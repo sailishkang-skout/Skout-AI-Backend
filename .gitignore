@@ -1,0 +1,25 @@
+# dependencies
+node_modules
+.pnpm-store
+
+# build
+dist
+*.tsbuildinfo
+
+# env
+.env
+.env.local
+
+# logs
+*.log
+
+# OS
+.DS_Store
+
+# docker
+postgres-data
+
+# python
+__pycache__
+.venv
+*.pyc
