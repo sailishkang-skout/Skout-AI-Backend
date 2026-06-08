@@ -104,6 +104,6 @@ export class SkoutEcsService extends Construct {
   }
 }
 
-export function secretFromArn(name: string, secret: secretsmanager.ISecret, field: string): ecs.Secret {
+export function secretFromArn(_name: string, secret: secretsmanager.ISecret, field: string): ecs.Secret {
   return ecs.Secret.fromSecretsManager(secret, field);
 }

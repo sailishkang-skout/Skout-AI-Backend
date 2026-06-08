@@ -81,8 +81,8 @@ aws secretsmanager create-secret --name SkoutProd/openai --secret-string '{"OPEN
 
 | Workflow | Trigger | Action |
 |----------|---------|--------|
-| `ci.yml` | PR + push to `development`, `uat`, `main` | Test, build, Docker build, CDK synth |
-| `deploy-dev.yml` | Push to **`development`** | Build images → ECR → CDK deploy dev |
+| `ci.yml` | PR + push to `develop`, `uat`, `main` | Test, build, Docker build, CDK synth |
+| `deploy-dev.yml` | Push to **`develop`** | Build images → ECR → CDK deploy dev |
 | `deploy-uat.yml` | Push to **`uat`** | Placeholder until UAT stack exists |
 | `deploy-prod.yml` | Push to **`main`** | Build images → ECR → CDK deploy prod |
 

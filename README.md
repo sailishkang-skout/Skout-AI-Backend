@@ -95,7 +95,7 @@ Frontend: `Skout Ai Frontend` (Next.js on port 3000).
 | Environment | How to run |
 | --- | --- |
 | **Local** | Backend: `pnpm docker:local` or `docker compose up -d` + `pnpm dev`. Frontend: see `Skout Ai Frontend` repo |
-| **Dev** | Push to **`development`** → GitHub Actions deploys to AWS |
+| **Dev** | Push to **`develop`** → GitHub Actions deploys to AWS |
 | **UAT** | Push to **`uat`** (sandbox — coming soon) |
 | **Prod** | Push to **`main`** → GitHub Actions deploys to AWS |
 

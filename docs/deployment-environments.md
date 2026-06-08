@@ -3,7 +3,7 @@
 | Git branch | Environment | AWS CDK | Deploy workflow | Env files |
 |------------|-------------|---------|-----------------|-----------|
 | **local** | Local machine | None (Docker Compose) | — | `.env`, `.env.local` |
-| **development** | Dev | `SkoutDev-*` | `deploy-dev.yml` | `.env.dev` |
+| **develop** | Dev | `SkoutDev-*` | `deploy-dev.yml` | `.env.dev` |
 | **uat** | UAT / sandbox | `SkoutUat-*` (coming soon) | `deploy-uat.yml` (placeholder) | `.env.uat` |
 | **main** | Production | `SkoutProd-*` | `deploy-prod.yml` | `.env.prod` |
 
@@ -63,7 +63,7 @@
 
 ```bash
 # Dev (manual)
-git push origin development          # or: pnpm infra:deploy:dev
+git push origin develop          # or: pnpm infra:deploy:dev
 
 # UAT (when ready)
 git push origin uat
