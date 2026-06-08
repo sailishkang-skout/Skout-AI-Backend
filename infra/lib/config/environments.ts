@@ -60,7 +60,7 @@ export const ENVIRONMENTS: Record<SkoutEnvironment, EnvironmentConfig> = {
     deployToAws: false,
     vpc: { maxAzs: 1, natGateways: 0 },
     database: {
-      instanceClass: "db.t4g.micro",
+      instanceClass: "t4g.micro",
       allocatedStorageGb: 20,
       multiAz: false,
       backupRetentionDays: 0,
@@ -91,7 +91,7 @@ export const ENVIRONMENTS: Record<SkoutEnvironment, EnvironmentConfig> = {
     deployToAws: true,
     vpc: { maxAzs: 2, natGateways: 1 },
     database: {
-      instanceClass: "db.t4g.micro",
+      instanceClass: "t4g.micro",
       allocatedStorageGb: 20,
       multiAz: false,
       backupRetentionDays: 3,
@@ -122,7 +122,7 @@ export const ENVIRONMENTS: Record<SkoutEnvironment, EnvironmentConfig> = {
     deployToAws: true,
     vpc: { maxAzs: 2, natGateways: 2 },
     database: {
-      instanceClass: "db.t4g.small",
+      instanceClass: "t4g.small",
       allocatedStorageGb: 50,
       multiAz: true,
       backupRetentionDays: 14,

@@ -43,6 +43,12 @@ export class ComputeStack extends Stack {
       imageTag = "latest",
     } = props;
 
+    const nodeHttpHealthCheck = (port: number, path: string) =>
+      `node -e "fetch('http://127.0.0.1:${port}${path}').then((r)=>process.exit(r.status<400?0:1)).catch(()=>process.exit(1))"`;
+
+    const pythonHttpHealthCheck = (port: number, path: string) =>
+      `python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:${port}${path}')"`;
+
     this.cluster = new ecs.Cluster(this, "Cluster", {
       vpc,
       clusterName: `${config.stackPrefix}-cluster`,
@@ -82,11 +88,13 @@ export class ComputeStack extends Stack {
       repository: apiRepository,
       imageTag,
       serviceName: "api",
+      environmentName: config.name,
       containerPort: 3001,
       cpu: config.ecs.apiCpu,
       memoryMiB: config.ecs.apiMemoryMiB,
       desiredCount: config.ecs.apiDesiredCount,
       healthCheckPath: "/api/v1/health",
+      containerHealthCheckCommand: [nodeHttpHealthCheck(3001, "/api/v1/health")],
       listener,
       pathPatterns: ["/api/*"],
       priority: 10,
@@ -114,11 +122,13 @@ export class ComputeStack extends Stack {
       repository: aiRepository,
       imageTag,
       serviceName: "ai",
+      environmentName: config.name,
       containerPort: 8000,
       cpu: config.ecs.aiCpu,
       memoryMiB: config.ecs.aiMemoryMiB,
       desiredCount: config.ecs.aiDesiredCount,
       healthCheckPath: "/health",
+      containerHealthCheckCommand: [pythonHttpHealthCheck(8000, "/health")],
       internalOnly: true,
       environment: {
         NODE_ENV: "production",
@@ -146,11 +156,14 @@ export class ComputeStack extends Stack {
       repository: webRepository,
       imageTag,
       serviceName: "web",
+      environmentName: config.name,
       containerPort: 3000,
       cpu: config.ecs.webCpu,
       memoryMiB: config.ecs.webMemoryMiB,
       desiredCount: config.ecs.webDesiredCount,
+      // No ECS container health check — ALB checks GET / (307 redirect is in 200-399).
       healthCheckPath: "/",
+      healthyHttpCodes: "200-399",
       listener,
       pathPatterns: ["/*"],
       priority: 100,

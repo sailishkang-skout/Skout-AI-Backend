@@ -12,6 +12,7 @@ const app = new cdk.App();
 const envName = app.node.tryGetContext("env") ?? "dev";
 const config = getEnvironment(envName);
 const imageTag = app.node.tryGetContext("imageTag") as string | undefined;
+const skipWeb = app.node.tryGetContext("skipWeb") === "true";
 
 const stackEnv: cdk.Environment = {
   account: config.account ?? process.env.CDK_DEFAULT_ACCOUNT,
@@ -46,7 +47,9 @@ if (!config.deployToAws) {
 
   new ComputeStack(app, `${config.stackPrefix}-Compute`, {
     env: stackEnv,
-    config,
+    config: skipWeb
+      ? { ...config, ecs: { ...config.ecs, webDesiredCount: 0 } }
+      : config,
     vpc: network.vpc,
     database: data.database,
     redis: data.redis,

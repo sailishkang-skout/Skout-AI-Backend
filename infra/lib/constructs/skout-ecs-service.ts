@@ -4,7 +4,7 @@ import * as ecr from "aws-cdk-lib/aws-ecr";
 import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
-import { Duration } from "aws-cdk-lib";
+import { Duration, RemovalPolicy } from "aws-cdk-lib";
 import { Construct } from "constructs";
 
 export interface SkoutEcsServiceProps {
@@ -13,6 +13,8 @@ export interface SkoutEcsServiceProps {
   readonly repository: ecr.IRepository;
   readonly imageTag?: string;
   readonly serviceName: string;
+  /** e.g. dev, prod — scopes CloudWatch log group names per environment */
+  readonly environmentName: string;
   readonly containerPort: number;
   readonly cpu: number;
   readonly memoryMiB: number;
@@ -20,6 +22,12 @@ export interface SkoutEcsServiceProps {
   readonly environment?: Record<string, string>;
   readonly secrets?: Record<string, ecs.Secret>;
   readonly healthCheckPath: string;
+  /** ALB target group healthy HTTP codes (default 200). Use 200-399 for Next.js redirects. */
+  readonly healthyHttpCodes?: string;
+  /** ECS container health check. Omit for ALB-only checks (recommended for Next.js on small Fargate). */
+  readonly containerHealthCheckCommand?: string[];
+  /** ECS container health check timeout (default 5s). Use 15s+ for Next.js on small Fargate CPU. */
+  readonly healthCheckTimeout?: Duration;
   readonly listener?: elbv2.ApplicationListener;
   readonly pathPatterns?: string[];
   readonly priority?: number;
@@ -40,8 +48,9 @@ export class SkoutEcsService extends Construct {
     });
 
     const logGroup = new logs.LogGroup(this, "LogGroup", {
-      logGroupName: `/skout/${props.serviceName}`,
+      logGroupName: `/skout/${props.environmentName}/${props.serviceName}`,
       retention: logs.RetentionDays.ONE_MONTH,
+      removalPolicy: RemovalPolicy.DESTROY,
     });
 
     const container = taskDef.addContainer("Container", {
@@ -49,13 +58,17 @@ export class SkoutEcsService extends Construct {
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: props.serviceName, logGroup }),
       environment: props.environment,
       secrets: props.secrets,
-      healthCheck: {
-        command: ["CMD-SHELL", `wget -qO- http://127.0.0.1:${props.containerPort}${props.healthCheckPath} || exit 1`],
-        interval: Duration.seconds(30),
-        timeout: Duration.seconds(5),
-        retries: 3,
-        startPeriod: Duration.seconds(30),
-      },
+      ...(props.containerHealthCheckCommand
+        ? {
+            healthCheck: {
+              command: ["CMD-SHELL", props.containerHealthCheckCommand.join(" ")],
+              interval: Duration.seconds(30),
+              timeout: props.healthCheckTimeout ?? Duration.seconds(5),
+              retries: 3,
+              startPeriod: Duration.seconds(60),
+            },
+          }
+        : {}),
     });
 
     container.addPortMappings({ containerPort: props.containerPort });
@@ -67,6 +80,8 @@ export class SkoutEcsService extends Construct {
     });
     this.securityGroup = sg;
 
+    const hasAlb = !props.internalOnly && props.listener;
+
     this.service = new ecs.FargateService(this, "Service", {
       cluster: props.cluster,
       taskDefinition: taskDef,
@@ -75,9 +90,10 @@ export class SkoutEcsService extends Construct {
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       assignPublicIp: false,
       circuitBreaker: { rollback: true },
+      ...(hasAlb ? { healthCheckGracePeriod: Duration.seconds(120) } : {}),
     });
 
-    if (!props.internalOnly && props.listener) {
+    if (hasAlb) {
       this.targetGroup = new elbv2.ApplicationTargetGroup(this, "TargetGroup", {
         vpc: props.vpc,
         port: props.containerPort,
@@ -85,7 +101,7 @@ export class SkoutEcsService extends Construct {
         targetType: elbv2.TargetType.IP,
         healthCheck: {
           path: props.healthCheckPath,
-          healthyHttpCodes: "200",
+          healthyHttpCodes: props.healthyHttpCodes ?? "200",
           interval: Duration.seconds(30),
         },
       });

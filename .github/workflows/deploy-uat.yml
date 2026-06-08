@@ -19,6 +19,12 @@ jobs:
     runs-on: ubuntu-latest
     environment: uat
     steps:
+      - name: Environment
+        run: |
+          echo "GitHub environment: ${{ github.environment }}"
+          echo "ENV_NAME: ${{ env.ENV_NAME }}"
+          echo "AWS_REGION: ${{ env.AWS_REGION }}"
+
       - name: UAT not configured yet
         run: |
           echo "::warning::UAT deployment is not configured yet."

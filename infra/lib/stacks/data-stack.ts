@@ -1,5 +1,6 @@
 import * as ec2 from "aws-cdk-lib/aws-ec2";
-import { Stack, StackProps, CfnOutput, Tags } from "aws-cdk-lib";
+import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
+import { SecretValue, Stack, StackProps, CfnOutput, Tags } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import type { EnvironmentConfig } from "../config/environments.js";
 import { SkoutDatabase } from "../constructs/skout-database.js";
@@ -24,6 +25,15 @@ export class DataStack extends Stack {
     this.database = new SkoutDatabase(this, "Database", { vpc, config });
     this.redis = new SkoutRedis(this, "Redis", { vpc, config });
     this.storage = new SkoutStorage(this, "Storage", { config });
+
+    // Placeholder — replace OPENAI_API_KEY value in Secrets Manager after deploy.
+    new secretsmanager.Secret(this, "OpenAiKey", {
+      secretName: `${config.stackPrefix}/openai`,
+      description: `OpenAI API key for Skout ${config.name}`,
+      secretStringValue: SecretValue.unsafePlainText(
+        JSON.stringify({ OPENAI_API_KEY: "replace-me-after-deploy" })
+      ),
+    });
 
     new CfnOutput(this, "DatabaseSecretArn", {
       value: this.database.secret.secretArn,

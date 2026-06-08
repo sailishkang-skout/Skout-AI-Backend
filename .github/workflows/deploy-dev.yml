@@ -18,6 +18,12 @@ jobs:
     runs-on: ubuntu-latest
     environment: dev
     steps:
+      - name: Environment
+        run: |
+          echo "GitHub environment: ${{ github.environment }}"
+          echo "ENV_NAME: ${{ env.ENV_NAME }}"
+          echo "AWS_REGION: ${{ env.AWS_REGION }}"
+
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4

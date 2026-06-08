@@ -1,5 +1,7 @@
 # Skout AI — Branch → Environment Mapping
 
+> For branch creation, PR workflow, and release naming, see [git-workflow.md](./git-workflow.md).
+
 | Git branch | Environment | AWS CDK | Deploy workflow | Env files |
 |------------|-------------|---------|-----------------|-----------|
 | **local** | Local machine | None (Docker Compose) | — | `.env`, `.env.local` |
@@ -47,13 +49,17 @@
    NEXT_PUBLIC_API_URL=http://YOUR_ALB_DNS
    ```
 
-3. Set GitHub **variables**:
+3. Create GitHub **environment** `dev`:
+   - Repo → **Settings** → **Environments** → **New environment** → name: `dev`
+   - Workflows use `environment: dev`, so secrets/variables must be set on this environment (not only repo-level).
+
+4. Set GitHub **variables** (on environment `dev`):
    - `DEV_API_URL` = `http://YOUR_ALB_DNS`
 
-4. Set GitHub **secrets**:
+5. Set GitHub **secrets** (on environment `dev`):
    - `AWS_DEPLOY_ROLE_ARN_DEV` = from CDK output `GitHubDeployRoleArn`
 
-5. Create AWS secret:
+6. Create AWS secret:
    ```bash
    aws secretsmanager create-secret --name SkoutDev/openai \
      --secret-string '{"OPENAI_API_KEY":"sk-..."}'

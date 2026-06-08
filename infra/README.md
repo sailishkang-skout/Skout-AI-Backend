@@ -61,11 +61,21 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
 cd infra
 pnpm install
 
-# First time: deploy infrastructure (creates ECR, VPC, etc.)
-pnpm deploy:dev
+# 1. Deploy base stacks (Network, Data, Registry) — skip Compute on first pass if images are not in ECR yet
+pnpm cdk deploy SkoutDev-Network SkoutDev-Data SkoutDev-Registry -c env=dev --require-approval never
 
-# Create secrets manually (once per env):
-aws secretsmanager create-secret --name SkoutDev/openai --secret-string '{"OPENAI_API_KEY":"sk-..."}'
+# 2. Build and push container images to ECR (from repo root credentials)
+# On Apple Silicon Macs, images are built for linux/amd64 (ECS Fargate default).
+pnpm push-images:dev
+
+# 3. Deploy Compute (ECS). Use skipWeb=true if the frontend image was not pushed.
+pnpm deploy:dev:compute -c skipWeb=true
+# Or full deploy when web image exists:
+# pnpm deploy:dev
+
+# 4. Update OpenAI key in Secrets Manager (placeholder is created by Data stack)
+aws secretsmanager put-secret-value --secret-id SkoutDev/openai \
+  --secret-string '{"OPENAI_API_KEY":"sk-..."}'
 ```
 
 ## Deploy prod

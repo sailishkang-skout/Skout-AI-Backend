@@ -107,6 +107,8 @@ pnpm infra:deploy:dev         # Deploy dev stacks (manual)
 
 Full infrastructure docs: [`infra/README.md`](infra/README.md)
 
+Branching, PRs, and releases: [`docs/git-workflow.md`](docs/git-workflow.md)
+
 ## Build order (from development plan)
 
 1. Search API + Redis cache + OpenSearch index

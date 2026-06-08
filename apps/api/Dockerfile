@@ -19,18 +19,16 @@ COPY apps/api ./apps/api
 COPY packages/shared ./packages/shared
 RUN pnpm --filter @skout/shared build
 RUN pnpm --filter @skout/api build
+# Flatten prod dependencies for the runtime image (pnpm symlinks break in plain COPY).
+RUN pnpm --filter @skout/api deploy --prod /prod
 
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 RUN addgroup -S skout && adduser -S skout -G skout
-COPY --from=build /app/apps/api/dist ./dist
-COPY --from=build /app/apps/api/package.json ./package.json
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/packages/shared/dist ./node_modules/@skout/shared/dist
-COPY --from=build /app/packages/shared/package.json ./node_modules/@skout/shared/package.json
+COPY --from=build /prod /app
 USER skout
 EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -qO- http://127.0.0.1:3001/api/v1/health || exit 1
+  CMD node -e "fetch('http://127.0.0.1:3001/api/v1/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 CMD ["node", "dist/index.js"]
