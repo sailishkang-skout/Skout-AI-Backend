@@ -1,0 +1,100 @@
+name: Deploy Dev
+
+on:
+  push:
+    branches: [development]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ENV_NAME: dev
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN_DEV }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tag
+        id: meta
+        run: echo "tag=dev-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Build and push API image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          API_REPO=$(aws ecr describe-repositories --repository-names skout-dev-api --query 'repositories[0].repositoryUri' --output text)
+          docker build -f apps/api/Dockerfile -t "$API_REPO:$IMAGE_TAG" -t "$API_REPO:latest" .
+          docker push "$API_REPO:$IMAGE_TAG"
+          docker push "$API_REPO:latest"
+
+      - name: Build and push AI image
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          AI_REPO=$(aws ecr describe-repositories --repository-names skout-dev-ai --query 'repositories[0].repositoryUri' --output text)
+          docker build -f apps/ai/Dockerfile -t "$AI_REPO:$IMAGE_TAG" -t "$AI_REPO:latest" apps/ai
+          docker push "$AI_REPO:$IMAGE_TAG"
+          docker push "$AI_REPO:latest"
+
+      - name: Checkout frontend
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/Skout-Ai-Frontend
+          path: frontend
+        continue-on-error: true
+
+      - name: Build and push Web image
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+          API_URL: ${{ vars.DEV_API_URL }}
+        run: |
+          if [ ! -f frontend/package.json ]; then echo "Frontend repo skipped"; exit 0; fi
+          WEB_REPO=$(aws ecr describe-repositories --repository-names skout-dev-web --query 'repositories[0].repositoryUri' --output text)
+          docker build -f frontend/Dockerfile \
+            --build-arg NEXT_PUBLIC_API_URL="${API_URL:-http://localhost:3001}" \
+            -t "$WEB_REPO:$IMAGE_TAG" -t "$WEB_REPO:latest" frontend
+          docker push "$WEB_REPO:$IMAGE_TAG"
+          docker push "$WEB_REPO:latest"
+
+      - name: Install CDK dependencies
+        working-directory: infra
+        run: pnpm install --frozen-lockfile || pnpm install
+
+      - name: Deploy CDK stacks
+        working-directory: infra
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+        run: pnpm cdk deploy --all -c env=dev -c imageTag=$IMAGE_TAG --require-approval never
+
+      - name: Force ECS redeploy
+        run: |
+          CLUSTER=$(aws ecs list-clusters --query "clusterArns[?contains(@, 'SkoutDev')]" --output text)
+          for svc in api ai web; do
+            aws ecs update-service --cluster "$CLUSTER" --service "$svc" --force-new-deployment || true
+          done

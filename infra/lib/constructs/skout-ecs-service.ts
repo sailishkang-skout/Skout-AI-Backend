@@ -1,0 +1,109 @@
+import * as ec2 from "aws-cdk-lib/aws-ec2";
+import * as ecs from "aws-cdk-lib/aws-ecs";
+import * as ecr from "aws-cdk-lib/aws-ecr";
+import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
+import * as logs from "aws-cdk-lib/aws-logs";
+import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
+import { Duration } from "aws-cdk-lib";
+import { Construct } from "constructs";
+
+export interface SkoutEcsServiceProps {
+  readonly vpc: ec2.IVpc;
+  readonly cluster: ecs.ICluster;
+  readonly repository: ecr.IRepository;
+  readonly imageTag?: string;
+  readonly serviceName: string;
+  readonly containerPort: number;
+  readonly cpu: number;
+  readonly memoryMiB: number;
+  readonly desiredCount: number;
+  readonly environment?: Record<string, string>;
+  readonly secrets?: Record<string, ecs.Secret>;
+  readonly healthCheckPath: string;
+  readonly listener?: elbv2.ApplicationListener;
+  readonly pathPatterns?: string[];
+  readonly priority?: number;
+  readonly internalOnly?: boolean;
+}
+
+export class SkoutEcsService extends Construct {
+  readonly service: ecs.FargateService;
+  readonly securityGroup: ec2.SecurityGroup;
+  readonly targetGroup?: elbv2.ApplicationTargetGroup;
+
+  constructor(scope: Construct, id: string, props: SkoutEcsServiceProps) {
+    super(scope, id);
+
+    const taskDef = new ecs.FargateTaskDefinition(this, "TaskDef", {
+      cpu: props.cpu,
+      memoryLimitMiB: props.memoryMiB,
+    });
+
+    const logGroup = new logs.LogGroup(this, "LogGroup", {
+      logGroupName: `/skout/${props.serviceName}`,
+      retention: logs.RetentionDays.ONE_MONTH,
+    });
+
+    const container = taskDef.addContainer("Container", {
+      image: ecs.ContainerImage.fromEcrRepository(props.repository, props.imageTag ?? "latest"),
+      logging: ecs.LogDrivers.awsLogs({ streamPrefix: props.serviceName, logGroup }),
+      environment: props.environment,
+      secrets: props.secrets,
+      healthCheck: {
+        command: ["CMD-SHELL", `wget -qO- http://127.0.0.1:${props.containerPort}${props.healthCheckPath} || exit 1`],
+        interval: Duration.seconds(30),
+        timeout: Duration.seconds(5),
+        retries: 3,
+        startPeriod: Duration.seconds(30),
+      },
+    });
+
+    container.addPortMappings({ containerPort: props.containerPort });
+
+    const sg = new ec2.SecurityGroup(this, "ServiceSg", {
+      vpc: props.vpc,
+      description: `Skout ${props.serviceName} ECS`,
+      allowAllOutbound: true,
+    });
+    this.securityGroup = sg;
+
+    this.service = new ecs.FargateService(this, "Service", {
+      cluster: props.cluster,
+      taskDefinition: taskDef,
+      desiredCount: props.desiredCount,
+      securityGroups: [sg],
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      assignPublicIp: false,
+      circuitBreaker: { rollback: true },
+    });
+
+    if (!props.internalOnly && props.listener) {
+      this.targetGroup = new elbv2.ApplicationTargetGroup(this, "TargetGroup", {
+        vpc: props.vpc,
+        port: props.containerPort,
+        protocol: elbv2.ApplicationProtocol.HTTP,
+        targetType: elbv2.TargetType.IP,
+        healthCheck: {
+          path: props.healthCheckPath,
+          healthyHttpCodes: "200",
+          interval: Duration.seconds(30),
+        },
+      });
+
+      this.service.attachToApplicationTargetGroup(this.targetGroup);
+
+      props.listener.addTargetGroups(props.serviceName, {
+        targetGroups: [this.targetGroup],
+        priority: props.priority ?? 10,
+        conditions: props.pathPatterns
+          ? [elbv2.ListenerCondition.pathPatterns(props.pathPatterns)]
+          : undefined,
+      });
+      sg.connections.allowFrom(props.listener.connections, ec2.Port.tcp(props.containerPort));
+    }
+  }
+}
+
+export function secretFromArn(name: string, secret: secretsmanager.ISecret, field: string): ecs.Secret {
+  return ecs.Secret.fromSecretsManager(secret, field);
+}

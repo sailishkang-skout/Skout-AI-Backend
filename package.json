@@ -9,7 +9,15 @@
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",
-    "prepare": "husky"
+    "prepare": "husky",
+    "docker:local": "docker compose -f docker-compose.yml -f docker-compose.local.yml up --build",
+    "infra:synth": "pnpm --filter @skout/infra synth",
+    "infra:synth:local": "pnpm --filter @skout/infra synth:local",
+    "infra:synth:dev": "pnpm --filter @skout/infra synth:dev",
+    "infra:synth:prod": "pnpm --filter @skout/infra synth:prod",
+    "infra:local-env": "pnpm --filter @skout/infra local:env",
+    "infra:deploy:dev": "pnpm --filter @skout/infra deploy:dev",
+    "infra:deploy:prod": "pnpm --filter @skout/infra deploy:prod"
   },
   "engines": {
     "node": ">=20"

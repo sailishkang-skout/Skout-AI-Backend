@@ -9,6 +9,15 @@ dist
 # env
 .env
 .env.local
+.env.dev
+.env.uat
+.env.prod
+.env.local.generated
+**/.env.local.generated
+
+# cdk
+infra/cdk.out
+infra/dist
 
 # logs
 *.log

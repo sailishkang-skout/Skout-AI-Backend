@@ -90,6 +90,23 @@ uvicorn src.main:app --reload --port 8000
 
 Frontend: `Skout Ai Frontend` (Next.js on port 3000).
 
+## Deployment
+
+| Environment | How to run |
+| --- | --- |
+| **Local** | Backend: `pnpm docker:local` or `docker compose up -d` + `pnpm dev`. Frontend: see `Skout Ai Frontend` repo |
+| **Dev** | Push to **`development`** → GitHub Actions deploys to AWS |
+| **UAT** | Push to **`uat`** (sandbox — coming soon) |
+| **Prod** | Push to **`main`** → GitHub Actions deploys to AWS |
+
+```bash
+pnpm infra:local-env          # Generate local .env files
+pnpm infra:synth:dev          # Preview dev CloudFormation
+pnpm infra:deploy:dev         # Deploy dev stacks (manual)
+```
+
+Full infrastructure docs: [`infra/README.md`](infra/README.md)
+
 ## Build order (from development plan)
 
 1. Search API + Redis cache + OpenSearch index
@@ -97,4 +114,3 @@ Frontend: `Skout Ai Frontend` (Next.js on port 3000).
 3. Email infra + sequences
 4. AI Gateway + HITL queue
 5. Temporal + Kafka at v1 scale
-# Skout-AI-Backend

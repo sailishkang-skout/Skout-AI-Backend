@@ -1,0 +1,29 @@
+name: Deploy UAT
+
+# Sandbox deployment — enable when UAT CDK stack is provisioned
+on:
+  push:
+    branches: [uat]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ENV_NAME: uat
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: uat
+    steps:
+      - name: UAT not configured yet
+        run: |
+          echo "::warning::UAT deployment is not configured yet."
+          echo "1. Add 'uat' environment to infra/lib/config/environments.ts"
+          echo "2. Run: pnpm infra:deploy:uat"
+          echo "3. Add AWS_DEPLOY_ROLE_ARN_UAT and UAT_API_URL to GitHub"
+          echo "4. Replace this placeholder with a full deploy job (copy deploy-dev.yml)"
+          exit 1

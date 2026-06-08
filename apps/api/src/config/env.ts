@@ -1,17 +1,34 @@
 import { z } from "zod";
 
-const envSchema = z.object({
-  NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
-  PORT: z.coerce.number().default(3001),
-  HOST: z.string().default("0.0.0.0"),
-  LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
-  DATABASE_URL: z.string().url().optional(),
-  REDIS_URL: z.string().default("redis://localhost:6379"),
-  CORS_ORIGIN: z.string().default("http://localhost:3000"),
-  OPENSEARCH_URL: z.string().url().optional(),
-  CLICKHOUSE_URL: z.string().url().optional(),
-  AI_SERVICE_URL: z.string().url().optional(),
-});
+const envSchema = z
+  .object({
+    NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+    PORT: z.coerce.number().default(3001),
+    HOST: z.string().default("0.0.0.0"),
+    LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
+    DATABASE_URL: z.string().url().optional(),
+    DATABASE_HOST: z.string().optional(),
+    DATABASE_PORT: z.coerce.number().optional(),
+    DATABASE_NAME: z.string().default("skout"),
+    DATABASE_USER: z.string().default("skout"),
+    DATABASE_PASSWORD: z.string().optional(),
+    REDIS_URL: z.string().default("redis://localhost:6379"),
+    CORS_ORIGIN: z.string().default("http://localhost:3000"),
+    EXPORTS_BUCKET: z.string().optional(),
+    OPENSEARCH_URL: z.string().url().optional(),
+    CLICKHOUSE_URL: z.string().url().optional(),
+    AI_SERVICE_URL: z.string().url().optional(),
+  })
+  .transform((data) => {
+    if (!data.DATABASE_URL && data.DATABASE_HOST && data.DATABASE_PASSWORD) {
+      const port = data.DATABASE_PORT ?? 5432;
+      return {
+        ...data,
+        DATABASE_URL: `postgresql://${data.DATABASE_USER}:${encodeURIComponent(data.DATABASE_PASSWORD)}@${data.DATABASE_HOST}:${port}/${data.DATABASE_NAME}`,
+      };
+    }
+    return data;
+  });
 
 export type Env = z.infer<typeof envSchema>;
 

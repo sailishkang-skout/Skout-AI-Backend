@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+dist
+**/dist
+.git
+.env
+.env.local
+**/*.test.ts
+**/vitest.config.ts
+docs
+infra/cdk.out
+.husky
+*.md

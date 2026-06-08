@@ -1,0 +1,31 @@
+{
+  "name": "@skout/infra",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "cdk": "cdk",
+    "synth": "cdk synth",
+    "synth:local": "cdk synth -c env=local",
+    "synth:dev": "cdk synth -c env=dev",
+    "synth:prod": "cdk synth -c env=prod",
+    "deploy:dev": "cdk deploy --all -c env=dev --require-approval never",
+    "deploy:prod": "cdk deploy --all -c env=prod",
+    "diff:dev": "cdk diff --all -c env=dev",
+    "diff:prod": "cdk diff --all -c env=prod",
+    "destroy:dev": "cdk destroy --all -c env=dev",
+    "local:env": "tsx scripts/generate-local-env.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.178.0",
+    "constructs": "^10.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "aws-cdk": "^2.178.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
