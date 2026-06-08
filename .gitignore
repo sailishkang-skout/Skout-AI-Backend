@@ -23,3 +23,5 @@ postgres-data
 __pycache__
 .venv
 *.pyc
+
+docs/mvp
