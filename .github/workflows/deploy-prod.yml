@@ -95,6 +95,9 @@ jobs:
           IMAGE_TAG: ${{ steps.meta.outputs.tag }}
         run: pnpm cdk deploy --all -c env=prod -c imageTag=$IMAGE_TAG --require-approval never
 
+      - name: Run database migrations (ECS one-off task)
+        run: bash scripts/ecs-run-migrations.sh SkoutProd
+
       - name: Force ECS redeploy
         run: |
           CLUSTER=$(aws ecs list-clusters --query "clusterArns[?contains(@, 'SkoutProd')]" --output text)

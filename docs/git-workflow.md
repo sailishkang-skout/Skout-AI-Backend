@@ -98,15 +98,16 @@ Open a PR in GitHub **targeting `develop`**.
 
 | Your branch type | Merge into | Review required |
 |------------------|------------|-----------------|
-| `feature/*`, `fix/*`, `chore/*`, `refactor/*` | `develop` | 1 teammate |
-| Release promotion | `uat` or `main` | Tech lead / release owner |
+| `feature/*`, `fix/*`, `chore/*`, `refactor/*` | `develop` | **1 approval** (enforced) |
+| Release promotion | `uat` or `main` | **1 approval** (enforced) |
+| `hotfix/*` | `main` | **1 approval** (enforced; expedited review) |
 
 ### Before requesting review
 
 - [ ] CI passes (tests, typecheck, Docker build, CDK synth)
 - [ ] Branch is rebased or merged with latest `develop`
 - [ ] No secrets or `.env` files committed
-- [ ] Database migrations included if schema changed
+- [ ] Drizzle migration generated (`pnpm db:generate`) if schema changed
 - [ ] PR description links the ClickUp task
 
 ### PR title format
@@ -309,15 +310,40 @@ git tag -a v0.X.Y -m "Release notes"
 git push origin v0.X.Y
 ```
 
-### Branch protection (recommended GitHub settings)
+### Branch protection (required)
 
-Configure in **Settings → Branches → Branch protection rules**:
+**All merges to `develop`, `uat`, and `main` are blocked until a pull request has at least one approving review.** Direct pushes to these branches are not allowed.
 
-| Branch | Require PR | Require CI | Require review |
-|--------|------------|------------|----------------|
-| `develop` | ✅ | ✅ | 1 approval |
-| `uat` | ✅ | ✅ | 1 approval |
-| `main` | ✅ | ✅ | 2 approvals (or tech lead) |
+| Branch | Require PR | Require review | Require CI (recommended) |
+|--------|------------|----------------|--------------------------|
+| `develop` | ✅ | **1 approval** | ✅ |
+| `uat` | ✅ | **1 approval** | ✅ |
+| `main` | ✅ | **1 approval** | ✅ |
+
+#### Apply via script (repo admins)
+
+```bash
+gh auth login
+chmod +x scripts/setup-branch-protection.sh
+./scripts/setup-branch-protection.sh
+```
+
+Dry run:
+
+```bash
+./scripts/setup-branch-protection.sh --dry-run
+```
+
+#### Apply manually in GitHub
+
+**Settings → Branches → Branch protection rules** (or **Rules → Rulesets**):
+
+1. Target `develop`, `uat`, and `main`
+2. Enable **Require a pull request before merging**
+3. Set **Required approving reviews** to **1**
+4. Enable **Dismiss stale pull request approvals when new commits are pushed**
+5. Enable **Require conversation resolution before merging**
+6. After CI has run at least once, add required status checks from `.github/workflows/ci.yml` (`test-and-build`, `docker-build`, `cdk-synth`)
 
 ---
 

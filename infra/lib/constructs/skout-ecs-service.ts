@@ -84,6 +84,7 @@ export class SkoutEcsService extends Construct {
 
     this.service = new ecs.FargateService(this, "Service", {
       cluster: props.cluster,
+      serviceName: props.serviceName,
       taskDefinition: taskDef,
       desiredCount: props.desiredCount,
       securityGroups: [sg],

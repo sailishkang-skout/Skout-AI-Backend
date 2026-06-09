@@ -9,7 +9,7 @@ Monorepo for the Skout AI platform backend, aligned with the production blueprin
 | Core API | Node.js, TypeScript, **Fastify** |
 | AI Service | Python, **FastAPI**, LiteLLM (stub) |
 | Shared types | `@skout/shared` (Zod schemas, identity) |
-| OLTP | PostgreSQL (activated records only) |
+| OLTP | PostgreSQL (activated records only), **Drizzle ORM** |
 | Cache / queues | Redis, BullMQ (MVP) → Temporal + Kafka (v1) |
 | Search / analytics | OpenSearch + ClickHouse (wire in staging) |
 
@@ -22,10 +22,9 @@ Skout AI Backend/
 │   └── ai/               # AI orchestration (FastAPI) — port 8000
 ├── packages/
 │   ├── shared/           # Schemas, prospect_id, shared contracts
+│   ├── db/               # Drizzle ORM client + migrations (per story)
 │   └── pal/              # Provider Abstraction Layer (planned)
 ├── workers/              # Async worker pools (BullMQ → Temporal)
-├── database/
-│   └── migrations/       # PostgreSQL DDL (workspace OLTP)
 ├── docs/
 │   └── adr/              # Architecture Decision Records
 └── docker-compose.yml    # Postgres + Redis for local dev
@@ -62,10 +61,56 @@ docker compose up -d
 
 pnpm install
 pnpm --filter @skout/shared build
+pnpm --filter @skout/db build
+pnpm db:migrate
+pnpm db:seed          # optional — demo workspace + credits
 pnpm dev
 ```
 
 API: [http://localhost:3001/api/v1/health](http://localhost:3001/api/v1/health)
+
+### Database (Drizzle ORM)
+
+Schema, client, and migrations live in **`packages/db`** (`@skout/db`). The API receives a typed Drizzle client via `app.db` when `DATABASE_URL` is set.
+
+```bash
+# 1. Start Postgres (if not already running)
+docker compose up -d
+
+# 2. Apply migrations (creates all tables)
+pnpm db:migrate
+
+# 3. Seed demo workspace + 500 credits (optional)
+pnpm db:seed
+```
+
+**When you change the schema** (`packages/db/src/schema/*.ts`):
+
+```bash
+pnpm db:generate    # generate new SQL migration in packages/db/drizzle/
+pnpm db:migrate     # apply pending migrations
+```
+
+| Command | Description |
+| --- | --- |
+| `pnpm db:generate` | Diff schema → new migration file in `packages/db/drizzle/` |
+| `pnpm db:migrate` | Apply all pending migrations to `DATABASE_URL` |
+| `pnpm db:seed` | Insert demo workspace (`00000000-…0001`) + 500 credits + sample list |
+| `pnpm db:push` | Push schema directly (dev only — skips migration files) |
+| `pnpm db:studio` | Open Drizzle Studio GUI |
+
+Requires `DATABASE_URL` in `.env` (see `.env.example`).
+
+### Migrations on deployment (AWS)
+
+Each deploy to **dev** (`develop`) or **prod** (`main`) runs migrations automatically:
+
+1. **Build API image** — includes `@skout/db`, SQL in `/app/db/drizzle/`
+2. **CDK deploy** — updates ECS task definition to the new image
+3. **ECS one-off migration task** — `scripts/ecs-run-migrations.sh` runs `node /app/db/dist/migrate.js` against RDS (uses `DATABASE_HOST` + `DATABASE_PASSWORD` from Secrets Manager)
+4. **ECS rolling deploy** — new API tasks start; entrypoint also runs migrations (no-op if already applied)
+
+Local Docker (`docker-compose.local.yml`) runs migrations on every API container start via `docker-entrypoint.sh`.
 
 ## Pre-commit hooks
 

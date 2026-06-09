@@ -92,9 +92,11 @@ aws secretsmanager create-secret --name SkoutProd/openai --secret-string '{"OPEN
 | Workflow | Trigger | Action |
 |----------|---------|--------|
 | `ci.yml` | PR + push to `develop`, `uat`, `main` | Test, build, Docker build, CDK synth |
-| `deploy-dev.yml` | Push to **`develop`** | Build images → ECR → CDK deploy dev |
+| `deploy-dev.yml` | Push to **`develop`** | Build images → ECR → CDK deploy → **DB migrate** → ECS redeploy |
 | `deploy-uat.yml` | Push to **`uat`** | Placeholder until UAT stack exists |
-| `deploy-prod.yml` | Push to **`main`** | Build images → ECR → CDK deploy prod |
+| `deploy-prod.yml` | Push to **`main`** | Build images → ECR → CDK deploy → **DB migrate** → ECS redeploy |
+
+Database migrations run via `scripts/ecs-run-migrations.sh` (one-off Fargate task using the API image) after CDK deploy and before ECS force-new-deployment. API containers also run migrations on startup (`docker-entrypoint.sh`) as a safety net.
 
 See [deployment-environments.md](../docs/deployment-environments.md) for branch → env mapping.
 
