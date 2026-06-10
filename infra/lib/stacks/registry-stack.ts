@@ -12,6 +12,12 @@ export class RegistryStack extends Stack {
   readonly apiRepository: ecr.Repository;
   readonly aiRepository: ecr.Repository;
   readonly webRepository: ecr.Repository;
+  readonly workerEnrichRepository: ecr.Repository;
+  readonly workerExportRepository: ecr.Repository;
+  readonly scraperOrchestratorRepository: ecr.Repository;
+  readonly scraperBotRepository: ecr.Repository;
+  readonly scraperCleanerRepository: ecr.Repository;
+  readonly scraperIngestorRepository: ecr.Repository;
   readonly deployRole: iam.Role;
 
   constructor(scope: Construct, id: string, props: RegistryStackProps) {
@@ -21,26 +27,26 @@ export class RegistryStack extends Stack {
 
     const removalPolicy = config.name === "prod" ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY;
 
-    this.apiRepository = new ecr.Repository(this, "ApiRepo", {
-      repositoryName: `skout-${config.name}-api`,
-      removalPolicy,
-      emptyOnDelete: config.name !== "prod",
-      imageScanOnPush: true,
-    });
+    const createRepo = (id: string, repoName: string) =>
+      new ecr.Repository(this, id, {
+        repositoryName: repoName,
+        removalPolicy,
+        emptyOnDelete: config.name !== "prod",
+        imageScanOnPush: true,
+      });
 
-    this.aiRepository = new ecr.Repository(this, "AiRepo", {
-      repositoryName: `skout-${config.name}-ai`,
-      removalPolicy,
-      emptyOnDelete: config.name !== "prod",
-      imageScanOnPush: true,
-    });
-
-    this.webRepository = new ecr.Repository(this, "WebRepo", {
-      repositoryName: `skout-${config.name}-web`,
-      removalPolicy,
-      emptyOnDelete: config.name !== "prod",
-      imageScanOnPush: true,
-    });
+    this.apiRepository = createRepo("ApiRepo", `skout-${config.name}-api`);
+    this.aiRepository = createRepo("AiRepo", `skout-${config.name}-ai`);
+    this.webRepository = createRepo("WebRepo", `skout-${config.name}-web`);
+    this.workerEnrichRepository = createRepo("WorkerEnrichRepo", `skout-${config.name}-worker-enrich`);
+    this.workerExportRepository = createRepo("WorkerExportRepo", `skout-${config.name}-worker-export`);
+    this.scraperOrchestratorRepository = createRepo(
+      "ScraperOrchestratorRepo",
+      `skout-${config.name}-scraper-orchestrator`
+    );
+    this.scraperBotRepository = createRepo("ScraperBotRepo", `skout-${config.name}-scraper-bot`);
+    this.scraperCleanerRepository = createRepo("ScraperCleanerRepo", `skout-${config.name}-scraper-cleaner`);
+    this.scraperIngestorRepository = createRepo("ScraperIngestorRepo", `skout-${config.name}-scraper-ingestor`);
 
     const githubOrg = config.github?.org ?? "skout-ai";
 
@@ -66,13 +72,74 @@ export class RegistryStack extends Stack {
       description: `GitHub Actions deploy role for Skout ${config.name}`,
     });
 
-    this.apiRepository.grantPullPush(this.deployRole);
-    this.aiRepository.grantPullPush(this.deployRole);
-    this.webRepository.grantPullPush(this.deployRole);
+    const repos = [
+      this.apiRepository,
+      this.aiRepository,
+      this.webRepository,
+      this.workerEnrichRepository,
+      this.workerExportRepository,
+      this.scraperOrchestratorRepository,
+      this.scraperBotRepository,
+      this.scraperCleanerRepository,
+      this.scraperIngestorRepository,
+    ];
+    for (const repo of repos) {
+      repo.grantPullPush(this.deployRole);
+    }
 
     this.deployRole.addToPolicy(
       new iam.PolicyStatement({
-        actions: ["ecs:UpdateService", "ecs:DescribeServices", "ecs:DescribeTaskDefinition"],
+        actions: [
+          "ecs:UpdateService",
+          "ecs:DescribeServices",
+          "ecs:DescribeTaskDefinition",
+          "ecs:RunTask",
+          "ecs:DescribeTasks",
+          "ecs:ListClusters",
+          "ecs:ListServices",
+          "iam:PassRole",
+        ],
+        resources: ["*"],
+      })
+    );
+
+    // CDK deploy via GitHub Actions
+    this.deployRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ["cloudformation:*", "s3:GetObject", "s3:PutObject", "s3:ListBucket"],
+        resources: ["*"],
+      })
+    );
+
+    this.deployRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "ec2:*",
+          "elasticloadbalancing:*",
+          "rds:*",
+          "elasticache:*",
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret",
+          "logs:*",
+          "servicediscovery:*",
+          "sqs:*",
+          "events:*",
+          "sns:*",
+          "cloudwatch:*",
+          "ecr:*",
+          "iam:GetRole",
+          "iam:CreateRole",
+          "iam:DeleteRole",
+          "iam:PutRolePolicy",
+          "iam:DeleteRolePolicy",
+          "iam:AttachRolePolicy",
+          "iam:DetachRolePolicy",
+          "iam:PassRole",
+          "iam:GetRolePolicy",
+          "iam:TagRole",
+          "iam:UntagRole",
+          "sts:AssumeRole",
+        ],
         resources: ["*"],
       })
     );
@@ -80,16 +147,6 @@ export class RegistryStack extends Stack {
     new CfnOutput(this, "ApiRepositoryUri", {
       value: this.apiRepository.repositoryUri,
       exportName: `${config.stackPrefix}-ApiRepoUri`,
-    });
-
-    new CfnOutput(this, "AiRepositoryUri", {
-      value: this.aiRepository.repositoryUri,
-      exportName: `${config.stackPrefix}-AiRepoUri`,
-    });
-
-    new CfnOutput(this, "WebRepositoryUri", {
-      value: this.webRepository.repositoryUri,
-      exportName: `${config.stackPrefix}-WebRepoUri`,
     });
 
     new CfnOutput(this, "GitHubDeployRoleArn", {

@@ -15,9 +15,9 @@ const envSchema = z
     REDIS_URL: z.string().default("redis://localhost:6379"),
     CORS_ORIGIN: z.string().default("http://localhost:3000"),
     EXPORTS_BUCKET: z.string().optional(),
-    OPENSEARCH_URL: z.string().url().optional(),
-    CLICKHOUSE_URL: z.string().url().optional(),
-    AI_SERVICE_URL: z.string().url().optional(),
+    OPENSEARCH_URL: z.string().optional(),
+    CLICKHOUSE_URL: z.string().optional(),
+    AI_SERVICE_URL: z.string().optional(),
   })
   .transform((data) => {
     if (!data.DATABASE_URL && data.DATABASE_HOST && data.DATABASE_PASSWORD) {

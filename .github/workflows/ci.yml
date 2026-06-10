@@ -60,7 +60,7 @@ jobs:
     needs: test-and-build
     strategy:
       matrix:
-        env: [local, dev, prod]
+        env: [local, dev, uat, prod]
     steps:
       - uses: actions/checkout@v4
 

@@ -8,6 +8,7 @@ import * as servicediscovery from "aws-cdk-lib/aws-servicediscovery";
 import { Stack, StackProps, CfnOutput, Tags } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import type { EnvironmentConfig } from "../config/environments.js";
+import type { SkoutAppSecrets } from "../constructs/skout-app-secrets.js";
 import { SkoutEcsService } from "../constructs/skout-ecs-service.js";
 import type { SkoutDatabase } from "../constructs/skout-database.js";
 import type { SkoutRedis } from "../constructs/skout-redis.js";
@@ -17,7 +18,9 @@ export interface ComputeStackProps extends StackProps {
   readonly vpc: ec2.IVpc;
   readonly database: SkoutDatabase;
   readonly redis: SkoutRedis;
+  readonly secrets: SkoutAppSecrets;
   readonly exportsBucket: s3.IBucket;
+  readonly scrapeBucket: s3.IBucket;
   readonly apiRepository: ecr.IRepository;
   readonly aiRepository: ecr.IRepository;
   readonly webRepository: ecr.IRepository;
@@ -27,6 +30,7 @@ export interface ComputeStackProps extends StackProps {
 export class ComputeStack extends Stack {
   readonly loadBalancer: elbv2.ApplicationLoadBalancer;
   readonly cluster: ecs.Cluster;
+  readonly apiService: ecs.FargateService;
 
   constructor(scope: Construct, id: string, props: ComputeStackProps) {
     super(scope, id, props);
@@ -36,7 +40,9 @@ export class ComputeStack extends Stack {
       vpc,
       database,
       redis,
+      secrets,
       exportsBucket,
+      scrapeBucket,
       apiRepository,
       aiRepository,
       webRepository,
@@ -82,7 +88,7 @@ export class ComputeStack extends Stack {
 
     const aiServiceUrl = `http://ai.${namespace.namespaceName}:8000`;
 
-    const apiService = new SkoutEcsService(this, "ApiService", {
+    const apiEcs = new SkoutEcsService(this, "ApiService", {
       vpc,
       cluster: this.cluster,
       repository: apiRepository,
@@ -105,6 +111,7 @@ export class ComputeStack extends Stack {
         CORS_ORIGIN: corsOrigin,
         REDIS_URL: `redis://${redis.endpoint}:6379`,
         EXPORTS_BUCKET: exportsBucket.bucketName,
+        SCRAPE_BUCKET: scrapeBucket.bucketName,
         AI_SERVICE_URL: aiServiceUrl,
         DATABASE_HOST: database.instance.dbInstanceEndpointAddress,
         DATABASE_PORT: database.instance.dbInstanceEndpointPort,
@@ -113,8 +120,42 @@ export class ComputeStack extends Stack {
       },
       secrets: {
         DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(database.secret, "password"),
+        CLERK_SECRET_KEY: ecs.Secret.fromSecretsManager(secrets.clerk, "CLERK_SECRET_KEY"),
+        APOLLO_API_KEY: ecs.Secret.fromSecretsManager(secrets.apollo, "APOLLO_API_KEY"),
+        HUNTER_API_KEY: ecs.Secret.fromSecretsManager(secrets.hunter, "HUNTER_API_KEY"),
+        HUBSPOT_CLIENT_ID: ecs.Secret.fromSecretsManager(secrets.hubspot, "HUBSPOT_CLIENT_ID"),
+        HUBSPOT_CLIENT_SECRET: ecs.Secret.fromSecretsManager(secrets.hubspot, "HUBSPOT_CLIENT_SECRET"),
+        OPENSEARCH_URL: ecs.Secret.fromSecretsManager(secrets.opensearch, "OPENSEARCH_URL"),
+        OPENSEARCH_USERNAME: ecs.Secret.fromSecretsManager(secrets.opensearch, "OPENSEARCH_USERNAME"),
+        OPENSEARCH_PASSWORD: ecs.Secret.fromSecretsManager(secrets.opensearch, "OPENSEARCH_PASSWORD"),
+        CLICKHOUSE_URL: ecs.Secret.fromSecretsManager(secrets.clickhouse, "CLICKHOUSE_URL"),
+        SENTRY_DSN: ecs.Secret.fromSecretsManager(secrets.sentry, "SENTRY_DSN"),
+        POSTHOG_API_KEY: ecs.Secret.fromSecretsManager(secrets.posthog, "POSTHOG_API_KEY"),
       },
     });
+
+    this.apiService = apiEcs.service;
+
+    const grantSecretRead = (taskDef: ecs.FargateTaskDefinition, ...appSecrets: secretsmanager.ISecret[]) => {
+      const role = taskDef.executionRole;
+      if (!role) return;
+      for (const secret of appSecrets) {
+        secret.grantRead(role);
+      }
+    };
+
+    grantSecretRead(
+      apiEcs.taskDefinition,
+      database.secret,
+      secrets.clerk,
+      secrets.apollo,
+      secrets.hunter,
+      secrets.hubspot,
+      secrets.opensearch,
+      secrets.clickhouse,
+      secrets.sentry,
+      secrets.posthog
+    );
 
     const aiService = new SkoutEcsService(this, "AiService", {
       vpc,
@@ -134,13 +175,14 @@ export class ComputeStack extends Stack {
         NODE_ENV: "production",
       },
       secrets: {
-        OPENAI_API_KEY: ecs.Secret.fromSecretsManager(
-          secretsmanager.Secret.fromSecretNameV2(this, "OpenAiKey", `${config.stackPrefix}/openai`)
-        ),
+        OPENAI_API_KEY: ecs.Secret.fromSecretsManager(secrets.openai, "OPENAI_API_KEY"),
       },
     });
 
-    apiService.service.connections.allowTo(aiService.service, ec2.Port.tcp(8000));
+    // Imported secrets (e.g. dev openai) are not auto-granted to the execution role.
+    grantSecretRead(aiService.taskDefinition, secrets.openai);
+
+    apiEcs.service.connections.allowTo(aiService.service, ec2.Port.tcp(8000));
 
     aiService.service.enableCloudMap({
       name: "ai",
@@ -150,7 +192,7 @@ export class ComputeStack extends Stack {
 
     const apiUrl = `http://${albDns}`;
 
-    new SkoutEcsService(this, "WebService", {
+    const webService = new SkoutEcsService(this, "WebService", {
       vpc,
       cluster: this.cluster,
       repository: webRepository,
@@ -161,7 +203,6 @@ export class ComputeStack extends Stack {
       cpu: config.ecs.webCpu,
       memoryMiB: config.ecs.webMemoryMiB,
       desiredCount: config.ecs.webDesiredCount,
-      // No ECS container health check — ALB checks GET / (307 redirect is in 200-399).
       healthCheckPath: "/",
       healthyHttpCodes: "200-399",
       listener,
@@ -171,14 +212,18 @@ export class ComputeStack extends Stack {
         NODE_ENV: "production",
         NEXT_PUBLIC_API_URL: apiUrl,
       },
+      secrets: {
+        CLERK_PUBLISHABLE_KEY: ecs.Secret.fromSecretsManager(secrets.clerk, "CLERK_PUBLISHABLE_KEY"),
+      },
     });
+    grantSecretRead(webService.taskDefinition, secrets.clerk);
 
     new ec2.CfnSecurityGroupIngress(this, "ApiToDbIngress", {
       groupId: database.securityGroup.securityGroupId,
       ipProtocol: "tcp",
       fromPort: 5432,
       toPort: 5432,
-      sourceSecurityGroupId: apiService.securityGroup.securityGroupId,
+      sourceSecurityGroupId: apiEcs.securityGroup.securityGroupId,
     });
 
     new ec2.CfnSecurityGroupIngress(this, "ApiToRedisIngress", {
@@ -186,10 +231,11 @@ export class ComputeStack extends Stack {
       ipProtocol: "tcp",
       fromPort: 6379,
       toPort: 6379,
-      sourceSecurityGroupId: apiService.securityGroup.securityGroupId,
+      sourceSecurityGroupId: apiEcs.securityGroup.securityGroupId,
     });
 
-    exportsBucket.grantReadWrite(apiService.service.taskDefinition.taskRole);
+    exportsBucket.grantReadWrite(apiEcs.service.taskDefinition.taskRole);
+    scrapeBucket.grantReadWrite(apiEcs.service.taskDefinition.taskRole);
 
     new CfnOutput(this, "LoadBalancerDns", {
       value: this.loadBalancer.loadBalancerDnsName,

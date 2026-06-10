@@ -1,4 +1,4 @@
-export type SkoutEnvironment = "local" | "dev" | "prod";
+export type SkoutEnvironment = "local" | "dev" | "uat" | "prod";
 
 export interface EnvironmentConfig {
   readonly name: SkoutEnvironment;
@@ -44,6 +44,9 @@ export interface EnvironmentConfig {
     readonly backendRepo: string;
     readonly frontendRepo: string;
   };
+  readonly alertEmail?: string;
+  /** Import pre-existing SkoutDev/openai secret instead of creating (dev only). */
+  readonly importOpenAiSecret?: boolean;
 }
 
 const baseGithub = {
@@ -111,6 +114,40 @@ export const ENVIRONMENTS: Record<SkoutEnvironment, EnvironmentConfig> = {
     },
     s3: { exportsRetentionDays: 30, versioning: true },
     github: baseGithub,
+    alertEmail: process.env.ALERT_EMAIL,
+    importOpenAiSecret: false,
+  },
+  uat: {
+    name: "uat",
+    stackPrefix: "SkoutUat",
+    region: process.env.AWS_REGION ?? "us-east-1",
+    domainName: process.env.UAT_DOMAIN_NAME,
+    apiSubdomain: "api-uat",
+    webSubdomain: "app-uat",
+    deployToAws: true,
+    vpc: { maxAzs: 2, natGateways: 1 },
+    database: {
+      instanceClass: "t4g.micro",
+      allocatedStorageGb: 20,
+      multiAz: false,
+      backupRetentionDays: 7,
+      deletionProtection: false,
+    },
+    redis: { nodeType: "cache.t4g.micro", numCacheNodes: 1 },
+    ecs: {
+      apiCpu: 256,
+      apiMemoryMiB: 512,
+      apiDesiredCount: 1,
+      aiCpu: 256,
+      aiMemoryMiB: 512,
+      aiDesiredCount: 1,
+      webCpu: 256,
+      webMemoryMiB: 512,
+      webDesiredCount: 1,
+    },
+    s3: { exportsRetentionDays: 60, versioning: true },
+    github: baseGithub,
+    alertEmail: process.env.ALERT_EMAIL,
   },
   prod: {
     name: "prod",
@@ -142,13 +179,14 @@ export const ENVIRONMENTS: Record<SkoutEnvironment, EnvironmentConfig> = {
     },
     s3: { exportsRetentionDays: 90, versioning: true },
     github: baseGithub,
+    alertEmail: process.env.ALERT_EMAIL,
   },
 };
 
 export function getEnvironment(name: string): EnvironmentConfig {
   const env = ENVIRONMENTS[name as SkoutEnvironment];
   if (!env) {
-    throw new Error(`Unknown environment "${name}". Use: local, dev, or prod.`);
+    throw new Error(`Unknown environment "${name}". Use: local, dev, uat, or prod.`);
   }
   return env;
 }

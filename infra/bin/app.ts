@@ -5,6 +5,8 @@ import { NetworkStack } from "../lib/stacks/network-stack.js";
 import { DataStack } from "../lib/stacks/data-stack.js";
 import { RegistryStack } from "../lib/stacks/registry-stack.js";
 import { ComputeStack } from "../lib/stacks/compute-stack.js";
+import { WorkersStack } from "../lib/stacks/workers-stack.js";
+import { ObservabilityStack } from "../lib/stacks/observability-stack.js";
 import { LocalConfigStack } from "../lib/stacks/local-config-stack.js";
 
 const app = new cdk.App();
@@ -36,7 +38,7 @@ if (!config.deployToAws) {
     env: stackEnv,
     config,
     vpc: network.vpc,
-    description: `Skout AI ${config.name} data layer (RDS, Redis, S3)`,
+    description: `Skout AI ${config.name} data layer (RDS, Redis, S3, secrets)`,
   });
 
   const registry = new RegistryStack(app, `${config.stackPrefix}-Registry`, {
@@ -45,7 +47,7 @@ if (!config.deployToAws) {
     description: `Skout AI ${config.name} ECR + GitHub OIDC`,
   });
 
-  new ComputeStack(app, `${config.stackPrefix}-Compute`, {
+  const compute = new ComputeStack(app, `${config.stackPrefix}-Compute`, {
     env: stackEnv,
     config: skipWeb
       ? { ...config, ecs: { ...config.ecs, webDesiredCount: 0 } }
@@ -53,12 +55,32 @@ if (!config.deployToAws) {
     vpc: network.vpc,
     database: data.database,
     redis: data.redis,
+    secrets: data.secrets,
     exportsBucket: data.storage.exportsBucket,
+    scrapeBucket: data.storage.scrapeBucket,
     apiRepository: registry.apiRepository,
     aiRepository: registry.aiRepository,
     webRepository: registry.webRepository,
     imageTag,
     description: `Skout AI ${config.name} ECS services (API, AI, Web)`,
+  });
+
+  new WorkersStack(app, `${config.stackPrefix}-Workers`, {
+    env: stackEnv,
+    config,
+    vpc: network.vpc,
+    scrapeBucket: data.storage.scrapeBucket,
+    description: `Skout AI ${config.name} worker queues (scrape schedule)`,
+  });
+
+  new ObservabilityStack(app, `${config.stackPrefix}-Observability`, {
+    env: stackEnv,
+    config,
+    loadBalancer: compute.loadBalancer,
+    apiService: compute.apiService,
+    database: data.database.instance,
+    alertEmail: config.alertEmail,
+    description: `Skout AI ${config.name} CloudWatch alarms`,
   });
 }
 

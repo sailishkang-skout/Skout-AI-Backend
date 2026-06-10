@@ -50,8 +50,10 @@ Skout AI Backend/
 ├── packages/             # Shared libraries consumed by apps (not deployed alone)
 │   ├── shared/           # Zod schemas, prospect_id, cross-service contracts
 │   ├── db/               # Drizzle ORM schema, migrations, seed, migrate runner
-│   └── pal/              # Provider Abstraction Layer (enrichment vendors) — planned
+│   ├── pal/              # Provider Abstraction Layer (enrichment vendors) — planned
+│   └── scraper-contracts/  # Scraping job + record schemas — planned
 ├── workers/              # Async job processors — planned (BullMQ → Temporal)
+│   └── scrapers/         # Scraping platform: bots, cleaner, ingestor (see scraping-platform-architecture.md)
 ├── infra/                # AWS CDK (VPC, RDS, ECS, ALB, ECR, GitHub OIDC)
 ├── scripts/              # Ops scripts (ECS migrations, branch protection)
 ├── docs/                 # Architecture, workflows, ADRs

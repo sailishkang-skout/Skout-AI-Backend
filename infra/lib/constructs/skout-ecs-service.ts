@@ -35,6 +35,7 @@ export interface SkoutEcsServiceProps {
 }
 
 export class SkoutEcsService extends Construct {
+  readonly taskDefinition: ecs.FargateTaskDefinition;
   readonly service: ecs.FargateService;
   readonly securityGroup: ec2.SecurityGroup;
   readonly targetGroup?: elbv2.ApplicationTargetGroup;
@@ -42,10 +43,11 @@ export class SkoutEcsService extends Construct {
   constructor(scope: Construct, id: string, props: SkoutEcsServiceProps) {
     super(scope, id);
 
-    const taskDef = new ecs.FargateTaskDefinition(this, "TaskDef", {
+    this.taskDefinition = new ecs.FargateTaskDefinition(this, "TaskDef", {
       cpu: props.cpu,
       memoryLimitMiB: props.memoryMiB,
     });
+    const taskDef = this.taskDefinition;
 
     const logGroup = new logs.LogGroup(this, "LogGroup", {
       logGroupName: `/skout/${props.environmentName}/${props.serviceName}`,

@@ -1,8 +1,8 @@
 import * as ec2 from "aws-cdk-lib/aws-ec2";
-import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
-import { SecretValue, Stack, StackProps, CfnOutput, Tags } from "aws-cdk-lib";
+import { Stack, StackProps, CfnOutput, Tags } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import type { EnvironmentConfig } from "../config/environments.js";
+import { SkoutAppSecrets } from "../constructs/skout-app-secrets.js";
 import { SkoutDatabase } from "../constructs/skout-database.js";
 import { SkoutRedis } from "../constructs/skout-redis.js";
 import { SkoutStorage } from "../constructs/skout-storage.js";
@@ -16,6 +16,7 @@ export class DataStack extends Stack {
   readonly database: SkoutDatabase;
   readonly redis: SkoutRedis;
   readonly storage: SkoutStorage;
+  readonly secrets: SkoutAppSecrets;
 
   constructor(scope: Construct, id: string, props: DataStackProps) {
     super(scope, id, props);
@@ -25,14 +26,9 @@ export class DataStack extends Stack {
     this.database = new SkoutDatabase(this, "Database", { vpc, config });
     this.redis = new SkoutRedis(this, "Redis", { vpc, config });
     this.storage = new SkoutStorage(this, "Storage", { config });
-
-    // Placeholder — replace OPENAI_API_KEY value in Secrets Manager after deploy.
-    new secretsmanager.Secret(this, "OpenAiKey", {
-      secretName: `${config.stackPrefix}/openai`,
-      description: `OpenAI API key for Skout ${config.name}`,
-      secretStringValue: SecretValue.unsafePlainText(
-        JSON.stringify({ OPENAI_API_KEY: "replace-me-after-deploy" })
-      ),
+    this.secrets = new SkoutAppSecrets(this, "AppSecrets", {
+      config,
+      importOpenAi: config.importOpenAiSecret,
     });
 
     new CfnOutput(this, "DatabaseSecretArn", {
@@ -48,6 +44,11 @@ export class DataStack extends Stack {
     new CfnOutput(this, "ExportsBucketName", {
       value: this.storage.exportsBucket.bucketName,
       exportName: `${config.stackPrefix}-ExportsBucket`,
+    });
+
+    new CfnOutput(this, "ScrapeBucketName", {
+      value: this.storage.scrapeBucket.bucketName,
+      exportName: `${config.stackPrefix}-ScrapeBucketData`,
     });
 
     Tags.of(this).add("skout:environment", config.name);
