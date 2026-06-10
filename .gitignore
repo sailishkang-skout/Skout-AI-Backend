@@ -33,5 +33,5 @@ __pycache__
 .venv
 *.pyc
 
-docs/mvp
-docs
+# Large MVP planning exports (keep docs/*.md tracked)
+docs/mvp/

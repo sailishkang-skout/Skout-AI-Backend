@@ -135,6 +135,8 @@ uvicorn src.main:app --reload --port 8000
 
 Frontend: `Skout Ai Frontend` (Next.js on port 3000).
 
+**Repo layout (backend + frontend):** [docs/repo-structure.md](docs/repo-structure.md) — why the monorepo is split into `apps/`, `packages/`, `infra/`, and why the UI lives in a separate repo.
+
 ## Deployment
 
 | Environment | How to run |
