@@ -1,0 +1,45 @@
+import { describe, expect, it } from "vitest";
+import { companyToProspectDoc, recordsToDocs, buildBulkBatch } from "./index.js";
+
+describe("ingestor", () => {
+  it("maps company candidates to prospect documents", () => {
+    const doc = companyToProspectDoc({
+      domain: "Acme.com",
+      companyName: "Acme",
+      scrapedAt: "2026-01-01T00:00:00.000Z",
+    });
+    expect(doc.companyDomain).toBe("acme.com");
+    expect(doc.companyName).toBe("Acme");
+  });
+
+  it("recordsToDocs handles mixed records", () => {
+    const docs = recordsToDocs([
+      { domain: "foo.com", companyName: "Foo", scrapedAt: "2026-01-01T00:00:00.000Z" },
+      {
+        companyDomain: "bar.com",
+        fullName: "Jane",
+        scrapedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+    expect(docs).toHaveLength(2);
+  });
+
+  it("deduplicates bulk batch by prospect id", () => {
+    const { docs, summary } = buildBulkBatch([
+      {
+        companyDomain: "dup.com",
+        fullName: "A",
+        email: "a@dup.com",
+        scrapedAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        companyDomain: "dup.com",
+        fullName: "A",
+        email: "a@dup.com",
+        scrapedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+    expect(docs).toHaveLength(1);
+    expect(summary.skippedDuplicate).toBe(1);
+  });
+});

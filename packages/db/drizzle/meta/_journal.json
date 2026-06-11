@@ -8,6 +8,20 @@
       "when": 1781002626633,
       "tag": "0000_yielding_dorian_gray",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1781174328471,
+      "tag": "0001_brown_annihilus",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781178323556,
+      "tag": "0002_fantastic_crusher_hogan",
+      "breakpoints": true
     }
   ]
 }

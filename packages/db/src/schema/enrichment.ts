@@ -23,13 +23,28 @@ export const enrichmentJobs = pgTable("enrichment_jobs", {
     .notNull()
     .references(() => prospectActivations.id, { onDelete: "cascade" }),
   asyncJobId: uuid("async_job_id").references(() => asyncJobs.id, { onDelete: "set null" }),
+  batchId: uuid("batch_id"),
   status: text("status").notNull().default("pending"),
   trigger: text("trigger").notNull().default("manual"),
   fieldsRequested: text("fields_requested").array().notNull().default(["email", "company", "validation"]),
+  creditsUsed: integer("credits_used").notNull().default(0),
   errorMessage: text("error_message"),
   queuedAt: timestamp("queued_at", { withTimezone: true }).notNull().defaultNow(),
   startedAt: timestamp("started_at", { withTimezone: true }),
   completedAt: timestamp("completed_at", { withTimezone: true }),
+});
+
+export const enrichmentBatches = pgTable("enrichment_batches", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  listId: uuid("list_id"),
+  total: integer("total").notNull().default(0),
+  done: integer("done").notNull().default(0),
+  failed: integer("failed").notNull().default(0),
+  status: text("status").notNull().default("queued"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const enrichmentAttempts = pgTable(
