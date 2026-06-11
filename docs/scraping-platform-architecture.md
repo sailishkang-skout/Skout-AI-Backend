@@ -271,6 +271,7 @@ Build order (stories):
 
 ## Related docs
 
+- [Data enrichment strategy](./data-enrichment-strategy.md) — sources, providers, costs, and the build-cheap/enrich-on-demand model
 - [Data flow diagram](./diagrams/skout-ai-data-flow.mmd) — search + enrichment OLTP path
 - [Scraping platform diagram](./diagrams/skout-ai-scraping-platform.mmd) — this pipeline visual
 - [ADR 0001 — canonical prospect ID](./adr/0001-canonical-prospect-id.md)

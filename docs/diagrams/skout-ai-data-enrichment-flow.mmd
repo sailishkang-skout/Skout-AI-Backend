@@ -1,0 +1,91 @@
+flowchart TB
+    %% ============ TIER 1: CORPUS BUILD (free / bulk) ============
+    subgraph SOURCES["Free & scraped sources (Tier 1 — corpus)"]
+        OC[OpenCorporates registry]
+        SEC[SEC EDGAR filings]
+        LI[LinkedIn company + people]
+        WEBS[Company websites]
+        GBP[Google Business Profile]
+        JOBS[Job boards / LinkedIn Jobs]
+        CB[Crunchbase pages]
+        WAP[Wappalyzer rules self-host]
+    end
+
+    subgraph COLLECT["1. Collect — scraper bots (Python ECS)"]
+        RAW[(S3 raw zone)]
+    end
+
+    subgraph ENRICHB["2. Resolve & enrich (bulk) — cleaner + ingestor (Node)"]
+        DOM[Domain discovery]
+        IND[Industry classification]
+        HC[Headcount estimate]
+        TECH[Tech-stack detection]
+        SIG[Hiring + funding signals]
+        NORM[Normalize + dedupe → prospect_id / company_id]
+    end
+
+    subgraph CORPUS["Skout corpus"]
+        OS[(OpenSearch global index)]
+    end
+
+    %% ============ AI LAYER ============
+    subgraph AI["4. AI qualification — apps/ai (FastAPI)"]
+        ICP[ICP match score 0-100]
+        INT[Intent score]
+        PAIN[Pain-point detection]
+        READY[Outreach readiness]
+    end
+
+    %% ============ USER ============
+    USER([User — search / filter / smart list])
+
+    %% ============ TIER 2: ACTIVATION (paid / on-demand) ============
+    subgraph PAL["3. Activate on-demand — PAL waterfall (paid, gated)"]
+        IGRAPH[internal_graph cache]
+        FIRM[Firmographics: RevenueBase / PDL / Explorium / Coresignal]
+        FIND[Email finding: Hunter.io + pattern gen]
+        VERIFY[Email verify: MillionVerifier then ZeroBounce / NeverBounce]
+        PHONE[Phone on-demand: Datagma / Cognism]
+    end
+
+    subgraph OLTP["PostgreSQL — activation only"]
+        ACT[prospect_activations]
+        ER[enrichment_results]
+        SCORES[prospect_scores]
+    end
+
+    %% ===== Tier 1 flow =====
+    OC & SEC & LI & WEBS & GBP & JOBS & CB & WAP --> RAW
+    RAW --> DOM --> IND --> HC --> TECH --> SIG --> NORM
+    NORM --> OS
+
+    %% ===== AI over corpus =====
+    OS --> ICP & INT & PAIN & READY
+    ICP & INT & PAIN & READY -->|write AI fields| OS
+
+    %% ===== User search =====
+    USER -->|search / filter| OS
+    OS -->|results| USER
+
+    %% ===== Tier 2 activation (gated) =====
+    USER -->|add to list / Enrich| IGRAPH
+    OS -.->|score over 80 auto-enrich| IGRAPH
+    IGRAPH -->|miss / stale| FIRM
+    FIRM --> FIND --> VERIFY
+    VERIFY -->|lead_score over 80| PHONE
+
+    FIRM & FIND & VERIFY & PHONE --> ER
+    ER --> ACT
+    ACT --> SCORES
+    READY -.-> SCORES
+
+    %% ===== styling =====
+    classDef free fill:#e6f4ea,stroke:#34a853,color:#0b3d1a;
+    classDef paid fill:#fce8e6,stroke:#ea4335,color:#5a1109;
+    classDef ai fill:#e8f0fe,stroke:#4285f4,color:#0b2a66;
+    classDef store fill:#fef7e0,stroke:#fbbc04,color:#5c3c00;
+
+    class OC,SEC,LI,WEBS,GBP,JOBS,CB,WAP,DOM,IND,HC,TECH,SIG,NORM free;
+    class FIRM,FIND,VERIFY,PHONE paid;
+    class ICP,INT,PAIN,READY ai;
+    class RAW,OS,ACT,ER,SCORES,IGRAPH store;
