@@ -5,8 +5,18 @@ import type { IcpConfig } from "./enrichment/ai-client.js";
 
 const { workspaceIcp } = schema;
 
+interface MemoryIcp {
+  config: IcpConfig;
+  version: number;
+}
+
+/** In-memory fallback when DATABASE_URL is unset. */
+const memoryIcpByWorkspace = new Map<string, MemoryIcp>();
+
 export async function getWorkspaceIcp(db: Db | null, workspaceId: string): Promise<IcpConfig> {
-  if (!db) return {};
+  if (!db) {
+    return memoryIcpByWorkspace.get(workspaceId)?.config ?? {};
+  }
   const [row] = await db.select().from(workspaceIcp).where(eq(workspaceIcp.workspaceId, workspaceId));
   if (!row) return {};
   const cfg = row.config as Record<string, unknown>;
@@ -20,7 +30,12 @@ export async function getWorkspaceIcp(db: Db | null, workspaceId: string): Promi
 }
 
 export async function setWorkspaceIcp(db: Db | null, workspaceId: string, config: IcpConfig) {
-  if (!db) return { workspaceId, config, version: 1 };
+  if (!db) {
+    const prev = memoryIcpByWorkspace.get(workspaceId);
+    const version = (prev?.version ?? 0) + 1;
+    memoryIcpByWorkspace.set(workspaceId, { config, version });
+    return { workspaceId, config, version };
+  }
   const [row] = await db
     .insert(workspaceIcp)
     .values({ workspaceId, config, version: 1 })
@@ -34,4 +49,10 @@ export async function setWorkspaceIcp(db: Db | null, workspaceId: string, config
     })
     .returning();
   return row;
+}
+
+export async function getWorkspaceIcpVersion(db: Db | null, workspaceId: string): Promise<number> {
+  if (!db) return memoryIcpByWorkspace.get(workspaceId)?.version ?? 0;
+  const [row] = await db.select().from(workspaceIcp).where(eq(workspaceIcp.workspaceId, workspaceId));
+  return row?.version ?? 0;
 }

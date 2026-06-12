@@ -48,9 +48,7 @@ export async function smartListRoutes(app: FastifyInstance) {
   app.post("/smart-lists/:id/run", async (request, reply) => {
     const { id } = request.params as { id: string };
     const workspaceId = request.workspaceId ?? "unknown";
-    const cfg = osConfig(app);
-    if (!cfg) return reply.status(503).send({ error: "opensearch_not_configured" });
-    const result = await runSmartList(app.db, cfg, workspaceId, id);
+    const result = await runSmartList(app.db, osConfig(app), workspaceId, id);
     if (!result) return reply.status(404).send({ error: "smart_list_not_found" });
     return reply.send(result);
   });

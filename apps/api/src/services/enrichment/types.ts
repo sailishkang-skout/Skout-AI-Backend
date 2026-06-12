@@ -81,6 +81,7 @@ export interface EnrichmentStore {
   getActivation(workspaceId: string, prospectId: string): Promise<ActivationRecord | null>;
 
   createList(workspaceId: string, name: string, prospectIds: string[]): Promise<ProspectList>;
+  addListMembers(workspaceId: string, listId: string, prospectIds: string[]): Promise<ProspectList | null>;
   listLists(workspaceId: string): Promise<ProspectList[]>;
   getListMemberIds(workspaceId: string, listId: string): Promise<string[]>;
 

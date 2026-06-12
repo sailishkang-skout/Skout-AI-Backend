@@ -107,6 +107,32 @@ export class DbStore implements EnrichmentStore {
     };
   }
 
+  async addListMembers(
+    workspaceId: string,
+    listId: string,
+    prospectIds: string[]
+  ): Promise<ProspectList | null> {
+    const [list] = await this.db
+      .select()
+      .from(lists)
+      .where(and(eq(lists.id, listId), eq(lists.workspaceId, workspaceId)));
+    if (!list) return null;
+    if (prospectIds.length) {
+      await this.db
+        .insert(listMembers)
+        .values(prospectIds.map((prospectId) => ({ listId, prospectId })))
+        .onConflictDoNothing();
+    }
+    const members = await this.db.select().from(listMembers).where(eq(listMembers.listId, listId));
+    return {
+      id: list.id,
+      workspaceId,
+      name: list.name,
+      prospectCount: members.length,
+      createdAt: list.createdAt.toISOString(),
+    };
+  }
+
   async listLists(workspaceId: string): Promise<ProspectList[]> {
     const rows = await this.db
       .select()

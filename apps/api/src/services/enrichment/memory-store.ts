@@ -99,6 +99,22 @@ export class MemoryStore implements EnrichmentStore {
     return list;
   }
 
+  async addListMembers(
+    workspaceId: string,
+    listId: string,
+    prospectIds: string[]
+  ): Promise<ProspectList | null> {
+    const w = this.ws(workspaceId);
+    const list = w.lists.get(listId);
+    if (!list || list.workspaceId !== workspaceId) return null;
+    const set = w.listMembers.get(listId) ?? new Set<string>();
+    for (const id of prospectIds) set.add(id);
+    w.listMembers.set(listId, set);
+    const updated = { ...list, prospectCount: set.size };
+    w.lists.set(listId, updated);
+    return updated;
+  }
+
   async listLists(workspaceId: string): Promise<ProspectList[]> {
     return [...this.ws(workspaceId).lists.values()].sort((a, b) =>
       b.createdAt.localeCompare(a.createdAt)

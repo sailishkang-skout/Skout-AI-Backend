@@ -48,4 +48,14 @@ export async function listRoutes(app: FastifyInstance) {
     const batch = await svc.enrichList(workspaceId, id, { fields: body.fields });
     return reply.status(202).send({ batchId: batch.id, status: batch.status, total: batch.total });
   });
+
+  app.post("/lists/:id/members", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const body = z.object({ prospects: z.array(snapshotSchema).min(1) }).parse(request.body ?? {});
+    const svc = buildEnrichmentService(app.db, app.config);
+    const list = await svc.addListMembers(workspaceId, id, body.prospects);
+    if (!list) return reply.status(404).send({ error: "list_not_found" });
+    return reply.status(200).send(list);
+  });
 }

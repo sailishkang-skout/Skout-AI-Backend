@@ -67,6 +67,16 @@ export class EnrichmentService {
     return this.store.createList(workspaceId, name, ids);
   }
 
+  async addListMembers(
+    workspaceId: string,
+    listId: string,
+    prospects: ProspectSnapshot[]
+  ): Promise<ProspectList | null> {
+    await this.activate(workspaceId, prospects);
+    const ids = prospects.map((p) => this.resolveIds(p).prospectId);
+    return this.store.addListMembers(workspaceId, listId, ids);
+  }
+
   async listActivations(workspaceId: string) {
     return this.store.listActivations(workspaceId);
   }

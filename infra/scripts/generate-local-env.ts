@@ -20,7 +20,7 @@ PORT=3001
 HOST=0.0.0.0
 LOG_LEVEL=debug
 
-DATABASE_URL=postgresql://skout:skout@localhost:5432/skout
+DATABASE_URL=postgresql://skout:skout@localhost:5434/skout
 REDIS_URL=redis://localhost:6379
 CORS_ORIGIN=http://localhost:3000
 

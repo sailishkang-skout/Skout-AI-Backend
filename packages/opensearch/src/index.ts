@@ -1,5 +1,9 @@
+import { buildDemoCorpus, filterDemoCorpus } from "./demo-corpus.js";
+
 /** Default OpenSearch index for the global prospect corpus. */
 export const PROSPECTS_INDEX = process.env.OPENSEARCH_INDEX ?? "prospects";
+
+export { buildDemoCorpus, filterDemoCorpus } from "./demo-corpus.js";
 
 export interface OpenSearchConfig {
   url: string;
@@ -237,4 +241,24 @@ export async function runSmartListQuery(
 ): Promise<ProspectDocument[]> {
   const res = await searchProspects(cfg, filters, 1, limit);
   return res.hits;
+}
+
+/**
+ * Query OpenSearch when configured; otherwise (or on connection failure) use the
+ * in-process demo corpus so smart lists work in local dev without Docker OpenSearch.
+ */
+export async function runSmartListQueryWithFallback(
+  cfg: OpenSearchConfig | null,
+  filters: SearchFilters,
+  limit = 1000
+): Promise<{ hits: ProspectDocument[]; demo: boolean }> {
+  if (cfg) {
+    try {
+      const hits = await runSmartListQuery(cfg, filters, limit);
+      return { hits, demo: false };
+    } catch {
+      // fall through to demo corpus
+    }
+  }
+  return { hits: filterDemoCorpus(buildDemoCorpus(), filters, limit), demo: true };
 }

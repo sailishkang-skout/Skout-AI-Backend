@@ -12,6 +12,7 @@
     "db:generate": "pnpm --filter @skout/db generate",
     "db:migrate": "pnpm --filter @skout/db migrate",
     "db:seed": "pnpm --filter @skout/db seed",
+    "opensearch:seed": "pnpm --filter @skout/opensearch seed",
     "db:push": "pnpm --filter @skout/db push",
     "db:studio": "pnpm --filter @skout/db studio",
     "prepare": "husky",
