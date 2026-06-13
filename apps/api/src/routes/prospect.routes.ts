@@ -60,6 +60,7 @@ export async function prospectRoutes(app: FastifyInstance) {
         status: job.status,
         creditsUsed: job.creditsUsed,
         results: job.results,
+        attempts: job.attempts,
       });
     } catch (err) {
       if (err instanceof InsufficientCreditsError) {

@@ -12,6 +12,8 @@ export interface EnrichmentInput {
   linkedinUrl?: string;
   /** AI lead score (0–100). Phone enrichment is gated on this (> 80). */
   leadScore?: number;
+  /** Re-score after firmographics, right before the phone gate. */
+  resolveLeadScoreForPhone?: (company?: CompanyData) => Promise<number>;
   /** Which fields to enrich. Defaults to company + email + validation. */
   fields?: EnrichField[];
 }
@@ -100,7 +102,12 @@ export interface PhoneData {
 
 export interface PhoneProvider {
   readonly name: string;
-  fetchPhone(fullName: string, domain: string, linkedinUrl?: string): Promise<PhoneData | null>;
+  fetchPhone(
+    fullName: string,
+    domain: string,
+    linkedinUrl?: string,
+    email?: string
+  ): Promise<PhoneData | null>;
 }
 
 export interface ProviderRegistry {

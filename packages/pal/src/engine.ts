@@ -4,6 +4,7 @@ import {
   PHONE_SCORE_GATE,
   type AttemptLog,
   type EnrichField,
+  type CompanyData,
   type EnrichmentInput,
   type EnrichmentOutcome,
   type FieldResult,
@@ -145,7 +146,13 @@ export class EnrichmentEngine {
 
     // 4. Phone — gated on lead score > 80 (strategy §6)
     if (fields.includes("phone")) {
-      const score = input.leadScore ?? 0;
+      const companyData = results.find((r) => r.field === "company")?.valueJson as
+        | CompanyData
+        | undefined;
+      const score = input.resolveLeadScoreForPhone
+        ? await input.resolveLeadScoreForPhone(companyData)
+        : (input.leadScore ?? 0);
+
       if (score <= this.phoneScoreGate) {
         attempts.push({
           order: ++order,
@@ -155,16 +162,58 @@ export class EnrichmentEngine {
           latencyMs: 0,
           detail: `lead score ${score} <= ${this.phoneScoreGate}`,
         });
-      } else if (input.fullName) {
+        results.push({
+          field: "phone",
+          provider: "phone-gate",
+          validationStatus: "skipped",
+          valueJson: {
+            reason: `Lead score ${score} must be above ${this.phoneScoreGate} for phone lookup`,
+            leadScore: score,
+            gate: this.phoneScoreGate,
+          },
+        });
+      } else if (!input.fullName) {
+        attempts.push({
+          order: ++order,
+          provider: "phone-gate",
+          operation: "name-gate",
+          status: "skipped",
+          latencyMs: 0,
+          detail: "full name required",
+        });
+        results.push({
+          field: "phone",
+          provider: "phone-gate",
+          validationStatus: "skipped",
+          valueJson: { reason: "Full name is required for phone lookup" },
+        });
+      } else {
         for (const p of this.providers.phone) {
           const phone = await run(p.name, "fetchPhone", () =>
-            p.fetchPhone(input.fullName!, input.companyDomain, input.linkedinUrl)
+            p.fetchPhone(input.fullName!, input.companyDomain, input.linkedinUrl, email)
           );
           if (phone) {
-            results.push({ field: "phone", valueJson: phone, value: phone.mobile ?? phone.direct, provider: p.name, isPrimary: true });
+            results.push({
+              field: "phone",
+              valueJson: phone,
+              value: phone.mobile ?? phone.direct,
+              provider: p.name,
+              isPrimary: true,
+            });
             creditsUsed += 1;
             break;
           }
+        }
+        const phoneError = attempts.find(
+          (a) => a.operation === "fetchPhone" && a.status === "error"
+        );
+        if (!results.some((r) => r.field === "phone" && r.isPrimary) && phoneError) {
+          results.push({
+            field: "phone",
+            provider: phoneError.provider,
+            validationStatus: "error",
+            valueJson: { reason: phoneError.detail ?? "Phone lookup failed" },
+          });
         }
       }
     }

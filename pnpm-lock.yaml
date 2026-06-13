@@ -35,6 +35,9 @@ importers:
       '@skout/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      dotenv:
+        specifier: ^16.4.7
+        version: 16.6.1
       drizzle-orm:
         specifier: ^0.44.2
         version: 0.44.7(postgres@3.4.9)
@@ -54,9 +57,6 @@ importers:
       '@types/node':
         specifier: ^22.10.1
         version: 22.19.20
-      dotenv:
-        specifier: ^16.4.7
-        version: 16.6.1
       tsx:
         specifier: ^4.19.2
         version: 4.22.4

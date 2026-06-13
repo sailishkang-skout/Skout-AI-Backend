@@ -31,6 +31,23 @@ export interface EnrichOptions {
   icp?: IcpConfig;
 }
 
+function inferSeniorityFromTitle(title?: string): string | undefined {
+  if (!title?.trim()) return undefined;
+  const t = title.toLowerCase();
+  if (/\b(cto|ceo|cfo|coo|chief|founder|president|vp|vice president|director|head of)\b/.test(t)) {
+    return "Executive";
+  }
+  if (/\bmanager|lead\b/.test(t)) return "Manager";
+  return undefined;
+}
+
+function scoreSnapshot(snapshot: ProspectSnapshot): ProspectSnapshot {
+  return {
+    ...snapshot,
+    seniority: snapshot.seniority ?? inferSeniorityFromTitle(snapshot.title),
+  };
+}
+
 /**
  * Orchestrates Tier-2 activation: activate → score → PAL waterfall → persist,
  * with credit gating and the phone score-gate (strategy §8). Storage and
@@ -50,6 +67,20 @@ export class EnrichmentService {
     const prospectId =
       s.prospectId ?? (s.email ? generateProspectId(s.companyDomain, s.email) : generateCompanyId(`${s.companyDomain}:${s.fullName ?? ""}`));
     return { companyId, prospectId };
+  }
+
+  /** Stable id from domain/name/email — used to link scores across URL aliases (e.g. domain as id). */
+  private scoreProspectId(snapshot: ProspectSnapshot): string {
+    return this.resolveIds({ ...snapshot, prospectId: undefined }).prospectId;
+  }
+
+  private async getStoredScore(workspaceId: string, snapshot: ProspectSnapshot) {
+    const { prospectId } = this.resolveIds(snapshot);
+    const contentId = this.scoreProspectId(snapshot);
+    return (
+      (await this.store.getScore(workspaceId, prospectId)) ??
+      (contentId !== prospectId ? await this.store.getScore(workspaceId, contentId) : null)
+    );
   }
 
   /** Add corpus prospects to the workspace (OLTP activation). No external spend. */
@@ -92,15 +123,16 @@ export class EnrichmentService {
   async score(workspaceId: string, snapshot: ProspectSnapshot, icp?: IcpConfig) {
     const { prospectId } = this.resolveIds(snapshot);
     const resolvedIcp = icp ?? (this.loadIcp ? await this.loadIcp(workspaceId) : {});
+    const scored = scoreSnapshot(snapshot);
     const input: ScoreInput = {
       prospectId,
-      title: snapshot.title,
-      seniority: snapshot.seniority,
-      industry: snapshot.industry,
-      country: snapshot.country,
-      employeeCount: snapshot.employeeCount,
-      companyDomain: snapshot.companyDomain,
-      signals: snapshot.signals,
+      title: scored.title,
+      seniority: scored.seniority,
+      industry: scored.industry,
+      country: scored.country,
+      employeeCount: scored.employeeCount,
+      companyDomain: scored.companyDomain,
+      signals: scored.signals,
     };
     const result = await scoreProspect(this.aiServiceUrl, input, resolvedIcp, this.aiTimeoutMs);
     await this.store.setScore({
@@ -154,10 +186,11 @@ export class EnrichmentService {
     });
 
     try {
-      const existingScore = await this.store.getScore(workspaceId, prospectId);
-      const leadScore =
-        existingScore?.score ??
-        (await this.score(workspaceId, snapshot, opts.icp)).icpScore;
+      const icp = opts.icp ?? (this.loadIcp ? await this.loadIcp(workspaceId) : {});
+      const scoredSnapshot = scoreSnapshot(snapshot);
+      const existingScore = await this.getStoredScore(workspaceId, snapshot);
+      let leadScore =
+        existingScore?.score ?? (await this.score(workspaceId, scoredSnapshot, icp)).icpScore;
 
       const outcome = await this.engine.enrich({
         prospectId,
@@ -168,6 +201,28 @@ export class EnrichmentService {
         linkedinUrl: snapshot.linkedinUrl,
         leadScore,
         fields,
+        resolveLeadScoreForPhone: fields.includes("phone")
+          ? async (company) => {
+              if (company) {
+                const enriched: ProspectSnapshot = {
+                  ...scoredSnapshot,
+                  industry: scoredSnapshot.industry ?? company.industry,
+                  country: scoredSnapshot.country ?? company.hqCountry,
+                  employeeCount: scoredSnapshot.employeeCount ?? company.employeeCount,
+                };
+                const addsData =
+                  enriched.industry !== scoredSnapshot.industry ||
+                  enriched.country !== scoredSnapshot.country ||
+                  enriched.employeeCount !== scoredSnapshot.employeeCount;
+                if (addsData) {
+                  const result = await this.score(workspaceId, enriched, icp);
+                  leadScore = result.icpScore;
+                  return result.icpScore;
+                }
+              }
+              return leadScore;
+            }
+          : undefined,
       });
 
       if (outcome.creditsUsed > 0) {
@@ -191,6 +246,7 @@ export class EnrichmentService {
           status: "completed",
           results: outcome.results,
           creditsUsed: outcome.creditsUsed,
+          attempts: outcome.attempts,
           completedAt: new Date().toISOString(),
         })) ?? job
       );

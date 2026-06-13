@@ -1,6 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { OpenSearchConfig } from "@skout/opensearch";
+import { buildEnrichmentService } from "../services/enrichment/index.js";
+import { prospectToSnapshot, prospectToSummary } from "../services/smart-list.mapper.js";
 import {
   createSmartList,
   listSmartLists,
@@ -21,6 +23,10 @@ const createSchema = z.object({
   }),
 });
 
+const activateSchema = z.object({
+  listName: z.string().min(1).max(255).optional(),
+});
+
 function osConfig(app: FastifyInstance): OpenSearchConfig | null {
   if (!app.config.OPENSEARCH_URL) return null;
   return {
@@ -28,6 +34,16 @@ function osConfig(app: FastifyInstance): OpenSearchConfig | null {
     username: app.config.OPENSEARCH_USERNAME,
     password: app.config.OPENSEARCH_PASSWORD,
     index: app.config.OPENSEARCH_INDEX,
+  };
+}
+
+function formatRunResponse(result: NonNullable<Awaited<ReturnType<typeof runSmartList>>>) {
+  const hits = result.hits.map(prospectToSummary);
+  return {
+    list: result.list,
+    hits,
+    total: result.total,
+    demo: result.demo,
   };
 }
 
@@ -50,6 +66,38 @@ export async function smartListRoutes(app: FastifyInstance) {
     const workspaceId = request.workspaceId ?? "unknown";
     const result = await runSmartList(app.db, osConfig(app), workspaceId, id);
     if (!result) return reply.status(404).send({ error: "smart_list_not_found" });
-    return reply.send(result);
+    return reply.send(formatRunResponse(result));
+  });
+
+  /** Run smart list, activate all matches, and create a workspace prospect list. */
+  app.post("/smart-lists/:id/activate", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const body = activateSchema.parse(request.body ?? {});
+
+    const result = await runSmartList(app.db, osConfig(app), workspaceId, id);
+    if (!result) return reply.status(404).send({ error: "smart_list_not_found" });
+
+    const prospects = result.hits.map(prospectToSnapshot).filter((p) => p.companyDomain);
+    if (prospects.length === 0) {
+      return reply.status(422).send({
+        error: "no_matches",
+        message: "Smart list matched 0 prospects — adjust filters and try again.",
+      });
+    }
+
+    const svc = buildEnrichmentService(app.db, app.config);
+    const listName =
+      body.listName ?? `${result.list.name} — ${new Date().toISOString().slice(0, 10)}`;
+    const list = await svc.createList(workspaceId, listName, prospects);
+
+    return reply.status(201).send({
+      list,
+      smartList: result.list,
+      hits: result.hits.map(prospectToSummary),
+      total: result.total,
+      activated: prospects.length,
+      demo: result.demo,
+    });
   });
 }

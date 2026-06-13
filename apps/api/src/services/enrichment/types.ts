@@ -1,4 +1,4 @@
-import type { FieldResult } from "@skout/pal";
+import type { AttemptLog, FieldResult } from "@skout/pal";
 
 export type JobStatus = "queued" | "running" | "completed" | "failed";
 
@@ -30,6 +30,7 @@ export interface EnrichmentJob {
   trigger: string;
   fieldsRequested: string[];
   results: FieldResult[];
+  attempts?: AttemptLog[];
   creditsUsed: number;
   errorMessage: string | null;
   queuedAt: string;

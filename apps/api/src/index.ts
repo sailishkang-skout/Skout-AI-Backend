@@ -5,7 +5,9 @@ import { loadEnv } from "./config/env.js";
 import { buildApp } from "./app.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
+if (process.env.NODE_ENV !== "production") {
+  dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
+}
 
 async function main() {
   const config = loadEnv();

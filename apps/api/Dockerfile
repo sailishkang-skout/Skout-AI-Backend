@@ -7,29 +7,24 @@ WORKDIR /app
 FROM base AS deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/api/package.json ./apps/api/
-COPY packages/shared/package.json ./packages/shared/
-COPY packages/db/package.json ./packages/db/
+COPY packages ./packages
+COPY workers/scrapers/orchestrator/package.json ./workers/scrapers/orchestrator/
 RUN pnpm install --frozen-lockfile
 
 FROM base AS build
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
-COPY --from=deps /app/packages/shared/node_modules ./packages/shared/node_modules
-COPY --from=deps /app/packages/db/node_modules ./packages/db/node_modules
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# Copy full install tree so workspace packages resolve tsc and devDependencies.
+COPY --from=deps /app ./
 COPY apps/api ./apps/api
-COPY packages/shared ./packages/shared
-COPY packages/db ./packages/db
-RUN pnpm --filter @skout/shared build
-RUN pnpm --filter @skout/db build
-RUN pnpm --filter @skout/api build
+COPY packages ./packages
+COPY workers/scrapers/orchestrator ./workers/scrapers/orchestrator
+RUN pnpm --filter @skout/api... build
 # Flatten prod dependencies for the runtime image (pnpm symlinks break in plain COPY).
 RUN pnpm --filter @skout/api deploy --prod /prod
 
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-ENV MIGRATIONS_FOLDER=/app/node_modules/@skout/db/drizzle
+ENV MIGRATIONS_FOLDER=/app/db/drizzle
 RUN addgroup -S skout && adduser -S skout -G skout
 COPY --from=build /prod /app
 COPY --from=build /app/packages/db/dist /app/db/dist

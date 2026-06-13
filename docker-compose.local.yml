@@ -1,8 +1,14 @@
-# Backend local stack — API, AI, Postgres, Redis
-# Usage: docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
+# Full local backend stack — API, AI, Postgres, Redis, OpenSearch
 #
-# Frontend runs separately from Skout Ai Frontend repo:
+# Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
+#
+# After first start (credits):
+#   pnpm docker:seed
+# Optional — seed Bonsai index from host: pnpm opensearch:seed
+#
+# OpenSearch: API uses Bonsai from .env. Local opensearch container in docker-compose.yml is optional.
+# Frontend still runs separately: cd "../Skout Ai Frontend" && pnpm dev
 
 networks:
   default:
@@ -15,28 +21,36 @@ services:
       dockerfile: apps/api/Dockerfile
     ports:
       - "3001:3001"
+    env_file:
+      - .env
     environment:
       NODE_ENV: development
       PORT: 3001
       HOST: 0.0.0.0
+      LOG_LEVEL: info
       DATABASE_URL: postgresql://skout:skout@postgres:5432/skout
       REDIS_URL: redis://redis:6379
-      CORS_ORIGIN: http://localhost:3000
       AI_SERVICE_URL: http://ai:8000
-      OPENSEARCH_URL: ${OPENSEARCH_URL:-http://host.docker.internal:9200}
+      CORS_ORIGIN: http://localhost:3000
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       ai:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/api/v1/health"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/api/v1/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
       interval: 15s
       timeout: 5s
-      retries: 5
-      start_period: 20s
+      retries: 8
+      start_period: 45s
 
   ai:
     build:
@@ -44,11 +58,19 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')",
+        ]
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 15s
+      start_period: 20s

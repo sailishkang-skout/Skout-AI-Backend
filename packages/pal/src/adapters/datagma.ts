@@ -1,18 +1,27 @@
-import { splitName } from "../email-patterns.js";
 import type { PhoneData, PhoneProvider } from "../types.js";
 import { fetchJson, qs } from "./http.js";
 
 /**
- * Datagma — on-demand phone enrichment (strategy §6 / E7.1). Only invoked by
- * the engine when the AI lead score clears the gate (> 80).
- * Docs: https://datagma.com/api  (gateway: https://gateway.datagma.net)
- * Key: DATAGMA_API_KEY
+ * Datagma — on-demand phone enrichment (strategy §6 / E7.1).
+ * Docs: https://datagmaapi.readme.io/reference/find-a-phone-number
+ * Key: DATAGMA_API_KEY (query param `apiId`)
  *
- * NOTE: Datagma's response shape varies by plan/endpoint. The adapter scans the
- * payload defensively for phone fields. If your account uses a different path,
- * set DATAGMA_BASE_URL to override the default gateway URL.
+ * Prefer v1/search when email or LinkedIn URL is known; otherwise v2/full with phoneFull.
  */
-export const DATAGMA_BASE_URL = "https://gateway.datagma.net/api/ingress/v8";
+export const DATAGMA_BASE_URL = "https://gateway.datagma.net/api/ingress";
+
+/** Strip legacy `/v8` suffix so env overrides stay compatible. */
+function apiRoot(baseUrl: string): string {
+  return baseUrl.replace(/\/v8\/?$/, "");
+}
+
+/** Datagma returns HTTP 200 with `{ code, message }` on billing/auth errors. */
+function assertDatagmaOk(body: Record<string, unknown>, context: string): void {
+  const code = body.code;
+  if (typeof code === "number" && code !== 0) {
+    throw new Error(String(body.message ?? `Datagma ${context} error (code ${code})`));
+  }
+}
 
 export class DatagmaPhone implements PhoneProvider {
   readonly name = "datagma";
@@ -22,46 +31,42 @@ export class DatagmaPhone implements PhoneProvider {
     private readonly timeoutMs?: number
   ) {}
 
-  async fetchPhone(fullName: string, domain: string, linkedinUrl?: string): Promise<PhoneData | null> {
-    const { first, last } = splitName(fullName);
-    const url = `${this.baseUrl}/findContact?${qs({
+  async fetchPhone(
+    fullName: string,
+    domain: string,
+    linkedinUrl?: string,
+    email?: string
+  ): Promise<PhoneData | null> {
+    const root = apiRoot(this.baseUrl);
+
+    if (email || linkedinUrl) {
+      const search = await fetchJson<Record<string, unknown>>(
+      `${root}/v1/search?${qs({
+        apiId: this.apiKey,
+        email,
+        username: linkedinUrl,
+        minimumMatch: 1,
+      })}`, { timeoutMs: this.timeoutMs });
+      assertDatagmaOk(search, "search");
+      const phones = (search.person as { phones?: Array<{ displayInternational?: string; display?: string }> } | undefined)?.phones;
+      const fromSearch = phones?.[0]?.displayInternational ?? phones?.[0]?.display;
+      if (fromSearch) return { mobile: fromSearch };
+    }
+
+    const enrich = await fetchJson<Record<string, unknown>>(
+    `${root}/v2/full?${qs({
       apiId: this.apiKey,
-      firstName: first,
-      lastName: last,
-      company: domain,
-      linkedinUrl,
-      phone: "true",
-    })}`;
+      fullName,
+      data: domain,
+      phoneFull: "true",
+    })}`, { timeoutMs: this.timeoutMs });
+    assertDatagmaOk(enrich, "full");
+    const phoneFull = enrich.phoneFull as { phones?: Array<{ displayInternational?: string; display?: string }> } | undefined;
+    const fromFull =
+      phoneFull?.phones?.[0]?.displayInternational ??
+      phoneFull?.phones?.[0]?.display;
+    if (fromFull) return { mobile: fromFull };
 
-    const body = await fetchJson<Record<string, unknown>>(url, { timeoutMs: this.timeoutMs });
-    const phone = pickPhone(body);
-    if (!phone) return null;
-    return { mobile: phone };
+    return null;
   }
-}
-
-/** Defensively extract the first phone-like string from a nested response. */
-function pickPhone(obj: unknown, depth = 0): string | undefined {
-  if (depth > 5 || obj == null) return undefined;
-  if (typeof obj === "string") return /^\+?[\d\s().-]{7,}$/.test(obj.trim()) ? obj.trim() : undefined;
-  if (Array.isArray(obj)) {
-    for (const item of obj) {
-      const found = pickPhone(item, depth + 1);
-      if (found) return found;
-    }
-    return undefined;
-  }
-  if (typeof obj === "object") {
-    for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
-      if (/phone|mobile|cell|tel/i.test(key)) {
-        const found = pickPhone(value, depth + 1);
-        if (found) return found;
-      }
-    }
-    for (const value of Object.values(obj as Record<string, unknown>)) {
-      const found = pickPhone(value, depth + 1);
-      if (found) return found;
-    }
-  }
-  return undefined;
 }

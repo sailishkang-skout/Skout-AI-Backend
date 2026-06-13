@@ -13,7 +13,12 @@ export class CognismPhone implements PhoneProvider {
     private readonly timeoutMs?: number
   ) {}
 
-  async fetchPhone(fullName: string, domain: string, linkedinUrl?: string): Promise<PhoneData | null> {
+  async fetchPhone(
+    fullName: string,
+    domain: string,
+    linkedinUrl?: string,
+    _email?: string
+  ): Promise<PhoneData | null> {
     const { first, last } = splitName(fullName);
     const body = await fetchJson<{ results?: { mobile?: string; direct?: string }[] }>(
       `${this.baseUrl}/search/contact/enrich`,

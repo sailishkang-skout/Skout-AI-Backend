@@ -45,10 +45,10 @@ const envSchema = z
     ZEROBOUNCE_BASE_URL: z.string().default("https://api.zerobounce.net/v2"),
     NEVERBOUNCE_BASE_URL: z.string().default("https://api.neverbounce.com/v4"),
     PDL_BASE_URL: z.string().default("https://api.peopledatalabs.com/v5"),
-    REVENUEBASE_BASE_URL: z.string().default("https://api.revenuebase.ai/v1"),
+    REVENUEBASE_BASE_URL: z.string().default("https://api.revenuebase.ai"),
     EXPLORIUM_BASE_URL: z.string().default("https://api.explorium.ai/v1"),
     CORESIGNAL_BASE_URL: z.string().default("https://api.coresignal.com/cdapi/v2"),
-    DATAGMA_BASE_URL: z.string().default("https://gateway.datagma.net/api/ingress/v8"),
+    DATAGMA_BASE_URL: z.string().default("https://gateway.datagma.net/api/ingress"),
     COGNISM_BASE_URL: z.string().default("https://app.cognism.com/api"),
     // --- Enrichment tunables. ---
     ENRICHMENT_REQUEST_TIMEOUT_MS: z.coerce.number().default(8000),

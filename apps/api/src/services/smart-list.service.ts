@@ -23,6 +23,10 @@ export interface SmartListRecord {
 /** In-memory fallback when DATABASE_URL is unset (local dev without Postgres). */
 const memoryByWorkspace = new Map<string, SmartListRecord[]>();
 
+function toSmartListRecord(row: typeof smartLists.$inferSelect): SmartListRecord {
+  return { ...row, filters: row.filters as SearchFilters };
+}
+
 function memoryLists(workspaceId: string): SmartListRecord[] {
   let lists = memoryByWorkspace.get(workspaceId);
   if (!lists) {
@@ -38,11 +42,12 @@ export async function listSmartLists(db: Db | null, workspaceId: string): Promis
       (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime()
     );
   }
-  return db
+  const rows = await db
     .select()
     .from(smartLists)
     .where(eq(smartLists.workspaceId, workspaceId))
     .orderBy(desc(smartLists.updatedAt));
+  return rows.map(toSmartListRecord);
 }
 
 export async function createSmartList(
@@ -68,7 +73,7 @@ export async function createSmartList(
     .insert(smartLists)
     .values({ workspaceId, name, filters })
     .returning();
-  return row;
+  return toSmartListRecord(row);
 }
 
 export async function runSmartList(
@@ -83,7 +88,7 @@ export async function runSmartList(
     list = memoryLists(workspaceId).find((l) => l.id === listId);
   } else {
     const [row] = await db.select().from(smartLists).where(eq(smartLists.id, listId));
-    list = row;
+    list = row ? toSmartListRecord(row) : undefined;
   }
 
   if (!list || list.workspaceId !== workspaceId) return null;

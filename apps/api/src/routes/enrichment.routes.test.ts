@@ -9,6 +9,17 @@ async function buildTestApp(overrides: Record<string, string | number> = {}) {
   const app = await buildApp({
     ...config,
     LOG_LEVEL: "fatal",
+    AI_SERVICE_URL: undefined,
+    HUNTER_API_KEY: undefined,
+    MILLIONVERIFIER_API_KEY: undefined,
+    ZEROBOUNCE_API_KEY: undefined,
+    NEVERBOUNCE_API_KEY: undefined,
+    PDL_API_KEY: undefined,
+    REVENUEBASE_API_KEY: undefined,
+    EXPLORIUM_API_KEY: undefined,
+    CORESIGNAL_API_KEY: undefined,
+    DATAGMA_API_KEY: undefined,
+    COGNISM_API_KEY: undefined,
     ...overrides,
   });
   return app;
@@ -64,7 +75,7 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     const app = await buildTestApp();
     const res = await app.inject({
       method: "POST",
-      url: "/api/v1/prospects/low-score/enrich",
+      url: "/api/v1/prospects/low-score-phone-gate/enrich",
       headers: { "x-workspace-id": WORKSPACE, "content-type": "application/json" },
       payload: {
         prospect: { fullName: "Jane Doe", companyDomain: "example.com", industry: "Retail", country: "US" },
@@ -73,7 +84,7 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     });
     expect(res.statusCode).toBe(202);
     const body = res.json() as { results: { field: string }[]; creditsUsed: number };
-    expect(body.results.some((r) => r.field === "phone")).toBe(false);
+    expect(body.results.some((r) => r.field === "phone" && r.validationStatus === "skipped")).toBe(true);
     expect(body.creditsUsed).toBe(0);
     await app.close();
   });
@@ -85,13 +96,13 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
       url: "/api/v1/prospects/gate-test/enrich",
       headers: { "x-workspace-id": WORKSPACE, "content-type": "application/json" },
       payload: {
-        prospect: { fullName: "Jane Doe", companyDomain: "example.com" },
+        prospect: { fullName: "John Smith", companyDomain: "acme.com" },
         fields: ["phone"],
       },
     });
     expect(res.statusCode).toBe(202);
     const body = res.json() as { results: { field: string }[] };
-    expect(body.results.some((r) => r.field === "phone")).toBe(true);
+    expect(body.results.some((r) => r.field === "phone" && r.isPrimary !== false)).toBe(true);
     await app.close();
   });
 

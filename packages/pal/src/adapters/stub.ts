@@ -67,7 +67,7 @@ export class StubEmailVerifier implements EmailVerifier {
 
 export class StubPhoneProvider implements PhoneProvider {
   readonly name = "stub-datagma";
-  async fetchPhone(fullName: string, domain: string): Promise<PhoneData | null> {
+  async fetchPhone(fullName: string, domain: string, _linkedinUrl?: string, _email?: string): Promise<PhoneData | null> {
     const seed = hashInt(fullName, domain);
     if (seed % 5 === 0) return null; // ~20% miss, like real providers
     const n = (seed % 9_000_000) + 1_000_000;

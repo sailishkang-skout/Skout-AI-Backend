@@ -37,7 +37,7 @@ describe("EnrichmentEngine", () => {
       fields: ["phone"],
       leadScore: 50,
     });
-    expect(out.results.some((r) => r.field === "phone")).toBe(false);
+    expect(out.results.some((r) => r.field === "phone" && r.validationStatus === "skipped")).toBe(true);
     expect(out.attempts.some((a) => a.operation === "score-gate" && a.status === "skipped")).toBe(true);
   });
 
