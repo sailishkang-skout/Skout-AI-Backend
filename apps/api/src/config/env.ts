@@ -34,6 +34,11 @@ const envSchema = z
       .transform((val) => val.split(",").map((s) => s.trim())),
     CLERK_SECRET_KEY: z.string().optional(),
     CLERK_PUBLISHABLE_KEY: z.string().optional(),
+    /** When true, skip JWT and use stub user (local only; never set in prod). */
+    AUTH_STUB: z
+      .string()
+      .optional()
+      .transform((v) => v === "true" || v === "1"),
     EXPORTS_BUCKET: z.string().optional(),
     SCRAPE_BUCKET: z.string().optional(),
     OPENSEARCH_URL: z.string().optional(),

@@ -17,7 +17,14 @@ async function main() {
     await app.listen({ port: config.PORT, host: config.HOST });
     app.log.info(`Skout API listening on http://${config.HOST}:${config.PORT}`);
   } catch (err) {
-    app.log.error(err);
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code === "EADDRINUSE") {
+      app.log.error(
+        `Port ${config.PORT} is already in use — stop the other process (often a stray "next dev -p ${config.PORT}") and restart the API`
+      );
+    } else {
+      app.log.error(err);
+    }
     process.exit(1);
   }
 }

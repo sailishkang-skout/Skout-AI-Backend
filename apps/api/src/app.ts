@@ -18,6 +18,8 @@ export async function buildApp(config: Env) {
   await app.register(dbPlugin);
   await app.register(authPlugin);
 
+  const allowedOrigins = config.CORS_ORIGIN.map((o) => o.toLowerCase());
+
   await app.register(cors, {
     origin: (origin, cb) => {
       // Non-browser or same-origin requests (no Origin header).
@@ -25,8 +27,7 @@ export async function buildApp(config: Env) {
         cb(null, true);
         return;
       }
-      const allowed = config.CORS_ORIGIN.toLowerCase();
-      if (origin.toLowerCase() === allowed) {
+      if (allowedOrigins.includes(origin.toLowerCase())) {
         cb(null, origin);
         return;
       }

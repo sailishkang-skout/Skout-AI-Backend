@@ -6,8 +6,8 @@ export async function workspaceContext(
 ): Promise<void> {
   const headerWorkspaceId = request.headers["x-workspace-id"] as string | undefined;
 
-  if (headerWorkspaceId) {
+  // JWT auth sets workspaceId from the user's provisioned tenant — don't override with a header.
+  if (headerWorkspaceId && !request.workspaceId) {
     request.workspaceId = headerWorkspaceId;
   }
-  // request.workspaceId is already set by authPlugin from DB — no hardcoded fallback
 }

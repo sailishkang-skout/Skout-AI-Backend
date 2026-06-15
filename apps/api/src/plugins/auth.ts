@@ -12,23 +12,38 @@ declare module "fastify" {
   }
 }
 
+function isHealthRoute(url: string): boolean {
+  return url === "/api/v1/health" || url.startsWith("/health");
+}
+
 export const authPlugin = fp(async (app) => {
   const config = app.config;
 
-  if (!config.CLERK_SECRET_KEY) {
-    app.log.warn("CLERK_SECRET_KEY not set — running in stub mode (userId/role set from headers or defaults)");
+  const applyStubUser = (request: FastifyRequest) => {
+    request.userId = (request.headers["x-stub-user-id"] as string | undefined) ?? "stub-user-id";
+    request.userEmail = (request.headers["x-stub-user-email"] as string | undefined) ?? "stub@example.com";
+    request.role = (request.headers["x-stub-role"] as string | undefined) ?? "owner";
+  };
+
+  const useStubAuth = !config.CLERK_SECRET_KEY || config.AUTH_STUB;
+
+  if (useStubAuth) {
+    app.log.warn(
+      config.AUTH_STUB
+        ? "AUTH_STUB=true — JWT disabled, using stub user"
+        : "CLERK_SECRET_KEY not set — running in stub mode"
+    );
     app.addHook("preHandler", async (request: FastifyRequest) => {
-      if (request.url === "/api/v1/health" || request.url.startsWith("/health")) return;
-      request.userId = (request.headers["x-stub-user-id"] as string | undefined) ?? "stub-user-id";
-      request.userEmail = (request.headers["x-stub-user-email"] as string | undefined) ?? "stub@example.com";
-      request.role = (request.headers["x-stub-role"] as string | undefined) ?? "owner";
-      // workspaceId is set by workspace-context from x-workspace-id header
+      if (isHealthRoute(request.url)) return;
+      applyStubUser(request);
     });
     return;
   }
 
+  const authorizedParties = config.CORS_ORIGIN;
+
   app.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {
-    if (request.url === "/api/v1/health" || request.url.startsWith("/health")) {
+    if (isHealthRoute(request.url)) {
       return;
     }
 
@@ -49,7 +64,10 @@ export const authPlugin = fp(async (app) => {
 
     try {
       const { verifyToken } = await import("@clerk/backend");
-      const claims = await verifyToken(token, { secretKey: config.CLERK_SECRET_KEY });
+      const claims = await verifyToken(token, {
+        secretKey: config.CLERK_SECRET_KEY,
+        authorizedParties,
+      });
 
       const clerkUserId = claims?.sub;
       if (!clerkUserId) {
@@ -67,9 +85,19 @@ export const authPlugin = fp(async (app) => {
       request.role = result.role;
     } catch (error) {
       app.log.error({ err: error }, "Auth failed");
-      const status = error instanceof HttpError ? error.statusCode : 401;
+      if (error instanceof HttpError) {
+        return reply.code(error.statusCode).send(errorResponse(error.message, error.statusCode));
+      }
+      // DB errors during provisioning are server failures, not invalid tokens.
+      const isDbError =
+        typeof error === "object" &&
+        error !== null &&
+        ("query" in error || (error as { code?: string }).code === "ECONNREFUSED");
+      if (isDbError) {
+        return reply.code(500).send(errorResponse("User provisioning failed", 500));
+      }
       const message = error instanceof Error ? error.message : "Invalid authorization token";
-      return reply.code(status).send(errorResponse(message, status));
+      return reply.code(401).send(errorResponse(message, 401));
     }
   });
 });
