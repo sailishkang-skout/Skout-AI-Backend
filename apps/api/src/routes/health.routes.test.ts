@@ -5,7 +5,11 @@ import { buildApp } from "../app.js";
 describe("health routes", () => {
   it("returns ok from /api/v1/health", async () => {
     const config = loadEnv();
-    const app = await buildApp({ ...config, LOG_LEVEL: "fatal" });
+    const app = await buildApp({
+      ...config,
+      LOG_LEVEL: "fatal",
+      CLERK_SECRET_KEY: undefined,
+    });
 
     const response = await app.inject({
       method: "GET",

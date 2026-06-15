@@ -18,6 +18,15 @@ export const dbPlugin = fp(async (app: FastifyInstance) => {
   }
 
   const { db, sql } = createDb(url);
+
+  try {
+    await sql`SELECT 1`;
+    app.log.info("Database connected successfully");
+  } catch (err) {
+    app.log.error({ err }, "Database connection failed");
+    throw err;
+  }
+
   app.decorate("db", db);
 
   app.addHook("onClose", async () => {

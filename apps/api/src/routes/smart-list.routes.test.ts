@@ -8,6 +8,7 @@ async function buildTestApp() {
   const config = loadEnv();
   return buildApp({
     ...config,
+    CLERK_SECRET_KEY: undefined,
     LOG_LEVEL: "fatal",
     AI_SERVICE_URL: undefined,
     OPENSEARCH_URL: undefined,

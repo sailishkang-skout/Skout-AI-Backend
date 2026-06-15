@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@clerk/backend": "^3.6.1",
     "@fastify/cors": "^10.0.1",
     "@skout/db": "workspace:*",
     "@skout/opensearch": "workspace:*",

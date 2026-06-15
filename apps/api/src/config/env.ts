@@ -1,4 +1,19 @@
+import path from "node:path";
+import dotenv from "dotenv";
 import { z } from "zod";
+
+const candidatePaths = [
+  path.resolve(process.cwd(), ".env"),
+  path.resolve(process.cwd(), ".env.local"),
+  path.resolve(process.cwd(), "../.env"),
+  path.resolve(process.cwd(), "../.env.local"),
+  path.resolve(process.cwd(), "../../.env"),
+  path.resolve(process.cwd(), "../../.env.local"),
+];
+
+for (const envPath of candidatePaths) {
+  dotenv.config({ path: envPath });
+}
 
 const envSchema = z
   .object({
@@ -13,7 +28,12 @@ const envSchema = z
     DATABASE_USER: z.string().default("skout"),
     DATABASE_PASSWORD: z.string().optional(),
     REDIS_URL: z.string().default("redis://localhost:6379"),
-    CORS_ORIGIN: z.string().default("http://localhost:3000"),
+    CORS_ORIGIN: z
+      .string()
+      .default("http://localhost:3000")
+      .transform((val) => val.split(",").map((s) => s.trim())),
+    CLERK_SECRET_KEY: z.string().optional(),
+    CLERK_PUBLISHABLE_KEY: z.string().optional(),
     EXPORTS_BUCKET: z.string().optional(),
     SCRAPE_BUCKET: z.string().optional(),
     OPENSEARCH_URL: z.string().optional(),

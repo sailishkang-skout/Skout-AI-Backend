@@ -7,6 +7,7 @@ describe("ingestor", () => {
       domain: "Acme.com",
       companyName: "Acme",
       scrapedAt: "2026-01-01T00:00:00.000Z",
+      source: "company-web",
     });
     expect(doc.companyDomain).toBe("acme.com");
     expect(doc.companyName).toBe("Acme");
@@ -14,11 +15,12 @@ describe("ingestor", () => {
 
   it("recordsToDocs handles mixed records", () => {
     const docs = recordsToDocs([
-      { domain: "foo.com", companyName: "Foo", scrapedAt: "2026-01-01T00:00:00.000Z" },
+      { domain: "foo.com", companyName: "Foo", scrapedAt: "2026-01-01T00:00:00.000Z", source: "company-web" },
       {
         companyDomain: "bar.com",
         fullName: "Jane",
         scrapedAt: "2026-01-01T00:00:00.000Z",
+        source: "linkedin",
       },
     ]);
     expect(docs).toHaveLength(2);
@@ -31,12 +33,14 @@ describe("ingestor", () => {
         fullName: "A",
         email: "a@dup.com",
         scrapedAt: "2026-01-01T00:00:00.000Z",
+        source: "linkedin",
       },
       {
         companyDomain: "dup.com",
         fullName: "A",
         email: "a@dup.com",
         scrapedAt: "2026-01-01T00:00:00.000Z",
+        source: "linkedin",
       },
     ]);
     expect(docs).toHaveLength(1);

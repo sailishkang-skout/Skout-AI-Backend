@@ -8,6 +8,7 @@ async function buildTestApp(overrides: Record<string, string | number> = {}) {
   const config = loadEnv();
   const app = await buildApp({
     ...config,
+    CLERK_SECRET_KEY: undefined,
     LOG_LEVEL: "fatal",
     AI_SERVICE_URL: undefined,
     HUNTER_API_KEY: undefined,
@@ -84,7 +85,7 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
       },
     });
     expect(res.statusCode).toBe(202);
-    const body = res.json() as { results: { field: string }[]; creditsUsed: number };
+    const body = res.json() as { results: { field: string; validationStatus?: string }[]; creditsUsed: number };
     expect(body.results.some((r) => r.field === "phone" && r.validationStatus === "skipped")).toBe(true);
     expect(body.creditsUsed).toBe(0);
     await app.close();
@@ -102,7 +103,7 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
       },
     });
     expect(res.statusCode).toBe(202);
-    const body = res.json() as { results: { field: string }[] };
+    const body = res.json() as { results: { field: string; isPrimary?: boolean }[] };
     expect(body.results.some((r) => r.field === "phone" && r.isPrimary !== false)).toBe(true);
     await app.close();
   });
