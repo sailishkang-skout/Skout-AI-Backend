@@ -59,8 +59,13 @@ export class EnrichmentService {
     private readonly engine: EnrichmentEngine,
     private readonly aiServiceUrl?: string,
     private readonly aiTimeoutMs?: number,
-    private readonly loadIcp?: (workspaceId: string) => Promise<IcpConfig>
+    private readonly loadIcp?: (workspaceId: string) => Promise<IcpConfig>,
+    private readonly beforeWrite?: (workspaceId: string) => Promise<void>
   ) {}
+
+  private async prepareWorkspace(workspaceId: string): Promise<void> {
+    if (this.beforeWrite) await this.beforeWrite(workspaceId);
+  }
 
   private resolveIds(s: ProspectSnapshot) {
     const companyId = s.companyId ?? generateCompanyId(s.companyDomain);
@@ -85,6 +90,7 @@ export class EnrichmentService {
 
   /** Add corpus prospects to the workspace (OLTP activation). No external spend. */
   async activate(workspaceId: string, prospects: ProspectSnapshot[]): Promise<number> {
+    await this.prepareWorkspace(workspaceId);
     for (const p of prospects) {
       const { companyId, prospectId } = this.resolveIds(p);
       await this.store.upsertActivation(workspaceId, prospectId, companyId, { ...p, prospectId, companyId });
@@ -155,6 +161,7 @@ export class EnrichmentService {
     snapshot: ProspectSnapshot,
     opts: EnrichOptions = {}
   ): Promise<EnrichmentJob> {
+    await this.prepareWorkspace(workspaceId);
     const { companyId, prospectId } = this.resolveIds(snapshot);
 
     // Activate first so the job has an activation to attach to.

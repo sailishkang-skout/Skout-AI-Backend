@@ -1,0 +1,908 @@
+{
+  "/SkoutDev-Data": [
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    },
+    {
+      "type": "aws:cdk:stack-tags",
+      "data": [
+        {
+          "key": "skout:environment",
+          "value": "dev"
+        }
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Custom::S3AutoDeleteObjectsCustomResourceProvider": [
+    {
+      "type": "aws:cdk:is-custom-resource-handler-customResourceProvider",
+      "data": true
+    }
+  ],
+  "/SkoutDev-Data/DatabaseSecretArn": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "DatabaseSecretArn"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:34:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Data/RedisEndpoint": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "RedisEndpoint"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:39:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Data/ExportsBucketName": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsBucketName"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:44:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Data/ScrapeBucketName": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScrapeBucketName"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:49:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Data/BootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BootstrapVersion"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/CheckBootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CheckBootstrapVersion"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Redis/SubnetGroup": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "RedisSubnetGroup2387CBFF"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new SkoutRedis (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-redis.ts:21:25)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:27:18)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Redis/Redis": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "Redis04B3B4F3"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new SkoutRedis (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-redis.ts:33:21)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:27:18)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Custom::S3AutoDeleteObjectsCustomResourceProvider/Role": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Custom::S3AutoDeleteObjectsCustomResourceProvider/Handler": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CustomS3AutoDeleteObjectsCustomResourceProviderHandler9D90184F"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/CDKMetadata/Default": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CDKMetadata"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Exports/Output{\"Fn::GetAtt\":[\"StorageExportsBucket1F25C8FC\",\"Arn\"]}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputFnGetAttStorageExportsBucket1F25C8FCArn8054303F"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Exports/Output{\"Fn::GetAtt\":[\"StorageScrapeBucketE2932C76\",\"Arn\"]}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputFnGetAttStorageScrapeBucketE2932C76ArnD85224CB"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Exports/Output{\"Fn::GetAtt\":[\"Redis04B3B4F3\",\"RedisEndpoint.Address\"]}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputFnGetAttRedis04B3B4F3RedisEndpointAddress8458D51B"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Exports/Output{\"Ref\":\"StorageExportsBucket1F25C8FC\"}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputRefStorageExportsBucket1F25C8FC33F30C42"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Exports/Output{\"Ref\":\"StorageScrapeBucketE2932C76\"}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputRefStorageScrapeBucketE2932C763773BB9C"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Exports/Output{\"Fn::GetAtt\":[\"DatabasePostgres277EF4CB\",\"Endpoint.Address\"]}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointAddress8AB85320"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Exports/Output{\"Fn::GetAtt\":[\"DatabasePostgres277EF4CB\",\"Endpoint.Port\"]}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointPortEA4FF89A"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Exports/Output{\"Ref\":\"DatabaseDbSecret1098DC6E\"}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Exports/Output{\"Ref\":\"AppSecretsClerk3C7EB3C5\"}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputRefAppSecretsClerk3C7EB3C545E9142A"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Exports/Output{\"Ref\":\"AppSecretsApolloE41F3509\"}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputRefAppSecretsApolloE41F3509642E2E3E"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Exports/Output{\"Ref\":\"AppSecretsHunterC714CAE0\"}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputRefAppSecretsHunterC714CAE0B0117957"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Exports/Output{\"Ref\":\"AppSecretsEnrichmentProviders3B50D358\"}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputRefAppSecretsEnrichmentProviders3B50D3583F71B8A2"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Exports/Output{\"Ref\":\"AppSecretsHubspotE761A874\"}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputRefAppSecretsHubspotE761A87435D0539B"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Exports/Output{\"Ref\":\"AppSecretsOpenSearchDD0A1CE0\"}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputRefAppSecretsOpenSearchDD0A1CE054DE5BE5"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Exports/Output{\"Ref\":\"AppSecretsClickHouseB10ADD14\"}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputRefAppSecretsClickHouseB10ADD14C051B586"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Exports/Output{\"Ref\":\"AppSecretsSentryCB7AAD9C\"}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputRefAppSecretsSentryCB7AAD9CC86ED58F"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Exports/Output{\"Ref\":\"AppSecretsPostHog2FD42F1B\"}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputRefAppSecretsPostHog2FD42F1B81AA1FB8"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Exports/Output{\"Ref\":\"AppSecretsOpenAi9C721DDE\"}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputRefAppSecretsOpenAi9C721DDEFB4634E2"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Exports/Output{\"Fn::GetAtt\":[\"DatabaseDbSg4E409684\",\"GroupId\"]}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputFnGetAttDatabaseDbSg4E409684GroupIdD2249FED"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Exports/Output{\"Fn::GetAtt\":[\"RedisRedisSg2F12D8B8\",\"GroupId\"]}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputFnGetAttRedisRedisSg2F12D8B8GroupId19AE2A5D"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Exports/Output{\"Ref\":\"DatabasePostgres277EF4CB\"}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputRefDatabasePostgres277EF4CBCFC8AF89"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Database/DbSecret/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "DatabaseDbSecret1098DC6E"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Secret2 in .pnpm...",
+        "new SkoutDatabase (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-database.ts:23:19)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:26:21)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Database/DbSg/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "DatabaseDbSg4E409684"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new SecurityGroup2 in .pnpm...",
+        "new SkoutDatabase (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-database.ts:32:26)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:26:21)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Database/Postgres/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "DatabasePostgres277EF4CB"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new DatabaseInstance2 in .pnpm...",
+        "new SkoutDatabase (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-database.ts:38:21)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:26:21)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Redis/RedisSg/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "RedisRedisSg2F12D8B8"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new SecurityGroup2 in .pnpm...",
+        "new SkoutRedis (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-redis.ts:27:26)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:27:18)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Storage/ExportsBucket/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "StorageExportsBucket1F25C8FC"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Bucket2 in .pnpm...",
+        "new SkoutStorage (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-storage.ts:19:26)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:28:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    },
+    {
+      "type": "aws:cdk:analytics:mixin",
+      "data": {
+        "mixin": "aws-cdk-lib.aws_s3.mixins.BucketAutoDeleteObjects"
+      }
+    }
+  ],
+  "/SkoutDev-Data/Storage/ScrapeBucket/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "StorageScrapeBucketE2932C76"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Bucket2 in .pnpm...",
+        "new SkoutStorage (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-storage.ts:34:25)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:28:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    },
+    {
+      "type": "aws:cdk:analytics:mixin",
+      "data": {
+        "mixin": "aws-cdk-lib.aws_s3.mixins.BucketAutoDeleteObjects"
+      }
+    }
+  ],
+  "/SkoutDev-Data/AppSecrets/OpenAi/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AppSecretsOpenAi9C721DDE"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Secret2 in .pnpm...",
+        "createPlaceholder (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:36:7)",
+        "new SkoutAppSecrets (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:44:9)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:29:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Data/AppSecrets/Clerk/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AppSecretsClerk3C7EB3C5"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Secret2 in .pnpm...",
+        "createPlaceholder (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:36:7)",
+        "new SkoutAppSecrets (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:45:18)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:29:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Data/AppSecrets/Apollo/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AppSecretsApolloE41F3509"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Secret2 in .pnpm...",
+        "createPlaceholder (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:36:7)",
+        "new SkoutAppSecrets (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:49:19)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:29:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Data/AppSecrets/Hunter/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AppSecretsHunterC714CAE0"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Secret2 in .pnpm...",
+        "createPlaceholder (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:36:7)",
+        "new SkoutAppSecrets (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:50:19)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:29:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Data/AppSecrets/EnrichmentProviders/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AppSecretsEnrichmentProviders3B50D358"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Secret2 in .pnpm...",
+        "createPlaceholder (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:36:7)",
+        "new SkoutAppSecrets (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:52:32)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:29:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Data/AppSecrets/Hubspot/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AppSecretsHubspotE761A874"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Secret2 in .pnpm...",
+        "createPlaceholder (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:36:7)",
+        "new SkoutAppSecrets (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:65:20)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:29:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Data/AppSecrets/OpenSearch/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AppSecretsOpenSearchDD0A1CE0"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Secret2 in .pnpm...",
+        "createPlaceholder (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:36:7)",
+        "new SkoutAppSecrets (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:69:23)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:29:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Data/AppSecrets/ClickHouse/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AppSecretsClickHouseB10ADD14"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Secret2 in .pnpm...",
+        "createPlaceholder (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:36:7)",
+        "new SkoutAppSecrets (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:74:23)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:29:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Data/AppSecrets/ScraperLinkedin/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AppSecretsScraperLinkedin8B484B29"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Secret2 in .pnpm...",
+        "createPlaceholder (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:36:7)",
+        "new SkoutAppSecrets (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:75:28)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:29:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Data/AppSecrets/ScraperProxy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AppSecretsScraperProxy2EE20DE8"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Secret2 in .pnpm...",
+        "createPlaceholder (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:36:7)",
+        "new SkoutAppSecrets (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:78:25)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:29:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Data/AppSecrets/Sentry/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AppSecretsSentryCB7AAD9C"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Secret2 in .pnpm...",
+        "createPlaceholder (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:36:7)",
+        "new SkoutAppSecrets (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:83:19)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:29:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Data/AppSecrets/PostHog/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AppSecretsPostHog2FD42F1B"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Secret2 in .pnpm...",
+        "createPlaceholder (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:36:7)",
+        "new SkoutAppSecrets (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-app-secrets.ts:84:20)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:29:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Database/DbSecret/Attachment/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "DatabaseDbSecretAttachment34026B56"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new DatabaseInstance2 in .pnpm...",
+        "new SkoutDatabase (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-database.ts:38:21)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:26:21)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals..."
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Database/Postgres/SubnetGroup/Default": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "DatabasePostgresSubnetGroup92BDEA06"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new DatabaseInstance2 in .pnpm...",
+        "new SkoutDatabase (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-database.ts:38:21)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:26:21)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:37:16)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Storage/ExportsBucket/Policy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "StorageExportsBucketPolicy938A32ED"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Bucket2 in .pnpm...",
+        "new SkoutStorage (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-storage.ts:19:26)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:28:20)"
+      ]
+    },
+    {
+      "type": "aws:cdk:analytics:mixin",
+      "data": {
+        "mixin": "aws-cdk-lib.aws_s3.mixins.BucketPolicyStatements"
+      }
+    }
+  ],
+  "/SkoutDev-Data/Storage/ExportsBucket/AutoDeleteObjectsCustomResource/Default": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "StorageExportsBucketAutoDeleteObjectsCustomResource33980B5E"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Data/Storage/ScrapeBucket/Policy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "StorageScrapeBucketPolicyE35F82B6"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Bucket2 in .pnpm...",
+        "new SkoutStorage (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-storage.ts:34:25)",
+        "new DataStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/data-stack.ts:28:20)"
+      ]
+    },
+    {
+      "type": "aws:cdk:analytics:mixin",
+      "data": {
+        "mixin": "aws-cdk-lib.aws_s3.mixins.BucketPolicyStatements"
+      }
+    }
+  ],
+  "/SkoutDev-Data/Storage/ScrapeBucket/AutoDeleteObjectsCustomResource/Default": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "StorageScrapeBucketAutoDeleteObjectsCustomResourceACA2137D"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ]
+}

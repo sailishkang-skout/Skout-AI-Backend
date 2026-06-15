@@ -117,6 +117,10 @@ export class ComputeStack extends Stack {
         DATABASE_PORT: database.instance.dbInstanceEndpointPort,
         DATABASE_NAME: "skout",
         DATABASE_USER: "skout",
+        // Dev: allow phone waterfall for typical test leads (score ~40); prod keeps default 80 via app env schema.
+        ...(config.name === "dev"
+          ? { ENRICHMENT_PHONE_SCORE_GATE: "39" }
+          : {}),
       },
       secrets: {
         DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(database.secret, "password"),

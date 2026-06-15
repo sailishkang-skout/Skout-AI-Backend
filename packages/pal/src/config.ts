@@ -17,6 +17,13 @@ import {
 } from "./adapters/stub.js";
 import type { ProviderRegistry } from "./types.js";
 
+/** Treat CDK placeholders and blank env as "no key" so we do not call live APIs with junk. */
+export function isLiveApiKey(value: string | undefined): value is string {
+  if (!value?.trim()) return false;
+  const v = value.trim().toLowerCase();
+  return v !== "replace-me" && v !== "changeme" && v !== "placeholder";
+}
+
 export interface PalConfig {
   hunterApiKey?: string;
   millionVerifierApiKey?: string;
@@ -49,56 +56,56 @@ export interface PalConfig {
 export function createRegistryFromConfig(cfg: PalConfig): ProviderRegistry {
   const t = cfg.requestTimeoutMs;
 
-  const emailFinders = cfg.hunterApiKey
+  const emailFinders = isLiveApiKey(cfg.hunterApiKey)
     ? [new HunterEmailFinder(cfg.hunterApiKey, cfg.hunterBaseUrl, t)]
     : [new StubEmailFinder()];
 
   const emailVerifiers: ProviderRegistry["emailVerifiers"] = [];
-  if (cfg.millionVerifierApiKey)
+  if (isLiveApiKey(cfg.millionVerifierApiKey))
     emailVerifiers.push(new MillionVerifier(cfg.millionVerifierApiKey, cfg.millionVerifierBaseUrl, t));
-  if (cfg.zeroBounceApiKey)
+  if (isLiveApiKey(cfg.zeroBounceApiKey))
     emailVerifiers.push(new ZeroBounce(cfg.zeroBounceApiKey, cfg.zeroBounceBaseUrl, t));
-  if (cfg.neverBounceApiKey)
+  if (isLiveApiKey(cfg.neverBounceApiKey))
     emailVerifiers.push(new NeverBounce(cfg.neverBounceApiKey, cfg.neverBounceBaseUrl, t));
-  if (cfg.hunterApiKey && emailVerifiers.length === 0) {
+  if (isLiveApiKey(cfg.hunterApiKey) && emailVerifiers.length === 0) {
     emailVerifiers.push(new HunterEmailVerifier(cfg.hunterApiKey, cfg.hunterBaseUrl, t));
   }
   if (emailVerifiers.length === 0) emailVerifiers.push(new StubEmailVerifier());
 
   // Firmographics waterfall (strategy §8): PDL → RevenueBase → Explorium → Coresignal
   const firmographics: ProviderRegistry["firmographics"] = [];
-  if (cfg.pdlApiKey) firmographics.push(new PeopleDataLabsFirmographics(cfg.pdlApiKey, cfg.pdlBaseUrl, t));
-  if (cfg.revenueBaseApiKey)
+  if (isLiveApiKey(cfg.pdlApiKey)) firmographics.push(new PeopleDataLabsFirmographics(cfg.pdlApiKey, cfg.pdlBaseUrl, t));
+  if (isLiveApiKey(cfg.revenueBaseApiKey))
     firmographics.push(new RevenueBaseFirmographics(cfg.revenueBaseApiKey, cfg.revenueBaseBaseUrl, t));
-  if (cfg.exploriumApiKey)
+  if (isLiveApiKey(cfg.exploriumApiKey))
     firmographics.push(new ExploriumFirmographics(cfg.exploriumApiKey, cfg.exploriumBaseUrl, t));
-  if (cfg.coresignalApiKey)
+  if (isLiveApiKey(cfg.coresignalApiKey))
     firmographics.push(new CoresignalFirmographics(cfg.coresignalApiKey, cfg.coresignalBaseUrl, t));
   if (firmographics.length === 0) firmographics.push(new StubFirmographics());
 
   // Phone waterfall (strategy §6): Datagma → ContactOut → Cognism (EMEA)
   const phone: ProviderRegistry["phone"] = [];
-  if (cfg.datagmaApiKey) phone.push(new DatagmaPhone(cfg.datagmaApiKey, cfg.datagmaBaseUrl, t));
-  if (cfg.contactOutApiKey)
+  if (isLiveApiKey(cfg.datagmaApiKey)) phone.push(new DatagmaPhone(cfg.datagmaApiKey, cfg.datagmaBaseUrl, t));
+  if (isLiveApiKey(cfg.contactOutApiKey))
     phone.push(new ContactOutPhone(cfg.contactOutApiKey, cfg.contactOutBaseUrl, t));
-  if (cfg.cognismApiKey) phone.push(new CognismPhone(cfg.cognismApiKey, cfg.cognismBaseUrl, t));
+  if (isLiveApiKey(cfg.cognismApiKey)) phone.push(new CognismPhone(cfg.cognismApiKey, cfg.cognismBaseUrl, t));
   if (phone.length === 0) phone.push(new StubPhoneProvider());
 
   return { firmographics, emailFinders, emailVerifiers, phone };
 }
 
 export function hasLiveProviders(cfg: PalConfig): boolean {
-  return Boolean(
-    cfg.hunterApiKey ||
-      cfg.millionVerifierApiKey ||
-      cfg.zeroBounceApiKey ||
-      cfg.neverBounceApiKey ||
-      cfg.pdlApiKey ||
-      cfg.revenueBaseApiKey ||
-      cfg.exploriumApiKey ||
-      cfg.coresignalApiKey ||
-      cfg.datagmaApiKey ||
-      cfg.contactOutApiKey ||
-      cfg.cognismApiKey
-  );
+  return [
+    cfg.hunterApiKey,
+    cfg.millionVerifierApiKey,
+    cfg.zeroBounceApiKey,
+    cfg.neverBounceApiKey,
+    cfg.pdlApiKey,
+    cfg.revenueBaseApiKey,
+    cfg.exploriumApiKey,
+    cfg.coresignalApiKey,
+    cfg.datagmaApiKey,
+    cfg.contactOutApiKey,
+    cfg.cognismApiKey,
+  ].some(isLiveApiKey);
 }

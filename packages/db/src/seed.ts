@@ -1,6 +1,5 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import dotenv from "dotenv";
 import { eq } from "drizzle-orm";
 import { createDb } from "./client.js";
 import { resolveDatabaseUrl } from "./database-url.js";
@@ -9,7 +8,13 @@ import { lists } from "./schema/prospects.js";
 import { workspaces } from "./schema/workspaces.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
+// Optional: load .env for local `pnpm db:seed` (dotenv is dev-only, not in ECS image).
+try {
+  const { config } = await import("dotenv");
+  config({ path: path.resolve(__dirname, "../../../.env") });
+} catch {
+  // ECS/task inject DATABASE_HOST + DATABASE_PASSWORD directly.
+}
 
 const databaseUrl = resolveDatabaseUrl();
 

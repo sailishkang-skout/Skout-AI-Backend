@@ -1,0 +1,36 @@
+{
+  "version": "54.0.0",
+  "files": {
+    "c0d9f24649426c60a1bc01108070535a40353ae6cd8ceccb812969319b936e5d": {
+      "displayName": "SkoutDev-Registry/Custom::AWSCDKOpenIdConnectProviderCustomResourceProvider Code",
+      "source": {
+        "path": "asset.c0d9f24649426c60a1bc01108070535a40353ae6cd8ceccb812969319b936e5d",
+        "packaging": "zip"
+      },
+      "destinations": {
+        "119408973331-us-east-1-7394258d": {
+          "bucketName": "cdk-hnb659fds-assets-119408973331-us-east-1",
+          "objectKey": "c0d9f24649426c60a1bc01108070535a40353ae6cd8ceccb812969319b936e5d.zip",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::119408973331:role/cdk-hnb659fds-file-publishing-role-119408973331-us-east-1"
+        }
+      }
+    },
+    "3ee02fa8a6b22f6753a0f29dc28912b461973b2226d3836e69249211e57c517f": {
+      "displayName": "SkoutDev-Registry Template",
+      "source": {
+        "path": "SkoutDev-Registry.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "119408973331-us-east-1-78973fba": {
+          "bucketName": "cdk-hnb659fds-assets-119408973331-us-east-1",
+          "objectKey": "3ee02fa8a6b22f6753a0f29dc28912b461973b2226d3836e69249211e57c517f.json",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::119408973331:role/cdk-hnb659fds-file-publishing-role-119408973331-us-east-1"
+        }
+      }
+    }
+  },
+  "dockerImages": {}
+}

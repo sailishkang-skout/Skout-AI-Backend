@@ -1,0 +1,137 @@
+{
+  "/SkoutDev-Workers": [
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:68:3)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    },
+    {
+      "type": "aws:cdk:stack-tags",
+      "data": [
+        {
+          "key": "skout:environment",
+          "value": "dev"
+        }
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScrapeScheduleQueueUrl": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScrapeScheduleQueueUrl"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:54:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:68:3)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/BootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BootstrapVersion"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/CheckBootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CheckBootstrapVersion"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScrapeScheduleDlq/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScrapeScheduleDlq9E8DD742"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Queue2 in .pnpm...",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:28:17)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:68:3)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScrapeScheduleQueue/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScrapeScheduleQueueEEE93AD2"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Queue2 in .pnpm...",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:33:32)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:68:3)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/DailyScrapeSchedule/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "DailyScrapeScheduleE5AB1C9D"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Rule2 in .pnpm...",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:39:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:68:3)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/CDKMetadata/Default": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CDKMetadata"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScrapeScheduleQueue/Policy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScrapeScheduleQueuePolicy32D7B875"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ]
+}

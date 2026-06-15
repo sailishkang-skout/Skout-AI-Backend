@@ -25,7 +25,13 @@ docker push "${REGISTRY}/skout-dev-ai:${TAG}"
 FRONTEND_DIR="${FRONTEND_DIR:-$ROOT/../Skout Ai Frontend}"
 if [[ -f "$FRONTEND_DIR/package.json" ]]; then
   echo "Building Web image from ${FRONTEND_DIR}..."
-  docker build --platform "$PLATFORM" -f "$FRONTEND_DIR/Dockerfile" -t "${REGISTRY}/skout-dev-web:${TAG}" "$FRONTEND_DIR"
+  WEB_BUILD_ARGS=(--platform "$PLATFORM")
+  # Same ALB serves web + /api — relative URLs avoid CORS (production default in next.config).
+  if [[ -n "${NEXT_PUBLIC_API_URL:-}" ]]; then
+    WEB_BUILD_ARGS+=(--build-arg "NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}")
+  fi
+  docker build "${WEB_BUILD_ARGS[@]}" -f "$FRONTEND_DIR/Dockerfile" \
+    -t "${REGISTRY}/skout-dev-web:${TAG}" "$FRONTEND_DIR"
   docker push "${REGISTRY}/skout-dev-web:${TAG}"
 else
   echo "Frontend not found at ${FRONTEND_DIR} — skip web image (deploy with -c skipWeb=true)."

@@ -17,7 +17,19 @@ export async function buildApp(config: Env) {
   await app.register(dbPlugin);
 
   await app.register(cors, {
-    origin: config.CORS_ORIGIN,
+    origin: (origin, cb) => {
+      // Non-browser or same-origin requests (no Origin header).
+      if (!origin) {
+        cb(null, true);
+        return;
+      }
+      const allowed = config.CORS_ORIGIN.toLowerCase();
+      if (origin.toLowerCase() === allowed) {
+        cb(null, origin);
+        return;
+      }
+      cb(null, false);
+    },
     credentials: true,
   });
 

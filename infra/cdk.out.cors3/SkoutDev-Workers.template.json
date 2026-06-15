@@ -1,0 +1,178 @@
+{
+ "Description": "Skout AI dev worker queues (scrape schedule)",
+ "Resources": {
+  "ScrapeScheduleDlq9E8DD742": {
+   "Type": "AWS::SQS::Queue",
+   "Properties": {
+    "MessageRetentionPeriod": 1209600,
+    "QueueName": "SkoutDev-scrape-schedule-dlq",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScrapeScheduleDlq/Resource"
+   }
+  },
+  "ScrapeScheduleQueueEEE93AD2": {
+   "Type": "AWS::SQS::Queue",
+   "Properties": {
+    "QueueName": "SkoutDev-scrape-schedule",
+    "RedrivePolicy": {
+     "deadLetterTargetArn": {
+      "Fn::GetAtt": [
+       "ScrapeScheduleDlq9E8DD742",
+       "Arn"
+      ]
+     },
+     "maxReceiveCount": 3
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "VisibilityTimeout": 900
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScrapeScheduleQueue/Resource"
+   }
+  },
+  "ScrapeScheduleQueuePolicy32D7B875": {
+   "Type": "AWS::SQS::QueuePolicy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+        "sqs:SendMessage"
+       ],
+       "Condition": {
+        "ArnEquals": {
+         "aws:SourceArn": {
+          "Fn::GetAtt": [
+           "DailyScrapeScheduleE5AB1C9D",
+           "Arn"
+          ]
+         }
+        }
+       },
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "events.amazonaws.com"
+       },
+       "Resource": {
+        "Fn::GetAtt": [
+         "ScrapeScheduleQueueEEE93AD2",
+         "Arn"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Queues": [
+     {
+      "Ref": "ScrapeScheduleQueueEEE93AD2"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScrapeScheduleQueue/Policy/Resource"
+   }
+  },
+  "DailyScrapeScheduleE5AB1C9D": {
+   "Type": "AWS::Events::Rule",
+   "Properties": {
+    "Description": "Triggers daily corpus scrape jobs (orchestrator consumes SQS)",
+    "Name": "SkoutDev-daily-scrape",
+    "ScheduleExpression": "cron(0 3 ? * MON-FRI *)",
+    "State": "ENABLED",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "Targets": [
+     {
+      "Arn": {
+       "Fn::GetAtt": [
+        "ScrapeScheduleQueueEEE93AD2",
+        "Arn"
+       ]
+      },
+      "Id": "Target0",
+      "Input": "{\"source\":\"eventbridge\",\"action\":\"schedule_daily_scrape\",\"environment\":\"dev\"}"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/DailyScrapeSchedule/Resource"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/z2LUQrCMBBEz9L/ZG2Dgv8eQK0HkJiusG1Mq5ttkZC7SxvwZ96bgTFgDkeoK7uwdt2gPT0g3aJ1g7IL3xO/GdJVUFCdnqHIlpfRk/v+x1KzwhlDZEit+O2xMufVzhIniVmFsUPoeTebPTQN1FXPRPojIdILoS38AYjzkGyXAAAA"
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "ScrapeScheduleQueueUrl": {
+   "Value": {
+    "Ref": "ScrapeScheduleQueueEEE93AD2"
+   },
+   "Export": {
+    "Name": "SkoutDev-ScrapeScheduleQueue"
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}

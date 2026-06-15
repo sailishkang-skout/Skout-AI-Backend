@@ -93,22 +93,40 @@ ENRICH_KEYS=(
   OPENCORPORATES_API_KEY
 )
 
-ENRICH_JSON="$(python3 - <<'PY'
-import json, os
+# ECS task definition expects every key below — always write the full set (placeholder when unset in .env).
+ENRICH_JSON="$(python3 - <<PY
+import json, os, subprocess
+prefix = "${PREFIX}"
+region = "${REGION}"
 keys = [
   "MILLIONVERIFIER_API_KEY", "ZEROBOUNCE_API_KEY", "NEVERBOUNCE_API_KEY",
   "PDL_API_KEY", "REVENUEBASE_API_KEY", "EXPLORIUM_API_KEY", "CORESIGNAL_API_KEY",
   "DATAGMA_API_KEY", "CONTACTOUT_API_KEY", "COGNISM_API_KEY", "OPENCORPORATES_API_KEY",
 ]
-d = {k: os.environ[k] for k in keys if os.environ.get(k)}
-print(json.dumps(d) if d else "")
+existing = {}
+try:
+    raw = subprocess.check_output([
+        "aws", "secretsmanager", "get-secret-value",
+        "--region", region,
+        "--secret-id", f"{prefix}/enrichment-providers",
+        "--query", "SecretString",
+        "--output", "text",
+    ], text=True)
+    existing = json.loads(raw)
+except subprocess.CalledProcessError:
+    pass
+merged = {k: existing.get(k, "replace-me") for k in keys}
+for k in keys:
+    if os.environ.get(k):
+        merged[k] = os.environ[k]
+print(json.dumps(merged))
 PY
 )"
 
 if [[ -n "$ENRICH_JSON" && "$ENRICH_JSON" != "{}" ]]; then
   put_json enrichment-providers "$ENRICH_JSON"
 else
-  echo "Skip enrichment-providers (no PAL keys set in $ENV_FILE)" >&2
+  echo "Skip enrichment-providers (failed to build secret JSON)" >&2
 fi
 
 if [[ "$REDEPLOY" == "--redeploy" || "${REDEPLOY:-}" == "--redeploy" ]]; then

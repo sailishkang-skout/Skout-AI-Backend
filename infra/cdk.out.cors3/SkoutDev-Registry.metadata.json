@@ -1,0 +1,411 @@
+{
+  "/SkoutDev-Registry": [
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:44:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    },
+    {
+      "type": "aws:cdk:stack-tags",
+      "data": [
+        {
+          "key": "skout:environment",
+          "value": "dev"
+        }
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/Custom::AWSCDKOpenIdConnectProviderCustomResourceProvider": [
+    {
+      "type": "aws:cdk:is-custom-resource-handler-customResourceProvider",
+      "data": true
+    }
+  ],
+  "/SkoutDev-Registry/ApiRepositoryUri": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ApiRepositoryUri"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new RegistryStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:147:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:44:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/GitHubDeployRoleArn": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "GitHubDeployRoleArn"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new RegistryStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:152:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:44:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/BootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BootstrapVersion"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/CheckBootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CheckBootstrapVersion"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/ApiRepo/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ApiRepoEFA7BA97"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Repository2 in .pnpm...",
+        "createRepo (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:31:7)",
+        "new RegistryStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:38:26)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:44:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/AiRepo/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AiRepo11BD4F80"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Repository2 in .pnpm...",
+        "createRepo (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:31:7)",
+        "new RegistryStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:39:25)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:44:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/WebRepo/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WebRepo9D56C0A3"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Repository2 in .pnpm...",
+        "createRepo (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:31:7)",
+        "new RegistryStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:40:26)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:44:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/WorkerEnrichRepo/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WorkerEnrichRepoE6CDAB1E"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Repository2 in .pnpm...",
+        "createRepo (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:31:7)",
+        "new RegistryStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:41:35)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:44:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/WorkerExportRepo/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WorkerExportRepo9BC32A49"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Repository2 in .pnpm...",
+        "createRepo (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:31:7)",
+        "new RegistryStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:42:35)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:44:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/ScraperOrchestratorRepo/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperOrchestratorRepo3DB2D377"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Repository2 in .pnpm...",
+        "createRepo (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:31:7)",
+        "new RegistryStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:43:42)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:44:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/ScraperBotRepo/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperBotRepo6EC4A5B3"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Repository2 in .pnpm...",
+        "createRepo (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:31:7)",
+        "new RegistryStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:47:33)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:44:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/ScraperCleanerRepo/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperCleanerRepo500E6EEB"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Repository2 in .pnpm...",
+        "createRepo (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:31:7)",
+        "new RegistryStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:48:37)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:44:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/ScraperIngestorRepo/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperIngestorRepoBEBF94AE"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Repository2 in .pnpm...",
+        "createRepo (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:31:7)",
+        "new RegistryStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:49:38)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:44:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/Custom::AWSCDKOpenIdConnectProviderCustomResourceProvider/Role": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CustomAWSCDKOpenIdConnectProviderCustomResourceProviderRole517FED65"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new OpenIdConnectProvider2 in .pnpm...",
+        "new RegistryStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:53:26)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:44:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals..."
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/Custom::AWSCDKOpenIdConnectProviderCustomResourceProvider/Handler": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CustomAWSCDKOpenIdConnectProviderCustomResourceProviderHandlerF2C543E0"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new OpenIdConnectProvider2 in .pnpm...",
+        "new RegistryStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:53:26)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:44:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals..."
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/GitHubDeployRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "GitHubDeployRoleED73FD64"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Role2 in .pnpm...",
+        "new RegistryStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:58:23)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:44:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/CDKMetadata/Default": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CDKMetadata"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/Exports/Output{\"Fn::GetAtt\":[\"ApiRepoEFA7BA97\",\"Arn\"]}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputFnGetAttApiRepoEFA7BA97ArnACFF43BA"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/Exports/Output{\"Ref\":\"ApiRepoEFA7BA97\"}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputRefApiRepoEFA7BA97FC7F6607"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/Exports/Output{\"Fn::GetAtt\":[\"AiRepo11BD4F80\",\"Arn\"]}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputFnGetAttAiRepo11BD4F80Arn125D0A5B"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/Exports/Output{\"Ref\":\"AiRepo11BD4F80\"}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputRefAiRepo11BD4F80E7A57D44"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/Exports/Output{\"Fn::GetAtt\":[\"WebRepo9D56C0A3\",\"Arn\"]}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputFnGetAttWebRepo9D56C0A3ArnD23AE5E7"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/Exports/Output{\"Ref\":\"WebRepo9D56C0A3\"}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputRefWebRepo9D56C0A3B9D0FCB6"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/GitHubOidc/Resource/Default": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "GitHubOidcA2A496A3"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new OpenIdConnectProvider2 in .pnpm...",
+        "new RegistryStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:53:26)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:44:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Registry/GitHubDeployRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "GitHubDeployRoleDefaultPolicy26C27B56"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...WrappedClass.grantPullPush in .pnpm...",
+        "new RegistryStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/registry-stack.ts:87:12)"
+      ]
+    }
+  ]
+}
