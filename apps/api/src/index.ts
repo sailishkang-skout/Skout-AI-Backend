@@ -1,5 +1,13 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import dotenv from "dotenv";
 import { loadEnv } from "./config/env.js";
 import { buildApp } from "./app.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+if (process.env.NODE_ENV !== "production") {
+  dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
+}
 
 async function main() {
   const config = loadEnv();

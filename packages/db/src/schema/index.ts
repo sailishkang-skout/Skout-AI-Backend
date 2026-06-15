@@ -3,6 +3,7 @@ export * from "./users.js";
 export * from "./credits.js";
 export * from "./icp.js";
 export * from "./jobs.js";
+export * from "./scrape.js";
 export * from "./prospects.js";
 export * from "./enrichment.js";
 export * from "./sequences.js";

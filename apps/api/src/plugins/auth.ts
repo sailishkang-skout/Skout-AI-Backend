@@ -17,7 +17,14 @@ export const authPlugin = fp(async (app) => {
   const config = app.config;
 
   if (!config.CLERK_SECRET_KEY) {
-    app.log.warn("CLERK_SECRET_KEY not set — auth middleware disabled (dev stub mode)");
+    app.log.warn("CLERK_SECRET_KEY not set — running in stub mode (userId/role set from headers or defaults)");
+    app.addHook("preHandler", async (request: FastifyRequest) => {
+      if (request.url === "/api/v1/health" || request.url.startsWith("/health")) return;
+      request.userId = (request.headers["x-stub-user-id"] as string | undefined) ?? "stub-user-id";
+      request.userEmail = (request.headers["x-stub-user-email"] as string | undefined) ?? "stub@example.com";
+      request.role = (request.headers["x-stub-role"] as string | undefined) ?? "owner";
+      // workspaceId is set by workspace-context from x-workspace-id header
+    });
     return;
   }
 

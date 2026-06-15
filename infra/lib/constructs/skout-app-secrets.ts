@@ -18,6 +18,7 @@ export class SkoutAppSecrets extends Construct {
   readonly clerk: secretsmanager.ISecret;
   readonly apollo: secretsmanager.ISecret;
   readonly hunter: secretsmanager.ISecret;
+  readonly enrichmentProviders: secretsmanager.ISecret;
   readonly hubspot: secretsmanager.ISecret;
   readonly opensearch: secretsmanager.ISecret;
   readonly clickhouse: secretsmanager.ISecret;
@@ -47,6 +48,19 @@ export class SkoutAppSecrets extends Construct {
     });
     this.apollo = createPlaceholder("Apollo", "apollo", { APOLLO_API_KEY: "replace-me" });
     this.hunter = createPlaceholder("Hunter", "hunter", { HUNTER_API_KEY: "replace-me" });
+    // PAL enrichment providers — email verify, firmographics, phone.
+    this.enrichmentProviders = createPlaceholder("EnrichmentProviders", "enrichment-providers", {
+      MILLIONVERIFIER_API_KEY: "replace-me",
+      ZEROBOUNCE_API_KEY: "replace-me",
+      NEVERBOUNCE_API_KEY: "replace-me",
+      PDL_API_KEY: "replace-me",
+      DATAGMA_API_KEY: "replace-me",
+      REVENUEBASE_API_KEY: "replace-me",
+      EXPLORIUM_API_KEY: "replace-me",
+      CORESIGNAL_API_KEY: "replace-me",
+      COGNISM_API_KEY: "replace-me",
+      OPENCORPORATES_API_KEY: "replace-me",
+    });
     this.hubspot = createPlaceholder("Hubspot", "hubspot", {
       HUBSPOT_CLIENT_ID: "replace-me",
       HUBSPOT_CLIENT_SECRET: "replace-me",
