@@ -74,6 +74,18 @@ export async function resolveOrProvisionUser(
       .limit(1);
 
     if (membership) {
+      // Heal missing credit balance (users provisioned before billing was added)
+      const [balance] = await tx
+        .select({ workspaceId: schema.creditBalances.workspaceId })
+        .from(schema.creditBalances)
+        .where(eq(schema.creditBalances.workspaceId, membership.workspaceId))
+        .limit(1);
+
+      if (!balance) {
+        await tx.insert(schema.creditBalances).values({ workspaceId: membership.workspaceId, balance: 500 });
+        await tx.insert(schema.creditTransactions).values({ workspaceId: membership.workspaceId, amount: 500, action: "provision" });
+      }
+
       return { userId, userEmail, workspaceId: membership.workspaceId, role: membership.role };
     }
 

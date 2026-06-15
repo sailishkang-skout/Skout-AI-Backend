@@ -85,8 +85,9 @@ describe("resolveOrProvisionUser", () => {
     it("returns userId, workspaceId, role without any inserts", async () => {
       const tx = makeTx({
         selects: [
-          [BASE_USER],       // user by clerkUserId
-          [BASE_MEMBERSHIP], // membership
+          [BASE_USER],                   // user by clerkUserId
+          [BASE_MEMBERSHIP],             // membership
+          [{ workspaceId: "ws-1" }],     // credit_balance → exists, no heal
         ],
       });
       const db = makeDb(tx);
@@ -108,9 +109,10 @@ describe("resolveOrProvisionUser", () => {
     it("updates clerkUserId and returns workspace membership", async () => {
       const tx = makeTx({
         selects: [
-          [],                // user by clerkUserId → miss
-          [BASE_USER],       // user by email → hit
-          [BASE_MEMBERSHIP], // membership
+          [],                              // user by clerkUserId → miss
+          [BASE_USER],                     // user by email → hit
+          [BASE_MEMBERSHIP],               // membership → hit
+          [{ workspaceId: "ws-1" }],       // credit_balance → exists, no heal needed
         ],
         withUpdate: true,
       });
@@ -122,6 +124,28 @@ describe("resolveOrProvisionUser", () => {
       expect(result.workspaceId).toBe("ws-1");
       expect(tx.update).toHaveBeenCalledTimes(1);
       expect(tx.insert).not.toHaveBeenCalled();
+    });
+
+    it("heals missing credit balance on back-fill (pre-provisioning users)", async () => {
+      const tx = makeTx({
+        selects: [
+          [],                // user by clerkUserId → miss
+          [BASE_USER],       // user by email → hit
+          [BASE_MEMBERSHIP], // membership → hit
+          [],                // credit_balance → MISSING → heal
+        ],
+        inserts: [
+          { mode: "void" }, // INSERT credit_balances
+          { mode: "void" }, // INSERT credit_transactions
+        ],
+        withUpdate: true,
+      });
+      const db = makeDb(tx);
+
+      const result = await resolveOrProvisionUser(db as any, "clerk_new", "test@example.com", "Test User");
+
+      expect(result.workspaceId).toBe("ws-1");
+      expect(tx.insert).toHaveBeenCalledTimes(2);
     });
   });
 
