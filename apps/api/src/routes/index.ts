@@ -8,11 +8,13 @@ import { prospectRoutes } from "./prospect.routes.js";
 import { searchRoutes } from "./search.routes.js";
 import { sequenceRoutes } from "./sequence.routes.js";
 import { workspaceRoutes } from "./workspace.routes.js";
+import { userRoutes } from "./user.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoutes, { prefix: "/api/v1" });
 
   await app.register(async (v1) => {
+    await v1.register(userRoutes);
     await v1.register(workspaceRoutes);
     await v1.register(searchRoutes);
     await v1.register(prospectRoutes);

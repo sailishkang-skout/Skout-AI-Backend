@@ -12,9 +12,12 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@clerk/backend": "^3.6.1",
     "@fastify/cors": "^10.0.1",
     "@skout/db": "workspace:*",
     "@skout/shared": "workspace:*",
+    "dotenv": "^16.6.1",
+    "drizzle-orm": "^0.44.2",
     "fastify": "^5.1.0",
     "fastify-plugin": "^5.0.1",
     "ioredis": "^5.4.1",
