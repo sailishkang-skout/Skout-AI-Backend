@@ -18,4 +18,5 @@ export { RevenueBaseFirmographics, REVENUEBASE_BASE_URL } from "./adapters/reven
 export { ExploriumFirmographics, EXPLORIUM_BASE_URL } from "./adapters/explorium.js";
 export { CoresignalFirmographics, CORESIGNAL_BASE_URL } from "./adapters/coresignal.js";
 export { DatagmaPhone, DATAGMA_BASE_URL } from "./adapters/datagma.js";
+export { ContactOutPhone, CONTACTOUT_BASE_URL } from "./adapters/contactout.js";
 export { CognismPhone, COGNISM_BASE_URL } from "./adapters/cognism.js";

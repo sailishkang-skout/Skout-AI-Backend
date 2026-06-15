@@ -25,6 +25,7 @@ function palConfigFromEnv(config: Env): PalConfig {
     exploriumApiKey: config.EXPLORIUM_API_KEY,
     coresignalApiKey: config.CORESIGNAL_API_KEY,
     datagmaApiKey: config.DATAGMA_API_KEY,
+    contactOutApiKey: config.CONTACTOUT_API_KEY,
     cognismApiKey: config.COGNISM_API_KEY,
     hunterBaseUrl: config.HUNTER_BASE_URL,
     millionVerifierBaseUrl: config.MILLIONVERIFIER_BASE_URL,
@@ -35,6 +36,7 @@ function palConfigFromEnv(config: Env): PalConfig {
     exploriumBaseUrl: config.EXPLORIUM_BASE_URL,
     coresignalBaseUrl: config.CORESIGNAL_BASE_URL,
     datagmaBaseUrl: config.DATAGMA_BASE_URL,
+    contactOutBaseUrl: config.CONTACTOUT_BASE_URL,
     cognismBaseUrl: config.COGNISM_BASE_URL,
     requestTimeoutMs: config.ENRICHMENT_REQUEST_TIMEOUT_MS,
   };

@@ -98,6 +98,9 @@ export interface PhoneData {
   mobile?: string;
   direct?: string;
   hq?: string;
+  /** ContactOut free-tier sample payload — not verified live data. */
+  sampleData?: boolean;
+  sampleMessage?: string;
 }
 
 export interface PhoneProvider {

@@ -38,6 +38,7 @@ const envSchema = z
     EXPLORIUM_API_KEY: z.string().optional(),
     CORESIGNAL_API_KEY: z.string().optional(),
     DATAGMA_API_KEY: z.string().optional(),
+    CONTACTOUT_API_KEY: z.string().optional(),
     COGNISM_API_KEY: z.string().optional(),
     // --- Enrichment provider base URLs (override per environment / sandbox). ---
     HUNTER_BASE_URL: z.string().default("https://api.hunter.io/v2"),
@@ -49,6 +50,7 @@ const envSchema = z
     EXPLORIUM_BASE_URL: z.string().default("https://api.explorium.ai/v1"),
     CORESIGNAL_BASE_URL: z.string().default("https://api.coresignal.com/cdapi/v2"),
     DATAGMA_BASE_URL: z.string().default("https://gateway.datagma.net/api/ingress"),
+    CONTACTOUT_BASE_URL: z.string().default("https://api.contactout.com"),
     COGNISM_BASE_URL: z.string().default("https://app.cognism.com/api"),
     // --- Enrichment tunables. ---
     ENRICHMENT_REQUEST_TIMEOUT_MS: z.coerce.number().default(8000),

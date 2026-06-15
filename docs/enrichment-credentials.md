@@ -18,6 +18,7 @@ turn providers on one at a time.
 | Company firmographics (fallback) | Explorium | `EXPLORIUM_API_KEY` | https://explorium.ai |
 | Company firmographics (fallback) | Coresignal | `CORESIGNAL_API_KEY` | https://coresignal.com |
 | Phone (score-gated, lead score > 80) | Datagma | `DATAGMA_API_KEY` | https://datagma.com → API |
+| Phone (fallback) | ContactOut | `CONTACTOUT_API_KEY` | https://contactout.com → API (header `token`) |
 | Phone (EMEA fallback) | Cognism | `COGNISM_API_KEY` | https://cognism.com |
 | Tier 1 registry data | OpenCorporates | `OPENCORPORATES_API_KEY` | https://opencorporates.com/api_accounts/new |
 
@@ -26,7 +27,7 @@ Selection rules (see `packages/pal/src/config.ts`):
 - Email verify → whichever of MillionVerifier / ZeroBounce / NeverBounce keys are set
   (run in that order). If only Hunter is set, Hunter's verifier is used. Else stub.
 - Firmographics → PDL → RevenueBase → Explorium → Coresignal (whichever keys are set).
-- Phone → Datagma → Cognism (whichever keys are set).
+- Phone → Datagma → ContactOut → Cognism (whichever keys are set).
 
 ---
 
@@ -46,6 +47,7 @@ REVENUEBASE_API_KEY=...
 EXPLORIUM_API_KEY=...
 CORESIGNAL_API_KEY=...
 DATAGMA_API_KEY=...
+CONTACTOUT_API_KEY=...
 COGNISM_API_KEY=...
 SCRAPE_BUCKET=...
 OPENCORPORATES_API_KEY=...
@@ -63,7 +65,7 @@ the CDK compute stack (`infra/lib/stacks/compute-stack.ts`).
 | Secret path | Keys it holds |
 |-------------|---------------|
 | `<Prefix>/hunter` | `HUNTER_API_KEY` |
-| `<Prefix>/enrichment-providers` | `MILLIONVERIFIER_API_KEY`, `ZEROBOUNCE_API_KEY`, `NEVERBOUNCE_API_KEY`, `PDL_API_KEY`, `REVENUEBASE_API_KEY`, `EXPLORIUM_API_KEY`, `CORESIGNAL_API_KEY`, `DATAGMA_API_KEY`, `COGNISM_API_KEY`, `OPENCORPORATES_API_KEY` |
+| `<Prefix>/enrichment-providers` | `MILLIONVERIFIER_API_KEY`, `ZEROBOUNCE_API_KEY`, `NEVERBOUNCE_API_KEY`, `PDL_API_KEY`, `REVENUEBASE_API_KEY`, `EXPLORIUM_API_KEY`, `CORESIGNAL_API_KEY`, `DATAGMA_API_KEY`, `CONTACTOUT_API_KEY`, `COGNISM_API_KEY`, `OPENCORPORATES_API_KEY` |
 
 `<Prefix>` is the stack prefix: **`SkoutDev`** (dev), `SkoutUat`, or `SkoutProd`.
 
@@ -84,6 +86,7 @@ The secrets are created with `replace-me` placeholders on first deploy
   "EXPLORIUM_API_KEY":"...",
   "CORESIGNAL_API_KEY":"...",
   "DATAGMA_API_KEY":"...",
+  "CONTACTOUT_API_KEY":"...",
   "COGNISM_API_KEY":"...",
   "OPENCORPORATES_API_KEY":"..."
 }'

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { EnrichmentEngine } from "./engine.js";
+import { createStubRegistry } from "./adapters/stub.js";
 import { generateEmailCandidates } from "./email-patterns.js";
+import type { PhoneData, PhoneProvider } from "./types.js";
 
 describe("email-patterns", () => {
   it("generates ranked candidates", () => {
@@ -51,5 +53,33 @@ describe("EnrichmentEngine", () => {
       leadScore: 95,
     });
     expect(out.attempts.some((a) => a.operation === "fetchPhone")).toBe(true);
+  });
+
+  it("falls through phone providers and reports all attempts on failure", async () => {
+    class FailPhone implements PhoneProvider {
+      constructor(readonly name: string) {}
+      async fetchPhone(): Promise<PhoneData | null> {
+        throw new Error(`${this.name} failed`);
+      }
+    }
+    const engine = new EnrichmentEngine({
+      ...createStubRegistry(),
+      phone: [new FailPhone("datagma"), new FailPhone("contactout")],
+    });
+    const out = await engine.enrich({
+      prospectId: "p1",
+      fullName: "Jane Doe",
+      companyDomain: "example.com",
+      fields: ["phone"],
+      leadScore: 95,
+    });
+    const phone = out.results.find((r) => r.field === "phone");
+    expect(phone?.provider).toBe("contactout");
+    expect(phone?.valueJson).toMatchObject({
+      providersTried: [
+        { provider: "datagma", status: "error", detail: "datagma failed" },
+        { provider: "contactout", status: "error", detail: "contactout failed" },
+      ],
+    });
   });
 });

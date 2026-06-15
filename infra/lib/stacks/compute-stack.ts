@@ -131,6 +131,7 @@ export class ComputeStack extends Stack {
         EXPLORIUM_API_KEY: ecs.Secret.fromSecretsManager(secrets.enrichmentProviders, "EXPLORIUM_API_KEY"),
         CORESIGNAL_API_KEY: ecs.Secret.fromSecretsManager(secrets.enrichmentProviders, "CORESIGNAL_API_KEY"),
         DATAGMA_API_KEY: ecs.Secret.fromSecretsManager(secrets.enrichmentProviders, "DATAGMA_API_KEY"),
+        CONTACTOUT_API_KEY: ecs.Secret.fromSecretsManager(secrets.enrichmentProviders, "CONTACTOUT_API_KEY"),
         COGNISM_API_KEY: ecs.Secret.fromSecretsManager(secrets.enrichmentProviders, "COGNISM_API_KEY"),
         OPENCORPORATES_API_KEY: ecs.Secret.fromSecretsManager(secrets.enrichmentProviders, "OPENCORPORATES_API_KEY"),
         HUBSPOT_CLIENT_ID: ecs.Secret.fromSecretsManager(secrets.hubspot, "HUBSPOT_CLIENT_ID"),

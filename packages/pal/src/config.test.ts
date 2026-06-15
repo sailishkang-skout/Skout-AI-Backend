@@ -18,6 +18,7 @@ describe("createRegistryFromConfig", () => {
       zeroBounceApiKey: "z",
       pdlApiKey: "p",
       datagmaApiKey: "d",
+      contactOutApiKey: "co",
       revenueBaseApiKey: "r",
       exploriumApiKey: "e",
       coresignalApiKey: "c",
@@ -31,7 +32,7 @@ describe("createRegistryFromConfig", () => {
       "explorium",
       "coresignal",
     ]);
-    expect(reg.phone.map((p) => p.name)).toEqual(["datagma", "cognism"]);
+    expect(reg.phone.map((p) => p.name)).toEqual(["datagma", "contactout", "cognism"]);
     expect(hasLiveProviders({ hunterApiKey: "h" })).toBe(true);
   });
 

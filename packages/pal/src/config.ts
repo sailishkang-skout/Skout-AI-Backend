@@ -7,6 +7,7 @@ import { RevenueBaseFirmographics } from "./adapters/revenuebase.js";
 import { ExploriumFirmographics } from "./adapters/explorium.js";
 import { CoresignalFirmographics } from "./adapters/coresignal.js";
 import { DatagmaPhone } from "./adapters/datagma.js";
+import { ContactOutPhone } from "./adapters/contactout.js";
 import { CognismPhone } from "./adapters/cognism.js";
 import {
   StubEmailFinder,
@@ -26,6 +27,7 @@ export interface PalConfig {
   exploriumApiKey?: string;
   coresignalApiKey?: string;
   datagmaApiKey?: string;
+  contactOutApiKey?: string;
   cognismApiKey?: string;
 
   hunterBaseUrl?: string;
@@ -37,6 +39,7 @@ export interface PalConfig {
   exploriumBaseUrl?: string;
   coresignalBaseUrl?: string;
   datagmaBaseUrl?: string;
+  contactOutBaseUrl?: string;
   cognismBaseUrl?: string;
 
   requestTimeoutMs?: number;
@@ -73,9 +76,11 @@ export function createRegistryFromConfig(cfg: PalConfig): ProviderRegistry {
     firmographics.push(new CoresignalFirmographics(cfg.coresignalApiKey, cfg.coresignalBaseUrl, t));
   if (firmographics.length === 0) firmographics.push(new StubFirmographics());
 
-  // Phone waterfall (strategy §6): Datagma → Cognism (EMEA fallback)
+  // Phone waterfall (strategy §6): Datagma → ContactOut → Cognism (EMEA)
   const phone: ProviderRegistry["phone"] = [];
   if (cfg.datagmaApiKey) phone.push(new DatagmaPhone(cfg.datagmaApiKey, cfg.datagmaBaseUrl, t));
+  if (cfg.contactOutApiKey)
+    phone.push(new ContactOutPhone(cfg.contactOutApiKey, cfg.contactOutBaseUrl, t));
   if (cfg.cognismApiKey) phone.push(new CognismPhone(cfg.cognismApiKey, cfg.cognismBaseUrl, t));
   if (phone.length === 0) phone.push(new StubPhoneProvider());
 
@@ -93,6 +98,7 @@ export function hasLiveProviders(cfg: PalConfig): boolean {
       cfg.exploriumApiKey ||
       cfg.coresignalApiKey ||
       cfg.datagmaApiKey ||
+      cfg.contactOutApiKey ||
       cfg.cognismApiKey
   );
 }

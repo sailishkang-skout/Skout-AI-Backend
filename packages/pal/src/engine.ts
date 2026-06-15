@@ -199,20 +199,28 @@ export class EnrichmentEngine {
               value: phone.mobile ?? phone.direct,
               provider: p.name,
               isPrimary: true,
+              validationStatus: phone.sampleData ? "sample" : undefined,
             });
             creditsUsed += 1;
             break;
           }
         }
-        const phoneError = attempts.find(
-          (a) => a.operation === "fetchPhone" && a.status === "error"
-        );
-        if (!results.some((r) => r.field === "phone" && r.isPrimary) && phoneError) {
+        const phoneAttempts = attempts.filter((a) => a.operation === "fetchPhone");
+        if (!results.some((r) => r.field === "phone" && r.isPrimary) && phoneAttempts.length) {
+          const errors = phoneAttempts.filter((a) => a.status === "error");
+          const last = errors.at(-1) ?? phoneAttempts.at(-1)!;
           results.push({
             field: "phone",
-            provider: phoneError.provider,
-            validationStatus: "error",
-            valueJson: { reason: phoneError.detail ?? "Phone lookup failed" },
+            provider: last.provider,
+            validationStatus: errors.length ? "error" : "miss",
+            valueJson: {
+              reason: last.detail ?? "Phone lookup failed",
+              providersTried: phoneAttempts.map((a) => ({
+                provider: a.provider,
+                status: a.status,
+                detail: a.detail,
+              })),
+            },
           });
         }
       }

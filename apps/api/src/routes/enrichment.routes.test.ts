@@ -19,6 +19,7 @@ async function buildTestApp(overrides: Record<string, string | number> = {}) {
     EXPLORIUM_API_KEY: undefined,
     CORESIGNAL_API_KEY: undefined,
     DATAGMA_API_KEY: undefined,
+    CONTACTOUT_API_KEY: undefined,
     COGNISM_API_KEY: undefined,
     ...overrides,
   });

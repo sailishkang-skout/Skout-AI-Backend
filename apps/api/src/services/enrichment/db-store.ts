@@ -1,7 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
-import type { FieldResult } from "@skout/pal";
+import type { FieldResult, AttemptLog, AttemptStatus } from "@skout/pal";
 import {
   InsufficientCreditsError,
   type ActivationRecord,
@@ -21,6 +21,7 @@ const {
   listMembers,
   enrichmentJobs,
   enrichmentResults,
+  enrichmentAttempts,
   enrichmentBatches,
   prospectScores,
 } = schema;
@@ -204,8 +205,29 @@ export class DbStore implements EnrichmentStore {
       }
     }
 
+    if (patch.attempts !== undefined) {
+      await this.db.delete(enrichmentAttempts).where(eq(enrichmentAttempts.enrichmentJobId, id));
+      if (patch.attempts.length) {
+        await this.db.insert(enrichmentAttempts).values(
+          patch.attempts.map((a) => ({
+            enrichmentJobId: id,
+            attemptOrder: a.order,
+            provider: a.provider,
+            operation: a.operation,
+            status: a.status,
+            latencyMs: a.latencyMs,
+            errorMessage: a.detail ?? null,
+            requestInput: {},
+            completedAt: new Date(),
+          }))
+        );
+      }
+    }
+
     const [updated] = await this.db.select().from(enrichmentJobs).where(eq(enrichmentJobs.id, id));
-    return updated ? this.toJob(updated, await this.loadResults(id)) : null;
+    return updated
+      ? this.toJob(updated, await this.loadResults(id), await this.loadAttempts(id))
+      : null;
   }
 
   async getJob(workspaceId: string, id: string): Promise<EnrichmentJob | null> {
@@ -213,7 +235,7 @@ export class DbStore implements EnrichmentStore {
       .select()
       .from(enrichmentJobs)
       .where(and(eq(enrichmentJobs.id, id), eq(enrichmentJobs.workspaceId, workspaceId)));
-    return row ? this.toJob(row, await this.loadResults(id)) : null;
+    return row ? this.toJob(row, await this.loadResults(id), await this.loadAttempts(id)) : null;
   }
 
   async listJobs(workspaceId: string): Promise<EnrichmentJob[]> {
@@ -222,7 +244,9 @@ export class DbStore implements EnrichmentStore {
       .from(enrichmentJobs)
       .where(eq(enrichmentJobs.workspaceId, workspaceId))
       .orderBy(desc(enrichmentJobs.queuedAt));
-    return Promise.all(rows.map(async (r) => this.toJob(r, await this.loadResults(r.id))));
+    return Promise.all(
+      rows.map(async (row) => this.toJob(row, await this.loadResults(row.id), await this.loadAttempts(row.id)))
+    );
   }
 
   async createBatch(batch: Omit<EnrichmentBatch, "id">): Promise<EnrichmentBatch> {
@@ -298,6 +322,22 @@ export class DbStore implements EnrichmentStore {
 
   // --- mappers -------------------------------------------------------------
 
+  private async loadAttempts(jobId: string): Promise<AttemptLog[]> {
+    const rows = await this.db
+      .select()
+      .from(enrichmentAttempts)
+      .where(eq(enrichmentAttempts.enrichmentJobId, jobId))
+      .orderBy(enrichmentAttempts.attemptOrder);
+    return rows.map((r) => ({
+      order: r.attemptOrder,
+      provider: r.provider,
+      operation: r.operation,
+      status: r.status as AttemptStatus,
+      latencyMs: r.latencyMs ?? 0,
+      detail: r.errorMessage ?? undefined,
+    }));
+  }
+
   private async loadResults(jobId: string): Promise<FieldResult[]> {
     const rows = await this.db
       .select()
@@ -346,7 +386,11 @@ export class DbStore implements EnrichmentStore {
     };
   }
 
-  private toJob(row: typeof enrichmentJobs.$inferSelect, results: FieldResult[]): EnrichmentJob {
+  private toJob(
+    row: typeof enrichmentJobs.$inferSelect,
+    results: FieldResult[],
+    attempts: EnrichmentJob["attempts"] = []
+  ): EnrichmentJob {
     return {
       id: row.id,
       workspaceId: row.workspaceId,
@@ -357,6 +401,7 @@ export class DbStore implements EnrichmentStore {
       trigger: row.trigger,
       fieldsRequested: row.fieldsRequested,
       results,
+      attempts,
       creditsUsed: row.creditsUsed,
       errorMessage: row.errorMessage ?? null,
       queuedAt: row.queuedAt.toISOString(),
