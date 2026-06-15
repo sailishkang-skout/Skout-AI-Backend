@@ -1,4 +1,3 @@
-import { verifyToken } from "@clerk/backend";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 import { resolveOrProvisionUser } from "../services/auth.service.js";
@@ -49,6 +48,7 @@ export const authPlugin = fp(async (app) => {
     }
 
     try {
+      const { verifyToken } = await import("@clerk/backend");
       const claims = await verifyToken(token, { secretKey: config.CLERK_SECRET_KEY });
 
       const clerkUserId = claims?.sub;
