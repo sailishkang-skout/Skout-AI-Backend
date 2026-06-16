@@ -177,4 +177,19 @@ export class MemoryStore implements EnrichmentStore {
   async getScore(workspaceId: string, prospectId: string): Promise<ProspectScore | null> {
     return this.ws(workspaceId).scores.get(prospectId) ?? null;
   }
+
+  async getScoresForProspects(workspaceId: string, prospectIds: string[]): Promise<ProspectScore[]> {
+    const w = this.ws(workspaceId);
+    return prospectIds
+      .map((id) => w.scores.get(id))
+      .filter((s): s is ProspectScore => s != null);
+  }
+
+  async getList(workspaceId: string, listId: string): Promise<ProspectList | null> {
+    const w = this.ws(workspaceId);
+    const list = w.lists.get(listId);
+    if (!list || list.workspaceId !== workspaceId) return null;
+    const count = w.listMembers.get(listId)?.size ?? 0;
+    return { ...list, prospectCount: count };
+  }
 }

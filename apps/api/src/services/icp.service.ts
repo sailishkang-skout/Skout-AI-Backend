@@ -56,3 +56,13 @@ export async function getWorkspaceIcpVersion(db: Db | null, workspaceId: string)
   const [row] = await db.select().from(workspaceIcp).where(eq(workspaceIcp.workspaceId, workspaceId));
   return row?.version ?? 0;
 }
+
+export function isIcpConfigured(icp: IcpConfig): boolean {
+  return Boolean(
+    icp.industries?.length ||
+      icp.countries?.length ||
+      icp.seniorities?.length ||
+      icp.minEmployees != null ||
+      icp.maxEmployees != null
+  );
+}

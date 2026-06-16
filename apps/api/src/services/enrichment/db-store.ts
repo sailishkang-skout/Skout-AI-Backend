@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { FieldResult, AttemptLog, AttemptStatus } from "@skout/pal";
@@ -318,6 +318,40 @@ export class DbStore implements EnrichmentStore {
           scoredAt: row.scoredAt.toISOString(),
         }
       : null;
+  }
+
+  async getScoresForProspects(workspaceId: string, prospectIds: string[]): Promise<ProspectScore[]> {
+    if (!prospectIds.length) return [];
+    const rows = await this.db
+      .select()
+      .from(prospectScores)
+      .where(
+        and(eq(prospectScores.workspaceId, workspaceId), inArray(prospectScores.prospectId, prospectIds))
+      );
+    return rows.map((row) => ({
+      workspaceId,
+      prospectId: row.prospectId,
+      score: row.score,
+      priority: row.priority,
+      reasoning: row.reasoning,
+      scoredAt: row.scoredAt.toISOString(),
+    }));
+  }
+
+  async getList(workspaceId: string, listId: string): Promise<ProspectList | null> {
+    const [list] = await this.db
+      .select()
+      .from(lists)
+      .where(and(eq(lists.id, listId), eq(lists.workspaceId, workspaceId)));
+    if (!list) return null;
+    const members = await this.db.select().from(listMembers).where(eq(listMembers.listId, listId));
+    return {
+      id: list.id,
+      workspaceId,
+      name: list.name,
+      prospectCount: members.length,
+      createdAt: list.createdAt.toISOString(),
+    };
   }
 
   // --- mappers -------------------------------------------------------------

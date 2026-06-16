@@ -6,8 +6,12 @@ import {
   type EnrichmentBatch,
   type EnrichmentJob,
   type EnrichmentStore,
+  type ListDetail,
   type ProspectList,
+  type ProspectScore,
 } from "./types.js";
+import { HttpError } from "../../utils/http.js";
+import { isIcpConfigured } from "../icp.service.js";
 
 export interface ProspectSnapshot {
   prospectId?: string;
@@ -129,6 +133,9 @@ export class EnrichmentService {
   async score(workspaceId: string, snapshot: ProspectSnapshot, icp?: IcpConfig) {
     const { prospectId } = this.resolveIds(snapshot);
     const resolvedIcp = icp ?? (this.loadIcp ? await this.loadIcp(workspaceId) : {});
+    if (!isIcpConfigured(resolvedIcp)) {
+      throw new HttpError("ICP_NOT_CONFIGURED", 400);
+    }
     const scored = scoreSnapshot(snapshot);
     const input: ScoreInput = {
       prospectId,
@@ -325,5 +332,61 @@ export class EnrichmentService {
 
   async getBatch(workspaceId: string, batchId: string) {
     return this.store.getBatch(workspaceId, batchId);
+  }
+
+  async getListDetail(workspaceId: string, listId: string): Promise<ListDetail | null> {
+    const list = await this.store.getList(workspaceId, listId);
+    if (!list) return null;
+    const memberIds = await this.store.getListMemberIds(workspaceId, listId);
+    const scores = await this.store.getScoresForProspects(workspaceId, memberIds);
+    const scoreById = new Map(scores.map((s) => [s.prospectId, s]));
+
+    const members = await Promise.all(
+      memberIds.map(async (prospectId) => {
+        const activation = await this.store.getActivation(workspaceId, prospectId);
+        return {
+          prospectId,
+          snapshot: activation?.snapshot ?? {},
+          score: scoreById.get(prospectId) ?? null,
+        };
+      })
+    );
+
+    return { list, members };
+  }
+
+  async lookupScores(workspaceId: string, prospectIds: string[]) {
+    const scores = await this.store.getScoresForProspects(workspaceId, prospectIds);
+    return Object.fromEntries(scores.map((s) => [s.prospectId, s]));
+  }
+
+  async scoreList(workspaceId: string, listId: string) {
+    const list = await this.store.getList(workspaceId, listId);
+    if (!list) throw new HttpError("list_not_found", 404);
+    const icp = this.loadIcp ? await this.loadIcp(workspaceId) : {};
+    if (!isIcpConfigured(icp)) {
+      throw new HttpError("ICP_NOT_CONFIGURED", 400);
+    }
+
+    const memberIds = await this.store.getListMemberIds(workspaceId, listId);
+    const results: Array<{ prospectId: string; icpScore: number; icpBand: string }> = [];
+
+    for (const prospectId of memberIds) {
+      const activation = await this.store.getActivation(workspaceId, prospectId);
+      const snap = (activation?.snapshot ?? {}) as Partial<ProspectSnapshot>;
+      if (!snap.companyDomain) continue;
+      const result = await this.score(
+        workspaceId,
+        { ...snap, companyDomain: snap.companyDomain, prospectId },
+        icp
+      );
+      results.push({
+        prospectId,
+        icpScore: result.icpScore,
+        icpBand: result.icpBand,
+      });
+    }
+
+    return { listId, scored: results.length, results };
   }
 }

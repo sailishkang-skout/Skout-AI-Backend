@@ -97,4 +97,17 @@ export interface EnrichmentStore {
 
   setScore(score: ProspectScore): Promise<ProspectScore>;
   getScore(workspaceId: string, prospectId: string): Promise<ProspectScore | null>;
+  getScoresForProspects(workspaceId: string, prospectIds: string[]): Promise<ProspectScore[]>;
+  getList(workspaceId: string, listId: string): Promise<ProspectList | null>;
+}
+
+export interface ListMemberDetail {
+  prospectId: string;
+  snapshot: Record<string, unknown>;
+  score: ProspectScore | null;
+}
+
+export interface ListDetail {
+  list: ProspectList;
+  members: ListMemberDetail[];
 }

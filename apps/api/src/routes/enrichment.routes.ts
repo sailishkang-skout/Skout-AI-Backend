@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { buildEnrichmentService } from "../services/enrichment/index.js";
 import { getWorkspaceIcp } from "../services/icp.service.js";
+import { HttpError, errorResponse } from "../utils/http.js";
 
 const scoreBodySchema = z.object({
   prospect: z.object({
@@ -62,8 +63,23 @@ export async function enrichmentRoutes(app: FastifyInstance) {
     const body = scoreBodySchema.parse(request.body ?? {});
     const svc = buildEnrichmentService(app.db, app.config);
     const icp = body.icp ?? (await getWorkspaceIcp(app.db, workspaceId));
-    const result = await svc.score(workspaceId, { ...body.prospect }, icp);
-    return reply.send(result);
+    try {
+      const result = await svc.score(workspaceId, { ...body.prospect }, icp);
+      return reply.send(result);
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return reply.status(err.statusCode).send(errorResponse(err.message, err.statusCode));
+      }
+      throw err;
+    }
+  });
+
+  app.post("/enrichment/scores/lookup", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const body = z.object({ prospectIds: z.array(z.string()).min(1).max(100) }).parse(request.body ?? {});
+    const svc = buildEnrichmentService(app.db, app.config);
+    const scores = await svc.lookupScores(workspaceId, body.prospectIds);
+    return reply.send({ scores });
   });
 
   app.post("/enrichment/personalize", async (request, reply) => {

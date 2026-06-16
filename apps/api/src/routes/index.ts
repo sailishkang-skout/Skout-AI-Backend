@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { dashboardRoutes } from "./dashboard.routes.js";
 import { aiRoutes } from "./ai.routes.js";
 import { crmRoutes, webhookRoutes } from "./crm.routes.js";
 import { enrichmentRoutes } from "./enrichment.routes.js";
@@ -20,6 +21,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(async (v1) => {
     await v1.register(userRoutes);
     await v1.register(workspaceRoutes);
+    await v1.register(dashboardRoutes);
     await v1.register(searchRoutes);
     await v1.register(prospectRoutes);
     await v1.register(listRoutes);
