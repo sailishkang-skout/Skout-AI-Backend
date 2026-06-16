@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { buildEnrichmentService } from "../services/enrichment/index.js";
+import { createCrmService } from "../services/crm.service.js";
 import { HttpError, errorResponse } from "../utils/http.js";
 
 const snapshotSchema = z.object({
@@ -82,5 +83,20 @@ export async function listRoutes(app: FastifyInstance) {
     const list = await svc.addListMembers(workspaceId, id, body.prospects);
     if (!list) return reply.status(404).send({ error: "list_not_found" });
     return reply.status(200).send(list);
+  });
+
+  app.post("/lists/:id/export/hubspot", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const crm = createCrmService(app.db, app.config);
+    try {
+      const result = await crm.startHubSpotListExport(workspaceId, id);
+      return reply.status(202).send(result);
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return reply.status(err.statusCode).send(errorResponse(err.message, err.statusCode, err.details));
+      }
+      throw err;
+    }
   });
 }

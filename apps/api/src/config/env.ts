@@ -77,20 +77,30 @@ const envSchema = z
     DATAGMA_BASE_URL: z.string().default("https://gateway.datagma.net/api/ingress"),
     CONTACTOUT_BASE_URL: z.string().default("https://api.contactout.com"),
     COGNISM_BASE_URL: z.string().default("https://app.cognism.com/api"),
+    HUBSPOT_CLIENT_ID: z.string().optional(),
+    HUBSPOT_CLIENT_SECRET: z.string().optional(),
+    /** Public API base URL for OAuth callbacks (e.g. https://alb.example.com). */
+    API_PUBLIC_URL: z.string().optional(),
+    /** Frontend origin for post-OAuth redirects. Defaults to first CORS_ORIGIN. */
+    FRONTEND_URL: z.string().optional(),
     // --- Enrichment tunables. ---
     ENRICHMENT_REQUEST_TIMEOUT_MS: z.coerce.number().default(8000),
     ENRICHMENT_PHONE_SCORE_GATE: z.coerce.number().default(80),
     ENRICHMENT_AI_TIMEOUT_MS: z.coerce.number().default(5000),
   })
   .transform((data) => {
+    let next = data;
     if (!data.DATABASE_URL && data.DATABASE_HOST && data.DATABASE_PASSWORD) {
       const port = data.DATABASE_PORT ?? 5432;
-      return {
+      next = {
         ...data,
         DATABASE_URL: `postgresql://${data.DATABASE_USER}:${encodeURIComponent(data.DATABASE_PASSWORD)}@${data.DATABASE_HOST}:${port}/${data.DATABASE_NAME}`,
       };
     }
-    return data;
+    if (!next.FRONTEND_URL && next.CORS_ORIGIN[0]) {
+      next = { ...next, FRONTEND_URL: next.CORS_ORIGIN[0] };
+    }
+    return next;
   });
 
 export type Env = z.infer<typeof envSchema>;

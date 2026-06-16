@@ -101,12 +101,19 @@ describe("createWorkspaceService", () => {
   });
 
   describe("renameWorkspace", () => {
-    it("returns the updated workspace row", async () => {
+    it("returns the updated workspace with credits", async () => {
       const updated = { id: "ws-1", name: "New Name", slug: "new-name-abc12" };
-      const db = makeMockDb({ update: [updated] });
+      const withCredits = {
+        id: "ws-1",
+        name: "New Name",
+        slug: "new-name-abc12",
+        createdAt: new Date("2026-01-01"),
+        balance: 500,
+      };
+      const db = makeMockDb({ update: [updated], selects: [[withCredits]] });
       const svc = createWorkspaceService(db as any);
       const result = await svc.renameWorkspace("ws-1", "New Name");
-      expect(result).toEqual(updated);
+      expect(result).toEqual(withCredits);
     });
 
     it("returns null when workspace not found", async () => {
@@ -116,7 +123,17 @@ describe("createWorkspaceService", () => {
     });
 
     it("calls db.update once", async () => {
-      const db = makeMockDb({ update: [{ id: "ws-1", name: "X", slug: "x-abc12" }] });
+      const withCredits = {
+        id: "ws-1",
+        name: "X",
+        slug: "x-abc12",
+        createdAt: new Date("2026-01-01"),
+        balance: 100,
+      };
+      const db = makeMockDb({
+        update: [{ id: "ws-1", name: "X", slug: "x-abc12" }],
+        selects: [[withCredits]],
+      });
       const svc = createWorkspaceService(db as any);
       await svc.renameWorkspace("ws-1", "X");
       expect(db.update).toHaveBeenCalledTimes(1);
@@ -173,15 +190,19 @@ describe("createWorkspaceService", () => {
   });
 
   describe("getCreditTransactions", () => {
-    it("returns the list of transactions", async () => {
+    it("returns the list of transactions with ISO createdAt", async () => {
+      const createdAt = new Date("2026-06-16T09:43:39.151Z");
       const rows = [
-        { id: "ct-1", workspaceId: "ws-1", amount: 500, action: "provision", referenceId: null, createdAt: new Date() },
-        { id: "ct-2", workspaceId: "ws-1", amount: -1,  action: "search",    referenceId: "job-1", createdAt: new Date() },
+        { id: "ct-1", workspaceId: "ws-1", amount: 500, action: "provision", referenceId: null, createdAt },
+        { id: "ct-2", workspaceId: "ws-1", amount: -1,  action: "search",    referenceId: "job-1", createdAt },
       ];
       const db = makeMockDb({ selects: [rows] });
       const svc = createWorkspaceService(db as any);
       const result = await svc.getCreditTransactions("ws-1");
-      expect(result).toEqual(rows);
+      expect(result).toEqual([
+        { ...rows[0], createdAt: createdAt.toISOString() },
+        { ...rows[1], createdAt: createdAt.toISOString() },
+      ]);
       expect(result).toHaveLength(2);
     });
 
