@@ -16,6 +16,16 @@ function isHealthRoute(url: string): boolean {
   return url === "/api/v1/health" || url.startsWith("/health");
 }
 
+function normalizeOrigin(origin: string): string {
+  try {
+    const url = new URL(origin);
+    url.hostname = url.hostname.toLowerCase();
+    return url.origin;
+  } catch {
+    return origin.toLowerCase();
+  }
+}
+
 export const authPlugin = fp(async (app) => {
   const config = app.config;
 
@@ -40,7 +50,7 @@ export const authPlugin = fp(async (app) => {
     return;
   }
 
-  const authorizedParties = config.CORS_ORIGIN;
+  const authorizedParties = config.CORS_ORIGIN.map(normalizeOrigin);
 
   app.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {
     if (isHealthRoute(request.url)) {

@@ -26,10 +26,49 @@ FRONTEND_DIR="${FRONTEND_DIR:-$ROOT/../Skout Ai Frontend}"
 if [[ -f "$FRONTEND_DIR/package.json" ]]; then
   echo "Building Web image from ${FRONTEND_DIR}..."
   WEB_BUILD_ARGS=(--platform "$PLATFORM")
-  # Same ALB serves web + /api — relative URLs avoid CORS (production default in next.config).
+
+  # Default API URL to dev ALB when not set (same host serves web + /api).
+  if [[ -z "${NEXT_PUBLIC_API_URL:-}" ]]; then
+    ALB_DNS="$(aws cloudformation describe-stacks --region "$REGION" \
+      --stack-name SkoutDev-Compute \
+      --query "Stacks[0].Outputs[?OutputKey=='LoadBalancerDns'].OutputValue" \
+      --output text 2>/dev/null || true)"
+    if [[ -n "$ALB_DNS" && "$ALB_DNS" != "None" ]]; then
+      NEXT_PUBLIC_API_URL="http://${ALB_DNS}"
+    fi
+  fi
   if [[ -n "${NEXT_PUBLIC_API_URL:-}" ]]; then
     WEB_BUILD_ARGS+=(--build-arg "NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}")
   fi
+
+  # Clerk keys: env → frontend .env.local → Secrets Manager.
+  if [[ -z "${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}" && -z "${CLERK_PUBLISHABLE_KEY:-}" ]]; then
+    for candidate in "$FRONTEND_DIR/.env.local" "$FRONTEND_DIR/.env.dev"; do
+      if [[ -f "$candidate" ]]; then
+        # shellcheck disable=SC1090
+        set -a && source "$candidate" && set +a
+        break
+      fi
+    done
+  fi
+  CLERK_PUBLISHABLE_KEY="${CLERK_PUBLISHABLE_KEY:-${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}}"
+  if [[ -z "${CLERK_SECRET_KEY:-}" || -z "${CLERK_PUBLISHABLE_KEY:-}" ]]; then
+    CLERK_JSON="$(aws secretsmanager get-secret-value --region "$REGION" \
+      --secret-id SkoutDev/clerk --query SecretString --output text 2>/dev/null || echo '{}')"
+    if [[ -z "${CLERK_SECRET_KEY:-}" ]]; then
+      CLERK_SECRET_KEY="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('CLERK_SECRET_KEY',''))" "$CLERK_JSON")"
+    fi
+    if [[ -z "${CLERK_PUBLISHABLE_KEY:-}" ]]; then
+      CLERK_PUBLISHABLE_KEY="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('CLERK_PUBLISHABLE_KEY',''))" "$CLERK_JSON")"
+    fi
+  fi
+  if [[ -n "${CLERK_PUBLISHABLE_KEY:-}" && "$CLERK_PUBLISHABLE_KEY" != "replace-me" ]]; then
+    WEB_BUILD_ARGS+=(--build-arg "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${CLERK_PUBLISHABLE_KEY}")
+  fi
+  if [[ -n "${CLERK_SECRET_KEY:-}" && "$CLERK_SECRET_KEY" != "replace-me" ]]; then
+    WEB_BUILD_ARGS+=(--build-arg "CLERK_SECRET_KEY=${CLERK_SECRET_KEY}")
+  fi
+
   docker build "${WEB_BUILD_ARGS[@]}" -f "$FRONTEND_DIR/Dockerfile" \
     -t "${REGISTRY}/skout-dev-web:${TAG}" "$FRONTEND_DIR"
   docker push "${REGISTRY}/skout-dev-web:${TAG}"
