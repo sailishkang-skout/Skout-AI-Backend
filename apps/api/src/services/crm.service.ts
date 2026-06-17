@@ -11,15 +11,62 @@ import {
   batchCreateHubSpotContacts,
   buildHubSpotAuthorizeUrl,
   exchangeHubSpotCode,
+  fetchAllHubSpotContacts,
+  fetchHubSpotListContacts,
   refreshHubSpotToken,
+  isHubSpotMissingScopeError,
+  searchHubSpotLists,
   type HubSpotContactInput,
+  type HubSpotContactProperties,
+  type HubSpotListSummary,
   type HubSpotTokens,
 } from "./hubspot.client.js";
+import { buildEnrichmentService, type ProspectSnapshot } from "./enrichment/index.js";
+import { normalizeDomain } from "@skout/shared";
 
 const { crmConnections, asyncJobs, prospectActivations, listMembers, lists } = schema;
 
 const HUBSPOT_PROVIDER = "hubspot";
 const EXPORT_CREDIT_PER_CONTACT = 1;
+const IMPORT_MAX_CONTACTS = 500;
+
+function domainFromEmail(email: string): string | null {
+  const parts = email.trim().toLowerCase().split("@");
+  if (parts.length !== 2 || !parts[1].includes(".")) return null;
+  return normalizeDomain(parts[1]);
+}
+
+function domainFromCompanyName(company: string): string {
+  const slug = company
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug ? `${slug}.hubspot-import` : "unknown.hubspot-import";
+}
+
+function hubSpotContactToSnapshot(contact: {
+  id: string;
+  properties: HubSpotContactProperties;
+}): ProspectSnapshot | null {
+  const props = contact.properties;
+  const email = props.email?.trim().toLowerCase();
+  const fullName = [props.firstname, props.lastname].filter(Boolean).join(" ").trim() || undefined;
+  const companyDomain =
+    (email ? domainFromEmail(email) : null) ??
+    (props.company?.trim() ? domainFromCompanyName(props.company) : null);
+
+  if (!companyDomain) return null;
+
+  return {
+    prospectId: undefined,
+    fullName,
+    title: props.jobtitle?.trim() || undefined,
+    companyDomain,
+    email: email || undefined,
+    signals: ["hubspot_import"],
+  };
+}
 
 interface ConnectionRow {
   id: string;
@@ -112,6 +159,83 @@ export class CrmService {
       .where(
         and(eq(crmConnections.workspaceId, workspaceId), eq(crmConnections.provider, HUBSPOT_PROVIDER))
       );
+  }
+
+  async listHubSpotLists(workspaceId: string): Promise<{ data: HubSpotListSummary[]; total: number }> {
+    await this.requireHubSpotConnected(workspaceId);
+    const tokens = await this.ensureFreshTokens(workspaceId);
+    try {
+      const data = await searchHubSpotLists(tokens.accessToken);
+      return { data, total: data.length };
+    } catch (err) {
+      if (isHubSpotMissingScopeError(err)) {
+        throw new HttpError("hubspot_lists_scope_missing", 403, {
+          scope: "crm.lists.read",
+          hint: "Disconnect HubSpot in Skout, run hs project upload, then connect again.",
+        });
+      }
+      throw err;
+    }
+  }
+
+  async importFromHubSpot(
+    workspaceId: string,
+    options: {
+      source: "all" | "list";
+      hubspotListId?: string;
+      targetListId?: string;
+      newListName?: string;
+      maxContacts?: number;
+    }
+  ): Promise<{ listId: string; imported: number; skipped: number; source: string }> {
+    if (!this.db) throw new HttpError("database_unavailable", 503);
+    await this.requireHubSpotConnected(workspaceId);
+
+    const maxContacts = Math.min(options.maxContacts ?? IMPORT_MAX_CONTACTS, IMPORT_MAX_CONTACTS);
+    const tokens = await this.ensureFreshTokens(workspaceId);
+
+    const rawContacts =
+      options.source === "list"
+        ? await (async () => {
+            if (!options.hubspotListId) throw new HttpError("hubspot_list_required", 400);
+            return fetchHubSpotListContacts(tokens.accessToken, options.hubspotListId, maxContacts);
+          })()
+        : await fetchAllHubSpotContacts(tokens.accessToken, maxContacts);
+
+    const snapshots: ProspectSnapshot[] = [];
+    let skipped = 0;
+    for (const contact of rawContacts) {
+      const snap = hubSpotContactToSnapshot(contact);
+      if (!snap) {
+        skipped += 1;
+        continue;
+      }
+      snapshots.push(snap);
+    }
+
+    if (!snapshots.length) {
+      throw new HttpError("hubspot_import_empty", 400, { skipped, fetched: rawContacts.length });
+    }
+
+    const enrich = buildEnrichmentService(this.db, this.config);
+    let listId = options.targetListId;
+
+    if (options.newListName?.trim()) {
+      const created = await enrich.createList(workspaceId, options.newListName.trim(), snapshots);
+      listId = created.id;
+    } else if (listId) {
+      const updated = await enrich.addListMembers(workspaceId, listId, snapshots);
+      if (!updated) throw new HttpError("list_not_found", 404);
+    } else {
+      throw new HttpError("import_target_required", 400);
+    }
+
+    return {
+      listId: listId!,
+      imported: snapshots.length,
+      skipped,
+      source: options.source === "list" ? `list:${options.hubspotListId}` : "all",
+    };
   }
 
   async startHubSpotListExport(workspaceId: string, listId: string): Promise<{ jobId: string }> {
@@ -323,6 +447,13 @@ export class CrmService {
       .where(
         and(eq(crmConnections.workspaceId, workspaceId), eq(crmConnections.provider, HUBSPOT_PROVIDER))
       );
+  }
+
+  private async requireHubSpotConnected(workspaceId: string): Promise<void> {
+    const connection = await this.getHubSpotConnection(workspaceId);
+    if (!connection || connection.status !== "connected") {
+      throw new HttpError("hubspot_not_connected", 400);
+    }
   }
 
   private async getHubSpotConnection(workspaceId: string): Promise<ConnectionRow | null> {

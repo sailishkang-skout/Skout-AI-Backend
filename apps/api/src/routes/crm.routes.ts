@@ -57,6 +57,51 @@ export async function crmRoutes(app: FastifyInstance) {
     }
   });
 
+  app.get("/crm/hubspot/lists", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    try {
+      return reply.send(await svc().listHubSpotLists(workspaceId));
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return reply.status(err.statusCode).send(errorResponse(err.message, err.statusCode, err.details));
+      }
+      throw err;
+    }
+  });
+
+  app.post("/crm/hubspot/import", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const body = (request.body ?? {}) as {
+      source?: "all" | "list";
+      hubspotListId?: string;
+      targetListId?: string;
+      newListName?: string;
+      maxContacts?: number;
+    };
+    if (body.source !== "all" && body.source !== "list") {
+      return reply.status(400).send(errorResponse("invalid_import_source", 400));
+    }
+    if (!body.targetListId && !body.newListName?.trim()) {
+      return reply.status(400).send(errorResponse("import_target_required", 400));
+    }
+    try {
+      return reply.status(201).send(
+        await svc().importFromHubSpot(workspaceId, {
+          source: body.source,
+          hubspotListId: body.hubspotListId,
+          targetListId: body.targetListId,
+          newListName: body.newListName,
+          maxContacts: body.maxContacts,
+        })
+      );
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return reply.status(err.statusCode).send(errorResponse(err.message, err.statusCode, err.details));
+      }
+      throw err;
+    }
+  });
+
   app.get("/crm/export-jobs/:jobId", async (request, reply) => {
     const { jobId } = request.params as { jobId: string };
     const workspaceId = request.workspaceId ?? "unknown";
