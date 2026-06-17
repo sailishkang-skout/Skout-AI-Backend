@@ -12,6 +12,7 @@ import { listRoutes } from "./list.routes.js";
 import { prospectRoutes } from "./prospect.routes.js";
 import { searchRoutes } from "./search.routes.js";
 import { sequenceRoutes } from "./sequence.routes.js";
+import { integrationRoutes } from "./integration.routes.js";
 import { workspaceRoutes } from "./workspace.routes.js";
 import { userRoutes } from "./user.routes.js";
 
@@ -34,5 +35,6 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(aiRoutes);
     await v1.register(crmRoutes);
     await v1.register(webhookRoutes);
+    await v1.register(integrationRoutes);
   }, { prefix: "/api/v1" });
 }

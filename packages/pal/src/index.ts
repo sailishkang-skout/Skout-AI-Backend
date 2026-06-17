@@ -2,6 +2,7 @@ export * from "./types.js";
 export * from "./email-patterns.js";
 export * from "./engine.js";
 export * from "./config.js";
+export { createRegistryWithByok } from "./config.js";
 export {
   createStubRegistry,
   StubFirmographics,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EnrichmentEngine } from "./engine.js";
+import { EnrichmentEngine, finalizeBillableCredits } from "./engine.js";
 import { createStubRegistry } from "./adapters/stub.js";
 import { generateEmailCandidates } from "./email-patterns.js";
 import type { PhoneData, PhoneProvider } from "./types.js";
@@ -81,5 +81,12 @@ describe("EnrichmentEngine", () => {
         { provider: "contactout", status: "error", detail: "contactout failed" },
       ],
     });
+  });
+
+  it("bills workspace keys at 75% of platform rate", () => {
+    const fourWorkspaceSteps = 4 * 3;
+    const fourPlatformSteps = 4 * 4;
+    expect(finalizeBillableCredits(fourWorkspaceSteps)).toBe(3);
+    expect(finalizeBillableCredits(fourPlatformSteps)).toBe(4);
   });
 });

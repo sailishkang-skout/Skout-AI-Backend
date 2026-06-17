@@ -52,6 +52,7 @@ const envSchema = z
     OPENCORPORATES_BASE_URL: z.string().default("https://api.opencorporates.com/v0.4"),
     SEC_EDGAR_BASE_URL: z.string().default("https://efts.sec.gov/LATEST/search-index"),
     LINKEDIN_ACCOUNTS_JSON: z.string().optional(),
+    INTEGRATION_ENCRYPTION_KEY: z.string().optional(),
     // --- Enrichment provider API keys (PAL). Optional: stub adapters are used
     //     for any capability whose key is absent. ---
     HUNTER_API_KEY: z.string().optional(),

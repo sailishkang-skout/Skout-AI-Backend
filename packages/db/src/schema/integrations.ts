@@ -56,6 +56,25 @@ export const webhookEndpoints = pgTable("webhook_endpoints", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** Workspace-owned enrichment provider API keys (BYOK), encrypted at rest. */
+export const workspaceIntegrations = pgTable(
+  "workspace_integrations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    encryptedApiKey: text("encrypted_api_key").notNull(),
+    keyHint: text("key_hint").notNull(),
+    status: text("status").notNull().default("active"),
+    lastValidatedAt: timestamp("last_validated_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [unique().on(table.workspaceId, table.provider)]
+);
+
 export const webhookDeliveries = pgTable("webhook_deliveries", {
   id: uuid("id").primaryKey().defaultRandom(),
   endpointId: uuid("endpoint_id")

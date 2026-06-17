@@ -3,6 +3,7 @@ import { generateEmailCandidates } from "./email-patterns.js";
 import {
   PHONE_SCORE_GATE,
   type AttemptLog,
+  type CredentialSource,
   type EnrichField,
   type CompanyData,
   type EnrichmentInput,
@@ -12,6 +13,25 @@ import {
 } from "./types.js";
 
 const DEFAULT_FIELDS: EnrichField[] = ["company", "email", "validation"];
+
+function billingQuarters(source: CredentialSource): number {
+  return source === "workspace" ? 3 : 4;
+}
+
+/** Billable Skout credits from per-step quarter totals (workspace = 3/4 rate). */
+export function finalizeBillableCredits(creditQuarters: number): number {
+  if (creditQuarters <= 0) return 0;
+  return Math.ceil(creditQuarters / 4);
+}
+
+function providerBillingSource(provider: unknown): CredentialSource {
+  const source = (provider as { credentialSource?: CredentialSource }).credentialSource;
+  return source ?? "platform";
+}
+
+function finalizeCredits(creditQuarters: number): number {
+  return finalizeBillableCredits(creditQuarters);
+}
 
 /**
  * EnrichmentEngine — the PAL waterfall (strategy §8 Tier 2).
@@ -43,7 +63,11 @@ export class EnrichmentEngine {
     const results: FieldResult[] = [];
     const attempts: AttemptLog[] = [];
     let order = 0;
-    let creditsUsed = 0;
+    let creditQuarters = 0;
+
+    const billProvider = (provider: unknown) => {
+      creditQuarters += billingQuarters(providerBillingSource(provider));
+    };
 
     const run = async <T>(
       provider: string,
@@ -82,8 +106,15 @@ export class EnrichmentEngine {
           p.fetchCompany(input.companyDomain, input.companyName)
         );
         if (company) {
-          results.push({ field: "company", valueJson: company, provider: p.name, isPrimary: true });
-          creditsUsed += 1;
+          const source = providerBillingSource(p);
+          results.push({
+            field: "company",
+            valueJson: company,
+            provider: p.name,
+            isPrimary: true,
+            billingSource: source,
+          });
+          billProvider(p);
           break;
         }
       }
@@ -98,8 +129,15 @@ export class EnrichmentEngine {
         );
         if (found) {
           email = found.email;
-          results.push({ field: "email", value: email, provider: p.name, confidence: found.confidence });
-          creditsUsed += 1;
+          const source = providerBillingSource(p);
+          results.push({
+            field: "email",
+            value: email,
+            provider: p.name,
+            confidence: found.confidence,
+            billingSource: source,
+          });
+          billProvider(p);
           break;
         }
       }
@@ -117,7 +155,8 @@ export class EnrichmentEngine {
       for (const p of this.providers.emailVerifiers) {
         const verdict = await run(p.name, "verify", () => p.verify(email!));
         if (verdict) {
-          creditsUsed += 1;
+          const source = providerBillingSource(p);
+          billProvider(p);
           const passes = verdict.status === "valid";
           results.push({
             field: "email_status",
@@ -125,6 +164,7 @@ export class EnrichmentEngine {
             valueJson: verdict,
             provider: p.name,
             validationStatus: verdict.status,
+            billingSource: source,
           });
           // Promote the email to primary only when verified valid.
           const emailResult = results.find((r) => r.field === "email");
@@ -193,6 +233,7 @@ export class EnrichmentEngine {
             p.fetchPhone(input.fullName!, input.companyDomain, input.linkedinUrl, email)
           );
           if (phone) {
+            const source = providerBillingSource(p);
             results.push({
               field: "phone",
               valueJson: phone,
@@ -200,8 +241,9 @@ export class EnrichmentEngine {
               provider: p.name,
               isPrimary: true,
               validationStatus: phone.sampleData ? "sample" : undefined,
+              billingSource: source,
             });
-            creditsUsed += 1;
+            billProvider(p);
             break;
           }
         }
@@ -226,6 +268,6 @@ export class EnrichmentEngine {
       }
     }
 
-    return { prospectId: input.prospectId, results, attempts, creditsUsed };
+    return { prospectId: input.prospectId, results, attempts, creditsUsed: finalizeCredits(creditQuarters) };
   }
 }

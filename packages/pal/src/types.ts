@@ -18,6 +18,10 @@ export interface EnrichmentInput {
   fields?: EnrichField[];
 }
 
+export type CredentialSource = "workspace" | "platform";
+
+export type WithCredential<T> = T & { credentialSource?: CredentialSource };
+
 export interface FieldResult {
   field: string;
   value?: string;
@@ -26,6 +30,7 @@ export interface FieldResult {
   confidence?: number;
   validationStatus?: string;
   isPrimary?: boolean;
+  billingSource?: CredentialSource;
 }
 
 export type AttemptStatus = "ok" | "miss" | "error" | "skipped";
