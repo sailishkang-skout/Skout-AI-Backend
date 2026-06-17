@@ -154,6 +154,38 @@ export class DbStore implements EnrichmentStore {
     return out;
   }
 
+  async renameList(workspaceId: string, listId: string, name: string): Promise<ProspectList | null> {
+    const [row] = await this.db
+      .update(lists)
+      .set({ name, updatedAt: new Date() })
+      .where(and(eq(lists.id, listId), eq(lists.workspaceId, workspaceId)))
+      .returning();
+    if (!row) return null;
+    const members = await this.db.select().from(listMembers).where(eq(listMembers.listId, listId));
+    return { id: row.id, workspaceId, name: row.name, prospectCount: members.length, createdAt: row.createdAt.toISOString() };
+  }
+
+  async deleteList(workspaceId: string, listId: string): Promise<boolean> {
+    const result = await this.db
+      .delete(lists)
+      .where(and(eq(lists.id, listId), eq(lists.workspaceId, workspaceId)))
+      .returning({ id: lists.id });
+    return result.length > 0;
+  }
+
+  async removeMembersFromList(workspaceId: string, listId: string, prospectIds: string[]): Promise<ProspectList | null> {
+    const [list] = await this.db
+      .select()
+      .from(lists)
+      .where(and(eq(lists.id, listId), eq(lists.workspaceId, workspaceId)));
+    if (!list) return null;
+    await this.db
+      .delete(listMembers)
+      .where(and(eq(listMembers.listId, listId), inArray(listMembers.prospectId, prospectIds)));
+    const members = await this.db.select().from(listMembers).where(eq(listMembers.listId, listId));
+    return { id: list.id, workspaceId, name: list.name, prospectCount: members.length, createdAt: list.createdAt.toISOString() };
+  }
+
   async getListMemberIds(workspaceId: string, listId: string): Promise<string[]> {
     const [list] = await this.db
       .select()

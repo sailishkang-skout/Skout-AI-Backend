@@ -126,6 +126,18 @@ export class EnrichmentService {
     return this.store.listLists(workspaceId);
   }
 
+  async renameList(workspaceId: string, listId: string, name: string) {
+    return this.store.renameList(workspaceId, listId, name);
+  }
+
+  async deleteList(workspaceId: string, listId: string) {
+    return this.store.deleteList(workspaceId, listId);
+  }
+
+  async removeMembersFromList(workspaceId: string, listId: string, prospectIds: string[]) {
+    return this.store.removeMembersFromList(workspaceId, listId, prospectIds);
+  }
+
   async getCredits(workspaceId: string) {
     return this.store.getCreditBalance(workspaceId);
   }

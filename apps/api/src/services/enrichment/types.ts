@@ -85,6 +85,9 @@ export interface EnrichmentStore {
   addListMembers(workspaceId: string, listId: string, prospectIds: string[]): Promise<ProspectList | null>;
   listLists(workspaceId: string): Promise<ProspectList[]>;
   getListMemberIds(workspaceId: string, listId: string): Promise<string[]>;
+  renameList(workspaceId: string, listId: string, name: string): Promise<ProspectList | null>;
+  deleteList(workspaceId: string, listId: string): Promise<boolean>;
+  removeMembersFromList(workspaceId: string, listId: string, prospectIds: string[]): Promise<ProspectList | null>;
 
   createJob(job: Omit<EnrichmentJob, "id">): Promise<EnrichmentJob>;
   updateJob(id: string, patch: Partial<EnrichmentJob>): Promise<EnrichmentJob | null>;
