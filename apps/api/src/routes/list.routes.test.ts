@@ -1,0 +1,448 @@
+import { describe, expect, it } from "vitest";
+import { loadEnv } from "../config/env.js";
+import { buildApp } from "../app.js";
+
+async function buildTestApp() {
+  const config = loadEnv();
+  return buildApp({
+    ...config,
+    CLERK_SECRET_KEY: undefined,
+    LOG_LEVEL: "fatal",
+    OPENSEARCH_URL: undefined,
+  });
+}
+
+// Injects as a specific stub user. Workspace is auto-provisioned on first call.
+function asUser(email: string) {
+  return { "x-stub-user-email": email };
+}
+
+describe("list routes — CRUD lifecycle", () => {
+  it("POST /lists creates a list and returns 201 with correct shape", async () => {
+    const app = await buildTestApp();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/lists",
+      headers: { ...asUser("list-create@test.com"), "content-type": "application/json" },
+      payload: { name: "My First List" },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as { id: string; name: string; workspaceId: string; prospectCount: number; createdAt: string };
+    expect(body.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(body.name).toBe("My First List");
+    expect(body.workspaceId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(body.prospectCount).toBe(0);
+    expect(body.createdAt).toBeTruthy();
+
+    await app.close();
+  });
+
+  it("GET /lists returns the lists for the workspace", async () => {
+    const app = await buildTestApp();
+    const email = "list-index@test.com";
+
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/lists",
+      headers: { ...asUser(email), "content-type": "application/json" },
+      payload: { name: "Index Test List" },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/lists",
+      headers: asUser(email),
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { data: { id: string; name: string }[]; total: number; workspaceId: string };
+    expect(body.workspaceId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(body.total).toBeGreaterThanOrEqual(1);
+    expect(body.data.some((l) => l.name === "Index Test List")).toBe(true);
+
+    await app.close();
+  });
+
+  it("GET /lists/:id returns the list by id", async () => {
+    const app = await buildTestApp();
+    const email = "list-show@test.com";
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/lists",
+      headers: { ...asUser(email), "content-type": "application/json" },
+      payload: { name: "Show Me List" },
+    });
+    const { id } = created.json() as { id: string };
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/lists/${id}`,
+      headers: asUser(email),
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { id: string; name: string };
+    expect(body.id).toBe(id);
+    expect(body.name).toBe("Show Me List");
+
+    await app.close();
+  });
+
+  it("POST /lists/:id/members adds prospects and returns list with members array", async () => {
+    const app = await buildTestApp();
+    const email = "list-addmembers@test.com";
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/lists",
+      headers: { ...asUser(email), "content-type": "application/json" },
+      payload: { name: "Members List" },
+    });
+    const { id } = created.json() as { id: string };
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/v1/lists/${id}/members`,
+      headers: { ...asUser(email), "content-type": "application/json" },
+      payload: { prospectIds: ["prospect-a", "prospect-b"] },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as {
+      id: string;
+      prospectCount: number;
+      members: { prospectId: string; companyId: string; snapshot: Record<string, unknown>; addedAt: string }[];
+    };
+    expect(body.id).toBe(id);
+    expect(body.prospectCount).toBe(2);
+    expect(Array.isArray(body.members)).toBe(true);
+    expect(body.members).toHaveLength(2);
+    expect(body.members.map((m) => m.prospectId).sort()).toEqual(["prospect-a", "prospect-b"]);
+    expect(body.members[0].addedAt).toBeTruthy();
+
+    await app.close();
+  });
+
+  it("GET /lists/:id/members returns the members array", async () => {
+    const app = await buildTestApp();
+    const email = "list-getmembers@test.com";
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/lists",
+      headers: { ...asUser(email), "content-type": "application/json" },
+      payload: { name: "Get Members List" },
+    });
+    const { id } = created.json() as { id: string };
+
+    await app.inject({
+      method: "POST",
+      url: `/api/v1/lists/${id}/members`,
+      headers: { ...asUser(email), "content-type": "application/json" },
+      payload: { prospectIds: ["p-x", "p-y", "p-z"] },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/lists/${id}/members`,
+      headers: asUser(email),
+    });
+
+    expect(res.statusCode).toBe(200);
+    const members = res.json() as { prospectId: string; companyId: string; snapshot: Record<string, unknown>; addedAt: string }[];
+    expect(Array.isArray(members)).toBe(true);
+    expect(members).toHaveLength(3);
+    expect(members.map((m) => m.prospectId).sort()).toEqual(["p-x", "p-y", "p-z"]);
+    members.forEach((m) => {
+      expect(m.prospectId).toBeTruthy();
+      expect(m.companyId).toBeTruthy();
+      expect(m.addedAt).toBeTruthy();
+      expect(typeof m.snapshot).toBe("object");
+    });
+
+    await app.close();
+  });
+
+  it("POST /lists/:id/members is idempotent — duplicate prospect IDs are not double-inserted", async () => {
+    const app = await buildTestApp();
+    const email = "list-idempotent@test.com";
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/lists",
+      headers: { ...asUser(email), "content-type": "application/json" },
+      payload: { name: "Idempotent List" },
+    });
+    const { id } = created.json() as { id: string };
+
+    await app.inject({
+      method: "POST",
+      url: `/api/v1/lists/${id}/members`,
+      headers: { ...asUser(email), "content-type": "application/json" },
+      payload: { prospectIds: ["dup-1"] },
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/v1/lists/${id}/members`,
+      headers: { ...asUser(email), "content-type": "application/json" },
+      payload: { prospectIds: ["dup-1"] },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { prospectCount: number; members: unknown[] };
+    expect(body.prospectCount).toBe(1);
+    expect(body.members).toHaveLength(1);
+
+    await app.close();
+  });
+
+  it("prospectCount on GET /lists matches the number of added members", async () => {
+    const app = await buildTestApp();
+    const email = "list-count@test.com";
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/lists",
+      headers: { ...asUser(email), "content-type": "application/json" },
+      payload: { name: "Count Check List" },
+    });
+    const { id } = created.json() as { id: string };
+
+    await app.inject({
+      method: "POST",
+      url: `/api/v1/lists/${id}/members`,
+      headers: { ...asUser(email), "content-type": "application/json" },
+      payload: { prospectIds: ["c1", "c2", "c3"] },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/lists/${id}`,
+      headers: asUser(email),
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { prospectCount: number }).prospectCount).toBe(3);
+
+    await app.close();
+  });
+});
+
+describe("list routes — workspace isolation", () => {
+  it("users from different workspaces cannot see each other's lists", async () => {
+    const app = await buildTestApp();
+
+    const resA = await app.inject({
+      method: "POST",
+      url: "/api/v1/lists",
+      headers: { ...asUser("isolation-userA@test.com"), "content-type": "application/json" },
+      payload: { name: "User A Private List" },
+    });
+    const { id: listAId } = resA.json() as { id: string };
+
+    // User B tries to fetch User A's list by ID
+    const resB = await app.inject({
+      method: "GET",
+      url: `/api/v1/lists/${listAId}`,
+      headers: asUser("isolation-userB@test.com"),
+    });
+    expect(resB.statusCode).toBe(404);
+
+    // User B's list index does not contain User A's list
+    const index = await app.inject({
+      method: "GET",
+      url: "/api/v1/lists",
+      headers: asUser("isolation-userB@test.com"),
+    });
+    const body = index.json() as { data: { id: string }[] };
+    expect(body.data.some((l) => l.id === listAId)).toBe(false);
+
+    await app.close();
+  });
+
+  it("users from different workspaces cannot add members to each other's lists", async () => {
+    const app = await buildTestApp();
+
+    const resA = await app.inject({
+      method: "POST",
+      url: "/api/v1/lists",
+      headers: { ...asUser("isolation-ownerA@test.com"), "content-type": "application/json" },
+      payload: { name: "Owner A List" },
+    });
+    const { id } = resA.json() as { id: string };
+
+    const resB = await app.inject({
+      method: "POST",
+      url: `/api/v1/lists/${id}/members`,
+      headers: { ...asUser("isolation-ownerB@test.com"), "content-type": "application/json" },
+      payload: { prospectIds: ["stolen-p1"] },
+    });
+    expect(resB.statusCode).toBe(404);
+
+    await app.close();
+  });
+
+  it("users from different workspaces cannot GET members of each other's lists", async () => {
+    const app = await buildTestApp();
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/lists",
+      headers: { ...asUser("isolation-memberA@test.com"), "content-type": "application/json" },
+      payload: { name: "Secret Members List" },
+    });
+    const { id } = created.json() as { id: string };
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/lists/${id}/members`,
+      headers: asUser("isolation-memberB@test.com"),
+    });
+    expect(res.statusCode).toBe(404);
+
+    await app.close();
+  });
+});
+
+describe("list routes — 404 and validation", () => {
+  it("GET /lists/:id returns 404 for a non-existent list", async () => {
+    const app = await buildTestApp();
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/lists/00000000-0000-4000-8000-000000000000",
+      headers: asUser("notfound@test.com"),
+    });
+    expect(res.statusCode).toBe(404);
+
+    await app.close();
+  });
+
+  it("GET /lists/:id/members returns 404 for a non-existent list", async () => {
+    const app = await buildTestApp();
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/lists/00000000-0000-4000-8000-000000000000/members",
+      headers: asUser("notfound-members@test.com"),
+    });
+    expect(res.statusCode).toBe(404);
+
+    await app.close();
+  });
+
+  it("POST /lists/:id/members returns 404 for a non-existent list", async () => {
+    const app = await buildTestApp();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/lists/00000000-0000-4000-8000-000000000000/members",
+      headers: { ...asUser("notfound-add@test.com"), "content-type": "application/json" },
+      payload: { prospectIds: ["p1"] },
+    });
+    expect(res.statusCode).toBe(404);
+
+    await app.close();
+  });
+
+  it("POST /lists rejects an empty name with 400", async () => {
+    const app = await buildTestApp();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/lists",
+      headers: { ...asUser("validation@test.com"), "content-type": "application/json" },
+      payload: { name: "" },
+    });
+    expect(res.statusCode).toBe(400);
+
+    await app.close();
+  });
+
+  it("POST /lists rejects a missing name with 400", async () => {
+    const app = await buildTestApp();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/lists",
+      headers: { ...asUser("validation-missing@test.com"), "content-type": "application/json" },
+      payload: {},
+    });
+    expect(res.statusCode).toBe(400);
+
+    await app.close();
+  });
+
+  it("POST /lists/:id/members rejects empty prospectIds array with 400", async () => {
+    const app = await buildTestApp();
+    const email = "validation-members@test.com";
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/lists",
+      headers: { ...asUser(email), "content-type": "application/json" },
+      payload: { name: "Validation List" },
+    });
+    const { id } = created.json() as { id: string };
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/v1/lists/${id}/members`,
+      headers: { ...asUser(email), "content-type": "application/json" },
+      payload: { prospectIds: [] },
+    });
+    expect(res.statusCode).toBe(400);
+
+    await app.close();
+  });
+});
+
+describe("list routes — auth stub", () => {
+  it("same email always maps to the same workspaceId across requests", async () => {
+    const app = await buildTestApp();
+    const email = "stable-workspace@test.com";
+
+    const r1 = await app.inject({
+      method: "GET",
+      url: "/api/v1/lists",
+      headers: asUser(email),
+    });
+    const r2 = await app.inject({
+      method: "GET",
+      url: "/api/v1/lists",
+      headers: asUser(email),
+    });
+
+    const w1 = (r1.json() as { workspaceId: string }).workspaceId;
+    const w2 = (r2.json() as { workspaceId: string }).workspaceId;
+    expect(w1).toBe(w2);
+    expect(w1).toMatch(/^[0-9a-f-]{36}$/);
+
+    await app.close();
+  });
+
+  it("different emails map to different workspaceIds", async () => {
+    const app = await buildTestApp();
+
+    const r1 = await app.inject({
+      method: "GET",
+      url: "/api/v1/lists",
+      headers: asUser("workspace-alpha@test.com"),
+    });
+    const r2 = await app.inject({
+      method: "GET",
+      url: "/api/v1/lists",
+      headers: asUser("workspace-beta@test.com"),
+    });
+
+    const w1 = (r1.json() as { workspaceId: string }).workspaceId;
+    const w2 = (r2.json() as { workspaceId: string }).workspaceId;
+    expect(w1).not.toBe(w2);
+
+    await app.close();
+  });
+});
