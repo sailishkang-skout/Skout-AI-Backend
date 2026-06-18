@@ -29,12 +29,6 @@ function normalizeOrigin(origin: string): string {
 export const authPlugin = fp(async (app) => {
   const config = app.config;
 
-  const applyStubUser = (request: FastifyRequest) => {
-    request.userId = (request.headers["x-stub-user-id"] as string | undefined) ?? "stub-user-id";
-    request.userEmail = (request.headers["x-stub-user-email"] as string | undefined) ?? "stub@example.com";
-    request.role = (request.headers["x-stub-role"] as string | undefined) ?? "owner";
-  };
-
   const useStubAuth = !config.CLERK_SECRET_KEY || config.AUTH_STUB;
 
   if (useStubAuth) {
@@ -43,9 +37,23 @@ export const authPlugin = fp(async (app) => {
         ? "AUTH_STUB=true — JWT disabled, using stub user"
         : "CLERK_SECRET_KEY not set — running in stub mode"
     );
-    app.addHook("preHandler", async (request: FastifyRequest) => {
+    app.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {
       if (isHealthRoute(request.url)) return;
-      applyStubUser(request);
+      const stubEmail = (request.headers["x-stub-user-email"] as string | undefined) ?? "stub@example.com";
+      const db = app.db;
+      if (!db) {
+        return reply.code(500).send(errorResponse("Database not available", 500));
+      }
+      try {
+        const result = await resolveOrProvisionUser(db, `stub:${stubEmail}`, stubEmail, "Stub User");
+        request.userId = result.userId;
+        request.userEmail = result.userEmail;
+        request.workspaceId = result.workspaceId;
+        request.role = result.role;
+      } catch (err) {
+        app.log.error({ err }, "Stub user provisioning failed");
+        return reply.code(500).send(errorResponse("Stub user provisioning failed", 500));
+      }
     });
     return;
   }

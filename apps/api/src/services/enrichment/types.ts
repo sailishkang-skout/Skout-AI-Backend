@@ -12,12 +12,20 @@ export interface ActivationRecord {
   updatedAt: string;
 }
 
+export interface ProspectListMember {
+  prospectId: string;
+  companyId: string;
+  snapshot: Record<string, unknown>;
+  addedAt: string;
+}
+
 export interface ProspectList {
   id: string;
   workspaceId: string;
   name: string;
   prospectCount: number;
   createdAt: string;
+  members?: ProspectListMember[];
 }
 
 export interface EnrichmentJob {
