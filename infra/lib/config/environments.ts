@@ -103,7 +103,7 @@ export const ENVIRONMENTS: Record<SkoutEnvironment, EnvironmentConfig> = {
     redis: { nodeType: "cache.t4g.micro", numCacheNodes: 1 },
     ecs: {
       apiCpu: 256,
-      apiMemoryMiB: 512,
+      apiMemoryMiB: 1024,
       apiDesiredCount: 1,
       aiCpu: 256,
       aiMemoryMiB: 512,

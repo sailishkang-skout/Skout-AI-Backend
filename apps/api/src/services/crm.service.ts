@@ -1,3 +1,4 @@
+import { createLogger } from "@skout/observability";
 import { createHmac } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
@@ -27,6 +28,7 @@ import { normalizeDomain } from "@skout/shared";
 const { crmConnections, asyncJobs, prospectActivations, listMembers, lists } = schema;
 
 const HUBSPOT_PROVIDER = "hubspot";
+const log = createLogger("crm.service");
 const EXPORT_CREDIT_PER_CONTACT = 1;
 const IMPORT_MAX_CONTACTS = 500;
 
@@ -283,7 +285,7 @@ export class CrmService {
       .returning();
 
     void this.runHubSpotExport(job.id, workspaceId, listId).catch((err) => {
-      console.error("HubSpot export failed", err);
+      log.error("HubSpot export failed", err, { workspaceId, listId });
     });
 
     return { jobId: job.id };

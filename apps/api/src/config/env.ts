@@ -21,6 +21,27 @@ const envSchema = z
     PORT: z.coerce.number().default(3001),
     HOST: z.string().default("0.0.0.0"),
     LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
+    SERVICE_NAME: z.string().default("skout-api"),
+    SERVICE_VERSION: z.string().optional(),
+    SENTRY_DSN: z.string().optional(),
+    SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0.1),
+    POSTHOG_API_KEY: z.string().optional(),
+    POSTHOG_HOST: z.string().default("https://us.i.posthog.com"),
+    POSTHOG_PROJECT_ID: z.string().optional(),
+    /** Datadog API key — ECS Fargate agent sidecar (not serverless/Lambda). */
+    DD_API_KEY: z.string().optional(),
+    DD_SITE: z.string().default("us5.datadoghq.com"),
+    TRUST_PROXY: z
+      .string()
+      .optional()
+      .transform((v) => {
+        if (v === "true" || v === "1") return true;
+        if (v === "false" || v === "0") return false;
+        return process.env.NODE_ENV === "production";
+      }),
+    RATE_LIMIT_MAX: z.coerce.number().int().positive().default(200),
+    RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+    REQUEST_BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(1_048_576),
     DATABASE_URL: z.string().url().optional(),
     DATABASE_HOST: z.string().optional(),
     DATABASE_PORT: z.coerce.number().optional(),

@@ -37,6 +37,7 @@ export class ComputeStack extends Stack {
   readonly loadBalancer: elbv2.ApplicationLoadBalancer;
   readonly cluster: ecs.Cluster;
   readonly apiService: ecs.FargateService;
+  readonly apiLogGroupName: string;
 
   constructor(scope: Construct, id: string, props: ComputeStackProps) {
     super(scope, id, props);
@@ -180,6 +181,14 @@ export class ComputeStack extends Stack {
         DATABASE_PORT: database.instance.dbInstanceEndpointPort,
         DATABASE_NAME: "skout",
         DATABASE_USER: "skout",
+        SERVICE_NAME: "skout-api",
+        LOG_LEVEL: "info",
+        TRUST_PROXY: "true",
+        DD_SERVICE: "skout-api",
+        DD_ENV: config.name,
+        DD_SITE: "us5.datadoghq.com",
+        RATE_LIMIT_MAX: "200",
+        RATE_LIMIT_WINDOW_MS: "60000",
         // Dev: allow phone waterfall for typical test leads (score ~40); prod keeps default 80 via app env schema.
         ...(config.name === "dev"
           ? { ENRICHMENT_PHONE_SCORE_GATE: "39" }
@@ -209,10 +218,20 @@ export class ComputeStack extends Stack {
         CLICKHOUSE_URL: ecs.Secret.fromSecretsManager(secrets.clickhouse, "CLICKHOUSE_URL"),
         SENTRY_DSN: ecs.Secret.fromSecretsManager(secrets.sentry, "SENTRY_DSN"),
         POSTHOG_API_KEY: ecs.Secret.fromSecretsManager(secrets.posthog, "POSTHOG_API_KEY"),
+        INTEGRATION_ENCRYPTION_KEY: ecs.Secret.fromSecretsManager(
+          secrets.appConfig,
+          "INTEGRATION_ENCRYPTION_KEY"
+        ),
+        DD_API_KEY: ecs.Secret.fromSecretsManager(secrets.datadog, "DD_API_KEY"),
+      },
+      datadog: {
+        apiKeySecret: ecs.Secret.fromSecretsManager(secrets.datadog, "DD_API_KEY"),
+        site: "us5.datadoghq.com",
       },
     });
 
     this.apiService = apiEcs.service;
+    this.apiLogGroupName = `/skout/${config.name}/api`;
 
     const grantSecretRead = (taskDef: ecs.FargateTaskDefinition, ...appSecrets: secretsmanager.ISecret[]) => {
       const role = taskDef.executionRole;
@@ -233,7 +252,9 @@ export class ComputeStack extends Stack {
       secrets.opensearch,
       secrets.clickhouse,
       secrets.sentry,
-      secrets.posthog
+      secrets.posthog,
+      secrets.appConfig,
+      secrets.datadog
     );
 
     const aiService = new SkoutEcsService(this, "AiService", {
@@ -252,14 +273,16 @@ export class ComputeStack extends Stack {
       internalOnly: true,
       environment: {
         NODE_ENV: "production",
+        POSTHOG_HOST: "https://us.i.posthog.com",
       },
       secrets: {
         OPENAI_API_KEY: ecs.Secret.fromSecretsManager(secrets.openai, "OPENAI_API_KEY"),
+        SENTRY_DSN: ecs.Secret.fromSecretsManager(secrets.sentry, "SENTRY_DSN_AI"),
+        POSTHOG_PROJECT_TOKEN: ecs.Secret.fromSecretsManager(secrets.posthog, "POSTHOG_API_KEY"),
       },
     });
 
-    // Imported secrets (e.g. dev openai) are not auto-granted to the execution role.
-    grantSecretRead(aiService.taskDefinition, secrets.openai);
+    grantSecretRead(aiService.taskDefinition, secrets.openai, secrets.sentry, secrets.posthog);
 
     apiEcs.service.connections.allowTo(aiService.service, ec2.Port.tcp(8000));
 

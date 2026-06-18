@@ -83,6 +83,7 @@ if (!config.deployToAws) {
     loadBalancer: compute.loadBalancer,
     apiService: compute.apiService,
     database: data.database.instance,
+    apiLogGroupName: compute.apiLogGroupName,
     alertEmail: config.alertEmail,
     description: `Skout AI ${config.name} CloudWatch alarms`,
   });

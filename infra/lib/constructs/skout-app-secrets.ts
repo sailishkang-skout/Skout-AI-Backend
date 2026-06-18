@@ -26,6 +26,8 @@ export class SkoutAppSecrets extends Construct {
   readonly scraperProxy: secretsmanager.ISecret;
   readonly sentry: secretsmanager.ISecret;
   readonly posthog: secretsmanager.ISecret;
+  readonly appConfig: secretsmanager.ISecret;
+  readonly datadog: secretsmanager.ISecret;
 
   constructor(scope: Construct, id: string, props: SkoutAppSecretsProps) {
     super(scope, id);
@@ -80,7 +82,22 @@ export class SkoutAppSecrets extends Construct {
       PROXY_USERNAME: "replace-me",
       PROXY_PASSWORD: "replace-me",
     });
-    this.sentry = createPlaceholder("Sentry", "sentry", { SENTRY_DSN: "replace-me" });
-    this.posthog = createPlaceholder("PostHog", "posthog", { POSTHOG_API_KEY: "replace-me" });
+    this.sentry = createPlaceholder("Sentry", "sentry", {
+      SENTRY_DSN: "replace-me-node",
+      SENTRY_DSN_AI: "replace-me-python",
+      SENTRY_DSN_WEB: "replace-me-frontend",
+    });
+    this.posthog = createPlaceholder("PostHog", "posthog", {
+      POSTHOG_API_KEY: "replace-me",
+      POSTHOG_HOST: "https://us.i.posthog.com",
+      POSTHOG_PROJECT_ID: "replace-me",
+    });
+    this.appConfig = createPlaceholder("AppConfig", "app-config", {
+      INTEGRATION_ENCRYPTION_KEY: "replace-me",
+    });
+    this.datadog = createPlaceholder("Datadog", "datadog", {
+      DD_API_KEY: "replace-me",
+      DD_SITE: "us5.datadoghq.com",
+    });
   }
 }

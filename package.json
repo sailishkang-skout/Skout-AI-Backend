@@ -29,7 +29,8 @@
     "infra:deploy:dev": "pnpm --filter @skout/infra deploy:dev",
     "infra:deploy:uat": "pnpm --filter @skout/infra deploy:uat",
     "infra:deploy:prod": "pnpm --filter @skout/infra deploy:prod",
-    "infra:synth:uat": "pnpm --filter @skout/infra synth:uat"
+    "infra:synth:uat": "pnpm --filter @skout/infra synth:uat",
+    "test:observability": "bash scripts/test-observability.sh"
   },
   "engines": {
     "node": ">=20"

@@ -1,11 +1,102 @@
 """Skout AI — Python AI orchestration service (FastAPI + LangGraph + LiteLLM)."""
 
-from typing import Optional
+import atexit
+import os
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, Optional, Protocol
 
+import sentry_sdk
+from dotenv import load_dotenv
 from fastapi import FastAPI
+from posthog import Posthog
 from pydantic import BaseModel
+from sentry_sdk.integrations.fastapi import FastApiIntegration
 
-app = FastAPI(title="Skout AI Service", version="0.1.0")
+# Load apps/ai/.env first, then repo root .env for OPENAI_API_KEY etc.
+_ai_dir = Path(__file__).resolve().parent.parent
+load_dotenv(_ai_dir / ".env")
+load_dotenv(_ai_dir.parent.parent / ".env")
+
+_PLACEHOLDER_KEYS = frozenset(
+    {"", "replace-me", "replace-me-python", "undefined", "null", "none"}
+)
+
+
+def _is_configured(value: str | None) -> bool:
+    if not value or not value.strip():
+        return False
+    v = value.strip().lower()
+    if v in _PLACEHOLDER_KEYS or v.startswith("your_") or "..." in v:
+        return False
+    return True
+
+
+class _AnalyticsClient(Protocol):
+    def capture(self, *args: Any, **kwargs: Any) -> None: ...
+    def shutdown(self) -> None: ...
+
+
+class _NoOpAnalytics:
+    def capture(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def shutdown(self) -> None:
+        pass
+
+
+_sentry_dsn = os.getenv("SENTRY_DSN", "").strip()
+if _is_configured(_sentry_dsn):
+    try:
+        sentry_sdk.init(
+            dsn=_sentry_dsn,
+            integrations=[FastApiIntegration()],
+            environment=os.getenv("NODE_ENV", os.getenv("ENVIRONMENT", "development")),
+            traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+            send_default_pii=False,
+        )
+    except Exception:
+        pass
+
+_posthog_key = os.getenv("POSTHOG_PROJECT_TOKEN", os.getenv("POSTHOG_API_KEY", "")).strip()
+_posthog_host = os.getenv("POSTHOG_HOST", "https://us.i.posthog.com")
+
+
+def _create_posthog() -> _AnalyticsClient:
+    if not _is_configured(_posthog_key):
+        return _NoOpAnalytics()
+    try:
+        return Posthog(
+            api_key=_posthog_key,
+            host=_posthog_host,
+            enable_exception_autocapture=True,
+        )
+    except Exception:
+        return _NoOpAnalytics()
+
+
+posthog_client: _AnalyticsClient = _create_posthog()
+if not isinstance(posthog_client, _NoOpAnalytics):
+    atexit.register(posthog_client.shutdown)
+
+
+def analytics_capture(**kwargs: Any) -> None:
+    try:
+        analytics_capture(**kwargs)
+    except Exception:
+        pass
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    try:
+        posthog_client.shutdown()
+    except Exception:
+        pass
+
+
+app = FastAPI(title="Skout AI Service", version="0.1.0", lifespan=lifespan)
 
 
 class ClassifyRequest(BaseModel):
@@ -27,11 +118,21 @@ def health():
 @app.post("/v1/classify", response_model=ClassifyResponse)
 def classify(request: ClassifyRequest):
     """Intent classification stub — wire LiteLLM router + HITL escalation."""
-    return ClassifyResponse(
+    result = ClassifyResponse(
         intent="interested",
         confidence=0.72,
         requires_hitl=True,
     )
+    analytics_capture(
+        distinct_id=request.thread_id,
+        event="prospect_classified",
+        properties={
+            "intent": result.intent,
+            "confidence": result.confidence,
+            "requires_hitl": result.requires_hitl,
+        },
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +241,7 @@ def score(request: ScoreRequest):
     intent_score = min(100, len(p.signals) * 25)
     pain_points = sorted({_INTENT_SIGNALS[s] for s in p.signals if s in _INTENT_SIGNALS})
 
-    return ScoreResponse(
+    result = ScoreResponse(
         prospect_id=p.prospect_id,
         icp_score=icp_score,
         icp_band=_band(icp_score),
@@ -149,6 +250,19 @@ def score(request: ScoreRequest):
         outreach_readiness=_readiness(icp_score, intent_score),
         reasoning=", ".join(reasons) or "baseline score (no ICP signals matched)",
     )
+    analytics_capture(
+        distinct_id=p.prospect_id,
+        event="prospect_scored",
+        properties={
+            "icp_score": result.icp_score,
+            "icp_band": result.icp_band,
+            "intent_score": result.intent_score,
+            "outreach_readiness": result.outreach_readiness,
+            "num_pain_points": len(result.pain_points),
+            "num_signals": len(p.signals),
+        },
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -218,15 +332,28 @@ def pain_points(request: PainPointRequest):
             f"Description: {request.description}, Signals: {request.signals}, Jobs: {request.job_post_snippets}"
         )
         data = _llm_json(prompt)
-        return PainPointResponse(
+        result = PainPointResponse(
             prospect_id=request.prospect_id,
             pain_points=data.get("pain_points", []),
             source="llm",
         )
-    pts = sorted({_INTENT_SIGNALS[s] for s in request.signals if s in _INTENT_SIGNALS})
-    if request.job_post_snippets:
-        pts.append("Recruitment Challenges")
-    return PainPointResponse(prospect_id=request.prospect_id, pain_points=pts, source="heuristic")
+    else:
+        pts = sorted({_INTENT_SIGNALS[s] for s in request.signals if s in _INTENT_SIGNALS})
+        if request.job_post_snippets:
+            pts.append("Recruitment Challenges")
+        result = PainPointResponse(prospect_id=request.prospect_id, pain_points=pts, source="heuristic")
+
+    analytics_capture(
+        distinct_id=request.prospect_id,
+        event="pain_points_detected",
+        properties={
+            "num_pain_points": len(result.pain_points),
+            "source": result.source,
+            "num_signals": len(request.signals),
+            "has_job_snippets": bool(request.job_post_snippets),
+        },
+    )
+    return result
 
 
 @app.post("/v1/personalize", response_model=PersonalizeResponse)
@@ -239,17 +366,30 @@ def personalize(request: PersonalizeRequest):
             f"Pain points: {request.pain_points}. ICP score: {request.icp_score}"
         )
         data = _llm_json(prompt)
-        return PersonalizeResponse(
+        result = PersonalizeResponse(
             prospect_id=request.prospect_id,
             opener=data.get("opener", ""),
             talking_points=data.get("talking_points", []),
             source="llm",
         )
-    name = request.full_name or "there"
-    domain = request.company_domain or "your company"
-    return PersonalizeResponse(
-        prospect_id=request.prospect_id,
-        opener=f"Hi {name} — noticed {domain} is scaling. Thought this might resonate.",
-        talking_points=request.pain_points[:3] or ["Growth", "Efficiency"],
-        source="heuristic",
+    else:
+        name = request.full_name or "there"
+        domain = request.company_domain or "your company"
+        result = PersonalizeResponse(
+            prospect_id=request.prospect_id,
+            opener=f"Hi {name} — noticed {domain} is scaling. Thought this might resonate.",
+            talking_points=request.pain_points[:3] or ["Growth", "Efficiency"],
+            source="heuristic",
+        )
+
+    analytics_capture(
+        distinct_id=request.prospect_id,
+        event="outreach_personalized",
+        properties={
+            "source": result.source,
+            "num_talking_points": len(result.talking_points),
+            "has_icp_score": request.icp_score is not None,
+            "num_pain_points_input": len(request.pain_points),
+        },
     )
+    return result

@@ -1,29 +1,43 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import dotenv from "dotenv";
+import "./instrument.js";
+import { initRootLogger, initSentry } from "@skout/observability";
 import { loadEnv } from "./config/env.js";
 import { buildApp } from "./app.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-if (process.env.NODE_ENV !== "production") {
-  dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
-}
-
 async function main() {
   const config = loadEnv();
+
+  initRootLogger({
+    service: config.SERVICE_NAME,
+    level: config.LOG_LEVEL,
+    environment: config.NODE_ENV,
+    version: config.SERVICE_VERSION,
+  });
+
+  initSentry({
+    dsn: config.SENTRY_DSN,
+    service: config.SERVICE_NAME,
+    environment: config.NODE_ENV,
+    release: config.SERVICE_VERSION,
+    tracesSampleRate: config.SENTRY_TRACES_SAMPLE_RATE,
+  });
+
   const app = await buildApp(config);
 
   try {
     await app.listen({ port: config.PORT, host: config.HOST });
-    app.log.info(`Skout API listening on http://${config.HOST}:${config.PORT}`);
+    app.log.info(
+      { host: config.HOST, port: config.PORT, service: config.SERVICE_NAME },
+      "Skout API listening"
+    );
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code;
     if (code === "EADDRINUSE") {
       app.log.error(
-        `Port ${config.PORT} is already in use — stop the other process (often a stray "next dev -p ${config.PORT}") and restart the API`
+        { port: config.PORT },
+        `Port ${config.PORT} is already in use — stop the other process and restart the API`
       );
     } else {
-      app.log.error(err);
+      app.log.error({ err }, "API failed to start");
     }
     process.exit(1);
   }

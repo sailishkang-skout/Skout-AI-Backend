@@ -32,6 +32,11 @@ export interface SkoutEcsServiceProps {
   readonly pathPatterns?: string[];
   readonly priority?: number;
   readonly internalOnly?: boolean;
+  /** Optional Datadog Agent sidecar (ECS Fargate APM). App keeps running if agent fails. */
+  readonly datadog?: {
+    readonly apiKeySecret: ecs.Secret;
+    readonly site: string;
+  };
 }
 
 export class SkoutEcsService extends Construct {
@@ -74,6 +79,28 @@ export class SkoutEcsService extends Construct {
     });
 
     container.addPortMappings({ containerPort: props.containerPort });
+
+    if (props.datadog) {
+      container.addEnvironment("DD_AGENT_HOST", "127.0.0.1");
+      container.addEnvironment("DD_TRACE_AGENT_PORT", "8126");
+      container.addEnvironment("DD_SITE", props.datadog.site);
+
+      taskDef.addContainer("DatadogAgent", {
+        image: ecs.ContainerImage.fromRegistry("public.ecr.aws/datadog/agent:latest"),
+        essential: false,
+        environment: {
+          DD_SITE: props.datadog.site,
+          ECS_FARGATE: "true",
+          DD_APM_ENABLED: "true",
+          DD_LOGS_ENABLED: "false",
+          DD_PROCESS_AGENT_ENABLED: "false",
+        },
+        secrets: {
+          DD_API_KEY: props.datadog.apiKeySecret,
+        },
+        logging: ecs.LogDrivers.awsLogs({ streamPrefix: "datadog-agent", logGroup }),
+      });
+    }
 
     const sg = new ec2.SecurityGroup(this, "ServiceSg", {
       vpc: props.vpc,
