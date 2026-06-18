@@ -140,6 +140,11 @@ All shorthand used in this document. Expand on first read here; later sections u
 | 8 | [HubSpot Export](#8-hubspot-export) | Important | `/settings/crm` | Apollo HubSpot sync · Snov CRM push |
 | 9 | [Credit Usage Tracking](#9-credit-usage-tracking) | Critical | Top bar + `/settings/workspace` | Apollo credits · Snov credits |
 | 10 | [Dashboard](#10-dashboard) | Critical | `/dashboard` | Apollo Home · Reply analytics lite |
+| 13 | [User-Owned Enrichment Integrations](#13-user-owned-enrichment-integrations) | Important | `/settings/integrations` | Apollo API keys · Snov own SMTP/API · BYOK enrichment |
+| 14 | [Chrome Extension](#14-chrome-extension) | Important | Chrome Web Store + LinkedIn | Apollo extension · Snov LI prospector · Reply sidebar |
+| 15 | [Prospect Corpus Seed (5,200)](#15-prospect-corpus-seed-5200) | Critical | OpenSearch bulk import | Apollo data scale · Snov list size · search coverage |
+
+**Tracker:** [mvp-feature-tracker.xlsx](./mvp/mvp-feature-tracker.xlsx) — done vs remaining with tentative completion dates.
 
 ---
 
@@ -1169,6 +1174,116 @@ flowchart TD
 
 ---
 
+## 13. User-Owned Enrichment Integrations
+
+**Problem solved:** Beta customers who already pay Apollo, Hunter, Prospeo, or ZeroBounce can use their own API quotas instead of Skout platform credits only.
+
+**Competitive reference**
+
+| Tool | Pattern | Skout adoption |
+| --- | --- | --- |
+| Apollo | Workspace API key in settings | Per-provider key + test connection |
+| Snov.io | Own email finder credits | BYOK toggles per provider |
+| Reply.io | Connected accounts | Settings → Integrations tab |
+
+### User flow
+
+```mermaid
+flowchart TD
+    I1[Settings → Integrations] --> I2[Choose provider e.g. Apollo]
+    I2 --> I3[Paste API key + Save]
+    I3 --> I4[Test connection]
+    I4 -->|OK| I5[Provider enabled for workspace]
+    I4 -->|Fail| I6[Inline error + retry]
+    I5 --> I7[Enrich uses workspace key first in PAL waterfall]
+```
+
+| Step | Actor | Action |
+| --- | --- | --- |
+| 1 | User | Opens `/settings/integrations` |
+| 2 | User | Adds API key per provider (encrypted at rest) |
+| 3 | System | Validates key with lightweight provider ping |
+| 4 | System | PAL waterfall prefers workspace credentials; falls back to platform keys |
+| 5 | User | Enriches from search, list, or extension — spend hits their vendor account |
+
+**API (planned):** `GET /api/v1/integrations` · `PUT /api/v1/integrations/:provider` · `POST /api/v1/integrations/:provider/test` · `DELETE /api/v1/integrations/:provider`
+
+**Storage:** `workspace_integrations` (or Secrets Manager ref per workspace + provider); never return full key to client after save.
+
+---
+
+## 14. Chrome Extension
+
+**Problem solved:** SDRs capture leads from LinkedIn without leaving the browser tab — same activation + enrich path as in-app search.
+
+**Competitive reference**
+
+| Tool | Pattern | Skout adoption |
+| --- | --- | --- |
+| Apollo | LinkedIn sidebar + save to list | MV3 extension + Skout auth |
+| Snov.io | LI email finder extension | Profile scrape → domain + name → enrich |
+| Reply.io | Chrome plugin for prospecting | Add to list dropdown |
+
+### User flow
+
+```mermaid
+flowchart TD
+    E1[Install Skout Chrome extension] --> E2[Sign in with Skout / Clerk]
+    E2 --> E3[Browse LinkedIn profile or company page]
+    E3 --> E4[Extension panel: name, title, company, domain]
+    E4 --> E5{Action}
+    E5 -->|Add to list| E6[Pick list → POST activate + list member]
+    E5 -->|Enrich| E7[POST enrich → show email status in panel]
+    E6 --> E8[Toast: Added to Acme Q2 list]
+```
+
+| Step | Actor | Action | Credits |
+| --- | --- | --- | --- |
+| 1 | User | Installs extension from Chrome Web Store (unlisted beta) | — |
+| 2 | User | Authenticates; extension stores short-lived session | — |
+| 3 | User | Clicks **Add to list** or **Enrich** on current LI page | 0 activate / 5 enrich |
+| 4 | Extension | Calls Skout API with JWT; same `prospect_activations` + `list_members` as web app | — |
+
+**Tech:** Manifest V3, content script on `linkedin.com`, background service worker, shared API client with web app.
+
+---
+
+## 15. Prospect Corpus Seed (5,200)
+
+**Problem solved:** Search must return enough real B2B records for beta demos and daily SDR use — not only synthetic demo rows.
+
+**Competitive reference**
+
+| Tool | Pattern | Skout adoption |
+| --- | --- | --- |
+| Apollo | Large searchable people DB | OpenSearch bulk index |
+| Snov.io | Prospecting database | 5,200 seed records for MVP beta |
+| Reply.io | Lead database | Filterable title / industry / geo |
+
+### User flow
+
+No separate UI — SDR uses [Prospect Search](#2-prospect-search) and sees non-demo results after seed completes.
+
+### Data flow
+
+```mermaid
+flowchart LR
+    SRC[CSV or vendor export] --> ETL[Normalize to prospectSummarySchema]
+    ETL --> HASH[Compute prospect_id per ADR 0001]
+    HASH --> BULK[bulkUpsertProspects → OpenSearch]
+    BULK --> OS[(OpenSearch prospects index)]
+    OS --> SEARCH[POST /search/prospects]
+```
+
+| Deliverable | Target |
+| --- | --- |
+| Record count | **5,200** prospects (minimum beta corpus) |
+| Fields | `full_name`, `title`, `company`, `domain`, `industry`, `employee_count`, `country`, `linkedin_url` |
+| Script | `pnpm opensearch:seed` (or equivalent bulk import) |
+| Acceptance | Search filters return >100 matches for common ICP; `cached: false` hits real OS docs |
+
+---
+
 ## Phase 1 Features (Out of MVP Scope)
 
 Documented in schema for future plug-in; **not** in MVP user flows:
@@ -1225,3 +1340,8 @@ Documented in schema for future plug-in; **not** in MVP user flows:
 | `GET` | `/dashboard/summary` | Dashboard |
 | `POST` | `/crm/hubspot/connect` | HubSpot OAuth |
 | `GET` | `/crm/connections` | CRM status |
+| `GET` | `/integrations` | User-owned provider keys (masked) |
+| `PUT` | `/integrations/:provider` | Save workspace API key |
+| `POST` | `/integrations/:provider/test` | Validate provider credentials |
+| — | Chrome extension | LI capture → activate / enrich / add to list |
+| — | OpenSearch bulk seed | 5,200 prospect documents |

@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { OpenSearchConfig } from "@skout/opensearch";
 import { buildEnrichmentService } from "../services/enrichment/index.js";
+import { createCrmService } from "../services/crm.service.js";
 import { HttpError, errorResponse } from "../utils/http.js";
 import { buildListService } from "../services/list.service.js";
 import type { Env } from "../config/env.js";
@@ -106,5 +107,20 @@ export async function listRoutes(app: FastifyInstance) {
     const list = await svc.removeMembersFromList(workspaceId, id, body.prospectIds);
     if (!list) return reply.status(404).send({ error: "list_not_found" });
     return reply.send(list);
+  });
+
+  app.post("/lists/:id/export/hubspot", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const crm = createCrmService(app.db, app.config);
+    try {
+      const result = await crm.startHubSpotListExport(workspaceId, id);
+      return reply.status(202).send(result);
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return reply.status(err.statusCode).send(errorResponse(err.message, err.statusCode, err.details));
+      }
+      throw err;
+    }
   });
 }

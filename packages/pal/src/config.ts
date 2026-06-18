@@ -15,7 +15,7 @@ import {
   StubFirmographics,
   StubPhoneProvider,
 } from "./adapters/stub.js";
-import type { ProviderRegistry } from "./types.js";
+import type { CredentialSource, ProviderRegistry, WithCredential } from "./types.js";
 
 /** Treat CDK placeholders and blank env as "no key" so we do not call live APIs with junk. */
 export function isLiveApiKey(value: string | undefined): value is string {
@@ -52,46 +52,133 @@ export interface PalConfig {
   requestTimeoutMs?: number;
 }
 
-/** Build registry — live adapters when keys present, stub fallback otherwise. */
-export function createRegistryFromConfig(cfg: PalConfig): ProviderRegistry {
-  const t = cfg.requestTimeoutMs;
+function withCredential<T extends { name: string }>(
+  adapter: T,
+  source: CredentialSource
+): WithCredential<T> {
+  return { ...adapter, credentialSource: source };
+}
 
-  const emailFinders = isLiveApiKey(cfg.hunterApiKey)
-    ? [new HunterEmailFinder(cfg.hunterApiKey, cfg.hunterBaseUrl, t)]
-    : [new StubEmailFinder()];
+/** Build registry — workspace keys first, then platform keys, then stubs. */
+export function createRegistryWithByok(
+  platformCfg: PalConfig,
+  workspaceCfg: Partial<PalConfig> = {}
+): ProviderRegistry {
+  const t = platformCfg.requestTimeoutMs ?? workspaceCfg.requestTimeoutMs;
+
+  const emailFinders: ProviderRegistry["emailFinders"] = [];
+  if (isLiveApiKey(workspaceCfg.hunterApiKey)) {
+    emailFinders.push(
+      withCredential(new HunterEmailFinder(workspaceCfg.hunterApiKey, platformCfg.hunterBaseUrl, t), "workspace")
+    );
+  }
+  if (isLiveApiKey(platformCfg.hunterApiKey)) {
+    emailFinders.push(
+      withCredential(new HunterEmailFinder(platformCfg.hunterApiKey, platformCfg.hunterBaseUrl, t), "platform")
+    );
+  }
+  if (emailFinders.length === 0) emailFinders.push(new StubEmailFinder());
 
   const emailVerifiers: ProviderRegistry["emailVerifiers"] = [];
-  if (isLiveApiKey(cfg.millionVerifierApiKey))
-    emailVerifiers.push(new MillionVerifier(cfg.millionVerifierApiKey, cfg.millionVerifierBaseUrl, t));
-  if (isLiveApiKey(cfg.zeroBounceApiKey))
-    emailVerifiers.push(new ZeroBounce(cfg.zeroBounceApiKey, cfg.zeroBounceBaseUrl, t));
-  if (isLiveApiKey(cfg.neverBounceApiKey))
-    emailVerifiers.push(new NeverBounce(cfg.neverBounceApiKey, cfg.neverBounceBaseUrl, t));
-  if (isLiveApiKey(cfg.hunterApiKey) && emailVerifiers.length === 0) {
-    emailVerifiers.push(new HunterEmailVerifier(cfg.hunterApiKey, cfg.hunterBaseUrl, t));
+  const addVerifier = (
+    wsKey: string | undefined,
+    platformKey: string | undefined,
+    factory: (key: string) => ProviderRegistry["emailVerifiers"][number]
+  ) => {
+    if (isLiveApiKey(wsKey)) emailVerifiers.push(withCredential(factory(wsKey), "workspace"));
+    if (isLiveApiKey(platformKey)) emailVerifiers.push(withCredential(factory(platformKey), "platform"));
+  };
+
+  addVerifier(
+    workspaceCfg.millionVerifierApiKey,
+    platformCfg.millionVerifierApiKey,
+    (key) => new MillionVerifier(key, platformCfg.millionVerifierBaseUrl, t)
+  );
+  addVerifier(
+    workspaceCfg.zeroBounceApiKey,
+    platformCfg.zeroBounceApiKey,
+    (key) => new ZeroBounce(key, platformCfg.zeroBounceBaseUrl, t)
+  );
+  addVerifier(
+    workspaceCfg.neverBounceApiKey,
+    platformCfg.neverBounceApiKey,
+    (key) => new NeverBounce(key, platformCfg.neverBounceBaseUrl, t)
+  );
+
+  if (emailVerifiers.length === 0) {
+    if (isLiveApiKey(workspaceCfg.hunterApiKey)) {
+      emailVerifiers.push(
+        withCredential(
+          new HunterEmailVerifier(workspaceCfg.hunterApiKey, platformCfg.hunterBaseUrl, t),
+          "workspace"
+        )
+      );
+    }
+    if (isLiveApiKey(platformCfg.hunterApiKey)) {
+      emailVerifiers.push(
+        withCredential(
+          new HunterEmailVerifier(platformCfg.hunterApiKey, platformCfg.hunterBaseUrl, t),
+          "platform"
+        )
+      );
+    }
   }
   if (emailVerifiers.length === 0) emailVerifiers.push(new StubEmailVerifier());
 
-  // Firmographics waterfall (strategy §8): PDL → RevenueBase → Explorium → Coresignal
   const firmographics: ProviderRegistry["firmographics"] = [];
-  if (isLiveApiKey(cfg.pdlApiKey)) firmographics.push(new PeopleDataLabsFirmographics(cfg.pdlApiKey, cfg.pdlBaseUrl, t));
-  if (isLiveApiKey(cfg.revenueBaseApiKey))
-    firmographics.push(new RevenueBaseFirmographics(cfg.revenueBaseApiKey, cfg.revenueBaseBaseUrl, t));
-  if (isLiveApiKey(cfg.exploriumApiKey))
-    firmographics.push(new ExploriumFirmographics(cfg.exploriumApiKey, cfg.exploriumBaseUrl, t));
-  if (isLiveApiKey(cfg.coresignalApiKey))
-    firmographics.push(new CoresignalFirmographics(cfg.coresignalApiKey, cfg.coresignalBaseUrl, t));
+  const addFirmographics = (
+    wsKey: string | undefined,
+    platformKey: string | undefined,
+    factory: (key: string) => ProviderRegistry["firmographics"][number]
+  ) => {
+    if (isLiveApiKey(wsKey)) firmographics.push(withCredential(factory(wsKey), "workspace"));
+    if (isLiveApiKey(platformKey)) firmographics.push(withCredential(factory(platformKey), "platform"));
+  };
+
+  addFirmographics(workspaceCfg.pdlApiKey, platformCfg.pdlApiKey, (key) =>
+    new PeopleDataLabsFirmographics(key, platformCfg.pdlBaseUrl, t)
+  );
+  addFirmographics(workspaceCfg.revenueBaseApiKey, platformCfg.revenueBaseApiKey, (key) =>
+    new RevenueBaseFirmographics(key, platformCfg.revenueBaseBaseUrl, t)
+  );
+  addFirmographics(workspaceCfg.exploriumApiKey, platformCfg.exploriumApiKey, (key) =>
+    new ExploriumFirmographics(key, platformCfg.exploriumBaseUrl, t)
+  );
+  addFirmographics(workspaceCfg.coresignalApiKey, platformCfg.coresignalApiKey, (key) =>
+    new CoresignalFirmographics(key, platformCfg.coresignalBaseUrl, t)
+  );
   if (firmographics.length === 0) firmographics.push(new StubFirmographics());
 
-  // Phone waterfall (strategy §6): Datagma → ContactOut → Cognism (EMEA)
   const phone: ProviderRegistry["phone"] = [];
-  if (isLiveApiKey(cfg.datagmaApiKey)) phone.push(new DatagmaPhone(cfg.datagmaApiKey, cfg.datagmaBaseUrl, t));
-  if (isLiveApiKey(cfg.contactOutApiKey))
-    phone.push(new ContactOutPhone(cfg.contactOutApiKey, cfg.contactOutBaseUrl, t));
-  if (isLiveApiKey(cfg.cognismApiKey)) phone.push(new CognismPhone(cfg.cognismApiKey, cfg.cognismBaseUrl, t));
+  const addPhone = (
+    wsKey: string | undefined,
+    platformKey: string | undefined,
+    factory: (key: string) => ProviderRegistry["phone"][number]
+  ) => {
+    if (isLiveApiKey(wsKey)) phone.push(withCredential(factory(wsKey), "workspace"));
+    if (isLiveApiKey(platformKey)) phone.push(withCredential(factory(platformKey), "platform"));
+  };
+
+  addPhone(workspaceCfg.datagmaApiKey, platformCfg.datagmaApiKey, (key) =>
+    new DatagmaPhone(key, platformCfg.datagmaBaseUrl, t)
+  );
+  addPhone(workspaceCfg.contactOutApiKey, platformCfg.contactOutApiKey, (key) =>
+    new ContactOutPhone(key, platformCfg.contactOutBaseUrl, t)
+  );
+  addPhone(workspaceCfg.cognismApiKey, platformCfg.cognismApiKey, (key) =>
+    new CognismPhone(key, platformCfg.cognismBaseUrl, t)
+  );
   if (phone.length === 0) phone.push(new StubPhoneProvider());
 
   return { firmographics, emailFinders, emailVerifiers, phone };
+}
+
+/** Build registry — live adapters when keys present, stub fallback otherwise. */
+export function createRegistryFromConfig(
+  cfg: PalConfig,
+  workspaceCfg?: Partial<PalConfig>
+): ProviderRegistry {
+  return createRegistryWithByok(cfg, workspaceCfg);
 }
 
 export function hasLiveProviders(cfg: PalConfig): boolean {

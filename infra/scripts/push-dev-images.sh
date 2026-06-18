@@ -27,18 +27,27 @@ if [[ -f "$FRONTEND_DIR/package.json" ]]; then
   echo "Building Web image from ${FRONTEND_DIR}..."
   WEB_BUILD_ARGS=(--platform "$PLATFORM")
 
-  # Default API URL to dev ALB when not set (same host serves web + /api).
+  # Default API URL to dev HTTPS WebUrl (CloudFront) when not set.
   if [[ -z "${NEXT_PUBLIC_API_URL:-}" ]]; then
-    ALB_DNS="$(aws cloudformation describe-stacks --region "$REGION" \
+    WEB_URL="$(aws cloudformation describe-stacks --region "$REGION" \
       --stack-name SkoutDev-Compute \
-      --query "Stacks[0].Outputs[?OutputKey=='LoadBalancerDns'].OutputValue" \
+      --query "Stacks[0].Outputs[?OutputKey=='WebUrl'].OutputValue" \
       --output text 2>/dev/null || true)"
-    if [[ -n "$ALB_DNS" && "$ALB_DNS" != "None" ]]; then
-      NEXT_PUBLIC_API_URL="http://${ALB_DNS}"
+    if [[ -n "$WEB_URL" && "$WEB_URL" != "None" ]]; then
+      NEXT_PUBLIC_API_URL="$WEB_URL"
+    else
+      ALB_DNS="$(aws cloudformation describe-stacks --region "$REGION" \
+        --stack-name SkoutDev-Compute \
+        --query "Stacks[0].Outputs[?OutputKey=='LoadBalancerDns'].OutputValue" \
+        --output text 2>/dev/null || true)"
+      if [[ -n "$ALB_DNS" && "$ALB_DNS" != "None" ]]; then
+        NEXT_PUBLIC_API_URL="http://${ALB_DNS}"
+      fi
     fi
   fi
   if [[ -n "${NEXT_PUBLIC_API_URL:-}" ]]; then
     WEB_BUILD_ARGS+=(--build-arg "NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}")
+    WEB_BUILD_ARGS+=(--build-arg "NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-${NEXT_PUBLIC_API_URL}}")
   fi
 
   # Clerk keys: env → frontend .env.local → Secrets Manager.

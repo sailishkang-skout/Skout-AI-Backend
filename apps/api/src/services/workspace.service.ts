@@ -40,7 +40,8 @@ export function createWorkspaceService(db: Db) {
           name: schema.workspaces.name,
           slug: schema.workspaces.slug,
         });
-      return row ?? null;
+      if (!row) return null;
+      return this.getWorkspaceWithCredits(workspaceId);
     },
 
     async getIcp(workspaceId: string) {
@@ -85,7 +86,35 @@ export function createWorkspaceService(db: Db) {
         .orderBy(desc(schema.creditTransactions.createdAt))
         .limit(limit)
         .offset(offset);
-      return rows;
+      return rows.map((r) => ({
+        id: r.id,
+        workspaceId: r.workspaceId,
+        amount: r.amount,
+        action: r.action,
+        referenceId: r.referenceId,
+        createdAt: r.createdAt.toISOString(),
+      }));
+    },
+
+    async addCredits(workspaceId: string, amount: number, action = "admin_topup") {
+      const current = await this.getCreditBalance(workspaceId);
+      const next = current.balance + amount;
+
+      await db
+        .insert(schema.creditBalances)
+        .values({ workspaceId, balance: next })
+        .onConflictDoUpdate({
+          target: schema.creditBalances.workspaceId,
+          set: { balance: next, updatedAt: new Date() },
+        });
+
+      await db.insert(schema.creditTransactions).values({
+        workspaceId,
+        amount,
+        action,
+      });
+
+      return next;
     },
   };
 }

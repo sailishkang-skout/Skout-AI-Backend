@@ -1,6 +1,10 @@
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as ecs from "aws-cdk-lib/aws-ecs";
 import * as ecr from "aws-cdk-lib/aws-ecr";
+import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
+import * as apigwIntegrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
+import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
+import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
@@ -25,6 +29,8 @@ export interface ComputeStackProps extends StackProps {
   readonly aiRepository: ecr.IRepository;
   readonly webRepository: ecr.IRepository;
   readonly imageTag?: string;
+  /** `none` = ALB HTTP only; `apigateway` = HTTPS via API Gateway (mobile-friendly); `cloudfront` = HTTPS via CloudFront. */
+  readonly httpsMode?: "none" | "apigateway" | "cloudfront";
 }
 
 export class ComputeStack extends Stack {
@@ -47,6 +53,7 @@ export class ComputeStack extends Stack {
       aiRepository,
       webRepository,
       imageTag = "latest",
+      httpsMode = "none",
     } = props;
 
     const nodeHttpHealthCheck = (port: number, path: string) =>
@@ -82,9 +89,63 @@ export class ComputeStack extends Stack {
     });
 
     const albDns = this.loadBalancer.loadBalancerDnsName;
+
+    // HTTPS: custom domain, API Gateway (mobile/cellular-friendly), or CloudFront in front of ALB.
+    // Plain HTTP on ALB port 80 often times out on mobile data — use apigateway or cloudfront.
+    let publicUrl: string;
+    let httpsDistribution: cloudfront.Distribution | undefined;
+    let httpsApi: apigwv2.HttpApi | undefined;
+
+    if (config.domainName) {
+      publicUrl = `https://${config.webSubdomain}.${config.domainName}`;
+    } else if (httpsMode === "cloudfront") {
+      httpsDistribution = new cloudfront.Distribution(this, "HttpsDistribution", {
+        comment: `Skout ${config.name} HTTPS via CloudFront`,
+        defaultBehavior: {
+          origin: new origins.LoadBalancerV2Origin(this.loadBalancer, {
+            protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+          }),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+        },
+      });
+      publicUrl = `https://${httpsDistribution.distributionDomainName}`;
+    } else if (httpsMode === "apigateway") {
+      httpsApi = new apigwv2.HttpApi(this, "HttpsApi", {
+        apiName: `${config.stackPrefix}-https`.substring(0, 128),
+        description: `Skout ${config.name} HTTPS entry (API Gateway → ALB)`,
+      });
+
+      httpsApi.addRoutes({
+        path: "/{proxy+}",
+        methods: [apigwv2.HttpMethod.ANY],
+        integration: new apigwIntegrations.HttpUrlIntegration(
+          "AlbProxyIntegration",
+          `http://${albDns}/{proxy}`,
+          { method: apigwv2.HttpMethod.ANY }
+        ),
+      });
+
+      httpsApi.addRoutes({
+        path: "/",
+        methods: [apigwv2.HttpMethod.ANY],
+        integration: new apigwIntegrations.HttpUrlIntegration(
+          "AlbRootIntegration",
+          `http://${albDns}/`,
+          { method: apigwv2.HttpMethod.ANY }
+        ),
+      });
+
+      publicUrl = httpsApi.url!.replace(/\/$/, "");
+    } else {
+      publicUrl = `http://${albDns}`;
+    }
+
     const corsOrigin = config.domainName
-      ? `https://${config.webSubdomain}.${config.domainName}`
-      : `http://${albDns}`;
+      ? publicUrl
+      : `${publicUrl},http://${albDns}`;
 
     const aiServiceUrl = `http://ai.${namespace.namespaceName}:8000`;
 
@@ -109,6 +170,8 @@ export class ComputeStack extends Stack {
         PORT: "3001",
         HOST: "0.0.0.0",
         CORS_ORIGIN: corsOrigin,
+        API_PUBLIC_URL: publicUrl,
+        FRONTEND_URL: publicUrl,
         REDIS_URL: `redis://${redis.endpoint}:6379`,
         EXPORTS_BUCKET: exportsBucket.bucketName,
         SCRAPE_BUCKET: scrapeBucket.bucketName,
@@ -206,7 +269,7 @@ export class ComputeStack extends Stack {
       dnsRecordType: servicediscovery.DnsRecordType.A,
     });
 
-    const apiUrl = `http://${albDns}`;
+    const apiUrl = publicUrl;
 
     const webService = new SkoutEcsService(this, "WebService", {
       vpc,
@@ -227,9 +290,11 @@ export class ComputeStack extends Stack {
       environment: {
         NODE_ENV: "production",
         NEXT_PUBLIC_API_URL: apiUrl,
+        CLERK_SIGN_IN_URL: `${publicUrl}/sign-in`,
+        CLERK_SIGN_UP_URL: `${publicUrl}/sign-up`,
       },
       secrets: {
-        CLERK_PUBLISHABLE_KEY: ecs.Secret.fromSecretsManager(secrets.clerk, "CLERK_PUBLISHABLE_KEY"),
+        CLERK_SECRET_KEY: ecs.Secret.fromSecretsManager(secrets.clerk, "CLERK_SECRET_KEY"),
       },
     });
     grantSecretRead(webService.taskDefinition, secrets.clerk);
@@ -258,6 +323,20 @@ export class ComputeStack extends Stack {
       exportName: `${config.stackPrefix}-AlbDns`,
     });
 
+    if (httpsDistribution) {
+      new CfnOutput(this, "CloudFrontDomain", {
+        value: httpsDistribution.distributionDomainName,
+        exportName: `${config.stackPrefix}-CloudFrontDomain`,
+      });
+    }
+
+    if (httpsApi) {
+      new CfnOutput(this, "ApiGatewayUrl", {
+        value: httpsApi.url!,
+        exportName: `${config.stackPrefix}-ApiGatewayUrl`,
+      });
+    }
+
     new CfnOutput(this, "ApiUrl", {
       value: `${apiUrl}/api/v1`,
       exportName: `${config.stackPrefix}-ApiUrl`,
@@ -265,7 +344,14 @@ export class ComputeStack extends Stack {
 
     new CfnOutput(this, "WebUrl", {
       value: apiUrl,
+      description: "Primary HTTPS URL for web + API (use this on mobile)",
       exportName: `${config.stackPrefix}-WebUrl`,
+    });
+
+    new CfnOutput(this, "AlbHttpUrl", {
+      value: `http://${albDns}`,
+      description: "Direct ALB HTTP URL (legacy; prefer WebUrl)",
+      exportName: `${config.stackPrefix}-AlbHttpUrl`,
     });
 
     Tags.of(this).add("skout:environment", config.name);

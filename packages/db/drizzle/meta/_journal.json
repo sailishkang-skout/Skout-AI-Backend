@@ -29,6 +29,13 @@
       "when": 1781539064621,
       "tag": "0003_lyrical_bulldozer",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1781700000000,
+      "tag": "0004_workspace_integrations",
+      "breakpoints": true
     }
   ]
 }

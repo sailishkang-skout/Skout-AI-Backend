@@ -3,6 +3,8 @@ import { EnrichmentEngine, createRegistryFromConfig, type PalConfig } from "@sko
 import type { Env } from "../../config/env.js";
 import { getWorkspaceIcp } from "../icp.service.js";
 import { ensureDemoWorkspace } from "../demo-workspace.js";
+import { createIntegrationService, workspaceEngineCacheKey } from "../integration.service.js";
+import { hasWorkspacePalKeys } from "../integration-providers.js";
 import { DbStore } from "./db-store.js";
 import { MemoryStore } from "./memory-store.js";
 import { EnrichmentService } from "./service.js";
@@ -43,26 +45,19 @@ function palConfigFromEnv(config: Env): PalConfig {
   };
 }
 
-// Engine cache keyed by provider + gate config (rebuilt when env changes).
-let cachedEngine: EnrichmentEngine | null = null;
-let cachedEngineKey: string | null = null;
+const engineCache = new Map<string, EnrichmentEngine>();
 
-function engineCacheKey(config: Env): string {
-  return JSON.stringify({
-    pal: palConfigFromEnv(config),
+function buildEngine(config: Env, workspaceOverrides: Partial<PalConfig> = {}): EnrichmentEngine {
+  const platform = palConfigFromEnv(config);
+  const cacheKey = workspaceEngineCacheKey(platform, workspaceOverrides, config.ENRICHMENT_PHONE_SCORE_GATE);
+  const cached = engineCache.get(cacheKey);
+  if (cached) return cached;
+
+  const engine = new EnrichmentEngine(createRegistryFromConfig(platform, workspaceOverrides), {
     phoneScoreGate: config.ENRICHMENT_PHONE_SCORE_GATE,
   });
-}
-
-function getEngine(config: Env): EnrichmentEngine {
-  const key = engineCacheKey(config);
-  if (!cachedEngine || cachedEngineKey !== key) {
-    cachedEngine = new EnrichmentEngine(createRegistryFromConfig(palConfigFromEnv(config)), {
-      phoneScoreGate: config.ENRICHMENT_PHONE_SCORE_GATE,
-    });
-    cachedEngineKey = key;
-  }
-  return cachedEngine;
+  engineCache.set(cacheKey, engine);
+  return engine;
 }
 
 export function getStore(db: Db | null): EnrichmentStore {
@@ -71,9 +66,19 @@ export function getStore(db: Db | null): EnrichmentStore {
 
 /** Build a request-scoped EnrichmentService bound to the right store + providers. */
 export function buildEnrichmentService(db: Db | null, config: Env): EnrichmentService {
+  const platformEngine = buildEngine(config);
+  const integrationSvc = createIntegrationService(db, config);
+
+  const resolveEngine = async (workspaceId: string): Promise<EnrichmentEngine> => {
+    if (!db) return platformEngine;
+    const workspacePal = await integrationSvc.loadWorkspacePalConfig(workspaceId);
+    if (!hasWorkspacePalKeys(workspacePal)) return platformEngine;
+    return buildEngine(config, workspacePal);
+  };
+
   return new EnrichmentService(
     getStore(db),
-    getEngine(config),
+    resolveEngine,
     config.AI_SERVICE_URL,
     config.ENRICHMENT_AI_TIMEOUT_MS,
     db ? (ws) => getWorkspaceIcp(db, ws) : undefined,

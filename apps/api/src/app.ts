@@ -23,7 +23,12 @@ export async function buildApp(config: Env) {
       });
     }
     app.log.error(error);
-    reply.code(error.statusCode ?? 500).send({ error: error.message ?? "internal_server_error" });
+    const statusCode =
+      typeof error === "object" && error !== null && "statusCode" in error
+        ? Number((error as { statusCode?: number }).statusCode) || 500
+        : 500;
+    const message = error instanceof Error ? error.message : "internal_server_error";
+    reply.code(statusCode).send({ error: message });
   });
 
   await app.register(configPlugin, config);

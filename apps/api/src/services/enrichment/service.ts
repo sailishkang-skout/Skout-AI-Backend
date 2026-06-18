@@ -60,7 +60,7 @@ function scoreSnapshot(snapshot: ProspectSnapshot): ProspectSnapshot {
 export class EnrichmentService {
   constructor(
     private readonly store: EnrichmentStore,
-    private readonly engine: EnrichmentEngine,
+    private readonly resolveEngine: (workspaceId: string) => Promise<EnrichmentEngine>,
     private readonly aiServiceUrl?: string,
     private readonly aiTimeoutMs?: number,
     private readonly loadIcp?: (workspaceId: string) => Promise<IcpConfig>,
@@ -218,7 +218,8 @@ export class EnrichmentService {
       let leadScore =
         existingScore?.score ?? (await this.score(workspaceId, scoredSnapshot, icp)).icpScore;
 
-      const outcome = await this.engine.enrich({
+      const engine = await this.resolveEngine(workspaceId);
+      const outcome = await engine.enrich({
         prospectId,
         companyDomain: snapshot.companyDomain,
         fullName: snapshot.fullName,

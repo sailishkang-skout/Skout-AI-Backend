@@ -15,6 +15,9 @@ const envName = app.node.tryGetContext("env") ?? "dev";
 const config = getEnvironment(envName);
 const imageTag = app.node.tryGetContext("imageTag") as string | undefined;
 const skipWeb = app.node.tryGetContext("skipWeb") === "true";
+const httpsMode =
+  (app.node.tryGetContext("httpsMode") as "none" | "apigateway" | "cloudfront" | undefined) ??
+  (envName === "dev" ? "apigateway" : "none");
 
 const stackEnv: cdk.Environment = {
   account: config.account ?? process.env.CDK_DEFAULT_ACCOUNT,
@@ -62,6 +65,7 @@ if (!config.deployToAws) {
     aiRepository: registry.aiRepository,
     webRepository: registry.webRepository,
     imageTag,
+    httpsMode,
     description: `Skout AI ${config.name} ECS services (API, AI, Web)`,
   });
 

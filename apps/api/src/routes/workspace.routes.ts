@@ -59,6 +59,17 @@ export async function workspaceRoutes(app: FastifyInstance) {
     return reply.send({ data: transactions });
   });
 
+  // POST /api/v1/credits/topup — beta manual top-up (Stripe later)
+  app.post("/credits/topup", async (request, reply) => {
+    if (!request.workspaceId) {
+      return reply.code(401).send(errorResponse("Not authenticated", 401));
+    }
+    const body = (request.body ?? {}) as { amount?: number };
+    const amount = Math.min(Math.max(Number(body.amount) || 100, 1), 10_000);
+    const balance = await svc.addCredits(request.workspaceId, amount, "admin_topup");
+    return reply.send({ data: { balance, amount } });
+  });
+
   // GET /api/v1/icp
   app.get("/icp", async (request, reply) => {
     if (!request.workspaceId) {
