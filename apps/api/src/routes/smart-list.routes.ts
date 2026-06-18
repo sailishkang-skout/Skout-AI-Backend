@@ -25,6 +25,7 @@ const createSchema = z.object({
 
 const activateSchema = z.object({
   listName: z.string().min(1).max(255).optional(),
+  listId: z.string().uuid().optional(),
 });
 
 function osConfig(app: FastifyInstance): OpenSearchConfig | null {
@@ -87,9 +88,17 @@ export async function smartListRoutes(app: FastifyInstance) {
     }
 
     const svc = buildEnrichmentService(app.db, app.config);
-    const listName =
-      body.listName ?? `${result.list.name} — ${new Date().toISOString().slice(0, 10)}`;
-    const list = await svc.createList(workspaceId, listName, prospects);
+
+    let list: Awaited<ReturnType<typeof svc.createList>>;
+    if (body.listId) {
+      const updated = await svc.addListMembers(workspaceId, body.listId, prospects);
+      if (!updated) return reply.status(404).send({ error: "list_not_found" });
+      list = updated;
+    } else {
+      const listName =
+        body.listName ?? `${result.list.name} — ${new Date().toISOString().slice(0, 10)}`;
+      list = await svc.createList(workspaceId, listName, prospects);
+    }
 
     return reply.status(201).send({
       list,

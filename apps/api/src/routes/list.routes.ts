@@ -79,4 +79,32 @@ export async function listRoutes(app: FastifyInstance) {
     const batch = await svc.enrichList(workspaceId, id, { fields: body.fields });
     return reply.status(202).send({ batchId: batch.id, status: batch.status, total: batch.total });
   });
+
+  app.patch("/lists/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const body = z.object({ name: z.string().min(1).max(255) }).parse(request.body ?? {});
+    const svc = buildEnrichmentService(app.db, app.config);
+    const list = await svc.renameList(workspaceId, id, body.name);
+    if (!list) return reply.status(404).send({ error: "list_not_found" });
+    return reply.send(list);
+  });
+
+  app.delete("/lists/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = buildEnrichmentService(app.db, app.config);
+    await svc.deleteList(workspaceId, id);
+    return reply.status(204).send();
+  });
+
+  app.delete("/lists/:id/members", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const body = z.object({ prospectIds: z.array(z.string()).min(1) }).parse(request.body ?? {});
+    const svc = buildEnrichmentService(app.db, app.config);
+    const list = await svc.removeMembersFromList(workspaceId, id, body.prospectIds);
+    if (!list) return reply.status(404).send({ error: "list_not_found" });
+    return reply.send(list);
+  });
 }

@@ -125,6 +125,35 @@ export class MemoryStore implements EnrichmentStore {
     return [...(this.ws(workspaceId).listMembers.get(listId) ?? [])];
   }
 
+  async renameList(workspaceId: string, listId: string, name: string): Promise<ProspectList | null> {
+    const ws = this.ws(workspaceId);
+    const list = ws.lists.get(listId);
+    if (!list) return null;
+    const updated = { ...list, name };
+    ws.lists.set(listId, updated);
+    return updated;
+  }
+
+  async deleteList(workspaceId: string, listId: string): Promise<boolean> {
+    const ws = this.ws(workspaceId);
+    const had = ws.lists.has(listId);
+    ws.lists.delete(listId);
+    ws.listMembers.delete(listId);
+    return had;
+  }
+
+  async removeMembersFromList(workspaceId: string, listId: string, prospectIds: string[]): Promise<ProspectList | null> {
+    const ws = this.ws(workspaceId);
+    const list = ws.lists.get(listId);
+    if (!list) return null;
+    const members = ws.listMembers.get(listId) ?? new Set<string>();
+    for (const id of prospectIds) members.delete(id);
+    ws.listMembers.set(listId, members);
+    const updated = { ...list, prospectCount: members.size };
+    ws.lists.set(listId, updated);
+    return updated;
+  }
+
   async createJob(job: Omit<EnrichmentJob, "id">): Promise<EnrichmentJob> {
     const full: EnrichmentJob = { ...job, id: randomUUID() };
     this.jobs.set(full.id, full);
