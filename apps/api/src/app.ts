@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import { ZodError } from "zod";
 import type { Env } from "./config/env.js";
 import { authPlugin } from "./plugins/auth.js";
 import { configPlugin } from "./plugins/config.js";
@@ -12,6 +13,17 @@ export async function buildApp(config: Env) {
     logger: {
       level: config.LOG_LEVEL,
     },
+  });
+
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof ZodError) {
+      return reply.code(400).send({
+        error: "validation_error",
+        issues: error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
+      });
+    }
+    app.log.error(error);
+    reply.code(error.statusCode ?? 500).send({ error: error.message ?? "internal_server_error" });
   });
 
   await app.register(configPlugin, config);
