@@ -68,7 +68,8 @@ jobs:
       - name: Checkout frontend
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/Skout-Ai-Frontend
+          repository: ${{ github.repository_owner }}/Skout-AI-Frontend
+          ref: uat
           path: frontend
         continue-on-error: true
 
@@ -77,10 +78,15 @@ jobs:
           IMAGE_TAG: ${{ steps.meta.outputs.tag }}
           API_URL: ${{ vars.UAT_API_URL }}
         run: |
-          if [ ! -f frontend/package.json ]; then echo "Frontend repo skipped"; exit 0; fi
+          if [ ! -f frontend/package.json ] || [ ! -f frontend/Dockerfile ]; then
+            echo "Frontend repo or Dockerfile not found — skipping web image build"
+            exit 0
+          fi
           WEB_REPO=$(aws ecr describe-repositories --repository-names skout-uat-web --query 'repositories[0].repositoryUri' --output text)
           docker build -f frontend/Dockerfile \
             --build-arg NEXT_PUBLIC_API_URL="${API_URL:-http://localhost:3001}" \
+            --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}" \
+            --build-arg CLERK_SECRET_KEY="${{ secrets.CLERK_SECRET_KEY }}" \
             -t "$WEB_REPO:$IMAGE_TAG" -t "$WEB_REPO:latest" frontend
           docker push "$WEB_REPO:$IMAGE_TAG"
           docker push "$WEB_REPO:latest"

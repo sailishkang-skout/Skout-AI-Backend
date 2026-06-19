@@ -50,7 +50,7 @@ export class RegistryStack extends Stack {
 
     const githubOrg = config.github?.org ?? "sailishkang-skout";
     const backendRepo = config.github?.backendRepo ?? "Skout-AI-Backend";
-    const frontendRepo = config.github?.frontendRepo ?? "Skout-Ai-Frontend";
+    const frontendRepo = config.github?.frontendRepo ?? "Skout-AI-Frontend";
 
     const oidcProvider = new iam.OpenIdConnectProvider(this, "GitHubOidc", {
       url: "https://token.actions.githubusercontent.com",

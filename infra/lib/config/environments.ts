@@ -52,7 +52,7 @@ export interface EnvironmentConfig {
 const baseGithub = {
   org: process.env.GITHUB_ORG ?? "sailishkang-skout",
   backendRepo: process.env.GITHUB_BACKEND_REPO ?? "Skout-AI-Backend",
-  frontendRepo: process.env.GITHUB_FRONTEND_REPO ?? "Skout-Ai-Frontend",
+  frontendRepo: process.env.GITHUB_FRONTEND_REPO ?? "Skout-AI-Frontend",
 };
 
 export const ENVIRONMENTS: Record<SkoutEnvironment, EnvironmentConfig> = {
