@@ -48,7 +48,9 @@ export class RegistryStack extends Stack {
     this.scraperCleanerRepository = createRepo("ScraperCleanerRepo", `skout-${config.name}-scraper-cleaner`);
     this.scraperIngestorRepository = createRepo("ScraperIngestorRepo", `skout-${config.name}-scraper-ingestor`);
 
-    const githubOrg = config.github?.org ?? "skout-ai";
+    const githubOrg = config.github?.org ?? "sailishkang-skout";
+    const backendRepo = config.github?.backendRepo ?? "Skout-AI-Backend";
+    const frontendRepo = config.github?.frontendRepo ?? "Skout-Ai-Frontend";
 
     const oidcProvider = new iam.OpenIdConnectProvider(this, "GitHubOidc", {
       url: "https://token.actions.githubusercontent.com",
@@ -64,7 +66,10 @@ export class RegistryStack extends Stack {
             "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
           },
           StringLike: {
-            "token.actions.githubusercontent.com:sub": `repo:${githubOrg}/*`,
+            "token.actions.githubusercontent.com:sub": [
+              `repo:${githubOrg}/${backendRepo}:*`,
+              `repo:${githubOrg}/${frontendRepo}:*`,
+            ],
           },
         },
         "sts:AssumeRoleWithWebIdentity"
