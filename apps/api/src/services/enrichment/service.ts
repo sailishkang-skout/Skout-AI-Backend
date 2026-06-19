@@ -13,6 +13,8 @@ import {
 import { HttpError } from "../../utils/http.js";
 import { isIcpConfigured } from "../icp.service.js";
 
+export const SCORE_CREDIT_COST = 2;
+
 export interface ProspectSnapshot {
   prospectId?: string;
   companyId?: string;
@@ -26,6 +28,9 @@ export interface ProspectSnapshot {
   linkedinUrl?: string;
   employeeCount?: number;
   signals?: string[];
+  companyName?: string;
+  hubspotContactId?: string;
+  phone?: string;
 }
 
 export interface EnrichOptions {
@@ -143,14 +148,22 @@ export class EnrichmentService {
   }
 
   async score(workspaceId: string, snapshot: ProspectSnapshot, icp?: IcpConfig) {
+    await this.prepareWorkspace(workspaceId);
     const { prospectId } = this.resolveIds(snapshot);
     const resolvedIcp = icp ?? (this.loadIcp ? await this.loadIcp(workspaceId) : {});
     if (!isIcpConfigured(resolvedIcp)) {
       throw new HttpError("ICP_NOT_CONFIGURED", 400);
     }
+
+    const balance = await this.store.getCreditBalance(workspaceId);
+    if (balance < SCORE_CREDIT_COST) {
+      throw new InsufficientCreditsError(SCORE_CREDIT_COST, balance);
+    }
+
     const scored = scoreSnapshot(snapshot);
     const input: ScoreInput = {
       prospectId,
+      fullName: scored.fullName,
       title: scored.title,
       seniority: scored.seniority,
       industry: scored.industry,
@@ -160,15 +173,20 @@ export class EnrichmentService {
       signals: scored.signals,
     };
     const result = await scoreProspect(this.aiServiceUrl, input, resolvedIcp, this.aiTimeoutMs);
+    await this.store.deductCredits(workspaceId, SCORE_CREDIT_COST, "ai_score", prospectId);
+    const reasoning =
+      result.painPoints.length > 0
+        ? `${result.reasoning} | Pain: ${result.painPoints.join(", ")}`
+        : result.reasoning;
     await this.store.setScore({
       workspaceId,
       prospectId,
       score: result.icpScore,
       priority: result.outreachReadiness,
-      reasoning: result.reasoning,
+      reasoning,
       scoredAt: new Date().toISOString(),
     });
-    return result;
+    return { ...result, creditsUsed: SCORE_CREDIT_COST };
   }
 
   /**
@@ -222,6 +240,7 @@ export class EnrichmentService {
       const outcome = await engine.enrich({
         prospectId,
         companyDomain: snapshot.companyDomain,
+        companyName: snapshot.companyName,
         fullName: snapshot.fullName,
         title: snapshot.title,
         email: snapshot.email,
@@ -256,13 +275,46 @@ export class EnrichmentService {
         await this.store.deductCredits(workspaceId, outcome.creditsUsed, "enrichment", job.id);
       }
 
-      // Fold enriched primary fields back into the activation snapshot.
-      const enriched: Record<string, unknown> = {};
+      // Fold enriched primary fields back into the activation snapshot (merge, do not replace).
+      const enriched: Record<string, unknown> = {
+        ...(activation.snapshot && typeof activation.snapshot === "object" ? activation.snapshot : {}),
+      };
       for (const r of outcome.results) {
-        if (r.field === "email" && r.isPrimary) enriched.email = r.value;
+        if (r.field === "email" && r.isPrimary && r.value) enriched.email = r.value;
         if (r.field === "email_status") enriched.emailStatus = r.value;
         if (r.field === "phone" && r.isPrimary) enriched.phone = r.value;
-        if (r.field === "company") enriched.company = r.valueJson;
+        if (r.field === "company") {
+          const firm = r.valueJson as {
+            companyName?: string;
+            industry?: string;
+            employeeCount?: number;
+          };
+          const existingName =
+            typeof enriched.companyName === "string" ? enriched.companyName.trim() : "";
+          const firmName = firm.companyName?.trim() ?? "";
+          const useFirmName =
+            firmName.length > 0 &&
+            firmName.toLowerCase() !== "name" &&
+            (!existingName || existingName.toLowerCase() === "name");
+          enriched.company = {
+            ...firm,
+            companyName: useFirmName ? firmName : existingName || firmName || undefined,
+          };
+          if (useFirmName && !enriched.companyName) enriched.companyName = firmName;
+          if (firm.industry && !enriched.industry) enriched.industry = firm.industry;
+          if (firm.employeeCount != null && enriched.employeeCount == null) {
+            enriched.employeeCount = firm.employeeCount;
+          }
+        }
+      }
+      // Keep identity fields from the enrich input when validation ran on an imported email.
+      if (snapshot.email && !enriched.email) enriched.email = snapshot.email;
+      if (snapshot.fullName && !enriched.fullName) enriched.fullName = snapshot.fullName;
+      if (snapshot.title && !enriched.title) enriched.title = snapshot.title;
+      if (snapshot.companyDomain && !enriched.companyDomain) enriched.companyDomain = snapshot.companyDomain;
+      if (snapshot.companyName && !enriched.companyName) enriched.companyName = snapshot.companyName;
+      if (snapshot.hubspotContactId && !enriched.hubspotContactId) {
+        enriched.hubspotContactId = snapshot.hubspotContactId;
       }
       if (Object.keys(enriched).length) {
         await this.store.upsertActivation(workspaceId, prospectId, companyId, enriched);
@@ -374,6 +426,7 @@ export class EnrichmentService {
   }
 
   async scoreList(workspaceId: string, listId: string) {
+    await this.prepareWorkspace(workspaceId);
     const list = await this.store.getList(workspaceId, listId);
     if (!list) throw new HttpError("list_not_found", 404);
     const icp = this.loadIcp ? await this.loadIcp(workspaceId) : {};
@@ -382,24 +435,34 @@ export class EnrichmentService {
     }
 
     const memberIds = await this.store.getListMemberIds(workspaceId, listId);
-    const results: Array<{ prospectId: string; icpScore: number; icpBand: string }> = [];
-
+    const snapshots: ProspectSnapshot[] = [];
     for (const prospectId of memberIds) {
       const activation = await this.store.getActivation(workspaceId, prospectId);
       const snap = (activation?.snapshot ?? {}) as Partial<ProspectSnapshot>;
-      if (!snap.companyDomain) continue;
-      const result = await this.score(
-        workspaceId,
-        { ...snap, companyDomain: snap.companyDomain, prospectId },
-        icp
-      );
+      if (snap.companyDomain) {
+        snapshots.push({ ...snap, companyDomain: snap.companyDomain, prospectId });
+      }
+    }
+
+    const totalCost = snapshots.length * SCORE_CREDIT_COST;
+    const balance = await this.store.getCreditBalance(workspaceId);
+    if (totalCost > 0 && balance < totalCost) {
+      throw new InsufficientCreditsError(totalCost, balance);
+    }
+
+    const results: Array<{ prospectId: string; icpScore: number; icpBand: string }> = [];
+    let creditsUsed = 0;
+
+    for (const snap of snapshots) {
+      const result = await this.score(workspaceId, snap, icp);
+      creditsUsed += result.creditsUsed ?? SCORE_CREDIT_COST;
       results.push({
-        prospectId,
+        prospectId: result.prospectId,
         icpScore: result.icpScore,
         icpBand: result.icpBand,
       });
     }
 
-    return { listId, scored: results.length, results };
+    return { listId, scored: results.length, results, creditsUsed };
   }
 }

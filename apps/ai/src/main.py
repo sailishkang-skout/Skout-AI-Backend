@@ -82,7 +82,7 @@ if not isinstance(posthog_client, _NoOpAnalytics):
 
 def analytics_capture(**kwargs: Any) -> None:
     try:
-        analytics_capture(**kwargs)
+        posthog_client.capture(**kwargs)
     except Exception:
         pass
 
@@ -142,6 +142,7 @@ def classify(request: ClassifyRequest):
 
 class ProspectInput(BaseModel):
     prospect_id: str
+    full_name: Optional[str] = None
     title: Optional[str] = None
     seniority: Optional[str] = None
     industry: Optional[str] = None
@@ -155,6 +156,8 @@ class IcpConfig(BaseModel):
     industries: list[str] = []
     countries: list[str] = []
     seniorities: list[str] = []
+    titles: list[str] = []
+    keywords: list[str] = []
     min_employees: Optional[int] = None
     max_employees: Optional[int] = None
 
@@ -172,6 +175,7 @@ class ScoreResponse(BaseModel):
     pain_points: list[str]
     outreach_readiness: str  # ready | warm | nurture | not_qualified
     reasoning: str
+    source: str  # llm | heuristic
 
 
 _INTENT_SIGNALS = {
@@ -201,13 +205,8 @@ def _readiness(icp: int, intent: int) -> str:
     return "not_qualified"
 
 
-@app.post("/v1/score", response_model=ScoreResponse)
-def score(request: ScoreRequest):
-    """Heuristic ICP + intent scoring.
-
-    Deterministic baseline so the pipeline works without an LLM; swap the body
-    for a LiteLLM call when model scoring is wired (keeps the same contract).
-    """
+def _score_heuristic(request: ScoreRequest) -> ScoreResponse:
+    """Deterministic ICP + intent baseline when LLM is unavailable."""
     p = request.prospect
     icp = request.icp
     score = 40
@@ -235,13 +234,22 @@ def score(request: ScoreRequest):
         if lo <= p.employee_count <= hi:
             score += 10
             reasons.append("size fit")
+    if icp.titles and p.title:
+        title_l = p.title.lower()
+        if any(t.lower() in title_l or title_l in t.lower() for t in icp.titles):
+            score += 10
+            reasons.append("title fit")
+    if icp.keywords and p.title:
+        title_l = p.title.lower()
+        if any(kw.lower() in title_l for kw in icp.keywords):
+            score += 5
+            reasons.append("keyword match")
 
     icp_score = max(0, min(100, score))
-
     intent_score = min(100, len(p.signals) * 25)
     pain_points = sorted({_INTENT_SIGNALS[s] for s in p.signals if s in _INTENT_SIGNALS})
 
-    result = ScoreResponse(
+    return ScoreResponse(
         prospect_id=p.prospect_id,
         icp_score=icp_score,
         icp_band=_band(icp_score),
@@ -249,7 +257,61 @@ def score(request: ScoreRequest):
         pain_points=pain_points,
         outreach_readiness=_readiness(icp_score, intent_score),
         reasoning=", ".join(reasons) or "baseline score (no ICP signals matched)",
+        source="heuristic",
     )
+
+
+def _score_llm(request: ScoreRequest, baseline: ScoreResponse) -> ScoreResponse:
+    p = request.prospect
+    icp = request.icp
+    prompt = (
+        "You are a B2B sales ICP scoring engine. Score how well this prospect matches the ICP. "
+        "Return JSON with: icp_score (0-100 int), intent_score (0-100 int), "
+        "pain_points (array of short strings), reasoning (one concise sentence). "
+        f"Prospect: name={p.full_name}, title={p.title}, seniority={p.seniority}, "
+        f"industry={p.industry}, country={p.country}, employees={p.employee_count}, "
+        f"domain={p.company_domain}, signals={p.signals}. "
+        f"ICP: industries={icp.industries}, countries={icp.countries}, seniorities={icp.seniorities}, "
+        f"titles={icp.titles}, keywords={icp.keywords}, "
+        f"min_employees={icp.min_employees}, max_employees={icp.max_employees}. "
+        f"Signal themes: {_INTENT_SIGNALS}. "
+        f"Heuristic baseline icp_score={baseline.icp_score} — refine with judgment, do not copy blindly."
+    )
+    data = _llm_json(prompt)
+    icp_score = max(0, min(100, int(data.get("icp_score", baseline.icp_score))))
+    intent_score = max(0, min(100, int(data.get("intent_score", baseline.intent_score))))
+    raw_pain = data.get("pain_points", baseline.pain_points)
+    if isinstance(raw_pain, str):
+        pain_points = [raw_pain] if raw_pain else []
+    elif isinstance(raw_pain, list):
+        pain_points = [str(x) for x in raw_pain if x]
+    else:
+        pain_points = baseline.pain_points
+    reasoning = str(data.get("reasoning") or baseline.reasoning)
+    return ScoreResponse(
+        prospect_id=p.prospect_id,
+        icp_score=icp_score,
+        icp_band=_band(icp_score),
+        intent_score=intent_score,
+        pain_points=pain_points,
+        outreach_readiness=_readiness(icp_score, intent_score),
+        reasoning=reasoning,
+        source="llm",
+    )
+
+
+@app.post("/v1/score", response_model=ScoreResponse)
+def score(request: ScoreRequest):
+    """ICP + intent scoring via LLM when OPENAI_API_KEY is set, else heuristic."""
+    baseline = _score_heuristic(request)
+    p = request.prospect
+    result = baseline
+    if _llm_available():
+        try:
+            result = _score_llm(request, baseline)
+        except Exception:
+            result = baseline
+
     analytics_capture(
         distinct_id=p.prospect_id,
         event="prospect_scored",
@@ -260,6 +322,7 @@ def score(request: ScoreRequest):
             "outreach_readiness": result.outreach_readiness,
             "num_pain_points": len(result.pain_points),
             "num_signals": len(p.signals),
+            "source": result.source,
         },
     )
     return result

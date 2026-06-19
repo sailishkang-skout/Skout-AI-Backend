@@ -1,5 +1,6 @@
 export interface ScoreInput {
   prospectId: string;
+  fullName?: string;
   title?: string;
   seniority?: string;
   industry?: string;
@@ -13,6 +14,8 @@ export interface IcpConfig {
   industries?: string[];
   countries?: string[];
   seniorities?: string[];
+  titles?: string[];
+  keywords?: string[];
   minEmployees?: number;
   maxEmployees?: number;
 }
@@ -25,6 +28,8 @@ export interface ScoreResult {
   painPoints: string[];
   outreachReadiness: string;
   reasoning: string;
+  source: "llm" | "heuristic";
+  creditsUsed?: number;
 }
 
 const BANDS = (s: number) => (s >= 75 ? "strong" : s >= 45 ? "medium" : "weak");
@@ -69,6 +74,7 @@ export function scoreLocally(input: ScoreInput, icp: IcpConfig = {}): ScoreResul
     painPoints: [],
     outreachReadiness: READINESS(icpScore, intentScore),
     reasoning: reasons.join(", ") || "baseline score",
+    source: "heuristic",
   };
 }
 
@@ -87,6 +93,7 @@ export async function scoreProspect(
       body: JSON.stringify({
         prospect: {
           prospect_id: input.prospectId,
+          full_name: input.fullName,
           title: input.title,
           seniority: input.seniority,
           industry: input.industry,
@@ -99,6 +106,8 @@ export async function scoreProspect(
           industries: icp.industries ?? [],
           countries: icp.countries ?? [],
           seniorities: icp.seniorities ?? [],
+          titles: icp.titles ?? [],
+          keywords: icp.keywords ?? [],
           min_employees: icp.minEmployees,
           max_employees: icp.maxEmployees,
         },
@@ -115,6 +124,7 @@ export async function scoreProspect(
       painPoints: (data.pain_points as string[]) ?? [],
       outreachReadiness: String(data.outreach_readiness ?? "nurture"),
       reasoning: String(data.reasoning ?? ""),
+      source: data.source === "llm" ? "llm" : "heuristic",
     };
   } catch {
     return scoreLocally(input, icp);

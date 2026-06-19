@@ -2,6 +2,7 @@ import "./instrument.js";
 import { initRootLogger, initSentry } from "@skout/observability";
 import { loadEnv } from "./config/env.js";
 import { buildApp } from "./app.js";
+import { startCrmExportWorker } from "./workers/crm-export.worker.js";
 
 async function main() {
   const config = loadEnv();
@@ -21,7 +22,16 @@ async function main() {
     tracesSampleRate: config.SENTRY_TRACES_SAMPLE_RATE,
   });
 
+  const stopCrmWorker = await startCrmExportWorker(config);
+
   const app = await buildApp(config);
+
+  const shutdown = async () => {
+    await stopCrmWorker();
+    await app.close();
+  };
+  process.on("SIGINT", () => void shutdown());
+  process.on("SIGTERM", () => void shutdown());
 
   try {
     await app.listen({ port: config.PORT, host: config.HOST });

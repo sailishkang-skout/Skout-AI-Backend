@@ -9,6 +9,7 @@ import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as servicediscovery from "aws-cdk-lib/aws-servicediscovery";
+import * as iam from "aws-cdk-lib/aws-iam";
 import { Stack, StackProps, CfnOutput, Tags } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import type { EnvironmentConfig } from "../config/environments.js";
@@ -187,6 +188,7 @@ export class ComputeStack extends Stack {
         DD_SERVICE: "skout-api",
         DD_ENV: config.name,
         DD_SITE: "us5.datadoghq.com",
+        CRM_SECRETS_PREFIX: `${config.stackPrefix}/crm`,
         RATE_LIMIT_MAX: "200",
         RATE_LIMIT_WINDOW_MS: "60000",
         // Dev: allow phone waterfall for typical test leads (score ~40); prod keeps default 80 via app env schema.
@@ -229,6 +231,22 @@ export class ComputeStack extends Stack {
         site: "us5.datadoghq.com",
       },
     });
+
+    const stack = Stack.of(this);
+    apiEcs.taskDefinition.taskRole.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:PutSecretValue",
+          "secretsmanager:CreateSecret",
+          "secretsmanager:DeleteSecret",
+          "secretsmanager:DescribeSecret",
+        ],
+        resources: [
+          `arn:aws:secretsmanager:${stack.region}:${stack.account}:secret:${config.stackPrefix}/crm/*`,
+        ],
+      })
+    );
 
     this.apiService = apiEcs.service;
     this.apiLogGroupName = `/skout/${config.name}/api`;

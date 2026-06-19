@@ -24,6 +24,8 @@ export async function getWorkspaceIcp(db: Db | null, workspaceId: string): Promi
     industries: cfg.industries as string[] | undefined,
     countries: cfg.countries as string[] | undefined,
     seniorities: cfg.seniorities as string[] | undefined,
+    titles: cfg.titles as string[] | undefined,
+    keywords: cfg.keywords as string[] | undefined,
     minEmployees: cfg.minEmployees as number | undefined,
     maxEmployees: cfg.maxEmployees as number | undefined,
   };
@@ -62,6 +64,8 @@ export function isIcpConfigured(icp: IcpConfig): boolean {
     icp.industries?.length ||
       icp.countries?.length ||
       icp.seniorities?.length ||
+      icp.titles?.length ||
+      icp.keywords?.length ||
       icp.minEmployees != null ||
       icp.maxEmployees != null
   );

@@ -101,6 +101,14 @@ const envSchema = z
     COGNISM_BASE_URL: z.string().default("https://app.cognism.com/api"),
     HUBSPOT_CLIENT_ID: z.string().optional(),
     HUBSPOT_CLIENT_SECRET: z.string().optional(),
+    /** Prefix for per-workspace CRM OAuth secrets in AWS Secrets Manager. */
+    CRM_SECRETS_PREFIX: z.string().default("SkoutDev/crm"),
+    /** When true, store CRM OAuth tokens in local `.crm-secrets/` instead of AWS. */
+    CRM_CREDENTIALS_LOCAL: z
+      .string()
+      .optional()
+      .transform((v) => v === "true" || v === "1"),
+    AWS_REGION: z.string().optional(),
     /** Public API base URL for OAuth callbacks (e.g. https://alb.example.com). */
     API_PUBLIC_URL: z.string().optional(),
     /** Frontend origin for post-OAuth redirects. Defaults to first CORS_ORIGIN. */
@@ -108,7 +116,7 @@ const envSchema = z
     // --- Enrichment tunables. ---
     ENRICHMENT_REQUEST_TIMEOUT_MS: z.coerce.number().default(8000),
     ENRICHMENT_PHONE_SCORE_GATE: z.coerce.number().default(80),
-    ENRICHMENT_AI_TIMEOUT_MS: z.coerce.number().default(5000),
+    ENRICHMENT_AI_TIMEOUT_MS: z.coerce.number().default(15000),
   })
   .transform((data) => {
     let next = data;

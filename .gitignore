@@ -8,6 +8,7 @@ dist
 
 # env
 .env
+.crm-secrets/
 .env.local
 .env.dev
 .env.uat

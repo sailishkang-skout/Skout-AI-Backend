@@ -106,8 +106,120 @@ export interface HubSpotContactInput {
   lastname?: string;
   company?: string;
   jobtitle?: string;
+  hubspotContactId?: string;
 }
 
+export interface HubSpotUpsertResult {
+  upserted: number;
+  created: number;
+  updated: number;
+  mappings: Array<{ prospectId: string; hubspotContactId: string }>;
+  errors: string[];
+}
+
+function contactProperties(c: HubSpotContactInput): Record<string, string> {
+  const props: Record<string, string> = {};
+  if (c.email) props.email = c.email;
+  if (c.firstname) props.firstname = c.firstname;
+  if (c.lastname) props.lastname = c.lastname;
+  if (c.company) props.company = c.company;
+  if (c.jobtitle) props.jobtitle = c.jobtitle;
+  return props;
+}
+
+const BATCH_SIZE = 100;
+
+async function hubspotBatchRequest<T>(
+  accessToken: string,
+  path: string,
+  body: unknown
+): Promise<T> {
+  const res = await fetch(`${HUBSPOT_API}${path}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`HubSpot ${path} failed: ${res.status} ${text}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+/** Idempotent push: update by stored HubSpot id, else upsert by email. */
+export async function batchUpsertHubSpotContacts(
+  accessToken: string,
+  contacts: HubSpotContactInput[]
+): Promise<HubSpotUpsertResult> {
+  const mappings: Array<{ prospectId: string; hubspotContactId: string }> = [];
+  const errors: string[] = [];
+  let created = 0;
+  let updated = 0;
+
+  const byId = contacts.filter((c) => c.hubspotContactId?.trim());
+  const byEmail = contacts.filter((c) => c.email?.trim() && !c.hubspotContactId?.trim());
+
+  for (let i = 0; i < byId.length; i += BATCH_SIZE) {
+    const chunk = byId.slice(i, i + BATCH_SIZE);
+    try {
+      const data = await hubspotBatchRequest<{ results?: Array<{ id: string }> }>(
+        accessToken,
+        "/crm/v3/objects/contacts/batch/update",
+        {
+          inputs: chunk.map((c) => ({
+            id: c.hubspotContactId!,
+            properties: contactProperties(c),
+          })),
+        }
+      );
+      const results = data.results ?? [];
+      updated += results.length;
+      chunk.forEach((c, idx) => {
+        const id = results[idx]?.id ?? c.hubspotContactId!;
+        mappings.push({ prospectId: c.prospectId, hubspotContactId: id });
+      });
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  for (let i = 0; i < byEmail.length; i += BATCH_SIZE) {
+    const chunk = byEmail.slice(i, i + BATCH_SIZE);
+    try {
+      const data = await hubspotBatchRequest<{ results?: Array<{ id: string }> }>(
+        accessToken,
+        "/crm/v3/objects/contacts/batch/upsert",
+        {
+          inputs: chunk.map((c) => ({
+            idProperty: "email",
+            properties: contactProperties(c),
+          })),
+        }
+      );
+      const results = data.results ?? [];
+      created += results.length;
+      chunk.forEach((c, idx) => {
+        const id = results[idx]?.id;
+        if (id) mappings.push({ prospectId: c.prospectId, hubspotContactId: id });
+      });
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  return {
+    upserted: mappings.length,
+    created,
+    updated,
+    mappings,
+    errors,
+  };
+}
+
+/** @deprecated Use batchUpsertHubSpotContacts for idempotent export. */
 export async function batchCreateHubSpotContacts(
   accessToken: string,
   contacts: HubSpotContactInput[]

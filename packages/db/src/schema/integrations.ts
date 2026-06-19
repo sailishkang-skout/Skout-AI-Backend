@@ -43,6 +43,21 @@ export const crmConnections = pgTable(
   (table) => [unique().on(table.workspaceId, table.provider)]
 );
 
+/** Maps Skout prospect_id → CRM record id (e.g. HubSpot contact id) for idempotent export. */
+export const crmProspectMappings = pgTable(
+  "crm_prospect_mappings",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    prospectId: text("prospect_id").notNull(),
+    externalId: text("external_id").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [unique().on(table.workspaceId, table.provider, table.prospectId)]
+);
+
 export const webhookEndpoints = pgTable("webhook_endpoints", {
   id: uuid("id").primaryKey().defaultRandom(),
   workspaceId: uuid("workspace_id")

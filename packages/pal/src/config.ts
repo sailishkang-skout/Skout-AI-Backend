@@ -56,7 +56,8 @@ function withCredential<T extends { name: string }>(
   adapter: T,
   source: CredentialSource
 ): WithCredential<T> {
-  return { ...adapter, credentialSource: source };
+  // Object.assign preserves class methods on the prototype; object spread does not.
+  return Object.assign(adapter, { credentialSource: source }) as WithCredential<T>;
 }
 
 /** Build registry — workspace keys first, then platform keys, then stubs. */

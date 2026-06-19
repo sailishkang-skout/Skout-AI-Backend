@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { FieldResult, AttemptLog, AttemptStatus } from "@skout/pal";
@@ -61,12 +61,17 @@ export class DbStore implements EnrichmentStore {
     companyId: string,
     snapshot: Record<string, unknown>
   ): Promise<ActivationRecord> {
+    const patch = JSON.stringify(snapshot);
     const [row] = await this.db
       .insert(prospectActivations)
       .values({ workspaceId, prospectId, companyId, snapshot })
       .onConflictDoUpdate({
         target: [prospectActivations.workspaceId, prospectActivations.prospectId],
-        set: { snapshot, companyId, updatedAt: new Date() },
+        set: {
+          snapshot: sql`coalesce(${prospectActivations.snapshot}, '{}'::jsonb) || ${patch}::jsonb`,
+          companyId,
+          updatedAt: new Date(),
+        },
       })
       .returning();
     return this.toActivation(row);

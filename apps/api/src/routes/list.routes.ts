@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { OpenSearchConfig } from "@skout/opensearch";
-import { buildEnrichmentService } from "../services/enrichment/index.js";
+import { buildEnrichmentService, InsufficientCreditsError } from "../services/enrichment/index.js";
 import { createCrmService } from "../services/crm.service.js";
 import { HttpError, errorResponse } from "../utils/http.js";
 import { buildListService } from "../services/list.service.js";
@@ -42,11 +42,24 @@ export async function listRoutes(app: FastifyInstance) {
   app.get("/lists/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
     const workspaceId = request.workspaceId ?? "unknown";
-    const svc = buildListService(app.db, osConfig(app.config));
-    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
-    const list = await svc.getListById(workspaceId, id);
+    const listSvc = buildListService(app.db, osConfig(app.config));
+    if (!listSvc) return reply.status(503).send({ error: "database_unavailable" });
+    const list = await listSvc.getListById(workspaceId, id);
     if (!list) return reply.status(404).send({ error: "list_not_found" });
-    return reply.send(list);
+
+    const members = await listSvc.getMembers(workspaceId, id);
+    const enrichment = buildEnrichmentService(app.db, app.config);
+    const scores = members?.length
+      ? await enrichment.lookupScores(workspaceId, members.map((m) => m.prospectId))
+      : {};
+
+    return reply.send({
+      ...list,
+      members: (members ?? []).map((m) => ({
+        ...m,
+        score: scores[m.prospectId] ?? null,
+      })),
+    });
   });
 
   app.get("/lists/:id/members", async (request, reply) => {
@@ -79,6 +92,28 @@ export async function listRoutes(app: FastifyInstance) {
     const svc = buildEnrichmentService(app.db, app.config);
     const batch = await svc.enrichList(workspaceId, id, { fields: body.fields });
     return reply.status(202).send({ batchId: batch.id, status: batch.status, total: batch.total });
+  });
+
+  app.post("/lists/:id/score", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = buildEnrichmentService(app.db, app.config);
+    try {
+      const result = await svc.scoreList(workspaceId, id);
+      return reply.send(result);
+    } catch (err) {
+      if (err instanceof InsufficientCreditsError) {
+        return reply.status(402).send({
+          error: "insufficient_credits",
+          required: err.required,
+          available: err.available,
+        });
+      }
+      if (err instanceof HttpError) {
+        return reply.status(err.statusCode).send(errorResponse(err.message, err.statusCode));
+      }
+      throw err;
+    }
   });
 
   app.patch("/lists/:id", async (request, reply) => {

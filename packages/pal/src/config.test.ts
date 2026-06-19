@@ -40,4 +40,19 @@ describe("createRegistryFromConfig", () => {
     const reg = createRegistryFromConfig({ hunterApiKey: "h" });
     expect(reg.emailVerifiers.map((v) => v.name)).toEqual(["hunter-verify"]);
   });
+
+  it("keeps provider methods after BYOK credential wrapping", () => {
+    const reg = createRegistryFromConfig({
+      revenueBaseApiKey: "r",
+      exploriumApiKey: "e",
+      millionVerifierApiKey: "m",
+      zeroBounceApiKey: "z",
+    });
+    for (const p of reg.firmographics) {
+      expect(typeof p.fetchCompany).toBe("function");
+    }
+    for (const p of reg.emailVerifiers) {
+      expect(typeof p.verify).toBe("function");
+    }
+  });
 });

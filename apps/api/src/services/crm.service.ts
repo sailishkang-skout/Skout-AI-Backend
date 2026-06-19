@@ -6,26 +6,31 @@ import { schema } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import { signOAuthState, verifyOAuthState } from "../utils/oauth-state.js";
+import { enqueueCrmExportJob } from "../workers/crm-export.queue.js";
 import { DbStore } from "./enrichment/db-store.js";
 import { InsufficientCreditsError } from "./enrichment/types.js";
 import {
-  batchCreateHubSpotContacts,
+  ensureFreshTokens,
+  saveHubSpotTokens,
+} from "./crm-export.runner.js";
+import {
   buildHubSpotAuthorizeUrl,
   exchangeHubSpotCode,
   fetchAllHubSpotContacts,
   fetchHubSpotListContacts,
-  refreshHubSpotToken,
   isHubSpotMissingScopeError,
   searchHubSpotLists,
-  type HubSpotContactInput,
   type HubSpotContactProperties,
   type HubSpotListSummary,
-  type HubSpotTokens,
 } from "./hubspot.client.js";
+import {
+  createHubSpotCredentialsStore,
+  type HubSpotCredentialsStore,
+} from "./hubspot-credentials.store.js";
 import { buildEnrichmentService, type ProspectSnapshot } from "./enrichment/index.js";
-import { normalizeDomain } from "@skout/shared";
+import { normalizeDomain, generateCompanyId, generateProspectId } from "@skout/shared";
 
-const { crmConnections, asyncJobs, prospectActivations, listMembers, lists } = schema;
+const { crmConnections, asyncJobs, listMembers, lists, crmProspectMappings } = schema;
 
 const HUBSPOT_PROVIDER = "hubspot";
 const log = createLogger("crm.service");
@@ -47,16 +52,70 @@ function domainFromCompanyName(company: string): string {
   return slug ? `${slug}.hubspot-import` : "unknown.hubspot-import";
 }
 
+function prospectIdFromSnapshot(snap: ProspectSnapshot): string {
+  return (
+    snap.prospectId ??
+    (snap.email
+      ? generateProspectId(snap.companyDomain, snap.email)
+      : generateCompanyId(`${snap.companyDomain}:${snap.fullName ?? ""}`))
+  );
+}
+
+async function saveHubSpotImportMappings(
+  db: Db,
+  workspaceId: string,
+  snapshots: ProspectSnapshot[]
+): Promise<void> {
+  for (const snap of snapshots) {
+    if (!snap.hubspotContactId) continue;
+    const prospectId = prospectIdFromSnapshot(snap);
+    await db
+      .insert(crmProspectMappings)
+      .values({
+        workspaceId,
+        provider: HUBSPOT_PROVIDER,
+        prospectId,
+        externalId: snap.hubspotContactId,
+      })
+      .onConflictDoUpdate({
+        target: [
+          crmProspectMappings.workspaceId,
+          crmProspectMappings.provider,
+          crmProspectMappings.prospectId,
+        ],
+        set: {
+          externalId: snap.hubspotContactId,
+          updatedAt: new Date(),
+        },
+      });
+  }
+}
+
+function displayNameFromEmail(email: string): string | undefined {
+  const local = email.split("@")[0]?.trim();
+  if (!local) return undefined;
+  const words = local.replace(/[._+-]+/g, " ").trim();
+  if (!words) return undefined;
+  return words
+    .split(/\s+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(" ");
+}
+
 function hubSpotContactToSnapshot(contact: {
   id: string;
   properties: HubSpotContactProperties;
 }): ProspectSnapshot | null {
   const props = contact.properties;
   const email = props.email?.trim().toLowerCase();
-  const fullName = [props.firstname, props.lastname].filter(Boolean).join(" ").trim() || undefined;
+  const companyName = props.company?.trim() || undefined;
+  const fullName =
+    [props.firstname, props.lastname].filter(Boolean).join(" ").trim() ||
+    (email ? displayNameFromEmail(email) : undefined) ||
+    companyName;
   const companyDomain =
     (email ? domainFromEmail(email) : null) ??
-    (props.company?.trim() ? domainFromCompanyName(props.company) : null);
+    (companyName ? domainFromCompanyName(companyName) : null);
 
   if (!companyDomain) return null;
 
@@ -65,8 +124,11 @@ function hubSpotContactToSnapshot(contact: {
     fullName,
     title: props.jobtitle?.trim() || undefined,
     companyDomain,
+    companyName,
     email: email || undefined,
+    phone: props.phone?.trim() || undefined,
     signals: ["hubspot_import"],
+    hubspotContactId: contact.id,
   };
 }
 
@@ -75,16 +137,20 @@ interface ConnectionRow {
   provider: string;
   status: string;
   externalAccountId: string | null;
-  settings: Record<string, unknown>;
+  credentialsRef: string | null;
   connectedAt: Date;
   tokenExpiresAt: Date | null;
 }
 
 export class CrmService {
+  private readonly credentialsStore: HubSpotCredentialsStore;
+
   constructor(
     private readonly db: Db | null,
     private readonly config: Env
-  ) {}
+  ) {
+    this.credentialsStore = createHubSpotCredentialsStore(config);
+  }
 
   private get oauthSecret(): string {
     return this.config.HUBSPOT_CLIENT_SECRET ?? this.config.CLERK_SECRET_KEY ?? "dev-oauth-state";
@@ -150,12 +216,23 @@ export class CrmService {
       code,
     });
 
-    await this.saveHubSpotConnection(parsed.workspaceId, tokens);
+    const portalId = createHmac("sha256", this.oauthSecret)
+      .update(tokens.accessToken)
+      .digest("hex")
+      .slice(0, 12);
+
+    await saveHubSpotTokens(this.db, this.credentialsStore, parsed.workspaceId, tokens, portalId);
     return `${this.frontendUrl.replace(/\/$/, "")}/settings/crm?hubspot=connected`;
   }
 
   async disconnectHubSpot(workspaceId: string): Promise<void> {
     if (!this.db) throw new HttpError("database_unavailable", 503);
+
+    const connection = await this.getHubSpotConnection(workspaceId);
+    if (connection?.credentialsRef) {
+      await this.credentialsStore.delete(connection.credentialsRef);
+    }
+
     await this.db
       .delete(crmConnections)
       .where(
@@ -164,8 +241,9 @@ export class CrmService {
   }
 
   async listHubSpotLists(workspaceId: string): Promise<{ data: HubSpotListSummary[]; total: number }> {
+    if (!this.db) throw new HttpError("database_unavailable", 503);
     await this.requireHubSpotConnected(workspaceId);
-    const tokens = await this.ensureFreshTokens(workspaceId);
+    const tokens = await ensureFreshTokens(this.db, this.config, this.credentialsStore, workspaceId);
     try {
       const data = await searchHubSpotLists(tokens.accessToken);
       return { data, total: data.length };
@@ -194,7 +272,7 @@ export class CrmService {
     await this.requireHubSpotConnected(workspaceId);
 
     const maxContacts = Math.min(options.maxContacts ?? IMPORT_MAX_CONTACTS, IMPORT_MAX_CONTACTS);
-    const tokens = await this.ensureFreshTokens(workspaceId);
+    const tokens = await ensureFreshTokens(this.db, this.config, this.credentialsStore, workspaceId);
 
     const rawContacts =
       options.source === "list"
@@ -231,6 +309,8 @@ export class CrmService {
     } else {
       throw new HttpError("import_target_required", 400);
     }
+
+    await saveHubSpotImportMappings(this.db, workspaceId, snapshots);
 
     return {
       listId: listId!,
@@ -284,9 +364,24 @@ export class CrmService {
       })
       .returning();
 
-    void this.runHubSpotExport(job.id, workspaceId, listId).catch((err) => {
-      log.error("HubSpot export failed", err, { workspaceId, listId });
-    });
+    try {
+      await enqueueCrmExportJob(this.config, {
+        jobId: job.id,
+        workspaceId,
+        listId,
+      });
+    } catch (err) {
+      log.error("Failed to enqueue HubSpot export — rolling back job", err, { jobId: job.id });
+      await this.db
+        .update(asyncJobs)
+        .set({
+          status: "failed",
+          errorMessage: "queue_unavailable",
+          completedAt: new Date(),
+        })
+        .where(eq(asyncJobs.id, job.id));
+      throw new HttpError("export_queue_unavailable", 503);
+    }
 
     return { jobId: job.id };
   }
@@ -310,145 +405,6 @@ export class CrmService {
       startedAt: job.startedAt?.toISOString() ?? null,
       completedAt: job.completedAt?.toISOString() ?? null,
     };
-  }
-
-  private async runHubSpotExport(jobId: string, workspaceId: string, listId: string): Promise<void> {
-    if (!this.db) return;
-
-    await this.db
-      .update(asyncJobs)
-      .set({ status: "running", startedAt: new Date() })
-      .where(eq(asyncJobs.id, jobId));
-
-    try {
-      const tokens = await this.ensureFreshTokens(workspaceId);
-      const members = await this.db.select().from(listMembers).where(eq(listMembers.listId, listId));
-      const contacts: HubSpotContactInput[] = [];
-
-      for (const member of members) {
-        const [activation] = await this.db
-          .select()
-          .from(prospectActivations)
-          .where(
-            and(
-              eq(prospectActivations.workspaceId, workspaceId),
-              eq(prospectActivations.prospectId, member.prospectId)
-            )
-          );
-        const snap = (activation?.snapshot ?? {}) as Record<string, unknown>;
-        const fullName = typeof snap.fullName === "string" ? snap.fullName : "";
-        const parts = fullName.trim().split(/\s+/);
-        const firstname = parts[0] ?? "";
-        const lastname = parts.slice(1).join(" ") || undefined;
-        contacts.push({
-          prospectId: member.prospectId,
-          email: typeof snap.email === "string" ? snap.email : undefined,
-          firstname: firstname || undefined,
-          lastname,
-          company:
-            typeof snap.companyDomain === "string"
-              ? snap.companyDomain
-              : typeof snap.company === "string"
-                ? snap.company
-                : undefined,
-          jobtitle: typeof snap.title === "string" ? snap.title : undefined,
-        });
-      }
-
-      const withEmail = contacts.filter((c) => c.email);
-      const batchResult = await batchCreateHubSpotContacts(tokens.accessToken, withEmail);
-
-      await this.db
-        .update(asyncJobs)
-        .set({
-          status: "completed",
-          completedAt: new Date(),
-          result: {
-            total: contacts.length,
-            pushed: batchResult.created,
-            skippedNoEmail: contacts.length - withEmail.length,
-            errors: batchResult.errors,
-          },
-        })
-        .where(eq(asyncJobs.id, jobId));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      await this.db
-        .update(asyncJobs)
-        .set({
-          status: "failed",
-          completedAt: new Date(),
-          errorMessage: message,
-        })
-        .where(eq(asyncJobs.id, jobId));
-    }
-  }
-
-  private async ensureFreshTokens(workspaceId: string): Promise<HubSpotTokens> {
-    const row = await this.getHubSpotConnection(workspaceId);
-    if (!row) throw new HttpError("hubspot_not_connected", 400);
-
-    const settings = row.settings as unknown as HubSpotTokens;
-    const expiresAt = settings.expiresAt ? new Date(settings.expiresAt).getTime() : 0;
-    if (expiresAt > Date.now() + 60_000) {
-      return settings;
-    }
-
-    if (!this.hubspotConfigured() || !settings.refreshToken) {
-      await this.markConnectionError(workspaceId);
-      throw new HttpError("hubspot_token_expired", 401);
-    }
-
-    const refreshed = await refreshHubSpotToken({
-      clientId: this.config.HUBSPOT_CLIENT_ID!,
-      clientSecret: this.config.HUBSPOT_CLIENT_SECRET!,
-      refreshToken: settings.refreshToken,
-    });
-
-    await this.saveHubSpotConnection(workspaceId, refreshed, row.externalAccountId);
-    return refreshed;
-  }
-
-  private async saveHubSpotConnection(
-    workspaceId: string,
-    tokens: HubSpotTokens,
-    externalAccountId?: string | null
-  ): Promise<void> {
-    if (!this.db) return;
-    const portalId =
-      externalAccountId ??
-      createHmac("sha256", this.oauthSecret).update(tokens.accessToken).digest("hex").slice(0, 12);
-
-    await this.db
-      .insert(crmConnections)
-      .values({
-        workspaceId,
-        provider: HUBSPOT_PROVIDER,
-        status: "connected",
-        externalAccountId: portalId,
-        settings: tokens,
-        tokenExpiresAt: new Date(tokens.expiresAt),
-      })
-      .onConflictDoUpdate({
-        target: [crmConnections.workspaceId, crmConnections.provider],
-        set: {
-          status: "connected",
-          externalAccountId: portalId,
-          settings: tokens,
-          tokenExpiresAt: new Date(tokens.expiresAt),
-          updatedAt: new Date(),
-        },
-      });
-  }
-
-  private async markConnectionError(workspaceId: string): Promise<void> {
-    if (!this.db) return;
-    await this.db
-      .update(crmConnections)
-      .set({ status: "error", updatedAt: new Date() })
-      .where(
-        and(eq(crmConnections.workspaceId, workspaceId), eq(crmConnections.provider, HUBSPOT_PROVIDER))
-      );
   }
 
   private async requireHubSpotConnected(workspaceId: string): Promise<void> {

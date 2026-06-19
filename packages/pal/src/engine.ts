@@ -167,8 +167,18 @@ export class EnrichmentEngine {
             billingSource: source,
           });
           // Promote the email to primary only when verified valid.
-          const emailResult = results.find((r) => r.field === "email");
-          if (emailResult) emailResult.isPrimary = passes;
+          let emailResult = results.find((r) => r.field === "email");
+          if (!emailResult && passes) {
+            emailResult = {
+              field: "email",
+              value: email,
+              provider: "activation",
+              isPrimary: true,
+            };
+            results.push(emailResult);
+          } else if (emailResult) {
+            emailResult.isPrimary = passes;
+          }
           if (!passes) {
             attempts.push({
               order: ++order,

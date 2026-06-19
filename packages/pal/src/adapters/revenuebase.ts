@@ -52,8 +52,11 @@ export class RevenueBaseFirmographics implements FirmographicsProvider {
     );
     const c = body.companies?.[0];
     if (!c) return null;
+    const resolvedName = c.company_name?.trim();
+    const safeName =
+      resolvedName && resolvedName.toLowerCase() !== "name" ? resolvedName : companyName;
     return {
-      companyName: c.company_name ?? companyName,
+      companyName: safeName ?? companyName,
       hqCountry: c.headquarters_country,
       hqCity: c.headquarters_city,
     };

@@ -1,12 +1,13 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { buildEnrichmentService } from "../services/enrichment/index.js";
+import { buildEnrichmentService, InsufficientCreditsError } from "../services/enrichment/index.js";
 import { getWorkspaceIcp } from "../services/icp.service.js";
 import { HttpError, errorResponse } from "../utils/http.js";
 
 const scoreBodySchema = z.object({
   prospect: z.object({
     prospectId: z.string().optional(),
+    fullName: z.string().optional(),
     title: z.string().optional(),
     seniority: z.string().optional(),
     industry: z.string().optional(),
@@ -20,6 +21,8 @@ const scoreBodySchema = z.object({
       industries: z.array(z.string()).optional(),
       countries: z.array(z.string()).optional(),
       seniorities: z.array(z.string()).optional(),
+      titles: z.array(z.string()).optional(),
+      keywords: z.array(z.string()).optional(),
       minEmployees: z.number().optional(),
       maxEmployees: z.number().optional(),
     })
@@ -67,6 +70,13 @@ export async function enrichmentRoutes(app: FastifyInstance) {
       const result = await svc.score(workspaceId, { ...body.prospect }, icp);
       return reply.send(result);
     } catch (err) {
+      if (err instanceof InsufficientCreditsError) {
+        return reply.status(402).send({
+          error: "insufficient_credits",
+          required: err.required,
+          available: err.available,
+        });
+      }
       if (err instanceof HttpError) {
         return reply.status(err.statusCode).send(errorResponse(err.message, err.statusCode));
       }
