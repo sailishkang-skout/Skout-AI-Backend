@@ -26,10 +26,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile || pnpm install
 
-      - name: Build shared packages
-        run: |
-          pnpm --filter @skout/shared build
-          pnpm --filter @skout/scraper-contracts build
+      - name: Build workspace packages (API dependencies)
+        run: pnpm --filter @skout/api^... build
 
       - name: Test
         run: pnpm test
