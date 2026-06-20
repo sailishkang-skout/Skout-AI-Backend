@@ -58,7 +58,8 @@ async function buildTestApp(env: Env = baseEnv): Promise<FastifyInstance> {
         issues: error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
       });
     }
-    reply.code(500).send({ error: error.message ?? "internal_server_error" });
+    const message = error instanceof Error ? error.message : "internal_server_error";
+    reply.code(500).send({ error: message });
   });
 
   app.addHook("preHandler", async (req) => {
