@@ -19,14 +19,29 @@ export interface ProspectDocument {
   fullName?: string;
   title?: string;
   seniority?: string;
+  department?: string;
+  jobFunction?: string;
   email?: string;
+  phone?: string;
+  linkedinUrl?: string;
   companyDomain: string;
   companyName?: string;
   industry?: string;
   subIndustry?: string;
   country?: string;
+  state?: string;
+  city?: string;
   employeeCount?: number;
   employeeBucket?: string;
+  companyStage?: string;
+  annualRevenue?: number;
+  lastFundingRound?: string;
+  lastFundingDate?: string;
+  totalFunding?: number;
+  currentlyHiring?: boolean;
+  yearsAtCompany?: number;
+  yearsInRole?: number;
+  previousCompany?: string;
   techStack?: { category: string; technology: string }[];
   signals?: { type: string; observedAt: string; detail?: string }[];
   icpScore?: number;
@@ -38,11 +53,41 @@ export interface ProspectDocument {
 
 export interface SearchFilters {
   query?: string;
-  industry?: string;
-  country?: string;
+  // Contact
+  fullName?: string;
+  jobTitle?: string;
+  department?: string;
   seniority?: string;
+  jobFunction?: string;
+  emailAvailable?: boolean;
+  phoneAvailable?: boolean;
+  linkedInAvailable?: boolean;
+  // Experience
+  minYearsAtCompany?: number;
+  minYearsInRole?: number;
+  previousCompany?: string;
+  // Activity signals (multi-select OR)
+  contactSignals?: string[];
+  // Company — basic
+  companyName?: string;
+  industry?: string;
+  subIndustry?: string;
+  country?: string;
+  state?: string;
+  city?: string;
   minEmployees?: number;
   maxEmployees?: number;
+  // Company — stage & funding
+  companyStage?: string;
+  lastFundingRound?: string;
+  minRevenue?: number;
+  maxRevenue?: number;
+  // Hiring
+  currentlyHiring?: boolean;
+  hiringDepartments?: string[];
+  // Company signals (multi-select OR)
+  companySignals?: string[];
+  // Tech / intent (existing)
   tech?: string;
   signal?: string;
 }
@@ -101,11 +146,28 @@ export async function ensureProspectsIndex(cfg: OpenSearchConfig): Promise<void>
           fullName: { type: "text" },
           title: { type: "text" },
           seniority: { type: "keyword" },
+          department: { type: "keyword" },
+          jobFunction: { type: "keyword" },
+          email: { type: "keyword" },
+          phone: { type: "keyword" },
+          linkedinUrl: { type: "keyword" },
           companyDomain: { type: "keyword" },
           companyName: { type: "text" },
           industry: { type: "keyword" },
+          subIndustry: { type: "keyword" },
           country: { type: "keyword" },
+          state: { type: "keyword" },
+          city: { type: "text" },
           employeeCount: { type: "integer" },
+          companyStage: { type: "keyword" },
+          annualRevenue: { type: "long" },
+          lastFundingRound: { type: "keyword" },
+          lastFundingDate: { type: "date" },
+          totalFunding: { type: "long" },
+          currentlyHiring: { type: "boolean" },
+          yearsAtCompany: { type: "float" },
+          yearsInRole: { type: "float" },
+          previousCompany: { type: "text" },
           techStack: { type: "nested" },
           signals: { type: "nested" },
           icpScore: { type: "integer" },
@@ -169,9 +231,104 @@ export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25
       },
     });
   }
-  if (filters.industry) filter.push({ term: { industry: filters.industry } });
-  if (filters.country) filter.push({ term: { country: filters.country } });
+  // Contact information
+  if (filters.fullName?.trim()) {
+    filter.push({ match_phrase_prefix: { fullName: filters.fullName.trim() } });
+  }
+  if (filters.jobTitle?.trim()) {
+    filter.push({ match: { title: filters.jobTitle.trim() } });
+  }
+  if (filters.department) filter.push({ term: { department: filters.department } });
   if (filters.seniority) filter.push({ term: { seniority: filters.seniority } });
+  if (filters.jobFunction) filter.push({ term: { jobFunction: filters.jobFunction } });
+  if (filters.emailAvailable === true) filter.push({ exists: { field: "email" } });
+  if (filters.phoneAvailable === true) filter.push({ exists: { field: "phone" } });
+  if (filters.linkedInAvailable === true) filter.push({ exists: { field: "linkedinUrl" } });
+
+  // Experience
+  if (filters.minYearsAtCompany != null) {
+    filter.push({ range: { yearsAtCompany: { gte: filters.minYearsAtCompany } } });
+  }
+  if (filters.minYearsInRole != null) {
+    filter.push({ range: { yearsInRole: { gte: filters.minYearsInRole } } });
+  }
+  if (filters.previousCompany?.trim()) {
+    filter.push({ match: { previousCompany: filters.previousCompany.trim() } });
+  }
+
+  // Activity signals — OR across selected types
+  if (filters.contactSignals?.length) {
+    filter.push({
+      nested: {
+        path: "signals",
+        query: { terms: { "signals.type": filters.contactSignals } },
+      },
+    });
+  }
+
+  // Company — basic
+  if (filters.companyName?.trim()) {
+    filter.push({ match: { companyName: filters.companyName.trim() } });
+  }
+  if (filters.industry)    filter.push({ term: { industry: filters.industry } });
+  if (filters.subIndustry) filter.push({ term: { subIndustry: filters.subIndustry } });
+  if (filters.country)     filter.push({ term: { country: filters.country } });
+  if (filters.state?.trim()) filter.push({ term: { state: filters.state.trim() } });
+  if (filters.city?.trim())  filter.push({ match: { city: filters.city.trim() } });
+  if (filters.minEmployees != null || filters.maxEmployees != null) {
+    filter.push({
+      range: {
+        employeeCount: {
+          ...(filters.minEmployees != null ? { gte: filters.minEmployees } : {}),
+          ...(filters.maxEmployees != null ? { lte: filters.maxEmployees } : {}),
+        },
+      },
+    });
+  }
+
+  // Company — stage & funding
+  if (filters.companyStage)     filter.push({ term: { companyStage: filters.companyStage } });
+  if (filters.lastFundingRound) filter.push({ term: { lastFundingRound: filters.lastFundingRound } });
+  if (filters.minRevenue != null || filters.maxRevenue != null) {
+    filter.push({
+      range: {
+        annualRevenue: {
+          ...(filters.minRevenue != null ? { gte: filters.minRevenue } : {}),
+          ...(filters.maxRevenue != null ? { lte: filters.maxRevenue } : {}),
+        },
+      },
+    });
+  }
+
+  // Hiring
+  if (filters.currentlyHiring === true) filter.push({ term: { currentlyHiring: true } });
+  if (filters.hiringDepartments?.length) {
+    filter.push({
+      nested: {
+        path: "signals",
+        query: {
+          bool: {
+            must: [
+              { term: { "signals.type": "hiring" } },
+              { terms: { "signals.department": filters.hiringDepartments } },
+            ],
+          },
+        },
+      },
+    });
+  }
+
+  // Company signals (OR logic)
+  if (filters.companySignals?.length) {
+    filter.push({
+      nested: {
+        path: "signals",
+        query: { terms: { "signals.type": filters.companySignals } },
+      },
+    });
+  }
+
+  // Tech / intent signals (existing)
   if (filters.tech) {
     filter.push({
       nested: {
@@ -185,16 +342,6 @@ export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25
       nested: {
         path: "signals",
         query: { term: { "signals.type": filters.signal } },
-      },
-    });
-  }
-  if (filters.minEmployees != null || filters.maxEmployees != null) {
-    filter.push({
-      range: {
-        employeeCount: {
-          ...(filters.minEmployees != null ? { gte: filters.minEmployees } : {}),
-          ...(filters.maxEmployees != null ? { lte: filters.maxEmployees } : {}),
-        },
       },
     });
   }
