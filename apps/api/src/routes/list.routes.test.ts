@@ -446,3 +446,31 @@ describe("list routes — auth stub", () => {
     await app.close();
   });
 });
+
+describe("list routes — CSV export", () => {
+  it("GET /lists/:id/export/csv returns attachment", async () => {
+    const app = await buildTestApp();
+    const email = "list-csv@test.com";
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/lists",
+      headers: { ...asUser(email), "content-type": "application/json" },
+      payload: { name: "CSV Export List" },
+    });
+    const { id } = created.json() as { id: string };
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/lists/${id}/export/csv`,
+      headers: asUser(email),
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toContain("text/csv");
+    expect(res.body).toContain("Full Name");
+    expect(res.headers["content-disposition"]).toContain(".csv");
+
+    await app.close();
+  });
+});

@@ -62,7 +62,11 @@ export const authPlugin = fp(async (app) => {
     return;
   }
 
-  const authorizedParties = config.CORS_ORIGIN.map(normalizeOrigin);
+  const authorizedParties = [
+    ...config.CORS_ORIGIN.map(normalizeOrigin),
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+  ].filter((value, index, all) => all.indexOf(value) === index);
 
   app.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {
     if (isHealthRoute(request.url) || isPublicRoute(request.url)) {

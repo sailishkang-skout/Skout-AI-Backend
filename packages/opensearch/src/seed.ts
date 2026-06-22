@@ -20,7 +20,7 @@ const cfg: OpenSearchConfig = {
   index: process.env.OPENSEARCH_INDEX ?? "prospects",
 };
 
-const count = Number(process.env.DEMO_CORPUS_SIZE ?? 100);
+const count = Number(process.env.DEMO_CORPUS_SIZE ?? 5300);
 
 try {
   console.log(`Ensuring index "${cfg.index ?? "prospects"}"…`);

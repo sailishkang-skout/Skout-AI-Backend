@@ -1,5 +1,7 @@
+import { isSyntheticCaptureDomain, linkedinHandleFromUrl } from "../capture-domains.js";
 import { splitName } from "../email-patterns.js";
 import type {
+  EmailFindContext,
   EmailFinder,
   EmailVerification,
   EmailVerifier,
@@ -23,14 +25,39 @@ export class HunterEmailFinder implements EmailFinder {
     private readonly timeoutMs?: number
   ) {}
 
-  async findEmail(fullName: string, domain: string): Promise<FoundEmail | null> {
-    const { first, last } = splitName(fullName);
-    const url = `${this.baseUrl}/email-finder?${qs({
-      domain,
-      first_name: first,
-      last_name: last,
-      api_key: this.apiKey,
-    })}`;
+  async findEmail(
+    fullName: string,
+    domain: string,
+    context?: EmailFindContext
+  ): Promise<FoundEmail | null> {
+    const trimmedName = fullName.trim();
+    const { first, last } = splitName(trimmedName);
+    const params: Record<string, string | undefined> = { api_key: this.apiKey };
+
+    if (isSyntheticCaptureDomain(domain)) {
+      const handle = linkedinHandleFromUrl(context?.linkedinUrl);
+      if (handle) {
+        params.linkedin_handle = handle;
+        if (trimmedName) params.full_name = trimmedName;
+      } else if (context?.companyName?.trim()) {
+        params.company = context.companyName.trim();
+        if (trimmedName) params.full_name = trimmedName;
+      } else {
+        return null;
+      }
+    } else {
+      params.domain = domain;
+      if (first && last) {
+        params.first_name = first;
+        params.last_name = last;
+      } else if (trimmedName) {
+        params.full_name = trimmedName;
+      } else {
+        return null;
+      }
+    }
+
+    const url = `${this.baseUrl}/email-finder?${qs(params)}`;
     const body = await fetchJson<{ data?: { email?: string; score?: number } }>(url, {
       timeoutMs: this.timeoutMs,
     });

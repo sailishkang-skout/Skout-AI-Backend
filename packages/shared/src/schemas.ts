@@ -231,6 +231,7 @@ export const searchProspectsResponseSchema = z.object({
   page: z.number(),
   pageSize: z.number(),
   cached: z.boolean(),
+  creditsUsed: z.number().int().min(0).optional(),
 });
 
 export const workspaceSchema = z.object({

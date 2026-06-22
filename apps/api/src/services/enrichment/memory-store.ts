@@ -52,7 +52,7 @@ export class MemoryStore implements EnrichmentStore {
     return w.credits;
   }
 
-  async deductCredits(workspaceId: string, amount: number): Promise<number> {
+  async deductCredits(workspaceId: string, amount: number, _action?: string, _ref?: string): Promise<number> {
     const w = this.ws(workspaceId);
     if (w.credits < amount) throw new InsufficientCreditsError(amount, w.credits);
     w.credits -= amount;

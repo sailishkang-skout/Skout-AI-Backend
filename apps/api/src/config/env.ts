@@ -66,6 +66,12 @@ const envSchema = z
     OPENSEARCH_USERNAME: z.string().optional(),
     OPENSEARCH_PASSWORD: z.string().optional(),
     OPENSEARCH_INDEX: z.string().default("prospects"),
+    /** In-memory demo corpus size when OpenSearch is unavailable. */
+    DEMO_CORPUS_SIZE: z.coerce.number().int().positive().default(5300),
+    /** Credits charged per search page (cache miss only). */
+    SEARCH_CREDIT_COST: z.coerce.number().int().min(0).default(1),
+    /** Redis TTL for cached search result pages. */
+    SEARCH_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(300),
     CLICKHOUSE_URL: z.string().optional(),
     AI_SERVICE_URL: z.string().optional(),
     OPENAI_API_KEY: z.string().optional(),

@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
+import { isSyntheticCaptureDomain } from "../capture-domains.js";
 import { generateEmailCandidates } from "../email-patterns.js";
 import type {
   CompanyData,
+  EmailFindContext,
   EmailFinder,
   EmailVerification,
   EmailVerifier,
@@ -44,10 +46,26 @@ export class StubFirmographics implements FirmographicsProvider {
   }
 }
 
+function stubDomainFromContext(domain: string, context?: EmailFindContext): string | null {
+  if (!isSyntheticCaptureDomain(domain)) return domain;
+  const slug = context?.companyName
+    ?.trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+  if (!slug) return null;
+  return `${slug}.com`;
+}
+
 export class StubEmailFinder implements EmailFinder {
   readonly name = "stub-hunter";
-  async findEmail(fullName: string, domain: string): Promise<FoundEmail | null> {
-    const [best] = generateEmailCandidates(fullName, domain);
+  async findEmail(
+    fullName: string,
+    domain: string,
+    context?: EmailFindContext
+  ): Promise<FoundEmail | null> {
+    const resolvedDomain = stubDomainFromContext(domain, context);
+    if (!resolvedDomain) return null;
+    const [best] = generateEmailCandidates(fullName, resolvedDomain);
     if (!best) return null;
     const seed = hashInt(fullName, domain);
     return { email: best, confidence: 0.6 + (seed % 35) / 100 };

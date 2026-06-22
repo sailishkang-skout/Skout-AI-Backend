@@ -9,13 +9,14 @@ import { ListService } from "./list.service.js";
 // getLists: ...where().groupBy().orderBy()  → resolves
 // getListById: ...where().groupBy()         → resolves
 // getMembers member query: ...where()       → resolves
-function selectChain(result: unknown[], terminal: "orderBy" | "groupBy" | "where" = "where") {
+function selectChain(result: unknown[], terminal: "orderBy" | "groupBy" | "where" | "limit" = "where") {
   const c: Record<string, unknown> = {};
   c.from      = vi.fn().mockReturnValue(c);
   c.leftJoin  = vi.fn().mockReturnValue(c);
   c.where     = terminal === "where"    ? vi.fn().mockResolvedValue(result) : vi.fn().mockReturnValue(c);
   c.groupBy   = terminal === "groupBy"  ? vi.fn().mockResolvedValue(result) : vi.fn().mockReturnValue(c);
   c.orderBy   = terminal === "orderBy"  ? vi.fn().mockResolvedValue(result) : vi.fn().mockReturnValue(c);
+  c.limit     = terminal === "limit"    ? vi.fn().mockResolvedValue(result) : vi.fn().mockReturnValue(c);
   return c;
 }
 
@@ -222,10 +223,10 @@ describe("ListService.addMembers", () => {
   it("returns null when the list does not exist", async () => {
     const db = makeDb([{ result: [], terminal: "groupBy" }]);
     const svc = new ListService(db as any, null);
-    expect(await svc.addMembers("ws-1", "missing", ["p1"])).toBeNull();
+    expect(await svc.addMembers("ws-1", "missing", [{ prospectId: "p1" }])).toBeNull();
   });
 
-  it("returns the unchanged list when prospectIds is empty", async () => {
+  it("returns the unchanged list when members is empty", async () => {
     const db = makeDb([{ result: [LIST_ROW], terminal: "groupBy" }]);
     const svc = new ListService(db as any, null);
 
@@ -234,26 +235,27 @@ describe("ListService.addMembers", () => {
     expect(db.insert).not.toHaveBeenCalled();
   });
 
-  it("inserts one prospect_activation and one list_member per prospectId", async () => {
+  it("inserts list members and preserves existing activation snapshots", async () => {
     const updatedList = { ...LIST_ROW, memberCount: 2 };
     const db = makeDb(
       [
-        { result: [LIST_ROW], terminal: "groupBy" },  // initial getListById
-        { result: [updatedList], terminal: "groupBy" }, // getListByIdWithMembers → getListById
-        { result: [MEMBER_ROW, { ...MEMBER_ROW, prospectId: "p-2", addedAt: new Date() }], terminal: "where" }, // members
+        { result: [LIST_ROW], terminal: "groupBy" },
+        { result: [], terminal: "limit" },
+        { result: [], terminal: "limit" },
+        { result: [updatedList], terminal: "groupBy" },
+        { result: [MEMBER_ROW, { ...MEMBER_ROW, prospectId: "p-2", addedAt: new Date() }], terminal: "where" },
       ],
-      [
-        () => insertOnConflictUpdate(), // prospectActivations for p-1
-        () => insertOnConflictUpdate(), // prospectActivations for p-2
-        () => insertOnConflictNothing(), // listMembers
-      ]
+      [() => insertOnConflictNothing()]
     );
     const svc = new ListService(db as any, null);
 
-    const result = await svc.addMembers("ws-1", "list-1", ["p-1", "p-2"]);
+    const result = await svc.addMembers("ws-1", "list-1", [
+      { prospectId: "p-1" },
+      { prospectId: "p-2" },
+    ]);
 
     expect(result).not.toBeNull();
-    expect(db.insert).toHaveBeenCalledTimes(3);
+    expect(db.insert).toHaveBeenCalledTimes(1);
   });
 
   it("returns the list with members array after adding", async () => {
@@ -261,47 +263,46 @@ describe("ListService.addMembers", () => {
     const db = makeDb(
       [
         { result: [LIST_ROW], terminal: "groupBy" },
+        { result: [], terminal: "limit" },
         { result: [updatedList], terminal: "groupBy" },
         { result: [MEMBER_ROW], terminal: "where" },
       ],
-      [
-        () => insertOnConflictUpdate(),
-        () => insertOnConflictNothing(),
-      ]
+      [() => insertOnConflictNothing()]
     );
     const svc = new ListService(db as any, null);
 
-    const result = await svc.addMembers("ws-1", "list-1", ["p-1"]);
+    const result = await svc.addMembers("ws-1", "list-1", [{ prospectId: "p-1" }]);
     expect(result!.members).toHaveLength(1);
     expect(result!.members![0].prospectId).toBe("p-1");
     expect(result!.prospectCount).toBe(1);
   });
 
-  it("does not call OpenSearch when osCfg is null", async () => {
+  it("upserts activation when a display snapshot is provided", async () => {
     const updatedList = { ...LIST_ROW, memberCount: 1 };
     const db = makeDb(
       [
         { result: [LIST_ROW], terminal: "groupBy" },
+        { result: [], terminal: "limit" },
         { result: [updatedList], terminal: "groupBy" },
         { result: [MEMBER_ROW], terminal: "where" },
       ],
-      [
-        () => insertOnConflictUpdate(),
-        () => insertOnConflictNothing(),
-      ]
+      [() => insertOnConflictUpdate(), () => insertOnConflictNothing()]
     );
     const svc = new ListService(db as any, null);
 
-    // snapshot falls back to { prospectId } when no OS config
-    const insertMock = insertOnConflictUpdate();
-    const valuesFn = insertMock.values as ReturnType<typeof vi.fn>;
+    await svc.addMembers("ws-1", "list-1", [
+      {
+        prospectId: "p-1",
+        snapshot: { prospectId: "p-1", fullName: "Alice", companyDomain: "acme.com" },
+      },
+    ]);
 
-    await svc.addMembers("ws-1", "list-1", ["p-1"]);
-
-    // The prospectActivation insert should use the fallback snapshot
-    const firstInsertArg = (db.insert.mock.results[0].value as ReturnType<typeof insertOnConflictUpdate>);
+    const firstInsertArg = db.insert.mock.results[0].value as ReturnType<typeof insertOnConflictUpdate>;
     const valuesArg = (firstInsertArg as { values: ReturnType<typeof vi.fn> }).values.mock.calls[0][0];
-    expect(valuesArg).toMatchObject({ prospectId: "p-1", snapshot: { prospectId: "p-1" } });
+    expect(valuesArg).toMatchObject({
+      prospectId: "p-1",
+      snapshot: { prospectId: "p-1", fullName: "Alice", companyDomain: "acme.com" },
+    });
   });
 });
 

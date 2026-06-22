@@ -1,4 +1,5 @@
 import { createStubRegistry } from "./adapters/stub.js";
+import { isSyntheticCaptureDomain } from "./capture-domains.js";
 import { generateEmailCandidates } from "./email-patterns.js";
 import {
   PHONE_SCORE_GATE,
@@ -123,9 +124,13 @@ export class EnrichmentEngine {
     // 2. Email — use supplied, else find, else first generated candidate
     let email = input.email;
     if (!email && fields.includes("email") && input.fullName) {
+      const emailContext = {
+        companyName: input.companyName,
+        linkedinUrl: input.linkedinUrl,
+      };
       for (const p of this.providers.emailFinders) {
         const found = await run(p.name, "findEmail", () =>
-          p.findEmail(input.fullName!, input.companyDomain)
+          p.findEmail(input.fullName!, input.companyDomain, emailContext)
         );
         if (found) {
           email = found.email;
@@ -141,7 +146,7 @@ export class EnrichmentEngine {
           break;
         }
       }
-      if (!email) {
+      if (!email && !isSyntheticCaptureDomain(input.companyDomain)) {
         const [candidate] = generateEmailCandidates(input.fullName, input.companyDomain);
         if (candidate) {
           email = candidate;

@@ -89,4 +89,17 @@ describe("EnrichmentEngine", () => {
     expect(finalizeBillableCredits(fourWorkspaceSteps)).toBe(3);
     expect(finalizeBillableCredits(fourPlatformSteps)).toBe(4);
   });
+
+  it("does not pattern-generate emails for LinkedIn capture domains", async () => {
+    const engine = new EnrichmentEngine();
+    const out = await engine.enrich({
+      prospectId: "p1",
+      fullName: "Alex Founder",
+      companyDomain: "openchat.linkedin",
+      companyName: "OpenChat",
+      linkedinUrl: "https://www.linkedin.com/in/alex-founder/",
+      fields: ["email"],
+    });
+    expect(out.results.some((r) => r.field === "email" && r.provider === "pattern-gen")).toBe(false);
+  });
 });

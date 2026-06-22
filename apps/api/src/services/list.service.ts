@@ -1,10 +1,65 @@
-import { and, count, desc, eq, inArray } from "drizzle-orm";
+import { and, count, desc, eq, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
-import { getProspectById, type OpenSearchConfig } from "@skout/opensearch";
+import { getProspectById, type OpenSearchConfig, type ProspectDocument } from "@skout/opensearch";
 import type { ProspectList, ProspectListMember } from "./enrichment/types.js";
 
 const { lists, listMembers, prospectActivations } = schema;
+
+export interface AddMemberInput {
+  prospectId: string;
+  snapshot?: Record<string, unknown>;
+}
+
+const DISPLAY_FIELDS = [
+  "fullName",
+  "title",
+  "email",
+  "companyName",
+  "companyDomain",
+  "linkedinUrl",
+] as const;
+
+function snapshotHasDisplayFields(snapshot: Record<string, unknown>): boolean {
+  return DISPLAY_FIELDS.some((key) => {
+    const value = snapshot[key];
+    return typeof value === "string" && value.trim().length > 0;
+  });
+}
+
+function mergeSnapshots(
+  base: Record<string, unknown>,
+  patch: Record<string, unknown>
+): Record<string, unknown> {
+  const merged = { ...base };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined || value === null || value === "") continue;
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed) merged[key] = trimmed;
+      continue;
+    }
+    merged[key] = value;
+  }
+  return merged;
+}
+
+function osDocToSnapshot(doc: ProspectDocument): Record<string, unknown> {
+  return {
+    prospectId: doc.prospectId,
+    companyId: doc.companyId,
+    fullName: doc.fullName,
+    title: doc.title,
+    seniority: doc.seniority,
+    email: doc.email,
+    companyDomain: doc.companyDomain,
+    companyName: doc.companyName,
+    industry: doc.industry,
+    country: doc.country,
+    employeeCount: doc.employeeCount,
+    linkedinUrl: doc.linkedinUrl,
+  };
+}
 
 export class ListService {
   constructor(
@@ -78,49 +133,77 @@ export class ListService {
   async addMembers(
     workspaceId: string,
     listId: string,
-    prospectIds: string[]
+    members: AddMemberInput[]
   ): Promise<ProspectList | null> {
     const list = await this.getListById(workspaceId, listId);
     if (!list) return null;
-    if (prospectIds.length === 0) return list;
+    if (members.length === 0) return list;
 
-    // Fetch OS doc per prospectId and upsert into prospect_activations
-    for (const prospectId of prospectIds) {
+    for (const member of members) {
+      const { prospectId, snapshot: providedSnapshot } = member;
       let snapshot: Record<string, unknown> = { prospectId };
       let companyId = prospectId;
+      let osFound = false;
 
       if (this.osCfg) {
         const doc = await getProspectById(this.osCfg, prospectId).catch(() => null);
         if (doc) {
-          snapshot = {
-            prospectId: doc.prospectId,
-            companyId: doc.companyId,
-            fullName: doc.fullName,
-            title: doc.title,
-            seniority: doc.seniority,
-            email: doc.email,
-            companyDomain: doc.companyDomain,
-            companyName: doc.companyName,
-            industry: doc.industry,
-            country: doc.country,
-            employeeCount: doc.employeeCount,
-          };
+          osFound = true;
+          snapshot = osDocToSnapshot(doc);
           companyId = doc.companyId;
         }
       }
 
-      await this.db
-        .insert(prospectActivations)
-        .values({ workspaceId, prospectId, companyId, snapshot })
-        .onConflictDoUpdate({
-          target: [prospectActivations.workspaceId, prospectActivations.prospectId],
-          set: { snapshot, updatedAt: new Date() },
-        });
+      if (providedSnapshot) {
+        snapshot = mergeSnapshots(snapshot, providedSnapshot);
+        companyId = String(providedSnapshot.companyId ?? companyId);
+      }
+
+      const [existing] = await this.db
+        .select()
+        .from(prospectActivations)
+        .where(
+          and(
+            eq(prospectActivations.workspaceId, workspaceId),
+            eq(prospectActivations.prospectId, prospectId)
+          )
+        )
+        .limit(1);
+
+      const existingSnapshot =
+        existing?.snapshot && typeof existing.snapshot === "object"
+          ? (existing.snapshot as Record<string, unknown>)
+          : null;
+
+      if (existingSnapshot) {
+        snapshot = mergeSnapshots(existingSnapshot, snapshot);
+        companyId = existing?.companyId ?? companyId;
+      }
+
+      const hasProvided = Boolean(providedSnapshot && snapshotHasDisplayFields(providedSnapshot));
+      const shouldUpsert = existingSnapshot
+        ? osFound || hasProvided
+        : snapshotHasDisplayFields(snapshot);
+
+      if (shouldUpsert) {
+        const patch = JSON.stringify(snapshot);
+        await this.db
+          .insert(prospectActivations)
+          .values({ workspaceId, prospectId, companyId, snapshot })
+          .onConflictDoUpdate({
+            target: [prospectActivations.workspaceId, prospectActivations.prospectId],
+            set: {
+              snapshot: sql`coalesce(${prospectActivations.snapshot}, '{}'::jsonb) || ${patch}::jsonb`,
+              companyId,
+              updatedAt: new Date(),
+            },
+          });
+      }
     }
 
     await this.db
       .insert(listMembers)
-      .values(prospectIds.map((prospectId) => ({ listId, prospectId })))
+      .values(members.map((member) => ({ listId, prospectId: member.prospectId })))
       .onConflictDoNothing();
 
     return this.getListByIdWithMembers(workspaceId, listId);

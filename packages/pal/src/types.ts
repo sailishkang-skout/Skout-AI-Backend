@@ -76,9 +76,19 @@ export interface FoundEmail {
   confidence: number;
 }
 
+/** Extra context for email finders when companyDomain is a LinkedIn capture placeholder. */
+export interface EmailFindContext {
+  companyName?: string;
+  linkedinUrl?: string;
+}
+
 export interface EmailFinder {
   readonly name: string;
-  findEmail(fullName: string, domain: string): Promise<FoundEmail | null>;
+  findEmail(
+    fullName: string,
+    domain: string,
+    context?: EmailFindContext
+  ): Promise<FoundEmail | null>;
 }
 
 // --- Email verification -----------------------------------------------------

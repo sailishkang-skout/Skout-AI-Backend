@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "Skout AI Prospector",
+  "version": "0.4.9",
+  "description": "Capture LinkedIn profiles into Skout lists and enrich contacts without leaving the browser.",
+  "permissions": ["storage", "activeTab", "scripting", "webNavigation", "sidePanel", "tabs"],
+  "host_permissions": [
+    "https://www.linkedin.com/*",
+    "https://linkedin.com/*",
+    "http://localhost:3000/*",
+    "http://127.0.0.1:3000/*",
+    "http://localhost:3001/*",
+    "http://127.0.0.1:3001/*",
+    "https://*.execute-api.us-east-1.amazonaws.com/*"
+  ],
+  "action": {
+    "default_title": "Open Skout AI panel"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "externally_connectable": {
+    "matches": ["http://localhost:3000/*", "http://127.0.0.1:3000/*"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.linkedin.com/*", "https://linkedin.com/*"],
+      "js": ["linkedin-scrape.js", "linkedin-bridge.js", "content-script.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["http://localhost:3000/*", "http://127.0.0.1:3000/*"],
+      "js": ["skout-web-bridge.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

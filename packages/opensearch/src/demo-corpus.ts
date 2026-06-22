@@ -1,31 +1,94 @@
 import { createHash } from "node:crypto";
 import type { ProspectDocument, SearchFilters } from "./index.js";
 
-const INDUSTRIES = ["Software & SaaS", "FinTech", "Healthcare", "Retail & E-Commerce", "Manufacturing"];
-const COUNTRIES = ["US", "DE", "GB", "FR", "CA"];
-const CITIES = ["San Francisco", "New York", "London", "Berlin", "Toronto"];
-const STATES = ["CA", "NY", "TX", "WA", "ON"];
+const INDUSTRIES = [
+  "Software & SaaS",
+  "FinTech",
+  "Healthcare",
+  "Retail & E-Commerce",
+  "Manufacturing",
+  "Cybersecurity",
+  "HR Tech",
+  "EdTech",
+  "Logistics",
+  "Legal Tech",
+];
+const COUNTRIES = ["US", "DE", "GB", "FR", "CA", "AU", "IN", "SG", "NL", "IE"];
+const CITIES = [
+  "San Francisco",
+  "New York",
+  "London",
+  "Berlin",
+  "Toronto",
+  "Austin",
+  "Chicago",
+  "Boston",
+  "Seattle",
+  "Mumbai",
+];
+const STATES = ["CA", "NY", "TX", "WA", "ON", "MA", "IL", "CO", "GA", "FL"];
 const STAGES = ["seed", "series_a", "series_b", "bootstrapped", "public"];
 const SENIORITIES = ["vp", "director", "manager", "c_level", "founder", "head", "individual_contributor"];
 const DEPARTMENTS = ["Sales", "Marketing", "Engineering", "Product", "Operations", "Finance"];
 const JOB_FUNCTIONS = ["AE", "SDR", "Demand Generation", "RevOps", "Growth", "Recruiting"];
+const FIRST_NAMES = [
+  "Alex",
+  "Jordan",
+  "Taylor",
+  "Morgan",
+  "Casey",
+  "Riley",
+  "Sam",
+  "Avery",
+  "Quinn",
+  "Blake",
+  "Drew",
+  "Jamie",
+];
+const LAST_NAMES = [
+  "Chen",
+  "Patel",
+  "Nguyen",
+  "Brooks",
+  "Kim",
+  "Martinez",
+  "Singh",
+  "Okafor",
+  "Andersen",
+  "Silva",
+  "Khan",
+  "Fischer",
+];
+const TITLES = [
+  "VP Sales",
+  "Director of Marketing",
+  "Head of Growth",
+  "Chief Revenue Officer",
+  "Sales Manager",
+  "Account Executive",
+  "SDR Manager",
+  "Director of Demand Gen",
+  "VP Customer Success",
+  "RevOps Lead",
+];
 
 /** Synthetic corpus for local dev when OpenSearch is empty or unreachable. */
-export function buildDemoCorpus(count = 100): ProspectDocument[] {
+export function buildDemoCorpus(count = 5300): ProspectDocument[] {
   const now = new Date().toISOString();
+  const companyCount = Math.max(120, Math.ceil(count / 25));
   return Array.from({ length: count }, (_, i) => ({
     prospectId: createHash("sha256").update(`demo-prospect-${i}`).digest("hex"),
-    companyId: createHash("sha256").update(`demo-company-${i % 20}`).digest("hex"),
-    fullName: `Demo Prospect ${i + 1}`,
-    title: i % 2 === 0 ? "VP Sales" : "Director of Marketing",
+    companyId: createHash("sha256").update(`demo-company-${i % companyCount}`).digest("hex"),
+    fullName: `${FIRST_NAMES[i % FIRST_NAMES.length]} ${LAST_NAMES[(i + 3) % LAST_NAMES.length]}`,
+    title: TITLES[i % TITLES.length],
     seniority: SENIORITIES[i % SENIORITIES.length],
     department: DEPARTMENTS[i % DEPARTMENTS.length],
     jobFunction: JOB_FUNCTIONS[i % JOB_FUNCTIONS.length],
     email: i % 3 !== 0 ? `prospect${i}@example${(i % 10) + 1}.com` : undefined,
     phone: i % 4 === 0 ? `+1-555-${String(i).padStart(4, "0")}` : undefined,
     linkedinUrl: i % 2 === 0 ? `https://linkedin.com/in/demo-prospect-${i}` : undefined,
-    companyDomain: `example${(i % 10) + 1}.com`,
-    companyName: `Example Corp ${(i % 10) + 1}`,
+    companyDomain: `example${(i % companyCount) + 1}.com`,
+    companyName: `Example Corp ${(i % companyCount) + 1}`,
     industry: INDUSTRIES[i % INDUSTRIES.length],
     country: COUNTRIES[i % COUNTRIES.length],
     state: STATES[i % STATES.length],

@@ -1,0 +1,273 @@
+/** LinkedIn sidebar UI — panel init is once per page; bridge handles read-profile. */
+(function initSkoutLinkedInPanel() {
+  if (globalThis.__SKOUT_LINKEDIN_PANEL__) return;
+  globalThis.__SKOUT_LINKEDIN_PANEL__ = true;
+
+  function isProfilePage() {
+    return /linkedin\.com\/in\//i.test(location.href) || /linkedin\.com\/pub\//i.test(location.href);
+  }
+
+  function readProfileFromLinkedIn() {
+    if (typeof globalThis.__SKOUT_SCRAPE_LINKEDIN__ === "function") {
+      return globalThis.__SKOUT_SCRAPE_LINKEDIN__();
+    }
+    const linkedinUrl = location.href.split("?")[0];
+    if (!isProfilePage()) return { error: "not_a_profile", linkedinUrl };
+    return { fullName: "", title: "", companyName: "", linkedinUrl };
+  }
+
+  function setPanelStatus(panel, message, isError = false) {
+    const status = panel.querySelector("#skout-ai-status");
+    if (!status) return;
+    status.textContent = message;
+    status.style.color = isError ? "#fca5a5" : "#94a3b8";
+  }
+
+  function populateLists(select, lists, selectedId) {
+    if (!select) return;
+    select.innerHTML =
+      lists.length > 0
+        ? lists
+            .map(
+              (list) =>
+                `<option value="${list.id}"${list.id === selectedId ? " selected" : ""}>${list.name}</option>`
+            )
+            .join("")
+        : `<option value="">No lists — create in Skout</option>`;
+  }
+
+  function friendlyRuntimeError(message) {
+    const m = String(message || "").toLowerCase();
+    if (m.includes("frame") && m.includes("error page")) {
+      return "LinkedIn didn't load — refresh this page (Cmd+Shift+R) and try again.";
+    }
+    if (m.includes("invalidated") || m.includes("receiving end")) {
+      return "Extension updated — refresh this page (Cmd+Shift+R).";
+    }
+    return message || "Something went wrong.";
+  }
+
+  function safeRuntimeSend(message) {
+    return new Promise((resolve, reject) => {
+      try {
+        chrome.runtime.sendMessage(message, (response) => {
+          const err = chrome.runtime.lastError;
+          if (err) {
+            reject(new Error(friendlyRuntimeError(err.message)));
+            return;
+          }
+          resolve(response);
+        });
+      } catch {
+        reject(new Error("Extension updated — refresh this page (Cmd+Shift+R)."));
+      }
+    });
+  }
+
+  async function loadLists(panel) {
+    const select = panel.querySelector("#skout-ai-list-select");
+    try {
+      const response = await safeRuntimeSend({ type: "get-lists" });
+      populateLists(select, response?.lists || [], response?.lastListId || "");
+    } catch {
+      if (select) select.innerHTML = `<option value="">Sign in to Skout first</option>`;
+    }
+  }
+
+  function createPanel() {
+    const panel = document.createElement("aside");
+    panel.id = "skout-ai-panel";
+    panel.innerHTML = `
+      <style>
+        #skout-ai-panel {
+          position: fixed; top: 88px; right: 16px; z-index: 99999; width: 280px;
+          background: #0f172a; color: #f8fafc; border: 1px solid #334155;
+          border-radius: 12px; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.35);
+          font-family: Inter, system-ui, sans-serif; padding: 14px;
+        }
+        #skout-ai-panel-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+        #skout-ai-panel h2 { margin: 0; font-size: 14px; font-weight: 600; }
+        #skout-ai-close { background: transparent; border: 0; color: #94a3b8; cursor: pointer; font-size: 18px; }
+        #skout-ai-summary { margin: 0 0 10px; font-size: 12px; color: #cbd5e1; line-height: 1.4; }
+        #skout-ai-panel label { display: block; font-size: 11px; color: #94a3b8; margin-bottom: 4px; }
+        #skout-ai-list-select {
+          width: 100%; box-sizing: border-box; margin-bottom: 8px; border-radius: 8px;
+          border: 1px solid #334155; padding: 7px 8px; font-size: 12px; background: #1e293b; color: #f8fafc;
+        }
+        #skout-ai-panel button.action {
+          width: 100%; margin-top: 6px; border: 0; border-radius: 8px;
+          padding: 8px 10px; font-size: 12px; font-weight: 600; cursor: pointer;
+        }
+        #skout-ai-add { background: #2563eb; color: white; }
+        #skout-ai-enrich { background: #1e293b; color: #f8fafc; border: 1px solid #334155; }
+        #skout-ai-panel button:disabled { opacity: 0.6; cursor: wait; }
+        #skout-ai-status { margin-top: 8px; font-size: 11px; color: #94a3b8; }
+      </style>
+      <div id="skout-ai-panel-header">
+        <h2>Skout AI</h2>
+        <button id="skout-ai-close" type="button" aria-label="Close">×</button>
+      </div>
+      <p id="skout-ai-summary">Reading profile…</p>
+      <label for="skout-ai-list-select">Target list</label>
+      <select id="skout-ai-list-select"><option value="">Loading lists…</option></select>
+      <button id="skout-ai-add" type="button" class="action">Add to list</button>
+      <button id="skout-ai-enrich" type="button" class="action">Enrich email</button>
+      <div id="skout-ai-status">Ready</div>
+    `;
+
+    panel.querySelector("#skout-ai-close")?.addEventListener("click", () => {
+      panel.remove();
+      sessionStorage.setItem("skout-ai-panel-hidden", "1");
+    });
+
+    panel.querySelector("#skout-ai-add")?.addEventListener("click", () => void onAdd(panel));
+    panel.querySelector("#skout-ai-enrich")?.addEventListener("click", () => void onEnrich(panel));
+
+    document.body.appendChild(panel);
+    void loadLists(panel);
+    return panel;
+  }
+
+  function updatePanelProfile(panel) {
+    const profile = readProfileFromLinkedIn();
+    if (profile.error === "not_a_profile") {
+      panel.remove();
+      return;
+    }
+    panel.__skoutProfile = profile;
+    const summary = panel.querySelector("#skout-ai-summary");
+    if (summary) {
+      summary.textContent = profile.fullName
+        ? `${profile.fullName}${profile.title ? ` · ${profile.title}` : ""}`
+        : "Loading profile…";
+    }
+  }
+
+  function ensurePanel() {
+    let panel = document.getElementById("skout-ai-panel");
+    if (!panel) panel = createPanel();
+    updatePanelProfile(panel);
+    return panel;
+  }
+
+  function boot() {
+    if (sessionStorage.getItem("skout-ai-panel-hidden") === "1") return;
+    if (!isProfilePage()) {
+      document.getElementById("skout-ai-panel")?.remove();
+      return;
+    }
+    ensurePanel();
+  }
+
+  function nameFromUrlVanity() {
+    const url = location.href.split("?")[0];
+    const match = url.match(/linkedin\.com\/(?:in|pub)\/([^/?#]+)/i);
+    if (!match) return "";
+    const slug = decodeURIComponent(match[1]).replace(/\/$/, "");
+    const word = slug.replace(/-[a-f0-9]{6,}$/i, "").replace(/-\d+$/, "");
+    if (!word || word.includes("-")) return "";
+    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+  }
+
+  function getProfile(panel) {
+    let profile = panel.__skoutProfile || readProfileFromLinkedIn();
+    if (!profile.fullName) {
+      const retry = readProfileFromLinkedIn();
+      if (retry.fullName) {
+        panel.__skoutProfile = retry;
+        return retry;
+      }
+      const vanity = nameFromUrlVanity();
+      if (vanity) {
+        profile = { ...profile, fullName: vanity };
+        panel.__skoutProfile = profile;
+        return profile;
+      }
+      throw new Error("Profile still loading — wait a few seconds and try again.");
+    }
+    return profile;
+  }
+
+  async function onAdd(panel) {
+    const listId = panel.querySelector("#skout-ai-list-select")?.value;
+    const addBtn = panel.querySelector("#skout-ai-add");
+    const enrichBtn = panel.querySelector("#skout-ai-enrich");
+    if (!listId) {
+      setPanelStatus(panel, "Pick a list first.", true);
+      return;
+    }
+
+    addBtn.disabled = true;
+    enrichBtn.disabled = true;
+    setPanelStatus(panel, "Adding…");
+
+    try {
+      const profile = getProfile(panel);
+      const result = await safeRuntimeSend({ type: "add-to-list", listId, profile });
+      if (!result?.ok) throw new Error(result?.error || "Add failed");
+      setPanelStatus(panel, `Added ${result.fullName} ✓`);
+      safeRuntimeSend({ type: "save-last-list", listId }).catch(() => undefined);
+    } catch (error) {
+      setPanelStatus(panel, error instanceof Error ? error.message : "Add failed", true);
+    } finally {
+      addBtn.disabled = false;
+      enrichBtn.disabled = false;
+    }
+  }
+
+  async function onEnrich(panel) {
+    const enrichBtn = panel.querySelector("#skout-ai-enrich");
+    const addBtn = panel.querySelector("#skout-ai-add");
+    enrichBtn.disabled = true;
+    addBtn.disabled = true;
+    setPanelStatus(panel, "Enriching…");
+
+    try {
+      const profile = getProfile(panel);
+      const result = await safeRuntimeSend({ type: "enrich-profile", profile });
+      if (!result?.ok) throw new Error(result?.error || "Enrich failed");
+      setPanelStatus(panel, `Enrichment started for ${result.fullName}`);
+    } catch (error) {
+      setPanelStatus(panel, error instanceof Error ? error.message : "Enrich failed", true);
+    } finally {
+      enrichBtn.disabled = false;
+      addBtn.disabled = false;
+    }
+  }
+
+  let lastUrl = location.href;
+  function onRouteChange() {
+    if (location.href === lastUrl) return;
+    lastUrl = location.href;
+    boot();
+  }
+
+  const originalPushState = history.pushState.bind(history);
+  const originalReplaceState = history.replaceState.bind(history);
+  history.pushState = (...args) => {
+    originalPushState(...args);
+    onRouteChange();
+  };
+  history.replaceState = (...args) => {
+    originalReplaceState(...args);
+    onRouteChange();
+  };
+  window.addEventListener("popstate", onRouteChange);
+
+  let lastSummaryText = "";
+  setInterval(() => {
+    if (sessionStorage.getItem("skout-ai-panel-hidden") === "1" || !isProfilePage()) return;
+    const panel = document.getElementById("skout-ai-panel");
+    if (!panel) return;
+    const profile = readProfileFromLinkedIn();
+    if (!profile.fullName) return;
+    const summary = `${profile.fullName}${profile.title ? ` · ${profile.title}` : ""}`;
+    if (summary === lastSummaryText) return;
+    lastSummaryText = summary;
+    panel.__skoutProfile = profile;
+    const el = panel.querySelector("#skout-ai-summary");
+    if (el) el.textContent = summary;
+  }, 3000);
+
+  boot();
+})();

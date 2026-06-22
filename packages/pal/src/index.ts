@@ -1,4 +1,5 @@
 export * from "./types.js";
+export * from "./capture-domains.js";
 export * from "./email-patterns.js";
 export * from "./engine.js";
 export * from "./config.js";

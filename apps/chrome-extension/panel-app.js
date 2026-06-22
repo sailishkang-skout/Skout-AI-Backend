@@ -1,0 +1,272 @@
+/** Shared UI for side panel (stays open — unlike toolbar popup). */
+import { clearAuthToken, getStoredAuth, isAuthFresh, ensureSession } from "./auth.js";
+import { getConfig } from "./api.js";
+import { getLastListId, saveLastListId } from "./lists-cache.js";
+import { friendlyTabError, findLinkedInProfileTabId } from "./tab-utils.js";
+
+function runInBackground(type, payload = {}) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({ type, ...payload }, (response) => {
+      const err = chrome.runtime.lastError;
+      if (err) {
+        reject(new Error(friendlyTabError(err.message)));
+        return;
+      }
+      if (response?.ok) resolve(response);
+      else reject(new Error(friendlyTabError(response?.error || "Request failed")));
+    });
+  });
+}
+
+async function findLinkedInTabId() {
+  return findLinkedInProfileTabId();
+}
+
+function readProfileFromTab(tabId) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tabId, { type: "read-profile" }, (response) => {
+      const err = chrome.runtime.lastError;
+      if (err) {
+        reject(new Error(friendlyTabError(err.message)));
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
+export function initPanel() {
+  const statusEl = document.getElementById("status");
+  const authStatusEl = document.getElementById("auth-status");
+  const connectBtn = document.getElementById("connect-skout");
+  const reconnectBtn = document.getElementById("reconnect-skout");
+  const apiUrlEl = document.getElementById("api-url");
+  const webUrlEl = document.getElementById("web-url");
+  const stubEmailEl = document.getElementById("stub-email");
+  const useStubAuthEl = document.getElementById("use-stub-auth");
+  const listSelectEl = document.getElementById("list-select");
+
+  function setStatus(message, isError = false) {
+    if (!statusEl) return;
+    statusEl.textContent = message;
+    statusEl.className = isError ? "status-error" : "status-ok";
+  }
+
+  function setAuthStatus(message, connected = false) {
+    if (!authStatusEl) return;
+    authStatusEl.textContent = message;
+    authStatusEl.className = connected ? "auth-status connected" : "auth-status";
+  }
+
+  function setConnectedUi(connected) {
+    connectBtn?.classList.toggle("hidden", false);
+    if (connected) {
+      connectBtn.textContent = "Reconnect Skout account";
+    } else {
+      connectBtn.textContent = "Connect Skout account";
+    }
+  }
+
+  function setBusy(button, busy, label) {
+    if (!button) return;
+    button.disabled = busy;
+    if (label) button.textContent = label;
+  }
+
+  async function isSignedIn() {
+    const config = await getConfig();
+    if (config.useStubAuth) return true;
+    const auth = await getStoredAuth();
+    return isAuthFresh(auth);
+  }
+
+  async function loadConfig() {
+    const config = await getConfig();
+    if (apiUrlEl) apiUrlEl.value = config.apiUrl;
+    if (webUrlEl) webUrlEl.value = config.webUrl;
+    if (stubEmailEl) stubEmailEl.value = config.stubEmail;
+    if (useStubAuthEl) useStubAuthEl.checked = config.useStubAuth;
+
+    if (config.useStubAuth) {
+      setAuthStatus(`Stub mode · ${config.stubEmail}`, true);
+      setConnectedUi(true);
+      return;
+    }
+
+    const auth = await getStoredAuth();
+    if (isAuthFresh(auth)) {
+      setAuthStatus(auth.authEmail ? `Signed in as ${auth.authEmail}` : "Signed in to Skout", true);
+      setConnectedUi(true);
+    } else if (auth.authToken && auth.authEmail) {
+      setAuthStatus(`Session expired — open Skout (${auth.authEmail})`);
+      setConnectedUi(false);
+    } else {
+      setAuthStatus("Sign in to Skout in this browser.");
+      setConnectedUi(false);
+    }
+  }
+
+  async function refreshLists({ quiet = false } = {}) {
+    if (!listSelectEl) return;
+
+    if (!quiet) {
+      listSelectEl.innerHTML = `<option value="">Loading lists…</option>`;
+      setStatus("Loading lists…");
+    }
+
+    try {
+      const config = await getConfig();
+      if (!config.useStubAuth && !(await isSignedIn())) {
+        await runInBackground("connect-skout", { focus: false });
+        await loadConfig();
+      }
+
+      if (!(await isSignedIn())) {
+        listSelectEl.innerHTML = `<option value="">Sign in to Skout first</option>`;
+        if (!quiet) {
+          setStatus("Open localhost:3000, sign in, then click Connect Skout account.", true);
+        }
+        return;
+      }
+
+      const result = await runInBackground("get-lists");
+      const lists = result.lists || [];
+      const lastId = await getLastListId();
+      listSelectEl.innerHTML =
+        lists.length > 0
+          ? lists
+              .map(
+                (list) =>
+                  `<option value="${list.id}"${list.id === lastId ? " selected" : ""}>${list.name}</option>`
+              )
+              .join("")
+          : `<option value="">No lists yet — create one in Skout</option>`;
+
+      if (!quiet) {
+        setStatus(lists.length > 0 ? `${lists.length} list(s) ready.` : "Create a list in Skout.");
+      }
+    } catch (error) {
+      const message = friendlyTabError(error instanceof Error ? error.message : "Failed to load lists");
+      listSelectEl.innerHTML = `<option value="">Could not load lists</option>`;
+      if (!quiet) {
+        setStatus(
+          message.includes("signed in") || message.includes("Connect")
+            ? message
+            : `${message} Try Connect Skout account, or open localhost:3000 and sign in.`,
+          true
+        );
+      }
+    }
+  }
+
+  listSelectEl?.addEventListener("change", () => {
+    void saveLastListId(listSelectEl.value);
+  });
+
+  async function connectSkout() {
+    setBusy(connectBtn, true, "Connecting…");
+    setBusy(reconnectBtn, true, "Connecting…");
+    setStatus("Connecting…");
+    try {
+      const result = await runInBackground("connect-skout", { focus: true });
+      setAuthStatus(result.email ? `Signed in as ${result.email}` : "Signed in to Skout", true);
+      setConnectedUi(true);
+      await refreshLists();
+    } catch (error) {
+      setAuthStatus("Sign in to Skout in this browser.");
+      setConnectedUi(false);
+      setStatus(error instanceof Error ? error.message : "Connect failed", true);
+    } finally {
+      setBusy(connectBtn, false, "Connect Skout account");
+      setBusy(reconnectBtn, false, "Reconnect Skout account");
+    }
+  }
+
+  connectBtn?.addEventListener("click", () => void connectSkout());
+  reconnectBtn?.addEventListener("click", () => void connectSkout());
+
+  document.getElementById("save-config")?.addEventListener("click", async () => {
+    const useStub = Boolean(useStubAuthEl?.checked);
+    await chrome.storage.sync.set({
+      apiUrl: apiUrlEl?.value?.trim() || "http://localhost:3001",
+      webUrl: webUrlEl?.value?.trim() || "http://localhost:3000",
+      stubEmail: stubEmailEl?.value?.trim() || "extension@example.com",
+      useStubAuth: useStub,
+    });
+    if (useStub) await clearAuthToken();
+    setStatus("Saved settings.");
+    await loadConfig();
+    await refreshLists();
+  });
+
+  document.getElementById("refresh-lists")?.addEventListener("click", () => refreshLists());
+
+  document.getElementById("add-to-list")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const listId = listSelectEl?.value;
+    if (!listId) {
+      setStatus("Pick a list first.", true);
+      return;
+    }
+
+    setBusy(button, true, "Adding…");
+    try {
+      await saveLastListId(listId);
+      const tabId = await findLinkedInTabId();
+      const profile = await readProfileFromTab(tabId).catch(() => null);
+      const result = await runInBackground("add-to-list", { listId, tabId, profile: profile || undefined });
+      setStatus(`Added ${result.fullName} to the list.`);
+    } catch (error) {
+      setStatus(
+        error instanceof Error
+          ? error.message
+          : "Add failed — use the Skout box on the LinkedIn profile page.",
+        true
+      );
+    } finally {
+      setBusy(button, false, "Add current profile to list");
+    }
+  });
+
+  document.getElementById("enrich-profile")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    setBusy(button, true, "Enriching…");
+    try {
+      const tabId = await findLinkedInTabId();
+      const profile = await readProfileFromTab(tabId).catch(() => null);
+      const result = await runInBackground("enrich-profile", { tabId, profile: profile || undefined });
+      setStatus(`Enrichment started for ${result.fullName}.`);
+    } catch (error) {
+      setStatus(
+        error instanceof Error
+          ? error.message
+          : "Enrich failed — use the Skout box on the LinkedIn profile page.",
+        true
+      );
+    } finally {
+      setBusy(button, false, "Enrich email");
+    }
+  });
+
+  void (async () => {
+    await loadConfig();
+    if (!(await isSignedIn())) {
+      try {
+        await runInBackground("connect-skout", { focus: false });
+        await loadConfig();
+      } catch {
+        // User can click Connect.
+      }
+    }
+    await refreshLists({ quiet: true });
+  })();
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "sync" || !changes.authToken) return;
+    void (async () => {
+      await loadConfig();
+      await refreshLists({ quiet: true });
+      setStatus("Connected to Skout.");
+    })();
+  });
+}

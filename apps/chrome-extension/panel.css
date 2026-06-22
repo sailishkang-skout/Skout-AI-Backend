@@ -1,0 +1,6 @@
+@import url("popup.css");
+
+body.side-panel {
+  width: 100%;
+  min-height: 100vh;
+}

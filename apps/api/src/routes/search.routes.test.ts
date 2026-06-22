@@ -3,6 +3,8 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { ZodError } from "zod";
 import { searchRoutes } from "./search.routes.js";
 import type { Env } from "../config/env.js";
+import { clearSearchMemoryCache } from "../services/search-cache.service.js";
+import { getStore } from "../services/enrichment/index.js";
 
 // ---------------------------------------------------------------------------
 // Mock @skout/opensearch so tests don't hit a real cluster.
@@ -33,6 +35,10 @@ const baseEnv = {
   OPENSEARCH_INDEX: "prospects",
   OPENSEARCH_USERNAME: undefined,
   OPENSEARCH_PASSWORD: undefined,
+  REDIS_URL: "redis://127.0.0.1:1",
+  SEARCH_CREDIT_COST: 1,
+  SEARCH_CACHE_TTL_SECONDS: 300,
+  DEMO_CORPUS_SIZE: 100,
 } as unknown as Env;
 
 const osEnv = {
@@ -46,10 +52,14 @@ const osEnv = {
 // Build a lightweight Fastify app that skips full DB/auth setup.
 // The stub preHandler mimics what authPlugin sets on every authenticated request.
 // ---------------------------------------------------------------------------
-async function buildTestApp(env: Env = baseEnv): Promise<FastifyInstance> {
+async function buildTestApp(
+  env: Env = baseEnv,
+  workspaceId = "test-workspace-id"
+): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
 
   app.decorate("config", env);
+  app.decorate("db", null);
 
   app.setErrorHandler((error, _req, reply) => {
     if (error instanceof ZodError) {
@@ -64,7 +74,7 @@ async function buildTestApp(env: Env = baseEnv): Promise<FastifyInstance> {
 
   app.addHook("preHandler", async (req) => {
     req.userId = "test-user-id";
-    req.workspaceId = "test-workspace-id";
+    req.workspaceId = workspaceId;
   });
 
   await app.register(searchRoutes);
@@ -96,9 +106,13 @@ const sampleProspect: osModule.ProspectDocument = {
 describe("POST /search/prospects", () => {
   let app: FastifyInstance;
 
+  beforeEach(() => {
+    clearSearchMemoryCache();
+    vi.clearAllMocks();
+  });
+
   afterEach(async () => {
     await app.close();
-    vi.clearAllMocks();
   });
 
   describe("demo fallback (no OpenSearch URL)", () => {
@@ -335,6 +349,50 @@ describe("POST /search/prospects", () => {
         1,
         25
       );
+    });
+  });
+
+  describe("credits and cache", () => {
+    beforeEach(async () => {
+      app = await buildTestApp(baseEnv);
+    });
+
+    it("deducts one credit on cache miss and returns creditsUsed", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/search/prospects",
+        payload: { query: "credit-test-alpha" },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.cached).toBe(false);
+      expect(body.creditsUsed).toBe(1);
+    });
+
+    it("serves cached results without charging again", async () => {
+      const payload = { query: "credit-test-beta", page: 1, pageSize: 25 };
+      const first = await app.inject({ method: "POST", url: "/search/prospects", payload });
+      const second = await app.inject({ method: "POST", url: "/search/prospects", payload });
+
+      expect(first.json().cached).toBe(false);
+      expect(first.json().creditsUsed).toBe(1);
+      expect(second.json().cached).toBe(true);
+      expect(second.json().creditsUsed).toBe(0);
+    });
+
+    it("returns 402 when credits are exhausted", async () => {
+      app = await buildTestApp(baseEnv, "ws-zero-credits");
+      const store = getStore(null);
+      await store.deductCredits("ws-zero-credits", 500, "test_setup");
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/search/prospects",
+        payload: { query: "credit-test-gamma" },
+      });
+
+      expect(res.statusCode).toBe(402);
+      expect(res.json().error).toBe("insufficient_credits");
     });
   });
 });

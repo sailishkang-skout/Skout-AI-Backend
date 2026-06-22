@@ -1,12 +1,23 @@
-import { createHash } from "node:crypto";
 import { seniorityEnum, type SearchProspectsRequest, type SearchProspectsResponse } from "@skout/shared";
 import {
+  buildDemoCorpus,
+  filterDemoCorpus,
   getProspectById as osGetById,
   searchProspects as osSearch,
   type OpenSearchConfig,
+  type ProspectDocument,
   type SearchFilters,
 } from "@skout/opensearch";
 import type { Env } from "../config/env.js";
+
+let cachedDemoCorpus: ProspectDocument[] | null = null;
+
+function demoCorpus(env: Env): ProspectDocument[] {
+  if (!cachedDemoCorpus) {
+    cachedDemoCorpus = buildDemoCorpus(env.DEMO_CORPUS_SIZE);
+  }
+  return cachedDemoCorpus;
+}
 
 function osConfig(env: Env): OpenSearchConfig | null {
   if (!env.OPENSEARCH_URL) return null;
@@ -94,7 +105,7 @@ export class SearchService {
       }
     }
 
-    return this.demoSearch(page, pageSize);
+    return this.demoSearch(body, page, pageSize);
   }
 
   async getProspectById(prospectId: string) {
@@ -102,23 +113,15 @@ export class SearchService {
     if (cfg) {
       const doc = await osGetById(cfg, prospectId);
       if (doc) {
-        return {
-          prospectId: doc.prospectId,
-          companyId: doc.companyId,
-          fullName: doc.fullName ?? doc.companyName ?? "Unknown",
-          title: doc.title ?? "",
-          seniority: "unknown" as const,
-          country: doc.country ?? "",
-          industry: doc.industry ?? "",
-          companyDomain: doc.companyDomain,
-          employeeCount: doc.employeeCount,
-          icpScore: doc.icpScore,
-          intentScore: doc.intentScore,
-          painPoints: doc.painPoints,
-          outreachReadiness: doc.outreachReadiness,
-        };
+        return this.toProspectSummary(doc);
       }
     }
+
+    const doc = demoCorpus(this.env).find((row) => row.prospectId === prospectId);
+    if (doc) {
+      return this.toProspectSummary(doc);
+    }
+
     return {
       prospectId,
       companyId: prospectId,
@@ -131,19 +134,49 @@ export class SearchService {
     };
   }
 
-  private demoSearch(page: number, pageSize: number): SearchProspectsResponse {
-    const results = Array.from({ length: Math.min(pageSize, 5) }, (_, i) => ({
-      prospectId: createHash("sha256").update(`demo-${i}`).digest("hex"),
-      companyId: createHash("sha256").update(`company-${i}`).digest("hex"),
-      fullName: `Demo Prospect ${i + 1 + (page - 1) * pageSize}`,
-      title: i % 2 === 0 ? "VP Sales" : "Director of Marketing",
-      seniority: "vp" as const,
-      country: i % 3 === 0 ? "US" : "DE",
-      industry: "Software",
-      companyDomain: `example${i + 1}.com`,
-      employeeCount: 250 + i * 100,
-    }));
-    return { results, total: 200_000_000, page, pageSize, cached: false };
+  private toProspectSummary(doc: ProspectDocument) {
+    return {
+      prospectId: doc.prospectId,
+      companyId: doc.companyId,
+      fullName: doc.fullName ?? doc.companyName ?? "Unknown",
+      title: doc.title ?? "",
+      seniority: VALID_SENIORITIES.has(doc.seniority as (typeof seniorityEnum.options)[number])
+        ? (doc.seniority as (typeof seniorityEnum.options)[number])
+        : ("unknown" as const),
+      country: doc.country ?? "",
+      industry: doc.industry ?? "",
+      companyDomain: doc.companyDomain,
+      employeeCount: doc.employeeCount,
+      icpScore: doc.icpScore,
+      intentScore: doc.intentScore,
+      painPoints: doc.painPoints,
+      outreachReadiness: doc.outreachReadiness,
+    };
+  }
+
+  private demoSearch(body: SearchProspectsRequest, page: number, pageSize: number): SearchProspectsResponse {
+    const filtered = filterDemoCorpus(demoCorpus(this.env), toFilters(body));
+    const start = (page - 1) * pageSize;
+    const slice = filtered.slice(start, start + pageSize);
+    return {
+      results: slice.map((h) => ({
+        prospectId: h.prospectId,
+        companyId: h.companyId,
+        fullName: h.fullName ?? h.companyName ?? "Unknown",
+        title: h.title ?? "",
+        seniority: VALID_SENIORITIES.has(h.seniority as (typeof seniorityEnum.options)[number])
+          ? (h.seniority as (typeof seniorityEnum.options)[number])
+          : "unknown",
+        country: h.country ?? "",
+        industry: h.industry ?? "",
+        companyDomain: h.companyDomain,
+        employeeCount: h.employeeCount,
+      })),
+      total: filtered.length,
+      page,
+      pageSize,
+      cached: false,
+    };
   }
 }
 

@@ -116,6 +116,7 @@ All shorthand used in this document. Expand on first read here; later sections u
 | **Snov.io** | Competitor — prospecting, email finder, lists, CSV export. |
 | **Reply.io** | Competitor — outbound engagement, AI scoring patterns. |
 | **HubSpot** | CRM integration target for MVP export. |
+| **Razorpay** | Payment gateway for MVP self-serve credit pack purchases (India + international cards). |
 | **Fastify** | Node.js HTTP framework for `apps/api`. |
 | **FastAPI** | Python framework for `apps/ai` (scoring / LLM). |
 | **Next.js** | React framework for the frontend repo. |
@@ -142,7 +143,8 @@ All shorthand used in this document. Expand on first read here; later sections u
 | 10 | [Dashboard](#10-dashboard) | Critical | `/dashboard` | Apollo Home · Reply analytics lite |
 | 13 | [User-Owned Enrichment Integrations](#13-user-owned-enrichment-integrations) | Important | `/settings/integrations` | Apollo API keys · Snov own SMTP/API · BYOK enrichment |
 | 14 | [Chrome Extension](#14-chrome-extension) | Important | Chrome Web Store + LinkedIn | Apollo extension · Snov LI prospector · Reply sidebar |
-| 15 | [Prospect Corpus Seed (5,200)](#15-prospect-corpus-seed-5200) | Critical | OpenSearch bulk import | Apollo data scale · Snov list size · search coverage |
+| 15 | [Prospect Corpus Seed (5,300)](#15-prospect-corpus-seed-5300) | Critical | OpenSearch bulk import | Apollo data scale · Snov list size · search coverage |
+| 16 | [Razorpay Billing](#16-razorpay-billing) | Critical | `/settings/workspace` · insufficient-credits modal | Apollo credit packs · Snov buy credits · self-serve top-up |
 
 **Tracker:** [mvp-feature-tracker.xlsx](./mvp/mvp-feature-tracker.xlsx) — done vs remaining with tentative completion dates.
 
@@ -208,6 +210,7 @@ flowchart LR
     subgraph external [External]
         HS[HubSpot API]
         CLERK[Clerk Auth]
+        RZP[Razorpay]
     end
 
     FE -->|JWT| AUTH --> API
@@ -221,6 +224,8 @@ flowchart LR
     BQ --> PG
     BQ --> HS
     API --> S3
+    API --> RZP
+    RZP -.->|webhook| API
     CLERK -.->|session| FE
 ```
 
@@ -910,7 +915,7 @@ flowchart TD
 | --- | --- | --- |
 | Apollo | Export credits, enrichment credits | Unified ⚡ credit wallet |
 | Snov.io | Credit balance in header | Top bar badge + usage drawer |
-| Reply.io | Plan limits | Manual top-up via founder (beta) |
+| Reply.io | Plan limits | Self-serve credit packs via Razorpay |
 
 ### User flow
 
@@ -919,6 +924,7 @@ flowchart TD
     C1[User sees Credits: N in top bar] --> C2[Performs paid action]
     C2 --> C3{Balance sufficient?}
     C3 -->|No| C4[Insufficient credits modal]
+    C4 --> C4a[Buy credits → Razorpay Checkout]
     C3 -->|Yes| C5[Action proceeds]
     C5 --> C6[Badge decrements]
     C6 --> C7[User opens usage history in Settings]
@@ -931,7 +937,8 @@ flowchart TD
 | AI Score | 2 | `score` |
 | CSV export | 2 | `export_csv` |
 | HubSpot (per contact) | 1 | `export_hubspot` |
-| Admin top-up | +N | `admin_topup` |
+| Razorpay credit pack | +N | `razorpay_topup` |
+| Admin top-up (fallback) | +N | `admin_topup` |
 
 ### Data flow
 
@@ -1105,7 +1112,8 @@ flowchart TD
 | Section | Editable | API |
 | --- | --- | --- |
 | Workspace name | Yes | `PATCH /workspaces/current` |
-| Credit balance | No (read-only; founder top-up via admin script) | `GET /credits/balance` |
+| Credit balance | No (read-only; buy packs via Razorpay) | `GET /credits/balance` |
+| Buy credits | Yes — Razorpay Checkout | `POST /billing/razorpay/order` |
 | Usage history | No (append-only ledger) | `GET /credits/transactions` |
 
 | Step | Actor | Action |
@@ -1248,7 +1256,7 @@ flowchart TD
 
 ---
 
-## 15. Prospect Corpus Seed (5,200)
+## 15. Prospect Corpus Seed (5,300)
 
 **Problem solved:** Search must return enough real B2B records for beta demos and daily SDR use — not only synthetic demo rows.
 
@@ -1277,10 +1285,112 @@ flowchart LR
 
 | Deliverable | Target |
 | --- | --- |
-| Record count | **5,200** prospects (minimum beta corpus) |
+| Record count | **5,300** prospects (minimum beta corpus) |
 | Fields | `full_name`, `title`, `company`, `domain`, `industry`, `employee_count`, `country`, `linkedin_url` |
 | Script | `pnpm opensearch:seed` (or equivalent bulk import) |
 | Acceptance | Search filters return >100 matches for common ICP; `cached: false` hits real OS docs |
+
+---
+
+## 16. Razorpay Billing
+
+**Problem solved:** Beta customers can buy credit packs without founder manual top-ups — monetization path before subscriptions.
+
+**Competitive reference**
+
+| Tool | Pattern | Skout adoption |
+| --- | --- | --- |
+| Apollo | Credit packs in billing settings | Fixed packs (e.g. 500 / 1000 / 2500 ⚡) |
+| Snov.io | Buy credits in account | One-time Razorpay Checkout per pack |
+| Reply.io | Plan upgrade CTA | Insufficient-credits modal → Buy credits |
+
+**Routes:** `/settings/workspace` (Buy credits) · insufficient-credits modal (same flow)
+
+### Credit packs (MVP defaults)
+
+| Pack | Credits | Price (INR, indicative) | `credit_transactions.action` |
+| --- | --- | --- | --- |
+| Starter | 500 | ₹999 | `razorpay_topup` |
+| Growth | 1,000 | ₹1,799 | `razorpay_topup` |
+| Scale | 2,500 | ₹3,999 | `razorpay_topup` |
+
+> Pack SKUs and prices are env-configurable (`RAZORPAY_CREDIT_PACKS_JSON`). Beta may keep the existing `POST /credits/topup` (+100) for internal testing until Razorpay goes live.
+
+### User flow
+
+```mermaid
+flowchart TD
+    B1[User hits insufficient credits or opens Settings] --> B2[Click Buy credits]
+    B2 --> B3[Select credit pack]
+    B3 --> B4[POST /billing/razorpay/order]
+    B4 --> B5[Razorpay Checkout modal opens]
+    B5 --> B6{Payment result}
+    B6 -->|Success| B7[Webhook credits wallet]
+    B6 -->|Failed / dismissed| B8[Toast: payment cancelled]
+    B7 --> B9[Balance updates in top bar + Settings]
+    B9 --> B10[User retries enrich / search / export]
+```
+
+| Step | Actor | Action |
+| --- | --- | --- |
+| 1 | User | Opens Buy credits from Settings or insufficient-credits modal |
+| 2 | User | Selects pack (500 / 1000 / 2500 credits) |
+| 3 | Frontend | Calls API to create Razorpay order; loads Checkout.js |
+| 4 | User | Completes payment (UPI, card, netbanking) |
+| 5 | Razorpay | Sends `payment.captured` webhook to API |
+| 6 | System | Verifies signature, idempotently credits wallet |
+| 7 | UI | Polls balance or listens for success redirect; shows updated ⚡ count |
+
+### Data flow
+
+```mermaid
+sequenceDiagram
+    participant U as User Browser
+    participant FE as Next.js
+    participant API as Fastify API
+    participant PG as PostgreSQL
+    participant RZP as Razorpay
+
+    U->>FE: Select 1000-credit pack
+    FE->>API: POST /billing/razorpay/order { packId }
+    API->>PG: INSERT payment_orders status=created
+    API->>RZP: orders.create amount currency INR
+    RZP-->>API: order_id
+    API-->>FE: { orderId, amount, keyId }
+    FE->>RZP: Razorpay Checkout open
+    U->>RZP: Pay
+    RZP->>API: POST /webhooks/razorpay payment.captured
+    API->>API: Verify HMAC signature + idempotency key
+    API->>PG: UPDATE payment_orders status=captured
+    API->>PG: INSERT credit_transactions + UPDATE credit_balances
+    API-->>RZP: 200 OK
+    FE->>API: GET /credits/balance
+    API-->>FE: New balance
+```
+
+| Store | Table / secret | Purpose |
+| --- | --- | --- |
+| PostgreSQL | `payment_orders` | `id`, `workspace_id`, `razorpay_order_id`, `pack_id`, `amount_paise`, `credits`, `status` (`created` \| `captured` \| `failed`) |
+| PostgreSQL | `credit_transactions` | `+N` row with `action=razorpay_topup`, `reference_id=payment_orders.id` |
+| PostgreSQL | `credit_balances` | Atomic `balance += credits` on verified webhook only |
+| Env / Secrets | `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | Server-side only; publishable key exposed to Checkout |
+
+**Idempotency:** Webhook handler must no-op if `payment_orders.status` is already `captured` (duplicate `payment.captured` events).
+
+**Security:** Never trust client-side payment success alone — credits apply only after verified webhook (or server-side `payments.fetch` fallback on redirect).
+
+### API (planned)
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/v1/billing/packs` | List available credit packs (public metadata) |
+| `POST` | `/api/v1/billing/razorpay/order` | Create order for workspace + pack |
+| `POST` | `/api/v1/webhooks/razorpay` | Razorpay webhook (no JWT; signature auth) |
+| `GET` | `/api/v1/billing/orders` | Workspace payment history (optional MVP) |
+
+**Replaces:** Founder-only `POST /credits/topup` for production beta; keep admin CLI as ops fallback.
+
+**Frontend:** Replace “Beta top-up — Stripe billing will replace this later” with pack selector + Razorpay Checkout on `/settings/workspace` and insufficient-credits modal **Buy credits** CTA.
 
 ---
 
@@ -1302,7 +1412,7 @@ Documented in schema for future plug-in; **not** in MVP user flows:
 
 | Condition | User experience | System behavior |
 | --- | --- | --- |
-| Insufficient credits | Modal with contact CTA | `402` before job enqueue |
+| Insufficient credits | Modal with Buy credits (Razorpay) + contact CTA | `402` before job enqueue |
 | Enrichment failed | Red status on row; retry button | `enrichment_jobs.status=failed`; no refund (beta policy TBD) |
 | No ICP | Banner on search; score disabled | `400` on score with `ICP_NOT_CONFIGURED` |
 | HubSpot token expired | Settings shows reconnect | Worker marks `crm_connections.status=error` |
@@ -1343,5 +1453,8 @@ Documented in schema for future plug-in; **not** in MVP user flows:
 | `GET` | `/integrations` | User-owned provider keys (masked) |
 | `PUT` | `/integrations/:provider` | Save workspace API key |
 | `POST` | `/integrations/:provider/test` | Validate provider credentials |
+| `GET` | `/billing/packs` | Razorpay credit packs |
+| `POST` | `/billing/razorpay/order` | Create Razorpay order |
+| `POST` | `/webhooks/razorpay` | Payment webhook → credit top-up |
 | — | Chrome extension | LI capture → activate / enrich / add to list |
 | — | OpenSearch bulk seed | 5,200 prospect documents |

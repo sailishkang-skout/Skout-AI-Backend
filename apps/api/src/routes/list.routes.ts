@@ -6,6 +6,7 @@ import { createCrmService } from "../services/crm.service.js";
 import { HttpError, errorResponse } from "../utils/http.js";
 import { buildListService } from "../services/list.service.js";
 import type { Env } from "../config/env.js";
+import { buildListCsv } from "../utils/list-csv.js";
 
 function osConfig(config: Env): OpenSearchConfig | null {
   if (!config.OPENSEARCH_URL) return null;
@@ -75,12 +76,40 @@ export async function listRoutes(app: FastifyInstance) {
   app.post("/lists/:id/members", async (request, reply) => {
     const { id } = request.params as { id: string };
     const workspaceId = request.workspaceId ?? "unknown";
-    const { prospectIds } = z
-      .object({ prospectIds: z.array(z.string().min(1)).min(1) })
+    const memberSnapshotSchema = z.object({
+      prospectId: z.string().min(1),
+      fullName: z.string().optional(),
+      title: z.string().optional(),
+      seniority: z.string().optional(),
+      industry: z.string().optional(),
+      country: z.string().optional(),
+      companyDomain: z.string().optional(),
+      companyName: z.string().optional(),
+      email: z.string().email().optional(),
+      linkedinUrl: z.string().url().optional(),
+      employeeCount: z.number().optional(),
+      signals: z.array(z.string()).optional(),
+    });
+    const body = z
+      .object({
+        prospectIds: z.array(z.string().min(1)).min(1).optional(),
+        prospects: z.array(memberSnapshotSchema).min(1).optional(),
+      })
+      .refine((value) => (value.prospectIds?.length ?? 0) > 0 || (value.prospects?.length ?? 0) > 0, {
+        message: "prospectIds or prospects is required",
+      })
       .parse(request.body ?? {});
+
+    const members =
+      body.prospects?.map((prospect) => ({
+        prospectId: prospect.prospectId,
+        snapshot: prospect,
+      })) ??
+      body.prospectIds!.map((prospectId) => ({ prospectId }));
+
     const svc = buildListService(app.db, osConfig(app.config));
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
-    const list = await svc.addMembers(workspaceId, id, prospectIds);
+    const list = await svc.addMembers(workspaceId, id, members);
     if (!list) return reply.status(404).send({ error: "list_not_found" });
     return reply.send(list);
   });
@@ -142,6 +171,35 @@ export async function listRoutes(app: FastifyInstance) {
     const list = await svc.removeMembersFromList(workspaceId, id, body.prospectIds);
     if (!list) return reply.status(404).send({ error: "list_not_found" });
     return reply.send(list);
+  });
+
+  app.get("/lists/:id/export/csv", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const listSvc = buildListService(app.db, osConfig(app.config));
+    if (!listSvc) return reply.status(503).send({ error: "database_unavailable" });
+    const list = await listSvc.getListById(workspaceId, id);
+    if (!list) return reply.status(404).send({ error: "list_not_found" });
+
+    const members = await listSvc.getMembers(workspaceId, id);
+    const enrichment = buildEnrichmentService(app.db, app.config);
+    const scores = members?.length
+      ? await enrichment.lookupScores(workspaceId, members.map((m) => m.prospectId))
+      : {};
+
+    const { filename, content } = buildListCsv(
+      list.name,
+      (members ?? []).map((m) => ({
+        prospectId: m.prospectId,
+        snapshot: m.snapshot,
+        score: scores[m.prospectId] ?? null,
+      }))
+    );
+
+    return reply
+      .header("Content-Type", "text/csv; charset=utf-8")
+      .header("Content-Disposition", `attachment; filename="${filename}"`)
+      .send(content);
   });
 
   app.post("/lists/:id/export/hubspot", async (request, reply) => {
