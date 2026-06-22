@@ -55,7 +55,7 @@ const MEMBER_ROW = {
   snapshot: { prospectId: "p-1", fullName: "Alice" },
 };
 
-function makeDb(selectResults: { result: unknown[]; terminal?: "orderBy" | "groupBy" | "where" }[], inserts: (() => unknown)[] = []) {
+function makeDb(selectResults: { result: unknown[]; terminal?: "orderBy" | "groupBy" | "where" | "limit" }[], inserts: (() => unknown)[] = []) {
   const db = { select: vi.fn(), insert: vi.fn() };
   for (const { result, terminal } of selectResults) {
     db.select.mockReturnValueOnce(selectChain(result, terminal));

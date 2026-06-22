@@ -1,4 +1,4 @@
-import Redis from "ioredis";
+import { Redis } from "ioredis";
 import type { Env } from "../config/env.js";
 
 let client: Redis | null = null;

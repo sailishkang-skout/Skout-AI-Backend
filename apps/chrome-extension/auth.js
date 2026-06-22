@@ -1,9 +1,12 @@
 import { isUsableTab, isUsableTabUrl } from "./tab-utils.js";
-
-const SKOUT_TAB_PATTERNS = [
-  "http://localhost:3000/*",
-  "http://127.0.0.1:3000/*",
-];
+import {
+  DEFAULT_WEB_URL,
+  getStoredSkoutUrls,
+  normalizeSkoutBase,
+  skoutSignInHint,
+  skoutTabPatterns,
+  urlMatchesSkoutWeb,
+} from "./skout-urls.js";
 
 /** Refresh this many ms before JWT exp (Clerk session tokens are ~60s). */
 const REFRESH_BUFFER_MS = 15_000;
@@ -126,7 +129,8 @@ async function readAuthFromTab(tabId) {
   return injection?.result;
 }
 
-async function readAuthFromTabWithRetry(tabId, attempts = 15) {
+async function readAuthFromTabWithRetry(tabId, webUrl, attempts = 15) {
+  const hint = skoutSignInHint(webUrl);
   for (let i = 0; i < attempts; i += 1) {
     const result = await readAuthFromTab(tabId);
     if (result?.status === "ok" && result.token) {
@@ -134,7 +138,7 @@ async function readAuthFromTabWithRetry(tabId, attempts = 15) {
       return { token: result.token, email: result.email || "" };
     }
     if (result?.status === "tab_error") {
-      throw new Error("Skout tab failed to load — refresh localhost:3000 and sign in.");
+      throw new Error(`Skout tab failed to load — refresh your Skout tab and sign in (${hint}).`);
     }
     if (i === 2 || i === 8) {
       const viaMessage = await requestAuthViaPostMessage(tabId);
@@ -147,25 +151,23 @@ async function readAuthFromTabWithRetry(tabId, attempts = 15) {
   return requestAuthViaPostMessage(tabId);
 }
 
-async function findSkoutTabs() {
-  const byPattern = await chrome.tabs.query({ url: SKOUT_TAB_PATTERNS });
+async function findSkoutTabs(webUrl = DEFAULT_WEB_URL) {
+  const patterns = skoutTabPatterns(webUrl);
+  const byPattern = await chrome.tabs.query({ url: patterns });
   const usable = byPattern.filter(isUsableTab);
   if (usable.length > 0) return usable;
 
   const all = await chrome.tabs.query({});
-  return all.filter(
-    (tab) =>
-      isUsableTab(tab) &&
-      (tab.url?.includes("localhost:3000") || tab.url?.includes("127.0.0.1:3000"))
-  );
+  return all.filter((tab) => isUsableTab(tab) && urlMatchesSkoutWeb(tab.url, webUrl));
 }
 
 /** Pull a fresh Clerk JWT from an open, signed-in Skout tab. */
 export async function refreshAuthFromSkoutTabs() {
-  const tabs = await findSkoutTabs();
+  const { webUrl } = await getStoredSkoutUrls();
+  const tabs = await findSkoutTabs(webUrl);
   for (const tab of tabs) {
     if (!tab.id) continue;
-    const auth = await readAuthFromTabWithRetry(tab.id);
+    const auth = await readAuthFromTabWithRetry(tab.id, webUrl);
     if (auth) return auth;
   }
   return null;
@@ -175,6 +177,7 @@ export async function ensureFreshAuth() {
   const { useStubAuth } = await chrome.storage.sync.get(["useStubAuth"]);
   if (useStubAuth) return null;
 
+  const { webUrl } = await getStoredSkoutUrls();
   const stored = await getStoredAuth();
   if (isAuthFresh(stored)) {
     return { token: stored.authToken, email: stored.authEmail || "" };
@@ -188,10 +191,10 @@ export async function ensureFreshAuth() {
     return { token: after.authToken, email: after.authEmail || "" };
   }
 
-  throw new Error("Not signed in — open Skout at localhost:3000, then click Connect.");
+  throw new Error(`Not signed in — ${skoutSignInHint(webUrl)}.`);
 }
 
-async function waitForStoredAuth(attempts = 30) {
+async function waitForStoredAuth(webUrl, attempts = 30) {
   for (let i = 0; i < attempts; i += 1) {
     const auth = await getStoredAuth();
     if (auth.authToken && !isTokenExpired(auth.authToken)) {
@@ -200,18 +203,17 @@ async function waitForStoredAuth(attempts = 30) {
     await refreshAuthFromSkoutTabs();
     await sleep(500);
   }
-  throw new Error(
-    "Sign in to Skout in the tab that opened (same browser), then try again."
-  );
+  throw new Error(`Sign in to Skout in the tab that opened, then try again (${skoutSignInHint(webUrl)}).`);
 }
 
 /**
  * Ensure a valid session — uses open tabs first, opens Skout in the background if needed.
  */
-export async function ensureSession(webUrl = "http://localhost:3000", { focus = false } = {}) {
+export async function ensureSession(webUrl = DEFAULT_WEB_URL, { focus = false } = {}) {
   const { useStubAuth } = await chrome.storage.sync.get(["useStubAuth"]);
   if (useStubAuth) return { token: "stub", email: "" };
 
+  const base = normalizeSkoutBase(webUrl);
   const existing = await getStoredAuth();
   if (isAuthFresh(existing)) {
     return { token: existing.authToken, email: existing.authEmail || "" };
@@ -220,12 +222,11 @@ export async function ensureSession(webUrl = "http://localhost:3000", { focus = 
   const refreshed = await refreshAuthFromSkoutTabs();
   if (refreshed) return refreshed;
 
-  const base = webUrl.replace(/\/$/, "");
-  const tabs = await findSkoutTabs();
+  const tabs = await findSkoutTabs(base);
 
   let tab =
     tabs.find((t) => t.url?.startsWith(base)) ??
-    tabs.find((t) => t.url?.includes("localhost:3000") || t.url?.includes("127.0.0.1:3000"));
+    tabs.find((t) => urlMatchesSkoutWeb(t.url, base));
 
   if (!tab?.id) {
     tab = await chrome.tabs.create({ url: `${base}/dashboard`, active: focus });
@@ -238,26 +239,25 @@ export async function ensureSession(webUrl = "http://localhost:3000", { focus = 
   }
 
   if (!tab?.id || !isUsableTabUrl(tab.url)) {
-    throw new Error(
-      "Skout didn't load — open http://localhost:3000 in a tab, sign in, then click Connect."
-    );
+    throw new Error(`Skout didn't load — ${skoutSignInHint(base)}.`);
   }
 
-  const direct = await readAuthFromTabWithRetry(tab.id, 20);
+  const direct = await readAuthFromTabWithRetry(tab.id, base, 20);
   if (direct) return direct;
 
-  return waitForStoredAuth(focus ? 30 : 20);
+  return waitForStoredAuth(base, focus ? 30 : 20);
 }
 
 /** Use an open Skout tab or open the app — sync happens automatically when signed in. */
-export async function syncAuthFromSkoutTab(webUrl = "http://localhost:3000") {
+export async function syncAuthFromSkoutTab(webUrl = DEFAULT_WEB_URL) {
   return ensureSession(webUrl, { focus: true });
 }
 
 /** If Skout is already open and signed in, pick up the session without user action. */
 export async function trySyncFromOpenSkoutTabs() {
   try {
-    return await ensureSession(undefined, { focus: false });
+    const { webUrl } = await getStoredSkoutUrls();
+    return await ensureSession(webUrl, { focus: false });
   } catch {
     return null;
   }

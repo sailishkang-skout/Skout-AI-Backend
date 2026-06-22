@@ -1,8 +1,11 @@
 import { ensureFreshAuth, refreshAuthFromSkoutTabs } from "./auth.js";
 import { safeLocalSet } from "./storage-throttle.js";
-
-const DEFAULT_API_URL = "http://localhost:3001";
-const DEFAULT_WEB_URL = "http://localhost:3000";
+import {
+  DEFAULT_API_URL,
+  DEFAULT_WEB_URL,
+  normalizeSkoutBase,
+  skoutSignInHint,
+} from "./skout-urls.js";
 
 async function sha256(text) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -68,13 +71,14 @@ export async function getConfig() {
   };
 }
 
-function formatApiError(status, body) {
+function formatApiError(status, body, webUrl) {
+  const hint = skoutSignInHint(webUrl);
   if (status === 401) {
     const detail = typeof body?.error === "string" ? body.error.toLowerCase() : "";
     if (detail.includes("expired")) {
-      return "Session expired — keep Skout open at localhost:3000, then click Refresh lists.";
+      return `Session expired — keep Skout open (${normalizeSkoutBase(webUrl)}), then click Refresh lists.`;
     }
-    return "Session expired — open Skout at localhost:3000, then click Refresh lists.";
+    return `Session expired — ${hint}.`;
   }
   if (status === 402) {
     return "Insufficient credits for this action.";
@@ -111,7 +115,7 @@ export async function skoutFetch(path, options = {}) {
   try {
     res = await request(path, options);
   } catch {
-    throw new Error(`Cannot reach API at ${config.apiUrl}. Is the backend running on port 3001?`);
+    throw new Error(`Cannot reach API at ${config.apiUrl}. Check the API URL in extension settings.`);
   }
 
   if (res.status === 401 && !config.useStubAuth) {
@@ -119,13 +123,13 @@ export async function skoutFetch(path, options = {}) {
     try {
       res = await request(path, options);
     } catch {
-      throw new Error(`Cannot reach API at ${config.apiUrl}. Is the backend running on port 3001?`);
+      throw new Error(`Cannot reach API at ${config.apiUrl}. Check the API URL in extension settings.`);
     }
   }
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(formatApiError(res.status, body));
+    throw new Error(formatApiError(res.status, body, config.webUrl));
   }
 
   if (res.status === 204) return null;

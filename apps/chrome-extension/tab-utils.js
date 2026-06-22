@@ -57,7 +57,7 @@ export function friendlyTabError(message) {
     return "Extension updated — reload the extension, then refresh LinkedIn (Cmd+Shift+R).";
   }
   if (m.includes("missing bearer") || m.includes("session expired") || m.includes("401")) {
-    return "Not signed in — open Skout at localhost:3000, sign in, then click Connect.";
+    return "Not signed in — open Skout, sign in, then click Connect.";
   }
   return typeof message === "string" && message ? message : "Something went wrong.";
 }

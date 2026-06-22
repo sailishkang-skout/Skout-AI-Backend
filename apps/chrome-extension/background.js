@@ -2,19 +2,25 @@ import { saveAuthToken, getStoredAuth, ensureSession } from "./auth.js";
 import { readLinkedInProfile, injectLinkedInBridge } from "./linkedin-profile.js";
 import { activateProspect, addProspectToList, enrichProspect } from "./api.js";
 import { friendlyTabError, isUsableTab, isUsableTabUrl, nameFromLinkedInUrl } from "./tab-utils.js";
-
 import { getLists, prefetchLists, saveLastListId, getLastListId } from "./lists-cache.js";
 import { log, logError } from "./debug.js";
+import {
+  DEFAULT_API_URL,
+  DEFAULT_WEB_URL,
+  getStoredSkoutUrls,
+  skoutTabPatterns,
+  urlMatchesSkoutWeb,
+} from "./skout-urls.js";
 
 const LINKEDIN_PATTERNS = ["https://www.linkedin.com/*", "https://linkedin.com/*"];
-const SKOUT_PATTERNS = ["http://localhost:3000/*", "http://127.0.0.1:3000/*"];
-
-function isSkoutUrl(url) {
-  return Boolean(url?.includes("localhost:3000") || url?.includes("127.0.0.1:3000"));
-}
 
 function isLinkedInUrl(url) {
   return Boolean(url?.includes("linkedin.com"));
+}
+
+async function isSkoutUrl(url) {
+  const { webUrl } = await getStoredSkoutUrls();
+  return urlMatchesSkoutWeb(url, webUrl);
 }
 
 async function injectSkoutBridge(tabId) {
@@ -32,9 +38,11 @@ async function injectSkoutBridge(tabId) {
 
 /** After extension reload, re-inject scripts into open tabs so messaging works immediately. */
 async function refreshOpenTabs() {
+  const { webUrl } = await getStoredSkoutUrls();
+  const skoutPatterns = skoutTabPatterns(webUrl);
   const [linkedInTabs, skoutTabs] = await Promise.all([
     chrome.tabs.query({ url: LINKEDIN_PATTERNS }),
-    chrome.tabs.query({ url: SKOUT_PATTERNS }),
+    chrome.tabs.query({ url: skoutPatterns }),
   ]);
 
   await Promise.all([
@@ -55,8 +63,8 @@ chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => 
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.sync.set({
-    apiUrl: "http://localhost:3001",
-    webUrl: "http://localhost:3000",
+    apiUrl: DEFAULT_API_URL,
+    webUrl: DEFAULT_WEB_URL,
     stubEmail: "extension@example.com",
   });
   void refreshOpenTabs();
@@ -70,13 +78,15 @@ chrome.runtime.onStartup.addListener(() => {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete" || !tab.url || !isUsableTabUrl(tab.url)) return;
-  if (isSkoutUrl(tab.url)) {
-    void injectSkoutBridge(tabId);
-    void prefetchLists();
-  }
-  if (isLinkedInUrl(tab.url)) {
-    void injectLinkedInBridge(tabId).catch(() => undefined);
-  }
+  void (async () => {
+    if (await isSkoutUrl(tab.url)) {
+      void injectSkoutBridge(tabId);
+      void prefetchLists();
+    }
+    if (isLinkedInUrl(tab.url)) {
+      void injectLinkedInBridge(tabId).catch(() => undefined);
+    }
+  })();
 });
 
 async function resolveProfile(message) {
@@ -100,7 +110,7 @@ async function resolveProfile(message) {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "ping") {
-    sendResponse({ ok: true, version: "0.4.9" });
+    sendResponse({ ok: true, version: "0.5.0" });
     return true;
   }
 
@@ -207,7 +217,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 chrome.runtime.onMessageExternal.addListener((message, _sender, sendResponse) => {
   if (message.type === "ping") {
-    sendResponse({ ok: true, version: "0.4.9" });
+    sendResponse({ ok: true, version: "0.5.0" });
     return true;
   }
 

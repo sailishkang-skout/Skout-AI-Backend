@@ -1,4 +1,4 @@
-/** Relays Clerk token from Skout web app → extension storage. No inline scripts (CSP-safe). */
+/** Relays Clerk token from Skout web app → extension storage. Injected on Skout tabs only. */
 (function initSkoutWebBridge() {
   const EXTENSION_ID = chrome.runtime.id;
 
@@ -26,11 +26,6 @@
     return;
   }
   window.__SKOUT_WEB_BRIDGE__ = true;
-
-  const isSkoutLocal =
-    window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-
-  if (!isSkoutLocal) return;
 
   window.addEventListener("message", (event) => {
     if (event.source !== window || event.data?.source !== "skout-web") return;

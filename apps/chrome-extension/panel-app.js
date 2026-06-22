@@ -3,6 +3,7 @@ import { clearAuthToken, getStoredAuth, isAuthFresh, ensureSession } from "./aut
 import { getConfig } from "./api.js";
 import { getLastListId, saveLastListId } from "./lists-cache.js";
 import { friendlyTabError, findLinkedInProfileTabId } from "./tab-utils.js";
+import { ensureSkoutHostPermissions, normalizeSkoutBase, skoutSignInHint } from "./skout-urls.js";
 
 function runInBackground(type, payload = {}) {
   return new Promise((resolve, reject) => {
@@ -124,7 +125,7 @@ export function initPanel() {
       if (!(await isSignedIn())) {
         listSelectEl.innerHTML = `<option value="">Sign in to Skout first</option>`;
         if (!quiet) {
-          setStatus("Open localhost:3000, sign in, then click Connect Skout account.", true);
+          setStatus(`Open Skout (${normalizeSkoutBase(config.webUrl)}), sign in, then click Connect Skout account.`, true);
         }
         return;
       }
@@ -147,12 +148,13 @@ export function initPanel() {
       }
     } catch (error) {
       const message = friendlyTabError(error instanceof Error ? error.message : "Failed to load lists");
+      const config = await getConfig();
       listSelectEl.innerHTML = `<option value="">Could not load lists</option>`;
       if (!quiet) {
         setStatus(
           message.includes("signed in") || message.includes("Connect")
             ? message
-            : `${message} Try Connect Skout account, or open localhost:3000 and sign in.`,
+            : `${message} Try Connect Skout account, or ${skoutSignInHint(config.webUrl)}.`,
           true
         );
       }
@@ -187,9 +189,20 @@ export function initPanel() {
 
   document.getElementById("save-config")?.addEventListener("click", async () => {
     const useStub = Boolean(useStubAuthEl?.checked);
+    const apiUrl = apiUrlEl?.value?.trim() || "http://localhost:3001";
+    const webUrl = webUrlEl?.value?.trim() || "http://localhost:3000";
+
+    if (!useStub) {
+      const granted = await ensureSkoutHostPermissions(webUrl, apiUrl);
+      if (!granted) {
+        setStatus("Host permission denied — extension needs access to your Skout URL.", true);
+        return;
+      }
+    }
+
     await chrome.storage.sync.set({
-      apiUrl: apiUrlEl?.value?.trim() || "http://localhost:3001",
-      webUrl: webUrlEl?.value?.trim() || "http://localhost:3000",
+      apiUrl,
+      webUrl,
       stubEmail: stubEmailEl?.value?.trim() || "extension@example.com",
       useStubAuth: useStub,
     });
