@@ -1,6 +1,6 @@
 import { Queue, Worker } from "bullmq";
 import { scrapeJobRequestSchema } from "@skout/scraper-contracts";
-import { createScrapeStorage, scrapeKey } from "@skout/storage";
+import { createScrapeStorage, resolveScrapeStorage, scrapeKey } from "@skout/storage";
 import { scrapeCompanyWeb } from "./bots/company-web.js";
 import { scrapeLinkedIn } from "./bots/linkedin.js";
 import { scrapeOpenCorporates } from "./bots/opencorporates.js";
@@ -18,14 +18,15 @@ function redisConnection() {
   return { url };
 }
 
-function requireBucket() {
-  const bucket = process.env.SCRAPE_BUCKET;
-  if (!bucket) throw new Error("SCRAPE_BUCKET required");
-  return createScrapeStorage(bucket);
+function scrapeStorage() {
+  if (process.env.SCRAPE_BUCKET) {
+    return createScrapeStorage(process.env.SCRAPE_BUCKET);
+  }
+  return resolveScrapeStorage();
 }
 
 async function runBot(payload: ScrapeJobPayload): Promise<{ rawS3Key: string; rawCount: number }> {
-  const storage = requireBucket();
+  const storage = scrapeStorage();
   const { jobId, source, seeds } = payload;
   const records = [];
 
@@ -60,12 +61,22 @@ export async function startOrchestratorWorkers() {
     SCRAPE_QUEUES.schedule,
     async (job) => {
       const request = scrapeJobRequestSchema.parse(job.data);
-      const row = await createScrapeJob(db, {
-        source: request.source,
-        seeds: request.seeds,
-        trigger: "api",
-        options: request.options ?? {},
-      });
+      const scrapeJobId =
+        typeof job.data === "object" &&
+        job.data !== null &&
+        "scrapeJobId" in job.data &&
+        typeof (job.data as { scrapeJobId?: string }).scrapeJobId === "string" &&
+        (job.data as { scrapeJobId?: string }).scrapeJobId
+          ? (job.data as { scrapeJobId: string }).scrapeJobId
+          : "";
+      const row = scrapeJobId
+        ? { id: scrapeJobId }
+        : await createScrapeJob(db, {
+            source: request.source,
+            seeds: request.seeds,
+            trigger: "api",
+            options: request.options ?? {},
+          });
       const botQueue = new Queue(queueForSource(request.source), { connection });
       await botQueue.add("scrape", {
         jobId: row.id,
@@ -122,7 +133,7 @@ export async function startOrchestratorWorkers() {
 }
 
 // CLI entry
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1]?.includes("worker")) {
   startOrchestratorWorkers().catch((err) => {
     console.error(err);
     process.exit(1);

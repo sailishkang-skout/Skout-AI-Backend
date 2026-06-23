@@ -204,6 +204,48 @@ export async function bulkUpsertProspects(
   return { ingested: docs.length - failed, failed };
 }
 
+export interface ProspectScorePatch {
+  prospectId: string;
+  icpScore: number;
+  intentScore?: number;
+  painPoints?: string[];
+  outreachReadiness?: string;
+}
+
+/** Partial update of AI score fields on existing corpus documents. */
+export async function bulkPatchProspectScores(
+  cfg: OpenSearchConfig,
+  patches: ProspectScorePatch[]
+): Promise<{ updated: number; failed: number }> {
+  if (!patches.length) return { updated: 0, failed: 0 };
+  const index = cfg.index ?? PROSPECTS_INDEX;
+  const now = new Date().toISOString();
+  const lines: string[] = [];
+  for (const patch of patches) {
+    lines.push(JSON.stringify({ update: { _index: index, _id: patch.prospectId } }));
+    lines.push(
+      JSON.stringify({
+        doc: {
+          icpScore: patch.icpScore,
+          ...(patch.intentScore != null ? { intentScore: patch.intentScore } : {}),
+          ...(patch.painPoints?.length ? { painPoints: patch.painPoints } : {}),
+          ...(patch.outreachReadiness ? { outreachReadiness: patch.outreachReadiness } : {}),
+          updatedAt: now,
+        },
+      })
+    );
+  }
+  const body = lines.join("\n") + "\n";
+  const res = await osFetch<{ items?: { update?: { error?: unknown } }[] }>(cfg, "/_bulk", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-ndjson" },
+    body,
+  });
+  const items = res.items ?? [];
+  const failed = items.filter((i) => i.update?.error).length;
+  return { updated: patches.length - failed, failed };
+}
+
 export async function getProspectById(
   cfg: OpenSearchConfig,
   prospectId: string

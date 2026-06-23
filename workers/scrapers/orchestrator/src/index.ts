@@ -11,12 +11,19 @@ export { SCRAPE_QUEUES, queueForSource } from "./queues.js";
 export { startOrchestratorWorkers } from "./worker.js";
 
 /** Enqueue a scrape job via BullMQ (returns immediately with queued manifest). */
-export async function enqueueScrapeJob(input: unknown): Promise<ScrapeJobManifest> {
+export async function enqueueScrapeJob(
+  input: unknown,
+  options?: { scrapeJobId?: string }
+): Promise<ScrapeJobManifest> {
   const request: ScrapeJobRequest = scrapeJobRequestSchema.parse(input);
-  const jobId = randomUUID();
+  const jobId = options?.scrapeJobId ?? randomUUID();
   const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
   const queue = new Queue(SCRAPE_QUEUES.schedule, { connection: { url: redisUrl } });
-  await queue.add("schedule", request, { jobId });
+  await queue.add(
+    "schedule",
+    { ...request, scrapeJobId: options?.scrapeJobId },
+    { jobId: options?.scrapeJobId ?? jobId }
+  );
   await queue.close();
 
   return {

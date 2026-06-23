@@ -17,6 +17,7 @@
     "@skout/scraper-contracts": "workspace:*",
     "@skout/storage": "workspace:*",
     "bullmq": "^5.34.5",
+    "dotenv": "^16.4.7",
     "drizzle-orm": "^0.44.2",
     "ioredis": "^5.4.2"
   },

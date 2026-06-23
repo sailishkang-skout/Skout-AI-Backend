@@ -3,6 +3,7 @@ import { initRootLogger, initSentry } from "@skout/observability";
 import { loadEnv } from "./config/env.js";
 import { buildApp } from "./app.js";
 import { startCrmExportWorker } from "./workers/crm-export.worker.js";
+import { startListScoreWorker } from "./workers/list-score.worker.js";
 
 async function main() {
   const config = loadEnv();
@@ -23,10 +24,12 @@ async function main() {
   });
 
   const stopCrmWorker = await startCrmExportWorker(config);
+  const stopListScoreWorker = await startListScoreWorker(config);
 
   const app = await buildApp(config);
 
   const shutdown = async () => {
+    await stopListScoreWorker();
     await stopCrmWorker();
     await app.close();
   };

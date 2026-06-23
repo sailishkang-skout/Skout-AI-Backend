@@ -12,6 +12,7 @@ async function buildTestApp() {
     LOG_LEVEL: "fatal",
     AI_SERVICE_URL: undefined,
     OPENSEARCH_URL: undefined,
+    DEMO_CORPUS_SIZE: 5300,
   });
 }
 
@@ -25,7 +26,7 @@ describe("smart list API", () => {
       headers: { "x-workspace-id": WORKSPACE, "content-type": "application/json" },
       payload: {
         name: "Software US",
-        filters: { industry: "Software", country: "US" },
+        filters: { industry: "Software & SaaS", country: "US" },
       },
     });
     expect(create.statusCode).toBe(201);

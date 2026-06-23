@@ -1,16 +1,17 @@
 import { Worker } from "bullmq";
 import { eq } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
+import { requireDatabaseUrl } from "./load-env.js";
 import {
   bulkUpsertProspects,
   ensureProspectsIndex,
   type OpenSearchConfig,
 } from "@skout/opensearch";
 import { scrapeJobManifestSchema } from "@skout/scraper-contracts";
-import { createScrapeStorage, scrapeKey } from "@skout/storage";
+import { resolveScrapeStorage, scrapeKey } from "@skout/storage";
 import { recordsToDocs } from "./index.js";
 
-const SCRAPE_QUEUES = { ingest: "scrape:ingest" };
+const SCRAPE_QUEUES = { ingest: "scrape-ingest" };
 
 function osConfig(): OpenSearchConfig {
   const url = process.env.OPENSEARCH_URL;
@@ -24,9 +25,7 @@ function osConfig(): OpenSearchConfig {
 }
 
 export async function runIngestPipeline(cleanS3Key: string, source: string, jobId: string) {
-  const bucket = process.env.SCRAPE_BUCKET;
-  if (!bucket) throw new Error("SCRAPE_BUCKET required");
-  const storage = createScrapeStorage(bucket);
+  const storage = resolveScrapeStorage();
   const records = await storage.getJsonl(cleanS3Key);
   const docs = recordsToDocs(records);
 
@@ -57,9 +56,7 @@ export async function runIngestPipeline(cleanS3Key: string, source: string, jobI
 
 export async function startIngestorWorker() {
   const connection = { url: process.env.REDIS_URL ?? "redis://localhost:6379" };
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL required");
-  const { db, sql } = createDb(url);
+  const { db, sql } = createDb(requireDatabaseUrl());
 
   const worker = new Worker(
     SCRAPE_QUEUES.ingest,
@@ -69,18 +66,31 @@ export async function startIngestorWorker() {
         source: string;
         cleanS3Key: string;
       };
-      const result = await runIngestPipeline(cleanS3Key, source, jobId);
-      await db
-        .update(schema.scrapeJobs)
-        .set({
-          manifestS3Key: result.manifestS3Key,
-          ingestedCount: result.ingested,
-          skippedDuplicateCount: result.skippedDuplicate,
-          status: result.failed > 0 ? "failed" : "completed",
-          completedAt: new Date(),
-        })
-        .where(eq(schema.scrapeJobs.id, jobId));
-      return result;
+      try {
+        const result = await runIngestPipeline(cleanS3Key, source, jobId);
+        await db
+          .update(schema.scrapeJobs)
+          .set({
+            manifestS3Key: result.manifestS3Key,
+            ingestedCount: result.ingested,
+            skippedDuplicateCount: result.skippedDuplicate,
+            status: result.failed > 0 ? "failed" : "completed",
+            completedAt: new Date(),
+          })
+          .where(eq(schema.scrapeJobs.id, jobId));
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        await db
+          .update(schema.scrapeJobs)
+          .set({
+            status: "failed",
+            errorMessage: message,
+            completedAt: new Date(),
+          })
+          .where(eq(schema.scrapeJobs.id, jobId));
+        throw err;
+      }
     },
     { connection }
   );

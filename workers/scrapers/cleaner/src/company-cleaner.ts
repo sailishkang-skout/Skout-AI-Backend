@@ -17,19 +17,51 @@ function normalizeDomain(domain: string): string {
   return domain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
 }
 
+const SKIP_DOMAINS = /(?:linkedin\.com|licdn\.com|licdn\.cn|microsoft\.com|google\.com|gstatic\.com)$/i;
+
+/** Extract company website domain from LinkedIn company page HTML / seed URL. */
+export function deriveLinkedInCompanyDomain(input: {
+  url?: string;
+  payload: Record<string, unknown>;
+}): string | null {
+  const seed = String(input.payload.seed ?? input.url ?? "");
+  const html = String(input.payload.html ?? "");
+
+  const embedded = html.match(/"websiteUrl":"(https?:[^"]+)"/i)?.[1];
+  if (embedded) {
+    const d = normalizeDomain(embedded);
+    if (d && !SKIP_DOMAINS.test(d)) return d;
+  }
+
+  for (const match of html.matchAll(/https?:\/\/(?:www\.)?([a-z0-9][a-z0-9.-]*\.[a-z]{2,})/gi)) {
+    const d = normalizeDomain(match[0]);
+    if (d && !SKIP_DOMAINS.test(d)) return d;
+  }
+
+  const slug = seed.match(/linkedin\.com\/company\/([^/?#]+)/i)?.[1];
+  if (slug && slug !== "company") return `${slug.replace(/-/g, "")}.com`;
+
+  return null;
+}
+
 export function rawToCompanyCandidate(raw: {
   source: string;
   payload: Record<string, unknown>;
   scrapedAt?: string;
   rawS3Key?: string;
   html?: string;
+  url?: string;
 }): CompanyCandidate | null {
   const p = raw.payload;
-  const domain =
+  let domain: string | undefined =
     (p.domain as string) ??
     (p.company_domain as string) ??
     (p.homepage_url as string) ??
     (p.name as string);
+
+  if (!domain && raw.source === "linkedin") {
+    domain = deriveLinkedInCompanyDomain({ url: raw.url, payload: p }) ?? undefined;
+  }
   if (!domain) return null;
 
   const html = raw.html ?? (p.html as string) ?? "";
@@ -47,6 +79,8 @@ export function rawToCompanyCandidate(raw: {
     employeeBucket: toEmployeeBucket(p.employeeCount as number | undefined),
     techStack: techStack.length ? techStack : undefined,
     isPublic: raw.source === "sec-edgar" ? true : undefined,
+    isHiring: p.isHiring === true ? true : undefined,
+    openJobs: typeof p.openJobs === "number" ? p.openJobs : undefined,
     scrapedAt: raw.scrapedAt ?? new Date().toISOString(),
     rawS3Key: raw.rawS3Key,
   };
@@ -74,7 +108,12 @@ export function cleanCompanies(records: unknown[]): CompanyCleanResult {
   const seen = new Set<string>();
 
   for (const record of records) {
-    const r = record as { source?: string; payload?: Record<string, unknown>; scrapedAt?: string };
+    const r = record as {
+      source?: string;
+      payload?: Record<string, unknown>;
+      scrapedAt?: string;
+      url?: string;
+    };
     if (!r.source || !r.payload) {
       quarantined.push({ record, reason: "missing source or payload" });
       continue;
@@ -83,6 +122,8 @@ export function cleanCompanies(records: unknown[]): CompanyCleanResult {
       source: r.source,
       payload: r.payload,
       scrapedAt: r.scrapedAt,
+      url: r.url,
+      html: (r.payload as { html?: string }).html,
     });
     if (!candidate) {
       quarantined.push({ record, reason: "could not derive domain" });

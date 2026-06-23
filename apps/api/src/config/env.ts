@@ -62,6 +62,11 @@ const envSchema = z
       .transform((v) => v === "true" || v === "1"),
     EXPORTS_BUCKET: z.string().optional(),
     SCRAPE_BUCKET: z.string().optional(),
+    S3_ENDPOINT: z.string().optional(),
+    S3_FORCE_PATH_STYLE: z
+      .string()
+      .optional()
+      .transform((v) => v === "true" || v === "1"),
     OPENSEARCH_URL: z.string().optional(),
     OPENSEARCH_USERNAME: z.string().optional(),
     OPENSEARCH_PASSWORD: z.string().optional(),

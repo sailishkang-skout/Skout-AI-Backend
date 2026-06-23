@@ -10,6 +10,9 @@ export interface EnrichmentInput {
   /** Existing email, if any — skips finding, still validated. */
   email?: string;
   linkedinUrl?: string;
+  /** Activation / corpus cache — internal_graph step (no external spend). */
+  cachedEmail?: string;
+  cachedCompany?: CompanyData;
   /** AI lead score (0–100). Phone enrichment is gated on this (> 80). */
   leadScore?: number;
   /** Re-score after firmographics, right before the phone gate. */

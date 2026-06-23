@@ -1,38 +1,52 @@
 import type { FastifyInstance } from "fastify";
-import { desc } from "drizzle-orm";
-import { schema } from "@skout/db";
 import { scrapeJobRequestSchema } from "@skout/scraper-contracts";
-import { enqueueScrapeJob } from "@skout/scraper-orchestrator";
+import {
+  createAndEnqueueScrapeJob,
+  getScrapeJob,
+  listScrapeJobs,
+} from "../services/scrape.service.js";
 
 /** Internal corpus pipeline triggers (strategy §2 Stage 1). */
 export async function scrapeRoutes(app: FastifyInstance) {
   app.post("/scrape/jobs", async (request, reply) => {
     const body = scrapeJobRequestSchema.parse(request.body ?? {});
+    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
+
     try {
-      const manifest = await enqueueScrapeJob(body);
-      return reply.status(202).send(manifest);
+      const { job, warning } = await createAndEnqueueScrapeJob(app.db, app.config, body);
+      return reply.status(202).send({
+        jobId: job.id,
+        source: job.source,
+        status: job.status,
+        seeds: job.seeds,
+        counts: {
+          raw: job.rawCount ?? 0,
+          clean: job.cleanCount ?? 0,
+          quarantined: job.quarantinedCount ?? 0,
+          ingested: job.ingestedCount ?? 0,
+          skippedDuplicate: job.skippedDuplicateCount ?? 0,
+        },
+        startedAt: job.queuedAt,
+        warning,
+        error: job.errorMessage ?? undefined,
+      });
     } catch (err) {
-      if (process.env.NODE_ENV === "development") {
-        return reply.status(202).send({
-          jobId: crypto.randomUUID(),
-          source: body.source,
-          status: "queued",
-          counts: { raw: 0, clean: 0, quarantined: 0, ingested: 0, skippedDuplicate: 0 },
-          startedAt: new Date().toISOString(),
-          warning: "Redis unavailable — job validated but not enqueued",
-        });
-      }
-      throw err;
+      const message = err instanceof Error ? err.message : "enqueue_failed";
+      return reply.status(503).send({ error: message });
     }
   });
 
   app.get("/scrape/jobs", async (request, reply) => {
     if (!app.db) return reply.send({ data: [], total: 0 });
-    const rows = await app.db
-      .select()
-      .from(schema.scrapeJobs)
-      .orderBy(desc(schema.scrapeJobs.queuedAt))
-      .limit(50);
-    return reply.send({ data: rows, total: rows.length });
+    const data = await listScrapeJobs(app.db);
+    return reply.send({ data, total: data.length });
+  });
+
+  app.get("/scrape/jobs/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
+    const job = await getScrapeJob(app.db, id);
+    if (!job) return reply.status(404).send({ error: "job_not_found" });
+    return reply.send(job);
   });
 }

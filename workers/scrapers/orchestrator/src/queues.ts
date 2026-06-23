@@ -1,12 +1,12 @@
-/** BullMQ queue names for the corpus pipeline (strategy §2 Stage 1). */
+/** BullMQ queue names (no `:` — BullMQ 5.7+ restriction). */
 export const SCRAPE_QUEUES = {
-  schedule: "scrape:schedule",
-  clean: "scrape:clean",
-  ingest: "scrape:ingest",
-  companyWeb: "scrape:company-web",
-  linkedin: "scrape:linkedin",
-  opencorporates: "scrape:opencorporates",
-  secEdgar: "scrape:sec-edgar",
+  schedule: "scrape-schedule",
+  clean: "scrape-clean",
+  ingest: "scrape-ingest",
+  companyWeb: "scrape-company-web",
+  linkedin: "scrape-linkedin",
+  opencorporates: "scrape-opencorporates",
+  secEdgar: "scrape-sec-edgar",
 } as const;
 
 export type BotQueue =

@@ -38,6 +38,10 @@ export function cleanProspects(records: unknown[]): CleanResult {
   const seen = new Set<string>();
 
   for (const record of records) {
+    const r = record as Record<string, unknown>;
+    // Raw bot rows (jobId + payload) are cleaned by cleanCompanies, not here.
+    if (r.jobId && r.payload && !r.companyDomain) continue;
+
     const parsed = prospectCandidateSchema.safeParse(record);
     if (!parsed.success) {
       quarantined.push({ record, reason: parsed.error.issues.map((i) => i.message).join("; ") });

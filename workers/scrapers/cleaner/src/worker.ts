@@ -1,16 +1,15 @@
 import { Worker, Queue } from "bullmq";
-import { createScrapeStorage, scrapeKey } from "@skout/storage";
+import { resolveScrapeStorage, scrapeKey } from "@skout/storage";
 import { eq } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
+import { requireDatabaseUrl } from "./load-env.js";
 import { cleanCompanies } from "./company-cleaner.js";
 import { cleanProspects } from "./index.js";
 
-const SCRAPE_QUEUES = { clean: "scrape:clean", ingest: "scrape:ingest" };
+const SCRAPE_QUEUES = { clean: "scrape-clean", ingest: "scrape-ingest" };
 
 export async function runCleanPipeline(rawS3Key: string, source: string, jobId: string) {
-  const bucket = process.env.SCRAPE_BUCKET;
-  if (!bucket) throw new Error("SCRAPE_BUCKET required");
-  const storage = createScrapeStorage(bucket);
+  const storage = resolveScrapeStorage();
   const rawRecords = await storage.getJsonl(rawS3Key);
 
   const companies = cleanCompanies(rawRecords);
@@ -31,9 +30,7 @@ export async function runCleanPipeline(rawS3Key: string, source: string, jobId: 
 
 export async function startCleanerWorker() {
   const connection = { url: process.env.REDIS_URL ?? "redis://localhost:6379" };
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL required");
-  const { db, sql } = createDb(url);
+  const { db, sql } = createDb(requireDatabaseUrl());
   const ingestQueue = new Queue(SCRAPE_QUEUES.ingest, { connection });
 
   const worker = new Worker(
@@ -44,22 +41,35 @@ export async function startCleanerWorker() {
         source: string;
         rawS3Key: string;
       };
-      const result = await runCleanPipeline(rawS3Key, source, jobId);
-      await db
-        .update(schema.scrapeJobs)
-        .set({
-          cleanS3Key: result.cleanS3Key,
-          cleanCount: result.cleanCount,
-          quarantinedCount: result.quarantinedCount,
-        })
-        .where(eq(schema.scrapeJobs.id, jobId));
+      try {
+        const result = await runCleanPipeline(rawS3Key, source, jobId);
+        await db
+          .update(schema.scrapeJobs)
+          .set({
+            cleanS3Key: result.cleanS3Key,
+            cleanCount: result.cleanCount,
+            quarantinedCount: result.quarantinedCount,
+          })
+          .where(eq(schema.scrapeJobs.id, jobId));
 
-      await ingestQueue.add("ingest", {
-        jobId,
-        source,
-        cleanS3Key: result.cleanS3Key,
-      });
-      return result;
+        await ingestQueue.add("ingest", {
+          jobId,
+          source,
+          cleanS3Key: result.cleanS3Key,
+        });
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        await db
+          .update(schema.scrapeJobs)
+          .set({
+            status: "failed",
+            errorMessage: message,
+            completedAt: new Date(),
+          })
+          .where(eq(schema.scrapeJobs.id, jobId));
+        throw err;
+      }
     },
     { connection }
   );

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
+import { ensureDemoIcp } from "../test/ensure-demo-icp.js";
 
 const WORKSPACE = "00000000-0000-4000-8000-000000000001";
 
@@ -43,6 +44,7 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
 
   it("enriches a prospect: firmographics + email + verification (§5, §8)", async () => {
     const app = await buildTestApp();
+    await ensureDemoIcp(app, WORKSPACE);
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/prospects/acme-prospect/enrich",
@@ -75,6 +77,7 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
 
   it("skips phone when lead score is below gate (§6, default gate=80)", async () => {
     const app = await buildTestApp();
+    await ensureDemoIcp(app, WORKSPACE);
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/prospects/low-score-phone-gate/enrich",
@@ -93,6 +96,7 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
 
   it("allows phone when gate is overridden via env (§6)", async () => {
     const app = await buildTestApp({ ENRICHMENT_PHONE_SCORE_GATE: -1 });
+    await ensureDemoIcp(app, WORKSPACE);
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/prospects/gate-test/enrich",
@@ -125,6 +129,7 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
 
   it("scores a prospect against ICP (§9)", async () => {
     const app = await buildTestApp();
+    await ensureDemoIcp(app, WORKSPACE);
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/enrichment/score",
@@ -165,21 +170,38 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
 
   it("creates a list and bulk-enriches members (§8 user intent trigger)", async () => {
     const app = await buildTestApp();
+    await ensureDemoIcp(app, WORKSPACE);
     const create = await app.inject({
       method: "POST",
       url: "/api/v1/lists",
       headers: { "x-workspace-id": WORKSPACE, "content-type": "application/json" },
-      payload: {
-        name: "Test List",
-        prospects: [
-          { fullName: "Amy Lee", companyDomain: "foo.com", title: "CEO" },
-          { fullName: "Bob Ray", companyDomain: "bar.com", title: "VP Marketing" },
-        ],
-      },
+      payload: { name: "Test List" },
     });
     expect(create.statusCode).toBe(201);
     const list = create.json() as { id: string; prospectCount: number };
-    expect(list.prospectCount).toBe(2);
+
+    const members = await app.inject({
+      method: "POST",
+      url: `/api/v1/lists/${list.id}/members`,
+      headers: { "x-workspace-id": WORKSPACE, "content-type": "application/json" },
+      payload: {
+        prospects: [
+          {
+            prospectId: "prospect-amy",
+            fullName: "Amy Lee",
+            companyDomain: "foo.com",
+            title: "CEO",
+          },
+          {
+            prospectId: "prospect-bob",
+            fullName: "Bob Ray",
+            companyDomain: "bar.com",
+            title: "VP Marketing",
+          },
+        ],
+      },
+    });
+    expect(members.statusCode).toBe(200);
 
     const enrich = await app.inject({
       method: "POST",
@@ -206,6 +228,7 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
 
   it("lists enrichment jobs and fetches job by id", async () => {
     const app = await buildTestApp();
+    await ensureDemoIcp(app, WORKSPACE);
     const enrich = await app.inject({
       method: "POST",
       url: "/api/v1/prospects/job-fetch-test/enrich",

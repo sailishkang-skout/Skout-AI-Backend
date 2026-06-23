@@ -249,6 +249,9 @@ importers:
       bullmq:
         specifier: ^5.34.5
         version: 5.78.0
+      dotenv:
+        specifier: ^16.4.7
+        version: 16.6.1
       drizzle-orm:
         specifier: ^0.44.2
         version: 0.44.7(@opentelemetry/api@1.9.1)(@types/pg@8.6.1)(postgres@3.4.9)
@@ -289,6 +292,9 @@ importers:
       bullmq:
         specifier: ^5.34.5
         version: 5.78.0
+      dotenv:
+        specifier: ^16.4.7
+        version: 16.6.1
       drizzle-orm:
         specifier: ^0.44.2
         version: 0.44.7(@opentelemetry/api@1.9.1)(@types/pg@8.6.1)(postgres@3.4.9)
@@ -323,6 +329,9 @@ importers:
       bullmq:
         specifier: ^5.34.5
         version: 5.78.0
+      dotenv:
+        specifier: ^16.4.7
+        version: 16.6.1
       drizzle-orm:
         specifier: ^0.44.2
         version: 0.44.7(@opentelemetry/api@1.9.1)(@types/pg@8.6.1)(postgres@3.4.9)

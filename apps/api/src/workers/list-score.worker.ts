@@ -4,35 +4,30 @@ import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
-import {
-  createDefaultCredentialsStore,
-  runHubSpotExportJob,
-} from "../services/crm-export.runner.js";
-import { CRM_EXPORT_QUEUE, type CrmExportJobPayload } from "./crm-export.queue.js";
+import { runListScoreJob } from "../services/list-score.runner.js";
+import { LIST_SCORE_QUEUE, type ListScoreJobPayload } from "./list-score.queue.js";
 
-const log = createLogger("crm-export.worker");
+const log = createLogger("list-score.worker");
 
-export async function startCrmExportWorker(config: Env): Promise<() => Promise<void>> {
+export async function startListScoreWorker(config: Env): Promise<() => Promise<void>> {
   if (!config.DATABASE_URL) {
-    log.warn("CRM export worker not started — DATABASE_URL not set");
+    log.warn("List score worker not started — DATABASE_URL not set");
     return async () => {};
   }
 
   if (!(await isRedisAvailable(config))) {
-    log.warn("CRM export worker not started — Redis unavailable");
+    log.warn("List score worker not started — Redis unavailable");
     return async () => {};
   }
 
   const { db, sql } = createDb(config.DATABASE_URL);
 
-  const credentialsStore = createDefaultCredentialsStore(config);
-
-  const worker = new Worker<CrmExportJobPayload>(
-    CRM_EXPORT_QUEUE,
+  const worker = new Worker<ListScoreJobPayload>(
+    LIST_SCORE_QUEUE,
     async (job) => {
       const { jobId, workspaceId, listId } = job.data;
-      log.info("Processing HubSpot export", { jobId, workspaceId, listId, attempt: job.attemptsMade });
-      await runHubSpotExportJob(db, config, credentialsStore, jobId, workspaceId, listId);
+      log.info("Processing list score job", { jobId, workspaceId, listId, attempt: job.attemptsMade });
+      await runListScoreJob(db, config, jobId, workspaceId, listId);
     },
     {
       connection: redisBullMqConnection(config.REDIS_URL),
@@ -41,13 +36,13 @@ export async function startCrmExportWorker(config: Env): Promise<() => Promise<v
   );
 
   worker.on("failed", (job, err) => {
-    log.error("CRM export job failed in worker", err, {
+    log.error("List score job failed in worker", err, {
       jobId: job?.data?.jobId,
       workspaceId: job?.data?.workspaceId,
     });
   });
 
-  log.info("CRM export worker started", { queue: CRM_EXPORT_QUEUE });
+  log.info("List score worker started", { queue: LIST_SCORE_QUEUE });
 
   return async () => {
     await worker.close();
@@ -55,10 +50,9 @@ export async function startCrmExportWorker(config: Env): Promise<() => Promise<v
   };
 }
 
-/** Standalone entrypoint: `node dist/workers/crm-export.worker.js` */
 async function main() {
   const config = loadEnv();
-  const stop = await startCrmExportWorker(config);
+  const stop = await startListScoreWorker(config);
   const shutdown = async () => {
     await stop();
     process.exit(0);
@@ -68,8 +62,8 @@ async function main() {
 }
 
 const isMain =
-  process.argv[1]?.includes("crm-export.worker") ||
-  process.env.CRM_EXPORT_WORKER_STANDALONE === "true";
+  process.argv[1]?.includes("list-score.worker") ||
+  process.env.LIST_SCORE_WORKER_STANDALONE === "true";
 
 if (isMain) {
   main().catch((err) => {

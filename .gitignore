@@ -29,6 +29,8 @@ infra/dist
 
 # docker
 postgres-data
+.scrape-data/
+minio-data/
 
 # python
 __pycache__

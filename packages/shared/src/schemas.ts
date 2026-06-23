@@ -215,6 +215,10 @@ export const prospectSummarySchema = z.object({
   industry: z.string(),
   companyDomain: z.string(),
   employeeCount: z.number().optional(),
+  icpScore: z.number().int().min(0).max(100).optional(),
+  intentScore: z.number().int().min(0).max(100).optional(),
+  painPoints: z.array(z.string()).optional(),
+  outreachReadiness: z.string().optional(),
   updatedAt: z.string().datetime().optional(),
 });
 

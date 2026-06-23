@@ -1,12 +1,11 @@
 import { eq } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
+import { requireDatabaseUrl } from "./load-env.js";
 
 const { scrapeJobs } = schema;
 
 export function openDb() {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL required for scrape orchestrator");
-  return createDb(url);
+  return createDb(requireDatabaseUrl());
 }
 
 export async function createScrapeJob(

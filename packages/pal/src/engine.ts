@@ -100,8 +100,28 @@ export class EnrichmentEngine {
       }
     };
 
+    // 0. internal_graph — caller-supplied activation cache (free, no vendor call)
+    let companyFromCache = false;
+    if (fields.includes("company") && input.cachedCompany) {
+      order += 1;
+      attempts.push({
+        order,
+        provider: "internal_graph",
+        operation: "lookupCompany",
+        status: "ok",
+        latencyMs: 0,
+      });
+      results.push({
+        field: "company",
+        valueJson: input.cachedCompany,
+        provider: "internal_graph",
+        isPrimary: true,
+      });
+      companyFromCache = true;
+    }
+
     // 1. Firmographics
-    if (fields.includes("company")) {
+    if (fields.includes("company") && !companyFromCache) {
       for (const p of this.providers.firmographics) {
         const company = await run(p.name, "fetchCompany", () =>
           p.fetchCompany(input.companyDomain, input.companyName)
@@ -121,8 +141,25 @@ export class EnrichmentEngine {
       }
     }
 
-    // 2. Email — use supplied, else find, else first generated candidate
+    // 2. Email — cached activation email, supplied input, find, or pattern-gen
     let email = input.email;
+    if (!email && fields.includes("email") && input.cachedEmail) {
+      order += 1;
+      attempts.push({
+        order,
+        provider: "internal_graph",
+        operation: "lookupEmail",
+        status: "ok",
+        latencyMs: 0,
+      });
+      email = input.cachedEmail;
+      results.push({
+        field: "email",
+        value: email,
+        provider: "internal_graph",
+        confidence: 1,
+      });
+    }
     if (!email && fields.includes("email") && input.fullName) {
       const emailContext = {
         companyName: input.companyName,

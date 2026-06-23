@@ -3,6 +3,7 @@ import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { getProspectById, type OpenSearchConfig, type ProspectDocument } from "@skout/opensearch";
 import type { ProspectList, ProspectListMember } from "./enrichment/types.js";
+import { snapshotFromCorpusDoc } from "../utils/verified-email.js";
 
 const { lists, listMembers, prospectActivations } = schema;
 
@@ -45,20 +46,7 @@ function mergeSnapshots(
 }
 
 function osDocToSnapshot(doc: ProspectDocument): Record<string, unknown> {
-  return {
-    prospectId: doc.prospectId,
-    companyId: doc.companyId,
-    fullName: doc.fullName,
-    title: doc.title,
-    seniority: doc.seniority,
-    email: doc.email,
-    companyDomain: doc.companyDomain,
-    companyName: doc.companyName,
-    industry: doc.industry,
-    country: doc.country,
-    employeeCount: doc.employeeCount,
-    linkedinUrl: doc.linkedinUrl,
-  };
+  return snapshotFromCorpusDoc(doc) as unknown as Record<string, unknown>;
 }
 
 export class ListService {

@@ -102,4 +102,19 @@ describe("EnrichmentEngine", () => {
     });
     expect(out.results.some((r) => r.field === "email" && r.provider === "pattern-gen")).toBe(false);
   });
+
+  it("uses internal_graph cache before paid email finders", async () => {
+    const engine = new EnrichmentEngine();
+    const out = await engine.enrich({
+      prospectId: "p1",
+      fullName: "Jane Doe",
+      companyDomain: "acme.com",
+      cachedEmail: "jane@acme.com",
+      fields: ["email", "validation"],
+    });
+    expect(out.attempts.some((a) => a.provider === "internal_graph" && a.operation === "lookupEmail")).toBe(
+      true
+    );
+    expect(out.results.some((r) => r.field === "email" && r.provider === "internal_graph")).toBe(true);
+  });
 });

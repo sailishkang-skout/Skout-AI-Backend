@@ -2,6 +2,7 @@ import type { Db } from "@skout/db";
 import { EnrichmentEngine, createRegistryFromConfig, type PalConfig } from "@skout/pal";
 import type { Env } from "../../config/env.js";
 import { getWorkspaceIcp } from "../icp.service.js";
+import { writeScoreToOpenSearch } from "../score-opensearch.js";
 import { ensureDemoWorkspace } from "../demo-workspace.js";
 import { createIntegrationService, workspaceEngineCacheKey } from "../integration.service.js";
 import { hasWorkspacePalKeys } from "../integration-providers.js";
@@ -82,6 +83,7 @@ export function buildEnrichmentService(db: Db | null, config: Env): EnrichmentSe
     config.AI_SERVICE_URL,
     config.ENRICHMENT_AI_TIMEOUT_MS,
     db ? (ws) => getWorkspaceIcp(db, ws) : undefined,
-    db ? (ws) => ensureDemoWorkspace(db, ws) : undefined
+    db ? (ws) => ensureDemoWorkspace(db, ws) : undefined,
+    (result) => writeScoreToOpenSearch(config, result)
   );
 }

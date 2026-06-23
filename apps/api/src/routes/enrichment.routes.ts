@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { buildEnrichmentService, InsufficientCreditsError } from "../services/enrichment/index.js";
 import { getWorkspaceIcp } from "../services/icp.service.js";
+import { ListScoreService } from "../services/list-score.service.js";
 import { HttpError, errorResponse } from "../utils/http.js";
 
 const scoreBodySchema = z.object({
@@ -90,6 +91,22 @@ export async function enrichmentRoutes(app: FastifyInstance) {
     const svc = buildEnrichmentService(app.db, app.config);
     const scores = await svc.lookupScores(workspaceId, body.prospectIds);
     return reply.send({ scores });
+  });
+
+  app.get("/enrichment/score-jobs/:jobId", async (request, reply) => {
+    const { jobId } = request.params as { jobId: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
+    const svc = new ListScoreService(app.db, app.config);
+    try {
+      const job = await svc.getJob(workspaceId, jobId);
+      return reply.send(job);
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return reply.status(err.statusCode).send(errorResponse(err.message, err.statusCode));
+      }
+      throw err;
+    }
   });
 
   app.post("/enrichment/personalize", async (request, reply) => {

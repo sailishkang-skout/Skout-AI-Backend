@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { createDb } from "./client.js";
 import { resolveDatabaseUrl } from "./database-url.js";
 import { creditBalances } from "./schema/credits.js";
+import { workspaceIcp } from "./schema/icp.js";
 import { lists } from "./schema/prospects.js";
 import { workspaces } from "./schema/workspaces.js";
 
@@ -48,6 +49,33 @@ try {
       set: { balance: 500 },
     });
   console.log("Seeded 500 credits");
+
+  await db
+    .insert(workspaceIcp)
+    .values({
+      workspaceId: DEMO_WORKSPACE_ID,
+      config: {
+        industries: ["Software & SaaS"],
+        countries: ["US"],
+        seniorities: ["vp", "director"],
+        minEmployees: 10,
+      },
+      version: 1,
+    })
+    .onConflictDoUpdate({
+      target: workspaceIcp.workspaceId,
+      set: {
+        config: {
+          industries: ["Software & SaaS"],
+          countries: ["US"],
+          seniorities: ["vp", "director"],
+          minEmployees: 10,
+        },
+        version: 1,
+        updatedAt: new Date(),
+      },
+    });
+  console.log("Seeded demo ICP");
 
   const [demoList] = await db
     .select({ id: lists.id })

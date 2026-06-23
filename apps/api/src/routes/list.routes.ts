@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { OpenSearchConfig } from "@skout/opensearch";
 import { buildEnrichmentService, InsufficientCreditsError } from "../services/enrichment/index.js";
 import { createCrmService } from "../services/crm.service.js";
+import { ListScoreService } from "../services/list-score.service.js";
 import { HttpError, errorResponse } from "../utils/http.js";
 import { buildListService } from "../services/list.service.js";
 import type { Env } from "../config/env.js";
@@ -126,9 +127,13 @@ export async function listRoutes(app: FastifyInstance) {
   app.post("/lists/:id/score", async (request, reply) => {
     const { id } = request.params as { id: string };
     const workspaceId = request.workspaceId ?? "unknown";
-    const svc = buildEnrichmentService(app.db, app.config);
+    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
+    const svc = new ListScoreService(app.db, app.config);
     try {
-      const result = await svc.scoreList(workspaceId, id);
+      const result = await svc.start(workspaceId, id);
+      if (result.status === "pending") {
+        return reply.status(202).send({ jobId: result.jobId, status: result.status });
+      }
       return reply.send(result);
     } catch (err) {
       if (err instanceof InsufficientCreditsError) {

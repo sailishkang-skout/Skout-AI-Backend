@@ -1,6 +1,6 @@
 import { EnrichmentEngine, type EnrichField } from "@skout/pal";
 import { generateCompanyId, generateProspectId } from "@skout/shared";
-import { scoreProspect, type IcpConfig, type ScoreInput } from "./ai-client.js";
+import { scoreProspect, type IcpConfig, type ScoreInput, type ScoreResult } from "./ai-client.js";
 import {
   InsufficientCreditsError,
   type EnrichmentBatch,
@@ -12,6 +12,8 @@ import {
 } from "./types.js";
 import { HttpError } from "../../utils/http.js";
 import { isIcpConfigured } from "../icp.service.js";
+import { isVerifiedEmailStatus, stripUnverifiedEmail } from "../../utils/verified-email.js";
+import type { CompanyData } from "@skout/pal";
 
 export const SCORE_CREDIT_COST = 2;
 
@@ -31,6 +33,8 @@ export interface ProspectSnapshot {
   companyName?: string;
   hubspotContactId?: string;
   phone?: string;
+  emailStatus?: string;
+  company?: CompanyData;
 }
 
 export interface EnrichOptions {
@@ -69,7 +73,8 @@ export class EnrichmentService {
     private readonly aiServiceUrl?: string,
     private readonly aiTimeoutMs?: number,
     private readonly loadIcp?: (workspaceId: string) => Promise<IcpConfig>,
-    private readonly beforeWrite?: (workspaceId: string) => Promise<void>
+    private readonly beforeWrite?: (workspaceId: string) => Promise<void>,
+    private readonly afterScore?: (result: ScoreResult) => Promise<void>
   ) {}
 
   private async prepareWorkspace(workspaceId: string): Promise<void> {
@@ -102,7 +107,8 @@ export class EnrichmentService {
     await this.prepareWorkspace(workspaceId);
     for (const p of prospects) {
       const { companyId, prospectId } = this.resolveIds(p);
-      await this.store.upsertActivation(workspaceId, prospectId, companyId, { ...p, prospectId, companyId });
+      const snapshot = stripUnverifiedEmail({ ...p, prospectId, companyId });
+      await this.store.upsertActivation(workspaceId, prospectId, companyId, snapshot);
     }
     return prospects.length;
   }
@@ -186,6 +192,7 @@ export class EnrichmentService {
       reasoning,
       scoredAt: new Date().toISOString(),
     });
+    if (this.afterScore) await this.afterScore(result);
     return { ...result, creditsUsed: SCORE_CREDIT_COST };
   }
 
@@ -237,6 +244,16 @@ export class EnrichmentService {
         existingScore?.score ?? (await this.score(workspaceId, scoredSnapshot, icp)).icpScore;
 
       const engine = await this.resolveEngine(workspaceId);
+      const activationSnap: Partial<ProspectSnapshot> =
+        activation.snapshot && typeof activation.snapshot === "object"
+          ? (activation.snapshot as Partial<ProspectSnapshot>)
+          : {};
+      const cachedEmail =
+        activationSnap.email && isVerifiedEmailStatus(activationSnap.emailStatus)
+          ? activationSnap.email
+          : undefined;
+      const cachedCompany = activationSnap.company;
+
       const outcome = await engine.enrich({
         prospectId,
         companyDomain: snapshot.companyDomain,
@@ -245,6 +262,8 @@ export class EnrichmentService {
         title: snapshot.title,
         email: snapshot.email,
         linkedinUrl: snapshot.linkedinUrl,
+        cachedEmail,
+        cachedCompany,
         leadScore,
         fields,
         resolveLeadScoreForPhone: fields.includes("phone")
@@ -307,8 +326,7 @@ export class EnrichmentService {
           }
         }
       }
-      // Keep identity fields from the enrich input when validation ran on an imported email.
-      if (snapshot.email && !enriched.email) enriched.email = snapshot.email;
+      // Identity fields only — never restore unverified emails after validation.
       if (snapshot.fullName && !enriched.fullName) enriched.fullName = snapshot.fullName;
       if (snapshot.title && !enriched.title) enriched.title = snapshot.title;
       if (snapshot.companyDomain && !enriched.companyDomain) enriched.companyDomain = snapshot.companyDomain;
@@ -425,7 +443,7 @@ export class EnrichmentService {
     return Object.fromEntries(scores.map((s) => [s.prospectId, s]));
   }
 
-  async scoreList(workspaceId: string, listId: string) {
+  async prepareListScore(workspaceId: string, listId: string) {
     await this.prepareWorkspace(workspaceId);
     const list = await this.store.getList(workspaceId, listId);
     if (!list) throw new HttpError("list_not_found", 404);
@@ -450,8 +468,26 @@ export class EnrichmentService {
       throw new InsufficientCreditsError(totalCost, balance);
     }
 
+    return { list, icp, snapshots, totalCost };
+  }
+
+  async runListScore(
+    workspaceId: string,
+    listId: string,
+    opts?: {
+      onProgress?: (progress: {
+        scored: number;
+        total: number;
+        creditsUsed: number;
+        results: Array<{ prospectId: string; icpScore: number; icpBand: string }>;
+      }) => Promise<void>;
+    }
+  ) {
+    const { icp, snapshots } = await this.prepareListScore(workspaceId, listId);
+
     const results: Array<{ prospectId: string; icpScore: number; icpBand: string }> = [];
     let creditsUsed = 0;
+    let skipped = 0;
 
     for (const snap of snapshots) {
       const result = await this.score(workspaceId, snap, icp);
@@ -461,8 +497,24 @@ export class EnrichmentService {
         icpScore: result.icpScore,
         icpBand: result.icpBand,
       });
+      if (opts?.onProgress) {
+        await opts.onProgress({
+          scored: results.length,
+          total: snapshots.length,
+          creditsUsed,
+          results,
+        });
+      }
     }
 
-    return { listId, scored: results.length, results, creditsUsed };
+    const memberCount = (await this.store.getListMemberIds(workspaceId, listId)).length;
+    skipped = memberCount - snapshots.length;
+
+    return { listId, scored: results.length, skipped, results, creditsUsed };
+  }
+
+  /** @deprecated Use ListScoreService.start — kept for direct sync calls in tests */
+  async scoreList(workspaceId: string, listId: string) {
+    return this.runListScore(workspaceId, listId);
   }
 }
