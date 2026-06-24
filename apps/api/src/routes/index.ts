@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { dashboardRoutes } from "./dashboard.routes.js";
+import { analyticsRoutes } from "./analytics.routes.js";
 import { aiRoutes } from "./ai.routes.js";
 import { crmRoutes, webhookRoutes } from "./crm.routes.js";
 import { enrichmentRoutes } from "./enrichment.routes.js";
@@ -13,6 +14,7 @@ import { prospectRoutes } from "./prospect.routes.js";
 import { searchRoutes } from "./search.routes.js";
 import { sequenceRoutes } from "./sequence.routes.js";
 import { integrationRoutes } from "./integration.routes.js";
+import { billingRoutes } from "./billing.routes.js";
 import { workspaceRoutes } from "./workspace.routes.js";
 import { userRoutes } from "./user.routes.js";
 
@@ -23,6 +25,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(userRoutes);
     await v1.register(workspaceRoutes);
     await v1.register(dashboardRoutes);
+    await v1.register(analyticsRoutes);
     await v1.register(searchRoutes);
     await v1.register(prospectRoutes);
     await v1.register(listRoutes);
@@ -30,6 +33,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(icpRoutes);
     await v1.register(smartListRoutes);
     await v1.register(scrapeRoutes);
+    await v1.register(billingRoutes);
     await v1.register(sequenceRoutes);
     await v1.register(inboxRoutes);
     await v1.register(aiRoutes);

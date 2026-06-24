@@ -79,6 +79,11 @@ export function createWorkspaceService(db: Db) {
     },
 
     async getCreditTransactions(workspaceId: string, limit = 50, offset = 0) {
+      const [countRow] = await db
+        .select({ total: sql<number>`count(*)::int` })
+        .from(schema.creditTransactions)
+        .where(eq(schema.creditTransactions.workspaceId, workspaceId));
+
       const rows = await db
         .select()
         .from(schema.creditTransactions)
@@ -86,17 +91,22 @@ export function createWorkspaceService(db: Db) {
         .orderBy(desc(schema.creditTransactions.createdAt))
         .limit(limit)
         .offset(offset);
-      return rows.map((r) => ({
-        id: r.id,
-        workspaceId: r.workspaceId,
-        amount: r.amount,
-        action: r.action,
-        referenceId: r.referenceId,
-        createdAt: r.createdAt.toISOString(),
-      }));
+      return {
+        data: rows.map((r) => ({
+          id: r.id,
+          workspaceId: r.workspaceId,
+          amount: r.amount,
+          action: r.action,
+          referenceId: r.referenceId,
+          createdAt: r.createdAt.toISOString(),
+        })),
+        total: countRow?.total ?? 0,
+        limit,
+        offset,
+      };
     },
 
-    async addCredits(workspaceId: string, amount: number, action = "admin_topup") {
+    async addCredits(workspaceId: string, amount: number, action = "admin_topup", referenceId?: string) {
       const current = await this.getCreditBalance(workspaceId);
       const next = current.balance + amount;
 
@@ -112,6 +122,7 @@ export function createWorkspaceService(db: Db) {
         workspaceId,
         amount,
         action,
+        referenceId: referenceId ?? null,
       });
 
       return next;

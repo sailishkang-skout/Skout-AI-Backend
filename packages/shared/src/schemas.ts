@@ -205,6 +205,12 @@ export const searchFiltersSchema = z.object({
   signal: z.string().optional(),
 });
 
+export const prospectSignalSchema = z.object({
+  type: z.string(),
+  observedAt: z.string(),
+  detail: z.string().optional(),
+});
+
 export const prospectSummarySchema = z.object({
   prospectId: z.string(),
   companyId: z.string(),
@@ -214,11 +220,17 @@ export const prospectSummarySchema = z.object({
   country: z.string(),
   industry: z.string(),
   companyDomain: z.string(),
+  companyName: z.string().optional(),
+  recordType: z.enum(["person", "company"]).optional(),
   employeeCount: z.number().optional(),
   icpScore: z.number().int().min(0).max(100).optional(),
   intentScore: z.number().int().min(0).max(100).optional(),
   painPoints: z.array(z.string()).optional(),
   outreachReadiness: z.string().optional(),
+  signals: z.array(prospectSignalSchema).optional(),
+  techStack: z
+    .array(z.object({ category: z.string(), technology: z.string() }))
+    .optional(),
   updatedAt: z.string().datetime().optional(),
 });
 

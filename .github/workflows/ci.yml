@@ -62,17 +62,33 @@ jobs:
     needs: test-and-build
     strategy:
       matrix:
-        service: [api, ai]
+        include:
+          - service: api
+            dockerfile: apps/api/Dockerfile
+            context: .
+            build_args: ""
+          - service: ai
+            dockerfile: apps/ai/Dockerfile
+            context: apps/ai
+            build_args: ""
+          - service: scraper-orchestrator
+            dockerfile: workers/scrapers/Dockerfile
+            context: .
+            build_args: "--build-arg WORKER_SUBPATH=orchestrator --build-arg WORKER_PACKAGE=@skout/scraper-orchestrator"
+          - service: scraper-cleaner
+            dockerfile: workers/scrapers/Dockerfile
+            context: .
+            build_args: "--build-arg WORKER_SUBPATH=cleaner --build-arg WORKER_PACKAGE=@skout/scraper-cleaner"
+          - service: scraper-ingestor
+            dockerfile: workers/scrapers/Dockerfile
+            context: .
+            build_args: "--build-arg WORKER_SUBPATH=ingestor --build-arg WORKER_PACKAGE=@skout/scraper-ingestor"
     steps:
       - uses: actions/checkout@v4
 
       - name: Build ${{ matrix.service }} image
         run: |
-          if [ "${{ matrix.service }}" = "api" ]; then
-            docker build -f apps/api/Dockerfile -t skout-${{ matrix.service }}:ci .
-          else
-            docker build -f apps/ai/Dockerfile -t skout-${{ matrix.service }}:ci apps/ai
-          fi
+          docker build --platform linux/amd64 -f ${{ matrix.dockerfile }} ${{ matrix.build_args }} -t skout-${{ matrix.service }}:ci ${{ matrix.context }}
 
   cdk-synth:
     runs-on: ubuntu-latest

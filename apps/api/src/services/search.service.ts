@@ -67,6 +67,35 @@ function toFilters(body: SearchProspectsRequest): SearchFilters {
 
 const VALID_SENIORITIES = new Set(seniorityEnum.options);
 
+function recordTypeFor(doc: ProspectDocument): "person" | "company" {
+  if (doc.title || doc.email || doc.fullName) return "person";
+  return "company";
+}
+
+function mapDocToSummary(doc: ProspectDocument) {
+  return {
+    prospectId: doc.prospectId,
+    companyId: doc.companyId,
+    fullName: doc.fullName ?? doc.companyName ?? "Unknown",
+    title: doc.title ?? "",
+    seniority: VALID_SENIORITIES.has(doc.seniority as (typeof seniorityEnum.options)[number])
+      ? (doc.seniority as (typeof seniorityEnum.options)[number])
+      : ("unknown" as const),
+    country: doc.country ?? "",
+    industry: doc.industry ?? "",
+    companyDomain: doc.companyDomain,
+    companyName: doc.companyName,
+    recordType: recordTypeFor(doc),
+    employeeCount: doc.employeeCount,
+    icpScore: doc.icpScore,
+    intentScore: doc.intentScore,
+    painPoints: doc.painPoints,
+    outreachReadiness: doc.outreachReadiness,
+    signals: doc.signals?.slice(0, 5),
+    techStack: doc.techStack?.slice(0, 6),
+  };
+}
+
 /**
  * Search service — OpenSearch corpus with demo fallback when OPENSEARCH_URL unset.
  */
@@ -82,19 +111,7 @@ export class SearchService {
       try {
         const res = await osSearch(cfg, toFilters(body), page, pageSize);
         return {
-          results: res.hits.map((h) => ({
-            prospectId: h.prospectId,
-            companyId: h.companyId,
-            fullName: h.fullName ?? h.companyName ?? "Unknown",
-            title: h.title ?? "",
-            seniority: VALID_SENIORITIES.has(h.seniority as (typeof seniorityEnum.options)[number])
-              ? (h.seniority as (typeof seniorityEnum.options)[number])
-              : "unknown",
-            country: h.country ?? "",
-            industry: h.industry ?? "",
-            companyDomain: h.companyDomain,
-            employeeCount: h.employeeCount,
-          })),
+          results: res.hits.map((h) => mapDocToSummary(h)),
           total: res.total,
           page,
           pageSize,
@@ -135,23 +152,7 @@ export class SearchService {
   }
 
   private toProspectSummary(doc: ProspectDocument) {
-    return {
-      prospectId: doc.prospectId,
-      companyId: doc.companyId,
-      fullName: doc.fullName ?? doc.companyName ?? "Unknown",
-      title: doc.title ?? "",
-      seniority: VALID_SENIORITIES.has(doc.seniority as (typeof seniorityEnum.options)[number])
-        ? (doc.seniority as (typeof seniorityEnum.options)[number])
-        : ("unknown" as const),
-      country: doc.country ?? "",
-      industry: doc.industry ?? "",
-      companyDomain: doc.companyDomain,
-      employeeCount: doc.employeeCount,
-      icpScore: doc.icpScore,
-      intentScore: doc.intentScore,
-      painPoints: doc.painPoints,
-      outreachReadiness: doc.outreachReadiness,
-    };
+    return mapDocToSummary(doc);
   }
 
   private demoSearch(body: SearchProspectsRequest, page: number, pageSize: number): SearchProspectsResponse {
@@ -159,23 +160,7 @@ export class SearchService {
     const start = (page - 1) * pageSize;
     const slice = filtered.slice(start, start + pageSize);
     return {
-      results: slice.map((h) => ({
-        prospectId: h.prospectId,
-        companyId: h.companyId,
-        fullName: h.fullName ?? h.companyName ?? "Unknown",
-        title: h.title ?? "",
-        seniority: VALID_SENIORITIES.has(h.seniority as (typeof seniorityEnum.options)[number])
-          ? (h.seniority as (typeof seniorityEnum.options)[number])
-          : "unknown",
-        country: h.country ?? "",
-        industry: h.industry ?? "",
-        companyDomain: h.companyDomain,
-        employeeCount: h.employeeCount,
-        icpScore: h.icpScore,
-        intentScore: h.intentScore,
-        painPoints: h.painPoints,
-        outreachReadiness: h.outreachReadiness,
-      })),
+      results: slice.map((h) => mapDocToSummary(h)),
       total: filtered.length,
       page,
       pageSize,

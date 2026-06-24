@@ -9,6 +9,7 @@ import { createScrapeJob, openDb, patchScrapeJob } from "./db.js";
 import {
   queueForSource,
   SCRAPE_QUEUES,
+  SCRAPE_JOB_OPTS,
   type CleanJobPayload,
   type ScrapeJobPayload,
 } from "./queues.js";
@@ -83,7 +84,7 @@ export async function startOrchestratorWorkers() {
         source: request.source,
         seeds: request.seeds,
         options: request.options,
-      } satisfies ScrapeJobPayload);
+      } satisfies ScrapeJobPayload, SCRAPE_JOB_OPTS);
       return { jobId: row.id };
     },
     { connection }
@@ -99,7 +100,7 @@ export async function startOrchestratorWorkers() {
         jobId: payload.jobId,
         source: payload.source,
         rawS3Key,
-      } satisfies CleanJobPayload);
+      } satisfies CleanJobPayload, SCRAPE_JOB_OPTS);
       return { rawS3Key, rawCount };
     } catch (err) {
       await patchScrapeJob(db, payload.jobId, {

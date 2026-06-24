@@ -3,18 +3,22 @@ import { createWorkspaceService } from "./workspace.service.js";
 
 // Chainable mock builders
 function selectChain(result: unknown[]) {
+  const limitPromise = Object.assign(Promise.resolve(result), {
+    offset: vi.fn().mockResolvedValue(result),
+  });
+  const orderChain = {
+    limit: vi.fn().mockReturnValue(limitPromise),
+  };
+  const whereResult = Object.assign(Promise.resolve(result), {
+    orderBy: vi.fn().mockReturnValue(orderChain),
+    limit: vi.fn().mockReturnValue(limitPromise),
+  });
   const c: Record<string, unknown> = {};
   c.from = vi.fn().mockReturnValue(c);
   c.leftJoin = vi.fn().mockReturnValue(c);
-  c.where = vi.fn().mockReturnValue(c);
-  c.orderBy = vi.fn().mockReturnValue(c);
-  // queries that end in .limit() resolve directly;
-  // queries that chain .limit().offset() resolve at .offset()
-  c.limit = vi.fn().mockReturnValue(
-    Object.assign(Promise.resolve(result), {
-      offset: vi.fn().mockResolvedValue(result),
-    })
-  );
+  c.where = vi.fn().mockReturnValue(whereResult);
+  c.orderBy = vi.fn().mockReturnValue(orderChain);
+  c.limit = vi.fn().mockReturnValue(limitPromise);
   return c;
 }
 
@@ -190,26 +194,29 @@ describe("createWorkspaceService", () => {
   });
 
   describe("getCreditTransactions", () => {
-    it("returns the list of transactions with ISO createdAt", async () => {
+    it("returns paginated transactions with total count", async () => {
       const createdAt = new Date("2026-06-16T09:43:39.151Z");
       const rows = [
         { id: "ct-1", workspaceId: "ws-1", amount: 500, action: "provision", referenceId: null, createdAt },
         { id: "ct-2", workspaceId: "ws-1", amount: -1,  action: "search",    referenceId: "job-1", createdAt },
       ];
-      const db = makeMockDb({ selects: [rows] });
+      const db = makeMockDb({ selects: [[{ total: 2 }], rows] });
       const svc = createWorkspaceService(db as any);
-      const result = await svc.getCreditTransactions("ws-1");
-      expect(result).toEqual([
+      const result = await svc.getCreditTransactions("ws-1", 50, 0);
+      expect(result.total).toBe(2);
+      expect(result.data).toEqual([
         { ...rows[0], createdAt: createdAt.toISOString() },
         { ...rows[1], createdAt: createdAt.toISOString() },
       ]);
-      expect(result).toHaveLength(2);
+      expect(result.limit).toBe(50);
+      expect(result.offset).toBe(0);
     });
 
-    it("returns empty array when no transactions", async () => {
-      const db = makeMockDb({ selects: [[]] });
+    it("returns empty data when no transactions", async () => {
+      const db = makeMockDb({ selects: [[{ total: 0 }], []] });
       const svc = createWorkspaceService(db as any);
-      expect(await svc.getCreditTransactions("ws-1")).toEqual([]);
+      const result = await svc.getCreditTransactions("ws-1");
+      expect(result).toEqual({ data: [], total: 0, limit: 50, offset: 0 });
     });
   });
 });

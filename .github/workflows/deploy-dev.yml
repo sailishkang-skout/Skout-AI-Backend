@@ -66,6 +66,27 @@ jobs:
           docker push "$AI_REPO:$IMAGE_TAG"
           docker push "$AI_REPO:latest"
 
+      - name: Build and push scraper worker images
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          build_scraper() {
+            local subpath="$1"
+            local package="$2"
+            local repo_name="$3"
+            local repo
+            repo=$(aws ecr describe-repositories --repository-names "$repo_name" --query 'repositories[0].repositoryUri' --output text)
+            docker build --platform linux/amd64 -f workers/scrapers/Dockerfile \
+              --build-arg WORKER_SUBPATH="$subpath" \
+              --build-arg WORKER_PACKAGE="$package" \
+              -t "${repo}:${IMAGE_TAG}" -t "${repo}:latest" .
+            docker push "${repo}:${IMAGE_TAG}"
+            docker push "${repo}:latest"
+          }
+          build_scraper orchestrator @skout/scraper-orchestrator skout-dev-scraper-orchestrator
+          build_scraper cleaner @skout/scraper-cleaner skout-dev-scraper-cleaner
+          build_scraper ingestor @skout/scraper-ingestor skout-dev-scraper-ingestor
+
       - name: Checkout frontend
         uses: actions/checkout@v4
         with:
@@ -108,6 +129,6 @@ jobs:
       - name: Force ECS redeploy
         run: |
           CLUSTER=$(aws ecs list-clusters --query "clusterArns[?contains(@, 'SkoutDev')]" --output text)
-          for svc in api ai web; do
+          for svc in api ai web scraper-orchestrator scraper-cleaner scraper-ingestor; do
             aws ecs update-service --cluster "$CLUSTER" --service "$svc" --force-new-deployment || true
           done

@@ -112,6 +112,12 @@ const envSchema = z
     COGNISM_BASE_URL: z.string().default("https://app.cognism.com/api"),
     HUBSPOT_CLIENT_ID: z.string().optional(),
     HUBSPOT_CLIENT_SECRET: z.string().optional(),
+    /** Razorpay checkout (optional — beta top-up remains when unset). */
+    RAZORPAY_KEY_ID: z.string().optional(),
+    RAZORPAY_KEY_SECRET: z.string().optional(),
+    RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
+    /** JSON array of { id, label, credits, amountInr }. */
+    RAZORPAY_CREDIT_PACKS_JSON: z.string().optional(),
     /** Prefix for per-workspace CRM OAuth secrets in AWS Secrets Manager. */
     CRM_SECRETS_PREFIX: z.string().default("SkoutDev/crm"),
     /** When true, store CRM OAuth tokens in local `.crm-secrets/` instead of AWS. */

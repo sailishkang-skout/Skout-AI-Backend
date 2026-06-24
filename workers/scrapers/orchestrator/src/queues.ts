@@ -1,3 +1,10 @@
+export const SCRAPE_JOB_OPTS = {
+  attempts: 3,
+  backoff: { type: "exponential" as const, delay: 5_000 },
+  removeOnComplete: 100,
+  removeOnFail: 200,
+};
+
 /** BullMQ queue names (no `:` — BullMQ 5.7+ restriction). */
 export const SCRAPE_QUEUES = {
   schedule: "scrape-schedule",

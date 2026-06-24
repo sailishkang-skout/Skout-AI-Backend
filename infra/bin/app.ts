@@ -14,6 +14,9 @@ const app = new cdk.App();
 const envName = app.node.tryGetContext("env") ?? "dev";
 const config = getEnvironment(envName);
 const imageTag = app.node.tryGetContext("imageTag") as string | undefined;
+/** Corpus workers only — avoids retagging api/ai/web when deploying scrapers alone. */
+const scraperImageTag =
+  (app.node.tryGetContext("scraperImageTag") as string | undefined) ?? imageTag;
 const skipWeb = app.node.tryGetContext("skipWeb") === "true";
 const httpsMode =
   (app.node.tryGetContext("httpsMode") as "none" | "apigateway" | "cloudfront" | undefined) ??
@@ -69,13 +72,22 @@ if (!config.deployToAws) {
     description: `Skout AI ${config.name} ECS services (API, AI, Web)`,
   });
 
-  new WorkersStack(app, `${config.stackPrefix}-Workers`, {
+  const workers = new WorkersStack(app, `${config.stackPrefix}-Workers`, {
     env: stackEnv,
     config,
     vpc: network.vpc,
+    cluster: compute.cluster,
+    database: data.database,
+    redis: data.redis,
+    secrets: data.secrets,
     scrapeBucket: data.storage.scrapeBucket,
-    description: `Skout AI ${config.name} worker queues (scrape schedule)`,
+    orchestratorRepository: registry.scraperOrchestratorRepository,
+    cleanerRepository: registry.scraperCleanerRepository,
+    ingestorRepository: registry.scraperIngestorRepository,
+    scraperImageTag,
+    description: `Skout AI ${config.name} corpus workers (orchestrator, cleaner, ingestor)`,
   });
+  workers.addDependency(compute);
 
   new ObservabilityStack(app, `${config.stackPrefix}-Observability`, {
     env: stackEnv,

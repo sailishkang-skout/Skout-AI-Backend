@@ -52,11 +52,15 @@ export async function startCleanerWorker() {
           })
           .where(eq(schema.scrapeJobs.id, jobId));
 
-        await ingestQueue.add("ingest", {
-          jobId,
-          source,
-          cleanS3Key: result.cleanS3Key,
-        });
+        await ingestQueue.add(
+          "ingest",
+          {
+            jobId,
+            source,
+            cleanS3Key: result.cleanS3Key,
+          },
+          { attempts: 3, backoff: { type: "exponential", delay: 5_000 } }
+        );
         return result;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

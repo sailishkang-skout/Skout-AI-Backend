@@ -17,7 +17,10 @@ function isHealthRoute(url: string): boolean {
 }
 
 function isPublicRoute(url: string): boolean {
-  return url.startsWith("/api/v1/crm/hubspot/callback");
+  return (
+    url.startsWith("/api/v1/crm/hubspot/callback") ||
+    url.startsWith("/api/v1/billing/webhooks/")
+  );
 }
 
 function normalizeOrigin(origin: string): string {

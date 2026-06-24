@@ -55,8 +55,8 @@ export async function workspaceRoutes(app: FastifyInstance) {
     const query = request.query as { limit?: string; offset?: string };
     const limit = Math.min(parseInt(query.limit ?? "50", 10) || 50, 100);
     const offset = parseInt(query.offset ?? "0", 10) || 0;
-    const transactions = await svc.getCreditTransactions(request.workspaceId, limit, offset);
-    return reply.send({ data: transactions });
+    const result = await svc.getCreditTransactions(request.workspaceId, limit, offset);
+    return reply.send(result);
   });
 
   // POST /api/v1/credits/topup — beta manual top-up (Stripe later)
