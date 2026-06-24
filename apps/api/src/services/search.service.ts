@@ -96,6 +96,32 @@ function mapDocToSummary(doc: ProspectDocument) {
   };
 }
 
+function mapDocToDetail(doc: ProspectDocument) {
+  return {
+    ...mapDocToSummary(doc),
+    signals: doc.signals,
+    techStack: doc.techStack,
+    email: doc.email,
+    phone: doc.phone,
+    linkedinUrl: doc.linkedinUrl,
+    department: doc.department,
+    jobFunction: doc.jobFunction,
+    yearsAtCompany: doc.yearsAtCompany,
+    yearsInRole: doc.yearsInRole,
+    previousCompany: doc.previousCompany,
+    subIndustry: doc.subIndustry,
+    state: doc.state,
+    city: doc.city,
+    companyStage: doc.companyStage,
+    annualRevenue: doc.annualRevenue,
+    lastFundingRound: doc.lastFundingRound,
+    lastFundingDate: doc.lastFundingDate,
+    totalFunding: doc.totalFunding,
+    currentlyHiring: doc.currentlyHiring,
+    updatedAt: doc.updatedAt,
+  };
+}
+
 /**
  * Search service — OpenSearch corpus with demo fallback when OPENSEARCH_URL unset.
  */
@@ -129,15 +155,11 @@ export class SearchService {
     const cfg = osConfig(this.env);
     if (cfg) {
       const doc = await osGetById(cfg, prospectId);
-      if (doc) {
-        return this.toProspectSummary(doc);
-      }
+      if (doc) return mapDocToDetail(doc);
     }
 
     const doc = demoCorpus(this.env).find((row) => row.prospectId === prospectId);
-    if (doc) {
-      return this.toProspectSummary(doc);
-    }
+    if (doc) return mapDocToDetail(doc);
 
     return {
       prospectId,
@@ -148,11 +170,8 @@ export class SearchService {
       country: "US",
       industry: "Software",
       companyDomain: "example.com",
+      updatedAt: new Date().toISOString(),
     };
-  }
-
-  private toProspectSummary(doc: ProspectDocument) {
-    return mapDocToSummary(doc);
   }
 
   private demoSearch(body: SearchProspectsRequest, page: number, pageSize: number): SearchProspectsResponse {
