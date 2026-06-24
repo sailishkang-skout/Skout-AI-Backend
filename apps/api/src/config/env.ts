@@ -11,8 +11,10 @@ const candidatePaths = [
   path.resolve(process.cwd(), "../../.env.local"),
 ];
 
-for (const envPath of candidatePaths) {
-  dotenv.config({ path: envPath });
+if (process.env.NODE_ENV !== "test") {
+  for (const envPath of candidatePaths) {
+    dotenv.config({ path: envPath });
+  }
 }
 
 const envSchema = z
