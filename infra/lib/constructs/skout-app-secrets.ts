@@ -57,6 +57,8 @@ export class SkoutAppSecrets extends Construct {
       NEVERBOUNCE_API_KEY: "replace-me",
       PDL_API_KEY: "replace-me",
       DATAGMA_API_KEY: "replace-me",
+      KASPR_API_KEY: "replace-me",
+      LUSHA_API_KEY: "replace-me",
       CONTACTOUT_API_KEY: "replace-me",
       REVENUEBASE_API_KEY: "replace-me",
       EXPLORIUM_API_KEY: "replace-me",

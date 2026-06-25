@@ -116,8 +116,17 @@ export class WorkersStack extends Stack {
       cpu: SCRAPER_CPU,
       memoryMiB: SCRAPER_MEMORY_MIB,
       desiredCount: 1,
-      environment: scraperEnv,
-      secrets: { DATABASE_PASSWORD: dbPasswordSecret },
+      environment: {
+        ...scraperEnv,
+        REDIS_MAXMEMORY_POLICY: "noeviction",
+      },
+      secrets: {
+        DATABASE_PASSWORD: dbPasswordSecret,
+        PROXY_URL: ecs.Secret.fromSecretsManager(secrets.scraperProxy, "PROXY_URL"),
+        PROXY_USERNAME: ecs.Secret.fromSecretsManager(secrets.scraperProxy, "PROXY_USERNAME"),
+        PROXY_PASSWORD: ecs.Secret.fromSecretsManager(secrets.scraperProxy, "PROXY_PASSWORD"),
+        LINKEDIN_ACCOUNTS_JSON: ecs.Secret.fromSecretsManager(secrets.scraperLinkedin, "accounts"),
+      },
     });
 
     const cleaner = new SkoutWorkerService(this, "ScraperCleaner", {
@@ -188,6 +197,11 @@ export class WorkersStack extends Stack {
     for (const worker of [orchestrator, cleaner, ingestor]) {
       grantExecutionRoleRead(worker.taskDefinition, database.secret);
     }
+    grantExecutionRoleRead(
+      orchestrator.taskDefinition,
+      secrets.scraperProxy,
+      secrets.scraperLinkedin
+    );
     grantExecutionRoleRead(ingestor.taskDefinition, secrets.opensearch);
 
     new CfnOutput(this, "ScrapeScheduleQueueUrl", {

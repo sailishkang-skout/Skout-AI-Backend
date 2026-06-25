@@ -7,6 +7,8 @@ import { RevenueBaseFirmographics } from "./adapters/revenuebase.js";
 import { ExploriumFirmographics } from "./adapters/explorium.js";
 import { CoresignalFirmographics } from "./adapters/coresignal.js";
 import { DatagmaPhone } from "./adapters/datagma.js";
+import { KasprPhone } from "./adapters/kaspr.js";
+import { LushaPhone } from "./adapters/lusha.js";
 import { ContactOutPhone } from "./adapters/contactout.js";
 import { CognismPhone } from "./adapters/cognism.js";
 import {
@@ -34,6 +36,8 @@ export interface PalConfig {
   exploriumApiKey?: string;
   coresignalApiKey?: string;
   datagmaApiKey?: string;
+  kasprApiKey?: string;
+  lushaApiKey?: string;
   contactOutApiKey?: string;
   cognismApiKey?: string;
 
@@ -46,6 +50,8 @@ export interface PalConfig {
   exploriumBaseUrl?: string;
   coresignalBaseUrl?: string;
   datagmaBaseUrl?: string;
+  kasprBaseUrl?: string;
+  lushaBaseUrl?: string;
   contactOutBaseUrl?: string;
   cognismBaseUrl?: string;
 
@@ -163,6 +169,12 @@ export function createRegistryWithByok(
   addPhone(workspaceCfg.datagmaApiKey, platformCfg.datagmaApiKey, (key) =>
     new DatagmaPhone(key, platformCfg.datagmaBaseUrl, t)
   );
+  addPhone(workspaceCfg.kasprApiKey, platformCfg.kasprApiKey, (key) =>
+    new KasprPhone(key, platformCfg.kasprBaseUrl, t)
+  );
+  addPhone(workspaceCfg.lushaApiKey, platformCfg.lushaApiKey, (key) =>
+    new LushaPhone(key, platformCfg.lushaBaseUrl, t)
+  );
   addPhone(workspaceCfg.contactOutApiKey, platformCfg.contactOutApiKey, (key) =>
     new ContactOutPhone(key, platformCfg.contactOutBaseUrl, t)
   );
@@ -193,6 +205,8 @@ export function hasLiveProviders(cfg: PalConfig): boolean {
     cfg.exploriumApiKey,
     cfg.coresignalApiKey,
     cfg.datagmaApiKey,
+    cfg.kasprApiKey,
+    cfg.lushaApiKey,
     cfg.contactOutApiKey,
     cfg.cognismApiKey,
   ].some(isLiveApiKey);

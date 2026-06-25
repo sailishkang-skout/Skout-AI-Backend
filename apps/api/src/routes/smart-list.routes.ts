@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { OpenSearchConfig } from "@skout/opensearch";
-import { buildEnrichmentService } from "../services/enrichment/index.js";
+import { searchFiltersSchema } from "@skout/shared";
+import { buildEnrichmentService, InsufficientCreditsError } from "../services/enrichment/index.js";
 import { prospectToSnapshot, prospectToSummary } from "../services/smart-list.mapper.js";
 import {
   createSmartList,
@@ -11,16 +12,7 @@ import {
 
 const createSchema = z.object({
   name: z.string().min(1).max(255),
-  filters: z.object({
-    query: z.string().optional(),
-    industry: z.string().optional(),
-    country: z.string().optional(),
-    seniority: z.string().optional(),
-    minEmployees: z.number().optional(),
-    maxEmployees: z.number().optional(),
-    tech: z.string().optional(),
-    signal: z.string().optional(),
-  }),
+  filters: searchFiltersSchema,
 });
 
 const activateSchema = z.object({
@@ -108,5 +100,34 @@ export async function smartListRoutes(app: FastifyInstance) {
       activated: prospects.length,
       demo: result.demo,
     });
+  });
+
+  /** Batch re-score all prospects matched by a smart list (corpus scope). */
+  app.post("/smart-lists/:id/score", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const result = await runSmartList(app.db, osConfig(app), workspaceId, id);
+    if (!result) return reply.status(404).send({ error: "smart_list_not_found" });
+
+    const svc = buildEnrichmentService(app.db, app.config);
+    const snapshots = result.hits.map(prospectToSnapshot).filter((p) => p.companyDomain);
+    try {
+      const scored = await svc.runCorpusScore(workspaceId, snapshots);
+      return reply.send({
+        smartList: result.list,
+        total: result.total,
+        demo: result.demo,
+        ...scored,
+      });
+    } catch (err) {
+      if (err instanceof InsufficientCreditsError) {
+        return reply.status(402).send({
+          error: "insufficient_credits",
+          required: err.required,
+          available: err.available,
+        });
+      }
+      throw err;
+    }
   });
 }

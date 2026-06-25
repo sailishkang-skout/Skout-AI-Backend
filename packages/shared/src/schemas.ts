@@ -245,7 +245,33 @@ export const prospectSummarySchema = z.object({
   techStack: z
     .array(z.object({ category: z.string(), technology: z.string() }))
     .optional(),
-  updatedAt: z.string().datetime().optional(),
+  updatedAt: z.string().optional(),
+});
+
+/** Full corpus document shape for GET /search/prospects/:id */
+export const prospectDetailSchema = prospectSummarySchema.extend({
+  email: z.string().optional(),
+  phone: z.string().optional(),
+  linkedinUrl: z.string().optional(),
+  department: z.string().optional(),
+  jobFunction: z.string().optional(),
+  subIndustry: z.string().optional(),
+  state: z.string().optional(),
+  city: z.string().optional(),
+  employeeBucket: z.string().optional(),
+  companyStage: z.string().optional(),
+  annualRevenue: z.number().optional(),
+  lastFundingRound: z.string().optional(),
+  lastFundingDate: z.string().optional(),
+  totalFunding: z.number().optional(),
+  currentlyHiring: z.boolean().optional(),
+  foundedYear: z.number().int().optional(),
+  headcountGrowth: z.number().optional(),
+  companyEmailProvider: z.string().optional(),
+  yearsAtCompany: z.number().optional(),
+  yearsInRole: z.number().optional(),
+  totalYearsExperience: z.number().optional(),
+  previousCompany: z.string().optional(),
 });
 
 export const searchProspectsRequestSchema = z.object({
@@ -282,6 +308,7 @@ export const enrollSequenceSchema = z.object({
 });
 
 export type ProspectSummary = z.infer<typeof prospectSummarySchema>;
+export type ProspectDetail = z.infer<typeof prospectDetailSchema>;
 export type SearchProspectsRequest = z.infer<typeof searchProspectsRequestSchema>;
 export type SearchProspectsResponse = z.infer<typeof searchProspectsResponseSchema>;
 export type SearchFiltersInput = z.infer<typeof searchFiltersSchema>;

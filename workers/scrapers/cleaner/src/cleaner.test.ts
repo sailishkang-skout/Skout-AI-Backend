@@ -8,6 +8,12 @@ describe("wappalyzer", () => {
     const tech = detectTechnologies(html);
     expect(tech.some((t) => t.technology === "HubSpot")).toBe(true);
   });
+
+  it("skips first-party Stripe on stripe.com", () => {
+    const html = '<script src="https://js.stripe.com/v3/"></script>';
+    const tech = detectTechnologies(html, { domain: "stripe.com" });
+    expect(tech.some((t) => t.technology === "Stripe")).toBe(false);
+  });
 });
 
 describe("company-cleaner", () => {

@@ -19,6 +19,14 @@ export function prospectId(domain: string, email?: string, fullName?: string): s
   return createHash("sha256").update(key).digest("hex");
 }
 
+function foundedYearFromCandidate(c: CompanyCandidate): number | undefined {
+  if (c.foundedDate) {
+    const year = Number(c.foundedDate.slice(0, 4));
+    if (year > 1800 && year < 2100) return year;
+  }
+  return undefined;
+}
+
 export function companyToProspectDoc(c: CompanyCandidate): ProspectDocument {
   const domain = normalizeDomain(c.domain);
   const pid = generateCompanyId(domain);
@@ -30,8 +38,17 @@ export function companyToProspectDoc(c: CompanyCandidate): ProspectDocument {
     industry: c.industry,
     subIndustry: c.subIndustry,
     country: c.hqCountry,
+    state: c.hqState,
+    city: c.hqCity,
     employeeCount: c.employeeCount,
     employeeBucket: c.employeeBucket,
+    companyStage: c.companyStage,
+    annualRevenue: c.annualRevenue,
+    lastFundingRound: c.funding?.lastRound,
+    lastFundingDate: c.funding?.lastRoundDate,
+    totalFunding: c.funding?.totalRaised,
+    currentlyHiring: c.isHiring === true,
+    foundedYear: foundedYearFromCandidate(c),
     techStack: c.techStack?.map((t) => ({ category: t.category, technology: t.technology })),
     signals: c.signals?.map((s) => ({ type: s.type, observedAt: s.observedAt, detail: s.detail })),
     updatedAt: c.scrapedAt,

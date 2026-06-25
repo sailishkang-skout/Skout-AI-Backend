@@ -30,15 +30,25 @@ export class SkoutRedis extends Construct {
       allowAllOutbound: true,
     });
 
+    const paramGroup = new elasticache.CfnParameterGroup(this, "Params", {
+      cacheParameterGroupFamily: "redis7",
+      description: "BullMQ-safe noeviction policy",
+      properties: {
+        "maxmemory-policy": "noeviction",
+      },
+    });
+
     const cluster = new elasticache.CfnCacheCluster(this, "Redis", {
       engine: "redis",
       cacheNodeType: config.redis.nodeType,
       numCacheNodes: config.redis.numCacheNodes,
       cacheSubnetGroupName: subnetGroup.cacheSubnetGroupName!,
+      cacheParameterGroupName: paramGroup.ref,
       vpcSecurityGroupIds: [this.securityGroup.securityGroupId],
       clusterName: `${config.stackPrefix}-redis`.toLowerCase(),
     });
     cluster.addDependency(subnetGroup);
+    cluster.addDependency(paramGroup);
     cluster.applyRemovalPolicy(config.name === "prod" ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY);
 
     this.endpoint = cluster.attrRedisEndpointAddress;

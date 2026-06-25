@@ -40,7 +40,35 @@ export function cleanProspects(records: unknown[]): CleanResult {
   for (const record of records) {
     const r = record as Record<string, unknown>;
     // Raw bot rows (jobId + payload) are cleaned by cleanCompanies, not here.
-    if (r.jobId && r.payload && !r.companyDomain) continue;
+    if (r.jobId && r.payload && !r.companyDomain) {
+      const payload = r.payload as Record<string, unknown>;
+      if (payload.mode === "people" && payload.companyDomain) {
+        const scrapedAt = (r.scrapedAt as string) ?? new Date().toISOString();
+        const candidate: ProspectCandidate = {
+          source: (r.source as ProspectCandidate["source"]) ?? "linkedin",
+          fullName: payload.fullName as string | undefined,
+          title: payload.title as string | undefined,
+          linkedinUrl: payload.linkedinUrl as string | undefined,
+          companyDomain: normalizeDomain(String(payload.companyDomain)),
+          companyName: payload.companyName as string | undefined,
+          scrapedAt,
+        };
+        const score = qualityScore(candidate);
+        candidate.qualityScore = score;
+        if (score < QUALITY_THRESHOLD) {
+          quarantined.push({ record, reason: `quality ${score} < ${QUALITY_THRESHOLD}` });
+          continue;
+        }
+        const dedupeKey = `${candidate.companyDomain}|${candidate.fullName ?? ""}`;
+        if (seen.has(dedupeKey)) {
+          quarantined.push({ record, reason: "duplicate" });
+          continue;
+        }
+        seen.add(dedupeKey);
+        clean.push(candidate);
+      }
+      continue;
+    }
 
     const parsed = prospectCandidateSchema.safeParse(record);
     if (!parsed.success) {

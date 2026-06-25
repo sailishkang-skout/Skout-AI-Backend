@@ -1,9 +1,13 @@
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
-import { eq } from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
 import { createWorkspaceService } from "./workspace.service.js";
 import { buildEnrichmentService } from "./enrichment/index.js";
 import type { Env } from "../config/env.js";
+
+function weekAgo(): Date {
+  return new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+}
 
 export function createDashboardService(db: Db | null, config: Env) {
   const workspaceSvc = db ? createWorkspaceService(db) : null;
@@ -24,7 +28,12 @@ export function createDashboardService(db: Db | null, config: Env) {
       }
 
       let icpConfigured = false;
+      let searchesThisWeek = 0;
+      let enrichedThisWeek = 0;
+      let exportsThisWeek = 0;
+
       if (db) {
+        const since = weekAgo();
         const [icpRow] = await db
           .select()
           .from(schema.workspaceIcp)
@@ -40,6 +49,28 @@ export function createDashboardService(db: Db | null, config: Env) {
               cfg.maxEmployees != null
           );
         }
+
+        const weekly = await db
+          .select({
+            action: schema.creditTransactions.action,
+            total: sql<number>`count(*)::int`,
+          })
+          .from(schema.creditTransactions)
+          .where(
+            and(
+              eq(schema.creditTransactions.workspaceId, workspaceId),
+              gte(schema.creditTransactions.createdAt, since)
+            )
+          )
+          .groupBy(schema.creditTransactions.action);
+
+        for (const row of weekly) {
+          if (row.action === "search") searchesThisWeek = row.total;
+          if (row.action === "enrichment" || row.action === "ai_score") {
+            enrichedThisWeek += row.total;
+          }
+          if (row.action.startsWith("export")) exportsThisWeek += row.total;
+        }
       }
 
       return {
@@ -48,6 +79,9 @@ export function createDashboardService(db: Db | null, config: Env) {
         listCount,
         totalProspectsInLists,
         icpConfigured,
+        searchesThisWeek,
+        enrichedThisWeek,
+        exportsThisWeek,
         recentJobs: jobs.map((j) => ({
           id: j.id,
           prospectId: j.prospectId,

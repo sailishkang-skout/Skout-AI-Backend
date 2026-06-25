@@ -2,11 +2,12 @@ import { Worker, Queue } from "bullmq";
 import { resolveScrapeStorage, scrapeKey } from "@skout/storage";
 import { eq } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
+import { attachDeadLetterHandler, logRedisMemoryPolicyHint } from "./dlq.js";
 import { requireDatabaseUrl } from "./load-env.js";
 import { cleanCompanies } from "./company-cleaner.js";
 import { cleanProspects } from "./index.js";
 
-const SCRAPE_QUEUES = { clean: "scrape-clean", ingest: "scrape-ingest" };
+const SCRAPE_QUEUES = { clean: "scrape-clean", ingest: "scrape-ingest", deadLetter: "scrape-dead-letter" };
 
 export async function runCleanPipeline(rawS3Key: string, source: string, jobId: string) {
   const storage = resolveScrapeStorage();
@@ -30,8 +31,10 @@ export async function runCleanPipeline(rawS3Key: string, source: string, jobId: 
 
 export async function startCleanerWorker() {
   const connection = { url: process.env.REDIS_URL ?? "redis://localhost:6379" };
+  logRedisMemoryPolicyHint();
   const { db, sql } = createDb(requireDatabaseUrl());
   const ingestQueue = new Queue(SCRAPE_QUEUES.ingest, { connection });
+  const deadLetterQueue = new Queue(SCRAPE_QUEUES.deadLetter, { connection });
 
   const worker = new Worker(
     SCRAPE_QUEUES.clean,
@@ -77,10 +80,12 @@ export async function startCleanerWorker() {
     },
     { connection }
   );
+  attachDeadLetterHandler(worker, deadLetterQueue, SCRAPE_QUEUES.clean);
 
   const shutdown = async () => {
     await worker.close();
     await ingestQueue.close();
+    await deadLetterQueue.close();
     await sql.end();
   };
   process.on("SIGTERM", () => void shutdown());

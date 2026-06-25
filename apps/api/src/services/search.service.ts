@@ -103,6 +103,37 @@ function mapDocToSummary(doc: ProspectDocument) {
     outreachReadiness: doc.outreachReadiness,
     signals: doc.signals?.slice(0, 5),
     techStack: doc.techStack?.slice(0, 6),
+    updatedAt: doc.updatedAt,
+  };
+}
+
+function mapDocToDetail(doc: ProspectDocument) {
+  return {
+    ...mapDocToSummary(doc),
+    signals: doc.signals,
+    techStack: doc.techStack,
+    email: doc.email,
+    phone: doc.phone,
+    linkedinUrl: doc.linkedinUrl,
+    department: doc.department,
+    jobFunction: doc.jobFunction,
+    subIndustry: doc.subIndustry,
+    state: doc.state,
+    city: doc.city,
+    employeeBucket: doc.employeeBucket,
+    companyStage: doc.companyStage,
+    annualRevenue: doc.annualRevenue,
+    lastFundingRound: doc.lastFundingRound,
+    lastFundingDate: doc.lastFundingDate,
+    totalFunding: doc.totalFunding,
+    currentlyHiring: doc.currentlyHiring,
+    foundedYear: doc.foundedYear,
+    headcountGrowth: doc.headcountGrowth,
+    companyEmailProvider: doc.companyEmailProvider,
+    yearsAtCompany: doc.yearsAtCompany,
+    yearsInRole: doc.yearsInRole,
+    totalYearsExperience: doc.totalYearsExperience,
+    previousCompany: doc.previousCompany,
   };
 }
 
@@ -162,7 +193,7 @@ export class SearchService {
   }
 
   private toProspectSummary(doc: ProspectDocument) {
-    return mapDocToSummary(doc);
+    return mapDocToDetail(doc);
   }
 
   private demoSearch(body: SearchProspectsRequest, page: number, pageSize: number): SearchProspectsResponse {

@@ -1,4 +1,4 @@
-import { index, integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { bigint, index, integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { workspaces } from "./workspaces.js";
 
 /**
@@ -31,6 +31,23 @@ export const scrapeJobs = pgTable(
   (table) => [
     index("scrape_jobs_status_idx").on(table.status),
     index("scrape_jobs_source_idx").on(table.source),
+  ]
+);
+
+/** Point-in-time firmographic snapshots for headcount / hiring growth (E5.3). */
+export const companySnapshots = pgTable(
+  "company_snapshots",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    domain: text("domain").notNull(),
+    employeeCount: integer("employee_count"),
+    openJobs: integer("open_jobs"),
+    annualRevenue: bigint("annual_revenue", { mode: "number" }),
+    scrapedAt: timestamp("scraped_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("company_snapshots_domain_idx").on(table.domain),
+    index("company_snapshots_domain_scraped_idx").on(table.domain, table.scrapedAt),
   ]
 );
 

@@ -19,7 +19,11 @@
     "bullmq": "^5.34.5",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.44.2",
-    "ioredis": "^5.4.2"
+    "ioredis": "^5.4.2",
+    "undici": "^6.21.0"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.49.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",

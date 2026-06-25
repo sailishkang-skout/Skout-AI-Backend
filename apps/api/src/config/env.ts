@@ -96,6 +96,8 @@ const envSchema = z
     EXPLORIUM_API_KEY: z.string().optional(),
     CORESIGNAL_API_KEY: z.string().optional(),
     DATAGMA_API_KEY: z.string().optional(),
+    KASPR_API_KEY: z.string().optional(),
+    LUSHA_API_KEY: z.string().optional(),
     CONTACTOUT_API_KEY: z.string().optional(),
     COGNISM_API_KEY: z.string().optional(),
     // --- Enrichment provider base URLs (override per environment / sandbox). ---
@@ -108,6 +110,8 @@ const envSchema = z
     EXPLORIUM_BASE_URL: z.string().default("https://api.explorium.ai/v1"),
     CORESIGNAL_BASE_URL: z.string().default("https://api.coresignal.com/cdapi/v2"),
     DATAGMA_BASE_URL: z.string().default("https://gateway.datagma.net/api/ingress"),
+    KASPR_BASE_URL: z.string().default("https://api.developers.kaspr.io"),
+    LUSHA_BASE_URL: z.string().default("https://api.lusha.com"),
     CONTACTOUT_BASE_URL: z.string().default("https://api.contactout.com"),
     COGNISM_BASE_URL: z.string().default("https://app.cognism.com/api"),
     HUBSPOT_CLIENT_ID: z.string().optional(),

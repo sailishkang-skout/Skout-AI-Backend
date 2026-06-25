@@ -173,6 +173,7 @@ export async function ensureProspectsIndex(cfg: OpenSearchConfig): Promise<void>
           state: { type: "keyword" },
           city: { type: "text" },
           employeeCount: { type: "integer" },
+          employeeBucket: { type: "keyword" },
           companyStage: { type: "keyword" },
           annualRevenue: { type: "long" },
           lastFundingRound: { type: "keyword" },

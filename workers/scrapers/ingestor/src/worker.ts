@@ -1,6 +1,7 @@
-import { Worker } from "bullmq";
+import { Worker, Queue } from "bullmq";
 import { eq } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
+import { attachDeadLetterHandler, logRedisMemoryPolicyHint } from "./dlq.js";
 import { requireDatabaseUrl } from "./load-env.js";
 import {
   bulkUpsertProspects,
@@ -10,8 +11,10 @@ import {
 import { scrapeJobManifestSchema } from "@skout/scraper-contracts";
 import { resolveScrapeStorage, scrapeKey } from "@skout/storage";
 import { recordsToDocs } from "./index.js";
+import { enrichDocsWithGrowth } from "./growth.js";
+import type { Db } from "@skout/db";
 
-const SCRAPE_QUEUES = { ingest: "scrape-ingest" };
+const SCRAPE_QUEUES = { ingest: "scrape-ingest", deadLetter: "scrape-dead-letter" };
 
 function osConfig(): OpenSearchConfig {
   const url = process.env.OPENSEARCH_URL;
@@ -24,10 +27,14 @@ function osConfig(): OpenSearchConfig {
   };
 }
 
-export async function runIngestPipeline(cleanS3Key: string, source: string, jobId: string) {
+export async function runIngestPipeline(cleanS3Key: string, source: string, jobId: string, db?: Db) {
   const storage = resolveScrapeStorage();
   const records = await storage.getJsonl(cleanS3Key);
-  const docs = recordsToDocs(records);
+  let docs = recordsToDocs(records);
+
+  if (db) {
+    docs = await enrichDocsWithGrowth(db, records, docs);
+  }
 
   const cfg = osConfig();
   await ensureProspectsIndex(cfg);
@@ -56,7 +63,9 @@ export async function runIngestPipeline(cleanS3Key: string, source: string, jobI
 
 export async function startIngestorWorker() {
   const connection = { url: process.env.REDIS_URL ?? "redis://localhost:6379" };
+  logRedisMemoryPolicyHint();
   const { db, sql } = createDb(requireDatabaseUrl());
+  const deadLetterQueue = new Queue(SCRAPE_QUEUES.deadLetter, { connection });
 
   const worker = new Worker(
     SCRAPE_QUEUES.ingest,
@@ -67,7 +76,7 @@ export async function startIngestorWorker() {
         cleanS3Key: string;
       };
       try {
-        const result = await runIngestPipeline(cleanS3Key, source, jobId);
+        const result = await runIngestPipeline(cleanS3Key, source, jobId, db);
         await db
           .update(schema.scrapeJobs)
           .set({
@@ -94,9 +103,11 @@ export async function startIngestorWorker() {
     },
     { connection }
   );
+  attachDeadLetterHandler(worker, deadLetterQueue, SCRAPE_QUEUES.ingest);
 
   const shutdown = async () => {
     await worker.close();
+    await deadLetterQueue.close();
     await sql.end();
   };
   process.on("SIGTERM", () => void shutdown());

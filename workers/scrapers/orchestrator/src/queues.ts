@@ -10,8 +10,11 @@ export const SCRAPE_QUEUES = {
   schedule: "scrape-schedule",
   clean: "scrape-clean",
   ingest: "scrape-ingest",
+  deadLetter: "scrape-dead-letter",
   companyWeb: "scrape-company-web",
   linkedin: "scrape-linkedin",
+  linkedinJobs: "scrape-linkedin-jobs",
+  crunchbase: "scrape-crunchbase",
   opencorporates: "scrape-opencorporates",
   secEdgar: "scrape-sec-edgar",
 } as const;
@@ -19,6 +22,8 @@ export const SCRAPE_QUEUES = {
 export type BotQueue =
   | typeof SCRAPE_QUEUES.companyWeb
   | typeof SCRAPE_QUEUES.linkedin
+  | typeof SCRAPE_QUEUES.linkedinJobs
+  | typeof SCRAPE_QUEUES.crunchbase
   | typeof SCRAPE_QUEUES.opencorporates
   | typeof SCRAPE_QUEUES.secEdgar;
 
@@ -28,6 +33,10 @@ export function queueForSource(source: string): BotQueue {
       return SCRAPE_QUEUES.companyWeb;
     case "linkedin":
       return SCRAPE_QUEUES.linkedin;
+    case "linkedin-jobs":
+      return SCRAPE_QUEUES.linkedinJobs;
+    case "crunchbase":
+      return SCRAPE_QUEUES.crunchbase;
     case "opencorporates":
       return SCRAPE_QUEUES.opencorporates;
     case "sec-edgar":

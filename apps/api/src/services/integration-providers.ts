@@ -45,6 +45,20 @@ export const INTEGRATION_PROVIDERS = [
     docsUrl: "https://datagma.com",
   },
   {
+    id: "kaspr",
+    name: "Kaspr",
+    description: "EU phone enrichment",
+    palKey: "kasprApiKey" as const,
+    docsUrl: "https://www.kaspr.io",
+  },
+  {
+    id: "lusha",
+    name: "Lusha",
+    description: "Phone enrichment (ISO 27701)",
+    palKey: "lushaApiKey" as const,
+    docsUrl: "https://www.lusha.com",
+  },
+  {
     id: "contactout",
     name: "ContactOut",
     description: "Phone enrichment fallback",

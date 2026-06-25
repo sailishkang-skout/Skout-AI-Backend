@@ -22,8 +22,10 @@ async function buildTestApp(overrides: Record<string, string | number> = {}) {
     CORESIGNAL_API_KEY: undefined,
     DATAGMA_API_KEY: undefined,
     CONTACTOUT_API_KEY: undefined,
-    COGNISM_API_KEY: undefined,
-    ...overrides,
+      COGNISM_API_KEY: undefined,
+      KASPR_API_KEY: undefined,
+      LUSHA_API_KEY: undefined,
+      ...overrides,
   });
   return app;
 }
@@ -247,6 +249,65 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     });
     expect(get.statusCode).toBe(200);
     expect(get.json()).toMatchObject({ id: jobId, status: "completed" });
+    await app.close();
+  });
+
+  it("does not persist unverified email on activation snapshot (E4.3)", async () => {
+    const { createHash } = await import("node:crypto");
+
+    function hashInt(value: string): number {
+      return parseInt(createHash("sha256").update(value).digest("hex").slice(0, 8), 16);
+    }
+
+    function firstCandidate(fullName: string, domain: string): string {
+      const parts = fullName.trim().split(/\s+/);
+      const first = (parts[0] ?? "user").toLowerCase();
+      const last = (parts[parts.length - 1] ?? first).toLowerCase();
+      return `${first}.${last}@${domain}`;
+    }
+
+    let fullName = "Invalid Probe";
+    let domain = "probe-invalid.com";
+    for (let i = 0; i < 300; i++) {
+      const candidateDomain = `probe-${i}.com`;
+      const candidateName = `Probe Invalid ${i}`;
+      const [email] = [firstCandidate(candidateName, candidateDomain)];
+      if (email && hashInt(email) % 100 >= 85) {
+        fullName = candidateName;
+        domain = candidateDomain;
+        break;
+      }
+    }
+
+    const app = await buildTestApp();
+    await ensureDemoIcp(app, WORKSPACE);
+    const prospectId = `verified-only-${domain.replace(/\./g, "-")}`;
+
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/prospects/activate",
+      headers: { "x-workspace-id": WORKSPACE, "content-type": "application/json" },
+      payload: { prospect: { prospectId, companyDomain: domain, fullName } },
+    });
+
+    const enrich = await app.inject({
+      method: "POST",
+      url: `/api/v1/prospects/${prospectId}/enrich`,
+      headers: { "x-workspace-id": WORKSPACE, "content-type": "application/json" },
+      payload: {
+        prospect: { fullName, companyDomain: domain },
+        fields: ["email", "validation"],
+      },
+    });
+    expect(enrich.statusCode).toBe(202);
+    const enriched = enrich.json() as {
+      results: { field: string; value?: string; isPrimary?: boolean }[];
+    };
+    const status = enriched.results.find((r) => r.field === "email_status")?.value;
+    const primaryEmail = enriched.results.find((r) => r.field === "email" && r.isPrimary);
+    if (status !== "valid") {
+      expect(primaryEmail).toBeUndefined();
+    }
     await app.close();
   });
 });

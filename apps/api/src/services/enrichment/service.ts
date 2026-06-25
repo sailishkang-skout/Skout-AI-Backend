@@ -513,6 +513,58 @@ export class EnrichmentService {
     return { listId, scored: results.length, skipped, results, creditsUsed };
   }
 
+  async prepareCorpusScore(workspaceId: string, snapshots: ProspectSnapshot[]) {
+    await this.prepareWorkspace(workspaceId);
+    const icp = this.loadIcp ? await this.loadIcp(workspaceId) : {};
+    if (!isIcpConfigured(icp)) {
+      throw new HttpError("ICP_NOT_CONFIGURED", 400);
+    }
+    const eligible = snapshots.filter((s) => s.companyDomain);
+    const totalCost = eligible.length * SCORE_CREDIT_COST;
+    const balance = await this.store.getCreditBalance(workspaceId);
+    if (totalCost > 0 && balance < totalCost) {
+      throw new InsufficientCreditsError(totalCost, balance);
+    }
+    return { icp, snapshots: eligible, totalCost };
+  }
+
+  async runCorpusScore(
+    workspaceId: string,
+    snapshots: ProspectSnapshot[],
+    opts?: {
+      onProgress?: (progress: {
+        scored: number;
+        total: number;
+        creditsUsed: number;
+        results: Array<{ prospectId: string; icpScore: number; icpBand: string }>;
+      }) => Promise<void>;
+    }
+  ) {
+    const { icp, snapshots: eligible } = await this.prepareCorpusScore(workspaceId, snapshots);
+    const results: Array<{ prospectId: string; icpScore: number; icpBand: string }> = [];
+    let creditsUsed = 0;
+
+    for (const snap of eligible) {
+      const result = await this.score(workspaceId, snap, icp);
+      creditsUsed += result.creditsUsed ?? SCORE_CREDIT_COST;
+      results.push({
+        prospectId: result.prospectId,
+        icpScore: result.icpScore,
+        icpBand: result.icpBand,
+      });
+      if (opts?.onProgress) {
+        await opts.onProgress({
+          scored: results.length,
+          total: eligible.length,
+          creditsUsed,
+          results,
+        });
+      }
+    }
+
+    return { scored: results.length, skipped: snapshots.length - eligible.length, results, creditsUsed };
+  }
+
   /** @deprecated Use ListScoreService.start — kept for direct sync calls in tests */
   async scoreList(workspaceId: string, listId: string) {
     return this.runListScore(workspaceId, listId);

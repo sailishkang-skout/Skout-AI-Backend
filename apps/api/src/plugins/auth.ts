@@ -36,7 +36,15 @@ function normalizeOrigin(origin: string): string {
 export const authPlugin = fp(async (app) => {
   const config = app.config;
 
-  const useStubAuth = !config.CLERK_SECRET_KEY || config.AUTH_STUB;
+  const clerkKeyInvalid =
+    !config.CLERK_SECRET_KEY ||
+    config.CLERK_SECRET_KEY.trim().toLowerCase() === "replace-me";
+
+  if (config.NODE_ENV === "production" && (config.AUTH_STUB || clerkKeyInvalid)) {
+    throw new Error("Production requires CLERK_SECRET_KEY and AUTH_STUB must be false");
+  }
+
+  const useStubAuth = clerkKeyInvalid || config.AUTH_STUB;
 
   if (useStubAuth) {
     app.log.warn(
@@ -67,6 +75,7 @@ export const authPlugin = fp(async (app) => {
 
   const authorizedParties = [
     ...config.CORS_ORIGIN.map(normalizeOrigin),
+    ...(config.FRONTEND_URL ? [normalizeOrigin(config.FRONTEND_URL)] : []),
     "http://localhost:3000",
     "http://127.0.0.1:3000",
   ].filter((value, index, all) => all.indexOf(value) === index);
