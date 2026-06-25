@@ -171,6 +171,8 @@ export const searchFiltersSchema = z.object({
 
   // Company — basic
   companyName: z.string().optional(),
+  companyDomain: z.string().optional(),
+  keyword: z.string().optional(),
   industry: z.string().optional(),
   subIndustry: z.string().optional(),
   country: z.string().optional(),
@@ -195,7 +197,19 @@ export const searchFiltersSchema = z.object({
   // Experience
   minYearsAtCompany: z.number().int().min(0).optional(),
   minYearsInRole: z.number().int().min(0).optional(),
+  minTotalYearsExperience: z.number().int().min(0).optional(),
   previousCompany: z.string().optional(),
+
+  // Company attributes
+  minFoundedYear: z.number().int().min(1800).max(2100).optional(),
+  maxFoundedYear: z.number().int().min(1800).max(2100).optional(),
+  minHeadcountGrowth: z.number().optional(),
+  companyEmailProvider: z.string().optional(),
+
+  // Intent & deduplication
+  minIntentScore: z.number().int().min(0).max(100).optional(),
+  excludeDuplicates: z.coerce.boolean().optional(),
+  maxPerCompany: z.number().int().min(1).max(10).optional(),
 
   // Activity signals (multi-select — OR logic)
   contactSignals: z.array(z.string()).optional(),

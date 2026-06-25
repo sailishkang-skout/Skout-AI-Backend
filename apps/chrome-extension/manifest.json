@@ -13,7 +13,9 @@
     "http://localhost:3001/*",
     "http://127.0.0.1:3001/*",
     "http://skoutdev-alb-1606179294.us-east-1.elb.amazonaws.com/*",
-    "http://skoutdev-alb-1606179294.us-east-1.elb.amazonaws.com:3001/*"
+    "http://skoutdev-alb-1606179294.us-east-1.elb.amazonaws.com:3001/*",
+    "http://*.elb.amazonaws.com/*",
+    "https://*.cloudfront.net/*"
   ],
   "action": {
     "default_title": "Open Skout AI panel"
@@ -30,7 +32,9 @@
       "http://localhost:3000/*",
       "http://127.0.0.1:3000/*",
       "https://*.amazonaws.com/*",
-      "http://*.amazonaws.com/*"
+      "http://*.amazonaws.com/*",
+      "http://*.elb.amazonaws.com/*",
+      "https://*.cloudfront.net/*"
     ]
   },
   "content_scripts": [
@@ -40,7 +44,12 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["http://localhost:3000/*", "http://127.0.0.1:3000/*"],
+      "matches": [
+        "http://localhost:3000/*",
+        "http://127.0.0.1:3000/*",
+        "http://*.elb.amazonaws.com/*",
+        "https://*.cloudfront.net/*"
+      ],
       "js": ["skout-web-bridge.js"],
       "run_at": "document_start"
     }

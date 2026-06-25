@@ -72,6 +72,33 @@ const TITLES = [
   "RevOps Lead",
 ];
 
+/** Dedupe / per-company caps applied after query filters. */
+export function postProcessSearchHits(
+  hits: ProspectDocument[],
+  filters: Pick<SearchFilters, "excludeDuplicates" | "maxPerCompany">
+): ProspectDocument[] {
+  let result = hits;
+  if (filters.excludeDuplicates) {
+    const seen = new Set<string>();
+    result = result.filter((d) => {
+      const key = d.email?.toLowerCase() || `${d.companyDomain}|${d.fullName ?? ""}`.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+  if (filters.maxPerCompany != null && filters.maxPerCompany > 0) {
+    const counts = new Map<string, number>();
+    result = result.filter((d) => {
+      const n = counts.get(d.companyDomain) ?? 0;
+      if (n >= filters.maxPerCompany!) return false;
+      counts.set(d.companyDomain, n + 1);
+      return true;
+    });
+  }
+  return result;
+}
+
 /** Synthetic corpus for local dev when OpenSearch is empty or unreachable. */
 export function buildDemoCorpus(count = 5300): ProspectDocument[] {
   const now = new Date().toISOString();
@@ -100,6 +127,12 @@ export function buildDemoCorpus(count = 5300): ProspectDocument[] {
     currentlyHiring: i % 2 === 0,
     yearsAtCompany: 1 + (i % 8),
     yearsInRole: 1 + (i % 4),
+    totalYearsExperience: 2 + (i % 15),
+    foundedYear: 1995 + (i % 28),
+    headcountGrowth: (i % 25) - 5,
+    companyEmailProvider:
+      i % 3 === 0 ? "google_workspace" : i % 3 === 1 ? "microsoft_365" : "other",
+    intentScore: 15 + (i % 85),
     previousCompany: i % 5 === 0 ? `Previous Corp ${i}` : undefined,
     techStack:
       i % 3 === 0
@@ -182,6 +215,11 @@ export function filterDemoCorpus(
   if (filters.minYearsInRole != null) {
     result = result.filter((d) => (d.yearsInRole ?? 0) >= filters.minYearsInRole!);
   }
+  if (filters.minTotalYearsExperience != null) {
+    result = result.filter(
+      (d) => (d.totalYearsExperience ?? 0) >= filters.minTotalYearsExperience!
+    );
+  }
   if (filters.previousCompany?.trim()) {
     const v = filters.previousCompany.trim().toLowerCase();
     result = result.filter((d) => d.previousCompany?.toLowerCase().includes(v));
@@ -197,6 +235,23 @@ export function filterDemoCorpus(
   if (filters.companyName?.trim()) {
     const v = filters.companyName.trim().toLowerCase();
     result = result.filter((d) => d.companyName?.toLowerCase().includes(v));
+  }
+  if (filters.companyDomain?.trim()) {
+    const v = filters.companyDomain
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, "")
+      .split("/")[0];
+    result = result.filter((d) => d.companyDomain?.toLowerCase().includes(v));
+  }
+  if (filters.keyword?.trim()) {
+    const v = filters.keyword.trim().toLowerCase();
+    result = result.filter(
+      (d) =>
+        d.industry?.toLowerCase().includes(v) ||
+        d.subIndustry?.toLowerCase().includes(v) ||
+        d.companyName?.toLowerCase().includes(v)
+    );
   }
   if (filters.industry) {
     const v = filters.industry.toLowerCase();
@@ -238,10 +293,31 @@ export function filterDemoCorpus(
   if (filters.maxRevenue != null) {
     result = result.filter((d) => (d.annualRevenue ?? 0) <= filters.maxRevenue!);
   }
+  if (filters.minFoundedYear != null) {
+    result = result.filter((d) => (d.foundedYear ?? 0) >= filters.minFoundedYear!);
+  }
+  if (filters.maxFoundedYear != null) {
+    result = result.filter((d) => (d.foundedYear ?? 9999) <= filters.maxFoundedYear!);
+  }
+  if (filters.minHeadcountGrowth != null) {
+    result = result.filter((d) => (d.headcountGrowth ?? 0) >= filters.minHeadcountGrowth!);
+  }
+  if (filters.companyEmailProvider) {
+    result = result.filter((d) => d.companyEmailProvider === filters.companyEmailProvider);
+  }
+  if (filters.minIntentScore != null) {
+    result = result.filter((d) => (d.intentScore ?? 0) >= filters.minIntentScore!);
+  }
 
   // Hiring
   if (filters.currentlyHiring === true) {
     result = result.filter((d) => d.currentlyHiring === true);
+  }
+  if (filters.hiringDepartments?.length) {
+    const selected = new Set(filters.hiringDepartments);
+    result = result.filter(
+      (d) => d.currentlyHiring === true && d.department && selected.has(d.department)
+    );
   }
 
   // Company signals (OR)
@@ -262,5 +338,6 @@ export function filterDemoCorpus(
     result = result.filter((d) => d.signals?.some((s) => s.type.toLowerCase() === v));
   }
 
+  result = postProcessSearchHits(result, filters);
   return result.slice(0, limit);
 }

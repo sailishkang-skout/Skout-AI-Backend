@@ -1,9 +1,9 @@
-import { buildDemoCorpus, filterDemoCorpus } from "./demo-corpus.js";
+import { buildDemoCorpus, filterDemoCorpus, postProcessSearchHits } from "./demo-corpus.js";
 
 /** Default OpenSearch index for the global prospect corpus. */
 export const PROSPECTS_INDEX = process.env.OPENSEARCH_INDEX ?? "prospects";
 
-export { buildDemoCorpus, filterDemoCorpus } from "./demo-corpus.js";
+export { buildDemoCorpus, filterDemoCorpus, postProcessSearchHits } from "./demo-corpus.js";
 
 export interface OpenSearchConfig {
   url: string;
@@ -41,6 +41,10 @@ export interface ProspectDocument {
   currentlyHiring?: boolean;
   yearsAtCompany?: number;
   yearsInRole?: number;
+  totalYearsExperience?: number;
+  foundedYear?: number;
+  headcountGrowth?: number;
+  companyEmailProvider?: string;
   previousCompany?: string;
   techStack?: { category: string; technology: string }[];
   signals?: { type: string; observedAt: string; detail?: string }[];
@@ -65,11 +69,21 @@ export interface SearchFilters {
   // Experience
   minYearsAtCompany?: number;
   minYearsInRole?: number;
+  minTotalYearsExperience?: number;
   previousCompany?: string;
+  minFoundedYear?: number;
+  maxFoundedYear?: number;
+  minHeadcountGrowth?: number;
+  companyEmailProvider?: string;
+  minIntentScore?: number;
+  excludeDuplicates?: boolean;
+  maxPerCompany?: number;
   // Activity signals (multi-select OR)
   contactSignals?: string[];
   // Company — basic
   companyName?: string;
+  companyDomain?: string;
+  keyword?: string;
   industry?: string;
   subIndustry?: string;
   country?: string;
@@ -167,6 +181,10 @@ export async function ensureProspectsIndex(cfg: OpenSearchConfig): Promise<void>
           currentlyHiring: { type: "boolean" },
           yearsAtCompany: { type: "float" },
           yearsInRole: { type: "float" },
+          totalYearsExperience: { type: "float" },
+          foundedYear: { type: "integer" },
+          headcountGrowth: { type: "float" },
+          companyEmailProvider: { type: "keyword" },
           previousCompany: { type: "text" },
           techStack: { type: "nested" },
           signals: { type: "nested" },
@@ -294,6 +312,9 @@ export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25
   if (filters.minYearsInRole != null) {
     filter.push({ range: { yearsInRole: { gte: filters.minYearsInRole } } });
   }
+  if (filters.minTotalYearsExperience != null) {
+    filter.push({ range: { totalYearsExperience: { gte: filters.minTotalYearsExperience } } });
+  }
   if (filters.previousCompany?.trim()) {
     filter.push({ match: { previousCompany: filters.previousCompany.trim() } });
   }
@@ -311,6 +332,19 @@ export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25
   // Company — basic
   if (filters.companyName?.trim()) {
     filter.push({ match: { companyName: filters.companyName.trim() } });
+  }
+  if (filters.companyDomain?.trim()) {
+    const domain = filters.companyDomain.trim().toLowerCase().replace(/^https?:\/\//, "").split("/")[0];
+    filter.push({ wildcard: { companyDomain: `*${domain}*` } });
+  }
+  if (filters.keyword?.trim()) {
+    filter.push({
+      multi_match: {
+        query: filters.keyword.trim(),
+        fields: ["industry", "subIndustry", "companyName"],
+        type: "best_fields",
+      },
+    });
   }
   if (filters.industry)    filter.push({ term: { industry: filters.industry } });
   if (filters.subIndustry) filter.push({ term: { subIndustry: filters.subIndustry } });
@@ -340,6 +374,25 @@ export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25
         },
       },
     });
+  }
+  if (filters.minFoundedYear != null || filters.maxFoundedYear != null) {
+    filter.push({
+      range: {
+        foundedYear: {
+          ...(filters.minFoundedYear != null ? { gte: filters.minFoundedYear } : {}),
+          ...(filters.maxFoundedYear != null ? { lte: filters.maxFoundedYear } : {}),
+        },
+      },
+    });
+  }
+  if (filters.minHeadcountGrowth != null) {
+    filter.push({ range: { headcountGrowth: { gte: filters.minHeadcountGrowth } } });
+  }
+  if (filters.companyEmailProvider) {
+    filter.push({ term: { companyEmailProvider: filters.companyEmailProvider } });
+  }
+  if (filters.minIntentScore != null) {
+    filter.push({ range: { intentScore: { gte: filters.minIntentScore } } });
   }
 
   // Hiring
@@ -417,7 +470,10 @@ export async function searchProspects(
   }>(cfg, `/${index}/_search`, { method: "POST", body: JSON.stringify(body) });
 
   return {
-    hits: res.hits.hits.map((h) => h._source),
+    hits: postProcessSearchHits(
+      res.hits.hits.map((h) => h._source),
+      filters
+    ),
     total: res.hits.total.value,
   };
 }
