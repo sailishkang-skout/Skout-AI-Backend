@@ -6,6 +6,12 @@ node_modules
 dist
 *.tsbuildinfo
 
+# stray tsc output emitted next to worker sources (should live in dist/)
+workers/scrapers/**/src/**/*.js
+workers/scrapers/**/src/**/*.d.ts
+workers/scrapers/shared/**/*.js
+workers/scrapers/shared/**/*.d.ts
+
 # env
 .env
 .crm-secrets/
