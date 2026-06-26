@@ -437,3 +437,237 @@ describe("GET /search/prospects/:id", () => {
     expect(body.prospectId).toBe("missing-id");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Prospect drawer — detail field tests
+// Verifies that GET /search/prospects/:id returns the full ProspectDetail
+// shape needed by the frontend drawer (all fields beyond the list summary).
+// ---------------------------------------------------------------------------
+
+const richProspect: osModule.ProspectDocument = {
+  prospectId: "prospect-rich",
+  companyId: "company-rich",
+  fullName: "Alex Rivera",
+  title: "CTO",
+  seniority: "c_level",
+  department: "Engineering",
+  jobFunction: "Technology",
+  email: "alex@startup.io",
+  phone: "+1 415 555 0100",
+  linkedinUrl: "https://linkedin.com/in/alexrivera",
+  companyDomain: "startup.io",
+  companyName: "Startup Inc",
+  industry: "Software & SaaS",
+  subIndustry: "DevTools",
+  country: "US",
+  state: "CA",
+  city: "San Francisco",
+  employeeCount: 120,
+  companyStage: "series_b",
+  annualRevenue: 5_000_000,
+  lastFundingRound: "series_b",
+  lastFundingDate: "2024-06-01",
+  totalFunding: 20_000_000,
+  currentlyHiring: true,
+  yearsAtCompany: 3,
+  yearsInRole: 1,
+  previousCompany: "Google",
+  techStack: [
+    { category: "CRM", technology: "Salesforce" },
+    { category: "Analytics", technology: "Mixpanel" },
+    { category: "Cloud", technology: "AWS" },
+    { category: "Database", technology: "PostgreSQL" },
+    { category: "Messaging", technology: "Slack" },
+    { category: "CI/CD", technology: "GitHub Actions" },
+    { category: "Monitoring", technology: "Datadog" },
+  ],
+  signals: [
+    { type: "job_posting", observedAt: "2025-01-01T00:00:00Z", detail: "Hiring engineers" },
+    { type: "funding_round", observedAt: "2024-06-01T00:00:00Z" },
+    { type: "leadership_change", observedAt: "2024-09-01T00:00:00Z" },
+    { type: "product_launch", observedAt: "2024-11-01T00:00:00Z" },
+    { type: "expansion", observedAt: "2025-01-10T00:00:00Z" },
+    { type: "award", observedAt: "2025-01-12T00:00:00Z" },
+  ],
+  icpScore: 87,
+  intentScore: 72,
+  painPoints: ["scaling", "developer tooling"],
+  outreachReadiness: "high",
+  updatedAt: "2025-01-15T10:00:00.000Z",
+};
+
+describe("GET /search/prospects/:id — prospect drawer detail fields", () => {
+  let app: FastifyInstance;
+
+  afterEach(async () => {
+    await app.close();
+    vi.clearAllMocks();
+  });
+
+  describe("contact detail fields", () => {
+    it("returns email, phone, and linkedinUrl", async () => {
+      app = await buildTestApp(osEnv);
+      mockedGetById.mockResolvedValueOnce(richProspect);
+
+      const res = await app.inject({ method: "GET", url: "/search/prospects/prospect-rich" });
+      const body = res.json();
+
+      expect(body.email).toBe("alex@startup.io");
+      expect(body.phone).toBe("+1 415 555 0100");
+      expect(body.linkedinUrl).toBe("https://linkedin.com/in/alexrivera");
+    });
+
+    it("returns department and jobFunction", async () => {
+      app = await buildTestApp(osEnv);
+      mockedGetById.mockResolvedValueOnce(richProspect);
+
+      const res = await app.inject({ method: "GET", url: "/search/prospects/prospect-rich" });
+      const body = res.json();
+
+      expect(body.department).toBe("Engineering");
+      expect(body.jobFunction).toBe("Technology");
+    });
+
+    it("returns experience fields — yearsAtCompany, yearsInRole, previousCompany", async () => {
+      app = await buildTestApp(osEnv);
+      mockedGetById.mockResolvedValueOnce(richProspect);
+
+      const res = await app.inject({ method: "GET", url: "/search/prospects/prospect-rich" });
+      const body = res.json();
+
+      expect(body.yearsAtCompany).toBe(3);
+      expect(body.yearsInRole).toBe(1);
+      expect(body.previousCompany).toBe("Google");
+    });
+  });
+
+  describe("company detail fields", () => {
+    it("returns subIndustry, state, and city", async () => {
+      app = await buildTestApp(osEnv);
+      mockedGetById.mockResolvedValueOnce(richProspect);
+
+      const res = await app.inject({ method: "GET", url: "/search/prospects/prospect-rich" });
+      const body = res.json();
+
+      expect(body.subIndustry).toBe("DevTools");
+      expect(body.state).toBe("CA");
+      expect(body.city).toBe("San Francisco");
+    });
+
+    it("returns companyStage and funding fields", async () => {
+      app = await buildTestApp(osEnv);
+      mockedGetById.mockResolvedValueOnce(richProspect);
+
+      const res = await app.inject({ method: "GET", url: "/search/prospects/prospect-rich" });
+      const body = res.json();
+
+      expect(body.companyStage).toBe("series_b");
+      expect(body.lastFundingRound).toBe("series_b");
+      expect(body.lastFundingDate).toBe("2024-06-01");
+      expect(body.annualRevenue).toBe(5_000_000);
+      expect(body.totalFunding).toBe(20_000_000);
+    });
+
+    it("returns currentlyHiring", async () => {
+      app = await buildTestApp(osEnv);
+      mockedGetById.mockResolvedValueOnce(richProspect);
+
+      const res = await app.inject({ method: "GET", url: "/search/prospects/prospect-rich" });
+      expect(res.json().currentlyHiring).toBe(true);
+    });
+
+    it("returns updatedAt", async () => {
+      app = await buildTestApp(osEnv);
+      mockedGetById.mockResolvedValueOnce(richProspect);
+
+      const res = await app.inject({ method: "GET", url: "/search/prospects/prospect-rich" });
+      expect(res.json().updatedAt).toBe("2025-01-15T10:00:00.000Z");
+    });
+  });
+
+  describe("arrays — not truncated unlike list summary", () => {
+    it("returns all signals (not capped at 5)", async () => {
+      app = await buildTestApp(osEnv);
+      mockedGetById.mockResolvedValueOnce(richProspect);
+
+      const res = await app.inject({ method: "GET", url: "/search/prospects/prospect-rich" });
+      expect(res.json().signals).toHaveLength(6);
+    });
+
+    it("returns all tech stack entries (not capped at 6)", async () => {
+      app = await buildTestApp(osEnv);
+      mockedGetById.mockResolvedValueOnce(richProspect);
+
+      const res = await app.inject({ method: "GET", url: "/search/prospects/prospect-rich" });
+      expect(res.json().techStack).toHaveLength(7);
+    });
+
+    it("preserves signal detail text", async () => {
+      app = await buildTestApp(osEnv);
+      mockedGetById.mockResolvedValueOnce(richProspect);
+
+      const res = await app.inject({ method: "GET", url: "/search/prospects/prospect-rich" });
+      const first = res.json().signals[0];
+      expect(first.type).toBe("job_posting");
+      expect(first.detail).toBe("Hiring engineers");
+    });
+  });
+
+  describe("scoring fields", () => {
+    it("returns icpScore, intentScore, painPoints, and outreachReadiness", async () => {
+      app = await buildTestApp(osEnv);
+      mockedGetById.mockResolvedValueOnce(richProspect);
+
+      const res = await app.inject({ method: "GET", url: "/search/prospects/prospect-rich" });
+      const body = res.json();
+
+      expect(body.icpScore).toBe(87);
+      expect(body.intentScore).toBe(72);
+      expect(body.painPoints).toEqual(["scaling", "developer tooling"]);
+      expect(body.outreachReadiness).toBe("high");
+    });
+  });
+
+  describe("sparse document — optional fields absent when not stored", () => {
+    it("returns 200 and does not include undefined detail fields", async () => {
+      app = await buildTestApp(osEnv);
+      mockedGetById.mockResolvedValueOnce({
+        prospectId: "sparse-001",
+        companyId: "co-sparse",
+        companyDomain: "sparse.io",
+        updatedAt: "2025-01-01T00:00:00Z",
+      });
+
+      const res = await app.inject({ method: "GET", url: "/search/prospects/sparse-001" });
+      expect(res.statusCode).toBe(200);
+
+      const body = res.json();
+      expect(body.prospectId).toBe("sparse-001");
+      expect(body.email).toBeUndefined();
+      expect(body.phone).toBeUndefined();
+      expect(body.linkedinUrl).toBeUndefined();
+      expect(body.yearsAtCompany).toBeUndefined();
+      expect(body.currentlyHiring).toBeUndefined();
+      expect(body.subIndustry).toBeUndefined();
+      expect(body.totalFunding).toBeUndefined();
+    });
+  });
+
+  describe("demo fallback", () => {
+    it("includes updatedAt in demo response", async () => {
+      app = await buildTestApp(baseEnv);
+      const res = await app.inject({ method: "GET", url: "/search/prospects/any-id" });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toHaveProperty("updatedAt");
+    });
+
+    it("includes updatedAt when OS returns null and demo corpus is used", async () => {
+      app = await buildTestApp(osEnv);
+      mockedGetById.mockResolvedValueOnce(null);
+
+      const res = await app.inject({ method: "GET", url: "/search/prospects/missing-id" });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toHaveProperty("updatedAt");
+    });
+  });
+});

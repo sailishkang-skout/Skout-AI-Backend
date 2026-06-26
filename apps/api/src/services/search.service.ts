@@ -170,15 +170,11 @@ export class SearchService {
     const cfg = osConfig(this.env);
     if (cfg) {
       const doc = await osGetById(cfg, prospectId);
-      if (doc) {
-        return this.toProspectSummary(doc);
-      }
+      if (doc) return mapDocToDetail(doc);
     }
 
     const doc = demoCorpus(this.env).find((row) => row.prospectId === prospectId);
-    if (doc) {
-      return this.toProspectSummary(doc);
-    }
+    if (doc) return mapDocToDetail(doc);
 
     return {
       prospectId,
@@ -189,11 +185,8 @@ export class SearchService {
       country: "US",
       industry: "Software",
       companyDomain: "example.com",
+      updatedAt: new Date().toISOString(),
     };
-  }
-
-  private toProspectSummary(doc: ProspectDocument) {
-    return mapDocToDetail(doc);
   }
 
   private demoSearch(body: SearchProspectsRequest, page: number, pageSize: number): SearchProspectsResponse {
