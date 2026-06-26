@@ -16,13 +16,24 @@ export function growthPct(current: number, past: number): number | undefined {
 }
 
 export async function recordSnapshot(db: Db, company: CompanyCandidate): Promise<void> {
-  await db.insert(schema.companySnapshots).values({
-    domain: normalizeDomain(company.domain),
-    employeeCount: company.employeeCount ?? null,
-    openJobs: company.openJobs ?? null,
-    annualRevenue: company.annualRevenue ?? null,
-    scrapedAt: new Date(company.scrapedAt),
-  });
+  try {
+    await db.insert(schema.companySnapshots).values({
+      domain: normalizeDomain(company.domain),
+      employeeCount: company.employeeCount ?? null,
+      openJobs: company.openJobs ?? null,
+      annualRevenue: company.annualRevenue ?? null,
+      scrapedAt: new Date(company.scrapedAt),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/company_snapshots|relation .* does not exist/i.test(message)) {
+      console.warn(
+        "[ingestor] company_snapshots table missing — run migration 0007. Skipping snapshot insert."
+      );
+      return;
+    }
+    throw err;
+  }
 }
 
 export async function computeHeadcountGrowth(
@@ -33,17 +44,24 @@ export async function computeHeadcountGrowth(
   if (!currentEmployees || currentEmployees <= 0) return undefined;
 
   const cutoff = new Date(Date.now() - GROWTH_LOOKBACK_DAYS * 86_400_000);
-  const [past] = await db
-    .select({ employeeCount: schema.companySnapshots.employeeCount })
-    .from(schema.companySnapshots)
-    .where(
-      and(
-        eq(schema.companySnapshots.domain, normalizeDomain(domain)),
-        lte(schema.companySnapshots.scrapedAt, cutoff)
+  let past: { employeeCount: number | null } | undefined;
+  try {
+    [past] = await db
+      .select({ employeeCount: schema.companySnapshots.employeeCount })
+      .from(schema.companySnapshots)
+      .where(
+        and(
+          eq(schema.companySnapshots.domain, normalizeDomain(domain)),
+          lte(schema.companySnapshots.scrapedAt, cutoff)
+        )
       )
-    )
-    .orderBy(desc(schema.companySnapshots.scrapedAt))
-    .limit(1);
+      .orderBy(desc(schema.companySnapshots.scrapedAt))
+      .limit(1);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/company_snapshots|relation .* does not exist/i.test(message)) return undefined;
+    throw err;
+  }
 
   if (!past?.employeeCount) return undefined;
   return growthPct(currentEmployees, past.employeeCount);
