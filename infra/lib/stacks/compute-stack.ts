@@ -112,12 +112,11 @@ export class ComputeStack extends Stack {
     const albDns = this.loadBalancer.loadBalancerDnsName;
 
     /** Headers injected on API Gateway → ALB so Next/Clerk see the public HTTPS host, not the ALB DNS. */
-    const buildApigwProxyMapping = () =>
+    const buildApigwProxyMapping = (apigwHost: string, publicOrigin: string) =>
       new apigwv2.ParameterMapping()
         .overwriteHeader(ORIGIN_VERIFY_HEADER, apigwv2.MappingValue.custom(originVerifySecret))
-        .overwriteHeader("host", apigwv2.MappingValue.requestHeader("host"))
-        .overwriteHeader("x-forwarded-host", apigwv2.MappingValue.requestHeader("host"))
-        .overwriteHeader("x-forwarded-proto", apigwv2.MappingValue.custom("https"));
+        .overwriteHeader("host", apigwv2.MappingValue.custom(apigwHost))
+        .overwriteHeader("x-skout-public-origin", apigwv2.MappingValue.custom(publicOrigin));
 
     // HTTPS: custom domain, API Gateway (mobile/cellular-friendly), or CloudFront in front of ALB.
     // Plain HTTP on ALB port 80 often times out on mobile data — use apigateway or cloudfront.
@@ -148,13 +147,16 @@ export class ComputeStack extends Stack {
         description: `Skout ${config.name} HTTPS entry (API Gateway → ALB)`,
       });
 
+      const apigwHost = `${httpsApi.httpApiId}.execute-api.${Stack.of(this).region}.${Stack.of(this).urlSuffix}`;
+      publicUrl = `https://${apigwHost}`;
+
       httpsApi.addRoutes({
         path: "/{proxy+}",
         methods: [apigwv2.HttpMethod.ANY],
         integration: new apigwIntegrations.HttpUrlIntegration(
           "AlbProxyIntegration",
           `http://${albDns}/{proxy}`,
-          { method: apigwv2.HttpMethod.ANY, parameterMapping: buildApigwProxyMapping() }
+          { method: apigwv2.HttpMethod.ANY, parameterMapping: buildApigwProxyMapping(apigwHost, publicUrl) }
         ),
       });
 
@@ -164,11 +166,9 @@ export class ComputeStack extends Stack {
         integration: new apigwIntegrations.HttpUrlIntegration(
           "AlbRootIntegration",
           `http://${albDns}/`,
-          { method: apigwv2.HttpMethod.ANY, parameterMapping: buildApigwProxyMapping() }
+          { method: apigwv2.HttpMethod.ANY, parameterMapping: buildApigwProxyMapping(apigwHost, publicUrl) }
         ),
       });
-
-      publicUrl = httpsApi.url!.replace(/\/$/, "");
     } else {
       publicUrl = `http://${albDns}`;
     }
