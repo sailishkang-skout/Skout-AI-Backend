@@ -81,16 +81,39 @@ export class ComputeStack extends Stack {
       description: `Skout ${config.name} internal service discovery`,
     });
 
+    // When an HTTPS front door (API Gateway / CloudFront) is used, lock the public ALB so plain
+    // HTTP is rejected: only requests carrying the secret origin-verify header (injected by the
+    // front door) reach the services. This makes the direct http://<alb-dns> URL return 403.
+    const httpsFrontDoor = httpsMode === "apigateway" || httpsMode === "cloudfront";
+    const ORIGIN_VERIFY_HEADER = "X-Origin-Verify";
+    const originVerifySecret =
+      (this.node.tryGetContext("originVerifySecret") as string | undefined) ??
+      process.env.ORIGIN_VERIFY_SECRET ??
+      `skout-${config.name}-${this.account}-origin-verify`;
+    const originVerifyCondition = elbv2.ListenerCondition.httpHeader(ORIGIN_VERIFY_HEADER, [
+      originVerifySecret,
+    ]);
+    const albExtraConditions = httpsFrontDoor ? [originVerifyCondition] : [];
+
     const listener = this.loadBalancer.addListener("HttpListener", {
       port: 80,
       open: true,
-      defaultAction: elbv2.ListenerAction.fixedResponse(404, {
-        contentType: "text/plain",
-        messageBody: "Not Found",
-      }),
+      defaultAction: httpsFrontDoor
+        ? elbv2.ListenerAction.fixedResponse(403, {
+            contentType: "text/plain",
+            messageBody: "Direct HTTP access is not allowed. Use the HTTPS endpoint.",
+          })
+        : elbv2.ListenerAction.fixedResponse(404, {
+            contentType: "text/plain",
+            messageBody: "Not Found",
+          }),
     });
 
     const albDns = this.loadBalancer.loadBalancerDnsName;
+    const originVerifyMapping = new apigwv2.ParameterMapping().overwriteHeader(
+      ORIGIN_VERIFY_HEADER,
+      apigwv2.MappingValue.custom(originVerifySecret)
+    );
 
     // HTTPS: custom domain, API Gateway (mobile/cellular-friendly), or CloudFront in front of ALB.
     // Plain HTTP on ALB port 80 often times out on mobile data — use apigateway or cloudfront.
@@ -106,6 +129,7 @@ export class ComputeStack extends Stack {
         defaultBehavior: {
           origin: new origins.LoadBalancerV2Origin(this.loadBalancer, {
             protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+            customHeaders: { [ORIGIN_VERIFY_HEADER]: originVerifySecret },
           }),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
@@ -126,7 +150,7 @@ export class ComputeStack extends Stack {
         integration: new apigwIntegrations.HttpUrlIntegration(
           "AlbProxyIntegration",
           `http://${albDns}/{proxy}`,
-          { method: apigwv2.HttpMethod.ANY }
+          { method: apigwv2.HttpMethod.ANY, parameterMapping: originVerifyMapping }
         ),
       });
 
@@ -136,7 +160,7 @@ export class ComputeStack extends Stack {
         integration: new apigwIntegrations.HttpUrlIntegration(
           "AlbRootIntegration",
           `http://${albDns}/`,
-          { method: apigwv2.HttpMethod.ANY }
+          { method: apigwv2.HttpMethod.ANY, parameterMapping: originVerifyMapping }
         ),
       });
 
@@ -167,6 +191,7 @@ export class ComputeStack extends Stack {
       listener,
       pathPatterns: ["/api/*"],
       priority: 10,
+      extraConditions: albExtraConditions,
       environment: {
         NODE_ENV: "production",
         PORT: "3001",
@@ -328,6 +353,7 @@ export class ComputeStack extends Stack {
       listener,
       pathPatterns: ["/*"],
       priority: 100,
+      extraConditions: albExtraConditions,
       environment: {
         NODE_ENV: "production",
         NEXT_PUBLIC_API_URL: apiUrl,
@@ -391,7 +417,9 @@ export class ComputeStack extends Stack {
 
     new CfnOutput(this, "AlbHttpUrl", {
       value: `http://${albDns}`,
-      description: "Direct ALB HTTP URL (legacy; prefer WebUrl)",
+      description: httpsFrontDoor
+        ? "Internal ALB origin — direct HTTP returns 403; use WebUrl (HTTPS)"
+        : "Direct ALB HTTP URL (legacy; prefer WebUrl)",
       exportName: `${config.stackPrefix}-AlbHttpUrl`,
     });
 

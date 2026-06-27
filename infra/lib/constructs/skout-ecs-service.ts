@@ -32,6 +32,8 @@ export interface SkoutEcsServiceProps {
   readonly pathPatterns?: string[];
   readonly priority?: number;
   readonly internalOnly?: boolean;
+  /** Extra ALB listener-rule conditions (e.g. require an origin-verify header so only the HTTPS front door is allowed). */
+  readonly extraConditions?: elbv2.ListenerCondition[];
   /** Optional Datadog Agent sidecar (ECS Fargate APM). App keeps running if agent fails. */
   readonly datadog?: {
     readonly apiKeySecret: ecs.Secret;
@@ -120,7 +122,9 @@ export class SkoutEcsService extends Construct {
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       assignPublicIp: false,
       circuitBreaker: { rollback: true },
-      ...(hasAlb ? { healthCheckGracePeriod: Duration.seconds(120) } : {}),
+      // Generous grace: the api container runs DB migrations before listening, so first-listen
+      // can be ~70s after task start. Grace must exceed (listen time + healthyThreshold*interval).
+      ...(hasAlb ? { healthCheckGracePeriod: Duration.seconds(240) } : {}),
     });
 
     if (hasAlb) {
@@ -132,18 +136,25 @@ export class SkoutEcsService extends Construct {
         healthCheck: {
           path: props.healthCheckPath,
           healthyHttpCodes: props.healthyHttpCodes ?? "200",
-          interval: Duration.seconds(30),
+          // 2 passes × 15s = healthy ~30s after first-listen (well within the grace period),
+          // instead of the CDK default 5 × 30s = 150s which raced past the old grace and flapped.
+          interval: Duration.seconds(15),
+          timeout: Duration.seconds(5),
+          healthyThresholdCount: 2,
+          unhealthyThresholdCount: 5,
         },
       });
 
       this.service.attachToApplicationTargetGroup(this.targetGroup);
 
+      const conditions: elbv2.ListenerCondition[] = [
+        ...(props.pathPatterns ? [elbv2.ListenerCondition.pathPatterns(props.pathPatterns)] : []),
+        ...(props.extraConditions ?? []),
+      ];
       props.listener.addTargetGroups(props.serviceName, {
         targetGroups: [this.targetGroup],
         priority: props.priority ?? 10,
-        conditions: props.pathPatterns
-          ? [elbv2.ListenerCondition.pathPatterns(props.pathPatterns)]
-          : undefined,
+        conditions: conditions.length ? conditions : undefined,
       });
       sg.connections.allowFrom(props.listener.connections, ec2.Port.tcp(props.containerPort));
     }

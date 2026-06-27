@@ -9,6 +9,10 @@ permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
 env:
   AWS_REGION: us-east-1
   ENV_NAME: dev
