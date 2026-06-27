@@ -6,6 +6,8 @@ import type { Env } from "../config/env.js";
 const env = {
   REDIS_URL: "redis://127.0.0.1:1",
   SEARCH_CACHE_TTL_SECONDS: 60,
+  PROSPECT_CACHE_TTL_SECONDS: 30,
+  SMART_LIST_CACHE_TTL_SECONDS: 60,
 } as Env;
 
 describe("SearchCacheService", () => {

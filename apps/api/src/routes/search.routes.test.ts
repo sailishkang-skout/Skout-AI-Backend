@@ -38,6 +38,8 @@ const baseEnv = {
   REDIS_URL: "redis://127.0.0.1:1",
   SEARCH_CREDIT_COST: 1,
   SEARCH_CACHE_TTL_SECONDS: 300,
+  PROSPECT_CACHE_TTL_SECONDS: 60,
+  SMART_LIST_CACHE_TTL_SECONDS: 120,
   DEMO_CORPUS_SIZE: 100,
 } as unknown as Env;
 
@@ -400,9 +402,13 @@ describe("POST /search/prospects", () => {
 describe("GET /search/prospects/:id", () => {
   let app: FastifyInstance;
 
+  beforeEach(() => {
+    clearSearchMemoryCache();
+    vi.clearAllMocks();
+  });
+
   afterEach(async () => {
     await app.close();
-    vi.clearAllMocks();
   });
 
   it("returns demo prospect when OpenSearch is not configured", async () => {
@@ -499,9 +505,13 @@ const richProspect: osModule.ProspectDocument = {
 describe("GET /search/prospects/:id — prospect drawer detail fields", () => {
   let app: FastifyInstance;
 
+  beforeEach(() => {
+    clearSearchMemoryCache();
+    vi.clearAllMocks();
+  });
+
   afterEach(async () => {
     await app.close();
-    vi.clearAllMocks();
   });
 
   describe("contact detail fields", () => {
