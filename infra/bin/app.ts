@@ -18,6 +18,9 @@ const imageTag = app.node.tryGetContext("imageTag") as string | undefined;
 const scraperImageTag =
   (app.node.tryGetContext("scraperImageTag") as string | undefined) ?? imageTag;
 const skipWeb = app.node.tryGetContext("skipWeb") === "true";
+// Dev HTTPS: CloudFront is preferred but requires AWS account CloudFront verification
+// (AWS Support ticket). Until verified, default to API Gateway which gives a working
+// HTTPS URL. Override per-deploy with `-c httpsMode=cloudfront` once the account is verified.
 const httpsMode =
   (app.node.tryGetContext("httpsMode") as "none" | "apigateway" | "cloudfront" | undefined) ??
   (envName === "dev" ? "apigateway" : "none");

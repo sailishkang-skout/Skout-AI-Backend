@@ -172,6 +172,9 @@ export async function prospectRoutes(app: FastifyInstance) {
         creditsUsed: job.creditsUsed,
         results: job.results,
         attempts: job.attempts,
+        queuedAt: job.queuedAt,
+        startedAt: job.startedAt,
+        completedAt: job.completedAt,
       });
     } catch (err) {
       if (err instanceof InsufficientCreditsError) {

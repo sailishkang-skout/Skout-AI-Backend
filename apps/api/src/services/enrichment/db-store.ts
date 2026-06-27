@@ -215,7 +215,16 @@ export class DbStore implements EnrichmentStore {
         creditsUsed: job.creditsUsed,
       })
       .returning();
-    return { ...job, id: row.id };
+    const created = await this.getJob(job.workspaceId, row.id);
+    return (
+      created ?? {
+        ...job,
+        id: row.id,
+        queuedAt: row.queuedAt.toISOString(),
+        startedAt: row.startedAt?.toISOString() ?? null,
+        completedAt: row.completedAt?.toISOString() ?? null,
+      }
+    );
   }
 
   async updateJob(id: string, patch: Partial<EnrichmentJob>): Promise<EnrichmentJob | null> {

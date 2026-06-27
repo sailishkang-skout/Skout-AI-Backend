@@ -450,12 +450,90 @@ export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25
   };
 }
 
+function needsSearchPostProcess(filters: SearchFilters): boolean {
+  return Boolean(
+    filters.excludeDuplicates ||
+      (filters.maxPerCompany != null && filters.maxPerCompany > 0)
+  );
+}
+
+async function searchProspectsWithPostProcess(
+  cfg: OpenSearchConfig,
+  filters: SearchFilters,
+  page: number,
+  pageSize: number
+): Promise<SearchResult> {
+  const index = cfg.index ?? PROSPECTS_INDEX;
+  const batchSize = Math.min(Math.max(pageSize * 4, pageSize), 200);
+  const targetStart = (page - 1) * pageSize;
+  const targetEnd = targetStart + pageSize;
+  const maxScan = 20_000;
+
+  let processed: ProspectDocument[] = [];
+  let osFrom = 0;
+  let rawTotal = 0;
+  let exhausted = false;
+
+  while (processed.length < targetEnd && osFrom < maxScan) {
+    const body = buildSearchQuery(filters, 1, batchSize);
+    body.from = osFrom;
+    body.size = batchSize;
+
+    const res = await osFetch<{
+      hits: { total: { value: number }; hits: { _source: ProspectDocument }[] };
+    }>(cfg, `/${index}/_search`, { method: "POST", body: JSON.stringify(body) });
+
+    rawTotal = res.hits.total.value;
+    const batch = res.hits.hits.map((h) => h._source);
+    if (!batch.length) {
+      exhausted = true;
+      break;
+    }
+
+    processed = postProcessSearchHits([...processed, ...batch], filters);
+    osFrom += batch.length;
+
+    if (batch.length < batchSize || osFrom >= rawTotal) {
+      exhausted = true;
+      break;
+    }
+  }
+
+  let total = processed.length;
+  if (!exhausted && osFrom < rawTotal) {
+    while (osFrom < rawTotal && osFrom < maxScan) {
+      const body = buildSearchQuery(filters, 1, batchSize);
+      body.from = osFrom;
+      body.size = batchSize;
+      const res = await osFetch<{
+        hits: { total: { value: number }; hits: { _source: ProspectDocument }[] };
+      }>(cfg, `/${index}/_search`, { method: "POST", body: JSON.stringify(body) });
+      const batch = res.hits.hits.map((h) => h._source);
+      if (!batch.length) break;
+      processed = postProcessSearchHits([...processed, ...batch], filters);
+      osFrom += batch.length;
+      if (batch.length < batchSize) break;
+    }
+    total = processed.length;
+    if (osFrom < rawTotal) total = Math.max(total, rawTotal);
+  }
+
+  return {
+    hits: processed.slice(targetStart, targetEnd),
+    total,
+  };
+}
+
 export async function searchProspects(
   cfg: OpenSearchConfig,
   filters: SearchFilters,
   page = 1,
   pageSize = 25
 ): Promise<SearchResult> {
+  if (needsSearchPostProcess(filters)) {
+    return searchProspectsWithPostProcess(cfg, filters, page, pageSize);
+  }
+
   const index = cfg.index ?? PROSPECTS_INDEX;
   const body = buildSearchQuery(filters, page, pageSize);
   const res = await osFetch<{
@@ -463,10 +541,7 @@ export async function searchProspects(
   }>(cfg, `/${index}/_search`, { method: "POST", body: JSON.stringify(body) });
 
   return {
-    hits: postProcessSearchHits(
-      res.hits.hits.map((h) => h._source),
-      filters
-    ),
+    hits: res.hits.hits.map((h) => h._source),
     total: res.hits.total.value,
   };
 }

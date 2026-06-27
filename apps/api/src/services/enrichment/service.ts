@@ -225,16 +225,19 @@ export class EnrichmentService {
       prospectId,
       activationId: activation.id,
       batchId: opts.batchId ?? null,
-      status: "running",
+      status: "queued",
       trigger: opts.trigger ?? "manual",
       fieldsRequested: fields,
       results: [],
       creditsUsed: 0,
       errorMessage: null,
       queuedAt: new Date().toISOString(),
-      startedAt: new Date().toISOString(),
+      startedAt: null,
       completedAt: null,
     });
+
+    const startedAt = new Date().toISOString();
+    await this.store.updateJob(job.id, { status: "running", startedAt });
 
     try {
       const icp = opts.icp ?? (this.loadIcp ? await this.loadIcp(workspaceId) : {});
