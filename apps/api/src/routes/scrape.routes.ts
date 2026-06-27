@@ -5,7 +5,7 @@ import {
   getScrapeJob,
   listScrapeJobs,
 } from "../services/scrape.service.js";
-import { errorResponse } from "../utils/http.js";
+import { errorResponse, isDatabaseError } from "../utils/http.js";
 
 function isScrapeAdmin(role?: string): boolean {
   return role === "owner" || role === "admin";
@@ -45,13 +45,17 @@ export async function scrapeRoutes(app: FastifyInstance) {
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "enqueue_failed";
+      const safe =
+        isDatabaseError(err) || /failed query:/i.test(message)
+          ? "Could not queue scrape job"
+          : message;
       const hint =
         message.includes("Queue name") || message.includes("queue")
           ? "Rebuild scraper orchestrator: pnpm --filter @skout/scraper-orchestrator build"
           : message.includes("Redis") || message.includes("ECONNREFUSED")
             ? "Start Redis: docker compose up -d redis"
             : undefined;
-      return reply.status(503).send({ error: message, message, hint });
+      return reply.status(503).send({ error: "enqueue_failed", message: safe, hint });
     }
   });
 

@@ -314,9 +314,11 @@ export function filterDemoCorpus(
     result = result.filter((d) => d.currentlyHiring === true);
   }
   if (filters.hiringDepartments?.length) {
-    const selected = new Set(filters.hiringDepartments);
+    const selected = new Set(filters.hiringDepartments.map((d) => d.toLowerCase()));
     result = result.filter(
-      (d) => d.currentlyHiring === true && d.department && selected.has(d.department)
+      (d) =>
+        d.currentlyHiring === true &&
+        d.hiringDepartments?.some((dept) => selected.has(dept.toLowerCase()))
     );
   }
 

@@ -39,6 +39,8 @@ export interface ProspectDocument {
   lastFundingDate?: string;
   totalFunding?: number;
   currentlyHiring?: boolean;
+  /** Departments with open roles (from scraper hiringByDept keys). */
+  hiringDepartments?: string[];
   yearsAtCompany?: number;
   yearsInRole?: number;
   totalYearsExperience?: number;
@@ -400,17 +402,7 @@ export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25
   if (filters.currentlyHiring === true) filter.push({ term: { currentlyHiring: true } });
   if (filters.hiringDepartments?.length) {
     filter.push({
-      nested: {
-        path: "signals",
-        query: {
-          bool: {
-            must: [
-              { term: { "signals.type": "hiring" } },
-              { terms: { "signals.department": filters.hiringDepartments } },
-            ],
-          },
-        },
-      },
+      terms: { hiringDepartments: filters.hiringDepartments },
     });
   }
 

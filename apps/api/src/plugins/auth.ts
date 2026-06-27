@@ -53,6 +53,8 @@ export const authPlugin = fp(async (app) => {
         : "CLERK_SECRET_KEY not set — running in stub mode"
     );
     app.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {
+      // CORS preflight (and any OPTIONS) must never require auth.
+      if (request.method === "OPTIONS") return;
       if (isHealthRoute(request.url) || isPublicRoute(request.url)) return;
       const stubEmail = (request.headers["x-stub-user-email"] as string | undefined) ?? "stub@example.com";
       const db = app.db;
@@ -81,6 +83,10 @@ export const authPlugin = fp(async (app) => {
   ].filter((value, index, all) => all.indexOf(value) === index);
 
   app.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {
+    // CORS preflight (and any OPTIONS) must never require auth.
+    if (request.method === "OPTIONS") {
+      return;
+    }
     if (isHealthRoute(request.url) || isPublicRoute(request.url)) {
       return;
     }

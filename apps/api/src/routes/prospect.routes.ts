@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { generateCompanyId, generateProspectId } from "@skout/shared";
+import { generateCompanyId, generateProspectId, normalizeDomain } from "@skout/shared";
 import {
   bulkUpsertProspects,
   type OpenSearchConfig,
@@ -90,7 +90,7 @@ export async function prospectRoutes(app: FastifyInstance) {
   app.post("/prospects/manual", async (request, reply) => {
     const body = manualProspectSchema.parse(request.body ?? {});
 
-    const domain = body.companyDomain?.trim() || "unknown.com";
+    const domain = normalizeDomain(body.companyDomain ?? "") || "unknown.com";
     const companyId = generateCompanyId(domain);
     const prospectId = body.email
       ? generateProspectId(domain, body.email)

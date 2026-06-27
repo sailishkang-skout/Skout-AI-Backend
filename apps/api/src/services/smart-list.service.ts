@@ -76,6 +76,52 @@ export async function createSmartList(
   return toSmartListRecord(row);
 }
 
+export async function updateSmartList(
+  db: Db | null,
+  workspaceId: string,
+  listId: string,
+  patch: { name?: string; filters?: SearchFilters }
+): Promise<SmartListRecord | null> {
+  if (!db) {
+    const list = memoryLists(workspaceId).find((l) => l.id === listId);
+    if (!list) return null;
+    if (patch.name !== undefined) list.name = patch.name;
+    if (patch.filters !== undefined) list.filters = patch.filters;
+    list.updatedAt = new Date();
+    return list;
+  }
+  const [existing] = await db.select().from(smartLists).where(eq(smartLists.id, listId));
+  if (!existing || existing.workspaceId !== workspaceId) return null;
+  const [row] = await db
+    .update(smartLists)
+    .set({
+      ...(patch.name !== undefined ? { name: patch.name } : {}),
+      ...(patch.filters !== undefined ? { filters: patch.filters } : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(smartLists.id, listId))
+    .returning();
+  return row ? toSmartListRecord(row) : null;
+}
+
+export async function deleteSmartList(
+  db: Db | null,
+  workspaceId: string,
+  listId: string
+): Promise<boolean> {
+  if (!db) {
+    const lists = memoryLists(workspaceId);
+    const idx = lists.findIndex((l) => l.id === listId);
+    if (idx === -1) return false;
+    lists.splice(idx, 1);
+    return true;
+  }
+  const [existing] = await db.select().from(smartLists).where(eq(smartLists.id, listId));
+  if (!existing || existing.workspaceId !== workspaceId) return false;
+  await db.delete(smartLists).where(eq(smartLists.id, listId));
+  return true;
+}
+
 export async function runSmartList(
   db: Db | null,
   osCfg: OpenSearchConfig | null,

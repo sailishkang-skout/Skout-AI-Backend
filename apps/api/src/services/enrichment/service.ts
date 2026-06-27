@@ -10,7 +10,7 @@ import {
   type ProspectList,
   type ProspectScore,
 } from "./types.js";
-import { HttpError } from "../../utils/http.js";
+import { HttpError, isDatabaseError } from "../../utils/http.js";
 import { isIcpConfigured } from "../icp.service.js";
 import { isVerifiedEmailStatus, stripUnverifiedEmail } from "../../utils/verified-email.js";
 import type { CompanyData } from "@skout/pal";
@@ -348,7 +348,11 @@ export class EnrichmentService {
         })) ?? job
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const raw = err instanceof Error ? err.message : String(err);
+      const message =
+        isDatabaseError(err) || /failed query:/i.test(raw)
+          ? "Enrichment failed due to a server error"
+          : raw;
       return (
         (await this.store.updateJob(job.id, {
           status: "failed",

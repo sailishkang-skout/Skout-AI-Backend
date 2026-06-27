@@ -6,14 +6,25 @@ import { buildEnrichmentService, InsufficientCreditsError } from "../services/en
 import { prospectToSnapshot, prospectToSummary } from "../services/smart-list.mapper.js";
 import {
   createSmartList,
+  deleteSmartList,
   listSmartLists,
   runSmartList,
+  updateSmartList,
 } from "../services/smart-list.service.js";
 
 const createSchema = z.object({
   name: z.string().min(1).max(255),
   filters: searchFiltersSchema,
 });
+
+const updateSchema = z
+  .object({
+    name: z.string().min(1).max(255).optional(),
+    filters: searchFiltersSchema.optional(),
+  })
+  .refine((v) => v.name !== undefined || v.filters !== undefined, {
+    message: "Provide name or filters to update",
+  });
 
 const activateSchema = z.object({
   listName: z.string().min(1).max(255).optional(),
@@ -52,6 +63,23 @@ export async function smartListRoutes(app: FastifyInstance) {
     const body = createSchema.parse(request.body ?? {});
     const list = await createSmartList(app.db, workspaceId, body.name, body.filters);
     return reply.status(201).send(list);
+  });
+
+  app.patch("/smart-lists/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const body = updateSchema.parse(request.body ?? {});
+    const updated = await updateSmartList(app.db, workspaceId, id, body);
+    if (!updated) return reply.status(404).send({ error: "smart_list_not_found" });
+    return reply.send(updated);
+  });
+
+  app.delete("/smart-lists/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const deleted = await deleteSmartList(app.db, workspaceId, id);
+    if (!deleted) return reply.status(404).send({ error: "smart_list_not_found" });
+    return reply.status(204).send();
   });
 
   app.post("/smart-lists/:id/run", async (request, reply) => {

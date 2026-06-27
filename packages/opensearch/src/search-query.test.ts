@@ -255,14 +255,12 @@ describe("buildSearchQuery", () => {
       expect(q.query).toEqual({ bool: { must: [{ match_all: {} }] } });
     });
 
-    it("adds nested filter for hiringDepartments", () => {
+    it("adds terms filter for hiringDepartments", () => {
       const q = buildSearchQuery({ hiringDepartments: ["Engineering", "Sales"] });
       const bool = q.query.bool as { filter?: object[] };
-      expect(bool.filter).toContainEqual(
-        expect.objectContaining({
-          nested: expect.objectContaining({ path: "signals" }),
-        })
-      );
+      expect(bool.filter).toContainEqual({
+        terms: { hiringDepartments: ["Engineering", "Sales"] },
+      });
     });
   });
 

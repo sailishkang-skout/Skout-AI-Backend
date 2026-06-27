@@ -1,11 +1,7 @@
 import { createHash } from "node:crypto";
-import { generateCompanyId } from "@skout/shared";
+import { generateCompanyId, normalizeDomain } from "@skout/shared";
 import type { CompanyCandidate, ProspectCandidate } from "@skout/scraper-contracts";
 import type { ProspectDocument } from "@skout/opensearch";
-
-function normalizeDomain(domain: string): string {
-  return domain.trim().toLowerCase().replace(/^www\./, "");
-}
 
 export function companyId(domain: string): string {
   return generateCompanyId(normalizeDomain(domain));
@@ -48,6 +44,9 @@ export function companyToProspectDoc(c: CompanyCandidate): ProspectDocument {
     lastFundingDate: c.funding?.lastRoundDate,
     totalFunding: c.funding?.totalRaised,
     currentlyHiring: c.isHiring === true,
+    hiringDepartments: c.hiringByDept
+      ? Object.keys(c.hiringByDept).filter((dept) => (c.hiringByDept?.[dept] ?? 0) > 0)
+      : undefined,
     foundedYear: foundedYearFromCandidate(c),
     techStack: c.techStack?.map((t) => ({ category: t.category, technology: t.technology })),
     signals: c.signals?.map((s) => ({ type: s.type, observedAt: s.observedAt, detail: s.detail })),
