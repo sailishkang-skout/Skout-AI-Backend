@@ -99,10 +99,34 @@ jobs:
           path: frontend
         continue-on-error: true
 
+      - name: Resolve dev public URL for web build
+        id: weburl
+        run: |
+          WEB_URL=$(aws cloudformation describe-stacks --stack-name SkoutDev-Compute \
+            --query "Stacks[0].Outputs[?OutputKey=='WebUrl'].OutputValue" --output text 2>/dev/null || true)
+          WEB_URL="${WEB_URL%/}"
+          if [ -z "$WEB_URL" ] || [ "$WEB_URL" = "None" ]; then
+            WEB_URL="${{ vars.DEV_WEB_URL }}"
+            WEB_URL="${WEB_URL%/}"
+          fi
+          if [ -z "$WEB_URL" ]; then
+            WEB_URL="${{ vars.DEV_API_URL }}"
+            WEB_URL="${WEB_URL%/}"
+          fi
+          if echo "$WEB_URL" | grep -qi '\.elb\.amazonaws\.com'; then
+            echo "::error::Web build URL must be the HTTPS API Gateway URL (WebUrl output), not the ALB."
+            exit 1
+          fi
+          if [ -z "$WEB_URL" ]; then
+            WEB_URL="http://localhost:3001"
+          fi
+          echo "url=$WEB_URL" >> "$GITHUB_OUTPUT"
+          echo "Using web build URL: $WEB_URL"
+
       - name: Build and push Web image
         env:
           IMAGE_TAG: ${{ steps.meta.outputs.tag }}
-          API_URL: ${{ vars.DEV_API_URL }}
+          WEB_URL: ${{ steps.weburl.outputs.url }}
         run: |
           if [ ! -f frontend/package.json ] || [ ! -f frontend/Dockerfile ]; then
             echo "Frontend repo or Dockerfile not found — skipping web image build"
@@ -110,8 +134,8 @@ jobs:
           fi
           WEB_REPO=$(aws ecr describe-repositories --repository-names skout-dev-web --query 'repositories[0].repositoryUri' --output text)
           docker build -f frontend/Dockerfile \
-            --build-arg NEXT_PUBLIC_API_URL="${API_URL:-http://localhost:3001}" \
-            --build-arg NEXT_PUBLIC_APP_URL="${API_URL:-http://localhost:3001}" \
+            --build-arg NEXT_PUBLIC_API_URL="${WEB_URL}" \
+            --build-arg NEXT_PUBLIC_APP_URL="${WEB_URL}" \
             --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}" \
             --build-arg CLERK_SECRET_KEY="${{ secrets.CLERK_SECRET_KEY }}" \
             -t "$WEB_REPO:$IMAGE_TAG" -t "$WEB_REPO:latest" frontend
