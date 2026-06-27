@@ -110,10 +110,14 @@ export class ComputeStack extends Stack {
     });
 
     const albDns = this.loadBalancer.loadBalancerDnsName;
-    const originVerifyMapping = new apigwv2.ParameterMapping().overwriteHeader(
-      ORIGIN_VERIFY_HEADER,
-      apigwv2.MappingValue.custom(originVerifySecret)
-    );
+
+    /** Headers injected on API Gateway → ALB so Next/Clerk see the public HTTPS host, not the ALB DNS. */
+    const buildApigwProxyMapping = () =>
+      new apigwv2.ParameterMapping()
+        .overwriteHeader(ORIGIN_VERIFY_HEADER, apigwv2.MappingValue.custom(originVerifySecret))
+        .overwriteHeader("host", apigwv2.MappingValue.requestHeader("host"))
+        .overwriteHeader("x-forwarded-host", apigwv2.MappingValue.requestHeader("host"))
+        .overwriteHeader("x-forwarded-proto", apigwv2.MappingValue.custom("https"));
 
     // HTTPS: custom domain, API Gateway (mobile/cellular-friendly), or CloudFront in front of ALB.
     // Plain HTTP on ALB port 80 often times out on mobile data — use apigateway or cloudfront.
@@ -150,7 +154,7 @@ export class ComputeStack extends Stack {
         integration: new apigwIntegrations.HttpUrlIntegration(
           "AlbProxyIntegration",
           `http://${albDns}/{proxy}`,
-          { method: apigwv2.HttpMethod.ANY, parameterMapping: originVerifyMapping }
+          { method: apigwv2.HttpMethod.ANY, parameterMapping: buildApigwProxyMapping() }
         ),
       });
 
@@ -160,7 +164,7 @@ export class ComputeStack extends Stack {
         integration: new apigwIntegrations.HttpUrlIntegration(
           "AlbRootIntegration",
           `http://${albDns}/`,
-          { method: apigwv2.HttpMethod.ANY, parameterMapping: originVerifyMapping }
+          { method: apigwv2.HttpMethod.ANY, parameterMapping: buildApigwProxyMapping() }
         ),
       });
 
@@ -357,11 +361,18 @@ export class ComputeStack extends Stack {
       environment: {
         NODE_ENV: "production",
         NEXT_PUBLIC_API_URL: apiUrl,
+        NEXT_PUBLIC_APP_URL: publicUrl,
+        NEXT_PUBLIC_CLERK_SIGN_IN_URL: `${publicUrl}/sign-in`,
+        NEXT_PUBLIC_CLERK_SIGN_UP_URL: `${publicUrl}/sign-up`,
         CLERK_SIGN_IN_URL: `${publicUrl}/sign-in`,
         CLERK_SIGN_UP_URL: `${publicUrl}/sign-up`,
       },
       secrets: {
         CLERK_SECRET_KEY: ecs.Secret.fromSecretsManager(secrets.clerk, "CLERK_SECRET_KEY"),
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ecs.Secret.fromSecretsManager(
+          secrets.clerk,
+          "CLERK_PUBLISHABLE_KEY"
+        ),
       },
     });
     grantSecretRead(webService.taskDefinition, secrets.clerk);
