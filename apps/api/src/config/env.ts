@@ -79,6 +79,10 @@ const envSchema = z
     SEARCH_CREDIT_COST: z.coerce.number().int().min(0).default(1),
     /** Redis TTL for cached search result pages. */
     SEARCH_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(300),
+    /** Redis TTL for cached prospect-by-ID (drawer) results. */
+    PROSPECT_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(60),
+    /** Redis TTL for cached smart-list run results. */
+    SMART_LIST_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(120),
     CLICKHOUSE_URL: z.string().optional(),
     AI_SERVICE_URL: z.string().optional(),
     OPENAI_API_KEY: z.string().optional(),

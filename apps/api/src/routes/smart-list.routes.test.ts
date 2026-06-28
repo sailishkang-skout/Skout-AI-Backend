@@ -13,6 +13,7 @@ async function buildTestApp() {
     AI_SERVICE_URL: undefined,
     OPENSEARCH_URL: undefined,
     DEMO_CORPUS_SIZE: 5300,
+    REDIS_URL: "",
   });
 }
 

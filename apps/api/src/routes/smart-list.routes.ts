@@ -4,6 +4,7 @@ import type { OpenSearchConfig } from "@skout/opensearch";
 import { searchFiltersSchema } from "@skout/shared";
 import { buildEnrichmentService, InsufficientCreditsError } from "../services/enrichment/index.js";
 import { prospectToSnapshot, prospectToSummary } from "../services/smart-list.mapper.js";
+import { createSearchCacheService } from "../services/search-cache.service.js";
 import {
   createSmartList,
   deleteSmartList,
@@ -71,6 +72,7 @@ export async function smartListRoutes(app: FastifyInstance) {
     const body = updateSchema.parse(request.body ?? {});
     const updated = await updateSmartList(app.db, workspaceId, id, body);
     if (!updated) return reply.status(404).send({ error: "smart_list_not_found" });
+    await createSearchCacheService(app.config).invalidateSmartList(workspaceId, id);
     return reply.send(updated);
   });
 
@@ -79,15 +81,23 @@ export async function smartListRoutes(app: FastifyInstance) {
     const workspaceId = request.workspaceId ?? "unknown";
     const deleted = await deleteSmartList(app.db, workspaceId, id);
     if (!deleted) return reply.status(404).send({ error: "smart_list_not_found" });
+    await createSearchCacheService(app.config).invalidateSmartList(workspaceId, id);
     return reply.status(204).send();
   });
 
   app.post("/smart-lists/:id/run", async (request, reply) => {
     const { id } = request.params as { id: string };
     const workspaceId = request.workspaceId ?? "unknown";
+    const cache = createSearchCacheService(app.config);
+
+    const cached = await cache.getSmartList(workspaceId, id);
+    if (cached) return reply.send(cached);
+
     const result = await runSmartList(app.db, osConfig(app), workspaceId, id);
     if (!result) return reply.status(404).send({ error: "smart_list_not_found" });
-    return reply.send(formatRunResponse(result));
+    const payload = formatRunResponse(result);
+    await cache.setSmartList(workspaceId, id, payload as Record<string, unknown>);
+    return reply.send(payload);
   });
 
   /** Run smart list, activate all matches, and create a workspace prospect list. */
