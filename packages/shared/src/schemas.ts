@@ -307,6 +307,56 @@ export const enrollSequenceSchema = z.object({
   prospectIds: z.array(z.string()).optional(),
 });
 
+export const SEQUENCE_STEP_TYPES = ["email", "linkedin", "wait", "task"] as const;
+export const SEQUENCE_STATUSES = ["draft", "active", "paused", "archived"] as const;
+
+export const SEQUENCE_MERGE_TOKENS = [
+  "firstName", "lastName", "fullName", "companyName", "companyDomain",
+  "title", "senderName", "senderEmail", "unsubscribeUrl",
+] as const;
+
+export const createSequenceSchema = z.object({
+  name: z.string().min(1).max(255),
+});
+
+export const updateSequenceSchema = z
+  .object({
+    name: z.string().min(1).max(255).optional(),
+    status: z.enum(SEQUENCE_STATUSES).optional(),
+  })
+  .refine((d) => d.name !== undefined || d.status !== undefined, {
+    message: "At least one of name or status is required",
+  });
+
+export const createSequenceStepSchema = z.object({
+  stepType: z.enum(SEQUENCE_STEP_TYPES),
+  delayDays: z.number().int().min(0).default(0),
+  subject: z.string().max(500).optional(),
+  bodyTemplate: z.string().optional(),
+});
+
+export const updateSequenceStepSchema = z
+  .object({
+    stepType: z.enum(SEQUENCE_STEP_TYPES).optional(),
+    delayDays: z.number().int().min(0).optional(),
+    subject: z.string().max(500).nullable().optional(),
+    bodyTemplate: z.string().nullable().optional(),
+  })
+  .refine((d) => Object.values(d).some((v) => v !== undefined), {
+    message: "At least one field is required",
+  });
+
+export const reorderSequenceStepsSchema = z.object({
+  stepIds: z.array(z.string().uuid()).min(1),
+});
+
+export type SequenceStepType = (typeof SEQUENCE_STEP_TYPES)[number];
+export type SequenceStatus = (typeof SEQUENCE_STATUSES)[number];
+export type CreateSequenceInput = z.infer<typeof createSequenceSchema>;
+export type UpdateSequenceInput = z.infer<typeof updateSequenceSchema>;
+export type CreateSequenceStepInput = z.infer<typeof createSequenceStepSchema>;
+export type UpdateSequenceStepInput = z.infer<typeof updateSequenceStepSchema>;
+
 export type ProspectSummary = z.infer<typeof prospectSummarySchema>;
 export type ProspectDetail = z.infer<typeof prospectDetailSchema>;
 export type SearchProspectsRequest = z.infer<typeof searchProspectsRequestSchema>;
