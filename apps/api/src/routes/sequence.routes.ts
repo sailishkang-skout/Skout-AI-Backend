@@ -181,16 +181,18 @@ export async function sequenceRoutes(app: FastifyInstance) {
         listId: body.listId,
       });
 
-      // Enqueue a BullMQ advance job for each newly enrolled prospect
+      // Enqueue advance jobs — enrollment is already persisted, so queue failure is non-fatal
       for (const e of result.newEnrollments) {
         const delayMs = e.firstStepScheduledAt
           ? Math.max(0, e.firstStepScheduledAt.getTime() - Date.now())
           : 0;
-        await enqueueSequenceAdvanceJob(
+        enqueueSequenceAdvanceJob(
           app.config,
           { enrollmentId: e.enrollmentId, workspaceId, prospectId: e.prospectId, sequenceId: id },
           delayMs
-        );
+        ).catch((err: unknown) => {
+          app.log.error({ err, enrollmentId: e.enrollmentId }, "Failed to enqueue advance job");
+        });
       }
 
       return reply.status(202).send({

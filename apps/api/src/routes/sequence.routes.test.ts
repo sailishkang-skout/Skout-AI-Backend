@@ -850,3 +850,260 @@ describe("sequence routes — auth stub", () => {
     await app.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Enroll — validation (no DB needed)
+// ---------------------------------------------------------------------------
+
+describe("sequence routes — enroll validation (no DB)", () => {
+  it("POST /enroll with empty body returns 400", async () => {
+    const app = await buildTestApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/sequences/00000000-0000-4000-8000-000000000000/enroll",
+      headers: json("enroll-val-empty@test.com"),
+      payload: {},
+    });
+    expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it("POST /enroll with empty prospectIds array returns 400", async () => {
+    const app = await buildTestApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/sequences/00000000-0000-4000-8000-000000000000/enroll",
+      headers: json("enroll-val-array@test.com"),
+      payload: { prospectIds: [] },
+    });
+    expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it("POST /enroll with invalid listId (not a UUID) returns 400", async () => {
+    const app = await buildTestApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/sequences/00000000-0000-4000-8000-000000000000/enroll",
+      headers: json("enroll-val-uuid@test.com"),
+      payload: { listId: "not-a-uuid" },
+    });
+    expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Enroll — full lifecycle (requires DB)
+// ---------------------------------------------------------------------------
+
+describe("sequence routes — enroll lifecycle", () => {
+  async function buildActiveSequenceWithStep(
+    app: Awaited<ReturnType<typeof buildTestApp>>,
+    email: string
+  ): Promise<{ sequenceId: string; stepId: string } | null> {
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/sequences",
+      headers: json(email),
+      payload: { name: "Enroll Test Sequence" },
+    });
+    if (created.statusCode === 503) return null;
+    const { id: sequenceId } = created.json() as { id: string };
+
+    const stepRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/sequences/${sequenceId}/steps`,
+      headers: json(email),
+      payload: { stepType: "email", delayDays: 1, subject: "Hello {{firstName}}" },
+    });
+    const { id: stepId } = stepRes.json() as { id: string };
+
+    await app.inject({
+      method: "PATCH",
+      url: `/api/v1/sequences/${sequenceId}`,
+      headers: json(email),
+      payload: { status: "active" },
+    });
+
+    return { sequenceId, stepId };
+  }
+
+  it("returns 202 with enrolled=1, skipped=0 for a new prospect", async () => {
+    const app = await buildTestApp();
+    const email = "enroll-happy@test.com";
+
+    const setup = await buildActiveSequenceWithStep(app, email);
+    if (!setup) { await app.close(); return; }
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/v1/sequences/${setup.sequenceId}/enroll`,
+      headers: json(email),
+      payload: { prospectIds: ["prospect-abc-001"] },
+    });
+
+    expect(res.statusCode).toBe(202);
+    const body = res.json() as { enrolled: number; skipped: number; total: number };
+    expect(body.enrolled).toBe(1);
+    expect(body.skipped).toBe(0);
+    expect(body.total).toBe(1);
+
+    await app.close();
+  });
+
+  it("returns skipped=1 when enrolling the same prospect twice", async () => {
+    const app = await buildTestApp();
+    const email = "enroll-dup@test.com";
+
+    const setup = await buildActiveSequenceWithStep(app, email);
+    if (!setup) { await app.close(); return; }
+
+    const firstEnroll = await app.inject({
+      method: "POST",
+      url: `/api/v1/sequences/${setup.sequenceId}/enroll`,
+      headers: json(email),
+      payload: { prospectIds: ["prospect-dup-001"] },
+    });
+    if (firstEnroll.statusCode !== 202) { await app.close(); return; }
+
+    const secondEnroll = await app.inject({
+      method: "POST",
+      url: `/api/v1/sequences/${setup.sequenceId}/enroll`,
+      headers: json(email),
+      payload: { prospectIds: ["prospect-dup-001"] },
+    });
+
+    expect(secondEnroll.statusCode).toBe(202);
+    const body = secondEnroll.json() as { enrolled: number; skipped: number; total: number };
+    expect(body.enrolled).toBe(0);
+    expect(body.skipped).toBe(1);
+    expect(body.total).toBe(1);
+
+    await app.close();
+  });
+
+  it("returns 202 with mixed enrolled/skipped when some prospects are new", async () => {
+    const app = await buildTestApp();
+    const email = "enroll-mixed@test.com";
+
+    const setup = await buildActiveSequenceWithStep(app, email);
+    if (!setup) { await app.close(); return; }
+
+    // Enroll prospect-A first
+    await app.inject({
+      method: "POST",
+      url: `/api/v1/sequences/${setup.sequenceId}/enroll`,
+      headers: json(email),
+      payload: { prospectIds: ["prospect-mix-A"] },
+    });
+
+    // Enroll A again + B (new)
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/v1/sequences/${setup.sequenceId}/enroll`,
+      headers: json(email),
+      payload: { prospectIds: ["prospect-mix-A", "prospect-mix-B"] },
+    });
+
+    if (res.statusCode === 503) { await app.close(); return; }
+    expect(res.statusCode).toBe(202);
+    const body = res.json() as { enrolled: number; skipped: number; total: number };
+    expect(body.total).toBe(2);
+    expect(body.enrolled).toBe(1);
+    expect(body.skipped).toBe(1);
+
+    await app.close();
+  });
+
+  it("returns 422 when enrolling into a draft (non-active) sequence", async () => {
+    const app = await buildTestApp();
+    const email = "enroll-draft@test.com";
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/sequences",
+      headers: json(email),
+      payload: { name: "Draft Sequence" },
+    });
+    if (created.statusCode === 503) { await app.close(); return; }
+    const { id } = created.json() as { id: string };
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/v1/sequences/${id}/enroll`,
+      headers: json(email),
+      payload: { prospectIds: ["prospect-xxx"] },
+    });
+
+    expect(res.statusCode).toBe(422);
+
+    await app.close();
+  });
+
+  it("returns 422 when enrolling into an active sequence with no steps", async () => {
+    const app = await buildTestApp();
+    const email = "enroll-nostep@test.com";
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/sequences",
+      headers: json(email),
+      payload: { name: "No Steps Sequence" },
+    });
+    if (created.statusCode === 503) { await app.close(); return; }
+    const { id } = created.json() as { id: string };
+
+    // Activate without adding steps
+    await app.inject({
+      method: "PATCH",
+      url: `/api/v1/sequences/${id}`,
+      headers: json(email),
+      payload: { status: "active" },
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/v1/sequences/${id}/enroll`,
+      headers: json(email),
+      payload: { prospectIds: ["prospect-yyy"] },
+    });
+
+    expect(res.statusCode).toBe(422);
+
+    await app.close();
+  });
+
+  it("returns 404 when enrolling into a non-existent sequence", async () => {
+    const app = await buildTestApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/sequences/00000000-0000-4000-8000-000000000099/enroll",
+      headers: json("enroll-404@test.com"),
+      payload: { prospectIds: ["prospect-ghost"] },
+    });
+    if (res.statusCode === 503) { await app.close(); return; }
+    expect(res.statusCode).toBe(404);
+    await app.close();
+  });
+
+  it("returns 404 when a different workspace user tries to enroll", async () => {
+    const app = await buildTestApp();
+    const ownerEmail = "enroll-iso-owner@test.com";
+    const otherEmail = "enroll-iso-other@test.com";
+
+    const setup = await buildActiveSequenceWithStep(app, ownerEmail);
+    if (!setup) { await app.close(); return; }
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/v1/sequences/${setup.sequenceId}/enroll`,
+      headers: json(otherEmail),
+      payload: { prospectIds: ["prospect-iso-001"] },
+    });
+
+    expect(res.statusCode).toBe(404);
+
+    await app.close();
+  });
+});
