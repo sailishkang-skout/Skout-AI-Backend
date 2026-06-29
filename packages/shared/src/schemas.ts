@@ -302,10 +302,14 @@ export const createListSchema = z.object({
   prospectIds: z.array(z.string()).optional(),
 });
 
-export const enrollSequenceSchema = z.object({
-  listId: z.string().uuid().optional(),
-  prospectIds: z.array(z.string()).optional(),
-});
+export const enrollSequenceSchema = z
+  .object({
+    listId: z.string().uuid().optional(),
+    prospectIds: z.array(z.string().min(1)).min(1).optional(),
+  })
+  .refine((d) => d.listId !== undefined || (d.prospectIds?.length ?? 0) > 0, {
+    message: "listId or prospectIds (non-empty) is required",
+  });
 
 export const SEQUENCE_STEP_TYPES = ["email", "linkedin", "wait", "task"] as const;
 export const SEQUENCE_STATUSES = ["draft", "active", "paused", "archived"] as const;

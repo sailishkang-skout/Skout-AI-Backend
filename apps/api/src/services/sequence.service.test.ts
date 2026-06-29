@@ -548,13 +548,98 @@ describe("SequenceService.reorderSteps", () => {
 // enroll
 // ---------------------------------------------------------------------------
 
+const ACTIVE_SEQ = { ...SEQ_ROW, status: "active" };
+const ENROLLMENT_ROW = {
+  id: "enroll-1",
+  workspaceId: "ws-1",
+  sequenceId: "seq-1",
+  prospectId: "p-1",
+  listId: null,
+  status: "active",
+  enrolledAt: new Date("2026-01-01T09:00:00Z"),
+  completedAt: null,
+};
+
+function insertOnConflictReturning(result: unknown[]) {
+  const returning = vi.fn().mockResolvedValue(result);
+  const onConflict = vi.fn().mockReturnValue({ returning });
+  return { values: vi.fn().mockReturnValue({ onConflictDoNothing: onConflict }) };
+}
+
+function insertOnConflict() {
+  const onConflict = vi.fn().mockResolvedValue(undefined);
+  return { values: vi.fn().mockReturnValue({ onConflictDoNothing: onConflict }) };
+}
+
 describe("SequenceService.enroll", () => {
-  it("returns accepted stub response", async () => {
-    const svc = new SequenceService({} as any);
-    const result = await svc.enroll("seq-1", "ws-1");
-    expect(result.status).toBe("accepted");
-    expect(result.sequenceId).toBe("seq-1");
-    expect(result.workspaceId).toBe("ws-1");
+  it("throws HttpError 404 when sequence not found", async () => {
+    const db = makeDb({ selects: [{ result: [], terminal: "where" }] });
+    const svc = new SequenceService(db as any);
+    await expect(
+      svc.enroll("seq-1", "ws-1", { prospectIds: ["p-1"] })
+    ).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it("throws HttpError 422 when sequence is not active", async () => {
+    const db = makeDb({ selects: [{ result: [SEQ_ROW], terminal: "where" }] });
+    const svc = new SequenceService(db as any);
+    await expect(
+      svc.enroll("seq-1", "ws-1", { prospectIds: ["p-1"] })
+    ).rejects.toMatchObject({ statusCode: 422 });
+  });
+
+  it("throws HttpError 422 when sequence has no steps", async () => {
+    const db = makeDb({
+      selects: [
+        { result: [ACTIVE_SEQ], terminal: "where" },
+        { result: [], terminal: "orderBy" },
+      ],
+    });
+    const svc = new SequenceService(db as any);
+    await expect(
+      svc.enroll("seq-1", "ws-1", { prospectIds: ["p-1"] })
+    ).rejects.toMatchObject({ statusCode: 422 });
+  });
+
+  it("enrolls a single prospect and returns enrolled=1 skipped=0", async () => {
+    const db = makeDb({
+      selects: [
+        { result: [ACTIVE_SEQ], terminal: "where" },
+        { result: [STEP_ROW], terminal: "orderBy" },
+      ],
+      inserts: [
+        () => insertOnConflictReturning([ENROLLMENT_ROW]),
+        () => insertOnConflict(),
+      ],
+    });
+    const svc = new SequenceService(db as any);
+    const result = await svc.enroll("seq-1", "ws-1", { prospectIds: ["p-1"] });
+    expect(result.enrolled).toBe(1);
+    expect(result.skipped).toBe(0);
+    expect(result.total).toBe(1);
+    expect(result.newEnrollments).toHaveLength(1);
+    expect(result.newEnrollments[0]).toMatchObject({
+      enrollmentId: "enroll-1",
+      prospectId: "p-1",
+    });
+  });
+
+  it("skips duplicate enrollment and returns skipped=1", async () => {
+    const db = makeDb({
+      selects: [
+        { result: [ACTIVE_SEQ], terminal: "where" },
+        { result: [STEP_ROW], terminal: "orderBy" },
+      ],
+      inserts: [
+        () => insertOnConflictReturning([]),
+      ],
+    });
+    const svc = new SequenceService(db as any);
+    const result = await svc.enroll("seq-1", "ws-1", { prospectIds: ["p-1"] });
+    expect(result.enrolled).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.total).toBe(1);
+    expect(result.newEnrollments).toHaveLength(0);
   });
 });
 

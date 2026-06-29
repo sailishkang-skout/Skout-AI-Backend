@@ -2,8 +2,9 @@ import { and, asc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { HttpError } from "../utils/http.js";
+import { stepScheduledAt } from "../utils/scheduling.js";
 
-const { sequences, sequenceSteps } = schema;
+const { sequences, sequenceSteps, sequenceEnrollments, sequenceEnrollmentSteps, listMembers } = schema;
 
 export const STEP_TYPES = ["email", "linkedin", "wait", "task"] as const;
 export type StepType = (typeof STEP_TYPES)[number];
@@ -264,12 +265,114 @@ export class SequenceService {
       .orderBy(asc(sequenceSteps.stepOrder));
   }
 
-  async enroll(sequenceId: string, workspaceId: string) {
+  /**
+   * Enrolls one or more prospects into an active sequence.
+   * - Resolves prospects from explicit `prospectIds` and/or a `listId`.
+   * - Idempotent: UNIQUE(sequenceId, prospectId) — already-enrolled prospects
+   *   are counted as `skipped` and not double-inserted.
+   * - Materialises one `sequenceEnrollmentStep` row per step with `scheduledAt`
+   *   pre-calculated (business-hours aware).
+   * - Returns the new enrollment IDs + first-step scheduledAt so the caller
+   *   can enqueue BullMQ advance jobs with the correct delay.
+   */
+  async enroll(
+    sequenceId: string,
+    workspaceId: string,
+    input: { prospectIds?: string[]; listId?: string }
+  ): Promise<{
+    enrolled: number;
+    skipped: number;
+    total: number;
+    newEnrollments: { enrollmentId: string; prospectId: string; firstStepScheduledAt: Date | null }[];
+  }> {
+    // Validate sequence exists and is active
+    const [seq] = await this.db
+      .select()
+      .from(sequences)
+      .where(and(eq(sequences.id, sequenceId), eq(sequences.workspaceId, workspaceId)));
+    if (!seq) throw new HttpError("sequence_not_found", 404);
+    if (seq.status !== "active") {
+      throw new HttpError(`Cannot enroll into a ${seq.status} sequence`, 422, {
+        status: seq.status,
+        required: "active",
+      });
+    }
+
+    // Load steps in order
+    const steps = await this.db
+      .select()
+      .from(sequenceSteps)
+      .where(eq(sequenceSteps.sequenceId, sequenceId))
+      .orderBy(asc(sequenceSteps.stepOrder));
+    if (steps.length === 0) {
+      throw new HttpError("Sequence has no steps — add at least one step before enrolling", 422);
+    }
+
+    // Resolve prospect IDs: combine explicit list + listId members, deduplicate
+    const idSet = new Set<string>(input.prospectIds ?? []);
+    if (input.listId) {
+      const members = await this.db
+        .select({ prospectId: listMembers.prospectId })
+        .from(listMembers)
+        .where(eq(listMembers.listId, input.listId));
+      for (const m of members) idSet.add(m.prospectId);
+    }
+    if (idSet.size === 0) {
+      throw new HttpError("No prospects to enroll — provide prospectIds or a listId", 422);
+    }
+
+    const prospectIds = [...idSet];
+    const now = new Date();
+    const newEnrollments: { enrollmentId: string; prospectId: string; firstStepScheduledAt: Date | null }[] = [];
+    let skipped = 0;
+
+    for (const prospectId of prospectIds) {
+      // Insert enrollment — silently skip duplicates via UNIQUE(sequenceId, prospectId)
+      const inserted = await this.db
+        .insert(sequenceEnrollments)
+        .values({ workspaceId, sequenceId, prospectId, listId: input.listId ?? null, status: "active" })
+        .onConflictDoNothing()
+        .returning();
+
+      if (inserted.length === 0) {
+        skipped++;
+        continue;
+      }
+
+      const enrollment = inserted[0]!;
+
+      // Pre-calculate scheduledAt for each step
+      let previousScheduledAt = now;
+      let firstScheduledAt: Date | null = null;
+
+      for (const step of steps) {
+        const scheduled = stepScheduledAt(previousScheduledAt, step.delayDays);
+        if (firstScheduledAt === null) firstScheduledAt = scheduled;
+        previousScheduledAt = scheduled;
+
+        await this.db
+          .insert(sequenceEnrollmentSteps)
+          .values({
+            enrollmentId: enrollment.id,
+            stepId: step.id,
+            status: "scheduled",
+            scheduledAt: scheduled,
+          })
+          .onConflictDoNothing();
+      }
+
+      newEnrollments.push({
+        enrollmentId: enrollment.id,
+        prospectId,
+        firstStepScheduledAt: firstScheduledAt,
+      });
+    }
+
     return {
-      sequenceId,
-      workspaceId,
-      status: "accepted" as const,
-      message: "Enrollment workflow queued (Temporal stub)",
+      enrolled: newEnrollments.length,
+      skipped,
+      total: prospectIds.length,
+      newEnrollments,
     };
   }
 }

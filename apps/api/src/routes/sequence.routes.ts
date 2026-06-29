@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { enrollSequenceSchema } from "@skout/shared";
 import { buildSequenceService, STEP_TYPES, SEQUENCE_STATUSES } from "../services/sequence.service.js";
+import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.js";
 import { HttpError } from "../utils/http.js";
 
 const createSequenceSchema = z.object({
@@ -172,9 +173,36 @@ export async function sequenceRoutes(app: FastifyInstance) {
     const { id } = request.params as { id: string };
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = buildSequenceService(app.db);
-    enrollSequenceSchema.parse(request.body ?? {});
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
-    const result = await svc.enroll(id, workspaceId);
-    return reply.status(202).send(result);
+    const body = enrollSequenceSchema.parse(request.body ?? {});
+    try {
+      const result = await svc.enroll(id, workspaceId, {
+        prospectIds: body.prospectIds,
+        listId: body.listId,
+      });
+
+      // Enqueue a BullMQ advance job for each newly enrolled prospect
+      for (const e of result.newEnrollments) {
+        const delayMs = e.firstStepScheduledAt
+          ? Math.max(0, e.firstStepScheduledAt.getTime() - Date.now())
+          : 0;
+        await enqueueSequenceAdvanceJob(
+          app.config,
+          { enrollmentId: e.enrollmentId, workspaceId, prospectId: e.prospectId, sequenceId: id },
+          delayMs
+        );
+      }
+
+      return reply.status(202).send({
+        enrolled: result.enrolled,
+        skipped: result.skipped,
+        total: result.total,
+      });
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return reply.status(err.statusCode).send({ error: err.message, details: err.details ?? null });
+      }
+      throw err;
+    }
   });
 }
