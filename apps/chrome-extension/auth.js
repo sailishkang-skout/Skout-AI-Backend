@@ -1,4 +1,5 @@
 import { isUsableTab, isUsableTabUrl } from "./tab-utils.js";
+import { log, logError, timeStep } from "./debug.js";
 import {
   DEFAULT_WEB_URL,
   getStoredSkoutUrls,
@@ -102,13 +103,15 @@ async function requestAuthViaPostMessage(tabId) {
     },
   });
 
-  for (let i = 0; i < 25; i += 1) {
+  for (let i = 0; i < 15; i += 1) {
     await sleep(400);
     const auth = await getStoredAuth();
-    if (auth.authToken && isAuthFresh(auth)) {
+    if (auth.authToken) {
+      log(`requestAuthViaPostMessage: token received on poll ${i + 1}`);
       return { token: auth.authToken, email: auth.authEmail || "" };
     }
   }
+  log("requestAuthViaPostMessage: no fresh token after polls");
   return null;
 }
 
@@ -129,10 +132,20 @@ async function readAuthFromTab(tabId) {
   return injection?.result;
 }
 
-async function readAuthFromTabWithRetry(tabId, webUrl, attempts = 15) {
+/** Max time to spend polling a single Skout tab for a Clerk token. */
+const TAB_AUTH_TIMEOUT_MS = 12_000;
+
+async function readAuthFromTabWithRetry(tabId, webUrl, attempts = 8) {
   const hint = skoutSignInHint(webUrl);
+  const started = Date.now();
   for (let i = 0; i < attempts; i += 1) {
+    if (Date.now() - started > TAB_AUTH_TIMEOUT_MS) {
+      log(`readAuthFromTabWithRetry: tab ${tabId} timed out after ${TAB_AUTH_TIMEOUT_MS}ms`);
+      break;
+    }
+    log(`readAuthFromTab tab=${tabId} attempt=${i + 1}/${attempts}`);
     const result = await readAuthFromTab(tabId);
+    log(`readAuthFromTab tab=${tabId} status=${result?.status ?? "null"}`);
     if (result?.status === "ok" && result.token) {
       await saveAuthToken(result.token, result.email || "");
       return { token: result.token, email: result.email || "" };
@@ -140,12 +153,12 @@ async function readAuthFromTabWithRetry(tabId, webUrl, attempts = 15) {
     if (result?.status === "tab_error") {
       throw new Error(`Skout tab failed to load — refresh your Skout tab and sign in (${hint}).`);
     }
-    if (i === 2 || i === 8) {
+    if (i === 1 || i === 4) {
       const viaMessage = await requestAuthViaPostMessage(tabId);
       if (viaMessage) return viaMessage;
     }
-    if (result?.status === "not_signed_in" && i >= 6) break;
-    await sleep(500);
+    if (result?.status === "not_signed_in" && i >= 4) break;
+    await sleep(400);
   }
 
   return requestAuthViaPostMessage(tabId);
@@ -165,11 +178,15 @@ async function findSkoutTabs(webUrl = DEFAULT_WEB_URL) {
 export async function refreshAuthFromSkoutTabs() {
   const { webUrl } = await getStoredSkoutUrls();
   const tabs = await findSkoutTabs(webUrl);
+  log(`refreshAuthFromSkoutTabs: ${tabs.length} Skout tab(s)`, tabs.map((t) => t.id));
   for (const tab of tabs) {
     if (!tab.id) continue;
-    const auth = await readAuthFromTabWithRetry(tab.id, webUrl);
+    const auth = await timeStep(`refreshAuth tab=${tab.id}`, () =>
+      readAuthFromTabWithRetry(tab.id, webUrl)
+    );
     if (auth) return auth;
   }
+  log("refreshAuthFromSkoutTabs: no token from any tab");
   return null;
 }
 
@@ -179,15 +196,24 @@ export async function ensureFreshAuth() {
 
   const { webUrl } = await getStoredSkoutUrls();
   const stored = await getStoredAuth();
-  if (isAuthFresh(stored)) {
+
+  // Use any stored token immediately — proactive refresh before every API call
+  // was blocking Add-to-list for minutes when the Skout tab wasn't responsive.
+  // skoutFetch retries after 401 with refreshAuthFromSkoutTabs (also time-capped).
+  if (stored.authToken) {
+    log("ensureFreshAuth: using stored token", {
+      fresh: isAuthFresh(stored),
+      email: stored.authEmail || "(none)",
+    });
     return { token: stored.authToken, email: stored.authEmail || "" };
   }
 
+  log("ensureFreshAuth: no stored token — refreshing from Skout tab");
   const refreshed = await refreshAuthFromSkoutTabs();
   if (refreshed) return refreshed;
 
   const after = await getStoredAuth();
-  if (isAuthFresh(after)) {
+  if (after.authToken) {
     return { token: after.authToken, email: after.authEmail || "" };
   }
 

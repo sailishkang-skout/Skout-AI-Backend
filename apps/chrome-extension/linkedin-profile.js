@@ -26,7 +26,11 @@ export async function injectLinkedInBridge(tabId) {
 
 function sendReadProfile(tabId) {
   return new Promise((resolve, reject) => {
+    const timer = globalThis.setTimeout(() => {
+      reject(new Error("LinkedIn profile read timed out — refresh the page (Cmd+Shift+R) and try again."));
+    }, 12_000);
     chrome.tabs.sendMessage(tabId, { type: "read-profile" }, (response) => {
+      globalThis.clearTimeout(timer);
       const err = chrome.runtime.lastError;
       if (err) {
         reject(new Error(err.message));

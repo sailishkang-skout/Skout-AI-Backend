@@ -35,6 +35,14 @@ export interface ProspectSnapshot {
   phone?: string;
   emailStatus?: string;
   company?: CompanyData;
+  headline?: string;
+  location?: string;
+  city?: string;
+  state?: string;
+  about?: string;
+  connections?: string;
+  followers?: string;
+  photoUrl?: string;
 }
 
 export interface EnrichOptions {
@@ -79,6 +87,11 @@ export class EnrichmentService {
 
   private async prepareWorkspace(workspaceId: string): Promise<void> {
     if (this.beforeWrite) await this.beforeWrite(workspaceId);
+  }
+
+  /** Read a single stored activation (snapshot) for a prospect in this workspace. */
+  async getActivation(workspaceId: string, prospectId: string) {
+    return this.store.getActivation(workspaceId, prospectId);
   }
 
   private resolveIds(s: ProspectSnapshot) {

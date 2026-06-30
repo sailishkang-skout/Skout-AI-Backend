@@ -122,6 +122,59 @@ export function createBillingService(db: Db, config: Env) {
       }
     },
 
+    /**
+     * Verify the signature Razorpay Checkout returns to the browser after a
+     * successful payment: HMAC_SHA256(`${orderId}|${paymentId}`, keySecret).
+     */
+    verifyCheckoutSignature(orderId: string, paymentId: string, signature: string): boolean {
+      const secret = config.RAZORPAY_KEY_SECRET;
+      if (!secret) return false;
+      const expected = createHmac("sha256", secret)
+        .update(`${orderId}|${paymentId}`)
+        .digest("hex");
+      try {
+        return timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+      } catch {
+        return false;
+      }
+    },
+
+    /**
+     * Credit a paid order exactly once. Shared by the webhook (server-to-server)
+     * and the client-side verify endpoint so credits never double up.
+     * When `expectedWorkspaceId` is provided the order must belong to it.
+     */
+    async captureOrder(orderId: string, paymentId: string, expectedWorkspaceId?: string) {
+      const [order] = await db
+        .select()
+        .from(schema.paymentOrders)
+        .where(eq(schema.paymentOrders.providerOrderId, orderId))
+        .limit(1);
+
+      if (!order) {
+        return { handled: false as const, reason: "order_not_found" };
+      }
+      if (expectedWorkspaceId && order.workspaceId !== expectedWorkspaceId) {
+        return { handled: false as const, reason: "workspace_mismatch" };
+      }
+      if (order.status === "paid") {
+        return { handled: true as const, reason: "already_paid", credits: order.credits };
+      }
+
+      await workspaceSvc.addCredits(order.workspaceId, order.credits, "razorpay_purchase", paymentId);
+
+      await db
+        .update(schema.paymentOrders)
+        .set({
+          status: "paid",
+          razorpayPaymentId: paymentId,
+          paidAt: new Date(),
+        })
+        .where(eq(schema.paymentOrders.id, order.id));
+
+      return { handled: true as const, credits: order.credits, workspaceId: order.workspaceId };
+    },
+
     async handleRazorpayWebhook(payload: {
       event: string;
       payload?: {
@@ -145,36 +198,7 @@ export function createBillingService(db: Db, config: Env) {
         return { handled: false, reason: "missing_payment_fields" };
       }
 
-      const [order] = await db
-        .select()
-        .from(schema.paymentOrders)
-        .where(eq(schema.paymentOrders.providerOrderId, orderId))
-        .limit(1);
-
-      if (!order) {
-        return { handled: false, reason: "order_not_found" };
-      }
-      if (order.status === "paid") {
-        return { handled: true, reason: "already_paid" };
-      }
-
-      await workspaceSvc.addCredits(
-        order.workspaceId,
-        order.credits,
-        "razorpay_purchase",
-        paymentId
-      );
-
-      await db
-        .update(schema.paymentOrders)
-        .set({
-          status: "paid",
-          razorpayPaymentId: paymentId,
-          paidAt: new Date(),
-        })
-        .where(eq(schema.paymentOrders.id, order.id));
-
-      return { handled: true, credits: order.credits, workspaceId: order.workspaceId };
+      return this.captureOrder(orderId, paymentId);
     },
   };
 }

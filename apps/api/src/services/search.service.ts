@@ -137,11 +137,63 @@ function mapDocToDetail(doc: ProspectDocument) {
   };
 }
 
+function normalizeSeniority(value: unknown): (typeof seniorityEnum.options)[number] {
+  const raw = typeof value === "string" ? value.trim().toLowerCase().replace(/[\s-]+/g, "_") : "";
+  return VALID_SENIORITIES.has(raw as (typeof seniorityEnum.options)[number])
+    ? (raw as (typeof seniorityEnum.options)[number])
+    : ("unknown" as const);
+}
+
+function str(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+/** Build a prospect detail from a stored activation snapshot (LinkedIn capture / manual add). */
+export function buildDetailFromSnapshot(
+  prospectId: string,
+  companyId: string,
+  snapshot: Record<string, unknown>,
+  updatedAt?: string
+) {
+  const fullName = str(snapshot.fullName) ?? str(snapshot.companyName) ?? "Unknown";
+  const company = (snapshot.company as Record<string, unknown> | undefined) ?? undefined;
+  return {
+    prospectId,
+    companyId,
+    fullName,
+    title: str(snapshot.title) ?? str(snapshot.headline) ?? "",
+    seniority: normalizeSeniority(snapshot.seniority),
+    country: str(snapshot.country) ?? "",
+    industry: str(snapshot.industry) ?? str(company?.industry) ?? "",
+    companyDomain: str(snapshot.companyDomain) ?? "",
+    companyName: str(snapshot.companyName) ?? str(company?.name),
+    recordType: "person" as const,
+    employeeCount: typeof snapshot.employeeCount === "number" ? snapshot.employeeCount : undefined,
+    updatedAt: updatedAt ?? new Date().toISOString(),
+    email: str(snapshot.email),
+    phone: str(snapshot.phone),
+    linkedinUrl: str(snapshot.linkedinUrl),
+    city: str(snapshot.city),
+    state: str(snapshot.state),
+  };
+}
+
 /**
  * Search service — OpenSearch corpus with demo fallback when OPENSEARCH_URL unset.
  */
 export class SearchService {
   constructor(private readonly env: Env) {}
+
+  /** True when this id resolves to a real OpenSearch/demo doc (not the hardcoded fallback). */
+  async findExistingProspect(prospectId: string) {
+    const cfg = osConfig(this.env);
+    if (cfg) {
+      const doc = await osGetById(cfg, prospectId).catch(() => null);
+      if (doc) return mapDocToDetail(doc);
+    }
+    const doc = demoCorpus(this.env).find((row) => row.prospectId === prospectId);
+    return doc ? mapDocToDetail(doc) : null;
+  }
 
   async searchProspects(body: SearchProspectsRequest): Promise<SearchProspectsResponse> {
     const page = body.page ?? 1;
