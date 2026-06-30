@@ -30,9 +30,45 @@ vi.mock("./sequence-enrollment.queue.js", () => ({
   }),
 }));
 
+vi.mock("../utils/scheduling.js", () => ({
+  isBusinessHour: vi.fn().mockReturnValue(true),
+  nextBusinessHour: vi.fn().mockReturnValue(new Date("2026-01-01T09:00:00Z")),
+}));
+
+vi.mock("../services/prospect-resolver.service.js", () => ({
+  resolveProspectFields: vi.fn(),
+}));
+
+vi.mock("../services/suppression.service.js", () => ({
+  isSuppressed: vi.fn(),
+  buildUnsubscribeUrl: vi.fn().mockReturnValue("https://api.skout.ai/api/v1/unsubscribe/tok"),
+}));
+
+vi.mock("../services/inbox-rotation.service.js", () => ({
+  pickNextInbox: vi.fn(),
+  markInboxUsed: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("../services/template-render.service.js", () => ({
+  renderTemplate: vi.fn((template: string) => template),
+}));
+
+vi.mock("../services/tracking.service.js", () => ({
+  injectTracking: vi.fn().mockReturnValue({ html: "<p>tracked</p>", text: "plain" }),
+}));
+
+vi.mock("../services/email-sender.service.js", () => ({
+  buildEmailSenderFromInbox: vi.fn(),
+}));
+
 import { startSequenceEnrollmentWorker } from "./sequence-enrollment.worker.js";
 import { Worker } from "bullmq";
 import { createDb } from "@skout/db";
+import { isBusinessHour } from "../utils/scheduling.js";
+import { resolveProspectFields } from "../services/prospect-resolver.service.js";
+import { isSuppressed } from "../services/suppression.service.js";
+import { pickNextInbox, markInboxUsed } from "../services/inbox-rotation.service.js";
+import { buildEmailSenderFromInbox } from "../services/email-sender.service.js";
 
 const BASE_CONFIG = {
   DATABASE_URL: "postgresql://user:pass@localhost:5432/test",
@@ -118,5 +154,208 @@ describe("startSequenceEnrollmentWorker", () => {
     await startSequenceEnrollmentWorker(BASE_CONFIG);
 
     expect(mockOn).toHaveBeenCalledWith("failed", expect.any(Function));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// executeEmailStep dispatch — invoked indirectly via the captured BullMQ
+// processor function, since advanceEnrollment/executeEmailStep aren't exported.
+// ---------------------------------------------------------------------------
+
+function selectChain(result: unknown[]) {
+  const c = {} as Record<string, ReturnType<typeof vi.fn>>;
+  c.from = vi.fn().mockReturnValue(c);
+  c.innerJoin = vi.fn().mockReturnValue(c);
+  c.where = vi.fn().mockReturnValue(c);
+  c.orderBy = vi.fn().mockReturnValue(c);
+  c.limit = vi.fn().mockResolvedValue(result);
+  return c;
+}
+
+const PAST_DATE = new Date("2020-01-01T00:00:00Z");
+const ENROLLMENT_ROW = { id: "enr-1", workspaceId: "ws-1", status: "active", enrolledAt: PAST_DATE };
+const EMAIL_STEP_ROW = {
+  enrollmentStepId: "estep-1",
+  stepId: "step-1",
+  scheduledAt: PAST_DATE,
+  stepOrder: 1,
+  stepType: "email",
+  subject: "Hi {{firstName}}",
+  bodyTemplate: "Hello {{firstName}}, visit https://example.com {{unsubscribeUrl}}",
+};
+
+function makeWorkerDb(opts: {
+  pendingStep?: unknown;
+  txInsertThread?: { id: string };
+}) {
+  const select = vi.fn();
+  select.mockReturnValueOnce(selectChain([ENROLLMENT_ROW])); // load enrollment
+  select.mockReturnValueOnce(selectChain([])); // bounced check
+  select.mockReturnValueOnce(selectChain([])); // reply check
+  select.mockReturnValueOnce(selectChain(opts.pendingStep ? [opts.pendingStep] : [])); // pending step
+  select.mockReturnValueOnce(selectChain([])); // next pending step (none → completed)
+
+  const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+  const update = vi.fn().mockReturnValue({ set: updateSet });
+
+  const txInsertValues = vi.fn();
+  const txUpdateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+  const tx = {
+    insert: vi.fn().mockImplementation(() => ({
+      values: txInsertValues.mockReturnValueOnce({
+        returning: vi.fn().mockResolvedValue([opts.txInsertThread ?? { id: "thread-1" }]),
+      }),
+    })),
+    update: vi.fn().mockReturnValue({ set: txUpdateSet }),
+  };
+  const transaction = vi.fn().mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(tx));
+
+  return { select, update, transaction, updateSet, tx };
+}
+
+async function getProcessor(db: unknown): Promise<(job: { data: unknown; attemptsMade: number }) => Promise<void>> {
+  vi.mocked(createDb).mockReturnValueOnce({
+    db: db as any,
+    sql: { end: vi.fn().mockResolvedValue(undefined) } as any,
+  });
+  await startSequenceEnrollmentWorker(BASE_CONFIG);
+  const call = vi.mocked(Worker).mock.calls[0]!;
+  return call[1] as (job: { data: unknown; attemptsMade: number }) => Promise<void>;
+}
+
+const JOB_PAYLOAD = { enrollmentId: "enr-1", workspaceId: "ws-1", prospectId: "p-1", sequenceId: "seq-1" };
+
+describe("sequence-enrollment worker — email step execution", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(Worker).mockImplementation((() => ({
+      on: vi.fn(),
+      close: vi.fn().mockResolvedValue(undefined),
+    })) as any);
+    vi.mocked(isBusinessHour).mockReturnValue(true);
+  });
+
+  it("sends the email through the rotated inbox and marks the step executed", async () => {
+    vi.mocked(resolveProspectFields).mockResolvedValue({
+      prospectId: "p-1",
+      email: "prospect@example.com",
+      firstName: "Ada",
+      lastName: "Lovelace",
+      fullName: "Ada Lovelace",
+    });
+    vi.mocked(isSuppressed).mockResolvedValue(false);
+    vi.mocked(pickNextInbox).mockResolvedValue({
+      id: "inbox-1",
+      emailAddress: "sender@example.com",
+      displayName: "Sender",
+    } as any);
+    const send = vi.fn().mockResolvedValue({ externalId: "msg-1" });
+    vi.mocked(buildEmailSenderFromInbox).mockReturnValue({ send });
+
+    const { select, update, transaction, tx } = makeWorkerDb({ pendingStep: EMAIL_STEP_ROW });
+    const db = { select, update, transaction };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "prospect@example.com", from: "sender@example.com" })
+    );
+    expect(markInboxUsed).toHaveBeenCalledWith(db, "inbox-1");
+    expect(tx.update).toHaveBeenCalledWith("sequenceEnrollmentSteps");
+  });
+
+  it("marks the step failed (no retry) when the prospect has no resolvable email", async () => {
+    vi.mocked(resolveProspectFields).mockResolvedValue({
+      prospectId: "p-1",
+      email: undefined,
+      firstName: "Ada",
+      lastName: "Lovelace",
+      fullName: "Ada Lovelace",
+    });
+
+    const { select, update, updateSet } = makeWorkerDb({ pendingStep: EMAIL_STEP_ROW });
+    const db = { select, update, transaction: vi.fn() };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(isSuppressed).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledWith("sequenceEnrollmentSteps");
+    expect(updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "failed", failureReason: "prospect_email_not_found" })
+    );
+  });
+
+  it("marks the step skipped (no retry) when the prospect email is suppressed", async () => {
+    vi.mocked(resolveProspectFields).mockResolvedValue({
+      prospectId: "p-1",
+      email: "suppressed@example.com",
+      firstName: "Ada",
+      lastName: "Lovelace",
+      fullName: "Ada Lovelace",
+    });
+    vi.mocked(isSuppressed).mockResolvedValue(true);
+
+    const { select, update, updateSet } = makeWorkerDb({ pendingStep: EMAIL_STEP_ROW });
+    const db = { select, update, transaction: vi.fn() };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(pickNextInbox).not.toHaveBeenCalled();
+    expect(updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "skipped", failureReason: "suppressed" })
+    );
+  });
+
+  it("marks the step failed (no retry) when no active inbox is available", async () => {
+    vi.mocked(resolveProspectFields).mockResolvedValue({
+      prospectId: "p-1",
+      email: "prospect@example.com",
+      firstName: "Ada",
+      lastName: "Lovelace",
+      fullName: "Ada Lovelace",
+    });
+    vi.mocked(isSuppressed).mockResolvedValue(false);
+    vi.mocked(pickNextInbox).mockResolvedValue(null);
+
+    const { select, update, updateSet } = makeWorkerDb({ pendingStep: EMAIL_STEP_ROW });
+    const db = { select, update, transaction: vi.fn() };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(buildEmailSenderFromInbox).not.toHaveBeenCalled();
+    expect(updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "failed", failureReason: "no_active_inbox" })
+    );
+  });
+
+  it("propagates a transport send failure so BullMQ retries the job", async () => {
+    vi.mocked(resolveProspectFields).mockResolvedValue({
+      prospectId: "p-1",
+      email: "prospect@example.com",
+      firstName: "Ada",
+      lastName: "Lovelace",
+      fullName: "Ada Lovelace",
+    });
+    vi.mocked(isSuppressed).mockResolvedValue(false);
+    vi.mocked(pickNextInbox).mockResolvedValue({
+      id: "inbox-1",
+      emailAddress: "sender@example.com",
+      displayName: "Sender",
+    } as any);
+    const send = vi.fn().mockRejectedValue(new Error("smtp_connection_failed"));
+    vi.mocked(buildEmailSenderFromInbox).mockReturnValue({ send });
+
+    const { select, transaction } = makeWorkerDb({ pendingStep: EMAIL_STEP_ROW });
+    const db = { select, update: vi.fn(), transaction };
+
+    const processor = await getProcessor(db);
+    await expect(processor({ data: JOB_PAYLOAD, attemptsMade: 1 })).rejects.toThrow("smtp_connection_failed");
+
+    expect(transaction).not.toHaveBeenCalled();
+    expect(markInboxUsed).not.toHaveBeenCalled();
   });
 });

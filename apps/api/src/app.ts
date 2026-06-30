@@ -24,6 +24,10 @@ export async function buildApp(config: Env) {
     trustProxy: config.TRUST_PROXY,
     bodyLimit: config.REQUEST_BODY_LIMIT_BYTES,
     requestIdHeader: "x-request-id",
+    // Default find-my-way maxParamLength (100) is too short for HMAC-signed
+    // tracking/unsubscribe tokens, which routinely exceed it (the click token
+    // embeds the destination URL in its payload).
+    routerOptions: { maxParamLength: 1000 },
     genReqId: (req) =>
       (typeof req.headers["x-request-id"] === "string"
         ? req.headers["x-request-id"]

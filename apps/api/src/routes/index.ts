@@ -17,6 +17,8 @@ import { integrationRoutes } from "./integration.routes.js";
 import { billingRoutes } from "./billing.routes.js";
 import { workspaceRoutes } from "./workspace.routes.js";
 import { userRoutes } from "./user.routes.js";
+import { trackingRoutes } from "./tracking.routes.js";
+import { unsubscribeRoutes } from "./unsubscribe.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoutes, { prefix: "/api/v1" });
@@ -40,5 +42,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(crmRoutes);
     await v1.register(webhookRoutes);
     await v1.register(integrationRoutes);
+    await v1.register(trackingRoutes);
+    await v1.register(unsubscribeRoutes);
   }, { prefix: "/api/v1" });
 }

@@ -62,6 +62,26 @@ export const sequenceEnrollmentSteps = pgTable(
     status: text("status").notNull().default("pending"),
     scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
     executedAt: timestamp("executed_at", { withTimezone: true }),
+    failureReason: text("failure_reason"),
   },
   (table) => [unique().on(table.enrollmentId, table.stepId)]
 );
+
+/** Open/click events for a sent sequence step email, attributed to enrollment + step. */
+export const sequenceTrackingEvents = pgTable("sequence_tracking_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  enrollmentId: uuid("enrollment_id")
+    .notNull()
+    .references(() => sequenceEnrollments.id, { onDelete: "cascade" }),
+  enrollmentStepId: uuid("enrollment_step_id")
+    .notNull()
+    .references(() => sequenceEnrollmentSteps.id, { onDelete: "cascade" }),
+  eventType: text("event_type").notNull(),
+  url: text("url"),
+  userAgent: text("user_agent"),
+  ipAddress: text("ip_address"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});

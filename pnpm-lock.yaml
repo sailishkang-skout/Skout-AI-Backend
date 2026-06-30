@@ -68,6 +68,9 @@ importers:
       ioredis:
         specifier: ^5.4.1
         version: 5.11.1
+      nodemailer:
+        specifier: ^9.0.3
+        version: 9.0.3
       zod:
         specifier: ^3.23.8
         version: 3.25.76
@@ -75,6 +78,9 @@ importers:
       '@types/node':
         specifier: ^22.10.1
         version: 22.19.20
+      '@types/nodemailer':
+        specifier: ^8.0.1
+        version: 8.0.1
       tsx:
         specifier: ^4.19.2
         version: 4.22.4
@@ -1804,6 +1810,9 @@ packages:
   '@types/node@22.19.20':
     resolution: {integrity: sha512-6tELRwSDYWW9EdZhbeZmYGZ1/7Djkt+Ah3/ScEYT9cDord7UJzasR/4D3VONg9tQI5CDp+/CZC1AXj2pCFOvpw==}
 
+  '@types/nodemailer@8.0.1':
+    resolution: {integrity: sha512-PxpaInm8V1JQDd4j0ds5HfvWQk8JupS1C0Picb96QJsrrRDjBH+DlK7L4ZdNSqNULhiZRQHc40nLVShaGxXAMw==}
+
   '@types/pg-pool@2.0.6':
     resolution: {integrity: sha512-TaAUE5rq2VQYxab5Ts7WZhKNmuN78Q6PiFonTDdpbx8a1H0M1vhy3rhiMjl+e2iHmogyMw7jZF4FrE6eJUy5HQ==}
 
@@ -2306,6 +2315,10 @@ packages:
   node-gyp-build@4.8.4:
     resolution: {integrity: sha512-LA4ZjwlnUblHVgq0oBF3Jl/6h/Nvs5fzBLwdEF4nuxnFdsfajde4WfxtJr3CaiH+F6ewcIB/q4jQ4UzPyid+CQ==}
     hasBin: true
+
+  nodemailer@9.0.3:
+    resolution: {integrity: sha512-n+YP+NKwR5zRWa60k3GiQ6Q3B4KXCoAw40dAKeCtYn020iNN74aWK2liXIC3ZEATeGql7we3tE3t8QwhY0eskw==}
+    engines: {node: '>=6.0.0'}
 
   obliterator@2.0.5:
     resolution: {integrity: sha512-42CPE9AhahZRsMNslczq0ctAEtqk8Eka26QofnqC346BZdHDySk3LWka23LI7ULIw11NmltpiLagIq8gBozxTw==}
@@ -4036,6 +4049,10 @@ snapshots:
     dependencies:
       undici-types: 6.21.0
 
+  '@types/nodemailer@8.0.1':
+    dependencies:
+      '@types/node': 22.19.20
+
   '@types/pg-pool@2.0.6':
     dependencies:
       '@types/pg': 8.6.1
@@ -4561,6 +4578,8 @@ snapshots:
 
   node-gyp-build@4.8.4:
     optional: true
+
+  nodemailer@9.0.3: {}
 
   obliterator@2.0.5: {}
 
