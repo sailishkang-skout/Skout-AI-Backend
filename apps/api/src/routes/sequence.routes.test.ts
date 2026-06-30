@@ -1107,3 +1107,164 @@ describe("sequence routes — enroll lifecycle", () => {
     await app.close();
   });
 });
+
+describe("sequence routes — analytics and enrollments", () => {
+  async function buildActiveSequenceWithStep(
+    app: Awaited<ReturnType<typeof buildTestApp>>,
+    email: string
+  ): Promise<{ sequenceId: string; stepId: string } | null> {
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/sequences",
+      headers: json(email),
+      payload: { name: "Analytics Test Sequence" },
+    });
+    if (created.statusCode === 503) return null;
+    const { id: sequenceId } = created.json() as { id: string };
+
+    const stepRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/sequences/${sequenceId}/steps`,
+      headers: json(email),
+      payload: { stepType: "email", delayDays: 1, subject: "Hello {{firstName}}" },
+    });
+    const { id: stepId } = stepRes.json() as { id: string };
+
+    await app.inject({
+      method: "PATCH",
+      url: `/api/v1/sequences/${sequenceId}`,
+      headers: json(email),
+      payload: { status: "active" },
+    });
+
+    return { sequenceId, stepId };
+  }
+
+  it("returns 404 for analytics on a non-existent sequence", async () => {
+    const app = await buildTestApp();
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/sequences/00000000-0000-4000-8000-000000000000/analytics",
+      headers: asUser("analytics-404@test.com"),
+    });
+    if (res.statusCode === 503) { await app.close(); return; }
+    expect(res.statusCode).toBe(404);
+    await app.close();
+  });
+
+  it("returns zeroed funnel metrics and enrollment summary before any enrollments", async () => {
+    const app = await buildTestApp();
+    const email = "analytics-empty@test.com";
+    const setup = await buildActiveSequenceWithStep(app, email);
+    if (!setup) { await app.close(); return; }
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/sequences/${setup.sequenceId}/analytics`,
+      headers: asUser(email),
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as {
+      id: string;
+      enrollments: { total: number; active: number; completed: number; bounced: number; replied: number };
+      steps: { stepId: string; scheduled: number; sent: number; opens: number; clicks: number }[];
+    };
+    expect(body.id).toBe(setup.sequenceId);
+    expect(body.enrollments).toEqual({ total: 0, active: 0, completed: 0, bounced: 0, replied: 0 });
+    expect(body.steps).toHaveLength(1);
+    expect(body.steps[0]).toMatchObject({ stepId: setup.stepId, scheduled: 0, sent: 0, opens: 0, clicks: 0 });
+
+    await app.close();
+  });
+
+  it("reflects an active enrollment in the funnel and enrollment summary", async () => {
+    const app = await buildTestApp();
+    const email = "analytics-enrolled@test.com";
+    const setup = await buildActiveSequenceWithStep(app, email);
+    if (!setup) { await app.close(); return; }
+
+    const enrollRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/sequences/${setup.sequenceId}/enroll`,
+      headers: json(email),
+      payload: { prospectIds: ["prospect-analytics-001"] },
+    });
+    if (enrollRes.statusCode !== 202) { await app.close(); return; }
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/sequences/${setup.sequenceId}/analytics`,
+      headers: asUser(email),
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as {
+      enrollments: { total: number; active: number };
+      steps: { scheduled: number; sent: number }[];
+    };
+    expect(body.enrollments.total).toBe(1);
+    expect(body.enrollments.active).toBe(1);
+    expect(body.steps[0]?.scheduled).toBe(1);
+    expect(body.steps[0]?.sent).toBe(0);
+
+    await app.close();
+  });
+
+  it("lists enrollments with live status for a sequence", async () => {
+    const app = await buildTestApp();
+    const email = "enrollments-list@test.com";
+    const setup = await buildActiveSequenceWithStep(app, email);
+    if (!setup) { await app.close(); return; }
+
+    const enrollRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/sequences/${setup.sequenceId}/enroll`,
+      headers: json(email),
+      payload: { prospectIds: ["prospect-list-001"] },
+    });
+    if (enrollRes.statusCode !== 202) { await app.close(); return; }
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/sequences/${setup.sequenceId}/enrollments`,
+      headers: asUser(email),
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { data: { prospectId: string; status: string }[]; total: number };
+    expect(body.total).toBe(1);
+    expect(body.data[0]).toMatchObject({ prospectId: "prospect-list-001", status: "active" });
+
+    await app.close();
+  });
+
+  it("returns 404 for enrollments list on a non-existent sequence", async () => {
+    const app = await buildTestApp();
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/sequences/00000000-0000-4000-8000-000000000000/enrollments",
+      headers: asUser("enrollments-404@test.com"),
+    });
+    if (res.statusCode === 503) { await app.close(); return; }
+    expect(res.statusCode).toBe(404);
+    await app.close();
+  });
+
+  it("returns 404 when a different workspace user requests analytics", async () => {
+    const app = await buildTestApp();
+    const ownerEmail = "analytics-iso-owner@test.com";
+    const otherEmail = "analytics-iso-other@test.com";
+    const setup = await buildActiveSequenceWithStep(app, ownerEmail);
+    if (!setup) { await app.close(); return; }
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/sequences/${setup.sequenceId}/analytics`,
+      headers: asUser(otherEmail),
+    });
+
+    expect(res.statusCode).toBe(404);
+    await app.close();
+  });
+});

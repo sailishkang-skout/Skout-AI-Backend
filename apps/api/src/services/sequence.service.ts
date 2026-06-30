@@ -1,10 +1,19 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { HttpError } from "../utils/http.js";
 import { stepScheduledAt } from "../utils/scheduling.js";
 
-const { sequences, sequenceSteps, sequenceEnrollments, sequenceEnrollmentSteps, listMembers } = schema;
+const {
+  sequences,
+  sequenceSteps,
+  sequenceEnrollments,
+  sequenceEnrollmentSteps,
+  sequenceTrackingEvents,
+  listMembers,
+} = schema;
+
+const ENROLLMENT_STATUSES = ["active", "completed", "bounced", "replied"] as const;
 
 export const STEP_TYPES = ["email", "linkedin", "wait", "task"] as const;
 export type StepType = (typeof STEP_TYPES)[number];
@@ -374,6 +383,147 @@ export class SequenceService {
       total: prospectIds.length,
       newEnrollments,
     };
+  }
+
+  /**
+   * Per-step funnel metrics (scheduled/sent/failed/skipped + open/click counts,
+   * attributed via sequence_tracking_events) plus an overall enrollment-status
+   * summary. All counts are aggregated in JS over the (workspace-scoped) rows —
+   * cadence volumes are small enough that this stays simple, matching the
+   * existing analytics.service.ts convention.
+   */
+  async getAnalytics(workspaceId: string, sequenceId: string) {
+    const [seq] = await this.db
+      .select()
+      .from(sequences)
+      .where(and(eq(sequences.id, sequenceId), eq(sequences.workspaceId, workspaceId)));
+    if (!seq) return null;
+
+    const steps = await this.db
+      .select()
+      .from(sequenceSteps)
+      .where(eq(sequenceSteps.sequenceId, sequenceId))
+      .orderBy(asc(sequenceSteps.stepOrder));
+
+    const enrollments = await this.db
+      .select({ id: sequenceEnrollments.id, status: sequenceEnrollments.status })
+      .from(sequenceEnrollments)
+      .where(and(eq(sequenceEnrollments.sequenceId, sequenceId), eq(sequenceEnrollments.workspaceId, workspaceId)));
+
+    const enrollmentSummary = {
+      total: enrollments.length,
+      active: 0,
+      completed: 0,
+      bounced: 0,
+      replied: 0,
+    };
+    for (const e of enrollments) {
+      if ((ENROLLMENT_STATUSES as readonly string[]).includes(e.status)) {
+        enrollmentSummary[e.status as (typeof ENROLLMENT_STATUSES)[number]]++;
+      }
+    }
+
+    if (steps.length === 0) {
+      return { id: seq.id, name: seq.name, status: seq.status, enrollments: enrollmentSummary, steps: [] };
+    }
+
+    const enrollmentIds = enrollments.map((e) => e.id);
+    const enrollmentSteps =
+      enrollmentIds.length === 0
+        ? []
+        : await this.db
+            .select({
+              id: sequenceEnrollmentSteps.id,
+              stepId: sequenceEnrollmentSteps.stepId,
+              status: sequenceEnrollmentSteps.status,
+            })
+            .from(sequenceEnrollmentSteps)
+            .where(inArray(sequenceEnrollmentSteps.enrollmentId, enrollmentIds));
+
+    const enrollmentStepIds = enrollmentSteps.map((s) => s.id);
+    const trackingEvents =
+      enrollmentStepIds.length === 0
+        ? []
+        : await this.db
+            .select({
+              enrollmentStepId: sequenceTrackingEvents.enrollmentStepId,
+              eventType: sequenceTrackingEvents.eventType,
+            })
+            .from(sequenceTrackingEvents)
+            .where(inArray(sequenceTrackingEvents.enrollmentStepId, enrollmentStepIds));
+
+    // Distinct enrollment-steps with >=1 open/click, attributed to their parent step.
+    const openedEnrollmentSteps = new Set<string>();
+    const clickedEnrollmentSteps = new Set<string>();
+    for (const ev of trackingEvents) {
+      if (ev.eventType === "open") openedEnrollmentSteps.add(ev.enrollmentStepId);
+      else if (ev.eventType === "click") clickedEnrollmentSteps.add(ev.enrollmentStepId);
+    }
+
+    const stepMetrics = new Map<
+      string,
+      { scheduled: number; executed: number; failed: number; skipped: number; opens: number; clicks: number }
+    >();
+    for (const es of enrollmentSteps) {
+      const bucket =
+        stepMetrics.get(es.stepId) ??
+        { scheduled: 0, executed: 0, failed: 0, skipped: 0, opens: 0, clicks: 0 };
+      if (es.status === "scheduled") bucket.scheduled++;
+      else if (es.status === "executed") bucket.executed++;
+      else if (es.status === "failed") bucket.failed++;
+      else if (es.status === "skipped") bucket.skipped++;
+      if (openedEnrollmentSteps.has(es.id)) bucket.opens++;
+      if (clickedEnrollmentSteps.has(es.id)) bucket.clicks++;
+      stepMetrics.set(es.stepId, bucket);
+    }
+
+    const stepsOut = steps.map((step) => {
+      const m = stepMetrics.get(step.id) ?? {
+        scheduled: 0, executed: 0, failed: 0, skipped: 0, opens: 0, clicks: 0,
+      };
+      const opens = m.opens;
+      const clicks = m.clicks;
+      const sent = m.executed;
+      return {
+        stepId: step.id,
+        stepOrder: step.stepOrder,
+        stepType: step.stepType,
+        subject: step.subject,
+        delayDays: step.delayDays,
+        scheduled: m.scheduled,
+        sent,
+        failed: m.failed,
+        skipped: m.skipped,
+        opens,
+        clicks,
+        openRate: sent > 0 ? Math.round((opens / sent) * 100) : 0,
+        clickRate: sent > 0 ? Math.round((clicks / sent) * 100) : 0,
+      };
+    });
+
+    return { id: seq.id, name: seq.name, status: seq.status, enrollments: enrollmentSummary, steps: stepsOut };
+  }
+
+  /** Enrollment list with live per-prospect status, for the enroll-flow UI. */
+  async listEnrollments(workspaceId: string, sequenceId: string) {
+    const [seq] = await this.db
+      .select()
+      .from(sequences)
+      .where(and(eq(sequences.id, sequenceId), eq(sequences.workspaceId, workspaceId)));
+    if (!seq) return null;
+
+    return this.db
+      .select({
+        id: sequenceEnrollments.id,
+        prospectId: sequenceEnrollments.prospectId,
+        listId: sequenceEnrollments.listId,
+        status: sequenceEnrollments.status,
+        enrolledAt: sequenceEnrollments.enrolledAt,
+        completedAt: sequenceEnrollments.completedAt,
+      })
+      .from(sequenceEnrollments)
+      .where(and(eq(sequenceEnrollments.sequenceId, sequenceId), eq(sequenceEnrollments.workspaceId, workspaceId)))
+      .orderBy(desc(sequenceEnrollments.enrolledAt));
   }
 }
 
