@@ -108,6 +108,16 @@ export async function listRoutes(app: FastifyInstance) {
       })) ??
       body.prospectIds!.map((prospectId) => ({ prospectId }));
 
+    request.log.info(
+      {
+        workspaceId,
+        listId: id,
+        memberCount: members.length,
+        prospectIds: members.map((m) => m.prospectId),
+      },
+      "lists/members add"
+    );
+
     const svc = buildListService(app.db, osConfig(app.config));
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const list = await svc.addMembers(workspaceId, id, members);

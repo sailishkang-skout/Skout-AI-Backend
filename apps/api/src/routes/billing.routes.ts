@@ -44,9 +44,44 @@ export async function billingRoutes(app: FastifyInstance) {
     }
   });
 
+  app.post("/billing/razorpay/verify", async (request, reply) => {
+    if (!request.workspaceId) {
+      return reply.code(401).send(errorResponse("Not authenticated", 401));
+    }
+    const body = (request.body ?? {}) as {
+      razorpay_order_id?: string;
+      razorpay_payment_id?: string;
+      razorpay_signature?: string;
+    };
+    const orderId = body.razorpay_order_id;
+    const paymentId = body.razorpay_payment_id;
+    const signature = body.razorpay_signature;
+    if (!orderId || !paymentId || !signature) {
+      return reply
+        .code(400)
+        .send(errorResponse("razorpay_order_id, razorpay_payment_id and razorpay_signature are required", 400));
+    }
+
+    if (!billing.verifyCheckoutSignature(orderId, paymentId, signature)) {
+      return reply.code(400).send(errorResponse("Payment signature verification failed", 400));
+    }
+
+    try {
+      const result = await billing.captureOrder(orderId, paymentId, request.workspaceId);
+      if (!result.handled) {
+        const status = result.reason === "workspace_mismatch" ? 403 : 404;
+        return reply.code(status).send(errorResponse("Order could not be verified", status));
+      }
+      return reply.send({ data: { status: "paid", credits: result.credits ?? 0 } });
+    } catch (err) {
+      app.log.error({ err }, "Razorpay payment verification failed");
+      return reply.code(500).send(errorResponse("Could not verify payment", 500));
+    }
+  });
+
   app.post("/billing/webhooks/razorpay", async (request: FastifyRequest, reply) => {
     const signature = request.headers["x-razorpay-signature"];
-    const rawBody = JSON.stringify(request.body ?? {});
+    const rawBody = request.rawBody ?? JSON.stringify(request.body ?? {});
 
     if (app.config.RAZORPAY_WEBHOOK_SECRET) {
       if (typeof signature !== "string" || !billing.verifyWebhookSignature(rawBody, signature)) {

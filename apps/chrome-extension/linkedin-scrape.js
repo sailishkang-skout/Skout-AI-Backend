@@ -66,7 +66,25 @@
       if (block?.[1]) companyName = unescapeJsonString(block[1]);
     }
 
-    return { fullName, headline, companyName };
+    const location = pickFirstMatch(html, [
+      /"geoLocationName"\s*:\s*"((?:\\.|[^"\\])*)"/,
+      /"locationName"\s*:\s*"((?:\\.|[^"\\])*)"/,
+      /"defaultLocalizedName"\s*:\s*"((?:\\.|[^"\\])*)"/,
+    ]);
+
+    let about = "";
+    if (publicId) {
+      const escaped = publicId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const block = html.match(
+        new RegExp(`"publicIdentifier"\\s*:\\s*"${escaped}"[\\s\\S]{0,12000}?"summary"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`)
+      );
+      if (block?.[1]) about = unescapeJsonString(block[1]);
+    }
+    if (!about) {
+      about = pickFirstMatch(html, [/"summary"\s*:\s*"((?:\\.|[^"\\])*)"/]);
+    }
+
+    return { fullName, headline, companyName, location, about };
   }
 
   function nameFromDocumentTitle() {
@@ -442,6 +460,84 @@
     return parseTopExperience().companyName;
   }
 
+  function looksLikeLocation(text) {
+    if (!text || text.length < 2 || text.length > 100) return false;
+    if (/connection|follower|contact info|·|\bat\b|@/i.test(text)) return false;
+    // Locations are place names: letters, commas, spaces, hyphens, periods only.
+    return /^[\p{L} .,'\-()]+$/u.test(text);
+  }
+
+  function locationFromDom() {
+    const card = topCardRoot();
+    if (!card) return "";
+    const scope = profileHeaderScope(card);
+    const candidates = [
+      ...scope.querySelectorAll(
+        ".text-body-small.inline.t-black--light.break-words, span.text-body-small.t-black--light, .pv-text-details__left-panel .text-body-small"
+      ),
+    ];
+    for (const el of candidates) {
+      if (el.closest("ul, li")) continue;
+      const text = clean(el.textContent);
+      if (looksLikeLocation(text)) return text;
+    }
+    return "";
+  }
+
+  function splitLocation(location) {
+    const value = clean(location);
+    if (!value) return { city: "", state: "", country: "" };
+    const parts = value.split(",").map((p) => clean(p)).filter(Boolean);
+    if (parts.length >= 3) {
+      return { city: parts[0], state: parts[1], country: parts[parts.length - 1] };
+    }
+    if (parts.length === 2) {
+      return { city: parts[0], state: "", country: parts[1] };
+    }
+    // Single token like "San Francisco Bay Area" — keep as city/region.
+    return { city: parts[0] || "", state: "", country: "" };
+  }
+
+  function statFromDom(regex) {
+    const scope = document.querySelector("main") || document.body;
+    if (!scope) return "";
+    for (const el of scope.querySelectorAll("span, a, li, p")) {
+      if (el.children.length > 2) continue;
+      const match = clean(el.textContent).match(regex);
+      if (match?.[1]) return match[1];
+    }
+    return "";
+  }
+
+  function connectionsFromDom() {
+    return statFromDom(/([\d,]+\+?)\s+connections?/i);
+  }
+
+  function followersFromDom() {
+    return statFromDom(/([\d,]+\+?)\s+followers?/i);
+  }
+
+  function aboutFromDom() {
+    const anchor = document.querySelector("#about");
+    const section = anchor?.closest("section") || anchor?.parentElement?.parentElement;
+    if (!section) return "";
+    const el = section.querySelector(
+      ".inline-show-more-text span[aria-hidden='true'], .display-flex.full-width span[aria-hidden='true'], .pv-shared-text-with-see-more span[aria-hidden='true']"
+    );
+    const text = clean(el?.textContent);
+    if (text && text.length > 2) return text.slice(0, 2000);
+    return "";
+  }
+
+  function photoFromDom() {
+    const card = topCardRoot();
+    const img =
+      card?.querySelector("img.pv-top-card-profile-picture__image, img[class*='profile-picture'], img[class*='profile-photo']") ||
+      document.querySelector("img.pv-top-card-profile-picture__image");
+    const src = img?.getAttribute("src") || "";
+    return /^https?:\/\//.test(src) ? src : "";
+  }
+
   function scrapeLinkedInProfile() {
     const linkedinUrl = location.href.split("?")[0].split("#")[0];
     const isProfile =
@@ -490,11 +586,27 @@
       companyName = merged.companyName;
     }
 
+    const location = locationFromDom() || clean(embedded.location);
+    const { city, state, country } = splitLocation(location);
+    const about = aboutFromDom() || clean(embedded.about);
+    const connections = connectionsFromDom();
+    const followers = followersFromDom();
+    const photoUrl = photoFromDom();
+
     return {
       fullName,
       title: clean(title),
       companyName: clean(companyName),
       linkedinUrl,
+      headline: clean(headline),
+      location,
+      city,
+      state,
+      country,
+      about,
+      connections,
+      followers,
+      photoUrl,
     };
   }
 

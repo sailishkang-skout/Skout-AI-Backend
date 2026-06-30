@@ -3,7 +3,7 @@ import { readLinkedInProfile, injectLinkedInBridge } from "./linkedin-profile.js
 import { activateProspect, addProspectToList, enrichProspect } from "./api.js";
 import { friendlyTabError, isUsableTab, isUsableTabUrl, nameFromLinkedInUrl } from "./tab-utils.js";
 import { getLists, prefetchLists, saveLastListId, getLastListId } from "./lists-cache.js";
-import { log, logError } from "./debug.js";
+import { log, logError, timeStep, withTimeout } from "./debug.js";
 import {
   DEFAULT_API_URL,
   DEFAULT_WEB_URL,
@@ -13,6 +13,7 @@ import {
 } from "./skout-urls.js";
 
 const LINKEDIN_PATTERNS = ["https://www.linkedin.com/*", "https://linkedin.com/*"];
+const HANDLER_TIMEOUT_MS = 30_000;
 
 function isLinkedInUrl(url) {
   return Boolean(url?.includes("linkedin.com"));
@@ -110,7 +111,7 @@ async function resolveProfile(message) {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "ping") {
-    sendResponse({ ok: true, version: "0.5.0" });
+    sendResponse({ ok: true, version: "0.6.2" });
     return true;
   }
 
@@ -177,14 +178,35 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   if (message.type === "add-to-list") {
     void (async () => {
+      const t0 = Date.now();
+      log("add-to-list START", {
+        listId: message.listId,
+        hasProfile: Boolean(message.profile?.fullName),
+        profileName: message.profile?.fullName,
+      });
       try {
-        const profile = await resolveProfile(message);
-        await activateProspect(profile);
-        await addProspectToList(message.listId, profile);
-        await saveLastListId(message.listId);
-        sendResponse({ ok: true, fullName: profile.fullName });
+        let fullName = message.profile?.fullName || "";
+        await withTimeout(
+          (async () => {
+            const profile = await timeStep("resolveProfile", () => resolveProfile(message));
+            fullName = profile.fullName;
+            log("profile resolved", {
+              fullName: profile.fullName,
+              title: profile.title,
+              companyName: profile.companyName,
+              linkedinUrl: profile.linkedinUrl,
+            });
+            await timeStep("activateProspect", () => activateProspect(profile));
+            await timeStep("addProspectToList", () => addProspectToList(message.listId, profile));
+            await saveLastListId(message.listId);
+          })(),
+          HANDLER_TIMEOUT_MS,
+          "Add to list timed out — open Skout (localhost:3000), sign in, click Connect Skout account, then reload this page."
+        );
+        log(`add-to-list DONE (${Date.now() - t0}ms)`);
+        sendResponse({ ok: true, fullName });
       } catch (error) {
-        logError("add-to-list", error);
+        logError(`add-to-list FAILED (${Date.now() - t0}ms):`, error);
         sendResponse({
           ok: false,
           error: friendlyTabError(error instanceof Error ? error.message : "Add to list failed"),
@@ -196,13 +218,24 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   if (message.type === "enrich-profile") {
     void (async () => {
+      const t0 = Date.now();
+      log("enrich-profile START");
       try {
-        const profile = await resolveProfile(message);
-        const prospectId = await activateProspect(profile);
-        await enrichProspect(prospectId, profile);
-        sendResponse({ ok: true, fullName: profile.fullName });
+        let fullName = "";
+        await withTimeout(
+          (async () => {
+            const profile = await timeStep("resolveProfile", () => resolveProfile(message));
+            fullName = profile.fullName;
+            const prospectId = await timeStep("activateProspect", () => activateProspect(profile));
+            await timeStep("enrichProspect", () => enrichProspect(prospectId, profile));
+          })(),
+          HANDLER_TIMEOUT_MS,
+          "Enrich timed out — open Skout (localhost:3000), sign in, click Connect Skout account, then reload this page."
+        );
+        log(`enrich-profile DONE (${Date.now() - t0}ms)`);
+        sendResponse({ ok: true, fullName });
       } catch (error) {
-        logError("enrich", error);
+        logError(`enrich-profile FAILED (${Date.now() - t0}ms):`, error);
         sendResponse({
           ok: false,
           error: friendlyTabError(error instanceof Error ? error.message : "Enrich failed"),
@@ -217,7 +250,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 chrome.runtime.onMessageExternal.addListener((message, _sender, sendResponse) => {
   if (message.type === "ping") {
-    sendResponse({ ok: true, version: "0.5.0" });
+    sendResponse({ ok: true, version: "0.6.2" });
     return true;
   }
 

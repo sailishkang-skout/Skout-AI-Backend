@@ -1,5 +1,6 @@
 import { ensureFreshAuth, refreshAuthFromSkoutTabs } from "./auth.js";
 import { safeLocalSet } from "./storage-throttle.js";
+import { log, logError, timeStep } from "./debug.js";
 import {
   DEFAULT_API_URL,
   DEFAULT_WEB_URL,
@@ -35,15 +36,45 @@ export function isCaptureDomain(domain) {
   return d.endsWith(".linkedin") || d === "linkedin-capture.local";
 }
 
+function trimOrUndefined(value) {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function validPhotoUrl(value) {
+  const trimmed = trimOrUndefined(value);
+  if (!trimmed) return undefined;
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === "http:" || url.protocol === "https:" ? trimmed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function buildProspectFields(profile) {
   const companyDomain = normalizeDomain(slugCompanyDomain(profile.companyName || "linkedin"));
   const fields = {
-    fullName: profile.fullName?.trim() || undefined,
-    title: profile.title?.trim() || undefined,
-    companyName: profile.companyName?.trim() || undefined,
-    linkedinUrl: profile.linkedinUrl?.trim() || undefined,
+    fullName: trimOrUndefined(profile.fullName),
+    title: trimOrUndefined(profile.title),
+    companyName: trimOrUndefined(profile.companyName),
+    linkedinUrl: trimOrUndefined(profile.linkedinUrl),
     companyDomain,
+    headline: trimOrUndefined(profile.headline),
+    location: trimOrUndefined(profile.location),
+    city: trimOrUndefined(profile.city),
+    state: trimOrUndefined(profile.state),
+    country: trimOrUndefined(profile.country),
+    about: trimOrUndefined(profile.about),
+    connections: trimOrUndefined(profile.connections),
+    followers: trimOrUndefined(profile.followers),
+    photoUrl: validPhotoUrl(profile.photoUrl),
   };
+  // Drop undefined keys so we never send empty fields.
+  for (const key of Object.keys(fields)) {
+    if (fields[key] === undefined) delete fields[key];
+  }
   return fields;
 }
 
@@ -87,6 +118,31 @@ function formatApiError(status, body, webUrl) {
   return `Request failed (${status})`;
 }
 
+/** Hard caps so a stalled network call or auth refresh can never hang the UI forever. */
+const REQUEST_TIMEOUT_MS = 20_000;
+const AUTH_REFRESH_TIMEOUT_MS = 20_000;
+
+function isAbortError(error) {
+  return error?.name === "AbortError";
+}
+
+/** Reject with a clear message if `promise` doesn't settle within `ms`. */
+function withTimeout(promise, ms, message) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
 async function request(path, options = {}) {
   const { apiUrl, authToken, stubEmail, useStubAuth } = await getConfig();
   const headers = new Headers(options.headers || {});
@@ -98,37 +154,72 @@ async function request(path, options = {}) {
     headers.set("x-stub-user-email", stubEmail);
   }
 
-  return fetch(`${apiUrl}${path}`, {
-    ...options,
-    headers,
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(`${apiUrl}${path}`, {
+      ...options,
+      headers,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function skoutFetch(path, options = {}) {
   const config = await getConfig();
+  const method = options.method || "GET";
+  log(`skoutFetch ${method} ${path}`, { apiUrl: config.apiUrl, useStubAuth: config.useStubAuth });
 
   if (!config.useStubAuth) {
-    await ensureFreshAuth();
+    await timeStep("ensureFreshAuth", () =>
+      withTimeout(
+        ensureFreshAuth(),
+        AUTH_REFRESH_TIMEOUT_MS,
+        `Session refresh timed out — open Skout (${normalizeSkoutBase(config.webUrl)}), sign in, then click Connect Skout account.`
+      )
+    );
   }
+
+  const reachError = (error) =>
+    isAbortError(error)
+      ? new Error(`The API at ${config.apiUrl} didn't respond in time. Check it's running, then try again.`)
+      : new Error(`Cannot reach API at ${config.apiUrl}. Check the API URL in extension settings.`);
 
   let res;
   try {
-    res = await request(path, options);
-  } catch {
-    throw new Error(`Cannot reach API at ${config.apiUrl}. Check the API URL in extension settings.`);
+    res = await timeStep(`fetch ${method} ${path}`, () => request(path, options));
+  } catch (error) {
+    throw reachError(error);
   }
 
+  log(`fetch response ${res.status} for ${method} ${path}`);
+
   if (res.status === 401 && !config.useStubAuth) {
-    await refreshAuthFromSkoutTabs();
+    log("401 — attempting token refresh from Skout tab");
+    const refreshed = await withTimeout(
+      refreshAuthFromSkoutTabs(),
+      AUTH_REFRESH_TIMEOUT_MS,
+      `Session refresh timed out — open Skout (${normalizeSkoutBase(config.webUrl)}) and click Connect Skout account.`
+    ).catch((err) => {
+      logError("token refresh failed:", err instanceof Error ? err.message : err);
+      return null;
+    });
+    if (!refreshed) {
+      throw new Error(`Session expired — open Skout (${normalizeSkoutBase(config.webUrl)}), sign in, then click Connect Skout account.`);
+    }
     try {
-      res = await request(path, options);
-    } catch {
-      throw new Error(`Cannot reach API at ${config.apiUrl}. Check the API URL in extension settings.`);
+      res = await timeStep(`fetch retry ${method} ${path}`, () => request(path, options));
+      log(`retry response ${res.status} for ${method} ${path}`);
+    } catch (error) {
+      throw reachError(error);
     }
   }
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
+    logError(`API error ${res.status} for ${method} ${path}:`, body);
     throw new Error(formatApiError(res.status, body, config.webUrl));
   }
 

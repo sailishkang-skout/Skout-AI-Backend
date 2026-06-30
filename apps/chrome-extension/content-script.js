@@ -47,18 +47,32 @@
     return message || "Something went wrong.";
   }
 
-  function safeRuntimeSend(message) {
+  function safeRuntimeSend(message, timeoutMs = 35_000) {
+    const label = message?.type || "message";
+    console.log(`[Skout Extension] ▶ send ${label}`);
     return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        console.error(`[Skout Extension] ✗ ${label} timed out after ${timeoutMs}ms`);
+        reject(
+          new Error(
+            "Extension timed out — reload Skout extension at chrome://extensions, keep Skout open and signed in, then refresh this page."
+          )
+        );
+      }, timeoutMs);
       try {
         chrome.runtime.sendMessage(message, (response) => {
+          clearTimeout(timer);
           const err = chrome.runtime.lastError;
           if (err) {
+            console.error(`[Skout Extension] ✗ ${label}:`, err.message);
             reject(new Error(friendlyRuntimeError(err.message)));
             return;
           }
+          console.log(`[Skout Extension] ✓ ${label}`, response?.ok === false ? response?.error : "ok");
           resolve(response);
         });
       } catch {
+        clearTimeout(timer);
         reject(new Error("Extension updated — refresh this page (Cmd+Shift+R)."));
       }
     });
@@ -128,6 +142,21 @@
     return panel;
   }
 
+  function profileSummaryHtml(profile) {
+    if (!profile.fullName) return "Loading profile…";
+    const esc = (s) =>
+      String(s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+    const lines = [`<strong style="color:#f8fafc">${esc(profile.fullName)}</strong>`];
+    if (profile.title) lines.push(esc(profile.title));
+    if (profile.companyName) lines.push(`@ ${esc(profile.companyName)}`);
+    const meta = [];
+    if (profile.location) meta.push(esc(profile.location));
+    if (profile.connections) meta.push(`${esc(profile.connections)} connections`);
+    if (profile.followers) meta.push(`${esc(profile.followers)} followers`);
+    if (meta.length) lines.push(`<span style="color:#94a3b8">${meta.join(" · ")}</span>`);
+    return lines.join("<br>");
+  }
+
   function updatePanelProfile(panel) {
     const profile = readProfileFromLinkedIn();
     if (profile.error === "not_a_profile") {
@@ -136,11 +165,7 @@
     }
     panel.__skoutProfile = profile;
     const summary = panel.querySelector("#skout-ai-summary");
-    if (summary) {
-      summary.textContent = profile.fullName
-        ? `${profile.fullName}${profile.title ? ` · ${profile.title}` : ""}`
-        : "Loading profile…";
-    }
+    if (summary) summary.innerHTML = profileSummaryHtml(profile);
   }
 
   function ensurePanel() {
@@ -203,6 +228,7 @@
 
     try {
       const profile = getProfile(panel);
+      await safeRuntimeSend({ type: "ping" }, 5_000).catch(() => undefined);
       const result = await safeRuntimeSend({ type: "add-to-list", listId, profile });
       if (!result?.ok) throw new Error(result?.error || "Add failed");
       setPanelStatus(panel, `Added ${result.fullName} ✓`);
@@ -254,19 +280,26 @@
   };
   window.addEventListener("popstate", onRouteChange);
 
-  let lastSummaryText = "";
+  let lastSummaryKey = "";
   setInterval(() => {
     if (sessionStorage.getItem("skout-ai-panel-hidden") === "1" || !isProfilePage()) return;
     const panel = document.getElementById("skout-ai-panel");
     if (!panel) return;
     const profile = readProfileFromLinkedIn();
     if (!profile.fullName) return;
-    const summary = `${profile.fullName}${profile.title ? ` · ${profile.title}` : ""}`;
-    if (summary === lastSummaryText) return;
-    lastSummaryText = summary;
+    const key = [
+      profile.fullName,
+      profile.title,
+      profile.companyName,
+      profile.location,
+      profile.connections,
+      profile.followers,
+    ].join("|");
+    if (key === lastSummaryKey) return;
+    lastSummaryKey = key;
     panel.__skoutProfile = profile;
     const el = panel.querySelector("#skout-ai-summary");
-    if (el) el.textContent = summary;
+    if (el) el.innerHTML = profileSummaryHtml(profile);
   }, 3000);
 
   boot();

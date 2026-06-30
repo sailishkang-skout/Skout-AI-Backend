@@ -74,6 +74,16 @@ const snapshotSchema = z.object({
   linkedinUrl: z.string().url().optional(),
   employeeCount: z.number().optional(),
   signals: z.array(z.string()).optional(),
+  // Richer fields captured by the Chrome extension from LinkedIn profiles.
+  companyName: z.string().optional(),
+  headline: z.string().optional(),
+  location: z.string().optional(),
+  city: z.string().optional(),
+  state: z.string().optional(),
+  about: z.string().optional(),
+  connections: z.string().optional(),
+  followers: z.string().optional(),
+  photoUrl: z.string().url().optional(),
 });
 
 const enrichBodySchema = z.object({
@@ -149,6 +159,11 @@ export async function prospectRoutes(app: FastifyInstance) {
   app.post("/prospects/activate", async (request, reply) => {
     const workspaceId = request.workspaceId ?? "unknown";
     const body = activateBodySchema.parse(request.body ?? {});
+    const names = body.prospects.map((p) => p.fullName).filter(Boolean);
+    request.log.info(
+      { workspaceId, count: body.prospects.length, names },
+      "prospects/activate"
+    );
     const svc = buildEnrichmentService(app.db, app.config);
     const activated = await svc.activate(workspaceId, body.prospects);
     return reply.status(201).send({ activated });

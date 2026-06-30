@@ -4,36 +4,31 @@ import { getConfig } from "./api.js";
 import { getLastListId, saveLastListId } from "./lists-cache.js";
 import { friendlyTabError, findLinkedInProfileTabId } from "./tab-utils.js";
 import { ensureSkoutHostPermissions, normalizeSkoutBase, skoutSignInHint } from "./skout-urls.js";
+import { withTimeout } from "./debug.js";
+
+const BACKGROUND_TIMEOUT_MS = 35_000;
 
 function runInBackground(type, payload = {}) {
-  return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage({ type, ...payload }, (response) => {
-      const err = chrome.runtime.lastError;
-      if (err) {
-        reject(new Error(friendlyTabError(err.message)));
-        return;
-      }
-      if (response?.ok) resolve(response);
-      else reject(new Error(friendlyTabError(response?.error || "Request failed")));
-    });
-  });
+  console.log(`[Skout Extension] ▶ panel send ${type}`);
+  return withTimeout(
+    new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ type, ...payload }, (response) => {
+        const err = chrome.runtime.lastError;
+        if (err) {
+          reject(new Error(friendlyTabError(err.message)));
+          return;
+        }
+        if (response?.ok) resolve(response);
+        else reject(new Error(friendlyTabError(response?.error || "Request failed")));
+      });
+    }),
+    BACKGROUND_TIMEOUT_MS,
+    `${type} timed out — reload the extension at chrome://extensions, refresh LinkedIn, then try again.`
+  );
 }
 
 async function findLinkedInTabId() {
   return findLinkedInProfileTabId();
-}
-
-function readProfileFromTab(tabId) {
-  return new Promise((resolve, reject) => {
-    chrome.tabs.sendMessage(tabId, { type: "read-profile" }, (response) => {
-      const err = chrome.runtime.lastError;
-      if (err) {
-        reject(new Error(friendlyTabError(err.message)));
-        return;
-      }
-      resolve(response);
-    });
-  });
 }
 
 export function initPanel() {
@@ -226,14 +221,15 @@ export function initPanel() {
     try {
       await saveLastListId(listId);
       const tabId = await findLinkedInTabId();
-      const profile = await readProfileFromTab(tabId).catch(() => null);
-      const result = await runInBackground("add-to-list", { listId, tabId, profile: profile || undefined });
+      // Profile read happens in the background — avoids hanging here if the tab bridge isn't ready.
+      await runInBackground("ping").catch(() => undefined);
+      const result = await runInBackground("add-to-list", { listId, tabId });
       setStatus(`Added ${result.fullName} to the list.`);
     } catch (error) {
       setStatus(
         error instanceof Error
           ? error.message
-          : "Add failed — use the Skout box on the LinkedIn profile page.",
+          : "Add failed — refresh LinkedIn (Cmd+Shift+R) and try again.",
         true
       );
     } finally {
@@ -246,14 +242,14 @@ export function initPanel() {
     setBusy(button, true, "Enriching…");
     try {
       const tabId = await findLinkedInTabId();
-      const profile = await readProfileFromTab(tabId).catch(() => null);
-      const result = await runInBackground("enrich-profile", { tabId, profile: profile || undefined });
+      await runInBackground("ping").catch(() => undefined);
+      const result = await runInBackground("enrich-profile", { tabId });
       setStatus(`Enrichment started for ${result.fullName}.`);
     } catch (error) {
       setStatus(
         error instanceof Error
           ? error.message
-          : "Enrich failed — use the Skout box on the LinkedIn profile page.",
+          : "Enrich failed — refresh LinkedIn (Cmd+Shift+R) and try again.",
         true
       );
     } finally {

@@ -16,16 +16,38 @@
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.type !== "read-profile") return false;
 
-    void (async () => {
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        const profile = scrape();
-        if (profile.error === "not_a_profile" || profile.fullName) {
-          sendResponse(profile);
-          return;
-        }
-        await sleep(600);
+    let responded = false;
+    function reply(profile) {
+      if (responded) return;
+      responded = true;
+      sendResponse(profile);
+    }
+
+    const timer = globalThis.setTimeout(() => {
+      try {
+        reply(scrape());
+      } catch {
+        reply({ error: "scrape_timeout", linkedinUrl: location.href });
       }
-      sendResponse(scrape());
+    }, 10_000);
+
+    void (async () => {
+      try {
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+          const profile = scrape();
+          if (profile.error === "not_a_profile" || profile.fullName) {
+            globalThis.clearTimeout(timer);
+            reply(profile);
+            return;
+          }
+          await sleep(400);
+        }
+        globalThis.clearTimeout(timer);
+        reply(scrape());
+      } catch (error) {
+        globalThis.clearTimeout(timer);
+        reply({ error: String(error), linkedinUrl: location.href });
+      }
     })();
 
     return true;
