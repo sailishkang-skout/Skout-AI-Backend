@@ -60,6 +60,11 @@ export async function searchRoutes(app: FastifyInstance) {
   app.get("/search/prospects/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
     const workspaceId = request.workspaceId ?? "unknown";
+    const cache = createSearchCacheService(app.config);
+
+    const cached = await cache.getById(workspaceId, id);
+    if (cached) return reply.send(cached);
+
     const svc = createSearchService(app.config);
 
     // Prefer the workspace's own captured/activated data (e.g. LinkedIn extension)
@@ -79,6 +84,7 @@ export async function searchRoutes(app: FastifyInstance) {
     }
 
     const result = await svc.getProspectById(id);
+    await cache.setById(workspaceId, id, result as Record<string, unknown>);
     return reply.send(result);
   });
 }

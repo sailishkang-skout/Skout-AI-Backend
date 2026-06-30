@@ -4,6 +4,7 @@ import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { buildEnrichmentService } from "../services/enrichment/index.js";
+import { createSearchCacheService } from "./search-cache.service.js";
 
 const { asyncJobs } = schema;
 const log = createLogger("list-score.runner");
@@ -56,6 +57,9 @@ export async function runListScoreJob(
         completedAt: new Date(),
       })
       .where(eq(asyncJobs.id, jobId));
+
+    const cache = createSearchCacheService(config);
+    await Promise.all(result.results.map((r) => cache.invalidateById(workspaceId, r.prospectId)));
 
     return result;
   } catch (err) {
