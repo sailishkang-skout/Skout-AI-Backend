@@ -19,6 +19,7 @@
     "docker:local": "docker compose -f docker-compose.yml -f docker-compose.local.yml up --build",
     "docker:up": "docker compose -f docker-compose.yml -f docker-compose.local.yml up --build -d",
     "docker:down": "docker compose -f docker-compose.yml -f docker-compose.local.yml down",
+    "clickhouse:init": "node scripts/clickhouse-init.mjs",
     "docker:logs": "docker compose -f docker-compose.yml -f docker-compose.local.yml logs -f api ai",
     "docker:seed": "DATABASE_URL=postgresql://skout:skout@localhost:5434/skout pnpm db:seed",
     "docker:scrape-storage": "docker compose up -d minio minio-init",
