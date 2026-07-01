@@ -221,4 +221,7 @@ export const CAREERS_PATHS = [
   "/about-us",
   "/company",
   "/team",
+  "/leadership",
+  "/our-team",
+  "/people",
 ];

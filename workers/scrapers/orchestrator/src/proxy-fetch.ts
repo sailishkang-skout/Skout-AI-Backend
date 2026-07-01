@@ -1,4 +1,5 @@
 import { ProxyAgent, type Dispatcher } from "undici";
+import { clearSource429, recordSource429 } from "./rate-limit.js";
 
 let cachedDispatcher: Dispatcher | undefined;
 
@@ -37,7 +38,8 @@ const DEFAULT_HEADERS = {
 
 export async function fetchPage(
   url: string,
-  init?: RequestInit & { headers?: Record<string, string> }
+  init?: RequestInit & { headers?: Record<string, string> },
+  source?: string
 ): Promise<FetchPageResult | null> {
   const dispatcher = getProxyDispatcher();
   const timeout = Number(process.env.SCRAPER_REQUEST_TIMEOUT_MS ?? 20_000);
@@ -50,7 +52,12 @@ export async function fetchPage(
       // @ts-expect-error undici dispatcher
       dispatcher,
     });
+    if (res.status === 429) {
+      if (source) await recordSource429(source);
+      return { html: "", status: 429 };
+    }
     if (!res.ok) return null;
+    if (source) await clearSource429(source);
     return { html: await res.text(), status: res.status };
   } catch {
     return null;
@@ -78,8 +85,12 @@ export async function fetchPageWithPlaywright(url: string): Promise<string | nul
   }
 }
 
-export async function fetchPageSmart(url: string): Promise<FetchPageResult | null> {
+export async function fetchPageSmart(
+  url: string,
+  init?: RequestInit & { headers?: Record<string, string> },
+  source?: string
+): Promise<FetchPageResult | null> {
   const rendered = await fetchPageWithPlaywright(url);
   if (rendered) return { html: rendered, status: 200 };
-  return fetchPage(url);
+  return fetchPage(url, init, source);
 }

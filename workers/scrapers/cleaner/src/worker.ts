@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
 import { attachDeadLetterHandler, logRedisMemoryPolicyHint } from "./dlq.js";
 import { requireDatabaseUrl } from "./load-env.js";
-import { cleanCompanies } from "./company-cleaner.js";
+import { cleanCompaniesAsync } from "./company-cleaner.js";
 import { cleanProspects } from "./index.js";
 
 const SCRAPE_QUEUES = { clean: "scrape-clean", ingest: "scrape-ingest", deadLetter: "scrape-dead-letter" };
@@ -13,7 +13,7 @@ export async function runCleanPipeline(rawS3Key: string, source: string, jobId: 
   const storage = resolveScrapeStorage();
   const rawRecords = await storage.getJsonl(rawS3Key);
 
-  const companies = cleanCompanies(rawRecords);
+  const companies = await cleanCompaniesAsync(rawRecords);
   const prospects = cleanProspects(rawRecords);
 
   const cleanRecords = [...companies.clean, ...prospects.clean];

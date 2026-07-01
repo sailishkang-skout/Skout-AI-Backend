@@ -9,6 +9,7 @@ import {
 import { detectTechnologies } from "./wappalyzer.js";
 import { collectSignals } from "./signals.js";
 import { parseSecEdgarPayload } from "./sec-parser.js";
+import { classifyIndustry } from "./industry-classifier.js";
 
 const QUALITY_THRESHOLD = Number(process.env.CLEANER_QUALITY_THRESHOLD ?? 30);
 
@@ -87,6 +88,10 @@ export function rawToCompanyCandidate(raw: {
   }
   if (!domain && raw.source === "crunchbase") {
     domain = (p.domain as string) ?? undefined;
+  }
+  if (!domain && raw.source === "google-business") {
+    const query = String(p.query ?? p.companyName ?? "");
+    if (query.includes(".")) domain = query;
   }
   if (!domain) return null;
 
@@ -229,6 +234,32 @@ export function cleanCompanies(records: unknown[]): CompanyCleanResult {
   }
 
   return { clean, quarantined };
+}
+
+/** Industry classification pass after base cleaning (R6.6). */
+export async function enrichCompaniesWithClassifier(result: CompanyCleanResult): Promise<CompanyCleanResult> {
+  for (const company of result.clean) {
+    if (company.industry && (company.qualityScore ?? 0) >= 60) continue;
+    const classified = await classifyIndustry(company);
+    if (!classified.industry) continue;
+    company.industry = classified.industry;
+    if (classified.subIndustry) company.subIndustry = classified.subIndustry;
+    company.provenance = [
+      ...(company.provenance ?? []),
+      {
+        field: "industry",
+        source: classified.source,
+        scrapedAt: company.scrapedAt,
+        confidence: classified.confidence,
+      },
+    ];
+  }
+  return result;
+}
+
+/** Parse + classify company records. */
+export async function cleanCompaniesAsync(records: unknown[]): Promise<CompanyCleanResult> {
+  return enrichCompaniesWithClassifier(cleanCompanies(records));
 }
 
 export { detectTechnologies } from "./wappalyzer.js";

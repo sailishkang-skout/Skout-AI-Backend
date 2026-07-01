@@ -200,9 +200,9 @@ aws secretsmanager put-secret-value --secret-id SkoutDev/scraper/proxy \
 
 | Field | How to get it |
 |-------|----------------|
-| `CLICKHOUSE_URL` | [clickhouse.cloud](https://clickhouse.cloud) → service → connection string |
+| `CLICKHOUSE_URL` | **Dev (self-hosted in VPC):** auto-set on `cdk deploy SkoutDev-Compute` → CloudFormation output `ClickHouseUrl`, or DNS `clickhouse.skoutdev.local:8123`. **Local:** `http://skout:skout@localhost:8123/skout` via `docker compose up -d clickhouse`. **External:** [clickhouse.cloud](https://clickhouse.cloud) connection string. |
 
-Used for: fast search total counts (optional MVP).
+Used for: workspace analytics events (`skout_events` table).
 
 ---
 

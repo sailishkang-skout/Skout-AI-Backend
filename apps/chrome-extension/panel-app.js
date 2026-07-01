@@ -168,6 +168,7 @@ export function initPanel() {
       const result = await runInBackground("connect-skout", { focus: true });
       setAuthStatus(result.email ? `Signed in as ${result.email}` : "Signed in to Skout", true);
       setConnectedUi(true);
+      await chrome.storage.sync.set({ onboardingComplete: true });
       await refreshLists();
     } catch (error) {
       setAuthStatus("Sign in to Skout in this browser.");
@@ -259,6 +260,10 @@ export function initPanel() {
 
   void (async () => {
     await loadConfig();
+    const { onboardingComplete } = await chrome.storage.sync.get(["onboardingComplete"]);
+    if (!onboardingComplete) {
+      setStatus("Welcome — open Skout, sign in, then click Connect Skout account.");
+    }
     if (!(await isSignedIn())) {
       try {
         await runInBackground("connect-skout", { focus: false });

@@ -49,7 +49,14 @@ export function companyToProspectDoc(c: CompanyCandidate): ProspectDocument {
       : undefined,
     foundedYear: foundedYearFromCandidate(c),
     techStack: c.techStack?.map((t) => ({ category: t.category, technology: t.technology })),
-    signals: c.signals?.map((s) => ({ type: s.type, observedAt: s.observedAt, detail: s.detail })),
+    signals: [
+      ...(c.signals?.map((s) => ({ type: s.type, observedAt: s.observedAt, detail: s.detail })) ?? []),
+      ...(c.provenance?.map((p) => ({
+        type: "field_provenance",
+        observedAt: p.scrapedAt,
+        detail: `${p.field}@${p.source}`,
+      })) ?? []),
+    ],
     updatedAt: c.scrapedAt,
   };
 }

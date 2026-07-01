@@ -4,7 +4,7 @@ import { schema } from "@skout/db";
 import type { CompanyCandidate } from "@skout/scraper-contracts";
 import type { ProspectDocument } from "@skout/opensearch";
 
-const GROWTH_LOOKBACK_DAYS = Number(process.env.GROWTH_LOOKBACK_DAYS ?? 90);
+const GROWTH_WINDOWS_MONTHS = [3, 6, 12] as const;
 
 function normalizeDomain(domain: string): string {
   return domain.trim().toLowerCase().replace(/^www\./, "");
@@ -36,14 +36,15 @@ export async function recordSnapshot(db: Db, company: CompanyCandidate): Promise
   }
 }
 
-export async function computeHeadcountGrowth(
+export async function computeHeadcountGrowthAtMonths(
   db: Db,
   domain: string,
-  currentEmployees?: number
+  currentEmployees?: number,
+  months = 3
 ): Promise<number | undefined> {
   if (!currentEmployees || currentEmployees <= 0) return undefined;
 
-  const cutoff = new Date(Date.now() - GROWTH_LOOKBACK_DAYS * 86_400_000);
+  const cutoff = new Date(Date.now() - months * 30 * 86_400_000);
   let past: { employeeCount: number | null } | undefined;
   try {
     [past] = await db
@@ -67,6 +68,15 @@ export async function computeHeadcountGrowth(
   return growthPct(currentEmployees, past.employeeCount);
 }
 
+/** @deprecated use computeHeadcountGrowthAtMonths with months=3 */
+export async function computeHeadcountGrowth(
+  db: Db,
+  domain: string,
+  currentEmployees?: number
+): Promise<number | undefined> {
+  return computeHeadcountGrowthAtMonths(db, domain, currentEmployees, 3);
+}
+
 /** Upsert snapshots and attach growth metrics to company prospect docs. */
 export async function enrichDocsWithGrowth(
   db: Db,
@@ -84,8 +94,25 @@ export async function enrichDocsWithGrowth(
   return Promise.all(
     docs.map(async (doc) => {
       if (!doc.employeeCount) return doc;
-      const headcountGrowth = await computeHeadcountGrowth(db, doc.companyDomain, doc.employeeCount);
-      return headcountGrowth != null ? { ...doc, headcountGrowth } : doc;
+      const growthByWindow: Record<string, number> = {};
+      for (const months of GROWTH_WINDOWS_MONTHS) {
+        const pct = await computeHeadcountGrowthAtMonths(db, doc.companyDomain, doc.employeeCount, months);
+        if (pct != null) growthByWindow[`${months}m`] = pct;
+      }
+      const headcountGrowth = growthByWindow["3m"];
+      const signals = [...(doc.signals ?? [])];
+      for (const [window, pct] of Object.entries(growthByWindow)) {
+        signals.push({
+          type: "headcount_growth",
+          observedAt: new Date().toISOString(),
+          detail: `${window}: ${pct}%`,
+        });
+      }
+      return {
+        ...doc,
+        headcountGrowth,
+        signals: signals.length ? signals : doc.signals,
+      };
     })
   );
 }

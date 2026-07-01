@@ -4,7 +4,7 @@ import { schema } from "@skout/db";
 import { searchFiltersSchema } from "@skout/shared";
 import { buildEnrichmentService, InsufficientCreditsError } from "../services/enrichment/index.js";
 import { getWorkspaceIcp } from "../services/icp.service.js";
-import { ListScoreService } from "../services/list-score.service.js";
+import { getAsyncJob } from "../services/async-job.service.js";
 import { HttpError, errorResponse } from "../utils/http.js";
 
 const scoreBodySchema = z.object({
@@ -99,9 +99,8 @@ export async function enrichmentRoutes(app: FastifyInstance) {
     const { jobId } = request.params as { jobId: string };
     const workspaceId = request.workspaceId ?? "unknown";
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
-    const svc = new ListScoreService(app.db, app.config);
     try {
-      const job = await svc.getJob(workspaceId, jobId);
+      const job = await getAsyncJob(app.db, workspaceId, jobId);
       return reply.send(job);
     } catch (err) {
       if (err instanceof HttpError) {

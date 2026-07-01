@@ -18,6 +18,8 @@ export interface IcpConfig {
   keywords?: string[];
   minEmployees?: number;
   maxEmployees?: number;
+  /** When false, saving ICP does not enqueue a workspace-wide re-score. Default: true. */
+  autoRescoreOnChange?: boolean;
 }
 
 export interface ScoreResult {

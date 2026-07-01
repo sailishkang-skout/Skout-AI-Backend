@@ -24,6 +24,12 @@ export interface EnvironmentConfig {
     readonly nodeType: string;
     readonly numCacheNodes: number;
   };
+  /** Self-hosted ClickHouse on ECS (dev/uat). */
+  readonly clickhouse?: {
+    readonly enabled: boolean;
+    readonly cpu: number;
+    readonly memoryMiB: number;
+  };
   readonly ecs: {
     readonly apiCpu: number;
     readonly apiMemoryMiB: number;
@@ -101,6 +107,7 @@ export const ENVIRONMENTS: Record<SkoutEnvironment, EnvironmentConfig> = {
       deletionProtection: false,
     },
     redis: { nodeType: "cache.t4g.micro", numCacheNodes: 1 },
+    clickhouse: { enabled: true, cpu: 1024, memoryMiB: 2048 },
     ecs: {
       apiCpu: 256,
       apiMemoryMiB: 1024,

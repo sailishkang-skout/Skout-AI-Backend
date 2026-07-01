@@ -2,6 +2,10 @@ import { Queue, Worker } from "bullmq";
 import { scrapeJobRequestSchema } from "@skout/scraper-contracts";
 import { createScrapeStorage, resolveScrapeStorage, scrapeKey } from "@skout/storage";
 import { attachDeadLetterHandler, logRedisMemoryPolicyHint } from "./dlq.js";
+import {
+  acquireSourceToken,
+  isSourceCircuitOpen,
+} from "./rate-limit.js";
 import { scrapeCompanyWeb } from "./bots/company-web.js";
 import { scrapeCrunchbase } from "./bots/crunchbase.js";
 import { scrapeLinkedIn } from "./bots/linkedin.js";
@@ -9,6 +13,8 @@ import { scrapeLinkedInPeople } from "./bots/linkedin-people.js";
 import { scrapeLinkedInJobs } from "./bots/linkedin-jobs.js";
 import { scrapeOpenCorporates } from "./bots/opencorporates.js";
 import { scrapeSecEdgar } from "./bots/sec-edgar.js";
+import { scrapeGoogleBusiness } from "./bots/google-business.js";
+import { startSqsScheduleConsumer } from "./sqs-schedule-consumer.js";
 import { createScrapeJob, openDb, patchScrapeJob } from "./db.js";
 import {
   queueForSource,
@@ -51,6 +57,8 @@ async function runBot(payload: ScrapeJobPayload): Promise<{ rawS3Key: string; ra
       records.push(...(await scrapeLinkedInJobs(jobId, seed)));
     } else if (source === "crunchbase") {
       records.push(...(await scrapeCrunchbase(jobId, seed)));
+    } else if (source === "google-business") {
+      records.push(...(await scrapeGoogleBusiness(jobId, seed)));
     } else {
       throw new Error(`Unsupported bot source: ${source}`);
     }
@@ -112,6 +120,12 @@ export async function startOrchestratorWorkers() {
 
   // 2. Bot workers (one per source)
   const botHandler = async (payload: ScrapeJobPayload) => {
+    if (await isSourceCircuitOpen(payload.source)) {
+      throw new Error(`source_circuit_open:${payload.source}`);
+    }
+    if (!(await acquireSourceToken(payload.source))) {
+      throw new Error(`rate_limited:${payload.source}`);
+    }
     await patchScrapeJob(db, payload.jobId, { status: "running", startedAt: new Date() });
     try {
       const { rawS3Key, rawCount } = await runBot(payload);
@@ -139,12 +153,16 @@ export async function startOrchestratorWorkers() {
     new Worker(SCRAPE_QUEUES.linkedin, (j) => botHandler(j.data as ScrapeJobPayload), workerOpts),
     new Worker(SCRAPE_QUEUES.linkedinJobs, (j) => botHandler(j.data as ScrapeJobPayload), workerOpts),
     new Worker(SCRAPE_QUEUES.crunchbase, (j) => botHandler(j.data as ScrapeJobPayload), workerOpts),
+    new Worker(SCRAPE_QUEUES.googleBusiness, (j) => botHandler(j.data as ScrapeJobPayload), workerOpts),
   ];
   for (const w of botWorkers) {
     attachDeadLetterHandler(w, deadLetterQueue, w.name);
   }
 
+  const stopSqs = startSqsScheduleConsumer();
+
   const shutdown = async () => {
+    stopSqs();
     await scheduleWorker.close();
     await Promise.all(botWorkers.map((w) => w.close()));
     await cleanQueue.close();

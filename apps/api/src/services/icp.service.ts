@@ -28,6 +28,7 @@ export async function getWorkspaceIcp(db: Db | null, workspaceId: string): Promi
     keywords: cfg.keywords as string[] | undefined,
     minEmployees: cfg.minEmployees as number | undefined,
     maxEmployees: cfg.maxEmployees as number | undefined,
+    autoRescoreOnChange: cfg.autoRescoreOnChange as boolean | undefined,
   };
 }
 

@@ -30,12 +30,15 @@ services:
       LOG_LEVEL: info
       DATABASE_URL: postgresql://skout:skout@postgres:5432/skout
       REDIS_URL: redis://redis:6379
+      CLICKHOUSE_URL: http://skout:skout@clickhouse:8123/skout
       AI_SERVICE_URL: http://ai:8000
       CORS_ORIGIN: http://localhost:3000
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      clickhouse:
         condition: service_healthy
       ai:
         condition: service_healthy

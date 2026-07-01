@@ -585,6 +585,77 @@ export class EnrichmentService {
     return { scored: results.length, skipped: snapshots.length - eligible.length, results, creditsUsed };
   }
 
+  async prepareWorkspaceRescore(workspaceId: string) {
+    await this.prepareWorkspace(workspaceId);
+    const icp = this.loadIcp ? await this.loadIcp(workspaceId) : {};
+    if (!isIcpConfigured(icp)) {
+      throw new HttpError("ICP_NOT_CONFIGURED", 400);
+    }
+
+    const activations = await this.store.listActivations(workspaceId);
+    const snapshots: ProspectSnapshot[] = [];
+    const seen = new Set<string>();
+    for (const activation of activations) {
+      const snap = (activation.snapshot ?? {}) as Partial<ProspectSnapshot>;
+      const prospectId = activation.prospectId;
+      if (!snap.companyDomain || seen.has(prospectId)) continue;
+      seen.add(prospectId);
+      snapshots.push({ ...snap, companyDomain: snap.companyDomain, prospectId });
+    }
+
+    const totalCost = snapshots.length * SCORE_CREDIT_COST;
+    const balance = await this.store.getCreditBalance(workspaceId);
+    if (totalCost > 0 && balance < totalCost) {
+      throw new InsufficientCreditsError(totalCost, balance);
+    }
+
+    return { icp, snapshots, totalCost };
+  }
+
+  async runWorkspaceRescore(
+    workspaceId: string,
+    icpVersion: number,
+    opts?: {
+      onProgress?: (progress: {
+        scored: number;
+        total: number;
+        creditsUsed: number;
+        results: Array<{ prospectId: string; icpScore: number; icpBand: string }>;
+      }) => Promise<void>;
+    }
+  ) {
+    const { icp, snapshots } = await this.prepareWorkspaceRescore(workspaceId);
+
+    const results: Array<{ prospectId: string; icpScore: number; icpBand: string }> = [];
+    let creditsUsed = 0;
+
+    for (const snap of snapshots) {
+      const result = await this.score(workspaceId, snap, icp);
+      creditsUsed += result.creditsUsed ?? SCORE_CREDIT_COST;
+      results.push({
+        prospectId: result.prospectId,
+        icpScore: result.icpScore,
+        icpBand: result.icpBand,
+      });
+      if (opts?.onProgress) {
+        await opts.onProgress({
+          scored: results.length,
+          total: snapshots.length,
+          creditsUsed,
+          results,
+        });
+      }
+    }
+
+    return {
+      scored: results.length,
+      skipped: 0,
+      results,
+      creditsUsed,
+      icpVersion,
+    };
+  }
+
   /** @deprecated Use ListScoreService.start — kept for direct sync calls in tests */
   async scoreList(workspaceId: string, listId: string) {
     return this.runListScore(workspaceId, listId);

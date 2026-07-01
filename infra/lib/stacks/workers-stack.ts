@@ -27,6 +27,10 @@ export interface WorkersStackProps extends StackProps {
   readonly scraperImageTag?: string;
 }
 
+const REDIS_HEALTHCHECK = [
+  "CMD-SHELL",
+  "node -e \"import('ioredis').then(async ({Redis})=>{const c=new Redis(process.env.REDIS_URL,{lazyConnect:true,maxRetriesPerRequest:1,connectTimeout:3000});await c.connect();const p=await c.ping();await c.quit();process.exit(p==='PONG'?0:1)}).catch(()=>process.exit(1))\"",
+];
 const SCRAPER_CPU = 256;
 const SCRAPER_MEMORY_MIB = 512;
 
@@ -119,7 +123,9 @@ export class WorkersStack extends Stack {
       environment: {
         ...scraperEnv,
         REDIS_MAXMEMORY_POLICY: "noeviction",
+        SCRAPE_SCHEDULE_QUEUE_URL: this.scrapeScheduleQueue.queueUrl,
       },
+      healthCheckCommand: REDIS_HEALTHCHECK,
       secrets: {
         DATABASE_PASSWORD: dbPasswordSecret,
         PROXY_URL: ecs.Secret.fromSecretsManager(secrets.scraperProxy, "PROXY_URL"),
@@ -141,6 +147,7 @@ export class WorkersStack extends Stack {
       desiredCount: 1,
       environment: scraperEnv,
       secrets: { DATABASE_PASSWORD: dbPasswordSecret },
+      healthCheckCommand: REDIS_HEALTHCHECK,
     });
 
     const ingestor = new SkoutWorkerService(this, "ScraperIngestor", {
@@ -160,6 +167,7 @@ export class WorkersStack extends Stack {
         OPENSEARCH_USERNAME: ecs.Secret.fromSecretsManager(secrets.opensearch, "OPENSEARCH_USERNAME"),
         OPENSEARCH_PASSWORD: ecs.Secret.fromSecretsManager(secrets.opensearch, "OPENSEARCH_PASSWORD"),
       },
+      healthCheckCommand: REDIS_HEALTHCHECK,
     });
 
     this.orchestratorService = orchestrator.service;
@@ -193,6 +201,7 @@ export class WorkersStack extends Stack {
     scrapeBucket.grantReadWrite(orchestrator.taskDefinition.taskRole);
     scrapeBucket.grantReadWrite(cleaner.taskDefinition.taskRole);
     scrapeBucket.grantReadWrite(ingestor.taskDefinition.taskRole);
+    this.scrapeScheduleQueue.grantConsumeMessages(orchestrator.taskDefinition.taskRole);
 
     for (const worker of [orchestrator, cleaner, ingestor]) {
       grantExecutionRoleRead(worker.taskDefinition, database.secret);

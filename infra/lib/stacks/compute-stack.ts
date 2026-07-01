@@ -17,6 +17,7 @@ import type { SkoutAppSecrets } from "../constructs/skout-app-secrets.js";
 import { SkoutEcsService } from "../constructs/skout-ecs-service.js";
 import type { SkoutDatabase } from "../constructs/skout-database.js";
 import type { SkoutRedis } from "../constructs/skout-redis.js";
+import { SkoutClickHouse } from "../constructs/skout-clickhouse.js";
 
 export interface ComputeStackProps extends StackProps {
   readonly config: EnvironmentConfig;
@@ -39,6 +40,7 @@ export class ComputeStack extends Stack {
   readonly cluster: ecs.Cluster;
   readonly apiService: ecs.FargateService;
   readonly apiLogGroupName: string;
+  readonly clickhouse?: SkoutClickHouse;
 
   constructor(scope: Construct, id: string, props: ComputeStackProps) {
     super(scope, id, props);
@@ -279,6 +281,29 @@ export class ComputeStack extends Stack {
 
     this.apiService = apiEcs.service;
     this.apiLogGroupName = `/skout/${config.name}/api`;
+
+    if (config.clickhouse?.enabled) {
+      this.clickhouse = new SkoutClickHouse(this, "ClickHouse", {
+        vpc,
+        cluster: this.cluster,
+        namespace,
+        config,
+        clickhouseSecret: secrets.clickhouse,
+        clientSecurityGroups: [apiEcs.securityGroup],
+      });
+
+      new CfnOutput(this, "ClickHouseHost", {
+        value: `clickhouse.${namespace.namespaceName}`,
+        description: "VPC-internal ClickHouse DNS (port 8123)",
+        exportName: `${config.stackPrefix}-ClickHouseHost`,
+      });
+
+      new CfnOutput(this, "ClickHouseUrl", {
+        value: this.clickhouse.httpUrl,
+        description: "VPC-internal ClickHouse URL (synced to Secrets Manager SkoutDev/clickhouse)",
+        exportName: `${config.stackPrefix}-ClickHouseUrl`,
+      });
+    }
 
     const grantSecretRead = (taskDef: ecs.FargateTaskDefinition, ...appSecrets: secretsmanager.ISecret[]) => {
       const role = taskDef.executionRole;

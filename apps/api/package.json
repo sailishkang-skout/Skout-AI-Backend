@@ -11,6 +11,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "lint": "echo \"lint: configure eslint\"",
+    "pretest": "pnpm --filter @skout/db build && pnpm --filter @skout/shared build && pnpm --filter @skout/scraper-orchestrator build && node scripts/ensure-test-postgres.mjs",
     "test": "vitest run"
   },
   "dependencies": {

@@ -17,6 +17,7 @@ export const SCRAPE_QUEUES = {
   crunchbase: "scrape-crunchbase",
   opencorporates: "scrape-opencorporates",
   secEdgar: "scrape-sec-edgar",
+  googleBusiness: "scrape-google-business",
 } as const;
 
 export type BotQueue =
@@ -25,7 +26,8 @@ export type BotQueue =
   | typeof SCRAPE_QUEUES.linkedinJobs
   | typeof SCRAPE_QUEUES.crunchbase
   | typeof SCRAPE_QUEUES.opencorporates
-  | typeof SCRAPE_QUEUES.secEdgar;
+  | typeof SCRAPE_QUEUES.secEdgar
+  | typeof SCRAPE_QUEUES.googleBusiness;
 
 export function queueForSource(source: string): BotQueue {
   switch (source) {
@@ -41,6 +43,8 @@ export function queueForSource(source: string): BotQueue {
       return SCRAPE_QUEUES.opencorporates;
     case "sec-edgar":
       return SCRAPE_QUEUES.secEdgar;
+    case "google-business":
+      return SCRAPE_QUEUES.googleBusiness;
     default:
       throw new Error(`Unknown scrape source: ${source}`);
   }

@@ -12,6 +12,7 @@ import {
   type ProspectList,
   type ProspectScore,
 } from "./types.js";
+import { trackCreditAdd, trackCreditSpend } from "../analytics-events.js";
 
 const {
   creditBalances,
@@ -46,6 +47,8 @@ export class DbStore implements EnrichmentStore {
       .values({ workspaceId, balance: next })
       .onConflictDoUpdate({ target: creditBalances.workspaceId, set: { balance: next, updatedAt: new Date() } });
     await this.db.insert(creditTransactions).values({ workspaceId, amount, action, referenceId: ref });
+    if (amount > 0) trackCreditAdd(workspaceId, amount, action, ref);
+    else if (amount < 0) trackCreditSpend(workspaceId, Math.abs(amount), action, ref);
     return next;
   }
 

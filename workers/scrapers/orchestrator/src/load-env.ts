@@ -5,8 +5,11 @@ import { config } from "dotenv";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../../../..");
 
-for (const name of [".env", ".env.local"]) {
-  config({ path: path.join(repoRoot, name) });
+/** Skip in vitest — API route tests use in-memory stores without Postgres. */
+if (process.env.NODE_ENV !== "test" && !process.env.VITEST) {
+  for (const name of [".env", ".env.local"]) {
+    config({ path: path.join(repoRoot, name) });
+  }
 }
 
 /** Load repo `.env` then resolve Postgres URL (DATABASE_URL or HOST+PASSWORD). */
