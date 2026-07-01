@@ -1,13 +1,22 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { getWorkspaceIcp, getWorkspaceIcpVersion, setWorkspaceIcp } from "../services/icp.service.js";
+import {
+  getWorkspaceIcp,
+  getWorkspaceIcpVersion,
+  isIcpConfigured,
+  setWorkspaceIcp,
+} from "../services/icp.service.js";
+import { startWorkspaceRescoreIfEnabled } from "../services/workspace-rescore.service.js";
 
 const icpSchema = z.object({
   industries: z.array(z.string()).optional(),
   countries: z.array(z.string()).optional(),
   seniorities: z.array(z.string()).optional(),
+  titles: z.array(z.string()).optional(),
+  keywords: z.array(z.string()).optional(),
   minEmployees: z.number().optional(),
   maxEmployees: z.number().optional(),
+  autoRescoreOnChange: z.boolean().optional(),
 });
 
 export async function icpRoutes(app: FastifyInstance) {
@@ -21,7 +30,31 @@ export async function icpRoutes(app: FastifyInstance) {
   app.put("/workspace/icp", async (request, reply) => {
     const workspaceId = request.workspaceId ?? "unknown";
     const body = icpSchema.parse(request.body ?? {});
+    const previousVersion = await getWorkspaceIcpVersion(app.db, workspaceId);
     const row = await setWorkspaceIcp(app.db, workspaceId, body);
-    return reply.send({ workspaceId, config: body, version: row?.version ?? 1 });
+    const version = row?.version ?? 1;
+
+    let rescoreJob = null;
+    if (isIcpConfigured(body) && version > previousVersion) {
+      try {
+        rescoreJob = await startWorkspaceRescoreIfEnabled(
+          app.db,
+          app.config,
+          workspaceId,
+          body,
+          version,
+          previousVersion
+        );
+      } catch (err) {
+        request.log.warn({ err, workspaceId }, "ICP rescore enqueue failed");
+      }
+    }
+
+    return reply.send({
+      workspaceId,
+      config: body,
+      version,
+      rescoreJob,
+    });
   });
 }

@@ -28,5 +28,6 @@ WORKDIR /app
 ENV NODE_ENV=production
 RUN addgroup -S skout && adduser -S skout -G skout
 COPY --from=build /prod /app
+COPY workers/scrapers/healthcheck.mjs /app/healthcheck.mjs
 USER skout
 CMD ["node", "dist/worker.js"]

@@ -14,6 +14,8 @@
     "deploy:uat": "cdk deploy --all -c env=uat --require-approval never",
     "diff:uat": "cdk diff --all -c env=uat",
     "push-images:dev": "bash scripts/push-dev-images.sh",
+    "push-scrapers:dev": "bash scripts/push-scraper-images.sh",
+    "deploy:dev:workers": "cdk deploy SkoutDev-Workers -c env=dev --require-approval never",
     "redeploy:dev": "bash scripts/force-ecs-redeploy.sh",
     "deploy:dev": "cdk deploy --all -c env=dev --require-approval never",
     "deploy:dev:compute": "cdk deploy SkoutDev-Compute -c env=dev --require-approval never",

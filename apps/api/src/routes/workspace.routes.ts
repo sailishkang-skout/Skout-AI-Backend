@@ -1,5 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { createWorkspaceService } from "../services/workspace.service.js";
+import { getWorkspaceIcpVersion, isIcpConfigured } from "../services/icp.service.js";
+import { startWorkspaceRescoreIfEnabled } from "../services/workspace-rescore.service.js";
+import type { IcpConfig } from "../services/enrichment/ai-client.js";
 import { errorResponse } from "../utils/http.js";
 
 export async function workspaceRoutes(app: FastifyInstance) {
@@ -84,8 +87,27 @@ export async function workspaceRoutes(app: FastifyInstance) {
     if (!request.workspaceId) {
       return reply.code(401).send(errorResponse("Not authenticated", 401));
     }
-    const config = request.body as Record<string, unknown>;
+    const config = request.body as IcpConfig;
+    const previousVersion = await getWorkspaceIcpVersion(app.db, request.workspaceId);
     const icp = await svc.upsertIcp(request.workspaceId, config);
-    return reply.send({ data: icp });
+    const version = icp?.version ?? 1;
+
+    let rescoreJob = null;
+    if (isIcpConfigured(config) && version > previousVersion) {
+      try {
+        rescoreJob = await startWorkspaceRescoreIfEnabled(
+          app.db,
+          app.config,
+          request.workspaceId,
+          config,
+          version,
+          previousVersion
+        );
+      } catch (err) {
+        request.log.warn({ err, workspaceId: request.workspaceId }, "ICP rescore enqueue failed");
+      }
+    }
+
+    return reply.send({ data: icp, rescoreJob });
   });
 }

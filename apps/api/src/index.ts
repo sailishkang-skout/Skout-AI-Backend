@@ -4,6 +4,7 @@ import { loadEnv } from "./config/env.js";
 import { buildApp } from "./app.js";
 import { startCrmExportWorker } from "./workers/crm-export.worker.js";
 import { startListScoreWorker } from "./workers/list-score.worker.js";
+import { startWorkspaceRescoreWorker } from "./workers/workspace-rescore.worker.js";
 import { startSequenceEnrollmentWorker } from "./workers/sequence-enrollment.worker.js";
 
 async function main() {
@@ -26,12 +27,14 @@ async function main() {
 
   const stopCrmWorker = await startCrmExportWorker(config);
   const stopListScoreWorker = await startListScoreWorker(config);
+  const stopWorkspaceRescoreWorker = await startWorkspaceRescoreWorker(config);
   const stopSeqWorker = await startSequenceEnrollmentWorker(config);
 
   const app = await buildApp(config);
 
   const shutdown = async () => {
     await stopSeqWorker();
+    await stopWorkspaceRescoreWorker();
     await stopListScoreWorker();
     await stopCrmWorker();
     await app.close();

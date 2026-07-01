@@ -1,21 +1,6 @@
 import type { RawScrapeRecord } from "@skout/scraper-contracts";
 import { fetchPage } from "../proxy-fetch.js";
-
-interface LinkedInAccount {
-  cookie?: string;
-  li_at?: string;
-  userAgent?: string;
-}
-
-function parseAccounts(): LinkedInAccount[] {
-  const raw = process.env.LINKEDIN_ACCOUNTS_JSON;
-  if (!raw || raw === "[]") return [];
-  try {
-    return JSON.parse(raw) as LinkedInAccount[];
-  } catch {
-    return [];
-  }
-}
+import { acquireLinkedInAccount } from "./linkedin-account-pool.js";
 
 function companySlug(seed: string): string {
   const m = seed.match(/company\/([^/?#]+)/i);
@@ -44,10 +29,9 @@ function parsePeopleFromHtml(html: string): Array<{
 
 /** LinkedIn company people listing (authenticated cookie when available). */
 export async function scrapeLinkedInPeople(jobId: string, seed: string): Promise<RawScrapeRecord[]> {
-  const accounts = parseAccounts();
   const slug = companySlug(seed);
   const peopleUrl = `https://www.linkedin.com/company/${slug}/people/`;
-  const account = accounts[0];
+  const account = await acquireLinkedInAccount();
   const cookie = account?.li_at ? `li_at=${account.li_at}` : account?.cookie;
 
   const page = cookie

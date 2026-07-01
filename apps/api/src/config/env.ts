@@ -11,7 +11,7 @@ const candidatePaths = [
   path.resolve(process.cwd(), "../../.env.local"),
 ];
 
-if (process.env.NODE_ENV !== "test") {
+if (process.env.NODE_ENV !== "test" && !process.env.VITEST) {
   for (const envPath of candidatePaths) {
     dotenv.config({ path: envPath });
   }

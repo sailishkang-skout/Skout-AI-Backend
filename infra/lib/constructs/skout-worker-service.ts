@@ -18,6 +18,8 @@ export interface SkoutWorkerServiceProps {
   readonly desiredCount: number;
   readonly environment?: Record<string, string>;
   readonly secrets?: Record<string, ecs.Secret>;
+  /** ECS container health check command (default: no-op). */
+  readonly healthCheckCommand?: string[];
 }
 
 /** Background BullMQ / queue consumer — no ALB, no container port. */
@@ -46,7 +48,7 @@ export class SkoutWorkerService extends Construct {
       environment: props.environment,
       secrets: props.secrets,
       healthCheck: {
-        command: ["CMD-SHELL", "node -e \"process.exit(0)\""],
+        command: props.healthCheckCommand ?? ["CMD-SHELL", "node -e \"process.exit(0)\""],
         interval: Duration.seconds(30),
         timeout: Duration.seconds(5),
         retries: 3,

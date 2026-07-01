@@ -288,3 +288,15 @@ export async function trySyncFromOpenSkoutTabs() {
     return null;
   }
 }
+
+/** Background alarm: refresh JWT before expiry when a Skout tab is open. */
+export async function proactiveAuthRefresh() {
+  const stored = await getStoredAuth();
+  if (!stored.authToken || isAuthFresh(stored)) return stored;
+
+  try {
+    return await refreshAuthFromSkoutTabs();
+  } catch {
+    return null;
+  }
+}

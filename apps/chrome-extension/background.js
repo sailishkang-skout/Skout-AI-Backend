@@ -1,4 +1,4 @@
-import { saveAuthToken, getStoredAuth, ensureSession } from "./auth.js";
+import { saveAuthToken, getStoredAuth, ensureSession, proactiveAuthRefresh } from "./auth.js";
 import { readLinkedInProfile, injectLinkedInBridge } from "./linkedin-profile.js";
 import { activateProspect, addProspectToList, enrichProspect } from "./api.js";
 import { friendlyTabError, isUsableTab, isUsableTabUrl, nameFromLinkedInUrl } from "./tab-utils.js";
@@ -62,11 +62,21 @@ async function refreshOpenTabs() {
 
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => undefined);
 
+const AUTH_REFRESH_ALARM = "skout-auth-refresh";
+
+chrome.alarms.create(AUTH_REFRESH_ALARM, { periodInMinutes: 0.75 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === AUTH_REFRESH_ALARM) {
+    void proactiveAuthRefresh().catch(() => undefined);
+  }
+});
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.sync.set({
     apiUrl: DEFAULT_API_URL,
     webUrl: DEFAULT_WEB_URL,
     stubEmail: "extension@example.com",
+    onboardingComplete: false,
   });
   void refreshOpenTabs();
   void prefetchLists();

@@ -4,6 +4,7 @@ import { schema } from "@skout/db";
 import { buildEnrichmentService } from "./enrichment/index.js";
 import { createWorkspaceService } from "./workspace.service.js";
 import type { Env } from "../config/env.js";
+import { queryDailyCreditTotals } from "../lib/clickhouse.js";
 
 /** Local calendar date (YYYY-MM-DD) — matches buildDailySeries buckets. */
 function dayKey(date: Date): string {
@@ -122,6 +123,12 @@ export function createAnalyticsService(db: Db | null, config: Env) {
         completed: v.completed,
       }));
 
+      const chDaily = await queryDailyCreditTotals(config, workspaceId, since.toISOString());
+      const creditsDaily =
+        chDaily && chDaily.length > 0
+          ? chDaily
+          : daily.map(({ date, spent, added }) => ({ date, spent, added }));
+
       const enrichmentCredits = jobsInPeriod.reduce((sum, j) => sum + (j.creditsUsed ?? 0), 0);
       const finished = completedJobs.length + failedJobs.length;
       const successRate = finished > 0 ? Math.round((completedJobs.length / finished) * 100) : 0;
@@ -145,7 +152,7 @@ export function createAnalyticsService(db: Db | null, config: Env) {
           added: creditsAdded,
           net: creditsAdded - creditsSpent,
           byAction,
-          daily: daily.map(({ date, spent, added }) => ({ date, spent, added })),
+          daily: creditsDaily,
         },
         enrichment: {
           totalJobs: jobsInPeriod.length,
