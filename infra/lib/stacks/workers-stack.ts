@@ -31,6 +31,7 @@ const REDIS_HEALTHCHECK = [
   "CMD-SHELL",
   "node -e \"import('ioredis').then(async ({Redis})=>{const c=new Redis(process.env.REDIS_URL,{lazyConnect:true,maxRetriesPerRequest:1,connectTimeout:3000});await c.connect();const p=await c.ping();await c.quit();process.exit(p==='PONG'?0:1)}).catch(()=>process.exit(1))\"",
 ];
+const SCRAPER_CPU = 256;
 const SCRAPER_MEMORY_MIB = 512;
 
 /**
