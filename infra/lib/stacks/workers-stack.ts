@@ -133,7 +133,6 @@ export class WorkersStack extends Stack {
         PROXY_PASSWORD: ecs.Secret.fromSecretsManager(secrets.scraperProxy, "PROXY_PASSWORD"),
         LINKEDIN_ACCOUNTS_JSON: ecs.Secret.fromSecretsManager(secrets.scraperLinkedin, "accounts"),
       },
-      healthCheckCommand: REDIS_HEALTHCHECK,
     });
 
     const cleaner = new SkoutWorkerService(this, "ScraperCleaner", {

@@ -19,7 +19,71 @@ import { createLogger } from "@skout/observability";
 const log = createLogger("clickhouse");
 
 export function isClickHouseEnabled(config: Env): boolean {
-  return Boolean(config.CLICKHOUSE_URL?.trim());
+  const url = config.CLICKHOUSE_URL?.trim();
+  return Boolean(url && url !== "replace-me" && !url.includes("REPLACE_WITH"));
+}
+
+function authHeader(user?: string, password?: string): string | undefined {
+  return user && password ? `Basic ${Buffer.from(`${user}:${password}`).toString("base64")}` : undefined;
+}
+
+async function runClickHouseQuery(
+  config: Env,
+  query: string,
+  opts?: { timeoutMs?: number }
+): Promise<boolean> {
+  if (!isClickHouseEnabled(config)) return false;
+
+  const { base, user, password } = parseUrl(config.CLICKHOUSE_URL!);
+  const auth = authHeader(user, password);
+
+  try {
+    const res = await fetch(`${base}/?query=${encodeURIComponent(query)}`, {
+      method: "POST",
+      headers: auth ? { Authorization: auth } : {},
+      signal: AbortSignal.timeout(opts?.timeoutMs ?? 8000),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      log.warn("ClickHouse query failed", { status: res.status, text: text.slice(0, 200) });
+      return false;
+    }
+    return true;
+  } catch (err) {
+    log.warn("ClickHouse query error", { err: err instanceof Error ? err.message : String(err) });
+    return false;
+  }
+}
+
+/** Ensure analytics tables exist (idempotent — safe on API startup). */
+export async function ensureClickHouseSchema(config: Env): Promise<void> {
+  if (!isClickHouseEnabled(config)) return;
+
+  const { database } = parseUrl(config.CLICKHOUSE_URL!);
+  const db = database || "skout";
+
+  const statements = [
+    `CREATE DATABASE IF NOT EXISTS ${db}`,
+    `CREATE TABLE IF NOT EXISTS ${db}.skout_events (
+      workspace_id String,
+      event_type LowCardinality(String),
+      event_time DateTime64(3, 'UTC'),
+      amount Int32 DEFAULT 0,
+      reference_id String DEFAULT '',
+      metadata String DEFAULT '{}'
+    ) ENGINE = MergeTree()
+    ORDER BY (workspace_id, event_type, event_time)`,
+  ];
+
+  for (const statement of statements) {
+    const ok = await runClickHouseQuery(config, statement, { timeoutMs: 15_000 });
+    if (!ok) {
+      log.warn("ClickHouse schema bootstrap incomplete");
+      return;
+    }
+  }
+
+  log.info("ClickHouse schema ready", { database: db });
 }
 
 function parseUrl(url: string) {
@@ -55,8 +119,7 @@ export async function insertAnalyticsEvent(
   };
 
   const query = `INSERT INTO ${database}.skout_events FORMAT JSONEachRow`;
-  const auth =
-    user && password ? `Basic ${Buffer.from(`${user}:${password}`).toString("base64")}` : undefined;
+  const auth = authHeader(user, password);
 
   try {
     const res = await fetch(`${base}/?query=${encodeURIComponent(query)}`, {
@@ -106,8 +169,7 @@ export async function queryDailyCreditTotals(
     default_format: "JSON",
   });
 
-  const auth =
-    user && password ? `Basic ${Buffer.from(`${user}:${password}`).toString("base64")}` : undefined;
+  const auth = authHeader(user, password);
 
   try {
     const res = await fetch(`${base}/?${params}`, {
