@@ -71,6 +71,28 @@ export async function sequenceRoutes(app: FastifyInstance) {
     return reply.send(sequence);
   });
 
+  // GET /sequences/:id/analytics — per-step funnel metrics + enrollment summary
+  app.get("/sequences/:id/analytics", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = buildSequenceService(app.db);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    const analytics = await svc.getAnalytics(workspaceId, id);
+    if (!analytics) return reply.status(404).send({ error: "sequence_not_found" });
+    return reply.send(analytics);
+  });
+
+  // GET /sequences/:id/enrollments — live per-prospect enrollment status
+  app.get("/sequences/:id/enrollments", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = buildSequenceService(app.db);
+    if (!svc) return reply.send({ workspaceId, data: [], total: 0 });
+    const data = await svc.listEnrollments(workspaceId, id);
+    if (data === null) return reply.status(404).send({ error: "sequence_not_found" });
+    return reply.send({ workspaceId, data, total: data.length });
+  });
+
   // PATCH /sequences/:id — update name and/or status (lifecycle-validated)
   app.patch("/sequences/:id", async (request, reply) => {
     const { id } = request.params as { id: string };

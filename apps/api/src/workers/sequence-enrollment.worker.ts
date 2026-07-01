@@ -6,6 +6,13 @@ import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { isBusinessHour, nextBusinessHour } from "../utils/scheduling.js";
+import { resolveProspectFields } from "../services/prospect-resolver.service.js";
+import { isSuppressed } from "../services/suppression.service.js";
+import { buildUnsubscribeUrl } from "../services/suppression.service.js";
+import { pickNextInbox, markInboxUsed } from "../services/inbox-rotation.service.js";
+import { renderTemplate, type MergeData } from "../services/template-render.service.js";
+import { injectTracking } from "../services/tracking.service.js";
+import { buildEmailSenderFromInbox } from "../services/email-sender.service.js";
 import {
   SEQUENCE_ENROLLMENT_QUEUE,
   enqueueSequenceAdvanceJob,
@@ -21,6 +28,8 @@ const {
   inboxThreads,
   inboxMessages,
 } = schema;
+
+type DbClient = ReturnType<typeof createDb>["db"];
 
 // ---------------------------------------------------------------------------
 // Signal detection — reply or bounce on an inbox thread for this prospect
@@ -65,6 +74,119 @@ async function detectCadenceSignal(
   if (reply) return "replied";
 
   return "none";
+}
+
+// ---------------------------------------------------------------------------
+// Email step execution — render, suppression-check, rotate inbox, send, track
+// ---------------------------------------------------------------------------
+
+interface PendingStep {
+  enrollmentStepId: string;
+  stepId: string;
+  stepType: string;
+  subject: string | null;
+  bodyTemplate: string | null;
+}
+
+async function markStepTerminal(
+  db: DbClient,
+  enrollmentStepId: string,
+  status: string,
+  failureReason: string | null,
+  now: Date
+): Promise<void> {
+  await db
+    .update(sequenceEnrollmentSteps)
+    .set({ status, executedAt: now, failureReason })
+    .where(eq(sequenceEnrollmentSteps.id, enrollmentStepId));
+}
+
+/**
+ * Sends the email for a scheduled step through a rotated connected inbox.
+ * Suppression / missing-prospect-email / no-available-inbox are terminal (non-retryable) —
+ * the step is marked failed/skipped and the cadence moves on. An actual send failure
+ * (SMTP/network) is re-thrown so the BullMQ job retries — the step stays "scheduled".
+ */
+async function executeEmailStep(
+  db: DbClient,
+  config: Env,
+  payload: SeqAdvanceJobPayload,
+  pending: PendingStep,
+  now: Date
+): Promise<void> {
+  const { enrollmentId, workspaceId, prospectId } = payload;
+
+  const prospect = await resolveProspectFields(config, db, workspaceId, prospectId);
+  if (!prospect?.email) {
+    await markStepTerminal(db, pending.enrollmentStepId, "failed", "prospect_email_not_found", now);
+    log.warn("Email step skipped — no prospect email", { enrollmentId, prospectId });
+    return;
+  }
+
+  if (await isSuppressed(db, workspaceId, prospect.email)) {
+    await markStepTerminal(db, pending.enrollmentStepId, "skipped", "suppressed", now);
+    log.info("Email step skipped — suppressed", { enrollmentId, email: prospect.email });
+    return;
+  }
+
+  const inbox = await pickNextInbox(db, workspaceId);
+  if (!inbox) {
+    await markStepTerminal(db, pending.enrollmentStepId, "failed", "no_active_inbox", now);
+    log.warn("Email step failed — no active inbox", { enrollmentId, workspaceId });
+    return;
+  }
+
+  const mergeData: MergeData = {
+    firstName: prospect.firstName,
+    lastName: prospect.lastName,
+    fullName: prospect.fullName,
+    companyName: prospect.companyName ?? "",
+    companyDomain: prospect.companyDomain ?? "",
+    title: prospect.title ?? "",
+    senderName: inbox.displayName ?? inbox.emailAddress,
+    senderEmail: inbox.emailAddress,
+    unsubscribeUrl: buildUnsubscribeUrl(config, workspaceId, prospect.email),
+  };
+
+  const subject = renderTemplate(pending.subject ?? "", mergeData);
+  const bodyText = renderTemplate(pending.bodyTemplate ?? "", mergeData);
+  const { html, text } = injectTracking(config, bodyText, enrollmentId, pending.enrollmentStepId);
+
+  // Transport failures propagate — the job retries with the step still "scheduled".
+  const transport = buildEmailSenderFromInbox(config, inbox);
+  const sendResult = await transport.send({
+    from: inbox.emailAddress,
+    fromName: inbox.displayName,
+    to: prospect.email,
+    subject,
+    text,
+    html,
+  });
+
+  await db.transaction(async (tx) => {
+    const [thread] = await tx
+      .insert(inboxThreads)
+      .values({ workspaceId, inboxId: inbox.id, prospectId, subject, status: "open", lastMessageAt: now })
+      .returning();
+    await tx.insert(inboxMessages).values({
+      threadId: thread!.id,
+      direction: "outbound",
+      fromAddress: inbox.emailAddress,
+      toAddress: prospect.email!,
+      subject,
+      bodyText: text,
+      bodyHtml: html,
+      externalId: sendResult.externalId,
+      sentAt: now,
+    });
+    await tx
+      .update(sequenceEnrollmentSteps)
+      .set({ status: "executed", executedAt: now })
+      .where(eq(sequenceEnrollmentSteps.id, pending.enrollmentStepId));
+  });
+
+  await markInboxUsed(db, inbox.id);
+  log.info("Email sent", { enrollmentId, enrollmentStepId: pending.enrollmentStepId, inboxId: inbox.id });
 }
 
 // ---------------------------------------------------------------------------
@@ -126,6 +248,8 @@ async function advanceEnrollment(
       scheduledAt: sequenceEnrollmentSteps.scheduledAt,
       stepOrder: sequenceSteps.stepOrder,
       stepType: sequenceSteps.stepType,
+      subject: sequenceSteps.subject,
+      bodyTemplate: sequenceSteps.bodyTemplate,
     })
     .from(sequenceEnrollmentSteps)
     .innerJoin(sequenceSteps, eq(sequenceEnrollmentSteps.stepId, sequenceSteps.id))
@@ -168,10 +292,14 @@ async function advanceEnrollment(
   }
 
   // Execute the step
-  await db
-    .update(sequenceEnrollmentSteps)
-    .set({ status: "executed", executedAt: now })
-    .where(eq(sequenceEnrollmentSteps.id, pending.enrollmentStepId));
+  if (pending.stepType === "email") {
+    await executeEmailStep(db, config, payload, pending, now);
+  } else {
+    await db
+      .update(sequenceEnrollmentSteps)
+      .set({ status: "executed", executedAt: now })
+      .where(eq(sequenceEnrollmentSteps.id, pending.enrollmentStepId));
+  }
 
   log.info("Step executed", {
     enrollmentId,

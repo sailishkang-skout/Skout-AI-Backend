@@ -91,6 +91,8 @@ const envSchema = z
     SEC_EDGAR_BASE_URL: z.string().default("https://efts.sec.gov/LATEST/search-index"),
     LINKEDIN_ACCOUNTS_JSON: z.string().optional(),
     INTEGRATION_ENCRYPTION_KEY: z.string().optional(),
+    /** HMAC secret for signed tracking/unsubscribe tokens. Falls back to INTEGRATION_ENCRYPTION_KEY. */
+    TRACKING_SIGNING_SECRET: z.string().optional(),
     // --- Enrichment provider API keys (PAL). Optional: stub adapters are used
     //     for any capability whose key is absent. ---
     HUNTER_API_KEY: z.string().optional(),

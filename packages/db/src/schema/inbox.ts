@@ -1,4 +1,4 @@
-import { integer, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { boolean, integer, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { workspaces } from "./workspaces.js";
 
 export const sendingDomains = pgTable(
@@ -34,6 +34,12 @@ export const inboxes = pgTable(
     warmupStatus: text("warmup_status").notNull().default("cold"),
     dailySendLimit: integer("daily_send_limit").notNull().default(50),
     status: text("status").notNull().default("active"),
+    smtpHost: text("smtp_host"),
+    smtpPort: integer("smtp_port"),
+    smtpUsername: text("smtp_username"),
+    smtpPasswordEncrypted: text("smtp_password_encrypted"),
+    smtpSecure: boolean("smtp_secure").notNull().default(true),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

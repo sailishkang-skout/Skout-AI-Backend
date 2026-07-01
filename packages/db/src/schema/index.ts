@@ -10,3 +10,4 @@ export * from "./sequences.js";
 export * from "./inbox.js";
 export * from "./integrations.js";
 export * from "./billing.js";
+export * from "./suppressions.js";

@@ -19,7 +19,9 @@ function isHealthRoute(url: string): boolean {
 function isPublicRoute(url: string): boolean {
   return (
     url.startsWith("/api/v1/crm/hubspot/callback") ||
-    url.startsWith("/api/v1/billing/webhooks/")
+    url.startsWith("/api/v1/billing/webhooks/") ||
+    url.startsWith("/api/v1/track/") ||
+    url.startsWith("/api/v1/unsubscribe/")
   );
 }
 
