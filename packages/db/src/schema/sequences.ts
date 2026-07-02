@@ -1,4 +1,5 @@
 import { integer, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { inboxes } from "./inbox.js";
 import { lists } from "./prospects.js";
 import { workspaces } from "./workspaces.js";
 
@@ -63,6 +64,7 @@ export const sequenceEnrollmentSteps = pgTable(
     scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
     executedAt: timestamp("executed_at", { withTimezone: true }),
     failureReason: text("failure_reason"),
+    inboxId: uuid("inbox_id").references(() => inboxes.id, { onDelete: "set null" }),
   },
   (table) => [unique().on(table.enrollmentId, table.stepId)]
 );

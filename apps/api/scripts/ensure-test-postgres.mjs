@@ -56,6 +56,7 @@ if (!(await waitForPostgres())) {
 const migrate = spawnSync("pnpm", ["db:migrate"], {
   cwd: repoRoot,
   stdio: "inherit",
+  shell: true,
   env: { ...process.env, DATABASE_URL },
 });
 

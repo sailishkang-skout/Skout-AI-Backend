@@ -146,6 +146,10 @@ const envSchema = z
     ENRICHMENT_REQUEST_TIMEOUT_MS: z.coerce.number().default(8000),
     ENRICHMENT_PHONE_SCORE_GATE: z.coerce.number().default(80),
     ENRICHMENT_AI_TIMEOUT_MS: z.coerce.number().default(15000),
+    // --- Inbox rotation / health thresholds. ---
+    INBOX_BOUNCE_RATE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.05),
+    INBOX_SPAM_RATE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.01),
+    INBOX_MIN_SENT_BEFORE_HEALTH_CHECK: z.coerce.number().int().positive().default(20),
   })
   .transform((data) => {
     let next = data;
