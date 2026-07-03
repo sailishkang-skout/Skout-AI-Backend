@@ -448,7 +448,7 @@ describe("list routes — auth stub", () => {
 });
 
 describe("list routes — CSV export", () => {
-  it("GET /lists/:id/export/csv returns attachment", async () => {
+  it("GET /lists/:id/export/csv returns export metadata and inline CSV when no bucket", async () => {
     const app = await buildTestApp();
     const email = "list-csv@test.com";
 
@@ -467,9 +467,32 @@ describe("list routes — CSV export", () => {
     });
 
     expect(res.statusCode).toBe(200);
-    expect(res.headers["content-type"]).toContain("text/csv");
-    expect(res.body).toContain("Full Name");
-    expect(res.headers["content-disposition"]).toContain(".csv");
+    expect(res.headers["content-type"]).toContain("application/json");
+    const body = res.json() as {
+      filename: string;
+      creditsUsed: number;
+      memberCount: number;
+      exportKey?: string;
+      content?: string;
+      downloadUrl: string;
+    };
+    expect(body.filename).toContain(".csv");
+    expect(body.creditsUsed).toBe(2);
+    expect(body.memberCount).toBe(0);
+    expect(body.content).toContain("Full Name");
+    expect(body.exportKey).toBeTruthy();
+    expect(body.downloadUrl).toContain("/export/csv/download");
+
+    if (!body.content) {
+      const download = await app.inject({
+        method: "GET",
+        url: `/api/v1/lists/${id}/export/csv/download?key=${encodeURIComponent(body.exportKey!)}`,
+        headers: asUser(email),
+      });
+      expect(download.statusCode).toBe(200);
+      expect(download.headers["content-type"]).toContain("text/csv");
+      expect(download.body).toContain("Full Name");
+    }
 
     await app.close();
   });

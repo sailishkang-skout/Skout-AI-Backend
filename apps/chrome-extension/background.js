@@ -1,6 +1,6 @@
 import { saveAuthToken, getStoredAuth, ensureSession, proactiveAuthRefresh } from "./auth.js";
 import { readLinkedInProfile, injectLinkedInBridge } from "./linkedin-profile.js";
-import { activateProspect, addProspectToList, enrichProspect } from "./api.js";
+import { activateProspect, addProspectToList, enrichProspect, scoreProspect } from "./api.js";
 import { friendlyTabError, isUsableTab, isUsableTabUrl, nameFromLinkedInUrl } from "./tab-utils.js";
 import { getLists, prefetchLists, saveLastListId, getLastListId } from "./lists-cache.js";
 import { log, logError, timeStep, withTimeout } from "./debug.js";
@@ -232,23 +232,71 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       log("enrich-profile START");
       try {
         let fullName = "";
-        await withTimeout(
+        const result = await withTimeout(
           (async () => {
             const profile = await timeStep("resolveProfile", () => resolveProfile(message));
             fullName = profile.fullName;
             const prospectId = await timeStep("activateProspect", () => activateProspect(profile));
-            await timeStep("enrichProspect", () => enrichProspect(prospectId, profile));
+            const enrichResult = await timeStep("enrichProspect", () =>
+              enrichProspect(prospectId, profile)
+            );
+            return enrichResult;
           })(),
           HANDLER_TIMEOUT_MS,
           "Enrich timed out — open Skout (localhost:3000), sign in, click Connect Skout account, then reload this page."
         );
+        const emailLine = result?.email ? ` · ${result.email}` : "";
+        const statusLine = result?.emailStatus ? ` (${result.emailStatus})` : "";
         log(`enrich-profile DONE (${Date.now() - t0}ms)`);
-        sendResponse({ ok: true, fullName });
+        sendResponse({
+          ok: true,
+          fullName,
+          email: result?.email ?? null,
+          emailStatus: result?.emailStatus ?? null,
+          jobStatus: result?.status ?? null,
+          message: `Enrichment ${result?.status ?? "started"}${emailLine}${statusLine}`,
+        });
       } catch (error) {
         logError(`enrich-profile FAILED (${Date.now() - t0}ms):`, error);
         sendResponse({
           ok: false,
           error: friendlyTabError(error instanceof Error ? error.message : "Enrich failed"),
+        });
+      }
+    })();
+    return true;
+  }
+
+  if (message.type === "score-profile") {
+    void (async () => {
+      const t0 = Date.now();
+      log("score-profile START");
+      try {
+        let fullName = "";
+        const result = await withTimeout(
+          (async () => {
+            const profile = await timeStep("resolveProfile", () => resolveProfile(message));
+            fullName = profile.fullName;
+            const prospectId = await timeStep("activateProspect", () => activateProspect(profile));
+            return timeStep("scoreProspect", () => scoreProspect(prospectId, profile));
+          })(),
+          HANDLER_TIMEOUT_MS,
+          "Score timed out — open Skout, sign in, and connect your account."
+        );
+        log(`score-profile DONE (${Date.now() - t0}ms)`);
+        sendResponse({
+          ok: true,
+          fullName,
+          icpScore: result?.icpScore ?? null,
+          icpBand: result?.icpBand ?? null,
+          outreachReadiness: result?.outreachReadiness ?? null,
+          message: `ICP score: ${result?.icpScore ?? "—"} (${result?.icpBand ?? "n/a"})`,
+        });
+      } catch (error) {
+        logError(`score-profile FAILED (${Date.now() - t0}ms):`, error);
+        sendResponse({
+          ok: false,
+          error: friendlyTabError(error instanceof Error ? error.message : "Score failed"),
         });
       }
     })();

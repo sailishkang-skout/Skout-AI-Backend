@@ -166,6 +166,36 @@ export class EnrichmentService {
     return this.store.getCreditBalance(workspaceId);
   }
 
+  async deductExportCredits(workspaceId: string, amount: number, listId: string) {
+    return this.store.deductCredits(workspaceId, amount, "export_csv", listId);
+  }
+
+  /** Re-run a failed or completed enrichment job using the stored activation snapshot. */
+  async retryJob(workspaceId: string, jobId: string): Promise<EnrichmentJob> {
+    const existing = await this.store.getJob(workspaceId, jobId);
+    if (!existing) throw new HttpError("job_not_found", 404);
+    if (existing.status === "running" || existing.status === "queued") {
+      throw new HttpError("job_still_active", 409);
+    }
+
+    const activation = await this.store.getActivation(workspaceId, existing.prospectId);
+    if (!activation) throw new HttpError("activation_not_found", 404);
+
+    const snap = activation.snapshot as Partial<ProspectSnapshot>;
+    return this.enrichProspect(
+      workspaceId,
+      {
+        ...snap,
+        prospectId: existing.prospectId,
+        companyDomain: snap.companyDomain ?? "",
+      },
+      {
+        fields: existing.fieldsRequested as EnrichField[],
+        trigger: existing.trigger ?? "retry",
+      }
+    );
+  }
+
   async score(workspaceId: string, snapshot: ProspectSnapshot, icp?: IcpConfig) {
     await this.prepareWorkspace(workspaceId);
     const { prospectId } = this.resolveIds(snapshot);

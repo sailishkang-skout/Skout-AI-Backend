@@ -36,6 +36,22 @@ export function scrapeKey(
   return `${zone}/${source}/${date}/${jobId}/${filename}`;
 }
 
+function createS3Client(): S3Client {
+  const opts: S3ClientConfig = {
+    region: process.env.AWS_REGION ?? "us-east-1",
+  };
+  const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+  if (accessKeyId && secretAccessKey) {
+    opts.credentials = { accessKeyId, secretAccessKey };
+  }
+  if (process.env.S3_ENDPOINT) {
+    opts.endpoint = process.env.S3_ENDPOINT;
+    opts.forcePathStyle = process.env.S3_FORCE_PATH_STYLE === "true";
+  }
+  return new S3Client(opts);
+}
+
 export class ScrapeStorage implements ScrapeStorageLike {
   private readonly client: S3Client;
 
@@ -158,4 +174,52 @@ export function resolveScrapeStorage(): ScrapeStorageLike {
   const bucket = process.env.SCRAPE_BUCKET;
   if (bucket) return createScrapeStorage(bucket);
   return new LocalScrapeStorage(defaultLocalScrapeDir());
+}
+
+export const CSV_EXPORT_PRESIGN_SECONDS = 900;
+
+export interface StoredExport {
+  key: string;
+  filename: string;
+  inline: boolean;
+  content?: string;
+}
+
+function exportKey(workspaceId: string, listId: string, filename: string): string {
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  return `exports/${workspaceId}/${listId}/${ts}-${filename}`;
+}
+
+/** Upload list CSV to S3 or keep inline for local dev. */
+export async function storeCsvExport(
+  bucket: string | undefined,
+  workspaceId: string,
+  listId: string,
+  filename: string,
+  content: string
+): Promise<StoredExport> {
+  const key = exportKey(workspaceId, listId, filename);
+
+  if (!bucket) {
+    return { key, filename, inline: true, content };
+  }
+
+  const client = createS3Client();
+
+  await client.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: content,
+      ContentType: "text/csv; charset=utf-8",
+    })
+  );
+
+  return { key, filename, inline: false };
+}
+
+export async function readCsvExport(bucket: string, key: string): Promise<string> {
+  const client = createS3Client();
+  const res = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  return (await res.Body?.transformToString()) ?? "";
 }

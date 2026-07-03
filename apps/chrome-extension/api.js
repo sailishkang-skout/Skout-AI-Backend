@@ -288,11 +288,36 @@ export async function addProspectToList(listId, profile) {
 
 export async function enrichProspect(prospectId, profile) {
   const fields = buildProspectFields(profile);
-  return skoutFetch(`/api/v1/prospects/${prospectId}/enrich`, {
+  const response = await skoutFetch(`/api/v1/prospects/${prospectId}/enrich`, {
     method: "POST",
     body: JSON.stringify({
       prospect: { prospectId, ...fields },
-      fields: ["email"],
+      fields: ["company", "email", "validation"],
+    }),
+  });
+  const emailResult = response.results?.find((r) => r.field === "email" && r.isPrimary);
+  return {
+    ...response,
+    email: emailResult?.value ?? null,
+    emailStatus: response.results?.find((r) => r.field === "email_status")?.value ?? null,
+  };
+}
+
+export async function scoreProspect(prospectId, profile) {
+  const fields = buildProspectFields(profile);
+  return skoutFetch("/api/v1/enrichment/score", {
+    method: "POST",
+    body: JSON.stringify({
+      prospect: {
+        prospectId,
+        fullName: fields.fullName,
+        title: fields.title,
+        industry: fields.industry,
+        country: fields.country,
+        companyDomain: fields.companyDomain,
+        employeeCount: profile.employeeCount,
+        signals: profile.signals,
+      },
     }),
   });
 }

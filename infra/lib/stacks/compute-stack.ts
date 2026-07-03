@@ -224,7 +224,12 @@ export class ComputeStack extends Stack {
         RATE_LIMIT_WINDOW_MS: "60000",
         // Dev: allow phone waterfall for typical test leads (score ~40); prod keeps default 80 via app env schema.
         ...(config.name === "dev"
-          ? { ENRICHMENT_PHONE_SCORE_GATE: "39" }
+          ? {
+              ENRICHMENT_PHONE_SCORE_GATE: "39",
+              RAZORPAY_KEY_ID: "rzp_test_T7RSEsGBVeHtUD",
+              RAZORPAY_CREDIT_PACKS_JSON:
+                '[{"id":"starter","label":"Starter","credits":500,"amountInr":499},{"id":"growth","label":"Growth","credits":2000,"amountInr":1499},{"id":"scale","label":"Scale","credits":10000,"amountInr":4999}]',
+            }
           : {}),
       },
       secrets: {
@@ -256,6 +261,11 @@ export class ComputeStack extends Stack {
           "INTEGRATION_ENCRYPTION_KEY"
         ),
         DD_API_KEY: ecs.Secret.fromSecretsManager(secrets.datadog, "DD_API_KEY"),
+        RAZORPAY_KEY_SECRET: ecs.Secret.fromSecretsManager(secrets.razorpay, "RAZORPAY_KEY_SECRET"),
+        RAZORPAY_WEBHOOK_SECRET: ecs.Secret.fromSecretsManager(
+          secrets.razorpay,
+          "RAZORPAY_WEBHOOK_SECRET"
+        ),
       },
       datadog: {
         apiKeySecret: ecs.Secret.fromSecretsManager(secrets.datadog, "DD_API_KEY"),

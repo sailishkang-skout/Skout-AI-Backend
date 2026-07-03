@@ -27,6 +27,7 @@
     "@skout/scraper-contracts": "workspace:*",
     "@skout/scraper-orchestrator": "workspace:*",
     "@skout/shared": "workspace:*",
+    "@skout/storage": "workspace:*",
     "bullmq": "^5.40.0",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.44.2",
