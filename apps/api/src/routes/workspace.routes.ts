@@ -89,7 +89,7 @@ export async function workspaceRoutes(app: FastifyInstance) {
     }
     const config = request.body as IcpConfig;
     const previousVersion = await getWorkspaceIcpVersion(app.db, request.workspaceId);
-    const icp = await svc.upsertIcp(request.workspaceId, config);
+    const icp = await svc.upsertIcp(request.workspaceId, config as Record<string, unknown>);
     const version = icp?.version ?? 1;
 
     let rescoreJob = null;

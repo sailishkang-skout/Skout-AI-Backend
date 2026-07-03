@@ -51,7 +51,7 @@ export async function runWorkspaceRescoreJob(
       },
     });
 
-    const final: WorkspaceRescoreJobResult = { workspaceId, icpVersion, ...result };
+    const final: WorkspaceRescoreJobResult = { workspaceId, ...result };
     await db
       .update(asyncJobs)
       .set({

@@ -15,10 +15,10 @@ const dbEnvKeys = [
   "DATABASE_PASSWORD",
 ];
 
-function probePort(host, port, timeoutMs = 400) {
+function probePort(host: string, port: number, timeoutMs = 400): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = net.connect({ host, port });
-    const done = (ok) => {
+    const done = (ok: boolean) => {
       socket.removeAllListeners();
       socket.destroy();
       resolve(ok);
