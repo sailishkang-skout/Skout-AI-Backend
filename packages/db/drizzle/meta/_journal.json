@@ -61,8 +61,15 @@
     {
       "idx": 8,
       "version": "7",
-      "when": 1782821153991,
+      "when": 1782853347938,
       "tag": "0008_clean_agent_brand",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1782860000000,
+      "tag": "0009_lucky_master_chief",
       "breakpoints": true
     }
   ]

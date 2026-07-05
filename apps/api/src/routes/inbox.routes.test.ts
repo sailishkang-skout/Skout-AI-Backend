@@ -37,13 +37,14 @@ describe("inbox routes", () => {
 
   it("POST /inboxes creates an inbox with encrypted SMTP credentials and never returns the password", async () => {
     const app = await buildTestApp();
+    const uniqueEmail = `sender-${Date.now()}@example.com`;
 
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/inboxes",
       headers: json("inbox-create@test.com"),
       payload: {
-        emailAddress: "sender@example.com",
+        emailAddress: uniqueEmail,
         displayName: "Sender Name",
         smtpHost: "smtp.example.com",
         smtpPort: 587,

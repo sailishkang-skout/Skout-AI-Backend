@@ -299,14 +299,14 @@ async function advanceEnrollment(
       .update(sequenceEnrollmentSteps)
       .set({ status: "executed", executedAt: now })
       .where(eq(sequenceEnrollmentSteps.id, pending.enrollmentStepId));
-  }
 
-  log.info("Step executed", {
-    enrollmentId,
-    enrollmentStepId: pending.enrollmentStepId,
-    stepType: pending.stepType,
-    stepOrder: pending.stepOrder,
-  });
+    log.info("Step executed", {
+      enrollmentId,
+      enrollmentStepId: pending.enrollmentStepId,
+      stepType: pending.stepType,
+      stepOrder: pending.stepOrder,
+    });
+  }
 
   // Check if there is a next step
   const [nextPending] = await db

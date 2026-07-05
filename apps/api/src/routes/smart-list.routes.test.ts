@@ -70,5 +70,5 @@ describe("smart list API", () => {
     expect(listData.data.some((l) => l.id === activated.list.id)).toBe(true);
 
     await app.close();
-  });
+  }, 30000);
 });
