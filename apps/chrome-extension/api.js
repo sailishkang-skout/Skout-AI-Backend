@@ -268,6 +268,42 @@ export async function activateProspect(profile) {
   return resolveProspectId({ ...profile, companyName: profile.companyName || "linkedin" });
 }
 
+export async function activateProspects(profiles) {
+  if (!profiles?.length) return [];
+  const prospects = profiles.map((profile) => buildProspectFields(profile));
+  await skoutFetch("/api/v1/prospects/activate", {
+    method: "POST",
+    body: JSON.stringify({ prospects }),
+  });
+  return Promise.all(
+    profiles.map((profile) =>
+      resolveProspectId({ ...profile, companyName: profile.companyName || "linkedin" })
+    )
+  );
+}
+
+export async function getListMemberIds(listId) {
+  const members = await skoutFetch(`/api/v1/lists/${listId}/members`);
+  if (!Array.isArray(members)) return new Set();
+  return new Set(members.map((m) => m.prospectId));
+}
+
+export async function addProspectBatchToList(listId, profiles) {
+  const prospects = await Promise.all(
+    profiles.map(async (profile) => {
+      const fields = buildProspectFields(profile);
+      const prospectId = await resolveProspectId(profile);
+      const entry = { prospectId, ...fields };
+      if (!entry.linkedinUrl) delete entry.linkedinUrl;
+      return entry;
+    })
+  );
+  return skoutFetch(`/api/v1/lists/${listId}/members`, {
+    method: "POST",
+    body: JSON.stringify({ prospects }),
+  });
+}
+
 export async function addProspectsToList(listId, prospectIds) {
   return skoutFetch(`/api/v1/lists/${listId}/members`, {
     method: "POST",
@@ -288,11 +324,36 @@ export async function addProspectToList(listId, profile) {
 
 export async function enrichProspect(prospectId, profile) {
   const fields = buildProspectFields(profile);
-  return skoutFetch(`/api/v1/prospects/${prospectId}/enrich`, {
+  const response = await skoutFetch(`/api/v1/prospects/${prospectId}/enrich`, {
     method: "POST",
     body: JSON.stringify({
       prospect: { prospectId, ...fields },
-      fields: ["email"],
+      fields: ["company", "email", "validation"],
+    }),
+  });
+  const emailResult = response.results?.find((r) => r.field === "email" && r.isPrimary);
+  return {
+    ...response,
+    email: emailResult?.value ?? null,
+    emailStatus: response.results?.find((r) => r.field === "email_status")?.value ?? null,
+  };
+}
+
+export async function scoreProspect(prospectId, profile) {
+  const fields = buildProspectFields(profile);
+  return skoutFetch("/api/v1/enrichment/score", {
+    method: "POST",
+    body: JSON.stringify({
+      prospect: {
+        prospectId,
+        fullName: fields.fullName,
+        title: fields.title,
+        industry: fields.industry,
+        country: fields.country,
+        companyDomain: fields.companyDomain,
+        employeeCount: profile.employeeCount,
+        signals: profile.signals,
+      },
     }),
   });
 }

@@ -245,7 +245,7 @@ export function initPanel() {
       const tabId = await findLinkedInTabId();
       await runInBackground("ping").catch(() => undefined);
       const result = await runInBackground("enrich-profile", { tabId });
-      setStatus(`Enrichment started for ${result.fullName}.`);
+      setStatus(result.message || `Enrichment started for ${result.fullName}.`);
     } catch (error) {
       setStatus(
         error instanceof Error
@@ -254,7 +254,25 @@ export function initPanel() {
         true
       );
     } finally {
-      setBusy(button, false, "Enrich email");
+      setBusy(button, false, "Enrich contact");
+    }
+  });
+
+  document.getElementById("score-profile")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    setBusy(button, true, "Scoring…");
+    try {
+      const tabId = await findLinkedInTabId();
+      await runInBackground("ping").catch(() => undefined);
+      const result = await runInBackground("score-profile", { tabId });
+      setStatus(result.message || `Scored ${result.fullName}.`);
+    } catch (error) {
+      setStatus(
+        error instanceof Error ? error.message : "Score failed — connect Skout and configure ICP.",
+        true
+      );
+    } finally {
+      setBusy(button, false, "Score ICP");
     }
   });
 

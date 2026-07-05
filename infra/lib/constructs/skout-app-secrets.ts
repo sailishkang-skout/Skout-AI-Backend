@@ -28,6 +28,7 @@ export class SkoutAppSecrets extends Construct {
   readonly posthog: secretsmanager.ISecret;
   readonly appConfig: secretsmanager.ISecret;
   readonly datadog: secretsmanager.ISecret;
+  readonly razorpay: secretsmanager.ISecret;
 
   constructor(scope: Construct, id: string, props: SkoutAppSecretsProps) {
     super(scope, id);
@@ -100,6 +101,10 @@ export class SkoutAppSecrets extends Construct {
     this.datadog = createPlaceholder("Datadog", "datadog", {
       DD_API_KEY: "replace-me",
       DD_SITE: "us5.datadoghq.com",
+    });
+    this.razorpay = createPlaceholder("Razorpay", "razorpay", {
+      RAZORPAY_KEY_SECRET: "replace-me",
+      RAZORPAY_WEBHOOK_SECRET: "replace-me",
     });
   }
 }

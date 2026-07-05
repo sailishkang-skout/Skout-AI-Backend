@@ -55,6 +55,37 @@ export async function enrichmentRoutes(app: FastifyInstance) {
     return reply.send(job);
   });
 
+  app.post("/enrichment/jobs/:jobId/retry", async (request, reply) => {
+    const { jobId } = request.params as { jobId: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = buildEnrichmentService(app.db, app.config);
+    try {
+      const job = await svc.retryJob(workspaceId, jobId);
+      return reply.status(202).send({
+        jobId: job.id,
+        status: job.status,
+        creditsUsed: job.creditsUsed,
+        results: job.results,
+        attempts: job.attempts,
+        queuedAt: job.queuedAt,
+        startedAt: job.startedAt,
+        completedAt: job.completedAt,
+      });
+    } catch (err) {
+      if (err instanceof InsufficientCreditsError) {
+        return reply.status(402).send({
+          error: "insufficient_credits",
+          required: err.required,
+          available: err.available,
+        });
+      }
+      if (err instanceof HttpError) {
+        return reply.status(err.statusCode).send(errorResponse(err.message, err.statusCode));
+      }
+      throw err;
+    }
+  });
+
   app.get("/enrichment/batches/:batchId", async (request, reply) => {
     const { batchId } = request.params as { batchId: string };
     const workspaceId = request.workspaceId ?? "unknown";

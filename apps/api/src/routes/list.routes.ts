@@ -6,8 +6,9 @@ import { createCrmService } from "../services/crm.service.js";
 import { ListScoreService } from "../services/list-score.service.js";
 import { HttpError, errorResponse } from "../utils/http.js";
 import { buildListService } from "../services/list.service.js";
+import { exportListCsv, CSV_EXPORT_CREDIT_COST } from "../services/list-export.service.js";
+import { readListCsvExport } from "../services/export-storage.service.js";
 import type { Env } from "../config/env.js";
-import { buildListCsv } from "../utils/list-csv.js";
 
 function osConfig(config: Env): OpenSearchConfig | null {
   if (!config.OPENSEARCH_URL) return null;
@@ -188,33 +189,83 @@ export async function listRoutes(app: FastifyInstance) {
     return reply.send(list);
   });
 
+  app.delete("/lists/:id/members/:prospectId", async (request, reply) => {
+    const { id, prospectId } = request.params as { id: string; prospectId: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = buildEnrichmentService(app.db, app.config);
+    const list = await svc.removeMembersFromList(workspaceId, id, [prospectId]);
+    if (!list) return reply.status(404).send({ error: "list_not_found" });
+    return reply.send(list);
+  });
+
   app.get("/lists/:id/export/csv", async (request, reply) => {
     const { id } = request.params as { id: string };
     const workspaceId = request.workspaceId ?? "unknown";
     const listSvc = buildListService(app.db, osConfig(app.config));
     if (!listSvc) return reply.status(503).send({ error: "database_unavailable" });
+    const enrichment = buildEnrichmentService(app.db, app.config);
+
+    try {
+      const result = await exportListCsv(app.config, listSvc, enrichment, workspaceId, id);
+      if (result.inline && result.content) {
+        return reply.send({
+          downloadUrl: result.downloadUrl,
+          filename: result.filename,
+          creditsUsed: result.creditsUsed,
+          memberCount: result.memberCount,
+          expiresInSeconds: 900,
+          exportKey: result.exportKey,
+          ...(result.inline && result.content ? { content: result.content } : {}),
+        });
+      }
+      return reply.send({
+        downloadUrl: result.downloadUrl,
+        filename: result.filename,
+        creditsUsed: result.creditsUsed,
+        memberCount: result.memberCount,
+        expiresInSeconds: 900,
+        exportKey: result.exportKey,
+      });
+    } catch (err) {
+      if (err instanceof InsufficientCreditsError) {
+        return reply.status(402).send({
+          error: "insufficient_credits",
+          required: err.required,
+          available: err.available,
+          creditsRequired: CSV_EXPORT_CREDIT_COST,
+        });
+      }
+      if (err instanceof Error && err.message === "list_not_found") {
+        return reply.status(404).send({ error: "list_not_found" });
+      }
+      throw err;
+    }
+  });
+
+  app.get("/lists/:id/export/csv/download", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const { key } = z.object({ key: z.string().min(1) }).parse(request.query ?? {});
+
+    if (!key.startsWith(`exports/${workspaceId}/${id}/`)) {
+      return reply.status(403).send({ error: "invalid_export_key" });
+    }
+
+    const listSvc = buildListService(app.db, osConfig(app.config));
+    if (!listSvc) return reply.status(503).send({ error: "database_unavailable" });
     const list = await listSvc.getListById(workspaceId, id);
     if (!list) return reply.status(404).send({ error: "list_not_found" });
 
-    const members = await listSvc.getMembers(workspaceId, id);
-    const enrichment = buildEnrichmentService(app.db, app.config);
-    const scores = members?.length
-      ? await enrichment.lookupScores(workspaceId, members.map((m) => m.prospectId))
-      : {};
-
-    const { filename, content } = buildListCsv(
-      list.name,
-      (members ?? []).map((m) => ({
-        prospectId: m.prospectId,
-        snapshot: m.snapshot,
-        score: scores[m.prospectId] ?? null,
-      }))
-    );
-
-    return reply
-      .header("Content-Type", "text/csv; charset=utf-8")
-      .header("Content-Disposition", `attachment; filename="${filename}"`)
-      .send(content);
+    try {
+      const content = await readListCsvExport(app.config, key);
+      const filename = key.split("/").pop() ?? "export.csv";
+      return reply
+        .header("Content-Type", "text/csv; charset=utf-8")
+        .header("Content-Disposition", `attachment; filename="${filename}"`)
+        .send(content);
+    } catch {
+      return reply.status(404).send({ error: "export_not_found" });
+    }
   });
 
   app.post("/lists/:id/export/hubspot", async (request, reply) => {

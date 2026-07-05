@@ -21,8 +21,9 @@ function osConfig(env: Env): OpenSearchConfig | null {
 
 
 const manualProspectSchema = z.object({
-  // Contact — fullName is the only required field
+  // Contact — fullName + companyDomain required per MVP Path B
   fullName: z.string().min(1),
+  companyDomain: z.string().min(1),
   jobTitle: z.string().optional(),
   email: z.string().email().optional(),
   phone: z.string().optional(),
@@ -35,7 +36,6 @@ const manualProspectSchema = z.object({
   previousCompany: z.string().optional(),
   // Company
   companyName: z.string().optional(),
-  companyDomain: z.string().optional(),
   industry: z.string().optional(),
   subIndustry: z.string().optional(),
   companyDescription: z.string().optional(),
@@ -59,6 +59,9 @@ const manualProspectSchema = z.object({
   hiringDepartments: z.array(z.string()).optional(),
   crmUsed: z.string().optional(),
   techStackKeywords: z.array(z.string()).optional(),
+  listId: z.string().uuid().optional(),
+  autoEnrich: z.boolean().optional().default(true),
+  enrichFields: z.array(z.enum(["company", "email", "validation", "phone"])).optional(),
 });
 
 const snapshotSchema = z.object({
@@ -96,11 +99,12 @@ const activateBodySchema = z.object({
 });
 
 export async function prospectRoutes(app: FastifyInstance) {
-  // Manual lead entry — indexes into OpenSearch only (no DB write).
+  // Manual lead entry — OpenSearch index + workspace activation + optional enrich/list add.
   app.post("/prospects/manual", async (request, reply) => {
     const body = manualProspectSchema.parse(request.body ?? {});
+    const workspaceId = request.workspaceId ?? "unknown";
 
-    const domain = normalizeDomain(body.companyDomain ?? "") || "unknown.com";
+    const domain = normalizeDomain(body.companyDomain);
     const companyId = generateCompanyId(domain);
     const prospectId = body.email
       ? generateProspectId(domain, body.email)
@@ -141,10 +145,69 @@ export async function prospectRoutes(app: FastifyInstance) {
 
     await bulkUpsertProspects(cfg, [doc]);
 
+    const snapshot = {
+      prospectId,
+      companyId,
+      fullName: body.fullName,
+      title: body.jobTitle,
+      seniority: body.seniority,
+      industry: body.industry,
+      country: body.country,
+      companyDomain: domain,
+      companyName: body.companyName,
+      email: body.email,
+      phone: body.phone,
+      linkedinUrl: body.linkedinUrl,
+      employeeCount: body.employeeCount,
+    };
+
+    const svc = buildEnrichmentService(app.db, app.config);
+    await svc.activate(workspaceId, [snapshot]);
+
+    if (body.listId) {
+      const added = await svc.addListMembers(workspaceId, body.listId, [snapshot]);
+      if (!added) {
+        return reply.status(404).send({ error: "list_not_found" });
+      }
+    }
+
+    let job: Awaited<ReturnType<typeof svc.enrichProspect>> | null = null;
+    if (body.autoEnrich) {
+      try {
+        job = await svc.enrichProspect(workspaceId, snapshot, {
+          fields: body.enrichFields ?? ["company", "email", "validation"],
+          trigger: "manual",
+        });
+      } catch (err) {
+        if (err instanceof InsufficientCreditsError) {
+          return reply.status(402).send({
+            error: "insufficient_credits",
+            required: err.required,
+            available: err.available,
+            prospectId,
+            companyId,
+            activated: true,
+          });
+        }
+        throw err;
+      }
+    }
+
     return reply.status(201).send({
       prospectId,
       companyId,
-      message: "Prospect added to search index",
+      message: job
+        ? "Prospect activated and enrichment started"
+        : "Prospect activated",
+      activated: true,
+      listId: body.listId ?? null,
+      ...(job
+        ? {
+            jobId: job.id,
+            jobStatus: job.status,
+            creditsUsed: job.creditsUsed,
+          }
+        : {}),
     });
   });
 

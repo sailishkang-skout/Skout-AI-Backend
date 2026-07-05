@@ -40,6 +40,7 @@ async function buildTestApp(env: Env): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
 
   app.decorate("config", env);
+  app.decorate("db", null);
 
   app.setErrorHandler((error, _req, reply) => {
     if (error instanceof ZodError) {
@@ -82,7 +83,7 @@ describe("POST /prospects/manual", () => {
       const res = await app.inject({
         method: "POST",
         url: "/prospects/manual",
-        payload: { fullName: "Jane Smith" },
+        payload: { fullName: "Jane Smith", companyDomain: "acme.com" },
       });
       expect(res.statusCode).toBe(503);
       expect(res.json().error).toBe("Search index not configured");
@@ -105,7 +106,8 @@ describe("POST /prospects/manual", () => {
       const body = res.json();
       expect(body).toHaveProperty("prospectId");
       expect(body).toHaveProperty("companyId");
-      expect(body.message).toBe("Prospect added to search index");
+      expect(body.message).toMatch(/activated/i);
+      expect(body.activated).toBe(true);
     });
 
     it("calls bulkUpsertProspects with the correct document", async () => {
@@ -180,15 +182,13 @@ describe("POST /prospects/manual", () => {
       expect(res1.json().prospectId).toBe(res2.json().prospectId);
     });
 
-    it("uses unknown.com as domain fallback when companyDomain is omitted", async () => {
+    it("returns 400 when companyDomain is omitted", async () => {
       const res = await app.inject({
         method: "POST",
         url: "/prospects/manual",
         payload: { fullName: "No Domain" },
       });
-      expect(res.statusCode).toBe(201);
-      const [, docs] = mockedUpsert.mock.calls[0];
-      expect(docs[0].companyDomain).toBe("unknown.com");
+      expect(res.statusCode).toBe(400);
     });
 
     it("passes all optional fields through to the OpenSearch document", async () => {
@@ -250,7 +250,7 @@ describe("POST /prospects/manual", () => {
       const res = await app.inject({
         method: "POST",
         url: "/prospects/manual",
-        payload: { fullName: "" },
+        payload: { fullName: "", companyDomain: "acme.com" },
       });
       expect(res.statusCode).toBe(400);
       expect(res.json().error).toBe("validation_error");
@@ -260,7 +260,7 @@ describe("POST /prospects/manual", () => {
       const res = await app.inject({
         method: "POST",
         url: "/prospects/manual",
-        payload: { fullName: "Jane", email: "not-an-email" },
+        payload: { fullName: "Jane", email: "not-an-email", companyDomain: "acme.com" },
       });
       expect(res.statusCode).toBe(400);
       expect(res.json().issues[0].path).toContain("email");
@@ -270,7 +270,7 @@ describe("POST /prospects/manual", () => {
       const res = await app.inject({
         method: "POST",
         url: "/prospects/manual",
-        payload: { fullName: "Jane", linkedinUrl: "not-a-url" },
+        payload: { fullName: "Jane", linkedinUrl: "not-a-url", companyDomain: "acme.com" },
       });
       expect(res.statusCode).toBe(400);
       expect(res.json().issues[0].path).toContain("linkedinUrl");
@@ -280,7 +280,7 @@ describe("POST /prospects/manual", () => {
       const res = await app.inject({
         method: "POST",
         url: "/prospects/manual",
-        payload: { fullName: "Jane", employeeCount: 0 },
+        payload: { fullName: "Jane", employeeCount: 0, companyDomain: "acme.com" },
       });
       expect(res.statusCode).toBe(400);
     });
@@ -289,7 +289,7 @@ describe("POST /prospects/manual", () => {
       const res = await app.inject({
         method: "POST",
         url: "/prospects/manual",
-        payload: { fullName: "Jane", yearsAtCompany: -1 },
+        payload: { fullName: "Jane", yearsAtCompany: -1, companyDomain: "acme.com" },
       });
       expect(res.statusCode).toBe(400);
     });
