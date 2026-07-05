@@ -7,6 +7,23 @@
     return /linkedin\.com\/in\//i.test(location.href) || /linkedin\.com\/pub\//i.test(location.href);
   }
 
+  function isSearchResultsPage() {
+    if (typeof globalThis.__SKOUT_IS_LINKEDIN_SEARCH__ === "function") {
+      return globalThis.__SKOUT_IS_LINKEDIN_SEARCH__();
+    }
+    return (
+      /linkedin\.com\/search\/results\/people/i.test(location.href) ||
+      /linkedin\.com\/sales\/search\/people/i.test(location.href)
+    );
+  }
+
+  function readSearchResults() {
+    if (typeof globalThis.__SKOUT_SCRAPE_LINKEDIN_SEARCH__ === "function") {
+      return globalThis.__SKOUT_SCRAPE_LINKEDIN_SEARCH__();
+    }
+    return { results: [], count: 0 };
+  }
+
   function readProfileFromLinkedIn() {
     if (typeof globalThis.__SKOUT_SCRAPE_LINKEDIN__ === "function") {
       return globalThis.__SKOUT_SCRAPE_LINKEDIN__();
@@ -86,6 +103,205 @@
     } catch {
       if (select) select.innerHTML = `<option value="">Sign in to Skout first</option>`;
     }
+  }
+
+  function createBulkPanel() {
+    const panel = document.createElement("aside");
+    panel.id = "skout-ai-bulk-panel";
+    panel.innerHTML = `
+      <style>
+        #skout-ai-bulk-panel {
+          position: fixed; top: 88px; right: 16px; z-index: 99999; width: 300px; max-height: 70vh;
+          display: flex; flex-direction: column;
+          background: #0f172a; color: #f8fafc; border: 1px solid #334155;
+          border-radius: 12px; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.35);
+          font-family: Inter, system-ui, sans-serif; padding: 14px;
+        }
+        #skout-ai-bulk-panel h2 { margin: 0; font-size: 14px; font-weight: 600; }
+        #skout-ai-bulk-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+        #skout-ai-bulk-close { background: transparent; border: 0; color: #94a3b8; cursor: pointer; font-size: 18px; }
+        #skout-ai-bulk-summary { margin: 0 0 8px; font-size: 12px; color: #cbd5e1; }
+        #skout-ai-bulk-panel label { display: block; font-size: 11px; color: #94a3b8; margin-bottom: 4px; }
+        #skout-ai-bulk-list-select {
+          width: 100%; box-sizing: border-box; margin-bottom: 8px; border-radius: 8px;
+          border: 1px solid #334155; padding: 7px 8px; font-size: 12px; background: #1e293b; color: #f8fafc;
+        }
+        #skout-ai-bulk-toolbar { display: flex; gap: 6px; margin-bottom: 8px; font-size: 11px; }
+        #skout-ai-bulk-toolbar button {
+          flex: 1; border: 1px solid #334155; border-radius: 6px; background: #1e293b; color: #e2e8f0;
+          padding: 4px 6px; cursor: pointer; font-size: 11px;
+        }
+        #skout-ai-bulk-rows {
+          overflow-y: auto; flex: 1; min-height: 120px; max-height: 240px;
+          border: 1px solid #334155; border-radius: 8px; padding: 6px; margin-bottom: 8px; background: #1e293b;
+        }
+        .skout-bulk-row { display: flex; gap: 8px; align-items: flex-start; padding: 4px 2px; font-size: 11px; }
+        .skout-bulk-row label { margin: 0; flex: 1; cursor: pointer; color: #e2e8f0; line-height: 1.35; }
+        .skout-bulk-row small { display: block; color: #94a3b8; font-size: 10px; margin-top: 2px; }
+        #skout-ai-bulk-add {
+          width: 100%; border: 0; border-radius: 8px; padding: 8px 10px; font-size: 12px; font-weight: 600;
+          cursor: pointer; background: #2563eb; color: white;
+        }
+        #skout-ai-bulk-add:disabled { opacity: 0.6; cursor: wait; }
+        #skout-ai-bulk-status { margin-top: 8px; font-size: 11px; color: #94a3b8; }
+      </style>
+      <div id="skout-ai-bulk-header">
+        <h2>Bulk capture</h2>
+        <button id="skout-ai-bulk-close" type="button" aria-label="Close">×</button>
+      </div>
+      <p id="skout-ai-bulk-summary">Scanning this page…</p>
+      <label for="skout-ai-bulk-list-select">Target list</label>
+      <select id="skout-ai-bulk-list-select"><option value="">Loading lists…</option></select>
+      <div id="skout-ai-bulk-toolbar">
+        <button id="skout-ai-bulk-select-all" type="button">Select all</button>
+        <button id="skout-ai-bulk-clear" type="button">Clear</button>
+        <button id="skout-ai-bulk-rescan" type="button">Rescan</button>
+      </div>
+      <div id="skout-ai-bulk-rows"></div>
+      <button id="skout-ai-bulk-add" type="button">Add selected to list</button>
+      <div id="skout-ai-bulk-status">Ready</div>
+    `;
+
+    panel.querySelector("#skout-ai-bulk-close")?.addEventListener("click", () => {
+      panel.remove();
+      sessionStorage.setItem("skout-ai-bulk-panel-hidden", "1");
+    });
+    panel.querySelector("#skout-ai-bulk-select-all")?.addEventListener("click", () => {
+      panel.querySelectorAll('.skout-bulk-row input[type="checkbox"]').forEach((cb) => {
+        cb.checked = true;
+      });
+      updateBulkSelectionSummary(panel);
+    });
+    panel.querySelector("#skout-ai-bulk-clear")?.addEventListener("click", () => {
+      panel.querySelectorAll('.skout-bulk-row input[type="checkbox"]').forEach((cb) => {
+        cb.checked = false;
+      });
+      updateBulkSelectionSummary(panel);
+    });
+    panel.querySelector("#skout-ai-bulk-rescan")?.addEventListener("click", () => renderBulkRows(panel));
+    panel.querySelector("#skout-ai-bulk-add")?.addEventListener("click", () => void onBulkAdd(panel));
+    panel.addEventListener("change", (event) => {
+      if (event.target?.matches('.skout-bulk-row input[type="checkbox"]')) {
+        updateBulkSelectionSummary(panel);
+      }
+    });
+
+    document.body.appendChild(panel);
+    void loadBulkLists(panel);
+    renderBulkRows(panel);
+    return panel;
+  }
+
+  function updateBulkSelectionSummary(panel) {
+    const total = panel.querySelectorAll('.skout-bulk-row input[type="checkbox"]').length;
+    const selected = panel.querySelectorAll('.skout-bulk-row input[type="checkbox"]:checked').length;
+    const summary = panel.querySelector("#skout-ai-bulk-summary");
+    if (summary) {
+      summary.textContent =
+        total > 0
+          ? `${selected} of ${total} visible on this page selected`
+          : "No profiles found on this page — scroll to load more, then Rescan.";
+    }
+    const addBtn = panel.querySelector("#skout-ai-bulk-add");
+    if (addBtn) addBtn.textContent = selected ? `Add ${selected} to list` : "Add selected to list";
+  }
+
+  function renderBulkRows(panel) {
+    const rowsEl = panel.querySelector("#skout-ai-bulk-rows");
+    if (!rowsEl) return;
+    const esc = (s) =>
+      String(s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+    const { results } = readSearchResults();
+    panel.__skoutBulkResults = results;
+    if (!results.length) {
+      rowsEl.innerHTML = `<p style="margin:0;font-size:11px;color:#94a3b8;">No profile cards detected. Open LinkedIn people search results and click Rescan.</p>`;
+      updateBulkSelectionSummary(panel);
+      return;
+    }
+    rowsEl.innerHTML = results
+      .map((profile, index) => {
+        const subtitle = [profile.title, profile.companyName].filter(Boolean).join(" @ ");
+        return `
+          <div class="skout-bulk-row">
+            <input type="checkbox" id="skout-bulk-${index}" data-index="${index}" checked />
+            <label for="skout-bulk-${index}">
+              ${esc(profile.fullName)}
+              ${subtitle ? `<small>${esc(subtitle)}</small>` : ""}
+            </label>
+          </div>`;
+      })
+      .join("");
+    updateBulkSelectionSummary(panel);
+  }
+
+  async function loadBulkLists(panel) {
+    const select = panel.querySelector("#skout-ai-bulk-list-select");
+    try {
+      const response = await safeRuntimeSend({ type: "get-lists" });
+      populateLists(select, response?.lists || [], response?.lastListId || "");
+    } catch {
+      if (select) select.innerHTML = `<option value="">Sign in to Skout first</option>`;
+    }
+  }
+
+  function getSelectedBulkProfiles(panel) {
+    const results = panel.__skoutBulkResults || [];
+    const selected = [];
+    panel.querySelectorAll('.skout-bulk-row input[type="checkbox"]:checked').forEach((cb) => {
+      const index = Number(cb.getAttribute("data-index"));
+      if (results[index]) selected.push(results[index]);
+    });
+    return selected;
+  }
+
+  function setBulkStatus(panel, message, isError = false) {
+    const status = panel.querySelector("#skout-ai-bulk-status");
+    if (!status) return;
+    status.textContent = message;
+    status.style.color = isError ? "#fca5a5" : "#94a3b8";
+  }
+
+  async function onBulkAdd(panel) {
+    const listId = panel.querySelector("#skout-ai-bulk-list-select")?.value;
+    const addBtn = panel.querySelector("#skout-ai-bulk-add");
+    if (!listId) {
+      setBulkStatus(panel, "Pick a list first.", true);
+      return;
+    }
+    const profiles = getSelectedBulkProfiles(panel);
+    if (!profiles.length) {
+      setBulkStatus(panel, "Select at least one profile.", true);
+      return;
+    }
+
+    addBtn.disabled = true;
+    setBulkStatus(panel, `Adding ${profiles.length}…`);
+
+    try {
+      await safeRuntimeSend({ type: "ping" }, 5_000).catch(() => undefined);
+      const result = await safeRuntimeSend(
+        { type: "bulk-add-to-list", listId, profiles },
+        120_000
+      );
+      if (!result?.ok) throw new Error(result?.error || "Bulk add failed");
+      setBulkStatus(
+        panel,
+        `Done — added ${result.added ?? 0}, skipped ${result.skipped ?? 0}${result.failed ? `, failed ${result.failed}` : ""}.`
+      );
+      safeRuntimeSend({ type: "save-last-list", listId }).catch(() => undefined);
+    } catch (error) {
+      setBulkStatus(panel, error instanceof Error ? error.message : "Bulk add failed", true);
+    } finally {
+      addBtn.disabled = false;
+      updateBulkSelectionSummary(panel);
+    }
+  }
+
+  function ensureBulkPanel() {
+    let panel = document.getElementById("skout-ai-bulk-panel");
+    if (!panel) panel = createBulkPanel();
+    else renderBulkRows(panel);
+    return panel;
   }
 
   function createPanel() {
@@ -176,11 +392,17 @@
   }
 
   function boot() {
-    if (sessionStorage.getItem("skout-ai-panel-hidden") === "1") return;
-    if (!isProfilePage()) {
-      document.getElementById("skout-ai-panel")?.remove();
+    document.getElementById("skout-ai-panel")?.remove();
+    document.getElementById("skout-ai-bulk-panel")?.remove();
+
+    if (isSearchResultsPage()) {
+      if (sessionStorage.getItem("skout-ai-bulk-panel-hidden") === "1") return;
+      ensureBulkPanel();
       return;
     }
+
+    if (sessionStorage.getItem("skout-ai-panel-hidden") === "1") return;
+    if (!isProfilePage()) return;
     ensurePanel();
   }
 
@@ -282,6 +504,13 @@
 
   let lastSummaryKey = "";
   setInterval(() => {
+    if (isSearchResultsPage()) {
+      const bulkPanel = document.getElementById("skout-ai-bulk-panel");
+      if (bulkPanel && sessionStorage.getItem("skout-ai-bulk-panel-hidden") !== "1") {
+        renderBulkRows(bulkPanel);
+      }
+      return;
+    }
     if (sessionStorage.getItem("skout-ai-panel-hidden") === "1" || !isProfilePage()) return;
     const panel = document.getElementById("skout-ai-panel");
     if (!panel) return;

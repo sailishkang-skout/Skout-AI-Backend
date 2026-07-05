@@ -1,6 +1,6 @@
 import { saveAuthToken, getStoredAuth, ensureSession, proactiveAuthRefresh } from "./auth.js";
 import { readLinkedInProfile, injectLinkedInBridge } from "./linkedin-profile.js";
-import { activateProspect, addProspectToList, enrichProspect, scoreProspect } from "./api.js";
+import { activateProspect, addProspectToList, activateProspects, addProspectBatchToList, getListMemberIds, enrichProspect, scoreProspect, resolveProspectId } from "./api.js";
 import { friendlyTabError, isUsableTab, isUsableTabUrl, nameFromLinkedInUrl } from "./tab-utils.js";
 import { getLists, prefetchLists, saveLastListId, getLastListId } from "./lists-cache.js";
 import { log, logError, timeStep, withTimeout } from "./debug.js";
@@ -14,6 +14,8 @@ import {
 
 const LINKEDIN_PATTERNS = ["https://www.linkedin.com/*", "https://linkedin.com/*"];
 const HANDLER_TIMEOUT_MS = 30_000;
+const BULK_HANDLER_TIMEOUT_MS = 120_000;
+const BULK_CHUNK_SIZE = 25;
 
 function isLinkedInUrl(url) {
   return Boolean(url?.includes("linkedin.com"));
@@ -121,7 +123,7 @@ async function resolveProfile(message) {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "ping") {
-    sendResponse({ ok: true, version: "0.6.2" });
+    sendResponse({ ok: true, version: "0.7.0" });
     return true;
   }
 
@@ -267,6 +269,81 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "bulk-add-to-list") {
+    void (async () => {
+      const t0 = Date.now();
+      const profiles = Array.isArray(message.profiles) ? message.profiles : [];
+      log("bulk-add-to-list START", { listId: message.listId, count: profiles.length });
+      try {
+        const summary = await withTimeout(
+          (async () => {
+            const listId = message.listId;
+            if (!listId) throw new Error("Pick a list first.");
+            if (!profiles.length) throw new Error("No profiles selected.");
+
+            const existingIds = await timeStep("getListMemberIds", () => getListMemberIds(listId));
+            const results = [];
+            let added = 0;
+            let skipped = 0;
+            let failed = 0;
+
+            for (let i = 0; i < profiles.length; i += BULK_CHUNK_SIZE) {
+              const chunk = profiles.slice(i, i + BULK_CHUNK_SIZE);
+              const toProcess = [];
+              for (const profile of chunk) {
+                const prospectId = await resolveProspectId({
+                  ...profile,
+                  companyName: profile.companyName || "linkedin",
+                });
+                if (existingIds.has(prospectId)) {
+                  skipped += 1;
+                  results.push({ linkedinUrl: profile.linkedinUrl, status: "skipped", reason: "already_in_list" });
+                  continue;
+                }
+                toProcess.push(profile);
+              }
+              if (!toProcess.length) continue;
+
+              try {
+                await timeStep("activateProspects", () => activateProspects(toProcess));
+                await timeStep("addProspectBatchToList", () => addProspectBatchToList(listId, toProcess));
+                for (const profile of toProcess) {
+                  const prospectId = await resolveProspectId({
+                    ...profile,
+                    companyName: profile.companyName || "linkedin",
+                  });
+                  existingIds.add(prospectId);
+                  added += 1;
+                  results.push({ linkedinUrl: profile.linkedinUrl, status: "added" });
+                }
+              } catch (error) {
+                failed += toProcess.length;
+                const msg = error instanceof Error ? error.message : "Batch failed";
+                for (const profile of toProcess) {
+                  results.push({ linkedinUrl: profile.linkedinUrl, status: "failed", error: msg });
+                }
+              }
+            }
+
+            await saveLastListId(listId);
+            return { added, skipped, failed, results };
+          })(),
+          BULK_HANDLER_TIMEOUT_MS,
+          "Bulk add timed out — try fewer profiles or check your Skout session."
+        );
+        log(`bulk-add-to-list DONE (${Date.now() - t0}ms)`, summary);
+        sendResponse({ ok: true, ...summary });
+      } catch (error) {
+        logError(`bulk-add-to-list FAILED (${Date.now() - t0}ms):`, error);
+        sendResponse({
+          ok: false,
+          error: friendlyTabError(error instanceof Error ? error.message : "Bulk add failed"),
+        });
+      }
+    })();
+    return true;
+  }
+
   if (message.type === "score-profile") {
     void (async () => {
       const t0 = Date.now();
@@ -308,7 +385,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 chrome.runtime.onMessageExternal.addListener((message, _sender, sendResponse) => {
   if (message.type === "ping") {
-    sendResponse({ ok: true, version: "0.6.2" });
+    sendResponse({ ok: true, version: "0.7.0" });
     return true;
   }
 

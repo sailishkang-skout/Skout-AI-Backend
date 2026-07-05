@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Skout AI Prospector",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "description": "Capture LinkedIn profiles into Skout lists and enrich contacts without leaving the browser.",
   "permissions": ["storage", "activeTab", "scripting", "webNavigation", "sidePanel", "tabs", "alarms"],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
@@ -36,7 +36,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.linkedin.com/*", "https://linkedin.com/*"],
-      "js": ["linkedin-scrape.js", "linkedin-bridge.js", "content-script.js"],
+      "js": ["linkedin-scrape.js", "linkedin-search-scrape.js", "linkedin-bridge.js", "content-script.js"],
       "run_at": "document_idle"
     },
     {

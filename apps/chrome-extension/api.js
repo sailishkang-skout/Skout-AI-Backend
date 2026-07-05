@@ -268,6 +268,42 @@ export async function activateProspect(profile) {
   return resolveProspectId({ ...profile, companyName: profile.companyName || "linkedin" });
 }
 
+export async function activateProspects(profiles) {
+  if (!profiles?.length) return [];
+  const prospects = profiles.map((profile) => buildProspectFields(profile));
+  await skoutFetch("/api/v1/prospects/activate", {
+    method: "POST",
+    body: JSON.stringify({ prospects }),
+  });
+  return Promise.all(
+    profiles.map((profile) =>
+      resolveProspectId({ ...profile, companyName: profile.companyName || "linkedin" })
+    )
+  );
+}
+
+export async function getListMemberIds(listId) {
+  const members = await skoutFetch(`/api/v1/lists/${listId}/members`);
+  if (!Array.isArray(members)) return new Set();
+  return new Set(members.map((m) => m.prospectId));
+}
+
+export async function addProspectBatchToList(listId, profiles) {
+  const prospects = await Promise.all(
+    profiles.map(async (profile) => {
+      const fields = buildProspectFields(profile);
+      const prospectId = await resolveProspectId(profile);
+      const entry = { prospectId, ...fields };
+      if (!entry.linkedinUrl) delete entry.linkedinUrl;
+      return entry;
+    })
+  );
+  return skoutFetch(`/api/v1/lists/${listId}/members`, {
+    method: "POST",
+    body: JSON.stringify({ prospects }),
+  });
+}
+
 export async function addProspectsToList(listId, prospectIds) {
   return skoutFetch(`/api/v1/lists/${listId}/members`, {
     method: "POST",
