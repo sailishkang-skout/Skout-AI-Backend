@@ -134,6 +134,31 @@ export async function listThreads(db: Db, workspaceId: string) {
   return { workspaceId, data, total: data.length };
 }
 
+export async function createInbox(
+  db: Db,
+  workspaceId: string,
+  data: {
+    emailAddress: string;
+    displayName?: string;
+    provider?: string;
+    dailySendLimit?: number;
+    sendingDomainId?: string;
+  }
+) {
+  const [row] = await db
+    .insert(inboxes)
+    .values({
+      workspaceId,
+      emailAddress: data.emailAddress,
+      displayName: data.displayName,
+      provider: data.provider ?? "smtp",
+      dailySendLimit: data.dailySendLimit ?? 50,
+      sendingDomainId: data.sendingDomainId ?? null,
+    })
+    .returning();
+  return row;
+}
+
 export async function listDomains(db: Db, workspaceId: string) {
   const data = await db
     .select()
