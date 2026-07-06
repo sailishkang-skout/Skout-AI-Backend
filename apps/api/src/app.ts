@@ -61,6 +61,13 @@ export async function buildApp(config: Env) {
     }
   );
 
+  // Catch-all parser for requests with no Content-Type (e.g. DELETE with no body).
+  // Without this, Fastify returns 415 for any request whose content type doesn't
+  // match the application/json parser registered above.
+  app.addContentTypeParser("*", { parseAs: "string", bodyLimit: config.REQUEST_BODY_LIMIT_BYTES }, (_request, body, done) => {
+    done(null, body || {});
+  });
+
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof ZodError) {
       return reply.code(400).send(
