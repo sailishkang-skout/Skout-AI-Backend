@@ -78,6 +78,8 @@ const listThreadsQuerySchema = z.object({
     .string()
     .optional()
     .transform((v) => v === "true" || v === "1"),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
 });
 
 export async function inboxRoutes(app: FastifyInstance) {
@@ -186,11 +188,13 @@ export async function inboxRoutes(app: FastifyInstance) {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = buildInboxService(db, app.config);
     if (!svc) return reply.send({ workspaceId, data: [], total: 0 });
-    const { status, unread } = listThreadsQuerySchema.parse(request.query ?? {});
+    const { status, unread, limit, offset } = listThreadsQuerySchema.parse(request.query ?? {});
     return reply.send(
       await svc.listThreads(workspaceId, {
         status: status as ThreadStatus | undefined,
         unreadOnly: unread,
+        limit,
+        offset,
       })
     );
   });

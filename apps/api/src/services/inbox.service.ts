@@ -240,7 +240,7 @@ export class InboxService {
 
   async listThreads(
     workspaceId: string,
-    options: { status?: ThreadStatus; unreadOnly?: boolean } = {}
+    options: { status?: ThreadStatus; unreadOnly?: boolean; limit?: number; offset?: number } = {}
   ) {
     const conditions = [eq(inboxThreads.workspaceId, workspaceId)];
 
@@ -251,12 +251,57 @@ export class InboxService {
       conditions.push(gt(inboxThreads.unreadCount, 0));
     }
 
-    const data = await this.db
-      .select()
+    const limit = Math.min(options.limit ?? 50, 200);
+    const offset = options.offset ?? 0;
+    const where = and(...conditions);
+
+    const [{ total }] = await this.db.select({ total: count() }).from(inboxThreads).where(where);
+
+    const rows = await this.db
+      .select({
+        thread: inboxThreads,
+        prospectSnapshot: prospectActivations.snapshot,
+        icpScore: prospectScores.score,
+        icpBand: prospectScores.priority,
+      })
       .from(inboxThreads)
-      .where(and(...conditions))
-      .orderBy(sql`${inboxThreads.lastMessageAt} DESC NULLS LAST`);
-    return { workspaceId, data, total: data.length };
+      .leftJoin(
+        prospectActivations,
+        and(
+          eq(prospectActivations.workspaceId, inboxThreads.workspaceId),
+          eq(prospectActivations.prospectId, inboxThreads.prospectId as any)
+        )
+      )
+      .leftJoin(
+        prospectScores,
+        and(
+          eq(prospectScores.workspaceId, inboxThreads.workspaceId),
+          eq(prospectScores.prospectId, inboxThreads.prospectId as any)
+        )
+      )
+      .where(where)
+      .orderBy(desc(inboxThreads.updatedAt))
+      .limit(limit)
+      .offset(offset);
+
+    const data = rows.map(({ thread, prospectSnapshot, icpScore, icpBand }) => {
+      const snap = prospectSnapshot as Record<string, unknown> | null;
+      return {
+        ...thread,
+        prospect: snap
+          ? {
+              fullName: snap.fullName as string | undefined,
+              companyDomain: snap.companyDomain as string | undefined,
+              companyName: snap.companyName as string | undefined,
+              title: snap.title as string | undefined,
+              icpScore: icpScore ?? undefined,
+              icpBand: icpBand ?? undefined,
+            }
+          : null,
+      };
+    });
+
+    return { workspaceId, data, total, limit, offset };
   }
 
   async getThread(workspaceId: string, threadId: string) {

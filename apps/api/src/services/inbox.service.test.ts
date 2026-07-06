@@ -27,6 +27,24 @@ function selectChain(result: unknown[]) {
   return c;
 }
 
+function countChain(result: unknown[]) {
+  const c = {} as Record<string, ReturnType<typeof vi.fn>>;
+  c.from = vi.fn().mockReturnValue(c);
+  c.where = vi.fn().mockResolvedValue(result);
+  return c;
+}
+
+function threadDataChain(result: unknown[]) {
+  const c = {} as Record<string, ReturnType<typeof vi.fn>>;
+  c.from = vi.fn().mockReturnValue(c);
+  c.leftJoin = vi.fn().mockReturnValue(c);
+  c.where = vi.fn().mockReturnValue(c);
+  c.orderBy = vi.fn().mockReturnValue(c);
+  c.limit = vi.fn().mockReturnValue(c);
+  c.offset = vi.fn().mockResolvedValue(result);
+  return c;
+}
+
 function selectChainWithLimit(result: unknown[]) {
   const c = {} as Record<string, ReturnType<typeof vi.fn>>;
   c.from = vi.fn().mockReturnValue(c);
@@ -161,13 +179,23 @@ describe("InboxService", () => {
   });
 
   describe("listThreads", () => {
-    it("returns threads for the workspace", async () => {
-      const rows = [{ id: "thread-1", workspaceId: "ws-1" }];
-      const db = { select: vi.fn().mockReturnValue(selectChain(rows)) } as any;
+    it("returns threads for the workspace with pagination metadata", async () => {
+      const thread = { id: "thread-1", workspaceId: "ws-1", prospectId: null };
+      const db = {
+        select: vi.fn()
+          .mockReturnValueOnce(countChain([{ total: 1 }]))
+          .mockReturnValueOnce(threadDataChain([{ thread, prospectSnapshot: null, icpScore: null, icpBand: null }])),
+      } as any;
       const svc = new InboxService(db, config);
 
       const result = await svc.listThreads("ws-1");
-      expect(result).toEqual({ workspaceId: "ws-1", data: rows, total: 1 });
+      expect(result.workspaceId).toBe("ws-1");
+      expect(result.total).toBe(1);
+      expect(result.limit).toBe(50);
+      expect(result.offset).toBe(0);
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0]!.id).toBe("thread-1");
+      expect((result.data[0] as any).prospect).toBeNull();
     });
   });
 });
