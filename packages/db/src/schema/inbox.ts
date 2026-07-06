@@ -1,5 +1,6 @@
 import { boolean, integer, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { workspaces } from "./workspaces.js";
+import { sequenceEnrollments } from "./sequences.js";
 
 export const sendingDomains = pgTable(
   "sending_domains",
@@ -39,6 +40,10 @@ export const inboxes = pgTable(
     smtpUsername: text("smtp_username"),
     smtpPasswordEncrypted: text("smtp_password_encrypted"),
     smtpSecure: boolean("smtp_secure").notNull().default(true),
+    // IMAP inbound polling config (reuses SMTP username/password)
+    imapHost: text("imap_host"),
+    imapPort: integer("imap_port"),
+    imapLastPolledAt: timestamp("imap_last_polled_at", { withTimezone: true }),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     sentCount: integer("sent_count").notNull().default(0),
     bounceCount: integer("bounce_count").notNull().default(0),
@@ -57,8 +62,13 @@ export const inboxThreads = pgTable("inbox_threads", {
   inboxId: uuid("inbox_id")
     .notNull()
     .references(() => inboxes.id, { onDelete: "cascade" }),
+  // Link back to the sequence enrollment that originated this thread (nullable for cold inbound)
+  enrollmentId: uuid("enrollment_id").references(() => sequenceEnrollments.id, {
+    onDelete: "set null",
+  }),
   prospectId: text("prospect_id"),
   subject: text("subject").notNull(),
+  // 'open' | 'replied' | 'bounced' | 'archived'
   status: text("status").notNull().default("open"),
   lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -70,12 +80,22 @@ export const inboxMessages = pgTable("inbox_messages", {
   threadId: uuid("thread_id")
     .notNull()
     .references(() => inboxThreads.id, { onDelete: "cascade" }),
+  // 'outbound' | 'inbound'
   direction: text("direction").notNull(),
   fromAddress: text("from_address").notNull(),
   toAddress: text("to_address").notNull(),
   subject: text("subject"),
   bodyText: text("body_text"),
   bodyHtml: text("body_html"),
+  // Provider's internal message ID (Gmail API id, Graph API id, nodemailer messageId)
   externalId: text("external_id"),
+  // RFC 5322 Message-ID header (with angle brackets, e.g. <abc@smtp.example.com>)
+  messageId: text("message_id"),
+  // RFC 5322 In-Reply-To header — parent message ID
+  inReplyTo: text("in_reply_to"),
+  // RFC 5322 References header — space-separated chain of ancestor message IDs
+  referencesHeader: text("references_header"),
+  // 'human' | 'bounce' | 'auto_reply' — null for outbound
+  classification: text("classification"),
   sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
 });

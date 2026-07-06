@@ -7,6 +7,7 @@ import { startCrmExportWorker } from "./workers/crm-export.worker.js";
 import { startListScoreWorker } from "./workers/list-score.worker.js";
 import { startWorkspaceRescoreWorker } from "./workers/workspace-rescore.worker.js";
 import { startSequenceEnrollmentWorker } from "./workers/sequence-enrollment.worker.js";
+import { startImapPollWorker } from "./workers/imap-poll.worker.js";
 
 async function main() {
   const config = loadEnv();
@@ -32,10 +33,12 @@ async function main() {
   const stopListScoreWorker = await startListScoreWorker(config);
   const stopWorkspaceRescoreWorker = await startWorkspaceRescoreWorker(config);
   const stopSeqWorker = await startSequenceEnrollmentWorker(config);
+  const stopImapPollWorker = await startImapPollWorker(config);
 
   const app = await buildApp(config);
 
   const shutdown = async () => {
+    await stopImapPollWorker();
     await stopSeqWorker();
     await stopWorkspaceRescoreWorker();
     await stopListScoreWorker();
