@@ -1,6 +1,13 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 // Hoisted mocks — must appear before any imports that transitively load these modules
+vi.mock("../lib/redis.js", () => ({
+  isRedisAvailable: vi.fn().mockResolvedValue(true),
+  redisBullMqConnection: vi.fn().mockReturnValue({ host: "localhost", port: 6379 }),
+  getRedis: vi.fn().mockReturnValue(null),
+  closeRedis: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("bullmq", () => ({
   Worker: vi.fn().mockImplementation(() => ({
     on: vi.fn(),

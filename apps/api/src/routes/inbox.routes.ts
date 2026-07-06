@@ -189,14 +189,19 @@ export async function inboxRoutes(app: FastifyInstance) {
     const svc = buildInboxService(db, app.config);
     if (!svc) return reply.send({ workspaceId, data: [], total: 0 });
     const { status, unread, limit, offset } = listThreadsQuerySchema.parse(request.query ?? {});
-    return reply.send(
-      await svc.listThreads(workspaceId, {
-        status: status as ThreadStatus | undefined,
-        unreadOnly: unread,
-        limit,
-        offset,
-      })
-    );
+    try {
+      return reply.send(
+        await svc.listThreads(workspaceId, {
+          status: status as ThreadStatus | undefined,
+          unreadOnly: unread,
+          limit,
+          offset,
+        })
+      );
+    } catch (err) {
+      if (err instanceof HttpError) return reply.status(err.statusCode).send({ error: err.message });
+      throw err;
+    }
   });
 
   // GET /inbox/unread-counts — workspace unread badge counts by status

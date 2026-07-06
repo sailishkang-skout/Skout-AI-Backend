@@ -425,7 +425,7 @@ export class InboxService {
     const now = new Date();
     const [updated] = await this.db
       .update(inboxThreads)
-      .set({ status: targetStatus, updatedAt: now })
+      .set({ status: targetStatus, statusChangedAt: now, updatedAt: now })
       .where(and(eq(inboxThreads.workspaceId, workspaceId), eq(inboxThreads.id, threadId)))
       .returning();
     return updated!;
