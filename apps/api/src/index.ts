@@ -8,6 +8,7 @@ import { startListScoreWorker } from "./workers/list-score.worker.js";
 import { startWorkspaceRescoreWorker } from "./workers/workspace-rescore.worker.js";
 import { startSequenceEnrollmentWorker } from "./workers/sequence-enrollment.worker.js";
 import { startImapPollWorker } from "./workers/imap-poll.worker.js";
+import { startReplyTagWorker } from "./workers/reply-tag.worker.js";
 
 async function main() {
   const config = loadEnv();
@@ -34,10 +35,12 @@ async function main() {
   const stopWorkspaceRescoreWorker = await startWorkspaceRescoreWorker(config);
   const stopSeqWorker = await startSequenceEnrollmentWorker(config);
   const stopImapPollWorker = await startImapPollWorker(config);
+  const stopReplyTagWorker = await startReplyTagWorker(config);
 
   const app = await buildApp(config);
 
   const shutdown = async () => {
+    await stopReplyTagWorker();
     await stopImapPollWorker();
     await stopSeqWorker();
     await stopWorkspaceRescoreWorker();

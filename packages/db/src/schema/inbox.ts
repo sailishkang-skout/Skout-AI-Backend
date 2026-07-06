@@ -68,8 +68,15 @@ export const inboxThreads = pgTable("inbox_threads", {
   }),
   prospectId: text("prospect_id"),
   subject: text("subject").notNull(),
-  // 'open' | 'replied' | 'bounced' | 'archived'
-  status: text("status").notNull().default("open"),
+  // 'new' | 'replied' | 'bounced' | 'meeting_booked' | 'closed'
+  status: text("status").notNull().default("new"),
+  // Timestamp of the most recent status change (set whenever status transitions)
+  statusChangedAt: timestamp("status_changed_at", { withTimezone: true }),
+  // Count of unread inbound messages (human replies) in this thread; 0 = all read
+  unreadCount: integer("unread_count").notNull().default(0),
+  // AI-tagged intent/sentiment of the latest human reply; null until tagged
+  // 'positive' | 'negative' | 'neutral' | 'question' | 'meeting_request' | 'unsubscribe' | 'other'
+  replyTag: text("reply_tag"),
   lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

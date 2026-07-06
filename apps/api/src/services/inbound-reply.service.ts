@@ -1,6 +1,8 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
+import type { Env } from "../config/env.js";
+import { getReplyTagQueue } from "../workers/reply-tag.queue.js";
 
 const log = createLogger("inbound-reply.service");
 
@@ -112,17 +114,18 @@ export function extractParentMessageIds(inReplyTo?: string, references?: string)
  * Ingest one inbound email message.
  * - Deduplicates on messageId to handle repeated IMAP polls.
  * - Matches thread via RFC 5322 In-Reply-To / References headers.
- * - Creates a new thread if no match found (cold inbound).
+ * - Creates a new thread (status='new') if no match found (cold inbound).
  * - Classifies as human / bounce / auto_reply and acts accordingly:
- *   - human  → marks thread replied + pauses linked enrollment
- *   - bounce → marks thread bounced + adds email to suppressions + pauses enrollment
- *   - auto_reply → appends message but takes no enrollment action
+ *   - human     → status='replied', unreadCount++, enrollments paused, enqueues AI tagging
+ *   - bounce    → status='bounced', suppresses email, enrollment stopped
+ *   - auto_reply → appends message, no status or enrollment change
  */
 export async function ingestInboundMessage(
   db: DbClient,
   workspaceId: string,
   inboxId: string,
-  payload: InboundMessagePayload
+  payload: InboundMessagePayload,
+  config?: Pick<Env, "REDIS_URL" | "OPENAI_API_KEY">
 ): Promise<void> {
   // Deduplicate: skip if we've already stored this RFC 5322 message
   if (payload.messageId) {
@@ -176,6 +179,8 @@ export async function ingestInboundMessage(
   const normalizedMessageId = payload.messageId ? normalizeMessageId(payload.messageId) : null;
   const now = new Date();
 
+  let insertedMessageId: string | null = null;
+
   await db.transaction(async (tx) => {
     if (!threadId) {
       // Cold inbound or unresolved thread — create a new one
@@ -186,27 +191,32 @@ export async function ingestInboundMessage(
           inboxId,
           prospectId,
           subject: payload.subject ?? "(no subject)",
-          status: "open",
+          status: "new",
+          statusChangedAt: now,
           lastMessageAt: payload.sentAt,
         })
         .returning();
       threadId = newThread!.id;
     }
 
-    await tx.insert(inboxMessages).values({
-      threadId,
-      direction: "inbound",
-      fromAddress: payload.fromAddress,
-      toAddress: payload.toAddress,
-      subject: payload.subject,
-      bodyText: payload.bodyText,
-      bodyHtml: payload.bodyHtml,
-      messageId: normalizedMessageId,
-      inReplyTo: payload.inReplyTo,
-      referencesHeader: payload.references,
-      classification,
-      sentAt: payload.sentAt,
-    });
+    const [inserted] = await tx
+      .insert(inboxMessages)
+      .values({
+        threadId,
+        direction: "inbound",
+        fromAddress: payload.fromAddress,
+        toAddress: payload.toAddress,
+        subject: payload.subject,
+        bodyText: payload.bodyText,
+        bodyHtml: payload.bodyHtml,
+        messageId: normalizedMessageId,
+        inReplyTo: payload.inReplyTo,
+        referencesHeader: payload.references,
+        classification,
+        sentAt: payload.sentAt,
+      })
+      .returning({ id: inboxMessages.id });
+    insertedMessageId = inserted!.id;
 
     const newThreadStatus =
       classification === "bounce" ? "bounced" : classification === "human" ? "replied" : null;
@@ -216,7 +226,13 @@ export async function ingestInboundMessage(
       .set({
         lastMessageAt: payload.sentAt,
         updatedAt: now,
-        ...(newThreadStatus ? { status: newThreadStatus } : {}),
+        ...(newThreadStatus
+          ? { status: newThreadStatus, statusChangedAt: now }
+          : {}),
+        // Increment unread counter for human replies
+        ...(classification === "human"
+          ? { unreadCount: sql`${inboxThreads.unreadCount} + 1` }
+          : {}),
       })
       .where(eq(inboxThreads.id, threadId!));
 
@@ -272,6 +288,27 @@ export async function ingestInboundMessage(
         .onConflictDoNothing();
     }
   });
+
+  // Enqueue async AI tagging for human replies (fire-and-forget; graceful when no key)
+  if (
+    classification === "human" &&
+    threadId &&
+    payload.bodyText &&
+    config?.REDIS_URL &&
+    config?.OPENAI_API_KEY
+  ) {
+    try {
+      const q = getReplyTagQueue(config as Parameters<typeof getReplyTagQueue>[0]);
+      await q.add("tag-reply", {
+        threadId: threadId!,
+        messageId: insertedMessageId ?? "",
+        workspaceId,
+        bodyText: payload.bodyText,
+      });
+    } catch (err) {
+      log.warn("Failed to enqueue reply-tag job — tagging skipped", { threadId, err });
+    }
+  }
 
   log.info("Inbound message ingested", {
     workspaceId,

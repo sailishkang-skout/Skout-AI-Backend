@@ -238,11 +238,23 @@ export class InboxService {
     return row ? toPublicInbox(row) : null;
   }
 
-  async listThreads(workspaceId: string) {
+  async listThreads(
+    workspaceId: string,
+    options: { status?: ThreadStatus; unreadOnly?: boolean } = {}
+  ) {
+    const conditions = [eq(inboxThreads.workspaceId, workspaceId)];
+
+    if (options.status) {
+      conditions.push(eq(inboxThreads.status, options.status));
+    }
+    if (options.unreadOnly) {
+      conditions.push(gt(inboxThreads.unreadCount, 0));
+    }
+
     const data = await this.db
       .select()
       .from(inboxThreads)
-      .where(eq(inboxThreads.workspaceId, workspaceId))
+      .where(and(...conditions))
       .orderBy(sql`${inboxThreads.lastMessageAt} DESC NULLS LAST`);
     return { workspaceId, data, total: data.length };
   }
@@ -353,7 +365,7 @@ export class InboxService {
     await this.getThread(workspaceId, threadId);
     await this.db
       .update(inboxThreads)
-      .set({ updatedAt: new Date() })
+      .set({ unreadCount: 0, updatedAt: new Date() })
       .where(and(eq(inboxThreads.workspaceId, workspaceId), eq(inboxThreads.id, threadId)));
     return { ok: true };
   }

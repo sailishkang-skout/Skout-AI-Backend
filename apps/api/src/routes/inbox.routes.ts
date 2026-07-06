@@ -10,7 +10,6 @@ import {
   pauseInbox,
   resumeInbox,
   deleteInbox,
-  listThreads,
   listDomains,
   buildInboxService,
 } from "../services/inbox.service.js";
@@ -71,6 +70,14 @@ const threadStatusTransitionSchema = z.object({
 const replySchema = z.object({
   text: z.string().min(1),
   html: z.string().optional(),
+});
+
+const listThreadsQuerySchema = z.object({
+  status: z.enum(THREAD_STATUSES).optional(),
+  unread: z
+    .string()
+    .optional()
+    .transform((v) => v === "true" || v === "1"),
 });
 
 export async function inboxRoutes(app: FastifyInstance) {
@@ -174,11 +181,26 @@ export async function inboxRoutes(app: FastifyInstance) {
     return reply.send(await listDomains(db, workspaceId));
   });
 
-  // GET /inbox/threads
+  // GET /inbox/threads — filterable by ?status=&unread=true
   app.get("/inbox/threads", async (request, reply) => {
     const workspaceId = request.workspaceId ?? "unknown";
-    if (!db) return reply.send({ workspaceId, data: [], total: 0 });
-    return reply.send(await listThreads(db, workspaceId));
+    const svc = buildInboxService(db, app.config);
+    if (!svc) return reply.send({ workspaceId, data: [], total: 0 });
+    const { status, unread } = listThreadsQuerySchema.parse(request.query ?? {});
+    return reply.send(
+      await svc.listThreads(workspaceId, {
+        status: status as ThreadStatus | undefined,
+        unreadOnly: unread,
+      })
+    );
+  });
+
+  // GET /inbox/unread-counts — workspace unread badge counts by status
+  app.get("/inbox/unread-counts", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = buildInboxService(db, app.config);
+    if (!svc) return reply.send({ workspaceId, total: 0, byStatus: {} });
+    return reply.send(await svc.getUnreadCounts(workspaceId));
   });
 
   // GET /inbox/threads/:threadId
@@ -223,6 +245,20 @@ export async function inboxRoutes(app: FastifyInstance) {
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     try {
       return reply.send(await svc.getThreadContext(workspaceId, threadId));
+    } catch (err) {
+      if (err instanceof HttpError) return reply.status(err.statusCode).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  // POST /inbox/threads/:threadId/read — mark all messages as read
+  app.post("/inbox/threads/:threadId/read", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const { threadId } = request.params as { threadId: string };
+    const svc = buildInboxService(db, app.config);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    try {
+      return reply.send(await svc.markThreadRead(workspaceId, threadId));
     } catch (err) {
       if (err instanceof HttpError) return reply.status(err.statusCode).send({ error: err.message });
       throw err;
