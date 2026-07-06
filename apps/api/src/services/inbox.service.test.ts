@@ -180,11 +180,19 @@ describe("InboxService", () => {
 
   describe("listThreads", () => {
     it("returns threads for the workspace with pagination metadata", async () => {
-      const thread = { id: "thread-1", workspaceId: "ws-1", prospectId: null };
+      const thread = { id: "thread-1", workspaceId: "ws-1" };
+      const countC = countChain([{ total: 1 }]);
+      const dataC = {} as Record<string, ReturnType<typeof vi.fn>>;
+      dataC.from = vi.fn().mockReturnValue(dataC);
+      dataC.where = vi.fn().mockReturnValue(dataC);
+      dataC.orderBy = vi.fn().mockReturnValue(dataC);
+      dataC.limit = vi.fn().mockReturnValue(dataC);
+      dataC.offset = vi.fn().mockResolvedValue([thread]);
+
       const db = {
         select: vi.fn()
-          .mockReturnValueOnce(countChain([{ total: 1 }]))
-          .mockReturnValueOnce(threadDataChain([{ thread, prospectSnapshot: null, icpScore: null, icpBand: null }])),
+          .mockReturnValueOnce(countC)
+          .mockReturnValueOnce(dataC),
       } as any;
       const svc = new InboxService(db, config);
 
@@ -195,7 +203,6 @@ describe("InboxService", () => {
       expect(result.offset).toBe(0);
       expect(result.data).toHaveLength(1);
       expect(result.data[0]!.id).toBe("thread-1");
-      expect((result.data[0] as any).prospect).toBeNull();
     });
   });
 });

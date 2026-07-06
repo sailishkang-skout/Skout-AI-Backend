@@ -200,7 +200,7 @@ export async function inboxRoutes(app: FastifyInstance) {
       );
     } catch (err) {
       if (err instanceof HttpError) return reply.status(err.statusCode).send({ error: err.message });
-      throw err;
+      return reply.status(503).send({ error: "service_unavailable" });
     }
   });
 
