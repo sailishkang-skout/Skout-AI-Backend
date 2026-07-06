@@ -32,6 +32,8 @@ export async function buildApp(config: Env) {
       (typeof req.headers["x-request-id"] === "string"
         ? req.headers["x-request-id"]
         : undefined) ?? randomUUID(),
+    // Remote databases (e.g. Supabase) need more than the 10 s default.
+    pluginTimeout: 30_000,
   });
 
   await app.register(loggingPlugin);

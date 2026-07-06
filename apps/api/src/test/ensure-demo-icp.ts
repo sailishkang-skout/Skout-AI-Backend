@@ -5,6 +5,7 @@ const DEFAULT_TEST_ICP = {
   countries: ["US"],
   seniorities: ["vp", "director"],
   minEmployees: 10,
+  autoRescoreOnChange: false,
 };
 
 /** Demo workspace needs ICP before enrich/score routes succeed. */

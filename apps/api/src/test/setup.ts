@@ -1,8 +1,25 @@
 /**
  * Vitest global setup — route integration tests need Postgres; unit tests do not.
- * Probes the local docker-compose port and configures DATABASE_URL only when reachable.
+ * Loads .env so the Supabase URL is available, then probes to confirm reachability.
+ * Falls back to the local docker-compose default when DATABASE_URL is not set.
  */
 import net from "node:net";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { config as dotenvConfig } from "dotenv";
+
+// Load project .env (without overriding any CI-supplied vars) so that
+// DATABASE_URL and other secrets are visible to route integration tests.
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../");
+for (const candidate of [path.join(root, ".env"), path.join(root, ".env.local")]) {
+  dotenvConfig({ path: candidate, override: false });
+}
+
+// analytics-events.ts has a module-level loadEnv() cache that bypasses
+// per-test app config overrides. Clear external service URLs so that cache
+// never tries to connect to services that aren't running in test.
+delete process.env.CLICKHOUSE_URL;
+delete process.env.AI_SERVICE_URL;
 
 const DEFAULT_TEST_DATABASE_URL = "postgresql://skout:skout@localhost:5434/skout";
 
@@ -15,7 +32,7 @@ const dbEnvKeys = [
   "DATABASE_PASSWORD",
 ];
 
-function probePort(host: string, port: number, timeoutMs = 400): Promise<boolean> {
+function probePort(host: string, port: number, timeoutMs = 3000): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = net.connect({ host, port });
     const done = (ok: boolean) => {

@@ -34,6 +34,9 @@ export function getSequenceEnrollmentQueue(config: Env): Queue<SeqAdvanceJobPayl
         removeOnFail: 500,
       },
     });
+    queue.on("error", (err) => {
+      console.warn(`[bullmq] ${SEQUENCE_ENROLLMENT_QUEUE} queue error:`, err.message);
+    });
   }
   return queue;
 }

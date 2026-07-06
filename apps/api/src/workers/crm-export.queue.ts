@@ -23,6 +23,9 @@ export function getCrmExportQueue(config: Env): Queue<CrmExportJobPayload> {
         removeOnFail: 200,
       },
     });
+    queue.on("error", (err) => {
+      console.warn(`[bullmq] ${CRM_EXPORT_QUEUE} queue error:`, err.message);
+    });
   }
   return queue;
 }

@@ -42,7 +42,7 @@ export function getRedis(config: Env): Redis | null {
   }
 }
 
-/** Ping Redis once per process — used before starting BullMQ workers or enqueueing. */
+/** Ping Redis once per process and verify it meets BullMQ's minimum version (5.0.0). */
 export async function isRedisAvailable(config: Env): Promise<boolean> {
   if (!config.REDIS_URL) return false;
   if (availabilityChecked) return redisReachable;
@@ -56,7 +56,21 @@ export async function isRedisAvailable(config: Env): Promise<boolean> {
 
   try {
     if (redis.status === "wait") await redis.connect();
-    await redis.ping();
+    const info = await redis.info("server");
+    const versionMatch = info.match(/redis_version:(\S+)/);
+    if (versionMatch) {
+      const parts = versionMatch[1].split(".").map(Number);
+      const major = parts[0] ?? 0;
+      const minor = parts[1] ?? 0;
+      if (major < 5 || (major === 5 && minor < 0)) {
+        console.warn(
+          `[redis] Redis ${versionMatch[1]} is below BullMQ minimum (5.0.0) — workers disabled.`
+        );
+        redisReachable = false;
+        availabilityChecked = true;
+        return false;
+      }
+    }
     redisReachable = true;
   } catch {
     connectFailed = true;

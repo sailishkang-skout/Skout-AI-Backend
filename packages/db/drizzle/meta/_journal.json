@@ -71,6 +71,13 @@
       "when": 1782860000000,
       "tag": "0009_lucky_master_chief",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1751760000000,
+      "tag": "0010_inbound_email_threads",
+      "breakpoints": true
     }
   ]
 }
