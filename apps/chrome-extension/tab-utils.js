@@ -62,17 +62,41 @@ export function friendlyTabError(message) {
   return typeof message === "string" && message ? message : "Something went wrong.";
 }
 
+/** Pick the LinkedIn profile tab the user is most likely viewing (pure — testable). */
+export function pickLinkedInProfileTab(tabs, focusedActiveTab) {
+  const usable = tabs.filter(isUsableTab);
+  const profiles = usable.filter((t) => isLinkedInProfileUrl(t.url));
+  if (profiles.length === 0) return null;
+
+  if (
+    focusedActiveTab?.id &&
+    isUsableTab(focusedActiveTab) &&
+    isLinkedInProfileUrl(focusedActiveTab.url)
+  ) {
+    return focusedActiveTab;
+  }
+
+  const activeProfiles = profiles.filter((t) => t.active);
+  if (activeProfiles.length > 0) {
+    activeProfiles.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
+    return activeProfiles[0];
+  }
+
+  profiles.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
+  return profiles[0];
+}
+
 export async function findLinkedInProfileTabId() {
   const patterns = ["https://www.linkedin.com/*", "https://linkedin.com/*"];
-  const all = await chrome.tabs.query({ url: patterns });
-  const usable = all.filter(isUsableTab);
-  const profile = usable.find((t) => isLinkedInProfileUrl(t.url));
-  if (profile?.id) return profile.id;
+  const [all, [focusedActive]] = await Promise.all([
+    chrome.tabs.query({ url: patterns }),
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }),
+  ]);
 
-  const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (isUsableTab(active) && isLinkedInProfileUrl(active.url)) return active.id;
+  const picked = pickLinkedInProfileTab(all, focusedActive);
+  if (picked?.id) return picked.id;
 
-  if (all.length > 0 && usable.length === 0) {
+  if (all.length > 0 && all.filter(isUsableTab).length === 0) {
     throw new Error("LinkedIn tab has an error — refresh the profile page (Cmd+Shift+R).");
   }
 

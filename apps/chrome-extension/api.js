@@ -114,7 +114,12 @@ function formatApiError(status, body, webUrl) {
   if (status === 402) {
     return "Insufficient credits for this action.";
   }
-  if (typeof body?.error === "string") return body.error;
+  if (typeof body?.error === "string") {
+    if (body.error === "ICP_NOT_CONFIGURED") {
+      return "ICP not configured — open Skout and set your ICP under Settings.";
+    }
+    return body.error;
+  }
   return `Request failed (${status})`;
 }
 
@@ -143,15 +148,20 @@ function withTimeout(promise, ms, message) {
   });
 }
 
-async function request(path, options = {}) {
+async function request(path, options = {}, bearerOverride) {
   const { apiUrl, authToken, stubEmail, useStubAuth } = await getConfig();
   const headers = new Headers(options.headers || {});
   headers.set("Content-Type", "application/json");
 
-  if (authToken && !useStubAuth) {
-    headers.set("Authorization", `Bearer ${authToken}`);
-  } else {
+  if (useStubAuth) {
     headers.set("x-stub-user-email", stubEmail);
+  } else {
+    const token = bearerOverride || authToken;
+    if (token) {
+      headers.set("Authorization", `Bearer ${token}`);
+    } else {
+      headers.set("x-stub-user-email", stubEmail);
+    }
   }
 
   const controller = new AbortController();
@@ -172,14 +182,16 @@ export async function skoutFetch(path, options = {}) {
   const method = options.method || "GET";
   log(`skoutFetch ${method} ${path}`, { apiUrl: config.apiUrl, useStubAuth: config.useStubAuth });
 
+  let bearerToken = null;
   if (!config.useStubAuth) {
-    await timeStep("ensureFreshAuth", () =>
+    const auth = await timeStep("ensureFreshAuth", () =>
       withTimeout(
         ensureFreshAuth(),
         AUTH_REFRESH_TIMEOUT_MS,
         `Session refresh timed out — open Skout (${normalizeSkoutBase(config.webUrl)}), sign in, then click Connect Skout account.`
       )
     );
+    bearerToken = auth?.token ?? null;
   }
 
   const reachError = (error) =>
@@ -189,7 +201,7 @@ export async function skoutFetch(path, options = {}) {
 
   let res;
   try {
-    res = await timeStep(`fetch ${method} ${path}`, () => request(path, options));
+    res = await timeStep(`fetch ${method} ${path}`, () => request(path, options, bearerToken));
   } catch (error) {
     throw reachError(error);
   }
@@ -206,11 +218,12 @@ export async function skoutFetch(path, options = {}) {
       logError("token refresh failed:", err instanceof Error ? err.message : err);
       return null;
     });
-    if (!refreshed) {
+    if (!refreshed?.token) {
       throw new Error(`Session expired — open Skout (${normalizeSkoutBase(config.webUrl)}), sign in, then click Connect Skout account.`);
     }
+    bearerToken = refreshed.token;
     try {
-      res = await timeStep(`fetch retry ${method} ${path}`, () => request(path, options));
+      res = await timeStep(`fetch retry ${method} ${path}`, () => request(path, options, bearerToken));
       log(`retry response ${res.status} for ${method} ${path}`);
     } catch (error) {
       throw reachError(error);

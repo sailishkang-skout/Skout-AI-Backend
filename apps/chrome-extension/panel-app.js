@@ -76,6 +76,26 @@ export function initPanel() {
     return isAuthFresh(auth);
   }
 
+  async function ensurePanelSignedIn() {
+    const config = await getConfig();
+    if (config.useStubAuth) return true;
+
+    if (!(await isSignedIn())) {
+      setStatus("Connecting to Skout…");
+      await runInBackground("connect-skout", { focus: false });
+      await loadConfig();
+    }
+
+    if (!(await isSignedIn())) {
+      setStatus(
+        `Open Skout (${normalizeSkoutBase(config.webUrl)}), sign in, then click Connect Skout account.`,
+        true
+      );
+      return false;
+    }
+    return true;
+  }
+
   async function loadConfig() {
     const config = await getConfig();
     if (apiUrlEl) apiUrlEl.value = config.apiUrl;
@@ -220,6 +240,7 @@ export function initPanel() {
 
     setBusy(button, true, "Adding…");
     try {
+      if (!(await ensurePanelSignedIn())) return;
       await saveLastListId(listId);
       const tabId = await findLinkedInTabId();
       // Profile read happens in the background — avoids hanging here if the tab bridge isn't ready.
@@ -242,6 +263,7 @@ export function initPanel() {
     const button = event.currentTarget;
     setBusy(button, true, "Enriching…");
     try {
+      if (!(await ensurePanelSignedIn())) return;
       const tabId = await findLinkedInTabId();
       await runInBackground("ping").catch(() => undefined);
       const result = await runInBackground("enrich-profile", { tabId });
@@ -262,6 +284,7 @@ export function initPanel() {
     const button = event.currentTarget;
     setBusy(button, true, "Scoring…");
     try {
+      if (!(await ensurePanelSignedIn())) return;
       const tabId = await findLinkedInTabId();
       await runInBackground("ping").catch(() => undefined);
       const result = await runInBackground("score-profile", { tabId });

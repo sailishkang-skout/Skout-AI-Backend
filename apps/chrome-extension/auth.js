@@ -197,24 +197,27 @@ export async function ensureFreshAuth() {
   const { webUrl } = await getStoredSkoutUrls();
   const stored = await getStoredAuth();
 
-  // Use any stored token immediately — proactive refresh before every API call
-  // was blocking Add-to-list for minutes when the Skout tab wasn't responsive.
-  // skoutFetch retries after 401 with refreshAuthFromSkoutTabs (also time-capped).
-  if (stored.authToken) {
-    log("ensureFreshAuth: using stored token", {
-      fresh: isAuthFresh(stored),
+  if (stored.authToken && isAuthFresh(stored)) {
+    log("ensureFreshAuth: using fresh stored token", {
       email: stored.authEmail || "(none)",
     });
     return { token: stored.authToken, email: stored.authEmail || "" };
   }
 
-  log("ensureFreshAuth: no stored token — refreshing from Skout tab");
+  log("ensureFreshAuth: refreshing token", {
+    hadToken: Boolean(stored.authToken),
+    fresh: stored.authToken ? isAuthFresh(stored) : false,
+  });
   const refreshed = await refreshAuthFromSkoutTabs();
   if (refreshed) return refreshed;
 
   const after = await getStoredAuth();
-  if (after.authToken) {
+  if (after.authToken && isAuthFresh(after)) {
     return { token: after.authToken, email: after.authEmail || "" };
+  }
+
+  if (stored.authToken || after.authToken) {
+    throw new Error(`Session expired — ${skoutSignInHint(webUrl)}.`);
   }
 
   throw new Error(`Not signed in — ${skoutSignInHint(webUrl)}.`);

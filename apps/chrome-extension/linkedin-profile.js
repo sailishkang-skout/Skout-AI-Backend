@@ -6,6 +6,7 @@ import {
   isUsableTab,
   isUsableTabUrl,
   nameFromLinkedInUrl,
+  pickLinkedInProfileTab,
 } from "./tab-utils.js";
 
 const LINKEDIN_PATTERNS = ["https://www.linkedin.com/*", "https://linkedin.com/*"];
@@ -108,14 +109,14 @@ export async function findLinkedInTab(preferredTabId) {
     if (isUsableTab(tab) && isLinkedInProfileUrl(tab.url)) return tab;
   }
 
-  const tabs = (await chrome.tabs.query({ url: LINKEDIN_PATTERNS })).filter(isUsableTab);
-  const profile = tabs.find((t) => isLinkedInProfileUrl(t.url));
-  if (profile?.id) return profile;
+  const [tabs, [focusedActive]] = await Promise.all([
+    chrome.tabs.query({ url: LINKEDIN_PATTERNS }),
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }),
+  ]);
 
-  const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (isUsableTab(active) && isLinkedInProfileUrl(active.url)) return active;
+  const picked = pickLinkedInProfileTab(tabs, focusedActive);
+  if (picked?.id) return picked;
 
-  if (tabs[0]?.id) return tabs[0];
   throw new Error("Open a loaded LinkedIn profile (/in/username) tab first.");
 }
 

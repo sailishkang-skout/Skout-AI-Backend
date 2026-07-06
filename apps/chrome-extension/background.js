@@ -1,4 +1,4 @@
-import { saveAuthToken, getStoredAuth, ensureSession, proactiveAuthRefresh } from "./auth.js";
+import { saveAuthToken, getStoredAuth, ensureSession, proactiveAuthRefresh, ensureFreshAuth } from "./auth.js";
 import { readLinkedInProfile, injectLinkedInBridge } from "./linkedin-profile.js";
 import { activateProspect, addProspectToList, activateProspects, addProspectBatchToList, getListMemberIds, enrichProspect, scoreProspect, resolveProspectId } from "./api.js";
 import { friendlyTabError, isUsableTab, isUsableTabUrl, nameFromLinkedInUrl } from "./tab-utils.js";
@@ -102,26 +102,51 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   })();
 });
 
-async function resolveProfile(message) {
+async function resolveProfile(message, senderTabId) {
+  const tabId = message.tabId ?? senderTabId;
+
+  if (tabId) {
+    try {
+      const fromTab = await readLinkedInProfile(tabId);
+      return message.profile ? { ...message.profile, ...fromTab } : fromTab;
+    } catch (error) {
+      if (message.profile?.fullName) {
+        log("profile from page (tab read failed)", message.profile.fullName);
+        return message.profile;
+      }
+      if (message.profile?.linkedinUrl) {
+        const fullName = nameFromLinkedInUrl(message.profile.linkedinUrl);
+        if (fullName) return { ...message.profile, fullName };
+      }
+      throw error;
+    }
+  }
+
   if (message.profile?.fullName) {
     log("profile from page", message.profile.fullName);
     return message.profile;
   }
 
   if (message.profile?.linkedinUrl) {
-    try {
-      const fromTab = await readLinkedInProfile(message.tabId);
-      return { ...message.profile, ...fromTab };
-    } catch {
-      const fullName = nameFromLinkedInUrl(message.profile.linkedinUrl);
-      if (fullName) return { ...message.profile, fullName };
-    }
+    const fullName = nameFromLinkedInUrl(message.profile.linkedinUrl);
+    if (fullName) return { ...message.profile, fullName };
   }
 
-  return readLinkedInProfile(message.tabId);
+  return readLinkedInProfile();
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+/** Refresh Clerk JWT before API calls; opens Skout if needed. */
+async function ensureAuthForApi() {
+  const config = await chrome.storage.sync.get(["useStubAuth", "webUrl"]);
+  if (config.useStubAuth) return;
+  try {
+    await ensureFreshAuth();
+  } catch {
+    await ensureSession(config.webUrl || DEFAULT_WEB_URL, { focus: false });
+  }
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "ping") {
     sendResponse({ ok: true, version: "0.7.0" });
     return true;
@@ -200,7 +225,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         let fullName = message.profile?.fullName || "";
         await withTimeout(
           (async () => {
-            const profile = await timeStep("resolveProfile", () => resolveProfile(message));
+            await ensureAuthForApi();
+            const profile = await timeStep("resolveProfile", () => resolveProfile(message, sender.tab?.id));
             fullName = profile.fullName;
             log("profile resolved", {
               fullName: profile.fullName,
@@ -208,6 +234,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
               companyName: profile.companyName,
               linkedinUrl: profile.linkedinUrl,
             });
+            await ensureAuthForApi();
             await timeStep("activateProspect", () => activateProspect(profile));
             await timeStep("addProspectToList", () => addProspectToList(message.listId, profile));
             await saveLastListId(message.listId);
@@ -236,9 +263,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         let fullName = "";
         const result = await withTimeout(
           (async () => {
-            const profile = await timeStep("resolveProfile", () => resolveProfile(message));
+            await ensureAuthForApi();
+            const profile = await timeStep("resolveProfile", () => resolveProfile(message, sender.tab?.id));
             fullName = profile.fullName;
             const prospectId = await timeStep("activateProspect", () => activateProspect(profile));
+            await ensureAuthForApi();
             const enrichResult = await timeStep("enrichProspect", () =>
               enrichProspect(prospectId, profile)
             );
@@ -352,9 +381,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         let fullName = "";
         const result = await withTimeout(
           (async () => {
-            const profile = await timeStep("resolveProfile", () => resolveProfile(message));
+            await ensureAuthForApi();
+            const profile = await timeStep("resolveProfile", () => resolveProfile(message, sender.tab?.id));
             fullName = profile.fullName;
             const prospectId = await timeStep("activateProspect", () => activateProspect(profile));
+            await ensureAuthForApi();
             return timeStep("scoreProspect", () => scoreProspect(prospectId, profile));
           })(),
           HANDLER_TIMEOUT_MS,
