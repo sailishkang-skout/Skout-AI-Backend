@@ -23,6 +23,9 @@ export function getWorkspaceRescoreQueue(config: Env): Queue<WorkspaceRescoreJob
         removeOnFail: 100,
       },
     });
+    queue.on("error", (err) => {
+      console.warn(`[bullmq] ${WORKSPACE_RESCORE_QUEUE} queue error:`, err.message);
+    });
   }
   return queue;
 }

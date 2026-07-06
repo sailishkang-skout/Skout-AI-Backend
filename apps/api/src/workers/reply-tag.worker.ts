@@ -6,6 +6,7 @@ import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { tagReply } from "../services/reply-tagger.service.js";
 import { REPLY_TAG_QUEUE, type ReplyTagJobPayload } from "./reply-tag.queue.js";
+import { isRedisAvailable } from "../lib/redis.js";
 
 const log = createLogger("reply-tag.worker");
 
@@ -25,6 +26,11 @@ export async function startReplyTagWorker(config: Env): Promise<() => Promise<vo
   if (!config.DATABASE_URL || !config.OPENAI_API_KEY) {
     const reason = !config.DATABASE_URL ? "DATABASE_URL" : "OPENAI_API_KEY";
     log.warn(`Reply-tag worker not started — ${reason} not set`);
+    return async () => {};
+  }
+
+  if (!(await isRedisAvailable(config))) {
+    log.warn("Reply-tag worker not started — Redis unavailable");
     return async () => {};
   }
 

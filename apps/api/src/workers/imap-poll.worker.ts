@@ -9,6 +9,7 @@ import { loadEnv } from "../config/env.js";
 import { decryptSecret } from "../utils/integration-crypto.js";
 import { ingestInboundMessage } from "../services/inbound-reply.service.js";
 import { IMAP_POLL_QUEUE, scheduleImapPolling, type ImapPollJobPayload } from "./imap-poll.queue.js";
+import { isRedisAvailable } from "../lib/redis.js";
 
 const log = createLogger("imap-poll.worker");
 
@@ -159,6 +160,11 @@ function redisConnection(redisUrl: string) {
 export async function startImapPollWorker(config: Env): Promise<() => Promise<void>> {
   if (!config.DATABASE_URL) {
     log.warn("IMAP poll worker not started — DATABASE_URL not set");
+    return async () => {};
+  }
+
+  if (!(await isRedisAvailable(config))) {
+    log.warn("IMAP poll worker not started — Redis unavailable");
     return async () => {};
   }
 

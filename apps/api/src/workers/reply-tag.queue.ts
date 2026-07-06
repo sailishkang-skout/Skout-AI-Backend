@@ -33,6 +33,9 @@ export function getReplyTagQueue(config: Env): Queue<ReplyTagJobPayload> {
         removeOnFail: 200,
       },
     });
+    queue.on("error", (err) => {
+      console.warn(`[bullmq] ${REPLY_TAG_QUEUE} queue error:`, err.message);
+    });
   }
   return queue;
 }

@@ -1,38 +1,45 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
 import { ensureDemoIcp } from "../test/ensure-demo-icp.js";
+import type { FastifyInstance } from "fastify";
 
 const WORKSPACE = "00000000-0000-4000-8000-000000000001";
 
-async function buildTestApp(overrides: Record<string, string | number> = {}) {
+const BASE_OVERRIDES = {
+  CLERK_SECRET_KEY: undefined as unknown as string,
+  LOG_LEVEL: "fatal" as const,
+  AI_SERVICE_URL: undefined as unknown as string,
+  CLICKHOUSE_URL: undefined as unknown as string,
+  HUNTER_API_KEY: undefined as unknown as string,
+  MILLIONVERIFIER_API_KEY: undefined as unknown as string,
+  ZEROBOUNCE_API_KEY: undefined as unknown as string,
+  NEVERBOUNCE_API_KEY: undefined as unknown as string,
+  PDL_API_KEY: undefined as unknown as string,
+  REVENUEBASE_API_KEY: undefined as unknown as string,
+  EXPLORIUM_API_KEY: undefined as unknown as string,
+  CORESIGNAL_API_KEY: undefined as unknown as string,
+  DATAGMA_API_KEY: undefined as unknown as string,
+  CONTACTOUT_API_KEY: undefined as unknown as string,
+  COGNISM_API_KEY: undefined as unknown as string,
+  KASPR_API_KEY: undefined as unknown as string,
+  LUSHA_API_KEY: undefined as unknown as string,
+};
+
+let app: FastifyInstance;
+
+beforeAll(async () => {
   const config = loadEnv();
-  const app = await buildApp({
-    ...config,
-    CLERK_SECRET_KEY: undefined,
-    LOG_LEVEL: "fatal",
-    AI_SERVICE_URL: undefined,
-    HUNTER_API_KEY: undefined,
-    MILLIONVERIFIER_API_KEY: undefined,
-    ZEROBOUNCE_API_KEY: undefined,
-    NEVERBOUNCE_API_KEY: undefined,
-    PDL_API_KEY: undefined,
-    REVENUEBASE_API_KEY: undefined,
-    EXPLORIUM_API_KEY: undefined,
-    CORESIGNAL_API_KEY: undefined,
-    DATAGMA_API_KEY: undefined,
-    CONTACTOUT_API_KEY: undefined,
-      COGNISM_API_KEY: undefined,
-      KASPR_API_KEY: undefined,
-      LUSHA_API_KEY: undefined,
-      ...overrides,
-  });
-  return app;
-}
+  app = await buildApp({ ...config, ...BASE_OVERRIDES });
+  await ensureDemoIcp(app, WORKSPACE);
+}, 60000);
+
+afterAll(async () => {
+  await app?.close();
+});
 
 describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
   it("returns credit balance for workspace", async () => {
-    const app = await buildTestApp();
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/enrichment/credits",
@@ -41,12 +48,9 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     expect(res.statusCode).toBe(200);
     const body = res.json() as { balance: number };
     expect(body.balance).toBeGreaterThan(0);
-    await app.close();
   });
 
   it("enriches a prospect: firmographics + email + verification (§5, §8)", async () => {
-    const app = await buildTestApp();
-    await ensureDemoIcp(app, WORKSPACE);
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/prospects/acme-prospect/enrich",
@@ -74,12 +78,9 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     expect(body.results.some((r) => r.field === "company")).toBe(true);
     expect(body.results.some((r) => r.field === "email")).toBe(true);
     expect(body.results.some((r) => r.field === "email_status")).toBe(true);
-    await app.close();
   });
 
   it("skips phone when lead score is below gate (§6, default gate=80)", async () => {
-    const app = await buildTestApp();
-    await ensureDemoIcp(app, WORKSPACE);
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/prospects/low-score-phone-gate/enrich",
@@ -93,29 +94,31 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     const body = res.json() as { results: { field: string; validationStatus?: string }[]; creditsUsed: number };
     expect(body.results.some((r) => r.field === "phone" && r.validationStatus === "skipped")).toBe(true);
     expect(body.creditsUsed).toBe(0);
-    await app.close();
   });
 
   it("allows phone when gate is overridden via env (§6)", async () => {
-    const app = await buildTestApp({ ENRICHMENT_PHONE_SCORE_GATE: -1 });
-    await ensureDemoIcp(app, WORKSPACE);
-    const res = await app.inject({
-      method: "POST",
-      url: "/api/v1/prospects/gate-test/enrich",
-      headers: { "x-workspace-id": WORKSPACE, "content-type": "application/json" },
-      payload: {
-        prospect: { fullName: "John Smith", companyDomain: "acme.com" },
-        fields: ["phone"],
-      },
-    });
-    expect(res.statusCode).toBe(202);
-    const body = res.json() as { results: { field: string; isPrimary?: boolean }[] };
-    expect(body.results.some((r) => r.field === "phone" && r.isPrimary !== false)).toBe(true);
-    await app.close();
-  });
+    const config = loadEnv();
+    const gateApp = await buildApp({ ...config, ...BASE_OVERRIDES, ENRICHMENT_PHONE_SCORE_GATE: -1 });
+    try {
+      await ensureDemoIcp(gateApp, WORKSPACE);
+      const res = await gateApp.inject({
+        method: "POST",
+        url: "/api/v1/prospects/gate-test/enrich",
+        headers: { "x-workspace-id": WORKSPACE, "content-type": "application/json" },
+        payload: {
+          prospect: { fullName: "John Smith", companyDomain: "acme.com" },
+          fields: ["phone"],
+        },
+      });
+      expect(res.statusCode).toBe(202);
+      const body = res.json() as { results: { field: string; isPrimary?: boolean }[] };
+      expect(body.results.some((r) => r.field === "phone" && r.isPrimary !== false)).toBe(true);
+    } finally {
+      await gateApp.close();
+    }
+  }, 30000);
 
   it("activates prospects without external spend (§8 Tier 2 add-to-workspace)", async () => {
-    const app = await buildTestApp();
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/prospects/activate",
@@ -126,12 +129,9 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     });
     expect(res.statusCode).toBe(201);
     expect(res.json()).toMatchObject({ activated: 1 });
-    await app.close();
   });
 
   it("scores a prospect against ICP (§9)", async () => {
-    const app = await buildTestApp();
-    await ensureDemoIcp(app, WORKSPACE);
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/enrichment/score",
@@ -167,12 +167,9 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     expect(["strong", "medium", "weak"]).toContain(body.icpBand);
     expect(body.intentScore).toBeGreaterThan(0);
     expect(body.outreachReadiness).toBeTruthy();
-    await app.close();
   });
 
   it("creates a list and bulk-enriches members (§8 user intent trigger)", async () => {
-    const app = await buildTestApp();
-    await ensureDemoIcp(app, WORKSPACE);
     const create = await app.inject({
       method: "POST",
       url: "/api/v1/lists",
@@ -224,13 +221,9 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     expect(jobs.statusCode).toBe(200);
     const jobList = jobs.json() as { data: unknown[]; total: number };
     expect(jobList.total).toBeGreaterThanOrEqual(2);
-
-    await app.close();
   });
 
   it("lists enrichment jobs and fetches job by id", async () => {
-    const app = await buildTestApp();
-    await ensureDemoIcp(app, WORKSPACE);
     const enrich = await app.inject({
       method: "POST",
       url: "/api/v1/prospects/job-fetch-test/enrich",
@@ -249,7 +242,6 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     });
     expect(get.statusCode).toBe(200);
     expect(get.json()).toMatchObject({ id: jobId, status: "completed" });
-    await app.close();
   });
 
   it("does not persist unverified email on activation snapshot (E4.3)", async () => {
@@ -279,8 +271,6 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
       }
     }
 
-    const app = await buildTestApp();
-    await ensureDemoIcp(app, WORKSPACE);
     const prospectId = `verified-only-${domain.replace(/\./g, "-")}`;
 
     await app.inject({
@@ -308,6 +298,5 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     if (status !== "valid") {
       expect(primaryEmail).toBeUndefined();
     }
-    await app.close();
   });
 });

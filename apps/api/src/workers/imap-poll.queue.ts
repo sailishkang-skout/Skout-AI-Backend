@@ -31,6 +31,9 @@ export function getImapPollQueue(config: Env): Queue<ImapPollJobPayload> {
         removeOnFail: 100,
       },
     });
+    queue.on("error", (err) => {
+      console.warn(`[bullmq] ${IMAP_POLL_QUEUE} queue error:`, err.message);
+    });
   }
   return queue;
 }
@@ -38,5 +41,9 @@ export function getImapPollQueue(config: Env): Queue<ImapPollJobPayload> {
 /** Schedule a repeatable poll-all job (every 5 minutes). Safe to call on every startup. */
 export async function scheduleImapPolling(config: Env): Promise<void> {
   const q = getImapPollQueue(config);
-  await q.upsertJobScheduler("imap:poll-all", { every: 5 * 60 * 1000 }, { name: "imap:poll-all", data: {} });
+  try {
+    await q.upsertJobScheduler("imap:poll-all", { every: 5 * 60 * 1000 }, { name: "imap:poll-all", data: {} });
+  } catch (err) {
+    console.warn("[bullmq] Could not schedule IMAP polling (Redis may be incompatible):", (err as Error).message);
+  }
 }

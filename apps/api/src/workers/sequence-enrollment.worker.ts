@@ -18,6 +18,7 @@ import {
   enqueueSequenceAdvanceJob,
   type SeqAdvanceJobPayload,
 } from "./sequence-enrollment.queue.js";
+import { isRedisAvailable } from "../lib/redis.js";
 
 const log = createLogger("sequence-enrollment.worker");
 
@@ -368,6 +369,11 @@ function redisConnection(redisUrl: string) {
 export async function startSequenceEnrollmentWorker(config: Env): Promise<() => Promise<void>> {
   if (!config.DATABASE_URL) {
     log.warn("Sequence enrollment worker not started — DATABASE_URL not set");
+    return async () => {};
+  }
+
+  if (!(await isRedisAvailable(config))) {
+    log.warn("Sequence enrollment worker not started — Redis unavailable");
     return async () => {};
   }
 
