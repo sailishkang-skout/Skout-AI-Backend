@@ -336,6 +336,18 @@ export class SequenceService {
     let skipped = 0;
 
     for (const prospectId of prospectIds) {
+      // Remove terminal-state enrollments so re-enrollment creates a fresh row.
+      // Active enrollments still conflict and get skipped (idempotent).
+      await this.db
+        .delete(sequenceEnrollments)
+        .where(
+          and(
+            eq(sequenceEnrollments.sequenceId, sequenceId),
+            eq(sequenceEnrollments.prospectId, prospectId),
+            inArray(sequenceEnrollments.status, ["cancelled", "completed", "bounced", "replied"])
+          )
+        );
+
       // Insert enrollment — silently skip duplicates via UNIQUE(sequenceId, prospectId)
       const inserted = await this.db
         .insert(sequenceEnrollments)
@@ -502,6 +514,41 @@ export class SequenceService {
     });
 
     return { id: seq.id, name: seq.name, status: seq.status, enrollments: enrollmentSummary, steps: stepsOut };
+  }
+
+  /** Cancel an active enrollment — marks it cancelled and stops future steps. */
+  async unenroll(workspaceId: string, sequenceId: string, prospectId: string) {
+    const [updated] = await this.db
+      .update(sequenceEnrollments)
+      .set({ status: "cancelled", completedAt: new Date() })
+      .where(
+        and(
+          eq(sequenceEnrollments.sequenceId, sequenceId),
+          eq(sequenceEnrollments.workspaceId, workspaceId),
+          eq(sequenceEnrollments.prospectId, prospectId)
+        )
+      )
+      .returning({ id: sequenceEnrollments.id });
+    return updated ?? null;
+  }
+
+  /** Check if a prospect is actively enrolled in any sequence in this workspace. */
+  async getProspectEnrollments(workspaceId: string, prospectId: string) {
+    return this.db
+      .select({
+        id: sequenceEnrollments.id,
+        sequenceId: sequenceEnrollments.sequenceId,
+        status: sequenceEnrollments.status,
+        enrolledAt: sequenceEnrollments.enrolledAt,
+      })
+      .from(sequenceEnrollments)
+      .where(
+        and(
+          eq(sequenceEnrollments.workspaceId, workspaceId),
+          eq(sequenceEnrollments.prospectId, prospectId)
+        )
+      )
+      .orderBy(desc(sequenceEnrollments.enrolledAt));
   }
 
   /** Enrollment list with live per-prospect status, for the enroll-flow UI. */

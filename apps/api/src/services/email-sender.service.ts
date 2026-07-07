@@ -1,4 +1,4 @@
-import nodemailer from "nodemailer";
+import nodemailer, { type Transporter } from "nodemailer";
 import type { Env } from "../config/env.js";
 import { decryptSecret } from "../utils/integration-crypto.js";
 
@@ -27,7 +27,15 @@ export interface InboxSmtpConfig {
   smtpSecure: boolean;
 }
 
-/** Builds a nodemailer-backed transport for a connected inbox's stored SMTP credentials. */
+// Cache transporters by inbox credentials so we reuse the TCP/TLS connection
+// instead of opening a new one for every email.
+const transporterCache = new Map<string, Transporter>();
+
+function transporterCacheKey(inbox: InboxSmtpConfig): string {
+  return `${inbox.smtpHost}:${inbox.smtpPort}:${inbox.smtpUsername}`;
+}
+
+/** Builds (or returns a cached) nodemailer transport for a connected inbox. */
 export function buildEmailSenderFromInbox(config: Env, inbox: InboxSmtpConfig): EmailTransport {
   if (!inbox.smtpHost || !inbox.smtpPort || !inbox.smtpUsername || !inbox.smtpPasswordEncrypted) {
     throw new Error("inbox_missing_smtp_credentials");
@@ -36,25 +44,34 @@ export function buildEmailSenderFromInbox(config: Env, inbox: InboxSmtpConfig): 
   if (!encryptionKey) {
     throw new Error("INTEGRATION_ENCRYPTION_KEY not configured — cannot decrypt SMTP credentials");
   }
-  const password = decryptSecret(inbox.smtpPasswordEncrypted, encryptionKey);
 
-  const transporter = nodemailer.createTransport({
-    host: inbox.smtpHost,
-    port: inbox.smtpPort,
-    secure: inbox.smtpSecure,
-    auth: { user: inbox.smtpUsername, pass: password },
-  });
+  const cacheKey = transporterCacheKey(inbox);
+  let transporter = transporterCache.get(cacheKey);
+
+  if (!transporter) {
+    const password = decryptSecret(inbox.smtpPasswordEncrypted, encryptionKey);
+    transporter = nodemailer.createTransport({
+      host: inbox.smtpHost,
+      port: inbox.smtpPort,
+      secure: inbox.smtpSecure,
+      auth: { user: inbox.smtpUsername, pass: password },
+      connectionTimeout: 10_000,
+      greetingTimeout: 5_000,
+      socketTimeout: 30_000,
+    });
+    transporterCache.set(cacheKey, transporter);
+  }
 
   return {
     async send(input: SendEmailInput): Promise<SendEmailResult> {
-      const info = await transporter.sendMail({
+      const info = await transporter!.sendMail({
         from: input.fromName ? `"${input.fromName}" <${input.from}>` : input.from,
         to: input.to,
         subject: input.subject,
         text: input.text,
         html: input.html,
       });
-      return { externalId: info.messageId };
+      return { externalId: info.messageId ?? "" };
     },
   };
 }

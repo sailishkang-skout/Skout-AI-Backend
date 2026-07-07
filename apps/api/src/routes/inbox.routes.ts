@@ -11,7 +11,7 @@ import {
   resumeInbox,
   deleteInbox,
   listDomains,
-  addDomain,
+  createDomain,
   removeDomain,
   getDomainDns,
   getDeliverabilityMetrics,
@@ -22,20 +22,57 @@ import { recordBounce, recordSpam } from "../services/inbox-rotation.service.js"
 import { ingestInboundMessage } from "../services/inbound-reply.service.js";
 import { HttpError } from "../utils/http.js";
 
-const createInboxBody = z.object({
-  emailAddress: z.string().email(),
-  displayName: z.string().max(255).optional(),
-  provider: z.enum(["smtp", "google", "microsoft"]).default("smtp"),
-  dailySendLimit: z.number().int().positive().default(50),
-  sendingDomainId: z.string().uuid().optional(),
-  smtpHost: z.string().optional(),
-  smtpPort: z.number().int().optional(),
-  smtpUsername: z.string().optional(),
-  smtpPassword: z.string().optional(),
-  smtpSecure: z.boolean().default(true),
+const PROVIDER_ALIASES: Record<string, "smtp" | "google" | "microsoft"> = {
+  google: "google",
+  gmail: "google",
+  "gmail / google workspace": "google",
+  "google workspace": "google",
+  microsoft: "microsoft",
+  outlook: "microsoft",
+  "outlook / office 365": "microsoft",
+  "office 365": "microsoft",
+  smtp: "smtp",
+};
+
+// Coerce empty strings to undefined so optional fields aren't stored as ""
+function emptyToUndefined(v: unknown) {
+  return v === "" ? undefined : v;
+}
+
+const createInboxBody = z.preprocess(
+  (raw: unknown) => {
+    if (typeof raw !== "object" || raw === null) return raw;
+    const r = raw as Record<string, unknown>;
+    return {
+      ...r,
+      // Normalise email field name (frontend may send email, emailAddress, or email_address)
+      emailAddress: r.emailAddress ?? r.email ?? r.email_address,
+      // Normalise provider display names → internal enum values
+      provider:
+        typeof r.provider === "string"
+          ? (PROVIDER_ALIASES[r.provider.toLowerCase()] ?? r.provider)
+          : r.provider,
+      // Normalise SMTP field names (frontend sends smtpUser / smtpPass)
+      smtpUsername: emptyToUndefined(r.smtpUsername ?? r.smtpUser),
+      smtpPassword: emptyToUndefined(r.smtpPassword ?? r.smtpPass),
+      smtpHost: emptyToUndefined(r.smtpHost),
+    };
+  },
+  z.object({
+    emailAddress: z.string().email(),
+    displayName: z.string().max(255).optional(),
+    provider: z.enum(["smtp", "google", "microsoft"]).default("smtp"),
+    dailySendLimit: z.number().int().positive().default(50),
+    sendingDomainId: z.string().uuid().optional(),
+    smtpHost: z.string().optional(),
+    smtpPort: z.number().int().optional(),
+    smtpUsername: z.string().optional(),
+    smtpPassword: z.string().optional(),
+    smtpSecure: z.boolean().optional(),
   imapHost: z.string().optional(),
   imapPort: z.number().int().optional(),
-});
+  })
+);
 
 const updateInboxBody = z
   .object({
@@ -191,9 +228,9 @@ export async function inboxRoutes(app: FastifyInstance) {
   app.post("/domains", async (request, reply) => {
     const workspaceId = request.workspaceId ?? "unknown";
     if (!db) return reply.status(503).send({ error: "database_unavailable" });
-    const { domain } = z.object({ domain: z.string().min(3) }).parse(request.body ?? {});
-    const result = await addDomain(db, workspaceId, domain);
-    return reply.status(201).send(result);
+    const { domain } = z.object({ domain: z.string().min(1) }).parse(request.body ?? {});
+    const row = await createDomain(db, workspaceId, domain);
+    return reply.status(201).send(row);
   });
 
   // DELETE /domains/:id
@@ -380,4 +417,5 @@ export async function inboxRoutes(app: FastifyInstance) {
 
     return reply.status(202).send({ ok: true });
   });
+
 }

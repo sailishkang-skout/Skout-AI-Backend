@@ -62,8 +62,9 @@ function updateChain(result: unknown[] = []) {
 
 function insertChain(result: unknown[]) {
   const returning = vi.fn().mockResolvedValue(result);
-  const values = vi.fn().mockReturnValue({ returning });
-  return { values, returning };
+  const onConflictDoUpdate = vi.fn().mockReturnValue({ returning });
+  const values = vi.fn().mockReturnValue({ onConflictDoUpdate, returning });
+  return { values, onConflictDoUpdate, returning };
 }
 
 function deleteChain(result: unknown[]) {
@@ -175,6 +176,42 @@ describe("InboxService", () => {
       const insertedValues = chain.values.mock.calls[0]![0];
       expect(insertedValues.smtpPasswordEncrypted).toBeNull();
       expect((result as any).smtpConfigured).toBe(false);
+    });
+
+    it("sets smtpSecure: false when port is 587 (STARTTLS) and smtpSecure is not provided", async () => {
+      const returning = vi.fn().mockResolvedValue([{ id: "inbox-1", emailAddress: "a@b.com", smtpPasswordEncrypted: null }]);
+      const onConflict = vi.fn().mockReturnValue({ returning });
+      const values = vi.fn().mockReturnValue({ onConflictDoUpdate: onConflict });
+      const db = { insert: vi.fn().mockReturnValue({ values }) } as any;
+      const svc = new InboxService(db, config);
+
+      await svc.createInbox("ws-1", { emailAddress: "a@b.com", smtpPort: 587 });
+
+      expect(values).toHaveBeenCalledWith(expect.objectContaining({ smtpSecure: false }));
+    });
+
+    it("sets smtpSecure: true when port is 465 (SMTPS) and smtpSecure is not provided", async () => {
+      const returning = vi.fn().mockResolvedValue([{ id: "inbox-1", emailAddress: "a@b.com", smtpPasswordEncrypted: null }]);
+      const onConflict = vi.fn().mockReturnValue({ returning });
+      const values = vi.fn().mockReturnValue({ onConflictDoUpdate: onConflict });
+      const db = { insert: vi.fn().mockReturnValue({ values }) } as any;
+      const svc = new InboxService(db, config);
+
+      await svc.createInbox("ws-1", { emailAddress: "a@b.com", smtpPort: 465 });
+
+      expect(values).toHaveBeenCalledWith(expect.objectContaining({ smtpSecure: true }));
+    });
+
+    it("respects an explicit smtpSecure: true even on STARTTLS port 587", async () => {
+      const returning = vi.fn().mockResolvedValue([{ id: "inbox-1", emailAddress: "a@b.com", smtpPasswordEncrypted: null }]);
+      const onConflict = vi.fn().mockReturnValue({ returning });
+      const values = vi.fn().mockReturnValue({ onConflictDoUpdate: onConflict });
+      const db = { insert: vi.fn().mockReturnValue({ values }) } as any;
+      const svc = new InboxService(db, config);
+
+      await svc.createInbox("ws-1", { emailAddress: "a@b.com", smtpPort: 587, smtpSecure: true });
+
+      expect(values).toHaveBeenCalledWith(expect.objectContaining({ smtpSecure: true }));
     });
   });
 

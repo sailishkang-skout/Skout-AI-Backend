@@ -317,6 +317,18 @@ export async function getDeliverabilityMetrics(db: Db, workspaceId: string) {
   };
 }
 
+export async function createDomain(db: Db, workspaceId: string, domain: string) {
+  const [row] = await db
+    .insert(sendingDomains)
+    .values({ workspaceId, domain: domain.toLowerCase().trim() })
+    .onConflictDoUpdate({
+      target: [sendingDomains.workspaceId, sendingDomains.domain],
+      set: { updatedAt: new Date() },
+    })
+    .returning();
+  return row ?? null;
+}
+
 // ---------------------------------------------------------------------------
 // Class-based InboxService (thread management, inbound ingestion, replies)
 // ---------------------------------------------------------------------------
@@ -379,9 +391,21 @@ export class InboxService {
         smtpPort: input.smtpPort ?? null,
         smtpUsername: input.smtpUsername ?? null,
         smtpPasswordEncrypted,
-        smtpSecure: input.smtpSecure ?? true,
+        smtpSecure: input.smtpSecure ?? (input.smtpPort === 465),
         imapHost: input.imapHost ?? null,
         imapPort: input.imapPort ?? null,
+      })
+      .onConflictDoUpdate({
+        target: [inboxes.workspaceId, inboxes.emailAddress],
+        set: {
+          provider: input.provider ?? "smtp",
+          smtpHost: input.smtpHost ?? null,
+          smtpPort: input.smtpPort ?? null,
+          smtpUsername: input.smtpUsername ?? null,
+          smtpPasswordEncrypted,
+          smtpSecure: input.smtpSecure ?? (input.smtpPort === 465),
+          updatedAt: new Date(),
+        },
       })
       .returning();
     return row ? toPublicInbox(row) : null;

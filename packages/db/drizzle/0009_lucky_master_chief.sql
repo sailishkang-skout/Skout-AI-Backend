@@ -1,4 +1,6 @@
 ALTER TABLE "sequence_enrollment_steps" ADD COLUMN IF NOT EXISTS "inbox_id" uuid;--> statement-breakpoint
+ALTER TABLE "sequence_enrollment_steps" ADD COLUMN IF NOT EXISTS "failure_reason" text;--> statement-breakpoint
+ALTER TABLE "inboxes" ADD COLUMN IF NOT EXISTS "last_used_at" timestamptz;--> statement-breakpoint
 ALTER TABLE "inboxes" ADD COLUMN IF NOT EXISTS "sent_count" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
 ALTER TABLE "inboxes" ADD COLUMN IF NOT EXISTS "bounce_count" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
 ALTER TABLE "inboxes" ADD COLUMN IF NOT EXISTS "spam_count" integer DEFAULT 0 NOT NULL;--> statement-breakpoint

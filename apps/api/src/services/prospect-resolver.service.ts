@@ -33,8 +33,8 @@ export async function resolveProspectFields(
   prospectId: string
 ): Promise<ResolvedProspect | null> {
   const search = new SearchService(env);
-  const doc = await search.findExistingProspect(prospectId);
-  if (!doc) return null;
+  // OpenSearch lookup — may return null for manually-created prospects
+  const doc = await search.findExistingProspect(prospectId).catch(() => null);
 
   const [activation] = await db
     .select()
@@ -43,7 +43,17 @@ export async function resolveProspectFields(
       and(eq(prospectActivations.workspaceId, workspaceId), eq(prospectActivations.prospectId, prospectId))
     );
   const snap = (activation?.snapshot ?? {}) as Record<string, unknown>;
-  const snapshotEmail = typeof snap.email === "string" && snap.email.trim() ? snap.email.trim() : undefined;
+
+  // If no OpenSearch doc AND no activation snapshot, prospect is unresolvable
+  if (!doc && !activation) return null;
+
+  const str = (v: unknown): string | undefined =>
+    typeof v === "string" && v.trim() ? v.trim() : undefined;
+
+  const snapshotEmail = str(snap.email);
+  const snapshotFullName = str(snap.fullName);
+  const snapshotFirstName = str(snap.firstName);
+  const snapshotLastName = str(snap.lastName);
 
   let enrichedEmail: string | undefined;
   if (!snapshotEmail) {
@@ -62,17 +72,20 @@ export async function resolveProspectFields(
     enrichedEmail = primary?.fieldValue ?? rows.find((r) => r.fieldValue)?.fieldValue ?? undefined;
   }
 
-  const email = snapshotEmail ?? enrichedEmail ?? doc.email ?? undefined;
-  const { firstName, lastName } = splitName(doc.fullName ?? "");
+  const email = snapshotEmail ?? enrichedEmail ?? doc?.email ?? undefined;
+  const fullName = doc?.fullName ?? snapshotFullName ?? "";
+  const { firstName, lastName } = snapshotFirstName
+    ? { firstName: snapshotFirstName, lastName: snapshotLastName ?? "" }
+    : splitName(fullName);
 
   return {
     prospectId,
     email,
     firstName,
     lastName,
-    fullName: doc.fullName ?? "",
-    companyName: doc.companyName ?? undefined,
-    companyDomain: doc.companyDomain ?? undefined,
-    title: doc.title || undefined,
+    fullName,
+    companyName: doc?.companyName ?? str(snap.companyName) ?? undefined,
+    companyDomain: doc?.companyDomain ?? str(snap.companyDomain) ?? undefined,
+    title: doc?.title || str(snap.title) || undefined,
   };
 }

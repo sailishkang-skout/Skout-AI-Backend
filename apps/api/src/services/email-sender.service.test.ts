@@ -55,6 +55,32 @@ describe("buildEmailSenderFromInbox", () => {
     );
   });
 
+  it("uses secure: false for port 587 (STARTTLS)", () => {
+    buildEmailSenderFromInbox(config, validInbox({ smtpHost: "smtp.starttls-test.com", smtpPort: 587, smtpSecure: false }));
+    expect(createTransport).toHaveBeenCalledWith(
+      expect.objectContaining({ port: 587, secure: false })
+    );
+  });
+
+  it("uses secure: true for port 465 (SMTPS)", () => {
+    buildEmailSenderFromInbox(config, validInbox({ smtpHost: "smtp.smtps-test.com", smtpPort: 465, smtpSecure: true }));
+    expect(createTransport).toHaveBeenCalledWith(
+      expect.objectContaining({ port: 465, secure: true })
+    );
+  });
+
+  it("sets connection, greeting, and socket timeouts on the transport", () => {
+    // Use distinct credentials so this test bypasses the transporter cache
+    buildEmailSenderFromInbox(config, validInbox({ smtpHost: "smtp.timeout-test.com" }));
+    expect(createTransport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connectionTimeout: 10_000,
+        greetingTimeout: 5_000,
+        socketTimeout: 30_000,
+      })
+    );
+  });
+
   it("sends mail with the from/fromName formatted and returns the messageId", async () => {
     sendMail.mockResolvedValue({ messageId: "msg-123" });
     const transport = buildEmailSenderFromInbox(config, validInbox());
