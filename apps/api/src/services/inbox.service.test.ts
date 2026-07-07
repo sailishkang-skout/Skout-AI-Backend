@@ -358,12 +358,42 @@ describe("deleteInbox (function)", () => {
 });
 
 describe("listDomains (function)", () => {
-  it("returns sending domains for the workspace", async () => {
-    const rows = [{ id: "domain-1", domain: "skout.ai" }];
+  it("returns shaped domain objects for the workspace", async () => {
+    const rows = [
+      {
+        id: "domain-1",
+        workspaceId: "ws-1",
+        domain: "skout.ai",
+        dnsRecords: [
+          { purpose: "SPF", status: "pass", type: "TXT", name: "skout.ai", value: "v=spf1" },
+          { purpose: "DKIM", status: "unknown", type: "TXT", name: "_dkey.skout.ai", value: "v=DKIM1" },
+        ],
+        verifiedAt: null,
+        createdAt: new Date("2026-01-01T00:00:00Z"),
+        updatedAt: new Date("2026-01-01T00:00:00Z"),
+        status: "pending_verification",
+      },
+    ];
     const db = { select: vi.fn().mockReturnValue(selectChain(rows)) } as any;
 
     const result = await listDomains(db, "ws-1");
-    expect(result).toEqual({ workspaceId: "ws-1", data: rows, total: 1 });
+    expect(result).toEqual({
+      workspaceId: "ws-1",
+      data: [
+        {
+          id: "domain-1",
+          workspaceId: "ws-1",
+          domain: "skout.ai",
+          spfStatus: "pass",
+          dkimStatus: "unknown",
+          dmarcStatus: "unknown",
+          mxStatus: "unknown",
+          verifiedAt: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      total: 1,
+    });
   });
 });
 
