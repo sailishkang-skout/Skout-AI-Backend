@@ -288,6 +288,7 @@ export const searchProspectsResponseSchema = z.object({
   pageSize: z.number(),
   cached: z.boolean(),
   creditsUsed: z.number().int().min(0).optional(),
+  source: z.enum(["opensearch", "demo"]).optional(),
 });
 
 export const workspaceSchema = z.object({
