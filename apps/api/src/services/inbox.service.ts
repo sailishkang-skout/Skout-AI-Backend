@@ -159,13 +159,162 @@ export async function createInbox(
   return row;
 }
 
+type StoredDnsRecord = {
+  type: "TXT" | "CNAME" | "MX";
+  name: string;
+  value: string;
+  purpose: "SPF" | "DKIM" | "DMARC" | "MX";
+  status: "pass" | "fail" | "missing" | "unknown";
+};
+
+function generateDnsRecords(domain: string): StoredDnsRecord[] {
+  return [
+    { type: "TXT", name: domain, value: `v=spf1 include:_spf.skout.dev ~all`, purpose: "SPF", status: "unknown" },
+    { type: "TXT", name: `skout._domainkey.${domain}`, value: `v=DKIM1; k=rsa; p=PLACEHOLDER_CONTACT_SUPPORT`, purpose: "DKIM", status: "unknown" },
+    { type: "TXT", name: `_dmarc.${domain}`, value: `v=DMARC1; p=none; rua=mailto:dmarc@skout.dev`, purpose: "DMARC", status: "unknown" },
+    { type: "MX", name: domain, value: `10 mail.skout.dev`, purpose: "MX", status: "unknown" },
+  ];
+}
+
+function shapeDomain(row: typeof sendingDomains.$inferSelect) {
+  const records = (row.dnsRecords as StoredDnsRecord[]) ?? [];
+  const byPurpose: Record<string, string> = Object.fromEntries(records.map((r) => [r.purpose, r.status]));
+  return {
+    id: row.id,
+    workspaceId: row.workspaceId,
+    domain: row.domain,
+    spfStatus: (byPurpose["SPF"] ?? "unknown") as StoredDnsRecord["status"],
+    dkimStatus: (byPurpose["DKIM"] ?? "unknown") as StoredDnsRecord["status"],
+    dmarcStatus: (byPurpose["DMARC"] ?? "unknown") as StoredDnsRecord["status"],
+    mxStatus: (byPurpose["MX"] ?? "unknown") as StoredDnsRecord["status"],
+    verifiedAt: row.verifiedAt ? row.verifiedAt.toISOString() : null,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
 export async function listDomains(db: Db, workspaceId: string) {
-  const data = await db
+  const rows = await db
     .select()
     .from(sendingDomains)
     .where(eq(sendingDomains.workspaceId, workspaceId))
     .orderBy(sendingDomains.createdAt);
-  return { workspaceId, data, total: data.length };
+  return { workspaceId, data: rows.map(shapeDomain), total: rows.length };
+}
+
+export async function addDomain(db: Db, workspaceId: string, domain: string) {
+  const dnsRecords = generateDnsRecords(domain);
+  const [row] = await db
+    .insert(sendingDomains)
+    .values({ workspaceId, domain, dnsRecords })
+    .returning();
+  if (!row) throw new Error("Failed to create domain");
+  return shapeDomain(row);
+}
+
+export async function removeDomain(db: Db, workspaceId: string, id: string) {
+  const [deleted] = await db
+    .delete(sendingDomains)
+    .where(and(eq(sendingDomains.workspaceId, workspaceId), eq(sendingDomains.id, id)))
+    .returning({ id: sendingDomains.id });
+  return !!deleted;
+}
+
+export async function getDomainDns(db: Db, workspaceId: string, id: string) {
+  const [row] = await db
+    .select()
+    .from(sendingDomains)
+    .where(and(eq(sendingDomains.workspaceId, workspaceId), eq(sendingDomains.id, id)))
+    .limit(1);
+  if (!row) return null;
+  return { domain: row.domain, records: (row.dnsRecords as StoredDnsRecord[]) ?? [] };
+}
+
+export async function getDeliverabilityMetrics(db: Db, workspaceId: string) {
+  const now = new Date();
+  const thirtyDaysAgo = new Date(now);
+  thirtyDaysAgo.setUTCDate(thirtyDaysAgo.getUTCDate() - 29);
+  thirtyDaysAgo.setUTCHours(0, 0, 0, 0);
+
+  // All inboxes for this workspace
+  const allInboxes = await db
+    .select({
+      id: inboxes.id,
+      status: inboxes.status,
+      warmupStatus: inboxes.warmupStatus,
+      dailySendLimit: inboxes.dailySendLimit,
+      sentCount: inboxes.sentCount,
+      bounceCount: inboxes.bounceCount,
+      spamCount: inboxes.spamCount,
+    })
+    .from(inboxes)
+    .where(eq(inboxes.workspaceId, workspaceId));
+
+  // Daily outbound message counts for warmup chart (last 30 days)
+  const dailySent = await db
+    .select({
+      date: sql<string>`date_trunc('day', ${inboxMessages.sentAt})::date::text`,
+      sent: count(inboxMessages.id),
+    })
+    .from(inboxMessages)
+    .innerJoin(inboxThreads, eq(inboxMessages.threadId, inboxThreads.id))
+    .innerJoin(inboxes, eq(inboxThreads.inboxId, inboxes.id))
+    .where(
+      and(
+        eq(inboxes.workspaceId, workspaceId),
+        eq(inboxMessages.direction, "outbound"),
+        gte(inboxMessages.sentAt, thirtyDaysAgo),
+      )
+    )
+    .groupBy(sql`date_trunc('day', ${inboxMessages.sentAt})::date`)
+    .orderBy(sql`date_trunc('day', ${inboxMessages.sentAt})::date`);
+
+  // Build warmup array — fill in gaps for days with no sends
+  const sentByDate = Object.fromEntries(dailySent.map((r) => [r.date, Number(r.sent)]));
+  const totalDailyLimit = allInboxes.reduce((acc, i) => acc + i.dailySendLimit, 0);
+  const warmupRampTarget = Math.max(totalDailyLimit, 1);
+
+  const warmup: Array<{ date: string; sent: number; target: number }> = [];
+  for (let i = 0; i < 30; i++) {
+    const d = new Date(thirtyDaysAgo);
+    d.setUTCDate(d.getUTCDate() + i);
+    const dateStr = d.toISOString().slice(0, 10);
+    const dayFraction = (i + 1) / 30;
+    warmup.push({
+      date: dateStr,
+      sent: sentByDate[dateStr] ?? 0,
+      target: Math.round(warmupRampTarget * dayFraction),
+    });
+  }
+
+  // Bounce / spam chart — one aggregate point per inbox, last 30 days
+  // (we don't store daily bounce logs, so we surface total rates as a single point)
+  const totalSent = allInboxes.reduce((acc, i) => acc + i.sentCount, 0);
+  const totalBounce = allInboxes.reduce((acc, i) => acc + i.bounceCount, 0);
+  const totalSpam = allInboxes.reduce((acc, i) => acc + i.spamCount, 0);
+
+  const bounceRate = totalSent > 0 ? (totalBounce / totalSent) * 100 : 0;
+  const spamRate = totalSent > 0 ? (totalSpam / totalSent) * 100 : 0;
+
+  const bounce =
+    totalSent > 0
+      ? [{ date: now.toISOString().slice(0, 10), bounceRate, spamRate }]
+      : [];
+
+  // Summary
+  const inboxCount = allInboxes.filter((i) => i.status === "active").length;
+  const warmingCount = allInboxes.filter((i) => i.warmupStatus === "warming").length;
+
+  return {
+    warmup,
+    bounce,
+    summary: {
+      totalSent,
+      avgBounceRate: bounceRate,
+      avgSpamRate: spamRate,
+      inboxCount,
+      warmingCount,
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
