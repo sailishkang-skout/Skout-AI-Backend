@@ -55,7 +55,13 @@ export async function listInboxes(db: Db, workspaceId: string) {
     .from(inboxes)
     .where(eq(inboxes.workspaceId, workspaceId))
     .orderBy(inboxes.createdAt);
-  const data = await withDailyStats(db, rows);
+  if (rows.length === 0) return { workspaceId, data: [], total: 0 };
+  let data: Awaited<ReturnType<typeof withDailyStats>>;
+  try {
+    data = await withDailyStats(db, rows);
+  } catch {
+    data = rows.map((r) => ({ ...r, sentToday: 0 }));
+  }
   return { workspaceId, data, total: data.length };
 }
 
@@ -66,8 +72,12 @@ export async function getInboxById(db: Db, workspaceId: string, id: string) {
     .where(and(eq(inboxes.workspaceId, workspaceId), eq(inboxes.id, id)))
     .limit(1);
   if (!row) return null;
-  const [withStats] = await withDailyStats(db, [row]);
-  return withStats ?? null;
+  try {
+    const [withStats] = await withDailyStats(db, [row]);
+    return withStats ?? null;
+  } catch {
+    return { ...row, sentToday: 0 };
+  }
 }
 
 export async function updateInbox(
