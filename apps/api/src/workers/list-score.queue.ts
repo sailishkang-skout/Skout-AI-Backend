@@ -23,6 +23,9 @@ export function getListScoreQueue(config: Env): Queue<ListScoreJobPayload> {
         removeOnFail: 200,
       },
     });
+    queue.on("error", (err) => {
+      console.warn(`[bullmq] ${LIST_SCORE_QUEUE} queue error:`, err.message);
+    });
   }
   return queue;
 }

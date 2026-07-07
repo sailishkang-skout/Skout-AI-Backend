@@ -1,5 +1,7 @@
+import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { schema } from "@skout/db";
 import {
   InboxService,
   listInboxes,
@@ -8,10 +10,17 @@ import {
   pauseInbox,
   resumeInbox,
   deleteInbox,
-  listThreads,
   listDomains,
+  addDomain,
+  removeDomain,
+  getDomainDns,
+  getDeliverabilityMetrics,
+  buildInboxService,
 } from "../services/inbox.service.js";
+import type { ThreadStatus } from "../services/inbox.service.js";
 import { recordBounce, recordSpam } from "../services/inbox-rotation.service.js";
+import { ingestInboundMessage } from "../services/inbound-reply.service.js";
+import { HttpError } from "../utils/http.js";
 
 const createInboxBody = z.object({
   emailAddress: z.string().email(),
@@ -24,6 +33,8 @@ const createInboxBody = z.object({
   smtpUsername: z.string().optional(),
   smtpPassword: z.string().optional(),
   smtpSecure: z.boolean().default(true),
+  imapHost: z.string().optional(),
+  imapPort: z.number().int().optional(),
 });
 
 const updateInboxBody = z
@@ -38,6 +49,41 @@ const updateInboxBody = z
 
 const resumeBody = z.object({
   resetCounters: z.boolean().default(false),
+});
+
+const inboundWebhookSchema = z.object({
+  inboxEmailAddress: z.string().email(),
+  from: z.string().email(),
+  to: z.string().email(),
+  subject: z.string().optional(),
+  bodyText: z.string().optional(),
+  bodyHtml: z.string().optional(),
+  messageId: z.string().optional(),
+  inReplyTo: z.string().optional(),
+  references: z.string().optional(),
+  sentAt: z.string().datetime().optional(),
+  rawHeaders: z.record(z.string()).optional(),
+});
+
+const THREAD_STATUSES = ["new", "replied", "bounced", "meeting_booked", "closed"] as const;
+
+const threadStatusTransitionSchema = z.object({
+  status: z.enum(THREAD_STATUSES),
+});
+
+const replySchema = z.object({
+  text: z.string().min(1),
+  html: z.string().optional(),
+});
+
+const listThreadsQuerySchema = z.object({
+  status: z.enum(THREAD_STATUSES).optional(),
+  unread: z
+    .string()
+    .optional()
+    .transform((v) => v === "true" || v === "1"),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
 });
 
 export async function inboxRoutes(app: FastifyInstance) {
@@ -112,7 +158,7 @@ export async function inboxRoutes(app: FastifyInstance) {
     return reply.send(inbox);
   });
 
-  // POST /inboxes/:id/bounce — webhook: record a bounce event
+  // POST /inboxes/:id/bounce
   app.post("/inboxes/:id/bounce", async (request, reply) => {
     const { id } = request.params as { id: string };
     const workspaceId = request.workspaceId ?? "unknown";
@@ -123,7 +169,7 @@ export async function inboxRoutes(app: FastifyInstance) {
     return reply.status(204).send();
   });
 
-  // POST /inboxes/:id/spam — webhook: record a spam complaint
+  // POST /inboxes/:id/spam
   app.post("/inboxes/:id/spam", async (request, reply) => {
     const { id } = request.params as { id: string };
     const workspaceId = request.workspaceId ?? "unknown";
@@ -141,10 +187,197 @@ export async function inboxRoutes(app: FastifyInstance) {
     return reply.send(await listDomains(db, workspaceId));
   });
 
-  // GET /inbox/threads
+  // POST /domains
+  app.post("/domains", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    if (!db) return reply.status(503).send({ error: "database_unavailable" });
+    const { domain } = z.object({ domain: z.string().min(3) }).parse(request.body ?? {});
+    const result = await addDomain(db, workspaceId, domain);
+    return reply.status(201).send(result);
+  });
+
+  // DELETE /domains/:id
+  app.delete("/domains/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    if (!db) return reply.status(503).send({ error: "database_unavailable" });
+    const deleted = await removeDomain(db, workspaceId, id);
+    if (!deleted) return reply.status(404).send({ error: "domain_not_found" });
+    return reply.status(204).send();
+  });
+
+  // GET /domains/:id/dns
+  app.get("/domains/:id/dns", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    if (!db) return reply.status(503).send({ error: "database_unavailable" });
+    const result = await getDomainDns(db, workspaceId, id);
+    if (!result) return reply.status(404).send({ error: "domain_not_found" });
+    return reply.send(result);
+  });
+
+  // GET /deliverability/metrics — warmup + bounce/spam chart data + summary
+  app.get("/deliverability/metrics", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    if (!db) return reply.status(503).send({ error: "database_unavailable" });
+    return reply.send(await getDeliverabilityMetrics(db, workspaceId));
+  });
+
+  // GET /inbox/threads — filterable by ?status=&unread=true
   app.get("/inbox/threads", async (request, reply) => {
     const workspaceId = request.workspaceId ?? "unknown";
-    if (!db) return reply.send({ workspaceId, data: [], total: 0 });
-    return reply.send(await listThreads(db, workspaceId));
+    const svc = buildInboxService(db, app.config);
+    if (!svc) return reply.send({ workspaceId, data: [], total: 0 });
+    const { status, unread, limit, offset } = listThreadsQuerySchema.parse(request.query ?? {});
+    try {
+      return reply.send(
+        await svc.listThreads(workspaceId, {
+          status: status as ThreadStatus | undefined,
+          unreadOnly: unread,
+          limit,
+          offset,
+        })
+      );
+    } catch (err) {
+      if (err instanceof HttpError) return reply.status(err.statusCode).send({ error: err.message });
+      return reply.status(503).send({ error: "service_unavailable" });
+    }
+  });
+
+  // GET /inbox/unread-counts — workspace unread badge counts by status
+  app.get("/inbox/unread-counts", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = buildInboxService(db, app.config);
+    if (!svc) return reply.send({ workspaceId, total: 0, byStatus: {} });
+    return reply.send(await svc.getUnreadCounts(workspaceId));
+  });
+
+  // GET /inbox/threads/:threadId
+  app.get("/inbox/threads/:threadId", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const { threadId } = request.params as { threadId: string };
+    const svc = buildInboxService(db, app.config);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    try {
+      return reply.send(await svc.getThread(workspaceId, threadId));
+    } catch (err) {
+      if (err instanceof HttpError) return reply.status(err.statusCode).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  // GET /inbox/threads/:threadId/messages
+  app.get("/inbox/threads/:threadId/messages", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const { threadId } = request.params as { threadId: string };
+    const { limit, offset } = request.query as { limit?: string; offset?: string };
+    const svc = buildInboxService(db, app.config);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    try {
+      return reply.send(
+        await svc.listMessages(workspaceId, threadId, {
+          limit: limit ? parseInt(limit, 10) : undefined,
+          offset: offset ? parseInt(offset, 10) : undefined,
+        })
+      );
+    } catch (err) {
+      if (err instanceof HttpError) return reply.status(err.statusCode).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  // GET /inbox/threads/:threadId/context
+  app.get("/inbox/threads/:threadId/context", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const { threadId } = request.params as { threadId: string };
+    const svc = buildInboxService(db, app.config);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    try {
+      return reply.send(await svc.getThreadContext(workspaceId, threadId));
+    } catch (err) {
+      if (err instanceof HttpError) return reply.status(err.statusCode).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  // POST /inbox/threads/:threadId/read — mark all messages as read
+  app.post("/inbox/threads/:threadId/read", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const { threadId } = request.params as { threadId: string };
+    const svc = buildInboxService(db, app.config);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    try {
+      return reply.send(await svc.markThreadRead(workspaceId, threadId));
+    } catch (err) {
+      if (err instanceof HttpError) return reply.status(err.statusCode).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  // PATCH /inbox/threads/:threadId/status
+  app.patch("/inbox/threads/:threadId/status", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const { threadId } = request.params as { threadId: string };
+    const svc = buildInboxService(db, app.config);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    try {
+      const { status } = threadStatusTransitionSchema.parse(request.body ?? {});
+      return reply.send(await svc.transitionThreadStatus(workspaceId, threadId, status as ThreadStatus));
+    } catch (err) {
+      if (err instanceof HttpError) return reply.status(err.statusCode).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  // POST /inbox/threads/:threadId/reply
+  app.post("/inbox/threads/:threadId/reply", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const { threadId } = request.params as { threadId: string };
+    const svc = buildInboxService(db, app.config);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    try {
+      const body = replySchema.parse(request.body ?? {});
+      const message = await svc.replyToThread(workspaceId, threadId, body);
+      return reply.status(201).send(message);
+    } catch (err) {
+      if (err instanceof HttpError) return reply.status(err.statusCode).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  // POST /inbox/webhooks/inbound
+  app.post("/inbox/webhooks/inbound", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    if (!db) return reply.status(503).send({ error: "database_unavailable" });
+
+    const body = inboundWebhookSchema.parse(request.body ?? {});
+
+    const [inboxRow] = await db
+      .select({ id: schema.inboxes.id })
+      .from(schema.inboxes)
+      .where(
+        and(
+          eq(schema.inboxes.workspaceId, workspaceId),
+          eq(schema.inboxes.emailAddress, body.inboxEmailAddress)
+        )
+      )
+      .limit(1);
+
+    if (!inboxRow) return reply.status(404).send({ error: "inbox_not_found" });
+
+    await ingestInboundMessage(db as any, workspaceId, inboxRow.id, {
+      fromAddress: body.from,
+      toAddress: body.to,
+      subject: body.subject,
+      bodyText: body.bodyText,
+      bodyHtml: body.bodyHtml,
+      messageId: body.messageId,
+      inReplyTo: body.inReplyTo,
+      references: body.references,
+      sentAt: body.sentAt ? new Date(body.sentAt) : new Date(),
+      rawHeaders: body.rawHeaders,
+    });
+
+    return reply.status(202).send({ ok: true });
   });
 }

@@ -1,26 +1,30 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
+import type { FastifyInstance } from "fastify";
 
-async function buildTestApp() {
+let app: FastifyInstance;
+
+beforeAll(async () => {
   const config = loadEnv();
-  return buildApp({
+  app = await buildApp({
     ...config,
     CLERK_SECRET_KEY: undefined,
     LOG_LEVEL: "fatal",
     OPENSEARCH_URL: undefined,
   });
-}
+}, 30000);
 
-// Injects as a specific stub user. Workspace is auto-provisioned on first call.
+afterAll(async () => {
+  await app?.close();
+});
+
 function asUser(email: string) {
   return { "x-stub-user-email": email };
 }
 
 describe("list routes — CRUD lifecycle", () => {
   it("POST /lists creates a list and returns 201 with correct shape", async () => {
-    const app = await buildTestApp();
-
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/lists",
@@ -35,12 +39,9 @@ describe("list routes — CRUD lifecycle", () => {
     expect(body.workspaceId).toMatch(/^[0-9a-f-]{36}$/);
     expect(body.prospectCount).toBe(0);
     expect(body.createdAt).toBeTruthy();
-
-    await app.close();
   });
 
   it("GET /lists returns the lists for the workspace", async () => {
-    const app = await buildTestApp();
     const email = "list-index@test.com";
 
     await app.inject({
@@ -61,12 +62,9 @@ describe("list routes — CRUD lifecycle", () => {
     expect(body.workspaceId).toMatch(/^[0-9a-f-]{36}$/);
     expect(body.total).toBeGreaterThanOrEqual(1);
     expect(body.data.some((l) => l.name === "Index Test List")).toBe(true);
-
-    await app.close();
   });
 
   it("GET /lists/:id returns the list by id", async () => {
-    const app = await buildTestApp();
     const email = "list-show@test.com";
 
     const created = await app.inject({
@@ -87,12 +85,9 @@ describe("list routes — CRUD lifecycle", () => {
     const body = res.json() as { id: string; name: string };
     expect(body.id).toBe(id);
     expect(body.name).toBe("Show Me List");
-
-    await app.close();
   });
 
   it("POST /lists/:id/members adds prospects and returns list with members array", async () => {
-    const app = await buildTestApp();
     const email = "list-addmembers@test.com";
 
     const created = await app.inject({
@@ -122,12 +117,9 @@ describe("list routes — CRUD lifecycle", () => {
     expect(body.members).toHaveLength(2);
     expect(body.members.map((m) => m.prospectId).sort()).toEqual(["prospect-a", "prospect-b"]);
     expect(body.members[0].addedAt).toBeTruthy();
-
-    await app.close();
   });
 
   it("GET /lists/:id/members returns the members array", async () => {
-    const app = await buildTestApp();
     const email = "list-getmembers@test.com";
 
     const created = await app.inject({
@@ -162,12 +154,9 @@ describe("list routes — CRUD lifecycle", () => {
       expect(m.addedAt).toBeTruthy();
       expect(typeof m.snapshot).toBe("object");
     });
-
-    await app.close();
   });
 
   it("POST /lists/:id/members is idempotent — duplicate prospect IDs are not double-inserted", async () => {
-    const app = await buildTestApp();
     const email = "list-idempotent@test.com";
 
     const created = await app.inject({
@@ -196,12 +185,9 @@ describe("list routes — CRUD lifecycle", () => {
     const body = res.json() as { prospectCount: number; members: unknown[] };
     expect(body.prospectCount).toBe(1);
     expect(body.members).toHaveLength(1);
-
-    await app.close();
   });
 
   it("prospectCount on GET /lists matches the number of added members", async () => {
-    const app = await buildTestApp();
     const email = "list-count@test.com";
 
     const created = await app.inject({
@@ -227,15 +213,11 @@ describe("list routes — CRUD lifecycle", () => {
 
     expect(res.statusCode).toBe(200);
     expect((res.json() as { prospectCount: number }).prospectCount).toBe(3);
-
-    await app.close();
   });
 });
 
 describe("list routes — workspace isolation", () => {
   it("users from different workspaces cannot see each other's lists", async () => {
-    const app = await buildTestApp();
-
     const resA = await app.inject({
       method: "POST",
       url: "/api/v1/lists",
@@ -244,7 +226,6 @@ describe("list routes — workspace isolation", () => {
     });
     const { id: listAId } = resA.json() as { id: string };
 
-    // User B tries to fetch User A's list by ID
     const resB = await app.inject({
       method: "GET",
       url: `/api/v1/lists/${listAId}`,
@@ -252,7 +233,6 @@ describe("list routes — workspace isolation", () => {
     });
     expect(resB.statusCode).toBe(404);
 
-    // User B's list index does not contain User A's list
     const index = await app.inject({
       method: "GET",
       url: "/api/v1/lists",
@@ -260,13 +240,9 @@ describe("list routes — workspace isolation", () => {
     });
     const body = index.json() as { data: { id: string }[] };
     expect(body.data.some((l) => l.id === listAId)).toBe(false);
-
-    await app.close();
   });
 
   it("users from different workspaces cannot add members to each other's lists", async () => {
-    const app = await buildTestApp();
-
     const resA = await app.inject({
       method: "POST",
       url: "/api/v1/lists",
@@ -282,13 +258,9 @@ describe("list routes — workspace isolation", () => {
       payload: { prospectIds: ["stolen-p1"] },
     });
     expect(resB.statusCode).toBe(404);
-
-    await app.close();
   });
 
   it("users from different workspaces cannot GET members of each other's lists", async () => {
-    const app = await buildTestApp();
-
     const created = await app.inject({
       method: "POST",
       url: "/api/v1/lists",
@@ -303,41 +275,29 @@ describe("list routes — workspace isolation", () => {
       headers: asUser("isolation-memberB@test.com"),
     });
     expect(res.statusCode).toBe(404);
-
-    await app.close();
   });
 });
 
 describe("list routes — 404 and validation", () => {
   it("GET /lists/:id returns 404 for a non-existent list", async () => {
-    const app = await buildTestApp();
-
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/lists/00000000-0000-4000-8000-000000000000",
       headers: asUser("notfound@test.com"),
     });
     expect(res.statusCode).toBe(404);
-
-    await app.close();
   });
 
   it("GET /lists/:id/members returns 404 for a non-existent list", async () => {
-    const app = await buildTestApp();
-
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/lists/00000000-0000-4000-8000-000000000000/members",
       headers: asUser("notfound-members@test.com"),
     });
     expect(res.statusCode).toBe(404);
-
-    await app.close();
   });
 
   it("POST /lists/:id/members returns 404 for a non-existent list", async () => {
-    const app = await buildTestApp();
-
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/lists/00000000-0000-4000-8000-000000000000/members",
@@ -345,13 +305,9 @@ describe("list routes — 404 and validation", () => {
       payload: { prospectIds: ["p1"] },
     });
     expect(res.statusCode).toBe(404);
-
-    await app.close();
   });
 
   it("POST /lists rejects an empty name with 400", async () => {
-    const app = await buildTestApp();
-
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/lists",
@@ -359,13 +315,9 @@ describe("list routes — 404 and validation", () => {
       payload: { name: "" },
     });
     expect(res.statusCode).toBe(400);
-
-    await app.close();
   });
 
   it("POST /lists rejects a missing name with 400", async () => {
-    const app = await buildTestApp();
-
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/lists",
@@ -373,12 +325,9 @@ describe("list routes — 404 and validation", () => {
       payload: {},
     });
     expect(res.statusCode).toBe(400);
-
-    await app.close();
   });
 
   it("POST /lists/:id/members rejects empty prospectIds array with 400", async () => {
-    const app = await buildTestApp();
     const email = "validation-members@test.com";
 
     const created = await app.inject({
@@ -396,14 +345,11 @@ describe("list routes — 404 and validation", () => {
       payload: { prospectIds: [] },
     });
     expect(res.statusCode).toBe(400);
-
-    await app.close();
   });
 });
 
 describe("list routes — auth stub", () => {
   it("same email always maps to the same workspaceId across requests", async () => {
-    const app = await buildTestApp();
     const email = "stable-workspace@test.com";
 
     const r1 = await app.inject({
@@ -421,13 +367,9 @@ describe("list routes — auth stub", () => {
     const w2 = (r2.json() as { workspaceId: string }).workspaceId;
     expect(w1).toBe(w2);
     expect(w1).toMatch(/^[0-9a-f-]{36}$/);
-
-    await app.close();
   });
 
   it("different emails map to different workspaceIds", async () => {
-    const app = await buildTestApp();
-
     const r1 = await app.inject({
       method: "GET",
       url: "/api/v1/lists",
@@ -442,14 +384,11 @@ describe("list routes — auth stub", () => {
     const w1 = (r1.json() as { workspaceId: string }).workspaceId;
     const w2 = (r2.json() as { workspaceId: string }).workspaceId;
     expect(w1).not.toBe(w2);
-
-    await app.close();
   });
 });
 
 describe("list routes — CSV export", () => {
   it("GET /lists/:id/export/csv returns export metadata and inline CSV when no bucket", async () => {
-    const app = await buildTestApp();
     const email = "list-csv@test.com";
 
     const created = await app.inject({
@@ -493,7 +432,5 @@ describe("list routes — CSV export", () => {
       expect(download.headers["content-type"]).toContain("text/csv");
       expect(download.body).toContain("Full Name");
     }
-
-    await app.close();
   });
 });

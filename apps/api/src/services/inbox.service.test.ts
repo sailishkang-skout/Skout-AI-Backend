@@ -27,6 +27,24 @@ function selectChain(result: unknown[]) {
   return c;
 }
 
+function countChain(result: unknown[]) {
+  const c = {} as Record<string, ReturnType<typeof vi.fn>>;
+  c.from = vi.fn().mockReturnValue(c);
+  c.where = vi.fn().mockResolvedValue(result);
+  return c;
+}
+
+function threadDataChain(result: unknown[]) {
+  const c = {} as Record<string, ReturnType<typeof vi.fn>>;
+  c.from = vi.fn().mockReturnValue(c);
+  c.leftJoin = vi.fn().mockReturnValue(c);
+  c.where = vi.fn().mockReturnValue(c);
+  c.orderBy = vi.fn().mockReturnValue(c);
+  c.limit = vi.fn().mockReturnValue(c);
+  c.offset = vi.fn().mockResolvedValue(result);
+  return c;
+}
+
 function selectChainWithLimit(result: unknown[]) {
   const c = {} as Record<string, ReturnType<typeof vi.fn>>;
   c.from = vi.fn().mockReturnValue(c);
@@ -161,13 +179,30 @@ describe("InboxService", () => {
   });
 
   describe("listThreads", () => {
-    it("returns threads for the workspace", async () => {
-      const rows = [{ id: "thread-1", workspaceId: "ws-1" }];
-      const db = { select: vi.fn().mockReturnValue(selectChain(rows)) } as any;
+    it("returns threads for the workspace with pagination metadata", async () => {
+      const thread = { id: "thread-1", workspaceId: "ws-1" };
+      const countC = countChain([{ total: 1 }]);
+      const dataC = {} as Record<string, ReturnType<typeof vi.fn>>;
+      dataC.from = vi.fn().mockReturnValue(dataC);
+      dataC.where = vi.fn().mockReturnValue(dataC);
+      dataC.orderBy = vi.fn().mockReturnValue(dataC);
+      dataC.limit = vi.fn().mockReturnValue(dataC);
+      dataC.offset = vi.fn().mockResolvedValue([thread]);
+
+      const db = {
+        select: vi.fn()
+          .mockReturnValueOnce(countC)
+          .mockReturnValueOnce(dataC),
+      } as any;
       const svc = new InboxService(db, config);
 
       const result = await svc.listThreads("ws-1");
-      expect(result).toEqual({ workspaceId: "ws-1", data: rows, total: 1 });
+      expect(result.workspaceId).toBe("ws-1");
+      expect(result.total).toBe(1);
+      expect(result.limit).toBe(50);
+      expect(result.offset).toBe(0);
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0]!.id).toBe("thread-1");
     });
   });
 });
@@ -323,12 +358,42 @@ describe("deleteInbox (function)", () => {
 });
 
 describe("listDomains (function)", () => {
-  it("returns sending domains for the workspace", async () => {
-    const rows = [{ id: "domain-1", domain: "skout.ai" }];
+  it("returns shaped domain objects for the workspace", async () => {
+    const rows = [
+      {
+        id: "domain-1",
+        workspaceId: "ws-1",
+        domain: "skout.ai",
+        dnsRecords: [
+          { purpose: "SPF", status: "pass", type: "TXT", name: "skout.ai", value: "v=spf1" },
+          { purpose: "DKIM", status: "unknown", type: "TXT", name: "_dkey.skout.ai", value: "v=DKIM1" },
+        ],
+        verifiedAt: null,
+        createdAt: new Date("2026-01-01T00:00:00Z"),
+        updatedAt: new Date("2026-01-01T00:00:00Z"),
+        status: "pending_verification",
+      },
+    ];
     const db = { select: vi.fn().mockReturnValue(selectChain(rows)) } as any;
 
     const result = await listDomains(db, "ws-1");
-    expect(result).toEqual({ workspaceId: "ws-1", data: rows, total: 1 });
+    expect(result).toEqual({
+      workspaceId: "ws-1",
+      data: [
+        {
+          id: "domain-1",
+          workspaceId: "ws-1",
+          domain: "skout.ai",
+          spfStatus: "pass",
+          dkimStatus: "unknown",
+          dmarcStatus: "unknown",
+          mxStatus: "unknown",
+          verifiedAt: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      total: 1,
+    });
   });
 });
 

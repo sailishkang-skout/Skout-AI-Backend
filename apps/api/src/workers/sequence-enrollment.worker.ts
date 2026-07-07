@@ -19,6 +19,7 @@ import {
   enqueueSequenceAdvanceJob,
   type SeqAdvanceJobPayload,
 } from "./sequence-enrollment.queue.js";
+import { isRedisAvailable } from "../lib/redis.js";
 
 const log = createLogger("sequence-enrollment.worker");
 
@@ -167,7 +168,15 @@ async function executeEmailStep(
   await db.transaction(async (tx) => {
     const [thread] = await tx
       .insert(inboxThreads)
-      .values({ workspaceId, inboxId: inbox.id, prospectId, subject, status: "open", lastMessageAt: now })
+      .values({
+        workspaceId,
+        inboxId: inbox.id,
+        enrollmentId,
+        prospectId,
+        subject,
+        status: "open",
+        lastMessageAt: now,
+      })
       .returning();
     await tx.insert(inboxMessages).values({
       threadId: thread!.id,
@@ -178,6 +187,8 @@ async function executeEmailStep(
       bodyText: text,
       bodyHtml: html,
       externalId: sendResult.externalId,
+      // RFC 5322 Message-ID from nodemailer (same value, stored for thread matching)
+      messageId: sendResult.externalId,
       sentAt: now,
     });
     await tx
