@@ -12,6 +12,7 @@ beforeAll(async () => {
     CLERK_SECRET_KEY: undefined,
     LOG_LEVEL: "fatal",
     OPENSEARCH_URL: undefined,
+    EXPORTS_BUCKET: undefined,
   });
 }, 30000);
 

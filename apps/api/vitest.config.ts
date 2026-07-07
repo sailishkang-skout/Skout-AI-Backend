@@ -8,6 +8,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@clerk/backend": path.resolve(root, "src/test/mocks/clerk-backend.ts"),
+      openai: path.resolve(root, "src/test/mocks/openai.ts"),
     },
   },
   test: {

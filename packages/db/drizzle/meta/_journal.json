@@ -75,15 +75,22 @@
     {
       "idx": 10,
       "version": "7",
-      "when": 1751760000000,
+      "when": 1782870000000,
       "tag": "0010_inbound_email_threads",
       "breakpoints": true
     },
     {
       "idx": 11,
       "version": "7",
-      "when": 1751846400000,
+      "when": 1782880000000,
       "tag": "0011_conversation_state_machine",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1782890000000,
+      "tag": "0012_repair_inbox_inbound_schema",
       "breakpoints": true
     }
   ]

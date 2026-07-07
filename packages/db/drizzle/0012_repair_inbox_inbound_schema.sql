@@ -1,6 +1,5 @@
--- R2.1: Inbound email ingestion + thread model
--- Adds RFC 5322 header columns to inbox_messages for thread matching,
--- enrollmentId link on inbox_threads, and IMAP polling fields on inboxes.
+-- Repair migration: ensure R2.1/R2.2 inbox columns exist even if 0010/0011
+-- were recorded without applying (duplicate migration file confusion).
 
 ALTER TABLE "inboxes" ADD COLUMN IF NOT EXISTS "imap_host" text;
 --> statement-breakpoint
@@ -23,3 +22,11 @@ DO $$ BEGIN
 EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;
+--> statement-breakpoint
+ALTER TABLE "inbox_threads" ADD COLUMN IF NOT EXISTS "status_changed_at" timestamp with time zone;
+--> statement-breakpoint
+ALTER TABLE "inbox_threads" ADD COLUMN IF NOT EXISTS "unread_count" integer NOT NULL DEFAULT 0;
+--> statement-breakpoint
+ALTER TABLE "inbox_threads" ADD COLUMN IF NOT EXISTS "reply_tag" text;
+--> statement-breakpoint
+UPDATE "inbox_threads" SET "status" = 'new' WHERE "status" = 'open';
