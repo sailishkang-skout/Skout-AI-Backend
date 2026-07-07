@@ -11,6 +11,10 @@ import {
   resumeInbox,
   deleteInbox,
   listDomains,
+  addDomain,
+  removeDomain,
+  getDomainDns,
+  getDeliverabilityMetrics,
   buildInboxService,
 } from "../services/inbox.service.js";
 import type { ThreadStatus } from "../services/inbox.service.js";
@@ -181,6 +185,42 @@ export async function inboxRoutes(app: FastifyInstance) {
     const workspaceId = request.workspaceId ?? "unknown";
     if (!db) return reply.send({ workspaceId, data: [], total: 0 });
     return reply.send(await listDomains(db, workspaceId));
+  });
+
+  // POST /domains
+  app.post("/domains", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    if (!db) return reply.status(503).send({ error: "database_unavailable" });
+    const { domain } = z.object({ domain: z.string().min(3) }).parse(request.body ?? {});
+    const result = await addDomain(db, workspaceId, domain);
+    return reply.status(201).send(result);
+  });
+
+  // DELETE /domains/:id
+  app.delete("/domains/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    if (!db) return reply.status(503).send({ error: "database_unavailable" });
+    const deleted = await removeDomain(db, workspaceId, id);
+    if (!deleted) return reply.status(404).send({ error: "domain_not_found" });
+    return reply.status(204).send();
+  });
+
+  // GET /domains/:id/dns
+  app.get("/domains/:id/dns", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    if (!db) return reply.status(503).send({ error: "database_unavailable" });
+    const result = await getDomainDns(db, workspaceId, id);
+    if (!result) return reply.status(404).send({ error: "domain_not_found" });
+    return reply.send(result);
+  });
+
+  // GET /deliverability/metrics — warmup + bounce/spam chart data + summary
+  app.get("/deliverability/metrics", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    if (!db) return reply.status(503).send({ error: "database_unavailable" });
+    return reply.send(await getDeliverabilityMetrics(db, workspaceId));
   });
 
   // GET /inbox/threads — filterable by ?status=&unread=true
