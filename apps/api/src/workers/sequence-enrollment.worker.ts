@@ -19,7 +19,6 @@ import {
   enqueueSequenceAdvanceJob,
   type SeqAdvanceJobPayload,
 } from "./sequence-enrollment.queue.js";
-import { isRedisAvailable } from "../lib/redis.js";
 
 const log = createLogger("sequence-enrollment.worker");
 
