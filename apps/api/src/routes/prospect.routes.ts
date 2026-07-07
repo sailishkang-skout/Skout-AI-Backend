@@ -111,39 +111,40 @@ export async function prospectRoutes(app: FastifyInstance) {
       : generateCompanyId(`${domain}:${body.fullName}`);
 
     const cfg = osConfig(app.config);
-    if (!cfg) {
-      return reply.status(503).send({ error: "Search index not configured" });
+    let indexed = false;
+
+    if (cfg) {
+      const doc: ProspectDocument = {
+        prospectId,
+        companyId,
+        fullName: body.fullName,
+        title: body.jobTitle,
+        seniority: body.seniority,
+        department: body.department,
+        jobFunction: body.jobFunction,
+        email: body.email,
+        phone: body.phone,
+        linkedinUrl: body.linkedinUrl,
+        companyDomain: domain,
+        companyName: body.companyName,
+        industry: body.industry,
+        subIndustry: body.subIndustry,
+        country: body.country,
+        state: body.state,
+        city: body.city,
+        employeeCount: body.employeeCount,
+        companyStage: body.companyStage,
+        lastFundingRound: body.lastFundingRound,
+        currentlyHiring: body.currentlyHiring,
+        yearsAtCompany: body.yearsAtCompany,
+        yearsInRole: body.yearsInRole,
+        previousCompany: body.previousCompany,
+        updatedAt: new Date().toISOString(),
+      };
+
+      await bulkUpsertProspects(cfg, [doc]);
+      indexed = true;
     }
-
-    const doc: ProspectDocument = {
-      prospectId,
-      companyId,
-      fullName: body.fullName,
-      title: body.jobTitle,
-      seniority: body.seniority,
-      department: body.department,
-      jobFunction: body.jobFunction,
-      email: body.email,
-      phone: body.phone,
-      linkedinUrl: body.linkedinUrl,
-      companyDomain: domain,
-      companyName: body.companyName,
-      industry: body.industry,
-      subIndustry: body.subIndustry,
-      country: body.country,
-      state: body.state,
-      city: body.city,
-      employeeCount: body.employeeCount,
-      companyStage: body.companyStage,
-      lastFundingRound: body.lastFundingRound,
-      currentlyHiring: body.currentlyHiring,
-      yearsAtCompany: body.yearsAtCompany,
-      yearsInRole: body.yearsInRole,
-      previousCompany: body.previousCompany,
-      updatedAt: new Date().toISOString(),
-    };
-
-    await bulkUpsertProspects(cfg, [doc]);
 
     const snapshot = {
       prospectId,
@@ -200,6 +201,7 @@ export async function prospectRoutes(app: FastifyInstance) {
         ? "Prospect activated and enrichment started"
         : "Prospect activated",
       activated: true,
+      indexed,
       listId: body.listId ?? null,
       ...(job
         ? {

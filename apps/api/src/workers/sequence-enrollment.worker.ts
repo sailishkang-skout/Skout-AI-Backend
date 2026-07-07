@@ -5,6 +5,7 @@ import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
+import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
 import { isBusinessHour, nextBusinessHour } from "../utils/scheduling.js";
 import { resolveProspectFields } from "../services/prospect-resolver.service.js";
 import { isSuppressed } from "../services/suppression.service.js";
@@ -345,19 +346,14 @@ async function advanceEnrollment(
 // Worker export
 // ---------------------------------------------------------------------------
 
-function redisConnection(redisUrl: string) {
-  const parsed = new URL(redisUrl);
-  return {
-    host: parsed.hostname,
-    port: Number(parsed.port || "6379"),
-    password: parsed.password || undefined,
-    ...(parsed.protocol === "rediss:" ? { tls: {} } : {}),
-  };
-}
-
 export async function startSequenceEnrollmentWorker(config: Env): Promise<() => Promise<void>> {
   if (!config.DATABASE_URL) {
     log.warn("Sequence enrollment worker not started — DATABASE_URL not set");
+    return async () => {};
+  }
+
+  if (!(await isRedisAvailable(config))) {
+    log.warn("Sequence enrollment worker not started — Redis unavailable");
     return async () => {};
   }
 
@@ -373,7 +369,7 @@ export async function startSequenceEnrollmentWorker(config: Env): Promise<() => 
       await advanceEnrollment(db, config, job.data);
     },
     {
-      connection: redisConnection(config.REDIS_URL),
+      connection: redisBullMqConnection(config.REDIS_URL),
       concurrency: 5,
     }
   );

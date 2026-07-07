@@ -3,7 +3,7 @@ import { clearAuthToken, getStoredAuth, isAuthFresh, ensureSession } from "./aut
 import { getConfig } from "./api.js";
 import { getLastListId, saveLastListId } from "./lists-cache.js";
 import { friendlyTabError, findLinkedInProfileTabId } from "./tab-utils.js";
-import { ensureSkoutHostPermissions, normalizeSkoutBase, skoutSignInHint } from "./skout-urls.js";
+import { ensureSkoutHostPermissions, normalizeSkoutBase, normalizeApiUrl, skoutSignInHint, DEFAULT_API_URL } from "./skout-urls.js";
 import { withTimeout } from "./debug.js";
 
 const BACKGROUND_TIMEOUT_MS = 35_000;
@@ -205,8 +205,8 @@ export function initPanel() {
 
   document.getElementById("save-config")?.addEventListener("click", async () => {
     const useStub = Boolean(useStubAuthEl?.checked);
-    const apiUrl = apiUrlEl?.value?.trim() || "http://localhost:3001";
-    const webUrl = webUrlEl?.value?.trim() || "http://localhost:3000";
+    const apiUrl = normalizeApiUrl(apiUrlEl?.value?.trim() || DEFAULT_API_URL);
+    const webUrl = webUrlEl?.value?.trim() || DEFAULT_WEB_URL;
 
     if (!useStub) {
       const granted = await ensureSkoutHostPermissions(webUrl, apiUrl);

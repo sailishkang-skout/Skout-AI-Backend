@@ -18,6 +18,21 @@ export function normalizeSkoutBase(url, fallback = DEFAULT_WEB_URL) {
   return origin || parseSkoutOrigin(fallback) || DEFAULT_WEB_URL;
 }
 
+/** API base URL must be origin only — strip accidental /api/v1 suffix from CDK output. */
+export function normalizeApiUrl(url, fallback = DEFAULT_API_URL) {
+  const trimmed = String(url || "").trim().replace(/\/+$/, "");
+  if (!trimmed) return fallback;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.pathname === "/api/v1" || parsed.pathname.startsWith("/api/v1/")) {
+      parsed.pathname = "";
+    }
+    return parsed.origin;
+  } catch {
+    return trimmed.replace(/\/api\/v1\/?$/i, "") || fallback;
+  }
+}
+
 export function isLocalWebUrl(webUrl) {
   const origin = parseSkoutOrigin(webUrl || DEFAULT_WEB_URL);
   return LOCAL_WEB_ORIGINS.has(origin);

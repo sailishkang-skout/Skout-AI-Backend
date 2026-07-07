@@ -29,6 +29,7 @@
       "http://127.0.0.1:3000/*",
       "https://*.amazonaws.com/*",
       "http://*.amazonaws.com/*",
+      "https://*.execute-api.*.amazonaws.com/*",
       "http://*.elb.amazonaws.com/*",
       "https://*.cloudfront.net/*"
     ]
@@ -43,6 +44,7 @@
       "matches": [
         "http://localhost:3000/*",
         "http://127.0.0.1:3000/*",
+        "https://*.execute-api.*.amazonaws.com/*",
         "http://*.elb.amazonaws.com/*",
         "https://*.cloudfront.net/*"
       ],

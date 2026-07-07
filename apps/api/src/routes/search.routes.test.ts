@@ -21,6 +21,7 @@ vi.mock("@skout/opensearch", async (importOriginal) => {
 });
 
 import * as osModule from "@skout/opensearch";
+import { buildDemoCorpus } from "@skout/opensearch";
 
 const mockedSearch = vi.mocked(osModule.searchProspects);
 const mockedGetById = vi.mocked(osModule.getProspectById);
@@ -275,13 +276,12 @@ describe("POST /search/prospects", () => {
       expect(res.json().results[0].seniority).toBe("unknown");
     });
 
-    it("falls back to demo data when OpenSearch throws", async () => {
+    it("returns 502 when OpenSearch throws", async () => {
       mockedSearch.mockRejectedValueOnce(new Error("connection refused"));
 
       const res = await app.inject({ method: "POST", url: "/search/prospects", payload: {} });
-      expect(res.statusCode).toBe(200);
-      const body = res.json();
-      expect(body.results.length).toBeGreaterThan(0);
+      expect(res.statusCode).toBe(502);
+      expect(res.json().error).toBe("search_index_unavailable");
     });
 
     it("passes page and pageSize to opensearch", async () => {
@@ -411,14 +411,11 @@ describe("GET /search/prospects/:id", () => {
     await app.close();
   });
 
-  it("returns demo prospect when OpenSearch is not configured", async () => {
+  it("returns 404 when prospect is not in corpus", async () => {
     app = await buildTestApp(baseEnv);
     const res = await app.inject({ method: "GET", url: "/search/prospects/some-id" });
-    expect(res.statusCode).toBe(200);
-    const body = res.json();
-    expect(body).toHaveProperty("prospectId");
-    expect(body).toHaveProperty("fullName");
-    expect(body).toHaveProperty("title");
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error).toBe("prospect_not_found");
   });
 
   it("returns prospect from OpenSearch when found", async () => {
@@ -433,14 +430,13 @@ describe("GET /search/prospects/:id", () => {
     expect(body.companyDomain).toBe("salesforce.com");
   });
 
-  it("returns demo prospect when OpenSearch returns null", async () => {
+  it("returns 404 when OpenSearch returns null", async () => {
     app = await buildTestApp(osEnv);
     mockedGetById.mockResolvedValueOnce(null);
 
     const res = await app.inject({ method: "GET", url: "/search/prospects/missing-id" });
-    expect(res.statusCode).toBe(200);
-    const body = res.json();
-    expect(body.prospectId).toBe("missing-id");
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error).toBe("prospect_not_found");
   });
 });
 
@@ -666,18 +662,19 @@ describe("GET /search/prospects/:id — prospect drawer detail fields", () => {
   describe("demo fallback", () => {
     it("includes updatedAt in demo response", async () => {
       app = await buildTestApp(baseEnv);
-      const res = await app.inject({ method: "GET", url: "/search/prospects/any-id" });
+      const demoId = buildDemoCorpus(1)[0]!.prospectId;
+      const res = await app.inject({ method: "GET", url: `/search/prospects/${demoId}` });
       expect(res.statusCode).toBe(200);
       expect(res.json()).toHaveProperty("updatedAt");
     });
 
-    it("includes updatedAt when OS returns null and demo corpus is used", async () => {
+    it("returns 404 when OS returns null and id is not in demo corpus", async () => {
       app = await buildTestApp(osEnv);
       mockedGetById.mockResolvedValueOnce(null);
 
       const res = await app.inject({ method: "GET", url: "/search/prospects/missing-id" });
-      expect(res.statusCode).toBe(200);
-      expect(res.json()).toHaveProperty("updatedAt");
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error).toBe("prospect_not_found");
     });
   });
 });

@@ -9,6 +9,7 @@ import {
   type SearchFilters,
 } from "@skout/opensearch";
 import type { Env } from "../config/env.js";
+import { HttpError } from "../utils/http.js";
 
 let cachedDemoCorpus: ProspectDocument[] | null = null;
 
@@ -209,9 +210,14 @@ export class SearchService {
           page,
           pageSize,
           cached: false,
+          source: "opensearch" as const,
         };
-      } catch {
-        // fall through to demo data
+      } catch (err) {
+        throw new HttpError(
+          "search_index_unavailable",
+          502,
+          err instanceof Error ? err.message : "OpenSearch query failed"
+        );
       }
     }
 
@@ -221,24 +227,14 @@ export class SearchService {
   async getProspectById(prospectId: string) {
     const cfg = osConfig(this.env);
     if (cfg) {
-      const doc = await osGetById(cfg, prospectId);
+      const doc = await osGetById(cfg, prospectId).catch(() => null);
       if (doc) return mapDocToDetail(doc);
     }
 
     const doc = demoCorpus(this.env).find((row) => row.prospectId === prospectId);
     if (doc) return mapDocToDetail(doc);
 
-    return {
-      prospectId,
-      companyId: prospectId,
-      fullName: "Demo Prospect",
-      title: "VP Sales",
-      seniority: "vp" as const,
-      country: "US",
-      industry: "Software",
-      companyDomain: "example.com",
-      updatedAt: new Date().toISOString(),
-    };
+    return null;
   }
 
   private demoSearch(body: SearchProspectsRequest, page: number, pageSize: number): SearchProspectsResponse {
@@ -251,6 +247,7 @@ export class SearchService {
       page,
       pageSize,
       cached: false,
+      source: "demo" as const,
     };
   }
 }

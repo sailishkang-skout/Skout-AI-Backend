@@ -6,6 +6,7 @@ import {
   buildSearchCacheKey,
   createSearchCacheService,
 } from "../services/search-cache.service.js";
+import { apiError, HttpError } from "../utils/http.js";
 
 export async function searchRoutes(app: FastifyInstance) {
   app.post("/search/prospects", async (request, reply) => {
@@ -40,12 +41,23 @@ export async function searchRoutes(app: FastifyInstance) {
     }
 
     const svc = createSearchService(app.config);
-    const result = await svc.searchProspects(body);
+    let result;
+    try {
+      result = await svc.searchProspects(body);
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return reply
+          .code(err.statusCode)
+          .send(apiError(err.message, err.message, err.statusCode));
+      }
+      throw err;
+    }
     const payload = {
       results: result.results,
       total: result.total,
       page: result.page,
       pageSize: result.pageSize,
+      ...("source" in result && result.source ? { source: result.source } : {}),
     };
 
     await cache.set(cacheKey, payload);
@@ -84,6 +96,9 @@ export async function searchRoutes(app: FastifyInstance) {
     }
 
     const result = await svc.getProspectById(id);
+    if (!result) {
+      return reply.status(404).send({ error: "prospect_not_found" });
+    }
     await cache.setById(workspaceId, id, result as Record<string, unknown>);
     return reply.send(result);
   });

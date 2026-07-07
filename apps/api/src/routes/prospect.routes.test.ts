@@ -79,14 +79,15 @@ describe("POST /prospects/manual", () => {
       app = await buildTestApp(noOsEnv);
     });
 
-    it("returns 503", async () => {
+    it("returns 201 without OpenSearch index (activation only)", async () => {
       const res = await app.inject({
         method: "POST",
         url: "/prospects/manual",
         payload: { fullName: "Jane Smith", companyDomain: "acme.com" },
       });
-      expect(res.statusCode).toBe(503);
-      expect(res.json().error).toBe("Search index not configured");
+      expect(res.statusCode).toBe(201);
+      expect(res.json().activated).toBe(true);
+      expect(res.json().indexed).toBe(false);
     });
   });
 

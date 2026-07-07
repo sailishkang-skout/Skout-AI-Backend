@@ -330,6 +330,8 @@
         }
         #skout-ai-add { background: #2563eb; color: white; }
         #skout-ai-enrich { background: #1e293b; color: #f8fafc; border: 1px solid #334155; }
+        #skout-ai-score { background: #1e293b; color: #f8fafc; border: 1px solid #334155; }
+        #skout-ai-icp-badge { margin: 0 0 8px; font-size: 11px; color: #86efac; display: none; }
         #skout-ai-panel button:disabled { opacity: 0.6; cursor: wait; }
         #skout-ai-status { margin-top: 8px; font-size: 11px; color: #94a3b8; }
       </style>
@@ -337,11 +339,13 @@
         <h2>Skout AI</h2>
         <button id="skout-ai-close" type="button" aria-label="Close">×</button>
       </div>
+      <p id="skout-ai-icp-badge"></p>
       <p id="skout-ai-summary">Reading profile…</p>
       <label for="skout-ai-list-select">Target list</label>
       <select id="skout-ai-list-select"><option value="">Loading lists…</option></select>
       <button id="skout-ai-add" type="button" class="action">Add to list</button>
       <button id="skout-ai-enrich" type="button" class="action">Enrich email</button>
+      <button id="skout-ai-score" type="button" class="action">Score ICP</button>
       <div id="skout-ai-status">Ready</div>
     `;
 
@@ -352,6 +356,7 @@
 
     panel.querySelector("#skout-ai-add")?.addEventListener("click", () => void onAdd(panel));
     panel.querySelector("#skout-ai-enrich")?.addEventListener("click", () => void onEnrich(panel));
+    panel.querySelector("#skout-ai-score")?.addEventListener("click", () => void onScore(panel));
 
     document.body.appendChild(panel);
     void loadLists(panel);
@@ -435,17 +440,32 @@
     return profile;
   }
 
+  function setProfileActionsBusy(panel, busy) {
+    panel.querySelector("#skout-ai-add").disabled = busy;
+    panel.querySelector("#skout-ai-enrich").disabled = busy;
+    panel.querySelector("#skout-ai-score").disabled = busy;
+  }
+
+  function showIcpBadge(panel, icpScore, icpBand) {
+    const badge = panel.querySelector("#skout-ai-icp-badge");
+    if (!badge) return;
+    if (icpScore == null) {
+      badge.style.display = "none";
+      badge.textContent = "";
+      return;
+    }
+    badge.style.display = "block";
+    badge.textContent = `ICP ${icpScore} (${icpBand || "n/a"})`;
+  }
+
   async function onAdd(panel) {
     const listId = panel.querySelector("#skout-ai-list-select")?.value;
-    const addBtn = panel.querySelector("#skout-ai-add");
-    const enrichBtn = panel.querySelector("#skout-ai-enrich");
     if (!listId) {
       setPanelStatus(panel, "Pick a list first.", true);
       return;
     }
 
-    addBtn.disabled = true;
-    enrichBtn.disabled = true;
+    setProfileActionsBusy(panel, true);
     setPanelStatus(panel, "Adding…");
 
     try {
@@ -458,16 +478,12 @@
     } catch (error) {
       setPanelStatus(panel, error instanceof Error ? error.message : "Add failed", true);
     } finally {
-      addBtn.disabled = false;
-      enrichBtn.disabled = false;
+      setProfileActionsBusy(panel, false);
     }
   }
 
   async function onEnrich(panel) {
-    const enrichBtn = panel.querySelector("#skout-ai-enrich");
-    const addBtn = panel.querySelector("#skout-ai-add");
-    enrichBtn.disabled = true;
-    addBtn.disabled = true;
+    setProfileActionsBusy(panel, true);
     setPanelStatus(panel, "Enriching…");
 
     try {
@@ -478,8 +494,32 @@
     } catch (error) {
       setPanelStatus(panel, error instanceof Error ? error.message : "Enrich failed", true);
     } finally {
-      enrichBtn.disabled = false;
-      addBtn.disabled = false;
+      setProfileActionsBusy(panel, false);
+    }
+  }
+
+  async function onScore(panel) {
+    setProfileActionsBusy(panel, true);
+    setPanelStatus(panel, "Scoring…");
+
+    try {
+      const profile = getProfile(panel);
+      await safeRuntimeSend({ type: "ping" }, 5_000).catch(() => undefined);
+      const result = await safeRuntimeSend({ type: "score-profile", profile });
+      if (!result?.ok) throw new Error(result?.error || "Score failed");
+      showIcpBadge(panel, result.icpScore, result.icpBand);
+      setPanelStatus(panel, result.message || `ICP score: ${result.icpScore ?? "—"}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Score failed";
+      setPanelStatus(
+        panel,
+        message.includes("ICP not configured")
+          ? `${message} Open Skout → Settings → ICP to configure.`
+          : message,
+        true
+      );
+    } finally {
+      setProfileActionsBusy(panel, false);
     }
   }
 

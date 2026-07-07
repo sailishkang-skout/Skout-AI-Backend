@@ -73,13 +73,16 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.sync.set({
-    apiUrl: DEFAULT_API_URL,
-    webUrl: DEFAULT_WEB_URL,
-    stubEmail: "extension@example.com",
-    onboardingComplete: false,
-  });
+chrome.runtime.onInstalled.addListener((details) => {
+  // Only seed defaults on first install — don't wipe dev URLs on extension reload.
+  if (details.reason === "install") {
+    void chrome.storage.sync.set({
+      apiUrl: DEFAULT_API_URL,
+      webUrl: DEFAULT_WEB_URL,
+      stubEmail: "extension@example.com",
+      onboardingComplete: false,
+    });
+  }
   void refreshOpenTabs();
   void prefetchLists();
 });
@@ -306,6 +309,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       try {
         const summary = await withTimeout(
           (async () => {
+            await ensureAuthForApi();
             const listId = message.listId;
             if (!listId) throw new Error("Pick a list first.");
             if (!profiles.length) throw new Error("No profiles selected.");

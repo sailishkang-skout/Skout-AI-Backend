@@ -61,6 +61,14 @@ vi.mock("../services/email-sender.service.js", () => ({
   buildEmailSenderFromInbox: vi.fn(),
 }));
 
+vi.mock("../lib/redis.js", () => ({
+  isRedisAvailable: vi.fn().mockResolvedValue(true),
+  redisBullMqConnection: vi.fn().mockReturnValue({
+    host: "localhost",
+    port: 6379,
+  }),
+}));
+
 import { startSequenceEnrollmentWorker } from "./sequence-enrollment.worker.js";
 import { Worker } from "bullmq";
 import { createDb } from "@skout/db";
@@ -69,6 +77,7 @@ import { resolveProspectFields } from "../services/prospect-resolver.service.js"
 import { isSuppressed } from "../services/suppression.service.js";
 import { pickNextInbox, markInboxUsed } from "../services/inbox-rotation.service.js";
 import { buildEmailSenderFromInbox } from "../services/email-sender.service.js";
+import { isRedisAvailable } from "../lib/redis.js";
 
 const BASE_CONFIG = {
   DATABASE_URL: "postgresql://user:pass@localhost:5432/test",
@@ -90,6 +99,14 @@ describe("startSequenceEnrollmentWorker", () => {
 
   it("returns a noop shutdown when DATABASE_URL is falsy", async () => {
     const stop = await startSequenceEnrollmentWorker({ ...BASE_CONFIG, DATABASE_URL: undefined } as any);
+    await expect(stop()).resolves.toBeUndefined();
+    expect(Worker).not.toHaveBeenCalled();
+    expect(createDb).not.toHaveBeenCalled();
+  });
+
+  it("returns a noop shutdown when Redis is unavailable", async () => {
+    vi.mocked(isRedisAvailable).mockResolvedValueOnce(false);
+    const stop = await startSequenceEnrollmentWorker(BASE_CONFIG);
     await expect(stop()).resolves.toBeUndefined();
     expect(Worker).not.toHaveBeenCalled();
     expect(createDb).not.toHaveBeenCalled();
