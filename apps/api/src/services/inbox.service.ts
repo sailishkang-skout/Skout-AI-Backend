@@ -366,25 +366,32 @@ export class InboxService {
       if (!encryptionKey) throw new HttpError("INTEGRATION_ENCRYPTION_KEY not configured", 503);
       smtpPasswordEncrypted = encryptSecret(input.smtpPassword, encryptionKey);
     }
-    const [row] = await this.db
-      .insert(inboxes)
-      .values({
-        workspaceId,
-        emailAddress: input.emailAddress,
-        displayName: input.displayName ?? null,
-        provider: input.provider ?? "smtp",
-        dailySendLimit: input.dailySendLimit ?? 50,
-        sendingDomainId: input.sendingDomainId ?? null,
-        smtpHost: input.smtpHost ?? null,
-        smtpPort: input.smtpPort ?? null,
-        smtpUsername: input.smtpUsername ?? null,
-        smtpPasswordEncrypted,
-        smtpSecure: input.smtpSecure ?? true,
-        imapHost: input.imapHost ?? null,
-        imapPort: input.imapPort ?? null,
-      })
-      .returning();
-    return row ? toPublicInbox(row) : null;
+    try {
+      const [row] = await this.db
+        .insert(inboxes)
+        .values({
+          workspaceId,
+          emailAddress: input.emailAddress,
+          displayName: input.displayName ?? null,
+          provider: input.provider ?? "smtp",
+          dailySendLimit: input.dailySendLimit ?? 50,
+          sendingDomainId: input.sendingDomainId ?? null,
+          smtpHost: input.smtpHost ?? null,
+          smtpPort: input.smtpPort ?? null,
+          smtpUsername: input.smtpUsername ?? null,
+          smtpPasswordEncrypted,
+          smtpSecure: input.smtpSecure ?? true,
+          imapHost: input.imapHost ?? null,
+          imapPort: input.imapPort ?? null,
+        })
+        .returning();
+      return row ? toPublicInbox(row) : null;
+    } catch (err) {
+      if (typeof err === "object" && err !== null && (err as { code?: string }).code === "23505") {
+        throw new HttpError("inbox_already_connected", 409);
+      }
+      throw err;
+    }
   }
 
   async listThreads(
