@@ -190,6 +190,27 @@ export async function sequenceRoutes(app: FastifyInstance) {
     return reply.status(204).send();
   });
 
+  // DELETE /sequences/:id/enrollments/:prospectId — unenroll a prospect
+  app.delete("/sequences/:id/enrollments/:prospectId", async (request, reply) => {
+    const { id, prospectId } = request.params as { id: string; prospectId: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = buildSequenceService(app.db);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    const result = await svc.unenroll(workspaceId, id, prospectId);
+    if (!result) return reply.status(404).send({ error: "enrollment_not_found" });
+    return reply.status(204).send();
+  });
+
+  // GET /sequences/prospects/:prospectId/enrollments — get all enrollments for a prospect
+  app.get("/sequences/prospects/:prospectId/enrollments", async (request, reply) => {
+    const { prospectId } = request.params as { prospectId: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = buildSequenceService(app.db);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    const enrollments = await svc.getProspectEnrollments(workspaceId, prospectId);
+    return reply.send({ data: enrollments, total: enrollments.length });
+  });
+
   // POST /sequences/:id/enroll — enroll prospects into a sequence
   app.post("/sequences/:id/enroll", async (request, reply) => {
     const { id } = request.params as { id: string };
@@ -205,9 +226,10 @@ export async function sequenceRoutes(app: FastifyInstance) {
 
       // Enqueue advance jobs — enrollment is already persisted, so queue failure is non-fatal
       for (const e of result.newEnrollments) {
-        const delayMs = e.firstStepScheduledAt
-          ? Math.max(0, e.firstStepScheduledAt.getTime() - Date.now())
-          : 0;
+        const delayMs =
+          app.config.BYPASS_BUSINESS_HOURS || !e.firstStepScheduledAt
+            ? 0
+            : Math.max(0, e.firstStepScheduledAt.getTime() - Date.now());
         enqueueSequenceAdvanceJob(
           app.config,
           { enrollmentId: e.enrollmentId, workspaceId, prospectId: e.prospectId, sequenceId: id },

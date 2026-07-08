@@ -43,17 +43,21 @@ export function getSequenceEnrollmentQueue(config: Env): Queue<SeqAdvanceJobPayl
 
 /**
  * Enqueues a step-advance job.
- * `delayMs` is the milliseconds from now until the job should be processed
- * (used to fire at the step's scheduledAt time).
+ * `delayMs` — milliseconds from now until the job fires.
+ * `deduplicate` — use a fixed jobId (initial enqueue from route) so double-enrolling
+ *   doesn't create duplicate jobs. Pass false for re-enqueues from inside the worker
+ *   so a completed job's Redis entry doesn't silently block the new one.
  */
 export async function enqueueSequenceAdvanceJob(
   config: Env,
   payload: SeqAdvanceJobPayload,
-  delayMs = 0
+  delayMs = 0,
+  deduplicate = true
 ): Promise<void> {
   const q = getSequenceEnrollmentQueue(config);
-  // jobId deduplication: one active advance job per enrollment at a time
-  const jobId = `seq-advance:${payload.enrollmentId}`;
+  const jobId = deduplicate
+    ? `seq-advance-${payload.enrollmentId}`
+    : `seq-advance-${payload.enrollmentId}-${Date.now()}`;
   await q.add("step:advance", payload, {
     jobId,
     delay: Math.max(0, delayMs),

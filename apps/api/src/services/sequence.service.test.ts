@@ -607,6 +607,7 @@ describe("SequenceService.enroll", () => {
         { result: [ACTIVE_SEQ], terminal: "where" },
         { result: [STEP_ROW], terminal: "orderBy" },
       ],
+      deletes: [() => deleteWhere()],
       inserts: [
         () => insertOnConflictReturning([ENROLLMENT_ROW]),
         () => insertOnConflict(),
@@ -630,6 +631,7 @@ describe("SequenceService.enroll", () => {
         { result: [ACTIVE_SEQ], terminal: "where" },
         { result: [STEP_ROW], terminal: "orderBy" },
       ],
+      deletes: [() => deleteWhere()],
       inserts: [
         () => insertOnConflictReturning([]),
       ],

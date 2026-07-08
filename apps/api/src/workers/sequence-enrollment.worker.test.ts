@@ -356,6 +356,74 @@ describe("sequence-enrollment worker — email step execution", () => {
     );
   });
 
+  it("marks the step failed (no retry) when buildEmailSenderFromInbox throws missing-credentials", async () => {
+    vi.mocked(resolveProspectFields).mockResolvedValue({
+      prospectId: "p-1",
+      email: "prospect@example.com",
+      firstName: "Ada",
+      lastName: "Lovelace",
+      fullName: "Ada Lovelace",
+    });
+    vi.mocked(isSuppressed).mockResolvedValue(false);
+    vi.mocked(pickNextInbox).mockResolvedValue({
+      id: "inbox-1",
+      emailAddress: "sender@example.com",
+      displayName: "Sender",
+    } as any);
+    vi.mocked(buildEmailSenderFromInbox).mockImplementationOnce(() => {
+      throw new Error("inbox_missing_smtp_credentials");
+    });
+
+    const { select, update, updateSet } = makeWorkerDb({ pendingStep: EMAIL_STEP_ROW });
+    const db = { select, update, transaction: vi.fn() };
+
+    const processor = await getProcessor(db);
+    // Must NOT re-throw — the step is terminal, not retryable
+    await expect(processor({ data: JOB_PAYLOAD, attemptsMade: 1 })).resolves.toBeUndefined();
+
+    expect(updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "failed", failureReason: "inbox_missing_smtp_credentials" })
+    );
+    // Transaction (email send + thread/message insert) must NOT be called
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it("throws when the inbox thread insert returns no row, so BullMQ retries", async () => {
+    vi.mocked(resolveProspectFields).mockResolvedValue({
+      prospectId: "p-1",
+      email: "prospect@example.com",
+      firstName: "Ada",
+      lastName: "Lovelace",
+      fullName: "Ada Lovelace",
+    });
+    vi.mocked(isSuppressed).mockResolvedValue(false);
+    vi.mocked(pickNextInbox).mockResolvedValue({
+      id: "inbox-1",
+      emailAddress: "sender@example.com",
+      displayName: "Sender",
+    } as any);
+    const send = vi.fn().mockResolvedValue({ externalId: "msg-1" });
+    vi.mocked(buildEmailSenderFromInbox).mockReturnValue({ send });
+
+    // Override the thread insert to return an empty array (simulates DB returning no row)
+    const { select, update } = makeWorkerDb({ pendingStep: EMAIL_STEP_ROW, txInsertThread: undefined });
+    const tx = {
+      insert: vi.fn().mockImplementation(() => ({
+        values: vi.fn().mockReturnValue({
+          returning: vi.fn().mockResolvedValue([]), // no row returned
+        }),
+      })),
+      update: vi.fn().mockReturnValue({ set: vi.fn().mockReturnValue({ where: vi.fn() }) }),
+    };
+    const transaction = vi.fn().mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(tx));
+    const db = { select, update, transaction };
+
+    const processor = await getProcessor(db);
+    await expect(processor({ data: JOB_PAYLOAD, attemptsMade: 1 })).rejects.toThrow(
+      "inboxThreads insert returned no row"
+    );
+  });
+
   it("propagates a transport send failure so BullMQ retries the job", async () => {
     vi.mocked(resolveProspectFields).mockResolvedValue({
       prospectId: "p-1",

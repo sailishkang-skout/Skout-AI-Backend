@@ -29,7 +29,7 @@ async function checkAndAutoPause(db: Db, inboxId: string, config: Env): Promise<
   if (!inbox) return;
 
   const { sentCount, bounceCount, spamCount } = inbox;
-  if (sentCount < config.INBOX_MIN_SENT_BEFORE_HEALTH_CHECK) return;
+  if (sentCount === 0 || sentCount < config.INBOX_MIN_SENT_BEFORE_HEALTH_CHECK) return;
 
   const bounceRate = bounceCount / sentCount;
   const spamRate = spamCount / sentCount;

@@ -62,6 +62,11 @@ const envSchema = z
       .string()
       .optional()
       .transform((v) => v === "true" || v === "1"),
+    /** When true, skip business-hours check and send emails immediately (testing only). */
+    BYPASS_BUSINESS_HOURS: z
+      .string()
+      .optional()
+      .transform((v) => v === "true" || v === "1"),
     EXPORTS_BUCKET: z.string().optional(),
     SCRAPE_BUCKET: z.string().optional(),
     S3_ENDPOINT: z.string().optional(),

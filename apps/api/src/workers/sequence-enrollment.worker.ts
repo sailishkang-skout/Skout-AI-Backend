@@ -153,8 +153,19 @@ async function executeEmailStep(
   const bodyText = renderTemplate(pending.bodyTemplate ?? "", mergeData);
   const { html, text } = injectTracking(config, bodyText, enrollmentId, pending.enrollmentStepId);
 
-  // Transport failures propagate — the job retries with the step still "scheduled".
-  const transport = buildEmailSenderFromInbox(config, inbox);
+  // Build transport first — if credentials are missing, mark terminal rather than letting
+  // BullMQ retry forever with a step stuck in "scheduled".
+  let transport;
+  try {
+    transport = buildEmailSenderFromInbox(config, inbox);
+  } catch (err: unknown) {
+    const reason = err instanceof Error ? err.message : "smtp_build_failed";
+    await markStepTerminal(db, pending.enrollmentStepId, "failed", reason, now);
+    log.warn("Email step failed — could not build SMTP transport", { enrollmentId, reason });
+    return;
+  }
+
+  // Send the email. SMTP failures propagate so BullMQ retries (step stays "scheduled").
   const sendResult = await transport.send({
     from: inbox.emailAddress,
     fromName: inbox.displayName,
@@ -164,6 +175,10 @@ async function executeEmailStep(
     html,
   });
 
+  // Record the send atomically. If this transaction fails after the email was already
+  // delivered, the job will retry and attempt to send again — we guard against that by
+  // checking for an existing "executed" step at the top of advanceEnrollment (the step
+  // won't appear as "scheduled" on retry so the enrollment simply moves on).
   await db.transaction(async (tx) => {
     const [thread] = await tx
       .insert(inboxThreads)
@@ -177,8 +192,9 @@ async function executeEmailStep(
         lastMessageAt: now,
       })
       .returning();
+    if (!thread) throw new Error("inboxThreads insert returned no row");
     await tx.insert(inboxMessages).values({
-      threadId: thread!.id,
+      threadId: thread.id,
       direction: "outbound",
       fromAddress: inbox.emailAddress,
       toAddress: prospect.email!,
@@ -186,7 +202,6 @@ async function executeEmailStep(
       bodyText: text,
       bodyHtml: html,
       externalId: sendResult.externalId,
-      // RFC 5322 Message-ID from nodemailer (same value, stored for thread matching)
       messageId: sendResult.externalId,
       sentAt: now,
     });
@@ -285,19 +300,19 @@ async function advanceEnrollment(
 
   const now = new Date();
 
-  // Not yet due — re-enqueue with remaining delay
-  if (pending.scheduledAt && pending.scheduledAt > now) {
+  // Not yet due — re-enqueue with remaining delay (skipped when bypassing business hours)
+  if (!config.BYPASS_BUSINESS_HOURS && pending.scheduledAt && pending.scheduledAt > now) {
     const delayMs = pending.scheduledAt.getTime() - now.getTime();
-    await enqueueSequenceAdvanceJob(config, payload, delayMs);
+    await enqueueSequenceAdvanceJob(config, payload, delayMs, false);
     log.debug("Step not yet due — re-enqueued", { enrollmentId, delayMs });
     return;
   }
 
   // Outside business hours — re-enqueue to fire at the next business window
-  if (!isBusinessHour(now)) {
+  if (!isBusinessHour(now) && !config.BYPASS_BUSINESS_HOURS) {
     const nextWindow = nextBusinessHour(now);
     const delayMs = nextWindow.getTime() - now.getTime();
-    await enqueueSequenceAdvanceJob(config, payload, delayMs);
+    await enqueueSequenceAdvanceJob(config, payload, delayMs, false);
     log.debug("Outside business hours — re-enqueued", { enrollmentId, nextWindow });
     return;
   }
@@ -349,7 +364,7 @@ async function advanceEnrollment(
   const delayMs = nextPending.scheduledAt
     ? Math.max(0, nextPending.scheduledAt.getTime() - Date.now())
     : 0;
-  await enqueueSequenceAdvanceJob(config, payload, delayMs);
+  await enqueueSequenceAdvanceJob(config, payload, delayMs, false);
 }
 
 // ---------------------------------------------------------------------------
