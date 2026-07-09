@@ -47,6 +47,14 @@ jobs:
         id: meta
         run: echo "tag=uat-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
 
+      - name: Install CDK dependencies
+        working-directory: infra
+        run: pnpm install --frozen-lockfile || pnpm install
+
+      - name: Ensure ECR repositories (Registry stack)
+        working-directory: infra
+        run: pnpm cdk deploy SkoutUat-Registry -c env=uat --require-approval never
+
       - name: Build and push API image
         env:
           IMAGE_TAG: ${{ steps.meta.outputs.tag }}
@@ -120,10 +128,6 @@ jobs:
             -t "$WEB_REPO:$IMAGE_TAG" -t "$WEB_REPO:latest" frontend
           docker push "$WEB_REPO:$IMAGE_TAG"
           docker push "$WEB_REPO:latest"
-
-      - name: Install CDK dependencies
-        working-directory: infra
-        run: pnpm install --frozen-lockfile || pnpm install
 
       - name: Deploy CDK stacks
         working-directory: infra
