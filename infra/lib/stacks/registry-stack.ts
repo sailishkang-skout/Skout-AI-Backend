@@ -10,6 +10,7 @@ export interface RegistryStackProps extends StackProps {
 
 export class RegistryStack extends Stack {
   readonly apiRepository: ecr.Repository;
+  readonly crmRepository: ecr.Repository;
   readonly aiRepository: ecr.Repository;
   readonly webRepository: ecr.Repository;
   readonly workerEnrichRepository: ecr.Repository;
@@ -36,6 +37,7 @@ export class RegistryStack extends Stack {
       });
 
     this.apiRepository = createRepo("ApiRepo", `skout-${config.name}-api`);
+    this.crmRepository = createRepo("CrmRepo", `skout-${config.name}-crm`);
     this.aiRepository = createRepo("AiRepo", `skout-${config.name}-ai`);
     this.webRepository = createRepo("WebRepo", `skout-${config.name}-web`);
     this.workerEnrichRepository = createRepo("WorkerEnrichRepo", `skout-${config.name}-worker-enrich`);
@@ -79,6 +81,7 @@ export class RegistryStack extends Stack {
 
     const repos = [
       this.apiRepository,
+      this.crmRepository,
       this.aiRepository,
       this.webRepository,
       this.workerEnrichRepository,
@@ -152,6 +155,11 @@ export class RegistryStack extends Stack {
     new CfnOutput(this, "ApiRepositoryUri", {
       value: this.apiRepository.repositoryUri,
       exportName: `${config.stackPrefix}-ApiRepoUri`,
+    });
+
+    new CfnOutput(this, "CrmRepositoryUri", {
+      value: this.crmRepository.repositoryUri,
+      exportName: `${config.stackPrefix}-CrmRepoUri`,
     });
 
     new CfnOutput(this, "GitHubDeployRoleArn", {

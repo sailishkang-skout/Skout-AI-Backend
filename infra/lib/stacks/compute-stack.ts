@@ -28,6 +28,7 @@ export interface ComputeStackProps extends StackProps {
   readonly exportsBucket: s3.IBucket;
   readonly scrapeBucket: s3.IBucket;
   readonly apiRepository: ecr.IRepository;
+  readonly crmRepository: ecr.IRepository;
   readonly aiRepository: ecr.IRepository;
   readonly webRepository: ecr.IRepository;
   readonly imageTag?: string;
@@ -54,6 +55,7 @@ export class ComputeStack extends Stack {
       exportsBucket,
       scrapeBucket,
       apiRepository,
+      crmRepository,
       aiRepository,
       webRepository,
       imageTag = "latest",
@@ -292,6 +294,54 @@ export class ComputeStack extends Stack {
     this.apiService = apiEcs.service;
     this.apiLogGroupName = `/skout/${config.name}/api`;
 
+    const crmEcs = new SkoutEcsService(this, "CrmService", {
+      vpc,
+      cluster: this.cluster,
+      repository: crmRepository,
+      imageTag,
+      serviceName: "crm",
+      environmentName: config.name,
+      containerPort: 3002,
+      cpu: config.ecs.crmCpu,
+      memoryMiB: config.ecs.crmMemoryMiB,
+      desiredCount: config.ecs.crmDesiredCount,
+      healthCheckPath: "/api/v1/crm/health",
+      containerHealthCheckCommand: [nodeHttpHealthCheck(3002, "/api/v1/crm/health")],
+      listener,
+      pathPatterns: [
+        "/api/v1/crm/health",
+        "/api/v1/companies*",
+        "/api/v1/contacts*",
+        "/api/v1/deals*",
+      ],
+      priority: 5,
+      extraConditions: albExtraConditions,
+      environment: {
+        NODE_ENV: "production",
+        PORT: "3002",
+        HOST: "0.0.0.0",
+        CORS_ORIGIN: corsOrigin,
+        FRONTEND_URL: publicUrl,
+        DATABASE_HOST: database.instance.dbInstanceEndpointAddress,
+        DATABASE_PORT: database.instance.dbInstanceEndpointPort,
+        DATABASE_NAME: "skout",
+        DATABASE_USER: "skout",
+        SERVICE_NAME: "skout-crm",
+        LOG_LEVEL: "info",
+        TRUST_PROXY: "true",
+        DD_SERVICE: "skout-crm",
+        DD_ENV: config.name,
+        DD_SITE: "us5.datadoghq.com",
+        RATE_LIMIT_MAX: "200",
+        RATE_LIMIT_WINDOW_MS: "60000",
+      },
+      secrets: {
+        DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(database.secret, "password"),
+        CLERK_SECRET_KEY: ecs.Secret.fromSecretsManager(secrets.clerk, "CLERK_SECRET_KEY"),
+        SENTRY_DSN: ecs.Secret.fromSecretsManager(secrets.sentry, "SENTRY_DSN"),
+      },
+    });
+
     if (config.clickhouse?.enabled) {
       this.clickhouse = new SkoutClickHouse(this, "ClickHouse", {
         vpc,
@@ -338,6 +388,8 @@ export class ComputeStack extends Stack {
       secrets.appConfig,
       secrets.datadog
     );
+
+    grantSecretRead(crmEcs.taskDefinition, database.secret, secrets.clerk, secrets.sentry);
 
     const aiService = new SkoutEcsService(this, "AiService", {
       vpc,
@@ -412,6 +464,14 @@ export class ComputeStack extends Stack {
     });
     grantSecretRead(webService.taskDefinition, secrets.clerk);
 
+    new ec2.CfnSecurityGroupIngress(this, "CrmToDbIngress", {
+      groupId: database.securityGroup.securityGroupId,
+      ipProtocol: "tcp",
+      fromPort: 5432,
+      toPort: 5432,
+      sourceSecurityGroupId: crmEcs.securityGroup.securityGroupId,
+    });
+
     new ec2.CfnSecurityGroupIngress(this, "ApiToDbIngress", {
       groupId: database.securityGroup.securityGroupId,
       ipProtocol: "tcp",
@@ -449,6 +509,11 @@ export class ComputeStack extends Stack {
         exportName: `${config.stackPrefix}-ApiGatewayUrl`,
       });
     }
+
+    new CfnOutput(this, "CrmUrl", {
+      value: `${apiUrl}/api/v1/companies`,
+      exportName: `${config.stackPrefix}-CrmUrl`,
+    });
 
     new CfnOutput(this, "ApiUrl", {
       value: `${apiUrl}/api/v1`,

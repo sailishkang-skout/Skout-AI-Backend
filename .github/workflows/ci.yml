@@ -42,8 +42,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile || pnpm install
 
-      - name: Build workspace packages (API dependencies)
-        run: pnpm --filter @skout/api^... build
+      - name: Build workspace packages (API + CRM dependencies)
+        run: pnpm --filter @skout/api^... build && pnpm --filter @skout/crm^... build
 
       - name: Run database migrations
         run: pnpm db:migrate
@@ -54,8 +54,8 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Build API
-        run: pnpm --filter @skout/api build
+      - name: Build API and CRM
+        run: pnpm --filter @skout/api build && pnpm --filter @skout/crm build
 
   docker-build:
     runs-on: ubuntu-latest
@@ -65,6 +65,10 @@ jobs:
         include:
           - service: api
             dockerfile: apps/api/Dockerfile
+            context: .
+            build_args: ""
+          - service: crm
+            dockerfile: apps/crm/Dockerfile
             context: .
             build_args: ""
           - service: ai

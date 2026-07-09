@@ -34,6 +34,9 @@ export interface EnvironmentConfig {
     readonly apiCpu: number;
     readonly apiMemoryMiB: number;
     readonly apiDesiredCount: number;
+    readonly crmCpu: number;
+    readonly crmMemoryMiB: number;
+    readonly crmDesiredCount: number;
     readonly aiCpu: number;
     readonly aiMemoryMiB: number;
     readonly aiDesiredCount: number;
@@ -80,6 +83,9 @@ export const ENVIRONMENTS: Record<SkoutEnvironment, EnvironmentConfig> = {
       apiCpu: 256,
       apiMemoryMiB: 512,
       apiDesiredCount: 1,
+      crmCpu: 256,
+      crmMemoryMiB: 512,
+      crmDesiredCount: 1,
       aiCpu: 256,
       aiMemoryMiB: 512,
       aiDesiredCount: 1,
@@ -112,6 +118,9 @@ export const ENVIRONMENTS: Record<SkoutEnvironment, EnvironmentConfig> = {
       apiCpu: 256,
       apiMemoryMiB: 1024,
       apiDesiredCount: 1,
+      crmCpu: 256,
+      crmMemoryMiB: 512,
+      crmDesiredCount: 1,
       aiCpu: 256,
       aiMemoryMiB: 512,
       aiDesiredCount: 1,
@@ -145,6 +154,9 @@ export const ENVIRONMENTS: Record<SkoutEnvironment, EnvironmentConfig> = {
       apiCpu: 256,
       apiMemoryMiB: 512,
       apiDesiredCount: 1,
+      crmCpu: 256,
+      crmMemoryMiB: 512,
+      crmDesiredCount: 1,
       aiCpu: 256,
       aiMemoryMiB: 512,
       aiDesiredCount: 1,
@@ -177,6 +189,9 @@ export const ENVIRONMENTS: Record<SkoutEnvironment, EnvironmentConfig> = {
       apiCpu: 512,
       apiMemoryMiB: 1024,
       apiDesiredCount: 2,
+      crmCpu: 512,
+      crmMemoryMiB: 1024,
+      crmDesiredCount: 2,
       aiCpu: 512,
       aiMemoryMiB: 1024,
       aiDesiredCount: 2,

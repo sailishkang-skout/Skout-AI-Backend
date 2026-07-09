@@ -1,0 +1,113 @@
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { loadEnv } from "../config/env.js";
+import { buildApp } from "../app.js";
+import { buildRouteTestApp } from "../test/build-route-test-app.js";
+import type { FastifyInstance } from "fastify";
+
+const hasDatabase = Boolean(process.env.DATABASE_URL);
+
+describe("companies routes (unit)", () => {
+  it("GET /companies returns scaffold payload for workspace", async () => {
+    const app = await buildRouteTestApp();
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/companies",
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { data: unknown[]; total: number; workspaceId: string };
+    expect(body.data).toEqual([]);
+    expect(body.total).toBe(0);
+    expect(body.workspaceId).toBe("aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee");
+
+    await app.close();
+  });
+});
+
+describe("deals routes (unit)", () => {
+  it("GET /deals/summary returns zeroed pipeline summary", async () => {
+    const app = await buildRouteTestApp();
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/deals/summary",
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      openDeals: 0,
+      pipelineValue: 0,
+      currency: "USD",
+    });
+
+    await app.close();
+  });
+});
+
+describe("contacts routes (unit)", () => {
+  it("GET /contacts returns empty scaffold list", async () => {
+    const app = await buildRouteTestApp();
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/contacts",
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { total: number }).total).toBe(0);
+
+    await app.close();
+  });
+});
+
+describe.skipIf(!hasDatabase)("CRM routes (integration)", () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    const config = loadEnv();
+    app = await buildApp({
+      ...config,
+      CLERK_SECRET_KEY: undefined,
+      AUTH_STUB: true,
+      LOG_LEVEL: "fatal",
+    });
+  }, 30000);
+
+  afterAll(async () => {
+    await app?.close();
+  });
+
+  function asUser(email: string) {
+    return { "x-stub-user-email": email };
+  }
+
+  it("GET /companies provisions stub user and returns workspace id", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/companies",
+      headers: asUser("crm-companies@test.com"),
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { workspaceId: string };
+    expect(body.workspaceId).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("GET /deals/summary shares workspace with companies for same stub user", async () => {
+    const email = "crm-deals@test.com";
+    const companies = await app.inject({
+      method: "GET",
+      url: "/api/v1/companies",
+      headers: asUser(email),
+    });
+    const deals = await app.inject({
+      method: "GET",
+      url: "/api/v1/deals/summary",
+      headers: asUser(email),
+    });
+
+    expect(companies.statusCode).toBe(200);
+    expect(deals.statusCode).toBe(200);
+    expect((deals.json() as { workspaceId: string }).workspaceId).toBe(
+      (companies.json() as { workspaceId: string }).workspaceId
+    );
+  });
+});

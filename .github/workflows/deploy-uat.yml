@@ -56,6 +56,15 @@ jobs:
           docker push "$API_REPO:$IMAGE_TAG"
           docker push "$API_REPO:latest"
 
+      - name: Build and push CRM image
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          CRM_REPO=$(aws ecr describe-repositories --repository-names skout-uat-crm --query 'repositories[0].repositoryUri' --output text)
+          docker build -f apps/crm/Dockerfile -t "$CRM_REPO:$IMAGE_TAG" -t "$CRM_REPO:latest" .
+          docker push "$CRM_REPO:$IMAGE_TAG"
+          docker push "$CRM_REPO:latest"
+
       - name: Build and push AI image
         env:
           IMAGE_TAG: ${{ steps.meta.outputs.tag }}
@@ -128,6 +137,6 @@ jobs:
       - name: Force ECS redeploy
         run: |
           CLUSTER=$(aws ecs list-clusters --query "clusterArns[?contains(@, 'SkoutUat')]" --output text)
-          for svc in api ai web scraper-orchestrator scraper-cleaner scraper-ingestor; do
+          for svc in api crm ai web scraper-orchestrator scraper-cleaner scraper-ingestor; do
             aws ecs update-service --cluster "$CLUSTER" --service "$svc" --force-new-deployment || true
           done

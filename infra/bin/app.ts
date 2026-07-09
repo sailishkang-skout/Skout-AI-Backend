@@ -68,11 +68,12 @@ if (!config.deployToAws) {
     exportsBucket: data.storage.exportsBucket,
     scrapeBucket: data.storage.scrapeBucket,
     apiRepository: registry.apiRepository,
+    crmRepository: registry.crmRepository,
     aiRepository: registry.aiRepository,
     webRepository: registry.webRepository,
     imageTag,
     httpsMode,
-    description: `Skout AI ${config.name} ECS services (API, AI, Web)`,
+    description: `Skout AI ${config.name} ECS services (API, CRM, AI, Web)`,
   });
 
   const workers = new WorkersStack(app, `${config.stackPrefix}-Workers`, {
