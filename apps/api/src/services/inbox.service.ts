@@ -14,7 +14,8 @@ export type ThreadStatus = "new" | "replied" | "bounced" | "meeting_booked" | "c
 
 const ALLOWED_MANUAL_TRANSITIONS: Partial<Record<ThreadStatus, ThreadStatus[]>> = {
   replied: ["meeting_booked", "closed"],
-  new: ["closed"],
+  new: ["closed", "meeting_booked", "replied"],
+  open: ["closed", "meeting_booked", "replied"],
   meeting_booked: ["closed"],
   bounced: ["closed"],
   closed: [],
@@ -97,12 +98,13 @@ export async function updateInbox(
   db: Db,
   workspaceId: string,
   id: string,
-  patch: { displayName?: string; dailySendLimit?: number; status?: string }
+  patch: { displayName?: string; dailySendLimit?: number; status?: string; sendingDomainId?: string | null }
 ) {
   const set: Record<string, unknown> = { updatedAt: new Date() };
   if (patch.displayName !== undefined) set.displayName = patch.displayName;
   if (patch.dailySendLimit !== undefined) set.dailySendLimit = patch.dailySendLimit;
   if (patch.status !== undefined) set.status = patch.status;
+  if (patch.sendingDomainId !== undefined) set.sendingDomainId = patch.sendingDomainId;
   const [row] = await db
     .update(inboxes)
     .set(set)
@@ -206,10 +208,15 @@ function shapeDomain(row: typeof sendingDomains.$inferSelect) {
     id: row.id,
     workspaceId: row.workspaceId,
     domain: row.domain,
+    status: row.status,
     spfStatus: (byPurpose["SPF"] ?? "unknown") as StoredDnsRecord["status"],
     dkimStatus: (byPurpose["DKIM"] ?? "unknown") as StoredDnsRecord["status"],
     dmarcStatus: (byPurpose["DMARC"] ?? "unknown") as StoredDnsRecord["status"],
     mxStatus: (byPurpose["MX"] ?? "unknown") as StoredDnsRecord["status"],
+    blacklistStatus: row.blacklistStatus,
+    blacklistedOn: (row.blacklistedOn as string[]) ?? [],
+    lastCheckedAt: row.lastCheckedAt ? row.lastCheckedAt.toISOString() : null,
+    dnsRecords: records,
     verifiedAt: row.verifiedAt ? row.verifiedAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
   };
@@ -250,6 +257,34 @@ export async function getDomainDns(db: Db, workspaceId: string, id: string) {
     .limit(1);
   if (!row) return null;
   return { domain: row.domain, records: (row.dnsRecords as StoredDnsRecord[]) ?? [] };
+}
+
+export async function verifyDomain(db: Db, workspaceId: string, id: string) {
+  const [row] = await db
+    .select()
+    .from(sendingDomains)
+    .where(and(eq(sendingDomains.workspaceId, workspaceId), eq(sendingDomains.id, id)))
+    .limit(1);
+  if (!row) return null;
+
+  const { checkDomainDns } = await import("./domain-dns.service.js");
+  const result = await checkDomainDns(row.domain);
+
+  const allPass = result.spf === "pass" && result.dkim === "pass" && result.dmarc === "pass" && result.mx === "pass";
+  const now = new Date();
+
+  const [updated] = await db
+    .update(sendingDomains)
+    .set({
+      dnsRecords: result.records,
+      status: allPass ? "verified" : "pending_verification",
+      verifiedAt: allPass ? now : row.verifiedAt,
+      updatedAt: now,
+    })
+    .where(eq(sendingDomains.id, id))
+    .returning();
+
+  return updated ? shapeDomain(updated) : null;
 }
 
 export async function getDeliverabilityMetrics(db: Db, workspaceId: string) {
