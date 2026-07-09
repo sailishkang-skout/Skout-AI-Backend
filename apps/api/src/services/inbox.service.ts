@@ -405,6 +405,8 @@ export class InboxService {
       if (!encryptionKey) throw new HttpError("INTEGRATION_ENCRYPTION_KEY not configured", 503);
       smtpPasswordEncrypted = encryptSecret(input.smtpPassword, encryptionKey);
     }
+    // Require verification whenever credentials are provided
+    const requiresVerification = !!(smtpPasswordEncrypted || input.smtpHost);
     const [row] = await this.db
       .insert(inboxes)
       .values({
@@ -414,6 +416,7 @@ export class InboxService {
         provider: input.provider ?? "smtp",
         dailySendLimit: input.dailySendLimit ?? 50,
         sendingDomainId: input.sendingDomainId ?? null,
+        status: requiresVerification ? "pending_verification" : "active",
         smtpHost: input.smtpHost ?? null,
         smtpPort: input.smtpPort ?? null,
         smtpUsername: input.smtpUsername ?? null,
@@ -426,6 +429,7 @@ export class InboxService {
         target: [inboxes.workspaceId, inboxes.emailAddress],
         set: {
           provider: input.provider ?? "smtp",
+          status: requiresVerification ? "pending_verification" : "active",
           smtpHost: input.smtpHost ?? null,
           smtpPort: input.smtpPort ?? null,
           smtpUsername: input.smtpUsername ?? null,
