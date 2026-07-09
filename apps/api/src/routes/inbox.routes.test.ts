@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
+import type { FastifyInstance } from "fastify";
 
 async function buildTestApp() {
   const config = loadEnv();
@@ -94,5 +95,63 @@ describe("inbox routes", () => {
     expect([200, 503]).toContain(res.statusCode);
 
     await app.close();
+  });
+
+  it("POST /inboxes/:id/test-send returns 404 for a non-existent inbox", async () => {
+    const app = await buildTestApp();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/inboxes/00000000-0000-0000-0000-000000000000/test-send",
+      headers: asUser("test-send@test.com"),
+    });
+
+    // 503 when DB unavailable, 404 when inbox not found
+    expect([404, 503]).toContain(res.statusCode);
+
+    await app.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R3.1 OAuth connect routes — share one app instance to avoid resource contention
+// ---------------------------------------------------------------------------
+
+describe("inbox OAuth connect routes", () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await buildTestApp();
+  }, 30000);
+
+  afterAll(async () => {
+    await app?.close();
+  });
+
+  it("GET /inboxes/connect/google redirects to Google auth or returns 503 when not configured", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/inboxes/connect/google",
+      headers: asUser("oauth-google@test.com"),
+    });
+
+    // 302 when GOOGLE_CLIENT_ID is configured in .env, 503 when absent, 500 when DB unavailable
+    expect([302, 503, 500]).toContain(res.statusCode);
+    if (res.statusCode === 302) {
+      expect(res.headers.location).toContain("accounts.google.com");
+    }
+  });
+
+  it("GET /inboxes/connect/microsoft redirects to Microsoft auth or returns 503 when not configured", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/inboxes/connect/microsoft",
+      headers: asUser("oauth-ms@test.com"),
+    });
+
+    expect([302, 503, 500]).toContain(res.statusCode);
+    if (res.statusCode === 302) {
+      expect(res.headers.location).toContain("login.microsoftonline.com");
+    }
   });
 });

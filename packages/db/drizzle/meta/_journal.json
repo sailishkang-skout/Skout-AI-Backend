@@ -92,6 +92,13 @@
       "when": 1782890000000,
       "tag": "0012_repair_inbox_inbound_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1783900000000,
+      "tag": "0013_inbox_oauth_tokens",
+      "breakpoints": true
     }
   ]
 }
