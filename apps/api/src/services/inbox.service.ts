@@ -15,7 +15,6 @@ export type ThreadStatus = "new" | "replied" | "bounced" | "meeting_booked" | "c
 const ALLOWED_MANUAL_TRANSITIONS: Partial<Record<ThreadStatus, ThreadStatus[]>> = {
   replied: ["meeting_booked", "closed"],
   new: ["closed", "meeting_booked", "replied"],
-  open: ["closed", "meeting_booked", "replied"],
   meeting_booked: ["closed"],
   bounced: ["closed"],
   closed: [],
