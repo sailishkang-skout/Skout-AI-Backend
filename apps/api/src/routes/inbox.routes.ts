@@ -20,6 +20,12 @@ import {
 import type { ThreadStatus } from "../services/inbox.service.js";
 import { recordBounce, recordSpam } from "../services/inbox-rotation.service.js";
 import { ingestInboundMessage } from "../services/inbound-reply.service.js";
+import {
+  getGoogleConnectUrl,
+  handleGoogleCallback,
+  getMicrosoftConnectUrl,
+  handleMicrosoftCallback,
+} from "../services/inbox-oauth.service.js";
 import { HttpError } from "../utils/http.js";
 
 const PROVIDER_ALIASES: Record<string, "smtp" | "google" | "microsoft"> = {
@@ -215,6 +221,76 @@ export async function inboxRoutes(app: FastifyInstance) {
     if (!inbox) return reply.status(404).send({ error: "inbox_not_found" });
     await recordSpam(db, id, app.config);
     return reply.status(204).send();
+  });
+
+  // POST /inboxes/:id/test-send — verify SMTP/OAuth credentials and activate inbox
+  app.post("/inboxes/:id/test-send", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    if (!db) return reply.status(503).send({ error: "database_unavailable" });
+    const svc = new InboxService(db, app.config);
+    try {
+      const result = await svc.testSend(workspaceId, id);
+      return reply.send(result);
+    } catch (err) {
+      if (err instanceof HttpError) return reply.status(err.statusCode).send({ error: err.message });
+      app.log.error({ err }, "test-send failed");
+      return reply.status(502).send({ error: "smtp_connection_failed" });
+    }
+  });
+
+  // GET /inboxes/connect/google — initiate Google OAuth for Gmail inbox
+  app.get("/inboxes/connect/google", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    try {
+      const url = getGoogleConnectUrl(workspaceId, app.config);
+      return reply.redirect(url);
+    } catch (err) {
+      if (err instanceof HttpError) return reply.status(err.statusCode).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  // GET /inboxes/connect/google/callback
+  app.get("/inboxes/connect/google/callback", async (request, reply) => {
+    const { code, state, error } = request.query as { code?: string; state?: string; error?: string };
+    const frontend = (app.config.FRONTEND_URL ?? app.config.CORS_ORIGIN[0] ?? "http://localhost:3000").replace(/\/$/, "");
+    const failUrl = `${frontend}/deliverability?connected=google_error`;
+    if (error || !code || !state || !db) return reply.redirect(failUrl);
+    try {
+      const { redirectUrl } = await handleGoogleCallback(code, state, db, app.config);
+      return reply.redirect(redirectUrl);
+    } catch (err) {
+      app.log.error({ err }, "Google inbox OAuth callback failed");
+      return reply.redirect(failUrl);
+    }
+  });
+
+  // GET /inboxes/connect/microsoft — initiate Microsoft OAuth for Outlook inbox
+  app.get("/inboxes/connect/microsoft", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    try {
+      const url = getMicrosoftConnectUrl(workspaceId, app.config);
+      return reply.redirect(url);
+    } catch (err) {
+      if (err instanceof HttpError) return reply.status(err.statusCode).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  // GET /inboxes/connect/microsoft/callback
+  app.get("/inboxes/connect/microsoft/callback", async (request, reply) => {
+    const { code, state, error } = request.query as { code?: string; state?: string; error?: string };
+    const frontend = (app.config.FRONTEND_URL ?? app.config.CORS_ORIGIN[0] ?? "http://localhost:3000").replace(/\/$/, "");
+    const failUrl = `${frontend}/deliverability?connected=microsoft_error`;
+    if (error || !code || !state || !db) return reply.redirect(failUrl);
+    try {
+      const { redirectUrl } = await handleMicrosoftCallback(code, state, db, app.config);
+      return reply.redirect(redirectUrl);
+    } catch (err) {
+      app.log.error({ err }, "Microsoft inbox OAuth callback failed");
+      return reply.redirect(failUrl);
+    }
   });
 
   // GET /domains

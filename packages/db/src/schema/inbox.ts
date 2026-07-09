@@ -44,6 +44,11 @@ export const inboxes = pgTable(
     imapHost: text("imap_host"),
     imapPort: integer("imap_port"),
     imapLastPolledAt: timestamp("imap_last_polled_at", { withTimezone: true }),
+    // OAuth tokens (Google / Microsoft) — AES-256-GCM encrypted at rest
+    oauthAccessTokenEncrypted: text("oauth_access_token_encrypted"),
+    oauthRefreshTokenEncrypted: text("oauth_refresh_token_encrypted"),
+    oauthTokenExpiresAt: timestamp("oauth_token_expires_at", { withTimezone: true }),
+    oauthScope: text("oauth_scope"),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     sentCount: integer("sent_count").notNull().default(0),
     bounceCount: integer("bounce_count").notNull().default(0),

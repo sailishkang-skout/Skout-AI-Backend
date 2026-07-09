@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, afterEach, beforeEach } from "vitest";
 import { buildInboxService, InboxService } from "./inbox.service.js";
 import {
   createInbox,
@@ -12,7 +12,20 @@ import {
   updateInbox,
 } from "./inbox.service.js";
 import { HttpError } from "../utils/http.js";
+import { encryptSecret } from "../utils/integration-crypto.js";
 import type { Env } from "../config/env.js";
+
+// Hoist nodemailer mock so inbox.service.ts picks it up at import time
+vi.mock("nodemailer", () => ({
+  default: {
+    createTransport: vi.fn(() => ({
+      verify: vi.fn().mockResolvedValue(true),
+    })),
+  },
+}));
+
+// Keep a reference so individual tests can adjust the mock
+import nodemailer from "nodemailer";
 
 // ---------------------------------------------------------------------------
 // Mock helpers
@@ -441,5 +454,292 @@ describe("listThreads (function)", () => {
 
     const result = await listThreads(db, "ws-1");
     expect(result).toEqual({ workspaceId: "ws-1", data: rows, total: 1 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// toPublicInbox — oauthConfigured field (via InboxService.listInboxes)
+// ---------------------------------------------------------------------------
+
+describe("InboxService — toPublicInbox oauthConfigured", () => {
+  it("adds oauthConfigured: true when oauthAccessTokenEncrypted is set", async () => {
+    const row = {
+      id: "inbox-1",
+      workspaceId: "ws-1",
+      emailAddress: "a@b.com",
+      smtpPasswordEncrypted: null,
+      oauthAccessTokenEncrypted: "iv:tag:cipher",
+      oauthRefreshTokenEncrypted: "iv:tag:cipher2",
+      createdAt: new Date("2026-01-01T00:00:00Z"),
+    };
+    const db = { select: vi.fn().mockReturnValue(selectChain([row])) } as any;
+    const svc = new InboxService(db, config);
+
+    const result = await svc.listInboxes("ws-1");
+    expect((result.data[0] as any).oauthConfigured).toBe(true);
+  });
+
+  it("adds oauthConfigured: false when oauthAccessTokenEncrypted is null", async () => {
+    const row = {
+      id: "inbox-1",
+      workspaceId: "ws-1",
+      smtpPasswordEncrypted: "iv:tag:cipher",
+      oauthAccessTokenEncrypted: null,
+    };
+    const db = { select: vi.fn().mockReturnValue(selectChain([row])) } as any;
+    const svc = new InboxService(db, config);
+
+    const result = await svc.listInboxes("ws-1");
+    expect((result.data[0] as any).oauthConfigured).toBe(false);
+  });
+
+  it("strips oauthAccessTokenEncrypted and oauthRefreshTokenEncrypted from response", async () => {
+    const row = {
+      id: "inbox-1",
+      workspaceId: "ws-1",
+      oauthAccessTokenEncrypted: "iv:tag:access",
+      oauthRefreshTokenEncrypted: "iv:tag:refresh",
+    };
+    const db = { select: vi.fn().mockReturnValue(selectChain([row])) } as any;
+    const svc = new InboxService(db, config);
+
+    const result = await svc.listInboxes("ws-1");
+    expect(result.data[0]).not.toHaveProperty("oauthAccessTokenEncrypted");
+    expect(result.data[0]).not.toHaveProperty("oauthRefreshTokenEncrypted");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeHealth — tested indirectly via listInboxes (standalone function)
+// ---------------------------------------------------------------------------
+
+describe("listInboxes — computeHealth field", () => {
+  function buildDb(inboxRow: Record<string, unknown>) {
+    const statsChain = { from: vi.fn(), innerJoin: vi.fn(), where: vi.fn() } as any;
+    statsChain.from.mockReturnValue(statsChain);
+    statsChain.innerJoin.mockReturnValue(statsChain);
+    statsChain.where.mockResolvedValue([{ sentToday: 0 }]);
+
+    const select = vi.fn()
+      .mockReturnValueOnce(selectChain([inboxRow]))
+      .mockReturnValueOnce(statsChain);
+
+    return { select } as any;
+  }
+
+  const baseInbox = {
+    id: "inbox-1",
+    workspaceId: "ws-1",
+    dailySendLimit: 50,
+    sentCount: 0,
+    bounceCount: 0,
+    spamCount: 0,
+  };
+
+  it("returns health: 'error' for a paused inbox", async () => {
+    const db = buildDb({ ...baseInbox, status: "paused", smtpHost: "smtp.test.com", smtpPasswordEncrypted: "enc" });
+    const result = await listInboxes(db, "ws-1");
+    expect((result.data[0] as any).health).toBe("error");
+  });
+
+  it("returns health: 'error' when no SMTP and no OAuth config", async () => {
+    const db = buildDb({ ...baseInbox, status: "active", smtpHost: null, smtpPasswordEncrypted: null, oauthAccessTokenEncrypted: null });
+    const result = await listInboxes(db, "ws-1");
+    expect((result.data[0] as any).health).toBe("error");
+  });
+
+  it("returns health: 'healthy' for a configured active inbox with low bounce/spam", async () => {
+    const db = buildDb({
+      ...baseInbox,
+      status: "active",
+      smtpHost: "smtp.test.com",
+      smtpPasswordEncrypted: "enc",
+      sentCount: 100,
+      bounceCount: 2,
+      spamCount: 0,
+    });
+    const result = await listInboxes(db, "ws-1");
+    expect((result.data[0] as any).health).toBe("healthy");
+  });
+
+  it("returns health: 'degraded' when bounce rate >= 5%", async () => {
+    const db = buildDb({
+      ...baseInbox,
+      status: "active",
+      smtpHost: "smtp.test.com",
+      smtpPasswordEncrypted: "enc",
+      sentCount: 100,
+      bounceCount: 6, // 6% bounce rate
+      spamCount: 0,
+    });
+    const result = await listInboxes(db, "ws-1");
+    expect((result.data[0] as any).health).toBe("degraded");
+  });
+
+  it("returns health: 'degraded' when spam rate >= 1%", async () => {
+    const db = buildDb({
+      ...baseInbox,
+      status: "active",
+      smtpHost: "smtp.test.com",
+      smtpPasswordEncrypted: "enc",
+      sentCount: 100,
+      bounceCount: 0,
+      spamCount: 2, // 2% spam rate
+    });
+    const result = await listInboxes(db, "ws-1");
+    expect((result.data[0] as any).health).toBe("degraded");
+  });
+
+  it("does not flag degraded before minSent threshold (20)", async () => {
+    const db = buildDb({
+      ...baseInbox,
+      status: "active",
+      smtpHost: "smtp.test.com",
+      smtpPasswordEncrypted: "enc",
+      sentCount: 10,
+      bounceCount: 5, // 50% bounce but only 10 sent — below minSent
+      spamCount: 0,
+    });
+    const result = await listInboxes(db, "ws-1");
+    expect((result.data[0] as any).health).toBe("healthy");
+  });
+
+  it("returns health: 'healthy' for OAuth-only configured inbox", async () => {
+    const db = buildDb({
+      ...baseInbox,
+      status: "active",
+      smtpHost: null,
+      smtpPasswordEncrypted: null,
+      oauthAccessTokenEncrypted: "iv:tag:enc",
+    });
+    const result = await listInboxes(db, "ws-1");
+    expect((result.data[0] as any).health).toBe("healthy");
+  });
+
+  it("includes capPct based on sentToday / dailySendLimit", async () => {
+    const statsChain = { from: vi.fn(), innerJoin: vi.fn(), where: vi.fn() } as any;
+    statsChain.from.mockReturnValue(statsChain);
+    statsChain.innerJoin.mockReturnValue(statsChain);
+    statsChain.where.mockResolvedValue([{ sentToday: 25 }]);
+
+    const select = vi.fn()
+      .mockReturnValueOnce(selectChain([{ ...baseInbox, status: "active", smtpPasswordEncrypted: "enc", smtpHost: "h", dailySendLimit: 50 }]))
+      .mockReturnValueOnce(statsChain);
+
+    const db = { select } as any;
+    const result = await listInboxes(db, "ws-1");
+    expect((result.data[0] as any).capPct).toBe(50); // 25/50 * 100 = 50
+  });
+});
+
+// ---------------------------------------------------------------------------
+// InboxService.testSend
+// ---------------------------------------------------------------------------
+
+describe("InboxService.testSend", () => {
+  const ENC_KEY = "test-key-32-bytes-long-for-aes!!";
+  const testConfig = { INTEGRATION_ENCRYPTION_KEY: ENC_KEY } as unknown as Env;
+
+  function withInboxSelect(inbox: unknown) {
+    const c = {} as Record<string, ReturnType<typeof vi.fn>>;
+    c.from = vi.fn().mockReturnValue(c);
+    c.where = vi.fn().mockReturnValue(c);
+    c.limit = vi.fn().mockResolvedValue(inbox ? [inbox] : []);
+    return c;
+  }
+
+  function withUpdateChain() {
+    const c = {} as Record<string, ReturnType<typeof vi.fn>>;
+    c.set = vi.fn().mockReturnValue(c);
+    c.where = vi.fn().mockResolvedValue([]);
+    return c;
+  }
+
+  it("throws 404 when inbox not found", async () => {
+    const db = { select: vi.fn().mockReturnValue(withInboxSelect(null)) } as any;
+    const svc = new InboxService(db, testConfig);
+    await expect(svc.testSend("ws-1", "missing")).rejects.toThrow(HttpError);
+  });
+
+  it("throws 503 when INTEGRATION_ENCRYPTION_KEY is not configured", async () => {
+    const inbox = { id: "inbox-1", workspaceId: "ws-1", provider: "smtp", smtpPasswordEncrypted: "enc" };
+    const db = { select: vi.fn().mockReturnValue(withInboxSelect(inbox)) } as any;
+    const svc = new InboxService(db, {} as unknown as Env);
+    await expect(svc.testSend("ws-1", "inbox-1")).rejects.toThrow(HttpError);
+  });
+
+  it("throws 422 when SMTP inbox has no credentials", async () => {
+    const inbox = {
+      id: "inbox-1",
+      workspaceId: "ws-1",
+      provider: "smtp",
+      smtpHost: null,
+      smtpPort: null,
+      smtpUsername: null,
+      smtpPasswordEncrypted: null,
+      oauthAccessTokenEncrypted: null,
+    };
+    const db = { select: vi.fn().mockReturnValue(withInboxSelect(inbox)) } as any;
+    const svc = new InboxService(db, testConfig);
+    await expect(svc.testSend("ws-1", "inbox-1")).rejects.toThrow(HttpError);
+  });
+
+  it("uses SMTP path and activates inbox on successful verify", async () => {
+    const encPass = encryptSecret("smtp-password", ENC_KEY);
+    const inbox = {
+      id: "inbox-1",
+      workspaceId: "ws-1",
+      provider: "smtp",
+      emailAddress: "sender@example.com",
+      smtpHost: "smtp.example.com",
+      smtpPort: 587,
+      smtpUsername: "sender@example.com",
+      smtpPasswordEncrypted: encPass,
+      smtpSecure: false,
+      oauthAccessTokenEncrypted: null,
+    };
+
+    const upd = withUpdateChain();
+    const db = {
+      select: vi.fn().mockReturnValue(withInboxSelect(inbox)),
+      update: vi.fn().mockReturnValue(upd),
+    } as any;
+
+    const svc = new InboxService(db, testConfig);
+    const result = await svc.testSend("ws-1", "inbox-1");
+
+    expect(result.ok).toBe(true);
+    expect(result.provider).toBe("smtp");
+    expect(upd.set).toHaveBeenCalledWith(expect.objectContaining({ status: "active" }));
+  });
+
+  it("falls back to SMTP path for google/microsoft inbox without OAuth tokens", async () => {
+    const encPass = encryptSecret("app-password", ENC_KEY);
+    const inbox = {
+      id: "inbox-1",
+      workspaceId: "ws-1",
+      provider: "google",
+      emailAddress: "user@gmail.com",
+      smtpHost: "smtp.gmail.com",
+      smtpPort: 465,
+      smtpUsername: "user@gmail.com",
+      smtpPasswordEncrypted: encPass,
+      smtpSecure: true,
+      oauthAccessTokenEncrypted: null, // no OAuth tokens → fall back to SMTP
+    };
+
+    const upd = withUpdateChain();
+    const db = {
+      select: vi.fn().mockReturnValue(withInboxSelect(inbox)),
+      update: vi.fn().mockReturnValue(upd),
+    } as any;
+
+    const svc = new InboxService(db, testConfig);
+    const result = await svc.testSend("ws-1", "inbox-1");
+
+    expect(result.ok).toBe(true);
+    expect(result.provider).toBe("google");
+    // Should have activated
+    expect(upd.set).toHaveBeenCalledWith(expect.objectContaining({ status: "active" }));
   });
 });

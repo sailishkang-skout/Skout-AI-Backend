@@ -26,6 +26,25 @@ function todayUtcMidnight(): Date {
   return d;
 }
 
+function computeHealth(
+  inbox: typeof inboxes.$inferSelect,
+  bounceThreshold = 0.05,
+  spamThreshold = 0.01,
+  minSent = 20,
+): "healthy" | "degraded" | "error" {
+  if (inbox.status === "paused" || inbox.status === "inactive") return "error";
+  const isConfigured =
+    (inbox.smtpHost && inbox.smtpPasswordEncrypted) ||
+    inbox.oauthAccessTokenEncrypted;
+  if (!isConfigured) return "error";
+  if (inbox.sentCount >= minSent) {
+    const bounceRate = inbox.bounceCount / inbox.sentCount;
+    const spamRate = inbox.spamCount / inbox.sentCount;
+    if (bounceRate >= bounceThreshold || spamRate >= spamThreshold) return "degraded";
+  }
+  return "healthy";
+}
+
 async function withDailyStats(db: Db, rows: (typeof inboxes.$inferSelect)[]) {
   return Promise.all(
     rows.map(async (inbox) => {
@@ -40,7 +59,11 @@ async function withDailyStats(db: Db, rows: (typeof inboxes.$inferSelect)[]) {
             gte(inboxMessages.sentAt, todayUtcMidnight())
           )
         );
-      return { ...inbox, sentToday: stat?.sentToday ?? 0 };
+      const sentToday = Number(stat?.sentToday ?? 0);
+      const capPct = inbox.dailySendLimit > 0
+        ? Math.min(100, Math.round((sentToday / inbox.dailySendLimit) * 100))
+        : 0;
+      return { ...inbox, sentToday, capPct, health: computeHealth(inbox) };
     })
   );
 }
@@ -336,8 +359,12 @@ export async function createDomain(db: Db, workspaceId: string, domain: string) 
 type RawInboxRow = typeof inboxes.$inferSelect;
 
 function toPublicInbox(row: RawInboxRow) {
-  const { smtpPasswordEncrypted, ...rest } = row;
-  return { ...rest, smtpConfigured: smtpPasswordEncrypted != null && smtpPasswordEncrypted.length > 0 };
+  const { smtpPasswordEncrypted, oauthAccessTokenEncrypted, oauthRefreshTokenEncrypted, ...rest } = row;
+  return {
+    ...rest,
+    smtpConfigured: smtpPasswordEncrypted != null && smtpPasswordEncrypted.length > 0,
+    oauthConfigured: oauthAccessTokenEncrypted != null && oauthAccessTokenEncrypted.length > 0,
+  };
 }
 
 export interface CreateInboxInput {
@@ -639,6 +666,72 @@ export class InboxService {
       .where(and(eq(inboxThreads.workspaceId, workspaceId), eq(inboxThreads.id, threadId)));
 
     return inserted!;
+  }
+
+  async testSend(workspaceId: string, inboxId: string): Promise<{ ok: true; provider: string }> {
+    const [inbox] = await this.db
+      .select()
+      .from(inboxes)
+      .where(and(eq(inboxes.workspaceId, workspaceId), eq(inboxes.id, inboxId)))
+      .limit(1);
+    if (!inbox) throw new HttpError("inbox_not_found", 404);
+
+    const encKey = this.config.INTEGRATION_ENCRYPTION_KEY;
+    if (!encKey) throw new HttpError("INTEGRATION_ENCRYPTION_KEY not configured", 503);
+
+    let transporter: ReturnType<typeof nodemailer.createTransport>;
+
+    const useOAuth =
+      (inbox.provider === "google" || inbox.provider === "microsoft") &&
+      !!inbox.oauthAccessTokenEncrypted;
+
+    if (useOAuth) {
+      const { resolveAccessToken } = await import("./inbox-oauth.service.js");
+      const accessToken = await resolveAccessToken(inbox, this.db, this.config);
+
+      const smtpConfig =
+        inbox.provider === "google"
+          ? { host: "smtp.gmail.com", port: 465, secure: true }
+          : { host: "smtp.office365.com", port: 587, secure: false };
+
+      const clientId =
+        inbox.provider === "google" ? this.config.GOOGLE_CLIENT_ID : this.config.MICROSOFT_CLIENT_ID;
+      const clientSecret =
+        inbox.provider === "google" ? this.config.GOOGLE_CLIENT_SECRET : this.config.MICROSOFT_CLIENT_SECRET;
+
+      transporter = nodemailer.createTransport({
+        ...smtpConfig,
+        auth: {
+          type: "OAuth2",
+          user: inbox.emailAddress,
+          clientId,
+          clientSecret,
+          accessToken,
+        },
+      });
+    } else {
+      // SMTP credentials (plain password — covers generic SMTP and Google/Microsoft app-password setups)
+      if (!inbox.smtpHost || !inbox.smtpPort || !inbox.smtpUsername || !inbox.smtpPasswordEncrypted) {
+        throw new HttpError("inbox_smtp_not_configured", 422);
+      }
+      const password = decryptSecret(inbox.smtpPasswordEncrypted, encKey);
+      transporter = nodemailer.createTransport({
+        host: inbox.smtpHost,
+        port: inbox.smtpPort,
+        secure: inbox.smtpSecure,
+        auth: { user: inbox.smtpUsername, pass: password },
+      });
+    }
+
+    await transporter.verify();
+
+    // Activate inbox after successful verification
+    await this.db
+      .update(inboxes)
+      .set({ status: "active", updatedAt: new Date() })
+      .where(eq(inboxes.id, inboxId));
+
+    return { ok: true, provider: inbox.provider };
   }
 
   async getUnreadCounts(workspaceId: string) {
