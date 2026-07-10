@@ -1,4 +1,4 @@
-import { integer, jsonb, numeric, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { boolean, integer, jsonb, numeric, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { inboxThreads } from "./inbox.js";
 import { sequenceEnrollmentSteps } from "./sequences.js";
 import { users } from "./users.js";
@@ -64,12 +64,23 @@ export const webhookEndpoints = pgTable("webhook_endpoints", {
     .notNull()
     .references(() => workspaces.id, { onDelete: "cascade" }),
   url: text("url").notNull(),
-  secretHash: text("secret_hash").notNull(),
-  events: text("events").array().notNull().default([]),
-  status: text("status").notNull().default("active"),
+  /** Raw HMAC signing secret (maps to secret_hash column for backward compat) */
+  secret: text("secret_hash").notNull(),
+  description: text("description"),
+  enabled: boolean("enabled").notNull().default(true),
+  /** jsonb array of subscribed event type strings */
+  eventTypes: jsonb("event_types").notNull().default([]),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const WEBHOOK_EVENT_TYPES = [
+  "prospect.enrolled",
+  "sequence.step.completed",
+  "reply.received",
+] as const;
+
+export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];
 
 /** Workspace-owned enrichment provider API keys (BYOK), encrypted at rest. */
 export const workspaceIntegrations = pgTable(
@@ -95,11 +106,18 @@ export const webhookDeliveries = pgTable("webhook_deliveries", {
   endpointId: uuid("endpoint_id")
     .notNull()
     .references(() => webhookEndpoints.id, { onDelete: "cascade" }),
+  workspaceId: uuid("workspace_id").notNull(),
   eventType: text("event_type").notNull(),
+  /** Stable idempotency key shared across retries for the same event+endpoint */
+  eventId: text("event_id").notNull(),
   payload: jsonb("payload").notNull(),
+  attempt: integer("attempt").notNull().default(1),
+  /** pending | success | failed | dead */
   status: text("status").notNull().default("pending"),
-  attempts: integer("attempts").notNull().default(0),
-  responseStatus: integer("response_status"),
-  lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+  statusCode: integer("status_code"),
+  responseBody: text("response_body"),
+  durationMs: integer("duration_ms"),
+  errorMessage: text("error_message"),
+  deliveredAt: timestamp("delivered_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

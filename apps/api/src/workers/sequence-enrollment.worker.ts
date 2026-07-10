@@ -19,6 +19,7 @@ import {
   enqueueSequenceAdvanceJob,
   type SeqAdvanceJobPayload,
 } from "./sequence-enrollment.queue.js";
+import { dispatchWebhookEvent } from "../services/webhook.service.js";
 
 const log = createLogger("sequence-enrollment.worker");
 
@@ -213,6 +214,14 @@ async function executeEmailStep(
 
   await markInboxUsed(db, inbox.id);
   log.info("Email sent", { enrollmentId, enrollmentStepId: pending.enrollmentStepId, inboxId: inbox.id });
+
+  dispatchWebhookEvent(db, config, "sequence.step.completed", workspaceId, {
+    enrollmentId,
+    sequenceId: payload.sequenceId,
+    prospectId,
+    stepId: pending.stepId,
+    stepType: pending.stepType,
+  }).catch((err: unknown) => log.warn("webhook dispatch failed", { err, event: "sequence.step.completed" }));
 }
 
 // ---------------------------------------------------------------------------

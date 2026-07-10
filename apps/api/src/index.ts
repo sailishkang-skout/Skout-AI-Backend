@@ -11,6 +11,7 @@ import { startImapPollWorker } from "./workers/imap-poll.worker.js";
 import { startReplyTagWorker } from "./workers/reply-tag.worker.js";
 import { startBlacklistMonitorWorker } from "./workers/blacklist-monitor.worker.js";
 import { startWarmupRampWorker } from "./workers/warmup-ramp.worker.js";
+import { startWebhookDeliveryWorker } from "./workers/webhook-delivery.worker.js";
 
 async function main() {
   const config = loadEnv();
@@ -40,10 +41,12 @@ async function main() {
   const stopReplyTagWorker = await startReplyTagWorker(config);
   const stopBlacklistMonitorWorker = await startBlacklistMonitorWorker(config);
   const stopWarmupRampWorker = await startWarmupRampWorker(config);
+  const stopWebhookDeliveryWorker = await startWebhookDeliveryWorker(config);
 
   const app = await buildApp(config);
 
   const shutdown = async () => {
+    await stopWebhookDeliveryWorker();
     await stopWarmupRampWorker();
     await stopBlacklistMonitorWorker();
     await stopReplyTagWorker();
