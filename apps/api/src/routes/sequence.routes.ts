@@ -251,4 +251,15 @@ export async function sequenceRoutes(app: FastifyInstance) {
       throw err;
     }
   });
+
+  // GET /sequences/:id/lists — lists that have enrollments in this sequence
+  app.get("/sequences/:id/lists", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = buildSequenceService(app.db);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    const data = await svc.listEnrolledLists(workspaceId, id);
+    if (!data) return reply.status(404).send({ error: "not_found" });
+    return reply.send({ workspaceId, data, total: data.length });
+  });
 }

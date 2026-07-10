@@ -66,18 +66,48 @@ try {
       ADD COLUMN IF NOT EXISTS "oauth_token_expires_at" timestamp with time zone,
       ADD COLUMN IF NOT EXISTS "oauth_scope" text`);
 
-  // 0014 — domain warmup + blacklist monitoring
+  // 0014 — domain warmup + blacklist monitoring columns
   await run("0014 blacklist columns on sending_domains", () => sql`
     ALTER TABLE "sending_domains"
       ADD COLUMN IF NOT EXISTS "blacklist_status" text NOT NULL DEFAULT 'clean',
-      ADD COLUMN IF NOT EXISTS "blacklisted_on" jsonb NOT NULL DEFAULT '[]',
-      ADD COLUMN IF NOT EXISTS "last_checked_at" timestamp with time zone,
-      ADD COLUMN IF NOT EXISTS "check_error" text`);
+      ADD COLUMN IF NOT EXISTS "blacklisted_on"   jsonb NOT NULL DEFAULT '[]',
+      ADD COLUMN IF NOT EXISTS "last_checked_at"  timestamptz,
+      ADD COLUMN IF NOT EXISTS "check_error"      text`);
 
-  await run("0014 warmup columns on inboxes", () => sql`
+  await run("0014 warmup ramp columns on inboxes", () => sql`
     ALTER TABLE "inboxes"
-      ADD COLUMN IF NOT EXISTS "warmup_day" integer NOT NULL DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS "warmup_started_at" timestamp with time zone`);
+      ADD COLUMN IF NOT EXISTS "warmup_day"        integer NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS "warmup_started_at" timestamptz`);
+
+  // 0015 — R7.2 outbound webhooks (alter existing stub tables)
+  await run("0015 webhook_endpoints new columns", () => sql`
+    ALTER TABLE "webhook_endpoints"
+      ADD COLUMN IF NOT EXISTS "description" text,
+      ADD COLUMN IF NOT EXISTS "enabled" boolean NOT NULL DEFAULT true,
+      ADD COLUMN IF NOT EXISTS "event_types" jsonb NOT NULL DEFAULT '[]'`);
+
+  await run("0015 webhook_endpoints drop old stubs", () => sql`
+    ALTER TABLE "webhook_endpoints"
+      DROP COLUMN IF EXISTS "events",
+      DROP COLUMN IF EXISTS "status"`);
+
+  await run("0015 webhook_deliveries new columns", () => sql`
+    ALTER TABLE "webhook_deliveries"
+      ADD COLUMN IF NOT EXISTS "workspace_id" uuid,
+      ADD COLUMN IF NOT EXISTS "event_id" text NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS "attempt" integer NOT NULL DEFAULT 1,
+      ADD COLUMN IF NOT EXISTS "status_code" integer,
+      ADD COLUMN IF NOT EXISTS "response_body" text,
+      ADD COLUMN IF NOT EXISTS "duration_ms" integer,
+      ADD COLUMN IF NOT EXISTS "error_message" text,
+      ADD COLUMN IF NOT EXISTS "delivered_at" timestamptz`);
+
+  await run("0015 webhook_deliveries drop old stubs", () => sql`
+    ALTER TABLE "webhook_deliveries"
+      DROP COLUMN IF EXISTS "attempts",
+      DROP COLUMN IF EXISTS "response_status",
+      DROP COLUMN IF EXISTS "last_attempt_at"`);
+
 
 } finally {
   await sql.end();
