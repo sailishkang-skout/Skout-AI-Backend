@@ -66,7 +66,7 @@ TASK_ARN="$(aws ecs run-task \
   --task-definition "$TASK_DEF" \
   --launch-type FARGATE \
   --network-configuration "$NETWORK_CONFIG" \
-  --overrides "{\"containerOverrides\":[{\"name\":\"${CONTAINER_NAME}\",\"command\":[\"node\",\"/app/node_modules/@skout/db/dist/migrate.js\"],\"environment\":[{\"name\":\"MIGRATIONS_FOLDER\",\"value\":\"/app/node_modules/@skout/db/drizzle\"}]}]}" \
+  --overrides "{\"containerOverrides\":[{\"name\":\"${CONTAINER_NAME}\",\"command\":[\"node\",\"/app/node_modules/@skout/db/dist/migrate.js\"],\"environment\":[{\"name\":\"MIGRATIONS_FOLDER\",\"value\":\"/app/db/drizzle\"}]}]}" \
   --query 'tasks[0].taskArn' \
   --output text)"
 
