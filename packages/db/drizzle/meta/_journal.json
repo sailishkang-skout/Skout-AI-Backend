@@ -106,6 +106,13 @@
       "when": 1783464000000,
       "tag": "0014_domain_warmup_blacklist",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1784000000000,
+      "tag": "0015_repair_inbox_domain_schema",
+      "breakpoints": true
     }
   ]
 }

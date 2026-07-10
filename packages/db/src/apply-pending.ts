@@ -66,6 +66,19 @@ try {
       ADD COLUMN IF NOT EXISTS "oauth_token_expires_at" timestamp with time zone,
       ADD COLUMN IF NOT EXISTS "oauth_scope" text`);
 
+  // 0014 — domain warmup + blacklist monitoring
+  await run("0014 blacklist columns on sending_domains", () => sql`
+    ALTER TABLE "sending_domains"
+      ADD COLUMN IF NOT EXISTS "blacklist_status" text NOT NULL DEFAULT 'clean',
+      ADD COLUMN IF NOT EXISTS "blacklisted_on" jsonb NOT NULL DEFAULT '[]',
+      ADD COLUMN IF NOT EXISTS "last_checked_at" timestamp with time zone,
+      ADD COLUMN IF NOT EXISTS "check_error" text`);
+
+  await run("0014 warmup columns on inboxes", () => sql`
+    ALTER TABLE "inboxes"
+      ADD COLUMN IF NOT EXISTS "warmup_day" integer NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS "warmup_started_at" timestamp with time zone`);
+
 } finally {
   await sql.end();
 }
