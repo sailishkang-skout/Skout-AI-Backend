@@ -58,7 +58,7 @@ export const authPlugin = fp(async (app) => {
       // CORS preflight (and any OPTIONS) must never require auth.
       if (request.method === "OPTIONS") return;
       if (isHealthRoute(request.url) || isPublicRoute(request.url)) return;
-      const stubEmail = (request.headers["x-stub-user-email"] as string | undefined) ?? "stub@example.com";
+      const stubEmail = (request.headers["x-stub-user-email"] as string | undefined) ?? config.AUTH_STUB_EMAIL ?? "stub@example.com";
       const db = app.db;
       if (!db) {
         return reply.code(500).send(errorResponse("Database not available", 500));

@@ -16,6 +16,19 @@ function selectChain(result: unknown[], terminal: Terminal = "where") {
   return c;
 }
 
+/** Chain that passes through all join/group/order calls, resolving at orderBy. */
+function joinChain(result: unknown[]) {
+  const c = {} as Record<string, ReturnType<typeof vi.fn>>;
+  const pass = () => c;
+  c.from       = vi.fn().mockReturnValue(c);
+  c.innerJoin  = vi.fn().mockReturnValue(c);
+  c.leftJoin   = vi.fn().mockReturnValue(c);
+  c.where      = vi.fn().mockReturnValue(c);
+  c.groupBy    = vi.fn().mockReturnValue(c);
+  c.orderBy    = vi.fn().mockResolvedValue(result);
+  return c;
+}
+
 function insertReturning(result: unknown[]) {
   return { values: vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue(result) }) };
 }
@@ -642,6 +655,145 @@ describe("SequenceService.enroll", () => {
     expect(result.skipped).toBe(1);
     expect(result.total).toBe(1);
     expect(result.newEnrollments).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listEnrolledLists
+// ---------------------------------------------------------------------------
+
+describe("SequenceService.listEnrolledLists", () => {
+  it("returns null when sequence is not found", async () => {
+    const db = {
+      select: vi.fn().mockReturnValueOnce(selectChain([])),
+    };
+    const svc = new SequenceService(db as any);
+    const result = await svc.listEnrolledLists("ws-1", "seq-missing");
+    expect(result).toBeNull();
+  });
+
+  it("returns empty array when no members are enrolled", async () => {
+    const db = {
+      select: vi.fn()
+        .mockReturnValueOnce(selectChain([SEQ_ROW]))
+        .mockReturnValueOnce(joinChain([])),
+    };
+    const svc = new SequenceService(db as any);
+    const result = await svc.listEnrolledLists("ws-1", "seq-1");
+    expect(result).toEqual([]);
+  });
+
+  it("returns lists for enrollments made via listId", async () => {
+    const db = {
+      select: vi.fn()
+        .mockReturnValueOnce(selectChain([SEQ_ROW]))
+        .mockReturnValueOnce(joinChain([
+          { listId: "list-1", listName: "Campaign A", total: 2, active: 1, completed: 1, enrolledAt: "2026-07-01" },
+        ])),
+    };
+    const svc = new SequenceService(db as any);
+    const result = await svc.listEnrolledLists("ws-1", "seq-1");
+    expect(result).toHaveLength(1);
+    expect(result![0]).toMatchObject({ listId: "list-1", listName: "Campaign A", total: 2, active: 1, completed: 1 });
+  });
+
+  it("returns lists for enrollments made via prospectIds (member-selected)", async () => {
+    const db = {
+      select: vi.fn()
+        .mockReturnValueOnce(selectChain([SEQ_ROW]))
+        .mockReturnValueOnce(joinChain([
+          { listId: "list-2", listName: "Data", total: 1, active: 0, completed: 1, enrolledAt: "2026-07-10" },
+        ])),
+    };
+    const svc = new SequenceService(db as any);
+    const result = await svc.listEnrolledLists("ws-1", "seq-1");
+    expect(result).toHaveLength(1);
+    expect(result![0]).toMatchObject({ listId: "list-2", listName: "Data", total: 1, completed: 1 });
+  });
+
+  it("falls back to 'Deleted list' when list name is null", async () => {
+    const db = {
+      select: vi.fn()
+        .mockReturnValueOnce(selectChain([SEQ_ROW]))
+        .mockReturnValueOnce(joinChain([
+          { listId: "list-orphan", listName: null, total: 1, active: 0, completed: 1, enrolledAt: "2026-07-10" },
+        ])),
+    };
+    const svc = new SequenceService(db as any);
+    const result = await svc.listEnrolledLists("ws-1", "seq-1");
+    expect(result![0]!.listName).toBe("Deleted list");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listSequencesForList
+// ---------------------------------------------------------------------------
+
+describe("SequenceService.listSequencesForList", () => {
+  it("returns null when list is not found", async () => {
+    const db = {
+      select: vi.fn().mockReturnValueOnce(selectChain([])),
+    };
+    const svc = new SequenceService(db as any);
+    const result = await svc.listSequencesForList("ws-1", "list-missing");
+    expect(result).toBeNull();
+  });
+
+  it("returns empty array when list has no members", async () => {
+    const db = {
+      select: vi.fn()
+        .mockReturnValueOnce(selectChain([{ id: "list-1" }]))
+        .mockReturnValueOnce(selectChain([]))          // no members
+        .mockReturnValueOnce(joinChain([])),            // no sequence rows
+    };
+    const svc = new SequenceService(db as any);
+    const result = await svc.listSequencesForList("ws-1", "list-1");
+    expect(result).toEqual([]);
+  });
+
+  it("returns sequences for list-enrolled members", async () => {
+    const db = {
+      select: vi.fn()
+        .mockReturnValueOnce(selectChain([{ id: "list-1" }]))
+        .mockReturnValueOnce(selectChain([{ prospectId: "p-1" }]))
+        .mockReturnValueOnce(joinChain([
+          { sequenceId: "seq-1", sequenceName: "Sahil", sequenceStatus: "active", total: 1, active: 1, completed: 0, enrolledAt: "2026-07-01" },
+        ])),
+    };
+    const svc = new SequenceService(db as any);
+    const result = await svc.listSequencesForList("ws-1", "list-1");
+    expect(result).toHaveLength(1);
+    expect(result![0]).toMatchObject({ sequenceId: "seq-1", sequenceName: "Sahil", total: 1, active: 1 });
+  });
+
+  it("returns sequences for member-selected (prospectId) enrollments", async () => {
+    const db = {
+      select: vi.fn()
+        .mockReturnValueOnce(selectChain([{ id: "list-1" }]))
+        .mockReturnValueOnce(selectChain([{ prospectId: "p-member" }]))
+        .mockReturnValueOnce(joinChain([
+          { sequenceId: "seq-2", sequenceName: "Quick Email Test", sequenceStatus: "active", total: 1, active: 0, completed: 1, enrolledAt: "2026-07-10" },
+        ])),
+    };
+    const svc = new SequenceService(db as any);
+    const result = await svc.listSequencesForList("ws-1", "list-1");
+    expect(result).toHaveLength(1);
+    expect(result![0]).toMatchObject({ sequenceId: "seq-2", sequenceName: "Quick Email Test", completed: 1 });
+  });
+
+  it("falls back to 'Deleted sequence' when sequence name is null", async () => {
+    const db = {
+      select: vi.fn()
+        .mockReturnValueOnce(selectChain([{ id: "list-1" }]))
+        .mockReturnValueOnce(selectChain([{ prospectId: "p-1" }]))
+        .mockReturnValueOnce(joinChain([
+          { sequenceId: "seq-orphan", sequenceName: null, sequenceStatus: null, total: 1, active: 0, completed: 1, enrolledAt: "2026-07-10" },
+        ])),
+    };
+    const svc = new SequenceService(db as any);
+    const result = await svc.listSequencesForList("ws-1", "list-1");
+    expect(result![0]!.sequenceName).toBe("Deleted sequence");
+    expect(result![0]!.sequenceStatus).toBe("archived");
   });
 });
 

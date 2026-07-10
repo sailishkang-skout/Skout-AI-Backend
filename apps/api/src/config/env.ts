@@ -62,6 +62,8 @@ const envSchema = z
       .string()
       .optional()
       .transform((v) => v === "true" || v === "1"),
+    /** Default email for stub auth when no x-stub-user-email header is sent. */
+    AUTH_STUB_EMAIL: z.string().email().optional(),
     /** When true, skip business-hours check and send emails immediately (testing only). */
     BYPASS_BUSINESS_HOURS: z
       .string()
