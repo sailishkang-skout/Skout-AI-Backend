@@ -188,7 +188,7 @@ async function executeEmailStep(
         enrollmentId,
         prospectId,
         subject,
-        status: "open",
+        status: "new",
         lastMessageAt: now,
       })
       .returning();

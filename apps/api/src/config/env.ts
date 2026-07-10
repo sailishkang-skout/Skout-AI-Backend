@@ -159,6 +159,12 @@ const envSchema = z
     INBOX_BOUNCE_RATE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.05),
     INBOX_SPAM_RATE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.01),
     INBOX_MIN_SENT_BEFORE_HEALTH_CHECK: z.coerce.number().int().positive().default(20),
+    // --- Sending domain warmup. ---
+    WARMUP_MAX_DAYS: z.coerce.number().int().positive().default(30),
+    WARMUP_MAX_DAILY_LIMIT: z.coerce.number().int().positive().default(200),
+    // --- DNSBL blacklist monitoring. ---
+    DNSBL_CHECK_INTERVAL_HOURS: z.coerce.number().int().positive().default(6),
+    DNS_RESOLVER_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
   })
   .transform((data) => {
     let next = data;
