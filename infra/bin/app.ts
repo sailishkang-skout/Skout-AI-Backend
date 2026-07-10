@@ -18,12 +18,11 @@ const imageTag = app.node.tryGetContext("imageTag") as string | undefined;
 const scraperImageTag =
   (app.node.tryGetContext("scraperImageTag") as string | undefined) ?? imageTag;
 const skipWeb = app.node.tryGetContext("skipWeb") === "true";
-// Dev HTTPS: CloudFront is preferred but requires AWS account CloudFront verification
-// (AWS Support ticket). Until verified, default to API Gateway which gives a working
-// HTTPS URL. Override per-deploy with `-c httpsMode=cloudfront` once the account is verified.
+// CloudFront is the default HTTPS edge for all environments (AWS account verified — R8.1).
+// Fall back to -c httpsMode=apigateway if CloudFront is unavailable in a region or needs bypass.
 const httpsMode =
   (app.node.tryGetContext("httpsMode") as "none" | "apigateway" | "cloudfront" | undefined) ??
-  (envName === "dev" ? "apigateway" : "none");
+  "cloudfront";
 
 const stackEnv: cdk.Environment = {
   account: config.account ?? process.env.CDK_DEFAULT_ACCOUNT,
