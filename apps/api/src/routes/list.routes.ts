@@ -8,6 +8,7 @@ import { HttpError, errorResponse } from "../utils/http.js";
 import { buildListService } from "../services/list.service.js";
 import { exportListCsv, CSV_EXPORT_CREDIT_COST } from "../services/list-export.service.js";
 import { readListCsvExport } from "../services/export-storage.service.js";
+import { buildSequenceService } from "../services/sequence.service.js";
 import type { Env } from "../config/env.js";
 
 function osConfig(config: Env): OpenSearchConfig | null {
@@ -281,5 +282,16 @@ export async function listRoutes(app: FastifyInstance) {
       }
       throw err;
     }
+  });
+
+  // GET /lists/:id/sequences — sequences running on this list (has enrollments from this list)
+  app.get("/lists/:id/sequences", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const seqSvc = buildSequenceService(app.db);
+    if (!seqSvc) return reply.status(503).send({ error: "database_unavailable" });
+    const data = await seqSvc.listSequencesForList(workspaceId, id);
+    if (!data) return reply.status(404).send({ error: "not_found" });
+    return reply.send({ workspaceId, data, total: data.length });
   });
 }

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { HttpError } from "../utils/http.js";
@@ -11,6 +11,7 @@ const {
   sequenceEnrollmentSteps,
   sequenceTrackingEvents,
   listMembers,
+  lists,
 } = schema;
 
 const ENROLLMENT_STATUSES = ["active", "completed", "bounced", "replied"] as const;
@@ -571,6 +572,95 @@ export class SequenceService {
       .from(sequenceEnrollments)
       .where(and(eq(sequenceEnrollments.sequenceId, sequenceId), eq(sequenceEnrollments.workspaceId, workspaceId)))
       .orderBy(desc(sequenceEnrollments.enrolledAt));
+  }
+
+  /** Lists that have at least one enrollment in this sequence, with prospect counts per status. */
+  async listEnrolledLists(workspaceId: string, sequenceId: string) {
+    const [seq] = await this.db
+      .select()
+      .from(sequences)
+      .where(and(eq(sequences.id, sequenceId), eq(sequences.workspaceId, workspaceId)));
+    if (!seq) return null;
+
+    // Join via listMembers so we catch both list-enrolled AND member-selected enrollments
+    const rows = await this.db
+      .select({
+        listId: listMembers.listId,
+        listName: lists.name,
+        total: count(sequenceEnrollments.id),
+        active: sql<number>`count(*) filter (where ${sequenceEnrollments.status} = 'active')`,
+        completed: sql<number>`count(*) filter (where ${sequenceEnrollments.status} = 'completed')`,
+        enrolledAt: sql<string>`min(${sequenceEnrollments.enrolledAt})`,
+      })
+      .from(sequenceEnrollments)
+      .innerJoin(listMembers, eq(listMembers.prospectId, sequenceEnrollments.prospectId))
+      .innerJoin(lists, and(eq(lists.id, listMembers.listId), eq(lists.workspaceId, workspaceId)))
+      .where(
+        and(
+          eq(sequenceEnrollments.sequenceId, sequenceId),
+          eq(sequenceEnrollments.workspaceId, workspaceId),
+        )
+      )
+      .groupBy(listMembers.listId, lists.name)
+      .orderBy(sql`min(${sequenceEnrollments.enrolledAt}) desc`);
+
+    return rows.map((r) => ({
+      listId: r.listId,
+      listName: r.listName ?? "Deleted list",
+      total: Number(r.total),
+      active: Number(r.active),
+      completed: Number(r.completed),
+      enrolledAt: r.enrolledAt,
+    }));
+  }
+
+  /** Sequences that have enrollments sourced from a specific list. */
+  async listSequencesForList(workspaceId: string, listId: string) {
+    const [list] = await this.db
+      .select({ id: lists.id })
+      .from(lists)
+      .where(and(eq(lists.id, listId), eq(lists.workspaceId, workspaceId)));
+    if (!list) return null;
+
+    // Collect all prospectIds in this list so we can match enrollments done via prospectIds too
+    const memberRows = await this.db
+      .select({ prospectId: listMembers.prospectId })
+      .from(listMembers)
+      .where(eq(listMembers.listId, listId));
+    const memberIds = memberRows.map((m) => m.prospectId);
+
+    const rows = await this.db
+      .select({
+        sequenceId: sequenceEnrollments.sequenceId,
+        sequenceName: sequences.name,
+        sequenceStatus: sequences.status,
+        total: count(sequenceEnrollments.id),
+        active: sql<number>`count(*) filter (where ${sequenceEnrollments.status} = 'active')`,
+        completed: sql<number>`count(*) filter (where ${sequenceEnrollments.status} = 'completed')`,
+        enrolledAt: sql<string>`min(${sequenceEnrollments.enrolledAt})`,
+      })
+      .from(sequenceEnrollments)
+      .leftJoin(sequences, eq(sequences.id, sequenceEnrollments.sequenceId))
+      .where(
+        and(
+          eq(sequenceEnrollments.workspaceId, workspaceId),
+          memberIds.length > 0
+            ? inArray(sequenceEnrollments.prospectId, memberIds)
+            : eq(sequenceEnrollments.listId, listId),
+        )
+      )
+      .groupBy(sequenceEnrollments.sequenceId, sequences.name, sequences.status)
+      .orderBy(sql`min(${sequenceEnrollments.enrolledAt}) desc`);
+
+    return rows.map((r) => ({
+      sequenceId: r.sequenceId,
+      sequenceName: r.sequenceName ?? "Deleted sequence",
+      sequenceStatus: r.sequenceStatus ?? "archived",
+      total: Number(r.total),
+      active: Number(r.active),
+      completed: Number(r.completed),
+      enrolledAt: r.enrolledAt,
+    }));
   }
 }
 
