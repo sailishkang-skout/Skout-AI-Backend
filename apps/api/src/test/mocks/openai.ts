@@ -1,9 +1,13 @@
+import { vi } from "vitest";
+
+export const mockCreate = vi.fn().mockResolvedValue({
+  choices: [{ message: { content: "{}" } }],
+});
+
 export default class OpenAI {
   chat = {
     completions: {
-      create: async () => ({
-        choices: [{ message: { content: "neutral" } }],
-      }),
+      create: mockCreate,
     },
   };
-};
+}
