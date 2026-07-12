@@ -132,7 +132,7 @@ export async function ingestInboundMessage(
   workspaceId: string,
   inboxId: string,
   payload: InboundMessagePayload,
-  config?: Pick<Env, "REDIS_URL" | "OPENAI_API_KEY">
+  config?: Pick<Env, "REDIS_URL" | "OPENROUTER_API_KEY">
 ): Promise<void> {
   // Deduplicate: skip if we've already stored this RFC 5322 message
   if (payload.messageId) {
@@ -307,7 +307,7 @@ export async function ingestInboundMessage(
     threadId &&
     payload.bodyText &&
     config?.REDIS_URL &&
-    config?.OPENAI_API_KEY
+    config?.OPENROUTER_API_KEY
   ) {
     try {
       const q = getReplyTagQueue(config as Parameters<typeof getReplyTagQueue>[0]);
