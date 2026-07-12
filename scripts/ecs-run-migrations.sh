@@ -8,8 +8,13 @@ set -euo pipefail
 STACK_PREFIX="${1:?Stack prefix required (e.g. SkoutDev or SkoutProd)}"
 SERVICE_NAME="${2:-api}"
 CONTAINER_NAME="${3:-Container}"
+# Skout stacks live in us-east-1; local ~/.aws/config may default elsewhere (e.g. ap-south-1).
+REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
+export AWS_REGION="$REGION"
+export AWS_DEFAULT_REGION="$REGION"
 
 CLUSTER="$(aws ecs list-clusters \
+  --region "$REGION" \
   --query "clusterArns[?contains(@, '${STACK_PREFIX}')]" \
   --output text | head -n1)"
 
