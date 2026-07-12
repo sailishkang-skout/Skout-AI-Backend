@@ -1,4 +1,5 @@
-import { integer, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { integer, pgTable, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { inboxes } from "./inbox.js";
 import { lists } from "./prospects.js";
 import { workspaces } from "./workspaces.js";
@@ -26,6 +27,8 @@ export const sequenceSteps = pgTable(
     delayDays: integer("delay_days").notNull().default(0),
     /** minutes | hours | days | weeks — delayDays is the numeric value for this unit */
     delayUnit: text("delay_unit").notNull().default("days"),
+    /** connect | message — only meaningful when stepType is linkedin */
+    linkedinAction: text("linkedin_action"),
     subject: text("subject"),
     bodyTemplate: text("body_template"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -49,7 +52,12 @@ export const sequenceEnrollments = pgTable(
     enrolledAt: timestamp("enrolled_at", { withTimezone: true }).notNull().defaultNow(),
     completedAt: timestamp("completed_at", { withTimezone: true }),
   },
-  (table) => [unique().on(table.sequenceId, table.prospectId)]
+  (table) => [
+    // Only one active enrollment per prospect/sequence — completed history is kept for analytics.
+    uniqueIndex("sequence_enrollments_active_unique")
+      .on(table.sequenceId, table.prospectId)
+      .where(sql`${table.status} = 'active'`),
+  ]
 );
 
 export const sequenceEnrollmentSteps = pgTable(
@@ -70,6 +78,30 @@ export const sequenceEnrollmentSteps = pgTable(
   },
   (table) => [unique().on(table.enrollmentId, table.stepId)]
 );
+
+/** Pending LinkedIn connect/message actions executed by the Chrome extension. */
+export const linkedinOutreachJobs = pgTable("linkedin_outreach_jobs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  enrollmentId: uuid("enrollment_id")
+    .notNull()
+    .references(() => sequenceEnrollments.id, { onDelete: "cascade" }),
+  enrollmentStepId: uuid("enrollment_step_id")
+    .notNull()
+    .references(() => sequenceEnrollmentSteps.id, { onDelete: "cascade" })
+    .unique(),
+  prospectId: text("prospect_id").notNull(),
+  linkedinUrl: text("linkedin_url").notNull(),
+  action: text("action").notNull(),
+  message: text("message"),
+  status: text("status").notNull().default("pending"),
+  failureReason: text("failure_reason"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+});
 
 /** Open/click events for a sent sequence step email, attributed to enrollment + step. */
 export const sequenceTrackingEvents = pgTable("sequence_tracking_events", {

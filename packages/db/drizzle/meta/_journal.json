@@ -117,15 +117,29 @@
     {
       "idx": 16,
       "version": "7",
-      "when": 1752192000000,
+      "when": 1784100000000,
       "tag": "0016_outbound_webhooks",
       "breakpoints": true
     },
     {
       "idx": 17,
       "version": "7",
-      "when": 1752336000000,
+      "when": 1784200000000,
       "tag": "0017_sequence_delay_unit",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1784300000000,
+      "tag": "0018_linkedin_outreach_and_enrollment_history",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1784400000000,
+      "tag": "0019_linkedin_accounts",
       "breakpoints": true
     }
   ]

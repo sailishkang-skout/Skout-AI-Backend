@@ -6,9 +6,26 @@ import { SearchService } from "./search.service.js";
 
 const { enrichmentResults, prospectActivations } = schema;
 
+/** Free-mail domains — corpus often has these; enrichment usually returns work email. */
+const PERSONAL_EMAIL_DOMAINS = new Set([
+  "gmail.com",
+  "googlemail.com",
+  "yahoo.com",
+  "yahoo.co.in",
+  "hotmail.com",
+  "outlook.com",
+  "live.com",
+  "icloud.com",
+  "me.com",
+  "proton.me",
+  "protonmail.com",
+  "aol.com",
+]);
+
 export interface ResolvedProspect {
   prospectId: string;
   email?: string;
+  linkedinUrl?: string;
   firstName: string;
   lastName: string;
   fullName: string;
@@ -22,9 +39,25 @@ function splitName(fullName: string): { firstName: string; lastName: string } {
   return { firstName: parts[0] ?? "", lastName: parts.slice(1).join(" ") };
 }
 
+function emailDomain(email: string): string {
+  return email.split("@")[1]?.trim().toLowerCase() ?? "";
+}
+
+function isPersonalEmail(email: string): boolean {
+  return PERSONAL_EMAIL_DOMAINS.has(emailDomain(email));
+}
+
 /**
  * Resolves a prospectId to the fields needed for merge tokens + the send-to address.
- * Email precedence mirrors crm-export.runner.ts: activation snapshot > enrichmentResults > OpenSearch doc.
+ *
+ * Email precedence:
+ * 1. OpenSearch personal/free-mail address (what search shows; preferred for deliverability tests)
+ * 2. Activation snapshot email
+ * 3. enrichmentResults primary (then any)
+ * 4. Any OpenSearch email
+ *
+ * Previously snapshot always beat OpenSearch, so enriched work emails (e.g. first.last@company)
+ * hid corpus Gmail and sequences sent to the wrong inbox.
  */
 export async function resolveProspectFields(
   env: Env,
@@ -54,25 +87,29 @@ export async function resolveProspectFields(
   const snapshotFullName = str(snap.fullName);
   const snapshotFirstName = str(snap.firstName);
   const snapshotLastName = str(snap.lastName);
+  const docEmail = str(doc?.email);
 
-  let enrichedEmail: string | undefined;
-  if (!snapshotEmail) {
-    const rows = await db
-      .select({ fieldValue: enrichmentResults.fieldValue, isPrimary: enrichmentResults.isPrimary })
-      .from(enrichmentResults)
-      .where(
-        and(
-          eq(enrichmentResults.workspaceId, workspaceId),
-          inArray(enrichmentResults.prospectId, [prospectId]),
-          eq(enrichmentResults.fieldName, "email")
-        )
+  const rows = await db
+    .select({ fieldValue: enrichmentResults.fieldValue, isPrimary: enrichmentResults.isPrimary })
+    .from(enrichmentResults)
+    .where(
+      and(
+        eq(enrichmentResults.workspaceId, workspaceId),
+        inArray(enrichmentResults.prospectId, [prospectId]),
+        eq(enrichmentResults.fieldName, "email")
       )
-      .orderBy(desc(enrichmentResults.createdAt));
-    const primary = rows.find((r) => r.isPrimary && r.fieldValue);
-    enrichedEmail = primary?.fieldValue ?? rows.find((r) => r.fieldValue)?.fieldValue ?? undefined;
+    )
+    .orderBy(desc(enrichmentResults.createdAt));
+  const primary = rows.find((r) => r.isPrimary && r.fieldValue);
+  const enrichedEmail = primary?.fieldValue ?? rows.find((r) => r.fieldValue)?.fieldValue ?? undefined;
+
+  let email: string | undefined;
+  if (docEmail && isPersonalEmail(docEmail)) {
+    email = docEmail;
+  } else {
+    email = snapshotEmail ?? enrichedEmail ?? docEmail ?? undefined;
   }
 
-  const email = snapshotEmail ?? enrichedEmail ?? doc?.email ?? undefined;
   const fullName = doc?.fullName ?? snapshotFullName ?? "";
   const { firstName, lastName } = snapshotFirstName
     ? { firstName: snapshotFirstName, lastName: snapshotLastName ?? "" }
@@ -81,6 +118,7 @@ export async function resolveProspectFields(
   return {
     prospectId,
     email,
+    linkedinUrl: str(snap.linkedinUrl) ?? doc?.linkedinUrl ?? undefined,
     firstName,
     lastName,
     fullName,

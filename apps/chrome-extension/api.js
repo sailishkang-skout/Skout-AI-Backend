@@ -370,3 +370,22 @@ export async function scoreProspect(prospectId, profile) {
     }),
   });
 }
+
+export async function listPendingLinkedinJobs(limit = 5) {
+  return skoutFetch(`/api/v1/linkedin/outreach/pending?limit=${limit}`);
+}
+
+export async function claimLinkedinJob(jobId) {
+  return skoutFetch(`/api/v1/linkedin/outreach/${jobId}/claim`, { method: "POST", body: "{}" });
+}
+
+export async function completeLinkedinJob(jobId) {
+  return skoutFetch(`/api/v1/linkedin/outreach/${jobId}/complete`, { method: "POST", body: "{}" });
+}
+
+export async function failLinkedinJob(jobId, reason) {
+  return skoutFetch(`/api/v1/linkedin/outreach/${jobId}/fail`, {
+    method: "POST",
+    body: JSON.stringify({ reason: reason || "linkedin_send_failed" }),
+  });
+}

@@ -51,6 +51,7 @@ export interface AddStepInput {
   stepType: StepType;
   delayDays: number;
   delayUnit?: "minutes" | "hours" | "days" | "weeks";
+  linkedinAction?: "connect" | "message";
   subject?: string;
   bodyTemplate?: string;
 }
@@ -59,6 +60,7 @@ export interface UpdateStepInput {
   stepType?: StepType;
   delayDays?: number;
   delayUnit?: "minutes" | "hours" | "days" | "weeks";
+  linkedinAction?: "connect" | "message" | null;
   subject?: string | null;
   bodyTemplate?: string | null;
 }
@@ -166,6 +168,10 @@ export class SequenceService {
         stepType: input.stepType,
         delayDays: input.delayDays,
         delayUnit: input.delayUnit ?? "days",
+        linkedinAction:
+          input.stepType === "linkedin"
+            ? (input.linkedinAction ?? "connect")
+            : null,
         subject: input.subject,
         bodyTemplate: input.bodyTemplate,
       })
@@ -190,6 +196,7 @@ export class SequenceService {
         ...(input.stepType !== undefined ? { stepType: input.stepType } : {}),
         ...(input.delayDays !== undefined ? { delayDays: input.delayDays } : {}),
         ...(input.delayUnit !== undefined ? { delayUnit: input.delayUnit } : {}),
+        ...(input.linkedinAction !== undefined ? { linkedinAction: input.linkedinAction } : {}),
         ...(input.subject !== undefined ? { subject: input.subject } : {}),
         ...(input.bodyTemplate !== undefined ? { bodyTemplate: input.bodyTemplate } : {}),
       })
@@ -341,19 +348,8 @@ export class SequenceService {
     let skipped = 0;
 
     for (const prospectId of prospectIds) {
-      // Remove terminal-state enrollments so re-enrollment creates a fresh row.
-      // Active enrollments still conflict and get skipped (idempotent).
-      await this.db
-        .delete(sequenceEnrollments)
-        .where(
-          and(
-            eq(sequenceEnrollments.sequenceId, sequenceId),
-            eq(sequenceEnrollments.prospectId, prospectId),
-            inArray(sequenceEnrollments.status, ["cancelled", "completed", "bounced", "replied"])
-          )
-        );
-
-      // Insert enrollment — silently skip duplicates via UNIQUE(sequenceId, prospectId)
+      // Insert enrollment — unique partial index allows only one *active* row.
+      // Terminal enrollments are kept so analytics (sent/skipped) are not wiped on re-run.
       const inserted = await this.db
         .insert(sequenceEnrollments)
         .values({ workspaceId, sequenceId, prospectId, listId: input.listId ?? null, status: "active" })

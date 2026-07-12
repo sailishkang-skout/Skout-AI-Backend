@@ -20,11 +20,13 @@ const updateSequenceSchema = z
   });
 
 const DELAY_UNITS = ["minutes", "hours", "days", "weeks"] as const;
+const LINKEDIN_ACTIONS = ["connect", "message"] as const;
 
 const createStepSchema = z.object({
   stepType: z.enum(STEP_TYPES),
   delayDays: z.number().int().min(0).default(0),
   delayUnit: z.enum(DELAY_UNITS).default("days"),
+  linkedinAction: z.enum(LINKEDIN_ACTIONS).optional(),
   subject: z.string().max(500).optional(),
   bodyTemplate: z.string().optional(),
 });
@@ -34,6 +36,7 @@ const updateStepSchema = z
     stepType: z.enum(STEP_TYPES).optional(),
     delayDays: z.number().int().min(0).optional(),
     delayUnit: z.enum(DELAY_UNITS).optional(),
+    linkedinAction: z.enum(LINKEDIN_ACTIONS).nullable().optional(),
     subject: z.string().max(500).nullable().optional(),
     bodyTemplate: z.string().nullable().optional(),
   })

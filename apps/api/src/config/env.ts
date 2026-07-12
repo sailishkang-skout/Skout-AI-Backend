@@ -97,6 +97,9 @@ const envSchema = z
     OPENCORPORATES_BASE_URL: z.string().default("https://api.opencorporates.com/v0.4"),
     SEC_EDGAR_BASE_URL: z.string().default("https://efts.sec.gov/LATEST/search-index"),
     LINKEDIN_ACCOUNTS_JSON: z.string().optional(),
+    /** Unipile DSN (e.g. https://api1.unipile.com:13111) for LinkedIn sequence sends. */
+    UNIPILE_DSN: z.string().url().optional(),
+    UNIPILE_API_KEY: z.string().optional(),
     INTEGRATION_ENCRYPTION_KEY: z.string().optional(),
     /** HMAC secret for signed tracking/unsubscribe tokens. Falls back to INTEGRATION_ENCRYPTION_KEY. */
     TRACKING_SIGNING_SECRET: z.string().optional(),

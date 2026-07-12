@@ -1,5 +1,5 @@
 import { Worker } from "bullmq";
-import { and, asc, eq, gte } from "drizzle-orm";
+import { and, asc, eq, gte, sql } from "drizzle-orm";
 import { createDb } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
@@ -20,6 +20,9 @@ import {
   type SeqAdvanceJobPayload,
 } from "./sequence-enrollment.queue.js";
 import { dispatchWebhookEvent } from "../services/webhook.service.js";
+import { LinkedinAccountService, sendLinkedinOutreach } from "../services/linkedin-account.service.js";
+import { isUnipileConfigured, UnipileError } from "../services/unipile.client.js";
+import { LinkedinOutreachService } from "../services/linkedin-outreach.service.js";
 
 const log = createLogger("sequence-enrollment.worker");
 
@@ -45,7 +48,8 @@ async function detectCadenceSignal(
   prospectId: string,
   enrolledAt: Date
 ): Promise<CadenceSignal> {
-  // Hard stop: bounced thread
+  // Hard stop: bounce that happened at/after this enrollment.
+  // Do NOT use lifetime bounced threads — stale test bounces were aborting every re-run.
   const [bounced] = await db
     .select({ id: inboxThreads.id })
     .from(inboxThreads)
@@ -53,7 +57,8 @@ async function detectCadenceSignal(
       and(
         eq(inboxThreads.workspaceId, workspaceId),
         eq(inboxThreads.prospectId, prospectId),
-        eq(inboxThreads.status, "bounced")
+        eq(inboxThreads.status, "bounced"),
+        sql`coalesce(${inboxThreads.statusChangedAt}, ${inboxThreads.lastMessageAt}, ${inboxThreads.createdAt}) >= ${enrolledAt}`
       )
     )
     .limit(1);
@@ -86,6 +91,7 @@ interface PendingStep {
   enrollmentStepId: string;
   stepId: string;
   stepType: string;
+  linkedinAction: string | null;
   subject: string | null;
   bodyTemplate: string | null;
 }
@@ -225,6 +231,124 @@ async function executeEmailStep(
   }).catch((err: unknown) => log.warn("webhook dispatch failed", { err, event: "sequence.step.completed" }));
 }
 
+const LINKEDIN_RETRY_MS = 60_000;
+
+/**
+ * Sends a LinkedIn connection request or DM via Unipile (server-side).
+ * Does not depend on the Chrome extension.
+ */
+async function executeLinkedinStep(
+  db: DbClient,
+  config: Env,
+  payload: SeqAdvanceJobPayload,
+  pending: PendingStep,
+  now: Date
+): Promise<"waiting" | "done"> {
+  const { enrollmentId, workspaceId, prospectId } = payload;
+
+  if (!isUnipileConfigured(config)) {
+    await markStepTerminal(db, pending.enrollmentStepId, "failed", "unipile_not_configured", now);
+    log.warn("LinkedIn step failed — Unipile not configured", { enrollmentId });
+    return "done";
+  }
+
+  const accounts = new LinkedinAccountService(db, config);
+  const account = await accounts.pickNextAccount(workspaceId);
+  if (!account) {
+    await markStepTerminal(db, pending.enrollmentStepId, "failed", "no_active_linkedin_account", now);
+    log.warn("LinkedIn step failed — no connected LinkedIn account", { enrollmentId, workspaceId });
+    return "done";
+  }
+
+  const prospect = await resolveProspectFields(config, db, workspaceId, prospectId);
+  const linkedinUrl = prospect?.linkedinUrl;
+  if (!linkedinUrl) {
+    await markStepTerminal(db, pending.enrollmentStepId, "failed", "prospect_linkedin_url_not_found", now);
+    log.warn("LinkedIn step failed — no profile URL", { enrollmentId, prospectId });
+    return "done";
+  }
+
+  const action = pending.linkedinAction === "message" ? "message" : ("connect" as const);
+  const mergeData: MergeData = {
+    firstName: prospect?.firstName ?? "",
+    lastName: prospect?.lastName ?? "",
+    fullName: prospect?.fullName ?? "",
+    companyName: prospect?.companyName ?? "",
+    companyDomain: prospect?.companyDomain ?? "",
+    title: prospect?.title ?? "",
+    senderName: account.displayName ?? "",
+    senderEmail: "",
+    unsubscribeUrl: "",
+  };
+  const message = pending.bodyTemplate
+    ? renderTemplate(
+        pending.bodyTemplate.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+        mergeData
+      )
+    : null;
+
+  const outreach = new LinkedinOutreachService(db, config);
+  const job = await outreach.ensureJobForStep({
+    workspaceId,
+    enrollmentId,
+    enrollmentStepId: pending.enrollmentStepId,
+    prospectId,
+    linkedinUrl,
+    action,
+    message: message || null,
+  });
+
+  if (job.status === "completed") {
+    await markStepTerminal(db, pending.enrollmentStepId, "executed", null, now);
+    return "done";
+  }
+  if (job.status === "failed") {
+    await markStepTerminal(
+      db,
+      pending.enrollmentStepId,
+      "failed",
+      job.failureReason ?? "linkedin_failed",
+      now
+    );
+    return "done";
+  }
+
+  try {
+    await sendLinkedinOutreach(config, account, { action, linkedinUrl, message });
+    await accounts.markUsed(account.id);
+    await outreach.completeJob(workspaceId, job.id);
+    log.info("LinkedIn outreach sent via Unipile", {
+      enrollmentId,
+      enrollmentStepId: pending.enrollmentStepId,
+      action,
+      accountId: account.id,
+    });
+    // completeJob already enqueues next advance
+    return "waiting";
+  } catch (err: unknown) {
+    const reason =
+      err instanceof UnipileError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : "linkedin_send_failed";
+
+    // Rate limits / transient — retry later without failing the step
+    const status = err instanceof UnipileError ? err.status : 0;
+    if (status === 429 || status >= 500) {
+      await accounts.markError(account.id, reason);
+      log.warn("LinkedIn send transient failure — will retry", { enrollmentId, reason, status });
+      await enqueueSequenceAdvanceJob(config, payload, LINKEDIN_RETRY_MS, false);
+      return "waiting";
+    }
+
+    await accounts.markError(account.id, reason);
+    await outreach.failJob(workspaceId, job.id, reason);
+    log.warn("LinkedIn step failed", { enrollmentId, reason });
+    return "waiting";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Core advance logic
 // ---------------------------------------------------------------------------
@@ -284,6 +408,7 @@ async function advanceEnrollment(
       scheduledAt: sequenceEnrollmentSteps.scheduledAt,
       stepOrder: sequenceSteps.stepOrder,
       stepType: sequenceSteps.stepType,
+      linkedinAction: sequenceSteps.linkedinAction,
       subject: sequenceSteps.subject,
       bodyTemplate: sequenceSteps.bodyTemplate,
     })
@@ -330,6 +455,12 @@ async function advanceEnrollment(
   // Execute the step
   if (pending.stepType === "email") {
     await executeEmailStep(db, config, payload, pending, now);
+  } else if (pending.stepType === "linkedin") {
+    const result = await executeLinkedinStep(db, config, payload, pending, now);
+    if (result === "waiting") {
+      // Extension has not finished yet — poll job already re-enqueued.
+      return;
+    }
   } else {
     await db
       .update(sequenceEnrollmentSteps)

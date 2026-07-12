@@ -44,4 +44,17 @@ const migrate = spawnSync("pnpm", ["db:migrate"], {
   env: { ...process.env, DATABASE_URL },
 });
 
-process.exit(migrate.status === 0 ? 0 : migrate.status ?? 1);
+if (migrate.status !== 0) {
+  process.exit(migrate.status ?? 1);
+}
+
+// Idempotent repairs for columns drizzle migrate may skip when journal `when`
+// timestamps are stale relative to already-applied migrations.
+const applyPending = spawnSync("pnpm", ["--filter", "@skout/db", "exec", "tsx", "src/apply-pending.ts"], {
+  cwd: repoRoot,
+  stdio: "inherit",
+  shell: true,
+  env: { ...process.env, DATABASE_URL },
+});
+
+process.exit(applyPending.status === 0 ? 0 : applyPending.status ?? 1);

@@ -112,6 +112,65 @@ try {
     ALTER TABLE "sequence_steps"
       ADD COLUMN IF NOT EXISTS "delay_unit" text DEFAULT 'days' NOT NULL`);
 
+  await run("0018 drop old enrollment unique", () => sql`
+    ALTER TABLE "sequence_enrollments" DROP CONSTRAINT IF EXISTS "sequence_enrollments_sequence_id_prospect_id_unique"`);
+
+  await run("0018 drop old enrollment unique index", () => sql`
+    DROP INDEX IF EXISTS "sequence_enrollments_sequence_id_prospect_id_unique"`);
+
+  await run("0018 active enrollment unique index", () => sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS "sequence_enrollments_active_unique"
+      ON "sequence_enrollments" ("sequence_id", "prospect_id")
+      WHERE "status" = 'active'`);
+
+  await run("0018 sequence_steps.linkedin_action", () => sql`
+    ALTER TABLE "sequence_steps"
+      ADD COLUMN IF NOT EXISTS "linkedin_action" text`);
+
+  await run("0018 linkedin_outreach_jobs table", () => sql`
+    CREATE TABLE IF NOT EXISTS "linkedin_outreach_jobs" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "workspace_id" uuid NOT NULL REFERENCES "workspaces"("id") ON DELETE cascade,
+      "enrollment_id" uuid NOT NULL REFERENCES "sequence_enrollments"("id") ON DELETE cascade,
+      "enrollment_step_id" uuid NOT NULL REFERENCES "sequence_enrollment_steps"("id") ON DELETE cascade,
+      "prospect_id" text NOT NULL,
+      "linkedin_url" text NOT NULL,
+      "action" text NOT NULL,
+      "message" text,
+      "status" text NOT NULL DEFAULT 'pending',
+      "failure_reason" text,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "completed_at" timestamp with time zone,
+      CONSTRAINT "linkedin_outreach_jobs_enrollment_step_id_unique" UNIQUE ("enrollment_step_id")
+    )`);
+
+  await run("0018 linkedin_outreach_jobs pending index", () => sql`
+    CREATE INDEX IF NOT EXISTS "linkedin_outreach_jobs_pending_idx"
+      ON "linkedin_outreach_jobs" ("workspace_id", "status", "created_at")
+      WHERE "status" = 'pending'`);
+
+  await run("0019 linkedin_accounts table", () => sql`
+    CREATE TABLE IF NOT EXISTS "linkedin_accounts" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "workspace_id" uuid NOT NULL REFERENCES "workspaces"("id") ON DELETE cascade,
+      "unipile_account_id" text NOT NULL,
+      "display_name" text,
+      "linkedin_url" text,
+      "status" text NOT NULL DEFAULT 'active',
+      "daily_send_limit" integer NOT NULL DEFAULT 40,
+      "sent_count" integer NOT NULL DEFAULT 0,
+      "last_used_at" timestamp with time zone,
+      "last_error" text,
+      "is_default" boolean NOT NULL DEFAULT false,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+    )`);
+
+  await run("0019 linkedin_accounts unique", () => sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS "linkedin_accounts_workspace_unipile_unique"
+      ON "linkedin_accounts" ("workspace_id", "unipile_account_id")`);
+
 } finally {
   await sql.end();
 }

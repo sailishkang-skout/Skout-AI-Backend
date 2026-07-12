@@ -64,42 +64,53 @@ NETWORK_CONFIG="$(aws ecs describe-services \
   --output json)"
 
 echo "Task definition: ${TASK_DEF}"
-echo "Starting migration task..."
 
-TASK_ARN="$(aws ecs run-task \
-  --cluster "$CLUSTER" \
-  --task-definition "$TASK_DEF" \
-  --launch-type FARGATE \
-  --network-configuration "$NETWORK_CONFIG" \
-  --overrides "{\"containerOverrides\":[{\"name\":\"${CONTAINER_NAME}\",\"command\":[\"node\",\"/app/node_modules/@skout/db/dist/migrate.js\"],\"environment\":[{\"name\":\"MIGRATIONS_FOLDER\",\"value\":\"/app/db/drizzle\"}]}]}" \
-  --query 'tasks[0].taskArn' \
-  --output text)"
+run_one_off() {
+  local label="$1"
+  local command_json="$2"
+  echo "Starting ${label}..."
+  local task_arn
+  task_arn="$(aws ecs run-task \
+    --cluster "$CLUSTER" \
+    --task-definition "$TASK_DEF" \
+    --launch-type FARGATE \
+    --network-configuration "$NETWORK_CONFIG" \
+    --overrides "{\"containerOverrides\":[{\"name\":\"${CONTAINER_NAME}\",\"command\":${command_json},\"environment\":[{\"name\":\"MIGRATIONS_FOLDER\",\"value\":\"/app/db/drizzle\"}]}]}" \
+    --query 'tasks[0].taskArn' \
+    --output text)"
 
-if [ -z "$TASK_ARN" ] || [ "$TASK_ARN" = "None" ]; then
-  echo "Failed to start migration task"
-  exit 1
-fi
+  if [ -z "$task_arn" ] || [ "$task_arn" = "None" ]; then
+    echo "Failed to start ${label}"
+    exit 1
+  fi
 
-echo "Migration task: ${TASK_ARN}"
-aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN"
+  echo "${label}: ${task_arn}"
+  aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$task_arn"
 
-EXIT_CODE="$(aws ecs describe-tasks \
-  --cluster "$CLUSTER" \
-  --tasks "$TASK_ARN" \
-  --query 'tasks[0].containers[0].exitCode' \
-  --output text)"
+  local exit_code stop_reason
+  exit_code="$(aws ecs describe-tasks \
+    --cluster "$CLUSTER" \
+    --tasks "$task_arn" \
+    --query 'tasks[0].containers[0].exitCode' \
+    --output text)"
+  stop_reason="$(aws ecs describe-tasks \
+    --cluster "$CLUSTER" \
+    --tasks "$task_arn" \
+    --query 'tasks[0].stoppedReason' \
+    --output text)"
 
-STOP_REASON="$(aws ecs describe-tasks \
-  --cluster "$CLUSTER" \
-  --tasks "$TASK_ARN" \
-  --query 'tasks[0].stoppedReason' \
-  --output text)"
+  if [ "$exit_code" != "0" ]; then
+    echo "${label} failed (exit ${exit_code}): ${stop_reason}"
+    local env_slug
+    env_slug="$(echo "$STACK_PREFIX" | sed 's/^Skout//' | tr '[:upper:]' '[:lower:]')"
+    aws logs tail "/skout/${env_slug}/api" --since 10m 2>/dev/null || true
+    exit 1
+  fi
+}
 
-if [ "$EXIT_CODE" != "0" ]; then
-  echo "Migration failed (exit ${EXIT_CODE}): ${STOP_REASON}"
-  ENV_SLUG="$(echo "$STACK_PREFIX" | sed 's/^Skout//' | tr '[:upper:]' '[:lower:]')"
-  aws logs tail "/skout/${ENV_SLUG}/api" --since 10m 2>/dev/null || true
-  exit 1
-fi
+# Drizzle migrator (journal-based), then idempotent schema repairs for columns
+# that may be missing when the image's drizzle folder lags the schema.
+run_one_off "drizzle migrate" '["node","/app/node_modules/@skout/db/dist/migrate.js"]'
+run_one_off "apply-pending" '["node","/app/node_modules/@skout/db/dist/apply-pending.js"]'
 
 echo "Migrations completed successfully"

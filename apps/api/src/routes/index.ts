@@ -14,6 +14,8 @@ import { listRoutes } from "./list.routes.js";
 import { prospectRoutes } from "./prospect.routes.js";
 import { searchRoutes } from "./search.routes.js";
 import { sequenceRoutes } from "./sequence.routes.js";
+import { linkedinOutreachRoutes } from "./linkedin-outreach.routes.js";
+import { linkedinAccountRoutes } from "./linkedin-account.routes.js";
 import { integrationRoutes } from "./integration.routes.js";
 import { billingRoutes } from "./billing.routes.js";
 import { workspaceRoutes } from "./workspace.routes.js";
@@ -38,6 +40,8 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(scrapeRoutes);
     await v1.register(billingRoutes);
     await v1.register(sequenceRoutes);
+    await v1.register(linkedinOutreachRoutes);
+    await v1.register(linkedinAccountRoutes);
     await v1.register(inboxRoutes);
     await v1.register(aiRoutes);
     await v1.register(crmRoutes);

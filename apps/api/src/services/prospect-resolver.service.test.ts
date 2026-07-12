@@ -23,10 +23,12 @@ function selectChain(result: unknown[], terminal: Terminal) {
   return c;
 }
 
-function makeDb(activationRows: unknown[], enrichmentRows: unknown[] = []) {
+function makeDb(activationRows: unknown[], enrichmentRows: unknown[] = [], opts?: { skipEnrichment?: boolean }) {
   const select = vi.fn();
   select.mockReturnValueOnce(selectChain(activationRows, "where"));
-  select.mockReturnValueOnce(selectChain(enrichmentRows, "orderBy"));
+  if (!opts?.skipEnrichment) {
+    select.mockReturnValueOnce(selectChain(enrichmentRows, "orderBy"));
+  }
   return { select } as any;
 }
 
@@ -39,12 +41,12 @@ describe("resolveProspectFields", () => {
 
   it("returns null when the prospect doc cannot be found", async () => {
     findExistingProspect.mockResolvedValue(null);
-    const db = makeDb([]);
+    const db = makeDb([], [], { skipEnrichment: true });
     await expect(resolveProspectFields(env, db, "ws-1", "p-1")).resolves.toBeNull();
   });
 
-  it("prefers the activation snapshot email over enrichment/doc email", async () => {
-    findExistingProspect.mockResolvedValue({ fullName: "Ada Lovelace", email: "doc@example.com" });
+  it("prefers the activation snapshot email over work enrichment/doc email", async () => {
+    findExistingProspect.mockResolvedValue({ fullName: "Ada Lovelace", email: "doc@acme.com" });
     const db = makeDb([{ snapshot: { email: "snapshot@example.com" } }]);
 
     const result = await resolveProspectFields(env, db, "ws-1", "p-1");
@@ -53,8 +55,21 @@ describe("resolveProspectFields", () => {
     expect(result?.lastName).toBe("Lovelace");
   });
 
+  it("prefers OpenSearch personal email over enriched work snapshot email", async () => {
+    findExistingProspect.mockResolvedValue({
+      fullName: "Neeraj Singh",
+      email: "neeraj190499@gmail.com",
+    });
+    const db = makeDb([{ snapshot: { email: "neeraj.singh@vdart.com" } }], [
+      { fieldValue: "neeraj.singh@vdart.com", isPrimary: true },
+    ]);
+
+    const result = await resolveProspectFields(env, db, "ws-1", "p-1");
+    expect(result?.email).toBe("neeraj190499@gmail.com");
+  });
+
   it("falls back to a primary enrichment result when no snapshot email exists", async () => {
-    findExistingProspect.mockResolvedValue({ fullName: "Ada Lovelace", email: "doc@example.com" });
+    findExistingProspect.mockResolvedValue({ fullName: "Ada Lovelace", email: "doc@acme.com" });
     const db = makeDb(
       [],
       [
@@ -68,7 +83,7 @@ describe("resolveProspectFields", () => {
   });
 
   it("falls back to the first enrichment result when none are marked primary", async () => {
-    findExistingProspect.mockResolvedValue({ fullName: "Ada Lovelace", email: "doc@example.com" });
+    findExistingProspect.mockResolvedValue({ fullName: "Ada Lovelace", email: "doc@acme.com" });
     const db = makeDb([], [{ fieldValue: "first@example.com", isPrimary: false }]);
 
     const result = await resolveProspectFields(env, db, "ws-1", "p-1");
@@ -76,11 +91,11 @@ describe("resolveProspectFields", () => {
   });
 
   it("falls back to the OpenSearch doc email when no snapshot or enrichment email exists", async () => {
-    findExistingProspect.mockResolvedValue({ fullName: "Ada Lovelace", email: "doc@example.com" });
+    findExistingProspect.mockResolvedValue({ fullName: "Ada Lovelace", email: "doc@acme.com" });
     const db = makeDb([], []);
 
     const result = await resolveProspectFields(env, db, "ws-1", "p-1");
-    expect(result?.email).toBe("doc@example.com");
+    expect(result?.email).toBe("doc@acme.com");
   });
 
   it("leaves email undefined when no source provides one", async () => {
