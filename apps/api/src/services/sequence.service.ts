@@ -50,6 +50,7 @@ function validateMergeTokens(template: string): void {
 export interface AddStepInput {
   stepType: StepType;
   delayDays: number;
+  delayUnit?: "minutes" | "hours" | "days" | "weeks";
   subject?: string;
   bodyTemplate?: string;
 }
@@ -57,6 +58,7 @@ export interface AddStepInput {
 export interface UpdateStepInput {
   stepType?: StepType;
   delayDays?: number;
+  delayUnit?: "minutes" | "hours" | "days" | "weeks";
   subject?: string | null;
   bodyTemplate?: string | null;
 }
@@ -163,6 +165,7 @@ export class SequenceService {
         stepOrder: nextOrder,
         stepType: input.stepType,
         delayDays: input.delayDays,
+        delayUnit: input.delayUnit ?? "days",
         subject: input.subject,
         bodyTemplate: input.bodyTemplate,
       })
@@ -186,6 +189,7 @@ export class SequenceService {
       .set({
         ...(input.stepType !== undefined ? { stepType: input.stepType } : {}),
         ...(input.delayDays !== undefined ? { delayDays: input.delayDays } : {}),
+        ...(input.delayUnit !== undefined ? { delayUnit: input.delayUnit } : {}),
         ...(input.subject !== undefined ? { subject: input.subject } : {}),
         ...(input.bodyTemplate !== undefined ? { bodyTemplate: input.bodyTemplate } : {}),
       })
@@ -368,7 +372,8 @@ export class SequenceService {
       let firstScheduledAt: Date | null = null;
 
       for (const step of steps) {
-        const scheduled = stepScheduledAt(previousScheduledAt, step.delayDays);
+        const unit = (step.delayUnit ?? "days") as "minutes" | "hours" | "days" | "weeks";
+        const scheduled = stepScheduledAt(previousScheduledAt, step.delayDays, unit);
         if (firstScheduledAt === null) firstScheduledAt = scheduled;
         previousScheduledAt = scheduled;
 

@@ -19,9 +19,12 @@ const updateSequenceSchema = z
     message: "At least one of name or status is required",
   });
 
+const DELAY_UNITS = ["minutes", "hours", "days", "weeks"] as const;
+
 const createStepSchema = z.object({
   stepType: z.enum(STEP_TYPES),
   delayDays: z.number().int().min(0).default(0),
+  delayUnit: z.enum(DELAY_UNITS).default("days"),
   subject: z.string().max(500).optional(),
   bodyTemplate: z.string().optional(),
 });
@@ -30,6 +33,7 @@ const updateStepSchema = z
   .object({
     stepType: z.enum(STEP_TYPES).optional(),
     delayDays: z.number().int().min(0).optional(),
+    delayUnit: z.enum(DELAY_UNITS).optional(),
     subject: z.string().max(500).nullable().optional(),
     bodyTemplate: z.string().nullable().optional(),
   })

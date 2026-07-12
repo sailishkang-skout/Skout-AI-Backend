@@ -108,6 +108,9 @@ try {
       DROP COLUMN IF EXISTS "response_status",
       DROP COLUMN IF EXISTS "last_attempt_at"`);
 
+  await run("0017 sequence_steps.delay_unit", () => sql`
+    ALTER TABLE "sequence_steps"
+      ADD COLUMN IF NOT EXISTS "delay_unit" text DEFAULT 'days' NOT NULL`);
 
 } finally {
   await sql.end();

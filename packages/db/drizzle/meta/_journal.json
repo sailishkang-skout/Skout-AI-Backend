@@ -120,6 +120,13 @@
       "when": 1752192000000,
       "tag": "0016_outbound_webhooks",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1752336000000,
+      "tag": "0017_sequence_delay_unit",
+      "breakpoints": true
     }
   ]
 }

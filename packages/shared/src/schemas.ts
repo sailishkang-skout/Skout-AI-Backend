@@ -333,9 +333,12 @@ export const updateSequenceSchema = z
     message: "At least one of name or status is required",
   });
 
+export const SEQUENCE_DELAY_UNITS = ["minutes", "hours", "days", "weeks"] as const;
+
 export const createSequenceStepSchema = z.object({
   stepType: z.enum(SEQUENCE_STEP_TYPES),
   delayDays: z.number().int().min(0).default(0),
+  delayUnit: z.enum(SEQUENCE_DELAY_UNITS).default("days"),
   subject: z.string().max(500).optional(),
   bodyTemplate: z.string().optional(),
 });
@@ -344,6 +347,7 @@ export const updateSequenceStepSchema = z
   .object({
     stepType: z.enum(SEQUENCE_STEP_TYPES).optional(),
     delayDays: z.number().int().min(0).optional(),
+    delayUnit: z.enum(SEQUENCE_DELAY_UNITS).optional(),
     subject: z.string().max(500).nullable().optional(),
     bodyTemplate: z.string().nullable().optional(),
   })
@@ -356,6 +360,7 @@ export const reorderSequenceStepsSchema = z.object({
 });
 
 export type SequenceStepType = (typeof SEQUENCE_STEP_TYPES)[number];
+export type SequenceDelayUnit = (typeof SEQUENCE_DELAY_UNITS)[number];
 export type SequenceStatus = (typeof SEQUENCE_STATUSES)[number];
 export type CreateSequenceInput = z.infer<typeof createSequenceSchema>;
 export type UpdateSequenceInput = z.infer<typeof updateSequenceSchema>;

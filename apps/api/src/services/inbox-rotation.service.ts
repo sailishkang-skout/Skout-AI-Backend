@@ -21,7 +21,14 @@ export async function pickNextInbox(db: Db, workspaceId: string): Promise<InboxR
 }
 
 export async function markInboxUsed(db: Db, inboxId: string): Promise<void> {
-  await db.update(inboxes).set({ lastUsedAt: new Date(), updatedAt: new Date() }).where(eq(inboxes.id, inboxId));
+  await db
+    .update(inboxes)
+    .set({
+      lastUsedAt: new Date(),
+      updatedAt: new Date(),
+      sentCount: sql`${inboxes.sentCount} + 1`,
+    })
+    .where(eq(inboxes.id, inboxId));
 }
 
 async function checkAndAutoPause(db: Db, inboxId: string, config: Env): Promise<void> {

@@ -24,6 +24,8 @@ export const sequenceSteps = pgTable(
     stepOrder: integer("step_order").notNull(),
     stepType: text("step_type").notNull(),
     delayDays: integer("delay_days").notNull().default(0),
+    /** minutes | hours | days | weeks — delayDays is the numeric value for this unit */
+    delayUnit: text("delay_unit").notNull().default("days"),
     subject: text("subject"),
     bodyTemplate: text("body_template"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
