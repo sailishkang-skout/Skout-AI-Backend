@@ -7,8 +7,14 @@ import { dispatchWebhookEvent } from "./webhook.service.js";
 
 const log = createLogger("inbound-reply.service");
 
-const { inboxThreads, inboxMessages, sequenceEnrollments, sequenceEnrollmentSteps, suppressions } =
-  schema;
+const {
+  inboxThreads,
+  inboxMessages,
+  sequenceEnrollments,
+  sequenceEnrollmentSteps,
+  suppressions,
+  inboxes,
+} = schema;
 
 type DbClient = ReturnType<typeof createDb>["db"];
 
@@ -282,6 +288,11 @@ export async function ingestInboundMessage(
     }
 
     if (classification === "bounce") {
+      // Keep deliverability counters in sync with classified bounces
+      await tx
+        .update(inboxes)
+        .set({ bounceCount: sql`${inboxes.bounceCount} + 1`, updatedAt: now })
+        .where(eq(inboxes.id, inboxId));
       // Suppress the bounced address to stop future sends
       await tx
         .insert(suppressions)

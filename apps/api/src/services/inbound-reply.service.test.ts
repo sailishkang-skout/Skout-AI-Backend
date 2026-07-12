@@ -401,15 +401,15 @@ describe("ingestInboundMessage — bounce", () => {
     const parentMsg = { threadId: "t-1", enrollmentId: null, prospectId: "p-1" };
     const { db, updateFn } = makeDb({ selectPages: [[], [parentMsg]] });
     await ingestInboundMessage(db as any, "ws-1", "inbox-1", BOUNCE_PAYLOAD);
-    expect(updateFn).toHaveBeenCalledTimes(1); // thread only (no enrollment)
+    expect(updateFn).toHaveBeenCalledTimes(2); // thread + bounceCount (no enrollment)
   });
 
   it("stops enrollment and inserts suppression when enrollmentId present", async () => {
     const parentMsg = { threadId: "t-1", enrollmentId: "enroll-1", prospectId: "p-1" };
     const { db, updateFn } = makeDb({ selectPages: [[], [parentMsg]] });
     await ingestInboundMessage(db as any, "ws-1", "inbox-1", BOUNCE_PAYLOAD);
-    // 3 updates: thread, enrollment, steps
-    expect(updateFn).toHaveBeenCalledTimes(3);
+    // 4 updates: thread, enrollment, steps, bounceCount
+    expect(updateFn).toHaveBeenCalledTimes(4);
     // 2 inserts: inboxMessages + suppressions
     expect(db.insert).toHaveBeenCalledTimes(2);
   });

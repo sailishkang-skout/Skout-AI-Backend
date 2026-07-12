@@ -230,7 +230,7 @@ describe("InboxService", () => {
 
   describe("listThreads", () => {
     it("returns threads for the workspace with pagination metadata", async () => {
-      const thread = { id: "thread-1", workspaceId: "ws-1" };
+      const thread = { id: "thread-1", workspaceId: "ws-1", prospectId: null };
       const countC = countChain([{ total: 1 }]);
       const dataC = {} as Record<string, ReturnType<typeof vi.fn>>;
       dataC.from = vi.fn().mockReturnValue(dataC);
@@ -239,10 +239,19 @@ describe("InboxService", () => {
       dataC.limit = vi.fn().mockReturnValue(dataC);
       dataC.offset = vi.fn().mockResolvedValue([thread]);
 
+      // Latest message from-address lookup
+      const msgC = {} as Record<string, ReturnType<typeof vi.fn>>;
+      msgC.from = vi.fn().mockReturnValue(msgC);
+      msgC.where = vi.fn().mockReturnValue(msgC);
+      msgC.orderBy = vi.fn().mockResolvedValue([
+        { threadId: "thread-1", fromAddress: "sender@example.com", direction: "inbound", sentAt: new Date() },
+      ]);
+
       const db = {
         select: vi.fn()
           .mockReturnValueOnce(countC)
-          .mockReturnValueOnce(dataC),
+          .mockReturnValueOnce(dataC)
+          .mockReturnValueOnce(msgC),
       } as any;
       const svc = new InboxService(db, config);
 
@@ -253,6 +262,7 @@ describe("InboxService", () => {
       expect(result.offset).toBe(0);
       expect(result.data).toHaveLength(1);
       expect(result.data[0]!.id).toBe("thread-1");
+      expect(result.data[0]!.prospect?.fullName).toBe("sender@example.com");
     });
   });
 });
