@@ -3,6 +3,7 @@ import { createDb, schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { getReplyTagQueue } from "../workers/reply-tag.queue.js";
+import { dispatchWebhookEvent } from "./webhook.service.js";
 
 const log = createLogger("inbound-reply.service");
 
@@ -317,4 +318,16 @@ export async function ingestInboundMessage(
     classification,
     messageId: normalizedMessageId,
   });
+
+  if (classification === "human" && config?.REDIS_URL) {
+    dispatchWebhookEvent(db, config as Env, "reply.received", workspaceId, {
+      threadId: threadId ?? null,
+      inboxId,
+      enrollmentId,
+      prospectId,
+      fromAddress: payload.fromAddress,
+      subject: payload.subject ?? null,
+      messageId: normalizedMessageId,
+    }).catch((err: unknown) => log.warn("webhook dispatch failed", { err, event: "reply.received" }));
+  }
 }

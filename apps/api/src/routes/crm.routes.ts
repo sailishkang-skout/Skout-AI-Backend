@@ -115,9 +115,3 @@ export async function crmRoutes(app: FastifyInstance) {
     }
   });
 }
-
-export async function webhookRoutes(app: FastifyInstance) {
-  app.get("/webhooks", async (_request, reply) => {
-    return reply.send({ data: [], total: 0 });
-  });
-}

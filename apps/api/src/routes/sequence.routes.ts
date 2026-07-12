@@ -3,6 +3,7 @@ import { z } from "zod";
 import { enrollSequenceSchema } from "@skout/shared";
 import { buildSequenceService, STEP_TYPES, SEQUENCE_STATUSES } from "../services/sequence.service.js";
 import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.js";
+import { dispatchWebhookEvent } from "../services/webhook.service.js";
 import { HttpError } from "../utils/http.js";
 
 const createSequenceSchema = z.object({
@@ -237,6 +238,16 @@ export async function sequenceRoutes(app: FastifyInstance) {
         ).catch((err: unknown) => {
           app.log.error({ err, enrollmentId: e.enrollmentId }, "Failed to enqueue advance job");
         });
+
+        if (app.db) {
+          dispatchWebhookEvent(app.db, app.config, "prospect.enrolled", workspaceId, {
+            enrollmentId: e.enrollmentId,
+            sequenceId: id,
+            prospectId: e.prospectId,
+          }).catch((err: unknown) => {
+            app.log.warn({ err, enrollmentId: e.enrollmentId }, "webhook dispatch failed for prospect.enrolled");
+          });
+        }
       }
 
       return reply.status(202).send({

@@ -68,6 +68,11 @@ vi.mock("../services/email-sender.service.js", () => ({
   buildEmailSenderFromInbox: vi.fn(),
 }));
 
+vi.mock("../services/webhook.service.js", () => ({
+  dispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
+  WEBHOOK_EVENT_TYPES: ["prospect.enrolled", "sequence.step.completed", "reply.received"],
+}));
+
 vi.mock("../lib/redis.js", () => ({
   isRedisAvailable: vi.fn().mockResolvedValue(true),
   redisBullMqConnection: vi.fn().mockReturnValue({
