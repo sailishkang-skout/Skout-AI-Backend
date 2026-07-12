@@ -308,6 +308,8 @@ export class ComputeStack extends Stack {
         ...(config.name === "dev"
           ? {
               ENRICHMENT_PHONE_SCORE_GATE: "39",
+              // Allow sequence sends on weekends / outside Mon–Fri 09–17 UTC (testing).
+              BYPASS_BUSINESS_HOURS: "true",
               RAZORPAY_KEY_ID: "rzp_test_T7RSEsGBVeHtUD",
               RAZORPAY_CREDIT_PACKS_JSON:
                 '[{"id":"starter","label":"Starter","credits":500,"amountInr":499},{"id":"growth","label":"Growth","credits":2000,"amountInr":1499},{"id":"scale","label":"Scale","credits":10000,"amountInr":4999}]',

@@ -52,7 +52,7 @@ describe("tracking.service", () => {
       expect(html).toContain("line one<br>\nline two");
     });
 
-    it("escapes HTML-significant characters", () => {
+    it("escapes HTML-significant characters in plain text", () => {
       const { html } = injectTracking(env, `Tom & Jerry <3 "quotes"`, "enr-1", "step-1");
       expect(html).toContain("Tom &amp; Jerry &lt;3 &quot;quotes&quot;");
     });
@@ -66,6 +66,23 @@ describe("tracking.service", () => {
     it("preserves the original plain text unchanged", () => {
       const { text } = injectTracking(env, "Hi {{firstName}}, visit https://example.com", "enr-1", "step-1");
       expect(text).toBe("Hi {{firstName}}, visit https://example.com");
+    });
+
+    it("preserves TipTap HTML instead of escaping tags", () => {
+      const body = "<p>Hi <strong>Ada</strong>,</p><p>Welcome aboard.</p>";
+      const { html, text } = injectTracking(env, body, "enr-1", "step-1");
+      expect(html).toContain("<p>Hi <strong>Ada</strong>,</p>");
+      expect(html).not.toContain("&lt;p&gt;");
+      expect(text).toBe("Hi Ada,\nWelcome aboard.");
+      expect(html).toContain('<img src="http://localhost:3001/api/v1/track/open/');
+    });
+
+    it("rewrites existing hrefs in HTML for click tracking", () => {
+      const body = '<p>See <a href="https://example.com/page">our site</a></p>';
+      const { html } = injectTracking(env, body, "enr-1", "step-1");
+      expect(html).toContain('<a href="http://localhost:3001/api/v1/track/click/');
+      expect(html).toContain(">our site</a>");
+      expect(html).not.toContain('href="https://example.com/page"');
     });
   });
 

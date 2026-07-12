@@ -151,8 +151,9 @@ async function executeEmailStep(
   };
 
   const subject = renderTemplate(pending.subject ?? "", mergeData);
-  const bodyText = renderTemplate(pending.bodyTemplate ?? "", mergeData);
-  const { html, text } = injectTracking(config, bodyText, enrollmentId, pending.enrollmentStepId);
+  // bodyTemplate is TipTap HTML from the email builder (or legacy plain text).
+  const renderedBody = renderTemplate(pending.bodyTemplate ?? "", mergeData);
+  const { html, text } = injectTracking(config, renderedBody, enrollmentId, pending.enrollmentStepId);
 
   // Build transport first — if credentials are missing, mark terminal rather than letting
   // BullMQ retry forever with a step stuck in "scheduled".
