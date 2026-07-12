@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, exists, gt, gte, inArray, notExists, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, exists, gt, gte, inArray, sql } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { encryptSecret, decryptSecret } from "../utils/integration-crypto.js";
@@ -571,6 +571,7 @@ export class InboxService {
       conditions.push(gt(inboxThreads.unreadCount, 0));
     }
     if (options.folder === "inbound") {
+      // Threads that received at least one inbound message
       conditions.push(
         exists(
           this.db
@@ -582,6 +583,7 @@ export class InboxService {
         )
       );
     } else if (options.folder === "sent") {
+      // Any thread with an outbound send — including replies on inbound threads
       conditions.push(
         exists(
           this.db
@@ -589,16 +591,6 @@ export class InboxService {
             .from(inboxMessages)
             .where(
               and(eq(inboxMessages.threadId, inboxThreads.id), eq(inboxMessages.direction, "outbound"))
-            )
-        )
-      );
-      conditions.push(
-        notExists(
-          this.db
-            .select({ id: inboxMessages.id })
-            .from(inboxMessages)
-            .where(
-              and(eq(inboxMessages.threadId, inboxThreads.id), eq(inboxMessages.direction, "inbound"))
             )
         )
       );
