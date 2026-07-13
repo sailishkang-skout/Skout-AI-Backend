@@ -141,13 +141,6 @@
       "when": 1784400000000,
       "tag": "0019_linkedin_accounts",
       "breakpoints": true
-    },
-    {
-      "idx": 20,
-      "version": "7",
-      "when": 1784500000000,
-      "tag": "0020_workspace_invites",
-      "breakpoints": true
     }
   ]
 }

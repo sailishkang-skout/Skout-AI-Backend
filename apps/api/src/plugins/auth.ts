@@ -17,14 +17,11 @@ function isHealthRoute(url: string): boolean {
 }
 
 function isPublicRoute(url: string): boolean {
-  // /api/v1/team/invites/<token> (GET details) is public; /accept suffix requires auth
-  const isInviteTokenLookup = /^\/api\/v1\/team\/invites\/[^/]+$/.test(url.split("?")[0]!);
   return (
     url.startsWith("/api/v1/crm/hubspot/callback") ||
     url.startsWith("/api/v1/billing/webhooks/") ||
     url.startsWith("/api/v1/track/") ||
-    url.startsWith("/api/v1/unsubscribe/") ||
-    isInviteTokenLookup
+    url.startsWith("/api/v1/unsubscribe/")
   );
 }
 
