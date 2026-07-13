@@ -59,7 +59,9 @@ async function detectCadenceSignal(
         eq(inboxThreads.workspaceId, workspaceId),
         eq(inboxThreads.prospectId, prospectId),
         eq(inboxThreads.status, "bounced"),
-        sql`coalesce(${inboxThreads.statusChangedAt}, ${inboxThreads.lastMessageAt}, ${inboxThreads.createdAt}) >= ${enrolledAt}`
+        // Bind as an ISO string cast to timestamptz — passing a raw JS Date into this
+        // untyped sql comparison makes postgres.js throw ("Received an instance of Date").
+        sql`coalesce(${inboxThreads.statusChangedAt}, ${inboxThreads.lastMessageAt}, ${inboxThreads.createdAt}) >= ${enrolledAt.toISOString()}::timestamptz`
       )
     )
     .limit(1);
