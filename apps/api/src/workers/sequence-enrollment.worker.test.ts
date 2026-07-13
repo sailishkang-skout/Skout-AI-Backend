@@ -26,6 +26,7 @@ vi.mock("@skout/db", () => ({
     sequenceSteps: "sequenceSteps",
     inboxThreads: "inboxThreads",
     inboxMessages: "inboxMessages",
+    aiDrafts: "aiDrafts",
   },
 }));
 
@@ -216,12 +217,15 @@ const EMAIL_STEP_ROW = {
 function makeWorkerDb(opts: {
   pendingStep?: unknown;
   txInsertThread?: { id: string };
+  approvedDraft?: { id: string; subject: string; body: string };
 }) {
   const select = vi.fn();
   select.mockReturnValueOnce(selectChain([ENROLLMENT_ROW])); // load enrollment
   select.mockReturnValueOnce(selectChain([])); // bounced check
   select.mockReturnValueOnce(selectChain([])); // reply check
   select.mockReturnValueOnce(selectChain(opts.pendingStep ? [opts.pendingStep] : [])); // pending step
+  // approved-draft lookup (executeEmailStep) — only reached once the step actually sends
+  select.mockReturnValueOnce(selectChain(opts.approvedDraft ? [opts.approvedDraft] : []));
   select.mockReturnValueOnce(selectChain([])); // next pending step (none → completed)
 
   const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
@@ -292,6 +296,38 @@ describe("sequence-enrollment worker — email step execution", () => {
     );
     expect(markInboxUsed).toHaveBeenCalledWith(db, "inbox-1");
     expect(tx.update).toHaveBeenCalledWith("sequenceEnrollmentSteps");
+  });
+
+  it("sends an APPROVED ai draft's content instead of the step template and consumes it", async () => {
+    vi.mocked(resolveProspectFields).mockResolvedValue({
+      prospectId: "p-1",
+      email: "prospect@example.com",
+      firstName: "Ada",
+      lastName: "Lovelace",
+      fullName: "Ada Lovelace",
+    });
+    vi.mocked(isSuppressed).mockResolvedValue(false);
+    vi.mocked(pickNextInbox).mockResolvedValue({
+      id: "inbox-1",
+      emailAddress: "sender@example.com",
+      displayName: "Sender",
+    } as any);
+    const send = vi.fn().mockResolvedValue({ externalId: "msg-1" });
+    vi.mocked(buildEmailSenderFromInbox).mockReturnValue({ send });
+
+    const { select, update, transaction, tx } = makeWorkerDb({
+      pendingStep: EMAIL_STEP_ROW,
+      approvedDraft: { id: "draft-1", subject: "Approved subject", body: "Approved body" },
+    });
+    const db = { select, update, transaction };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    // renderTemplate is mocked to echo its input — the draft subject must win over the template.
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ subject: "Approved subject" }));
+    // The draft is linked/consumed inside the send transaction.
+    expect(tx.update).toHaveBeenCalledWith("aiDrafts");
   });
 
   it("marks the step failed (no retry) when the prospect has no resolvable email", async () => {
