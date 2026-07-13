@@ -3,7 +3,7 @@ import { AiDraftService } from "./ai-draft.service.js";
 import { HttpError } from "../utils/http.js";
 
 function chain(result: unknown) {
-  const c: Record<string, ReturnType<typeof vi.fn>> = {};
+  const c: Record<string, ReturnType<typeof vi.fn> | undefined> = {};
   c.from = vi.fn().mockReturnValue(c);
   c.where = vi.fn().mockReturnValue(c);
   c.leftJoin = vi.fn().mockReturnValue(c);
