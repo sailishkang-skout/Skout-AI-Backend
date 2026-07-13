@@ -1,5 +1,5 @@
 import { Worker } from "bullmq";
-import { and, asc, eq, gte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, or, sql } from "drizzle-orm";
 import { createDb } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
@@ -32,6 +32,7 @@ const {
   sequenceSteps,
   inboxThreads,
   inboxMessages,
+  aiDrafts,
 } = schema;
 
 type DbClient = ReturnType<typeof createDb>["db"];
@@ -96,6 +97,37 @@ interface PendingStep {
   bodyTemplate: string | null;
 }
 
+/**
+ * HITL hookup: an APPROVED ai_draft overrides the step's template content for this send.
+ * Prefers a draft already linked to this enrollment step, then falls back to an unconsumed
+ * (enrollment_step_id IS NULL) approved draft for the same prospect. Returns null when none —
+ * in which case the caller uses the sequence step template (unchanged legacy behaviour).
+ */
+async function findApprovedAiDraft(
+  db: DbClient,
+  workspaceId: string,
+  prospectId: string,
+  enrollmentStepId: string
+): Promise<{ id: string; subject: string; body: string } | null> {
+  const [draft] = await db
+    .select({ id: aiDrafts.id, subject: aiDrafts.subject, body: aiDrafts.body })
+    .from(aiDrafts)
+    .where(
+      and(
+        eq(aiDrafts.workspaceId, workspaceId),
+        eq(aiDrafts.prospectId, prospectId),
+        eq(aiDrafts.status, "approved"),
+        or(eq(aiDrafts.enrollmentStepId, enrollmentStepId), isNull(aiDrafts.enrollmentStepId))
+      )
+    )
+    .orderBy(
+      sql`case when ${aiDrafts.enrollmentStepId} = ${enrollmentStepId} then 0 else 1 end`,
+      desc(aiDrafts.reviewedAt)
+    )
+    .limit(1);
+  return draft ?? null;
+}
+
 async function markStepTerminal(
   db: DbClient,
   enrollmentStepId: string,
@@ -156,9 +188,20 @@ async function executeEmailStep(
     unsubscribeUrl: buildUnsubscribeUrl(config, workspaceId, prospect.email),
   };
 
-  const subject = renderTemplate(pending.subject ?? "", mergeData);
+  // If a human has APPROVED an AI draft for this prospect/step, send that instead of the
+  // step template. Otherwise fall back to the sequence step's subject/bodyTemplate.
+  const approvedDraft = await findApprovedAiDraft(db, workspaceId, prospectId, pending.enrollmentStepId);
+  if (approvedDraft) {
+    log.info("Email step using approved AI draft", {
+      enrollmentId,
+      enrollmentStepId: pending.enrollmentStepId,
+      draftId: approvedDraft.id,
+    });
+  }
+
+  const subject = renderTemplate(approvedDraft?.subject ?? pending.subject ?? "", mergeData);
   // bodyTemplate is TipTap HTML from the email builder (or legacy plain text).
-  const renderedBody = renderTemplate(pending.bodyTemplate ?? "", mergeData);
+  const renderedBody = renderTemplate(approvedDraft?.body ?? pending.bodyTemplate ?? "", mergeData);
   const { html, text } = injectTracking(config, renderedBody, enrollmentId, pending.enrollmentStepId);
 
   // Build transport first — if credentials are missing, mark terminal rather than letting
@@ -217,6 +260,14 @@ async function executeEmailStep(
       .update(sequenceEnrollmentSteps)
       .set({ status: "executed", executedAt: now })
       .where(eq(sequenceEnrollmentSteps.id, pending.enrollmentStepId));
+
+    // Mark the approved draft as consumed by this step so it is not reused on a later send.
+    if (approvedDraft) {
+      await tx
+        .update(aiDrafts)
+        .set({ enrollmentStepId: pending.enrollmentStepId, threadId: thread.id })
+        .where(eq(aiDrafts.id, approvedDraft.id));
+    }
   });
 
   await markInboxUsed(db, inbox.id);

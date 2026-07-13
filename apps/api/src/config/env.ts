@@ -92,7 +92,9 @@ const envSchema = z
     SMART_LIST_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(120),
     CLICKHOUSE_URL: z.string().optional(),
     AI_SERVICE_URL: z.string().optional(),
+    /** OpenRouter API key (preferred). Also accepts OPEN_ROUTER_API_KEY via transform. */
     OPENROUTER_API_KEY: z.string().optional(),
+    OPEN_ROUTER_API_KEY: z.string().optional(),
     OPENCORPORATES_API_KEY: z.string().optional(),
     OPENCORPORATES_BASE_URL: z.string().default("https://api.opencorporates.com/v0.4"),
     SEC_EDGAR_BASE_URL: z.string().default("https://efts.sec.gov/LATEST/search-index"),
@@ -191,6 +193,10 @@ const envSchema = z
     }
     if (!next.FRONTEND_URL && next.CORS_ORIGIN[0]) {
       next = { ...next, FRONTEND_URL: next.CORS_ORIGIN[0] };
+    }
+    // Alias OPEN_ROUTER_API_KEY → OPENROUTER_API_KEY (common env naming)
+    if (!next.OPENROUTER_API_KEY && next.OPEN_ROUTER_API_KEY) {
+      next = { ...next, OPENROUTER_API_KEY: next.OPEN_ROUTER_API_KEY };
     }
     return next;
   });

@@ -77,3 +77,9 @@ git push origin uat
 # Production (when ready)
 git push origin main
 ```
+
+## LinkedIn + Chrome extension (MVP production)
+
+Go-live checklist for Unipile LinkedIn outreach and the Chrome extension (deploy steps + pending items):
+
+→ **[docs/mvp/mvp-production-checklist.md](./mvp/mvp-production-checklist.md)**

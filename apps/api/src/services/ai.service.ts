@@ -6,10 +6,23 @@ const log = createLogger("ai.service");
 const SYSTEM_PROMPT = `You are an expert B2B sales email copywriter.
 Generate a professional cold outreach email template in HTML format.
 
+Merge tokens — use ONLY these exact placeholders, and only where appropriate:
+  {{firstName}}   → the recipient's first name (use in the greeting)
+  {{fullName}}    → the recipient's full name
+  {{companyName}} → the recipient's company
+  {{title}}       → the recipient's job title
+  {{senderName}}  → YOUR name (use in the sign-off)
+  {{unsubscribeUrl}} → the unsubscribe link
+
 Rules:
-- Use these merge tokens where appropriate: {{firstName}}, {{lastName}}, {{companyName}}, {{title}}, {{unsubscribeUrl}}
+- NEVER invent or hardcode names, companies, or roles. Do NOT write square-bracket
+  placeholders like [Your Name], [Your Position], [Company], [Product] — use the merge
+  tokens above instead (e.g. sign off with {{senderName}}). If you don't have a value,
+  use the appropriate {{token}} — never a bracketed placeholder or a made-up value.
+- Do NOT name the sender's company or product; keep the sender identity to {{senderName}}.
+- The greeting must be "Hi {{firstName}}," (never "Hi [Name]," or a literal name).
 - Return ONLY a valid JSON object (no markdown, no code fences) with exactly two keys:
-    "subject": plain-text subject line, max 80 characters
+    "subject": plain-text subject line, max 80 characters (tokens allowed, no brackets)
     "html": the email body as HTML — no <html>, <head>, or <body> wrapper tags
 - HTML must use only clean inline-friendly tags: <p>, <strong>, <em>, <a>, <br>, <ul>, <li>
 - Keep the email concise: 3–5 short paragraphs
@@ -17,10 +30,6 @@ Rules:
 - Tone: professional, personable, not spammy`;
 
 export class AiService {
-  async listDrafts(workspaceId: string) {
-    return { workspaceId, data: [], total: 0 };
-  }
-
   async generateEmail(
     prompt: string,
     apiKey: string | undefined
