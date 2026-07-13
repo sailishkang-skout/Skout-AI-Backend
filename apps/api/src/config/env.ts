@@ -158,15 +158,6 @@ const envSchema = z
     API_PUBLIC_URL: z.string().optional(),
     /** Frontend origin for post-OAuth redirects. Defaults to first CORS_ORIGIN. */
     FRONTEND_URL: z.string().optional(),
-    /** Base URL used in invite-accept links (defaults to FRONTEND_URL). */
-    INVITE_BASE_URL: z.string().optional(),
-    /** From-address for transactional invite emails. */
-    INVITE_FROM_EMAIL: z.string().default("noreply@skoutai.io"),
-    /** SMTP host for transactional emails (invites). When absent, links are logged only. */
-    INVITE_SMTP_HOST: z.string().optional(),
-    INVITE_SMTP_PORT: z.coerce.number().optional(),
-    INVITE_SMTP_USER: z.string().optional(),
-    INVITE_SMTP_PASS: z.string().optional(),
     // --- Enrichment tunables. ---
     ENRICHMENT_REQUEST_TIMEOUT_MS: z.coerce.number().default(8000),
     ENRICHMENT_PHONE_SCORE_GATE: z.coerce.number().default(80),
