@@ -16,11 +16,9 @@ function isHealthRoute(url: string): boolean {
   return url === "/api/v1/health" || url.startsWith("/health");
 }
 
-function isPublicRoute(url: string, method?: string): boolean {
-  // Only GET /api/v1/team/invites/<token> is public; DELETE and /accept suffix require auth
-  const isInviteTokenLookup =
-    method === "GET" &&
-    /^\/api\/v1\/team\/invites\/[^/]+$/.test(url.split("?")[0]!);
+function isPublicRoute(url: string): boolean {
+  // /api/v1/team/invites/<token> (GET details) is public; /accept suffix requires auth
+  const isInviteTokenLookup = /^\/api\/v1\/team\/invites\/[^/]+$/.test(url.split("?")[0]!);
   return (
     url.startsWith("/api/v1/crm/hubspot/callback") ||
     url.startsWith("/api/v1/billing/webhooks/") ||
@@ -62,7 +60,7 @@ export const authPlugin = fp(async (app) => {
     app.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {
       // CORS preflight (and any OPTIONS) must never require auth.
       if (request.method === "OPTIONS") return;
-      if (isHealthRoute(request.url) || isPublicRoute(request.url, request.method)) return;
+      if (isHealthRoute(request.url) || isPublicRoute(request.url)) return;
       const stubEmail = (request.headers["x-stub-user-email"] as string | undefined) ?? config.AUTH_STUB_EMAIL ?? "stub@example.com";
       const db = app.db;
       if (!db) {
