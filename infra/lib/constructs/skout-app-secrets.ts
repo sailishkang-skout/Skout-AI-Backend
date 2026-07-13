@@ -66,6 +66,7 @@ export class SkoutAppSecrets extends Construct {
       CORESIGNAL_API_KEY: "replace-me",
       COGNISM_API_KEY: "replace-me",
       OPENCORPORATES_API_KEY: "replace-me",
+      OPENROUTER_API_KEY: "replace-me",
     });
     this.hubspot = createPlaceholder("Hubspot", "hubspot", {
       HUBSPOT_CLIENT_ID: "replace-me",
