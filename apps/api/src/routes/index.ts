@@ -22,6 +22,7 @@ import { workspaceRoutes } from "./workspace.routes.js";
 import { userRoutes } from "./user.routes.js";
 import { trackingRoutes } from "./tracking.routes.js";
 import { unsubscribeRoutes } from "./unsubscribe.routes.js";
+import { teamRoutes } from "./team.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoutes, { prefix: "/api/v1" });
@@ -49,5 +50,6 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(integrationRoutes);
     await v1.register(trackingRoutes);
     await v1.register(unsubscribeRoutes);
+    await v1.register(teamRoutes);
   }, { prefix: "/api/v1" });
 }

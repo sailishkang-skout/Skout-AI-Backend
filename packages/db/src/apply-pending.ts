@@ -171,6 +171,21 @@ try {
     CREATE UNIQUE INDEX IF NOT EXISTS "linkedin_accounts_workspace_unipile_unique"
       ON "linkedin_accounts" ("workspace_id", "unipile_account_id")`);
 
+  // 0020 — R8.3 workspace invites
+  await run("0020 workspace_invites table", () => sql`
+    CREATE TABLE IF NOT EXISTS "workspace_invites" (
+      "id"                  uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "workspace_id"        uuid NOT NULL REFERENCES "public"."workspaces"("id") ON DELETE CASCADE,
+      "invited_by_user_id"  uuid REFERENCES "public"."users"("id") ON DELETE SET NULL,
+      "email"               text NOT NULL,
+      "role"                text NOT NULL DEFAULT 'member',
+      "token"               text NOT NULL,
+      "expires_at"          timestamp with time zone NOT NULL,
+      "accepted_at"         timestamp with time zone,
+      "created_at"          timestamp with time zone NOT NULL DEFAULT now(),
+      CONSTRAINT "workspace_invites_token_unique" UNIQUE("token")
+    )`);
+
 } finally {
   await sql.end();
 }
