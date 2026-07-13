@@ -19,7 +19,7 @@ export async function aiRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: parse.error.errors[0]?.message ?? "Invalid request" });
     }
     try {
-      const result = await aiService.generateEmail(parse.data.prompt, app.config.OPENAI_API_KEY);
+      const result = await aiService.generateEmail(parse.data.prompt, app.config.OPENROUTER_API_KEY);
       return reply.send(result);
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };

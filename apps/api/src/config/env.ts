@@ -92,7 +92,7 @@ const envSchema = z
     SMART_LIST_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(120),
     CLICKHOUSE_URL: z.string().optional(),
     AI_SERVICE_URL: z.string().optional(),
-    OPENAI_API_KEY: z.string().optional(),
+    OPENROUTER_API_KEY: z.string().optional(),
     OPENCORPORATES_API_KEY: z.string().optional(),
     OPENCORPORATES_BASE_URL: z.string().default("https://api.opencorporates.com/v0.4"),
     SEC_EDGAR_BASE_URL: z.string().default("https://efts.sec.gov/LATEST/search-index"),

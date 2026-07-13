@@ -1,6 +1,7 @@
 """Skout AI — Python AI orchestration service (FastAPI + LangGraph + LiteLLM)."""
 
 import atexit
+import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -99,44 +100,58 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Skout AI Service", version="0.1.0", lifespan=lifespan)
 
 
-class ClassifyRequest(BaseModel):
-    thread_id: str
-    content: str
+# ---------------------------------------------------------------------------
+# LLM helpers
+# ---------------------------------------------------------------------------
 
 
-class ClassifyResponse(BaseModel):
-    intent: str
-    confidence: float
-    requires_hitl: bool
+def _llm_available() -> bool:
+    return bool(os.getenv("OPENROUTER_API_KEY"))
 
 
-@app.get("/health")
-def health():
-    return {"status": "ok", "service": "skout-ai"}
+def _default_model() -> str:
+    if os.getenv("AI_MODEL"):
+        return os.getenv("AI_MODEL")
+    return "openrouter/openai/gpt-4o-mini"
 
 
-@app.post("/v1/classify", response_model=ClassifyResponse)
-def classify(request: ClassifyRequest):
-    """Intent classification stub — wire LiteLLM router + HITL escalation."""
-    result = ClassifyResponse(
-        intent="interested",
-        confidence=0.72,
-        requires_hitl=True,
+def _llm_json(system_prompt: str, user_prompt: str) -> dict:
+    """
+    Call the LLM and return parsed JSON.
+
+    The system_prompt is the stable, cacheable part (ICP config + instructions).
+    OpenAI automatically caches prompts ≥1024 tokens that share the same prefix,
+    so keeping the ICP config in the system message amortises cost across all
+    prospects scored against the same ICP in a short window.
+    """
+    from litellm import completion
+
+    model = _default_model()
+    timeout = float(os.getenv("LLM_TIMEOUT_SECS", "4.0"))
+
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": user_prompt})
+
+    extra_kwargs: dict = {
+        "api_key": os.getenv("OPENROUTER_API_KEY"),
+        "api_base": "https://openrouter.ai/api/v1",
+    }
+
+    res = completion(
+        model=model,
+        messages=messages,
+        response_format={"type": "json_object"},
+        timeout=timeout,
+        **extra_kwargs,
     )
-    analytics_capture(
-        distinct_id=request.thread_id,
-        event="prospect_classified",
-        properties={
-            "intent": result.intent,
-            "confidence": result.confidence,
-            "requires_hitl": result.requires_hitl,
-        },
-    )
-    return result
+    content = res.choices[0].message.content or "{}"
+    return json.loads(content)
 
 
 # ---------------------------------------------------------------------------
-# ICP / lead scoring (strategy §9, ticket E6.1)
+# ICP / lead scoring
 # ---------------------------------------------------------------------------
 
 
@@ -162,6 +177,12 @@ class IcpConfig(BaseModel):
     max_employees: Optional[int] = None
 
 
+class DimensionScore(BaseModel):
+    score: int  # 0–100 fit quality for this dimension
+    matched: bool
+    explanation: str
+
+
 class ScoreRequest(BaseModel):
     prospect: ProspectInput
     icp: IcpConfig = IcpConfig()
@@ -176,6 +197,7 @@ class ScoreResponse(BaseModel):
     outreach_readiness: str  # ready | warm | nurture | not_qualified
     reasoning: str
     source: str  # llm | heuristic
+    dimensions: dict[str, DimensionScore]
 
 
 _INTENT_SIGNALS = {
@@ -210,44 +232,85 @@ def _score_heuristic(request: ScoreRequest) -> ScoreResponse:
     p = request.prospect
     icp = request.icp
     score = 40
-    reasons: list[str] = []
+    dims: dict[str, dict] = {}
 
+    # Industry
     if icp.industries and p.industry:
         if p.industry in icp.industries:
             score += 20
-            reasons.append("industry match")
+            dims["industry"] = {"score": 80, "matched": True, "explanation": f"{p.industry} is in target industries"}
         else:
             score -= 10
+            dims["industry"] = {"score": 20, "matched": False, "explanation": f"{p.industry} not in target industries"}
+    else:
+        dims["industry"] = {"score": 50, "matched": True, "explanation": "Industry not specified in ICP"}
+
+    # Seniority
     if icp.seniorities and p.seniority:
         if p.seniority in icp.seniorities:
             score += 15
-            reasons.append("seniority match")
+            dims["seniority"] = {"score": 80, "matched": True, "explanation": f"{p.seniority} matches target seniority"}
+        else:
+            dims["seniority"] = {"score": 30, "matched": False, "explanation": f"{p.seniority} not in target seniorities"}
+    else:
+        dims["seniority"] = {"score": 50, "matched": True, "explanation": "Seniority not specified in ICP"}
+
+    # Geography
     if icp.countries and p.country:
         if p.country in icp.countries:
             score += 10
-            reasons.append("geo match")
+            dims["geography"] = {"score": 80, "matched": True, "explanation": f"{p.country} is in target countries"}
         else:
             score -= 5
+            dims["geography"] = {"score": 20, "matched": False, "explanation": f"{p.country} not in target countries"}
+    else:
+        dims["geography"] = {"score": 50, "matched": True, "explanation": "Geography not specified in ICP"}
+
+    # Company size
     if p.employee_count is not None:
         lo = icp.min_employees if icp.min_employees is not None else 0
         hi = icp.max_employees if icp.max_employees is not None else 10**9
         if lo <= p.employee_count <= hi:
             score += 10
-            reasons.append("size fit")
+            dims["company_size"] = {"score": 80, "matched": True, "explanation": f"{p.employee_count} employees fits {lo}–{hi} range"}
+        else:
+            dims["company_size"] = {"score": 20, "matched": False, "explanation": f"{p.employee_count} employees outside {lo}–{hi} range"}
+    else:
+        dims["company_size"] = {"score": 50, "matched": True, "explanation": "Employee count unknown"}
+
+    # Title / keywords
     if icp.titles and p.title:
         title_l = p.title.lower()
         if any(t.lower() in title_l or title_l in t.lower() for t in icp.titles):
             score += 10
-            reasons.append("title fit")
-    if icp.keywords and p.title:
+            dims["title"] = {"score": 80, "matched": True, "explanation": f"{p.title} matches target titles"}
+        else:
+            dims["title"] = {"score": 30, "matched": False, "explanation": f"{p.title} not in target titles"}
+    elif icp.keywords and p.title:
         title_l = p.title.lower()
         if any(kw.lower() in title_l for kw in icp.keywords):
             score += 5
-            reasons.append("keyword match")
+            dims["title"] = {"score": 65, "matched": True, "explanation": f"{p.title} matches target keywords"}
+        else:
+            dims["title"] = {"score": 40, "matched": False, "explanation": "Title does not match keywords"}
+    else:
+        dims["title"] = {"score": 50, "matched": True, "explanation": "Title not specified in ICP"}
+
+    # Signals / intent
+    intent_score = min(100, len(p.signals) * 25)
+    if p.signals:
+        dims["signals"] = {"score": intent_score, "matched": True, "explanation": f"{len(p.signals)} signal(s): {', '.join(p.signals)}"}
+    else:
+        dims["signals"] = {"score": 0, "matched": False, "explanation": "No intent signals detected"}
 
     icp_score = max(0, min(100, score))
-    intent_score = min(100, len(p.signals) * 25)
     pain_points = sorted({_INTENT_SIGNALS[s] for s in p.signals if s in _INTENT_SIGNALS})
+    reasons = [
+        v["explanation"] for k, v in dims.items()
+        if v["matched"] and k != "signals"
+        and "not specified" not in v["explanation"]
+        and "unknown" not in v["explanation"].lower()
+    ]
 
     return ScoreResponse(
         prospect_id=p.prospect_id,
@@ -258,28 +321,111 @@ def _score_heuristic(request: ScoreRequest) -> ScoreResponse:
         outreach_readiness=_readiness(icp_score, intent_score),
         reasoning=", ".join(reasons) or "baseline score (no ICP signals matched)",
         source="heuristic",
+        dimensions={k: DimensionScore(**v) for k, v in dims.items()},
+    )
+
+
+def _build_system_prompt(icp: IcpConfig) -> str:
+    """
+    Build a stable, ICP-keyed system prompt.
+
+    Keeping the ICP in the system message means repeated calls for different
+    prospects against the same ICP share a common prefix — OpenAI automatically
+    caches prompts ≥1024 tokens that share the same prefix, reducing latency
+    and cost on the second+ prospect scored in a short window.
+    """
+    size_range = (
+        f"{icp.min_employees}–{icp.max_employees} employees"
+        if icp.min_employees or icp.max_employees
+        else "not specified"
+    )
+    return f"""You are a B2B sales intelligence engine specialised in ICP (Ideal Customer Profile) scoring.
+
+## Your Task
+Score a B2B prospect against the ICP configuration below. Return a single JSON object — no markdown, no text outside the JSON.
+
+## ICP Configuration
+Industries (target): {icp.industries or 'not specified'}
+Seniorities (target): {icp.seniorities or 'not specified'}
+Countries / Geographies (target): {icp.countries or 'not specified'}
+Job Titles (target): {icp.titles or 'not specified'}
+Keywords (must appear in title or role): {icp.keywords or 'not specified'}
+Company Size Range: {size_range}
+
+## Scoring Dimensions
+Evaluate each dimension independently and assign a 0–100 fit score:
+
+1. industry      — Does the prospect's industry match a target industry?  (weight ~20 pts toward icp_score)
+2. seniority     — Does the seniority level match?                        (weight ~15 pts)
+3. geography     — Does the country match?                                (weight ~10 pts)
+4. company_size  — Does headcount fall within the target range?           (weight ~10 pts)
+5. title         — Does the job title match target titles or keywords?    (weight ~15 pts)
+6. signals       — Intent signals indicating buying readiness.            (drives intent_score)
+
+## Required JSON Output Schema
+{{
+  "icp_score": <integer 0–100>,
+  "intent_score": <integer 0–100>,
+  "pain_points": ["<short string>", ...],
+  "reasoning": "<one concise sentence summarising overall fit>",
+  "dimensions": {{
+    "industry":     {{"score": <0–100>, "matched": <bool>, "explanation": "<why, one sentence>"}},
+    "seniority":    {{"score": <0–100>, "matched": <bool>, "explanation": "<why, one sentence>"}},
+    "geography":    {{"score": <0–100>, "matched": <bool>, "explanation": "<why, one sentence>"}},
+    "company_size": {{"score": <0–100>, "matched": <bool>, "explanation": "<why, one sentence>"}},
+    "title":        {{"score": <0–100>, "matched": <bool>, "explanation": "<why, one sentence>"}},
+    "signals":      {{"score": <0–100>, "matched": <bool>, "explanation": "<why, one sentence>"}}
+  }}
+}}
+
+## Scoring Guidelines
+- icp_score: weighted composite of all ICP dimensions (not signals)
+- intent_score: driven purely by signals — 0 for no signals, up to 100 for multiple strong signals
+- pain_points: infer from signals and role; keep to 1–4 short strings
+- reasoning: one sentence; name the single biggest driver of the score
+- dimension score: fit quality for that dimension (0 = terrible fit, 100 = perfect fit)
+- matched: true when the dimension criterion is met OR when the ICP has no constraint for that dimension
+- If an ICP field is empty / not specified, treat that dimension as neutral (score: 50, matched: true, explanation: "Not specified in ICP")
+
+## Intent Signal Reference
+{json.dumps(_INTENT_SIGNALS)}
+"""
+
+
+def _build_user_prompt(p: ProspectInput, baseline: ScoreResponse) -> str:
+    return f"""Score this prospect:
+Name: {p.full_name or 'unknown'}
+Title: {p.title or 'unknown'}
+Seniority: {p.seniority or 'unknown'}
+Industry: {p.industry or 'unknown'}
+Country: {p.country or 'unknown'}
+Employee Count: {p.employee_count or 'unknown'}
+Company Domain: {p.company_domain or 'unknown'}
+Intent Signals: {p.signals or []}
+
+Heuristic baseline — icp_score={baseline.icp_score}, intent_score={baseline.intent_score}
+Refine with judgment; do not copy the baseline blindly."""
+
+
+def _parse_dimension(raw: Any, fallback: DimensionScore) -> DimensionScore:
+    if not isinstance(raw, dict):
+        return fallback
+    return DimensionScore(
+        score=max(0, min(100, int(raw.get("score", fallback.score)))),
+        matched=bool(raw.get("matched", fallback.matched)),
+        explanation=str(raw.get("explanation", fallback.explanation)),
     )
 
 
 def _score_llm(request: ScoreRequest, baseline: ScoreResponse) -> ScoreResponse:
     p = request.prospect
-    icp = request.icp
-    prompt = (
-        "You are a B2B sales ICP scoring engine. Score how well this prospect matches the ICP. "
-        "Return JSON with: icp_score (0-100 int), intent_score (0-100 int), "
-        "pain_points (array of short strings), reasoning (one concise sentence). "
-        f"Prospect: name={p.full_name}, title={p.title}, seniority={p.seniority}, "
-        f"industry={p.industry}, country={p.country}, employees={p.employee_count}, "
-        f"domain={p.company_domain}, signals={p.signals}. "
-        f"ICP: industries={icp.industries}, countries={icp.countries}, seniorities={icp.seniorities}, "
-        f"titles={icp.titles}, keywords={icp.keywords}, "
-        f"min_employees={icp.min_employees}, max_employees={icp.max_employees}. "
-        f"Signal themes: {_INTENT_SIGNALS}. "
-        f"Heuristic baseline icp_score={baseline.icp_score} — refine with judgment, do not copy blindly."
-    )
-    data = _llm_json(prompt)
+    system_prompt = _build_system_prompt(request.icp)
+    user_prompt = _build_user_prompt(p, baseline)
+    data = _llm_json(system_prompt, user_prompt)
+
     icp_score = max(0, min(100, int(data.get("icp_score", baseline.icp_score))))
     intent_score = max(0, min(100, int(data.get("intent_score", baseline.intent_score))))
+
     raw_pain = data.get("pain_points", baseline.pain_points)
     if isinstance(raw_pain, str):
         pain_points = [raw_pain] if raw_pain else []
@@ -287,7 +433,20 @@ def _score_llm(request: ScoreRequest, baseline: ScoreResponse) -> ScoreResponse:
         pain_points = [str(x) for x in raw_pain if x]
     else:
         pain_points = baseline.pain_points
+
     reasoning = str(data.get("reasoning") or baseline.reasoning)
+
+    raw_dims = data.get("dimensions") or {}
+    dimensions = {
+        key: _parse_dimension(raw_dims.get(key), fallback)
+        for key, fallback in baseline.dimensions.items()
+    }
+    # Include any extra dimensions the LLM returned that aren't in the baseline
+    for key, raw in raw_dims.items():
+        if key not in dimensions:
+            neutral = DimensionScore(score=50, matched=True, explanation="")
+            dimensions[key] = _parse_dimension(raw, neutral)
+
     return ScoreResponse(
         prospect_id=p.prospect_id,
         icp_score=icp_score,
@@ -297,23 +456,31 @@ def _score_llm(request: ScoreRequest, baseline: ScoreResponse) -> ScoreResponse:
         outreach_readiness=_readiness(icp_score, intent_score),
         reasoning=reasoning,
         source="llm",
+        dimensions=dimensions,
     )
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "service": "skout-ai"}
 
 
 @app.post("/v1/score", response_model=ScoreResponse)
 def score(request: ScoreRequest):
     """ICP + intent scoring via LLM when OPENAI_API_KEY is set, else heuristic."""
     baseline = _score_heuristic(request)
-    p = request.prospect
     result = baseline
     if _llm_available():
         try:
             result = _score_llm(request, baseline)
-        except Exception:
+        except Exception as e:
+            import traceback
+            print(f"[score] LLM failed, falling back to heuristic: {e}")
+            traceback.print_exc()
             result = baseline
 
     analytics_capture(
-        distinct_id=p.prospect_id,
+        distinct_id=request.prospect.prospect_id,
         event="prospect_scored",
         properties={
             "icp_score": result.icp_score,
@@ -321,7 +488,7 @@ def score(request: ScoreRequest):
             "intent_score": result.intent_score,
             "outreach_readiness": result.outreach_readiness,
             "num_pain_points": len(result.pain_points),
-            "num_signals": len(p.signals),
+            "num_signals": len(request.prospect.signals),
             "source": result.source,
         },
     )
@@ -331,6 +498,17 @@ def score(request: ScoreRequest):
 # ---------------------------------------------------------------------------
 # LLM pain points + personalization (strategy §9)
 # ---------------------------------------------------------------------------
+
+
+class ClassifyRequest(BaseModel):
+    thread_id: str
+    content: str
+
+
+class ClassifyResponse(BaseModel):
+    intent: str
+    confidence: float
+    requires_hitl: bool
 
 
 class PainPointRequest(BaseModel):
@@ -365,24 +543,24 @@ class PersonalizeResponse(BaseModel):
     source: str
 
 
-def _llm_available() -> bool:
-    import os
-    return bool(os.getenv("OPENAI_API_KEY"))
-
-
-def _llm_json(prompt: str) -> dict:
-    import os
-    from litellm import completion
-
-    model = os.getenv("AI_MODEL", "gpt-4o-mini")
-    res = completion(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"},
+@app.post("/v1/classify", response_model=ClassifyResponse)
+def classify(request: ClassifyRequest):
+    """Intent classification stub — wire LiteLLM router + HITL escalation."""
+    result = ClassifyResponse(
+        intent="interested",
+        confidence=0.72,
+        requires_hitl=True,
     )
-    import json
-    content = res.choices[0].message.content or "{}"
-    return json.loads(content)
+    analytics_capture(
+        distinct_id=request.thread_id,
+        event="prospect_classified",
+        properties={
+            "intent": result.intent,
+            "confidence": result.confidence,
+            "requires_hitl": result.requires_hitl,
+        },
+    )
+    return result
 
 
 @app.post("/v1/pain-points", response_model=PainPointResponse)
@@ -394,7 +572,7 @@ def pain_points(request: PainPointRequest):
             f"Title: {request.title}, Industry: {request.industry}, Domain: {request.company_domain}, "
             f"Description: {request.description}, Signals: {request.signals}, Jobs: {request.job_post_snippets}"
         )
-        data = _llm_json(prompt)
+        data = _llm_json("", prompt)
         result = PainPointResponse(
             prospect_id=request.prospect_id,
             pain_points=data.get("pain_points", []),
@@ -428,7 +606,7 @@ def personalize(request: PersonalizeRequest):
             f"Prospect: {request.full_name}, {request.title} at {request.company_domain}. "
             f"Pain points: {request.pain_points}. ICP score: {request.icp_score}"
         )
-        data = _llm_json(prompt)
+        data = _llm_json("", prompt)
         result = PersonalizeResponse(
             prospect_id=request.prospect_id,
             opener=data.get("opener", ""),

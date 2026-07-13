@@ -23,8 +23,8 @@ const VALID_TAGS = new Set<ReplyTag>([
 ]);
 
 /**
- * Tag an inbound human reply with intent/sentiment using gpt-4o-mini.
- * Returns null when OPENAI_API_KEY is absent or the call fails (caller logs + skips).
+ * Tag an inbound human reply with intent/sentiment via OpenRouter.
+ * Returns null when OPENROUTER_API_KEY is absent or the call fails (caller logs + skips).
  */
 export async function tagReply(
   bodyText: string,
@@ -32,12 +32,16 @@ export async function tagReply(
 ): Promise<ReplyTag | null> {
   if (!apiKey) return null;
 
-  const client = new OpenAI({ apiKey });
+  const client = new OpenAI({
+    apiKey,
+    baseURL: "https://openrouter.ai/api/v1",
+    defaultHeaders: { "HTTP-Referer": "https://skoutai.io", "X-Title": "Skout AI" },
+  });
 
   let result: OpenAI.Chat.ChatCompletion;
   try {
     result = await client.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: process.env.AI_MODEL ?? "openai/gpt-4o-mini",
       max_tokens: 10,
       messages: [
         {
@@ -51,7 +55,7 @@ export async function tagReply(
       ],
     });
   } catch (err) {
-    log.warn("reply-tagger: OpenAI API call failed", { err });
+    log.warn("reply-tagger: OpenRouter API call failed", { err });
     return null;
   }
 

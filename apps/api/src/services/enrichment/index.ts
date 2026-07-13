@@ -88,6 +88,7 @@ export function buildEnrichmentService(db: Db | null, config: Env): EnrichmentSe
     config.ENRICHMENT_AI_TIMEOUT_MS,
     db ? (ws) => getWorkspaceIcp(db, ws) : undefined,
     db ? (ws) => ensureDemoWorkspace(db, ws) : undefined,
-    (result) => writeScoreToOpenSearch(config, result)
+    (result) => writeScoreToOpenSearch(config, result),
+    config.OPENROUTER_API_KEY
   );
 }

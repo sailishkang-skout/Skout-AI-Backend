@@ -26,17 +26,21 @@ export class AiService {
     apiKey: string | undefined
   ): Promise<{ html: string; subject: string }> {
     if (!apiKey) {
-      throw Object.assign(new Error("OpenAI API key is not configured on this workspace"), {
+      throw Object.assign(new Error("OpenRouter API key is not configured on this workspace"), {
         statusCode: 503,
       });
     }
 
-    const client = new OpenAI({ apiKey });
+    const client = new OpenAI({
+      apiKey,
+      baseURL: "https://openrouter.ai/api/v1",
+      defaultHeaders: { "HTTP-Referer": "https://skoutai.io", "X-Title": "Skout AI" },
+    });
 
     let raw: string;
     try {
       const result = await client.chat.completions.create({
-        model: "gpt-4o-mini",
+        model: process.env.AI_MODEL ?? "openai/gpt-4o-mini",
         max_tokens: 1200,
         temperature: 0.7,
         response_format: { type: "json_object" },
