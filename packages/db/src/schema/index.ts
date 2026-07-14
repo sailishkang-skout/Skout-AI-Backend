@@ -11,3 +11,4 @@ export * from "./inbox.js";
 export * from "./integrations.js";
 export * from "./billing.js";
 export * from "./suppressions.js";
+export * from "./crm.js";

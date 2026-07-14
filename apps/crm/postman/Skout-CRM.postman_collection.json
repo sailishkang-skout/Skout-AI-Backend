@@ -1,0 +1,803 @@
+{
+  "info": {
+    "_postman_id": "b7e2f7b0-6e0e-4a2b-9a1a-skoutcrm00001",
+    "name": "Skout CRM (@skout/crm)",
+    "description": "Native Revenue Workspace API — companies, contacts, deals, pipelines/stages, tasks, activities.\n\nAuth: local/dev uses stub auth via the `x-stub-user-email` header (set in the collection variable `stubEmail`). All requests in a workspace share the same `x-stub-user-email` → same workspace. Change `stubEmail` to simulate a different workspace/user.\n\nRun order for the golden path: Health → Companies → Contacts → Pipelines → Deals → Deal stage change → Activities → Tasks. IDs are captured automatically into collection variables by each request's test script, so requests later in the collection can reuse them.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3002", "type": "string" },
+    { "key": "stubEmail", "value": "crm-postman@test.com", "type": "string" },
+    { "key": "companyId", "value": "", "type": "string" },
+    { "key": "contactId", "value": "", "type": "string" },
+    { "key": "pipelineId", "value": "", "type": "string" },
+    { "key": "firstStageId", "value": "", "type": "string" },
+    { "key": "secondStageId", "value": "", "type": "string" },
+    { "key": "dealId", "value": "", "type": "string" },
+    { "key": "taskId", "value": "", "type": "string" },
+    { "key": "activityId", "value": "", "type": "string" },
+    { "key": "workspaceId", "value": "", "type": "string" }
+  ],
+  "auth": {
+    "type": "noauth"
+  },
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "GET /crm/health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v1/crm/health", "host": ["{{baseUrl}}"], "path": ["api", "v1", "crm", "health"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('service ok', () => { const b = pm.response.json(); pm.expect(b.status).to.eql('ok'); });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Companies",
+      "item": [
+        {
+          "name": "POST /companies (create Acme Corp)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "x-stub-user-email", "value": "{{stubEmail}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Acme Corp\",\n  \"domain\": \"acme.com\",\n  \"industry\": \"SaaS\",\n  \"employeeCount\": 250,\n  \"revenue\": 5000000,\n  \"location\": \"Austin, TX\",\n  \"status\": \"active\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/companies", "host": ["{{baseUrl}}"], "path": ["api", "v1", "companies"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('companyId', body.id);",
+                  "pm.collectionVariables.set('workspaceId', body.workspaceId);",
+                  "pm.test('has id + workspaceId', () => { pm.expect(body.id).to.be.a('string'); pm.expect(body.workspaceId).to.be.a('string'); });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /companies (list)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-stub-user-email", "value": "{{stubEmail}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/companies?limit=20&offset=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "companies"],
+              "query": [
+                { "key": "limit", "value": "20" },
+                { "key": "offset", "value": "0" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('created company is in the list', () => { pm.expect(body.data.some(c => c.id === pm.collectionVariables.get('companyId'))).to.be.true; });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /companies/:id",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-stub-user-email", "value": "{{stubEmail}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/companies/{{companyId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "companies", "{{companyId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('id matches', () => pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('companyId')));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH /companies/:id",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "x-stub-user-email", "value": "{{stubEmail}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"industry\": \"Enterprise SaaS\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/companies/{{companyId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "companies", "{{companyId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('industry updated', () => pm.expect(pm.response.json().industry).to.eql('Enterprise SaaS'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /companies/:id (404 nonexistent)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-stub-user-email", "value": "{{stubEmail}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/companies/00000000-0000-4000-8000-000000000000",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "companies", "00000000-0000-4000-8000-000000000000"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 404', () => pm.response.to.have.status(404));",
+                  "pm.test('error code', () => pm.expect(pm.response.json().error).to.eql('company_not_found'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Contacts",
+      "item": [
+        {
+          "name": "POST /contacts (create Jane Doe @ Acme)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "x-stub-user-email", "value": "{{stubEmail}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Jane\",\n  \"lastName\": \"Doe\",\n  \"email\": \"jane.doe@acme.com\",\n  \"title\": \"VP Sales\",\n  \"companyId\": \"{{companyId}}\",\n  \"lifecycleStage\": \"lead\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/contacts", "host": ["{{baseUrl}}"], "path": ["api", "v1", "contacts"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('contactId', body.id);",
+                  "pm.test('linked to company', () => pm.expect(body.companyId).to.eql(pm.collectionVariables.get('companyId')));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /contacts?companyId=",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-stub-user-email", "value": "{{stubEmail}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/contacts?companyId={{companyId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "contacts"],
+              "query": [{ "key": "companyId", "value": "{{companyId}}" }]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH /contacts/:id (advance lifecycle stage)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "x-stub-user-email", "value": "{{stubEmail}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"lifecycleStage\": \"sql\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/contacts/{{contactId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "contacts", "{{contactId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('lifecycleStage updated', () => pm.expect(pm.response.json().lifecycleStage).to.eql('sql'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /contacts (companyId from another workspace -> 404)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "x-stub-user-email", "value": "some-other-workspace@test.com" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Intruder\",\n  \"companyId\": \"{{companyId}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/contacts", "host": ["{{baseUrl}}"], "path": ["api", "v1", "contacts"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 404 (cross-workspace company)', () => pm.response.to.have.status(404));",
+                  "pm.test('error code', () => pm.expect(pm.response.json().error).to.eql('company_not_found'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Pipelines",
+      "item": [
+        {
+          "name": "GET /pipelines (auto-seeds default on first call)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-stub-user-email", "value": "{{stubEmail}}" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/pipelines", "host": ["{{baseUrl}}"], "path": ["api", "v1", "pipelines"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('exactly one default pipeline', () => { pm.expect(body.total).to.eql(1); pm.expect(body.data[0].isDefault).to.be.true; });",
+                  "pm.test('has 6 stages', () => pm.expect(body.data[0].stages).to.have.lengthOf(6));",
+                  "const pipeline = body.data[0];",
+                  "pm.collectionVariables.set('pipelineId', pipeline.id);",
+                  "const sorted = [...pipeline.stages].sort((a, b) => a.orderIndex - b.orderIndex);",
+                  "pm.collectionVariables.set('firstStageId', sorted[0].id);",
+                  "pm.collectionVariables.set('secondStageId', sorted[1].id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /pipelines (custom pipeline)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "x-stub-user-email", "value": "{{stubEmail}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Enterprise Pipeline\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/v1/pipelines", "host": ["{{baseUrl}}"], "path": ["api", "v1", "pipelines"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('starts with no stages', () => pm.expect(pm.response.json().stages).to.have.lengthOf(0));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /pipelines/:id/stages (custom stage on default pipeline)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "x-stub-user-email", "value": "{{stubEmail}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Legal Review\",\n  \"orderIndex\": 6,\n  \"probability\": 90,\n  \"isClosedWon\": false,\n  \"isClosedLost\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/pipelines/{{pipelineId}}/stages",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "pipelines", "{{pipelineId}}", "stages"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('status 201', () => pm.response.to.have.status(201));"],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Deals",
+      "item": [
+        {
+          "name": "POST /deals (create, default pipeline/stage)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "x-stub-user-email", "value": "{{stubEmail}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Acme — Annual Contract\",\n  \"companyId\": \"{{companyId}}\",\n  \"amount\": 24000,\n  \"currency\": \"USD\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/deals", "host": ["{{baseUrl}}"], "path": ["api", "v1", "deals"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('dealId', body.id);",
+                  "pm.test('landed in default pipeline first stage', () => { pm.expect(body.pipelineId).to.eql(pm.collectionVariables.get('pipelineId')); pm.expect(body.stageId).to.eql(pm.collectionVariables.get('firstStageId')); });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /deals?status=open",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-stub-user-email", "value": "{{stubEmail}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/deals?status=open",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "deals"],
+              "query": [{ "key": "status", "value": "open" }]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /deals/:id",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-stub-user-email", "value": "{{stubEmail}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/deals/{{dealId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "deals", "{{dealId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH /deals/:id (move stage -> logs stage_change activity)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "x-stub-user-email", "value": "{{stubEmail}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"stageId\": \"{{secondStageId}}\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/deals/{{dealId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "deals", "{{dealId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('stage updated', () => pm.expect(pm.response.json().stageId).to.eql(pm.collectionVariables.get('secondStageId')));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /deals/summary",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-stub-user-email", "value": "{{stubEmail}}" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/deals/summary", "host": ["{{baseUrl}}"], "path": ["api", "v1", "deals", "summary"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('includes at least one open deal', () => pm.expect(body.openDeals).to.be.at.least(1));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /deals (companyId from another workspace -> 404)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "x-stub-user-email", "value": "some-other-workspace@test.com" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Intruder Deal\",\n  \"companyId\": \"{{companyId}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/deals", "host": ["{{baseUrl}}"], "path": ["api", "v1", "deals"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 404 (cross-workspace company)', () => pm.response.to.have.status(404));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Activities",
+      "item": [
+        {
+          "name": "GET /activities?entityType=deal&entityId= (includes stage_change)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-stub-user-email", "value": "{{stubEmail}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/activities?entityType=deal&entityId={{dealId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "activities"],
+              "query": [
+                { "key": "entityType", "value": "deal" },
+                { "key": "entityId", "value": "{{dealId}}" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('has a stage_change entry', () => pm.expect(body.data.some(a => a.activityType === 'stage_change')).to.be.true);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /activities (400 without entityType/entityId)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-stub-user-email", "value": "{{stubEmail}}" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/activities", "host": ["{{baseUrl}}"], "path": ["api", "v1", "activities"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 400 (missing required query params)', () => pm.response.to.have.status(400));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /activities (log a manual call note on the contact)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "x-stub-user-email", "value": "{{stubEmail}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"entityType\": \"contact\",\n  \"entityId\": \"{{contactId}}\",\n  \"activityType\": \"call\",\n  \"subject\": \"Discovery call\",\n  \"body\": \"Discussed budget and timeline; follow up next week.\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/activities", "host": ["{{baseUrl}}"], "path": ["api", "v1", "activities"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('activityId', pm.response.json().id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Tasks",
+      "item": [
+        {
+          "name": "POST /tasks (follow-up on the deal)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "x-stub-user-email", "value": "{{stubEmail}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Send updated proposal\",\n  \"relatedEntityType\": \"deal\",\n  \"relatedEntityId\": \"{{dealId}}\",\n  \"priority\": \"high\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/tasks", "host": ["{{baseUrl}}"], "path": ["api", "v1", "tasks"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('taskId', body.id);",
+                  "pm.test('status is open', () => pm.expect(body.status).to.eql('open'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /tasks?status=open",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-stub-user-email", "value": "{{stubEmail}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/tasks?status=open",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "tasks"],
+              "query": [{ "key": "status", "value": "open" }]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH /tasks/:id",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "x-stub-user-email", "value": "{{stubEmail}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"priority\": \"medium\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/tasks/{{taskId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "tasks", "{{taskId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /tasks/:id/complete",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "x-stub-user-email", "value": "{{stubEmail}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/tasks/{{taskId}}/complete",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "tasks", "{{taskId}}", "complete"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status is done', () => pm.expect(pm.response.json().status).to.eql('done'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "DELETE /tasks/:id",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "x-stub-user-email", "value": "{{stubEmail}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/tasks/{{taskId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "tasks", "{{taskId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('status 204', () => pm.response.to.have.status(204));"],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Cleanup",
+      "item": [
+        {
+          "name": "DELETE /deals/:id",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "x-stub-user-email", "value": "{{stubEmail}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/deals/{{dealId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "deals", "{{dealId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('status 204', () => pm.response.to.have.status(204));"], "type": "text/javascript" }
+            }
+          ]
+        },
+        {
+          "name": "DELETE /contacts/:id",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "x-stub-user-email", "value": "{{stubEmail}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/contacts/{{contactId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "contacts", "{{contactId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('status 204', () => pm.response.to.have.status(204));"], "type": "text/javascript" }
+            }
+          ]
+        },
+        {
+          "name": "DELETE /companies/:id",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "x-stub-user-email", "value": "{{stubEmail}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/companies/{{companyId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "companies", "{{companyId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('status 204', () => pm.response.to.have.status(204));"], "type": "text/javascript" }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
