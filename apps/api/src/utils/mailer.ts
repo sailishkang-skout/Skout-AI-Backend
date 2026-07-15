@@ -13,16 +13,18 @@ export function createTransactionalMailer(config: Env) {
 
   async function sendInviteEmail(opts: InviteEmailOptions): Promise<void> {
     if (!config.INVITE_SMTP_HOST) {
-      console.log(
-        `[INVITE] ${opts.to} invited to "${opts.workspaceName}" as ${opts.role} → ${opts.acceptUrl}`
+      console.warn(
+        `[INVITE] INVITE_SMTP_HOST not set — email NOT sent. To: ${opts.to}, URL: ${opts.acceptUrl}`
       );
       return;
     }
 
     const nodemailer = await import("nodemailer");
+    const port = config.INVITE_SMTP_PORT ?? 587;
     const transport = nodemailer.default.createTransport({
       host: config.INVITE_SMTP_HOST,
-      port: config.INVITE_SMTP_PORT ?? 587,
+      port,
+      secure: port === 465,
       ...(config.INVITE_SMTP_USER
         ? { auth: { user: config.INVITE_SMTP_USER, pass: config.INVITE_SMTP_PASS } }
         : {}),
