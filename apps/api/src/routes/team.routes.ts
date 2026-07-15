@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { eq } from "drizzle-orm";
 import { schema } from "@skout/db";
 import { createTeamService } from "../services/team.service.js";
-import { createTransactionalMailer } from "../utils/mailer.js";
+import { sendMail, buildInviteEmail } from "../services/mail.service.js";
 import { errorResponse, HttpError } from "../utils/http.js";
 import type { WorkspaceRole } from "../services/team.service.js";
 
@@ -92,9 +92,8 @@ export async function teamRoutes(app: FastifyInstance) {
         request.role
       );
 
-      // send invite email (fire-and-forget)
-      const mailer = createTransactionalMailer(app.config);
-      const acceptUrl = `${mailer.baseUrl}/invite/${invite.token}`;
+      const baseUrl = app.config.INVITE_BASE_URL ?? app.config.FRONTEND_URL ?? "http://localhost:3000";
+      const acceptUrl = `${baseUrl}/invite/${invite.token}`;
 
       const [ws] = await app.db!
         .select({ name: schema.workspaces.name })
@@ -102,15 +101,16 @@ export async function teamRoutes(app: FastifyInstance) {
         .where(eq(schema.workspaces.id, request.workspaceId))
         .limit(1);
 
-      mailer
-        .sendInviteEmail({
+      sendMail(
+        app.config,
+        buildInviteEmail({
           to: invite.email,
           inviterName: request.userEmail ?? "A teammate",
           workspaceName: ws?.name ?? "Skout workspace",
           role: invite.role,
           acceptUrl,
         })
-        .catch((err: unknown) => app.log.warn({ err }, "Failed to send invite email"));
+      ).catch((err: unknown) => app.log.warn({ err }, "Failed to send invite email"));
 
       return reply.code(201).send({
         data: {

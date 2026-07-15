@@ -1,6 +1,6 @@
 import { schema } from "@skout/db";
 import type { Db } from "@skout/db";
-import { eq } from "drizzle-orm";
+import { and, eq, gt, isNull } from "drizzle-orm";
 import { HttpError } from "./http.js";
 
 export interface ProvisionResult {
@@ -102,6 +102,9 @@ export async function resolveOrProvisionUser(
         });
       }
 
+        // Auto-accept any pending invites for this email
+      await autoAcceptPendingInvites(tx, userId, userEmail, membership.workspaceId);
+
       return { userId, userEmail, workspaceId: membership.workspaceId, role: membership.role };
     }
 
@@ -135,4 +138,44 @@ export async function resolveOrProvisionUser(
 
     return { userId, userEmail, workspaceId: workspace.id, role: "owner" };
   });
+}
+
+async function autoAcceptPendingInvites(
+  tx: Parameters<Parameters<Db["transaction"]>[0]>[0],
+  userId: string,
+  email: string,
+  currentWorkspaceId: string
+): Promise<void> {
+  const now = new Date();
+  const pending = await tx
+    .select({ id: schema.workspaceInvites.id, workspaceId: schema.workspaceInvites.workspaceId, role: schema.workspaceInvites.role })
+    .from(schema.workspaceInvites)
+    .where(
+      and(
+        eq(schema.workspaceInvites.email, email.toLowerCase()),
+        isNull(schema.workspaceInvites.acceptedAt),
+        gt(schema.workspaceInvites.expiresAt, now)
+      )
+    );
+
+  for (const invite of pending) {
+    if (invite.workspaceId === currentWorkspaceId) continue;
+
+    const [alreadyMember] = await tx
+      .select({ userId: schema.workspaceMembers.userId })
+      .from(schema.workspaceMembers)
+      .where(
+        and(
+          eq(schema.workspaceMembers.workspaceId, invite.workspaceId),
+          eq(schema.workspaceMembers.userId, userId)
+        )
+      )
+      .limit(1);
+
+    if (!alreadyMember) {
+      await tx.insert(schema.workspaceMembers).values({ workspaceId: invite.workspaceId, userId, role: invite.role });
+    }
+
+    await tx.update(schema.workspaceInvites).set({ acceptedAt: now }).where(eq(schema.workspaceInvites.id, invite.id));
+  }
 }

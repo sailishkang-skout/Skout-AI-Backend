@@ -160,13 +160,13 @@ const envSchema = z
     FRONTEND_URL: z.string().optional(),
     /** Base URL used in invite-accept links (defaults to FRONTEND_URL). */
     INVITE_BASE_URL: z.string().optional(),
-    /** From-address for transactional invite emails. */
-    INVITE_FROM_EMAIL: z.string().default("noreply@skoutai.io"),
-    /** SMTP host for transactional emails (invites). When absent, links are logged only. */
-    INVITE_SMTP_HOST: z.string().optional(),
-    INVITE_SMTP_PORT: z.coerce.number().optional(),
-    INVITE_SMTP_USER: z.string().optional(),
-    INVITE_SMTP_PASS: z.string().optional(),
+    /** From-address for transactional emails (invites, OTP). */
+    SES_FROM_EMAIL: z.string().default("noreply@skoutai.io"),
+    /** AWS SES SMTP credentials. When SMTP_HOST absent, emails are logged only. */
+    SMTP_HOST: z.string().optional(),
+    SMTP_PORT: z.coerce.number().default(587),
+    SMTP_USERNAME: z.string().optional(),
+    SMTP_PASSWORD: z.string().optional(),
     // --- Enrichment tunables. ---
     ENRICHMENT_REQUEST_TIMEOUT_MS: z.coerce.number().default(8000),
     ENRICHMENT_PHONE_SCORE_GATE: z.coerce.number().default(80),

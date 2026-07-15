@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-secrets-manager": "^3.758.0",
+    "@aws-sdk/client-sesv2": "^3.1087.0",
     "@clerk/backend": "^3.6.1",
     "@fastify/cors": "^10.0.1",
     "@fastify/helmet": "^13.0.1",
