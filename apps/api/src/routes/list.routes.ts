@@ -6,6 +6,7 @@ import { createCrmService } from "../services/crm.service.js";
 import { ListScoreService } from "../services/list-score.service.js";
 import { HttpError, errorResponse } from "../utils/http.js";
 import { buildListService } from "../services/list.service.js";
+import { buildEmailVerificationService } from "../services/email-verification.service.js";
 import { exportListCsv, CSV_EXPORT_CREDIT_COST } from "../services/list-export.service.js";
 import { readListCsvExport } from "../services/export-storage.service.js";
 import { buildSequenceService } from "../services/sequence.service.js";
@@ -57,11 +58,18 @@ export async function listRoutes(app: FastifyInstance) {
       ? await enrichment.lookupScores(workspaceId, members.map((m) => m.prospectId))
       : {};
 
+    const verifySvc = buildEmailVerificationService(app.db, app.config, osConfig(app.config));
+    const verifications =
+      verifySvc && members?.length
+        ? await verifySvc.getForProspects(workspaceId, members.map((m) => m.prospectId))
+        : {};
+
     return reply.send({
       ...list,
       members: (members ?? []).map((m) => ({
         ...m,
         score: scores[m.prospectId] ?? null,
+        verification: verifications[m.prospectId] ?? null,
       })),
     });
   });
@@ -160,6 +168,18 @@ export async function listRoutes(app: FastifyInstance) {
       }
       throw err;
     }
+  });
+
+  // POST /lists/:id/verify — bulk-verify every member's email before a send, store verdicts,
+  // and return a deliverability summary (valid / risky / invalid / catch-all / unknown).
+  app.post("/lists/:id/verify", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = buildEmailVerificationService(app.db, app.config, osConfig(app.config));
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    const summary = await svc.verifyList(workspaceId, id);
+    if (!summary) return reply.status(404).send({ error: "list_not_found" });
+    return reply.send(summary);
   });
 
   app.patch("/lists/:id", async (request, reply) => {

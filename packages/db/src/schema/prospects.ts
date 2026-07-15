@@ -1,4 +1,14 @@
-import { integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  integer,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+  unique,
+  uuid,
+} from "drizzle-orm/pg-core";
 import { workspaces } from "./workspaces.js";
 
 export const prospectActivations = pgTable(
@@ -38,6 +48,30 @@ export const listMembers = pgTable(
     addedAt: timestamp("added_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [primaryKey({ columns: [table.listId, table.prospectId] })]
+);
+
+/**
+ * Latest email deliverability verdict per prospect (from a PAL verifier — MillionVerifier,
+ * ZeroBounce, NeverBounce, Hunter). Used to warn/exclude undeliverable addresses before a
+ * bulk send. Keyed by prospect so it is reusable across lists and the send pipeline.
+ */
+export const emailVerifications = pgTable(
+  "email_verifications",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    prospectId: text("prospect_id").notNull(),
+    email: text("email").notNull(),
+    // valid | invalid | catch_all | risky | unknown | no_email
+    status: text("status").notNull(),
+    deliverabilityScore: integer("deliverability_score").notNull().default(0),
+    catchAll: boolean("catch_all").notNull().default(false),
+    risky: boolean("risky").notNull().default(false),
+    provider: text("provider"),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.workspaceId, table.prospectId] })]
 );
 
 export const prospectScores = pgTable(

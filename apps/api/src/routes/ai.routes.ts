@@ -2,7 +2,30 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { aiService } from "../services/ai.service.js";
 import { AI_DRAFT_STATUSES, buildAiDraftService } from "../services/ai-draft.service.js";
+import { sendApprovedDraftEmail, type DraftSendResult } from "../services/ai-draft-send.service.js";
+import { computeOutcomeInsights, insightsToPrompt } from "../services/outcome-insights.service.js";
+import { buildSequenceService } from "../services/sequence.service.js";
 import { HttpError } from "../utils/http.js";
+
+const chatSchema = z.object({
+  messages: z
+    .array(
+      z.object({
+        role: z.enum(["user", "assistant"]),
+        content: z.string().min(1).max(4000),
+      })
+    )
+    .min(1)
+    .max(30),
+  mode: z.enum(["auto", "ask"]).default("ask"),
+  context: z
+    .object({
+      subject: z.string().max(500).optional(),
+      body: z.string().max(20000).optional(),
+      kind: z.enum(["email", "sequence", "general"]).optional(),
+    })
+    .optional(),
+});
 
 const generateEmailSchema = z.object({
   prompt: z.string().min(1, "Prompt is required").max(1000, "Prompt too long"),
@@ -63,7 +86,26 @@ export async function aiRoutes(app: FastifyInstance) {
     const body = bulkApproveSchema.parse(request.body ?? {});
     const drafts = draftsOr503(app);
     const result = await drafts.bulkApprove(workspaceId, body.ids, request.userId);
-    return reply.send(result);
+
+    // Send each standalone (non-enrollment) approved draft that hasn't been delivered yet.
+    let sent = 0;
+    const sendFailures: { id: string; reason?: string }[] = [];
+    if (app.db) {
+      for (const id of body.ids) {
+        const draft = await drafts.getById(workspaceId, id);
+        if (!draft || draft.status !== "approved" || draft.enrollmentStepId || draft.threadId) continue;
+        const res = await sendApprovedDraftEmail(app.db, app.config, {
+          id: draft.id,
+          workspaceId,
+          prospectId: draft.prospectId,
+          subject: draft.subject,
+          body: draft.body,
+        });
+        if (res.sent) sent += 1;
+        else sendFailures.push({ id: draft.id, reason: res.reason });
+      }
+    }
+    return reply.send({ ...result, sent, sendFailures });
   });
 
   app.get("/ai/drafts/:id", async (request, reply) => {
@@ -99,7 +141,10 @@ export async function aiRoutes(app: FastifyInstance) {
           .filter(Boolean)
           .join(". ");
 
-      const generated = await aiService.generateEmail(prompt, app.config.OPENROUTER_API_KEY);
+      const insights = app.db
+        ? insightsToPrompt(await computeOutcomeInsights(app.db, workspaceId).catch(() => null))
+        : null;
+      const generated = await aiService.generateEmail(prompt, app.config.OPENROUTER_API_KEY, insights);
       subject = subject ?? (generated.subject || `Outreach to ${body.fullName ?? "prospect"}`);
       content = content ?? generated.html;
       model = process.env.AI_MODEL ?? "openai/gpt-4o-mini";
@@ -128,7 +173,24 @@ export async function aiRoutes(app: FastifyInstance) {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const drafts = draftsOr503(app);
     const draft = await drafts.approve(workspaceId, id, request.userId);
-    return reply.send(draft);
+
+    // Complete AI Review: a standalone approved draft (not tied to a sequence step and not yet
+    // sent) is delivered to the prospect immediately. Enrollment-linked drafts are sent by the
+    // sequence worker when their step runs, so we skip those here to avoid double-sending.
+    let send: DraftSendResult | undefined;
+    if (app.db && !draft.enrollmentStepId && !draft.threadId) {
+      send = await sendApprovedDraftEmail(app.db, app.config, {
+        id: draft.id,
+        workspaceId,
+        prospectId: draft.prospectId,
+        subject: draft.subject,
+        body: draft.body,
+      });
+      if (send && !send.sent) {
+        app.log.warn({ draftId: draft.id, reason: send.reason }, "Approved draft could not be sent");
+      }
+    }
+    return reply.send({ ...draft, send });
   });
 
   app.post("/ai/drafts/:id/reject", async (request, reply) => {
@@ -139,6 +201,45 @@ export async function aiRoutes(app: FastifyInstance) {
     return reply.send(draft);
   });
 
+  /**
+   * POST /ai/chat — conversational assistant for templates/emails/sequences.
+   * Returns a reply + an optional structured action (email or sequence). In "auto" mode a
+   * proposed sequence is persisted immediately (returns sequenceId); "ask" mode returns the
+   * proposal for the client to confirm. Email actions are adopted client-side.
+   */
+  app.post("/ai/chat", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const body = chatSchema.parse(request.body ?? {});
+    try {
+      const insights = app.db
+        ? insightsToPrompt(await computeOutcomeInsights(app.db, workspaceId).catch(() => null))
+        : null;
+      const result = await aiService.chat(
+        { messages: body.messages, context: body.context, insights },
+        app.config.OPENROUTER_API_KEY
+      );
+
+      let applied = false;
+      let sequenceId: string | undefined;
+      if (body.mode === "auto" && result.action.type === "sequence" && app.db) {
+        const seqSvc = buildSequenceService(app.db);
+        if (seqSvc) {
+          const created = await seqSvc.createGeneratedSequence(workspaceId, {
+            name: result.action.name,
+            steps: result.action.steps,
+          });
+          applied = true;
+          sequenceId = created.id;
+        }
+      }
+
+      return reply.send({ reply: result.reply, action: result.action, applied, sequenceId });
+    } catch (err: unknown) {
+      const e = err as { statusCode?: number; message?: string };
+      return reply.status(e.statusCode ?? 500).send({ error: e.message ?? "chat_failed" });
+    }
+  });
+
   /** POST /ai/generate-email — generate an HTML email body + subject from a natural-language prompt */
   app.post("/ai/generate-email", async (request, reply) => {
     const parse = generateEmailSchema.safeParse(request.body);
@@ -146,7 +247,15 @@ export async function aiRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: parse.error.errors[0]?.message ?? "Invalid request" });
     }
     try {
-      const result = await aiService.generateEmail(parse.data.prompt, app.config.OPENROUTER_API_KEY);
+      const workspaceId = request.workspaceId ?? "unknown";
+      const insights = app.db
+        ? insightsToPrompt(await computeOutcomeInsights(app.db, workspaceId).catch(() => null))
+        : null;
+      const result = await aiService.generateEmail(
+        parse.data.prompt,
+        app.config.OPENROUTER_API_KEY,
+        insights
+      );
       return reply.send(result);
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };

@@ -1,5 +1,10 @@
 import type { Db } from "@skout/db";
-import { EnrichmentEngine, createRegistryFromConfig, type PalConfig } from "@skout/pal";
+import {
+  EnrichmentEngine,
+  createRegistryFromConfig,
+  type EmailVerifier,
+  type PalConfig,
+} from "@skout/pal";
 import type { Env } from "../../config/env.js";
 import { getWorkspaceIcp } from "../icp.service.js";
 import { writeScoreToOpenSearch } from "../score-opensearch.js";
@@ -67,6 +72,25 @@ function buildEngine(config: Env, workspaceOverrides: Partial<PalConfig> = {}): 
 
 export function getStore(db: Db | null): EnrichmentStore {
   return db ? new DbStore(db) : memoryStore;
+}
+
+/**
+ * Resolves the highest-priority email verifier for a workspace (workspace BYOK key first,
+ * then platform key, then a stub). Reuses the same provider waterfall as enrichment so bulk
+ * list verification and inline enrichment behave identically.
+ */
+export async function resolveEmailVerifier(
+  db: Db | null,
+  config: Env,
+  workspaceId: string
+): Promise<EmailVerifier> {
+  const platform = palConfigFromEnv(config);
+  let workspacePal: Partial<PalConfig> = {};
+  if (db) {
+    const integrationSvc = createIntegrationService(db, config);
+    workspacePal = await integrationSvc.loadWorkspacePalConfig(workspaceId);
+  }
+  return createRegistryFromConfig(platform, workspacePal).emailVerifiers[0]!;
 }
 
 /** Build a request-scoped EnrichmentService bound to the right store + providers. */
