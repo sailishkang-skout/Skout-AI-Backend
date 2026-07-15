@@ -94,7 +94,7 @@ export const authPlugin = fp(async (app) => {
     if (request.method === "OPTIONS") {
       return;
     }
-    if (isHealthRoute(request.url) || isPublicRoute(request.url)) {
+    if (isHealthRoute(request.url) || isPublicRoute(request.url, request.method)) {
       return;
     }
 
