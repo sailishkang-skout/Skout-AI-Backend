@@ -148,6 +148,13 @@
       "when": 1784500000000,
       "tag": "0020_workspace_invites",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1784600000000,
+      "tag": "0021_email_verifications",
+      "breakpoints": true
     }
   ]
 }

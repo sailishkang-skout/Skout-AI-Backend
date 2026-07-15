@@ -50,6 +50,11 @@ vi.mock("../services/ai.service.js", () => ({
   },
 }));
 
+const mockSend = vi.fn().mockResolvedValue({ sent: true, threadId: "t-1", to: "ada@acme.com" });
+vi.mock("../services/ai-draft-send.service.js", () => ({
+  sendApprovedDraftEmail: (...args: unknown[]) => mockSend(...args),
+}));
+
 async function buildTestApp(): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   app.decorate("config", { OPENROUTER_API_KEY: "test-key" } as never);
@@ -97,11 +102,25 @@ describe("ai routes — draft review", () => {
     expect(res.json().id).toBe(draft.id);
   });
 
-  it("POST /ai/drafts/:id/approve approves", async () => {
+  it("POST /ai/drafts/:id/approve approves and sends a standalone draft", async () => {
     const res = await app.inject({ method: "POST", url: `/ai/drafts/${draft.id}/approve` });
     expect(res.statusCode).toBe(200);
     expect(res.json().status).toBe("approved");
     expect(mockDrafts.approve).toHaveBeenCalledWith("ws-1", draft.id, "u-1");
+    // Standalone draft (no enrollmentStepId, no threadId) is delivered on approval.
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    expect(res.json().send).toEqual({ sent: true, threadId: "t-1", to: "ada@acme.com" });
+  });
+
+  it("POST /ai/drafts/:id/approve does not send an enrollment-linked draft", async () => {
+    mockDrafts.approve.mockResolvedValueOnce({
+      ...draft,
+      status: "approved",
+      enrollmentStepId: "estep-1",
+    });
+    const res = await app.inject({ method: "POST", url: `/ai/drafts/${draft.id}/approve` });
+    expect(res.statusCode).toBe(200);
+    expect(mockSend).not.toHaveBeenCalled();
   });
 
   it("POST /ai/drafts/:id/reject rejects", async () => {
@@ -127,7 +146,8 @@ describe("ai routes — draft review", () => {
       payload: { ids: [draft.id] },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ approved: 1, skipped: 0 });
+    // getById mock still reports "pending_review", so no standalone send is attempted here.
+    expect(res.json()).toEqual({ approved: 1, skipped: 0, sent: 0, sendFailures: [] });
   });
 
   it("POST /ai/drafts creates from OpenRouter when body omitted", async () => {

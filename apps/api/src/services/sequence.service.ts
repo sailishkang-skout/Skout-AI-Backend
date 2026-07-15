@@ -84,6 +84,78 @@ export class SequenceService {
     return row!;
   }
 
+  /** Atomically creates a draft sequence with all its steps (used by AI generation). */
+  async createGeneratedSequence(
+    workspaceId: string,
+    generated: {
+      name: string;
+      steps: {
+        stepType: StepType;
+        delayDays: number;
+        delayUnit?: "minutes" | "hours" | "days" | "weeks";
+        linkedinAction?: "connect" | "message";
+        subject?: string | null;
+        bodyTemplate?: string | null;
+      }[];
+    }
+  ) {
+    return this.db.transaction(async (tx) => {
+      const [seq] = await tx
+        .insert(sequences)
+        .values({ workspaceId, name: generated.name, status: "draft" })
+        .returning();
+      const steps = [];
+      for (let i = 0; i < generated.steps.length; i++) {
+        const s = generated.steps[i]!;
+        const [row] = await tx
+          .insert(sequenceSteps)
+          .values({
+            sequenceId: seq!.id,
+            stepOrder: i + 1,
+            stepType: s.stepType,
+            delayDays: s.delayDays,
+            delayUnit: s.delayUnit ?? "days",
+            linkedinAction:
+              s.stepType === "linkedin" ? (s.linkedinAction ?? "connect") : null,
+            subject: s.subject ?? null,
+            bodyTemplate: s.bodyTemplate ?? null,
+          })
+          .returning();
+        steps.push(row!);
+      }
+      return { ...seq!, steps };
+    });
+  }
+
+  /** Recent sequences with their email steps — style reference for AI generation. */
+  async getStyleExamples(workspaceId: string, limit = 3) {
+    const recent = await this.db
+      .select({ id: sequences.id, name: sequences.name })
+      .from(sequences)
+      .where(eq(sequences.workspaceId, workspaceId))
+      .orderBy(desc(sequences.createdAt))
+      .limit(limit);
+    if (recent.length === 0) return [];
+
+    const ids = recent.map((s) => s.id);
+    const steps = await this.db
+      .select({
+        sequenceId: sequenceSteps.sequenceId,
+        stepOrder: sequenceSteps.stepOrder,
+        stepType: sequenceSteps.stepType,
+        subject: sequenceSteps.subject,
+        bodyTemplate: sequenceSteps.bodyTemplate,
+      })
+      .from(sequenceSteps)
+      .where(inArray(sequenceSteps.sequenceId, ids))
+      .orderBy(asc(sequenceSteps.stepOrder));
+
+    return recent.map((s) => ({
+      name: s.name,
+      steps: steps.filter((st) => st.sequenceId === s.id),
+    }));
+  }
+
   async getSequenceById(workspaceId: string, id: string) {
     const [seq] = await this.db
       .select()
