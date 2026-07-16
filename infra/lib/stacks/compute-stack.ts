@@ -138,7 +138,7 @@ export class ComputeStack extends Stack {
       this.loadBalancer.connections.allowFrom(
         ec2.Peer.prefixList(cfPrefixListId),
         ec2.Port.tcp(80),
-        "CloudFront origin-facing IPs → ALB port 80"
+        "CloudFront origin-facing IPs to ALB port 80"
       );
     }
 
