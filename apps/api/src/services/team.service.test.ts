@@ -232,7 +232,10 @@ describe("createTeamService", () => {
     });
 
     it("throws 409 when invite already accepted", async () => {
-      const db = makeMockDb({ selects: [[{ ...INVITE_ROW, acceptedAt: new Date() }]] });
+      const db = makeMockDb({ selects: [
+        [{ ...INVITE_ROW, acceptedAt: new Date() }],  // invite lookup
+        [],                                            // alreadyMember → not a member → throw 409
+      ] });
       const svc = createTeamService(db as any);
       await expect(svc.acceptInvite("abc123", "uid", "new@acme.com"))
         .rejects.toMatchObject({ statusCode: 409 });
