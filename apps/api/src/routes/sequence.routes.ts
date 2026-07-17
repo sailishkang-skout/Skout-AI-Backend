@@ -2,8 +2,33 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { enrollSequenceSchema } from "@skout/shared";
 import { buildSequenceService, STEP_TYPES, SEQUENCE_STATUSES } from "../services/sequence.service.js";
+import { generateSequenceForWorkspace } from "../services/sequence-generate.service.js";
 import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.js";
+import { dispatchWebhookEvent } from "../services/webhook.service.js";
 import { HttpError } from "../utils/http.js";
+
+const generateSequenceSchema = z.object({
+  goal: z.string().min(1).max(600),
+  listId: z.string().uuid().optional(),
+  channels: z.array(z.enum(["email", "linkedin"])).min(1).max(2).optional(),
+});
+
+const fromStepsSchema = z.object({
+  name: z.string().min(1).max(120),
+  steps: z
+    .array(
+      z.object({
+        stepType: z.enum(STEP_TYPES),
+        delayDays: z.number().int().min(0).default(0),
+        delayUnit: z.enum(["minutes", "hours", "days", "weeks"]).default("days"),
+        linkedinAction: z.enum(["connect", "message"]).optional(),
+        subject: z.string().max(500).nullable().optional(),
+        bodyTemplate: z.string().nullable().optional(),
+      })
+    )
+    .min(1)
+    .max(12),
+});
 
 const createSequenceSchema = z.object({
   name: z.string().min(1).max(255),
@@ -18,9 +43,14 @@ const updateSequenceSchema = z
     message: "At least one of name or status is required",
   });
 
+const DELAY_UNITS = ["minutes", "hours", "days", "weeks"] as const;
+const LINKEDIN_ACTIONS = ["connect", "message"] as const;
+
 const createStepSchema = z.object({
   stepType: z.enum(STEP_TYPES),
   delayDays: z.number().int().min(0).default(0),
+  delayUnit: z.enum(DELAY_UNITS).default("days"),
+  linkedinAction: z.enum(LINKEDIN_ACTIONS).optional(),
   subject: z.string().max(500).optional(),
   bodyTemplate: z.string().optional(),
 });
@@ -29,6 +59,8 @@ const updateStepSchema = z
   .object({
     stepType: z.enum(STEP_TYPES).optional(),
     delayDays: z.number().int().min(0).optional(),
+    delayUnit: z.enum(DELAY_UNITS).optional(),
+    linkedinAction: z.enum(LINKEDIN_ACTIONS).nullable().optional(),
     subject: z.string().max(500).nullable().optional(),
     bodyTemplate: z.string().nullable().optional(),
   })
@@ -57,6 +89,32 @@ export async function sequenceRoutes(app: FastifyInstance) {
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const { name } = createSequenceSchema.parse(request.body ?? {});
     const sequence = await svc.createSequence(workspaceId, name);
+    return reply.status(201).send(sequence);
+  });
+
+  // POST /sequences/generate — AI-generate a draft multi-step cadence from a goal + list.
+  app.post("/sequences/generate", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
+    const body = generateSequenceSchema.parse(request.body ?? {});
+    try {
+      const sequence = await generateSequenceForWorkspace(app.db, app.config, workspaceId, body);
+      return reply.status(201).send(sequence);
+    } catch (err: unknown) {
+      const e = err as { statusCode?: number; message?: string };
+      return reply
+        .status(e.statusCode ?? 500)
+        .send({ error: e.message ?? "sequence_generation_failed" });
+    }
+  });
+
+  // POST /sequences/from-steps — persist a provided cadence as a draft sequence (chat "Apply").
+  app.post("/sequences/from-steps", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = buildSequenceService(app.db);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    const body = fromStepsSchema.parse(request.body ?? {});
+    const sequence = await svc.createGeneratedSequence(workspaceId, body);
     return reply.status(201).send(sequence);
   });
 
@@ -237,6 +295,16 @@ export async function sequenceRoutes(app: FastifyInstance) {
         ).catch((err: unknown) => {
           app.log.error({ err, enrollmentId: e.enrollmentId }, "Failed to enqueue advance job");
         });
+
+        if (app.db) {
+          dispatchWebhookEvent(app.db, app.config, "prospect.enrolled", workspaceId, {
+            enrollmentId: e.enrollmentId,
+            sequenceId: id,
+            prospectId: e.prospectId,
+          }).catch((err: unknown) => {
+            app.log.warn({ err, enrollmentId: e.enrollmentId }, "webhook dispatch failed for prospect.enrolled");
+          });
+        }
       }
 
       return reply.status(202).send({
@@ -250,5 +318,16 @@ export async function sequenceRoutes(app: FastifyInstance) {
       }
       throw err;
     }
+  });
+
+  // GET /sequences/:id/lists — lists that have enrollments in this sequence
+  app.get("/sequences/:id/lists", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = buildSequenceService(app.db);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    const data = await svc.listEnrolledLists(workspaceId, id);
+    if (!data) return reply.status(404).send({ error: "not_found" });
+    return reply.send({ workspaceId, data, total: data.length });
   });
 }

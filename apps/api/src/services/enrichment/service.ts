@@ -82,7 +82,8 @@ export class EnrichmentService {
     private readonly aiTimeoutMs?: number,
     private readonly loadIcp?: (workspaceId: string) => Promise<IcpConfig>,
     private readonly beforeWrite?: (workspaceId: string) => Promise<void>,
-    private readonly afterScore?: (result: ScoreResult) => Promise<void>
+    private readonly afterScore?: (result: ScoreResult) => Promise<void>,
+    private readonly openrouterApiKey?: string
   ) {}
 
   private async prepareWorkspace(workspaceId: string): Promise<void> {
@@ -221,7 +222,7 @@ export class EnrichmentService {
       companyDomain: scored.companyDomain,
       signals: scored.signals,
     };
-    const result = await scoreProspect(this.aiServiceUrl, input, resolvedIcp, this.aiTimeoutMs);
+    const result = await scoreProspect(this.aiServiceUrl, input, resolvedIcp, this.aiTimeoutMs, this.openrouterApiKey);
     await this.store.deductCredits(workspaceId, SCORE_CREDIT_COST, "ai_score", prospectId);
     const reasoning =
       result.painPoints.length > 0

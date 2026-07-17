@@ -23,8 +23,8 @@ function redisConnection(redisUrl: string) {
 }
 
 export async function startReplyTagWorker(config: Env): Promise<() => Promise<void>> {
-  if (!config.DATABASE_URL || !config.OPENAI_API_KEY) {
-    const reason = !config.DATABASE_URL ? "DATABASE_URL" : "OPENAI_API_KEY";
+  if (!config.DATABASE_URL || !config.OPENROUTER_API_KEY) {
+    const reason = !config.DATABASE_URL ? "DATABASE_URL" : "OPENROUTER_API_KEY";
     log.warn(`Reply-tag worker not started — ${reason} not set`);
     return async () => {};
   }
@@ -41,7 +41,7 @@ export async function startReplyTagWorker(config: Env): Promise<() => Promise<vo
     async (job) => {
       const { threadId, bodyText } = job.data;
 
-      const tag = await tagReply(bodyText, config.OPENAI_API_KEY);
+      const tag = await tagReply(bodyText, config.OPENROUTER_API_KEY);
       if (!tag) {
         log.debug("reply-tag: no tag returned, skipping update", { threadId });
         return;

@@ -164,7 +164,7 @@ jobs:
         working-directory: infra
         env:
           IMAGE_TAG: ${{ steps.meta.outputs.tag }}
-        run: pnpm cdk deploy --all -c env=dev -c imageTag=$IMAGE_TAG --require-approval never
+        run: pnpm cdk deploy --all -c env=dev -c imageTag=$IMAGE_TAG -c httpsMode=apigateway --require-approval never
 
       - name: Run database migrations (ECS one-off task)
         run: bash scripts/ecs-run-migrations.sh SkoutDev

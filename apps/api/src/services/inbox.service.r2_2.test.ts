@@ -184,7 +184,8 @@ describe("ingestInboundMessage — R2.2: statusChangedAt set on transitions", ()
     db.update = vi.fn(() => {
       const c: Record<string, ReturnType<typeof vi.fn>> = {};
       c.set = vi.fn((vals: Record<string, unknown>) => {
-        threadUpdateArgs = vals;
+        // Capture the thread status update (not bounceCount counter update)
+        if ("status" in vals) threadUpdateArgs = vals;
         return c;
       });
       c.where = vi.fn().mockReturnValue(c);

@@ -11,9 +11,10 @@ import {
   resumeInbox,
   deleteInbox,
   listDomains,
-  createDomain,
+  addDomain,
   removeDomain,
   getDomainDns,
+  verifyDomain,
   getDeliverabilityMetrics,
   buildInboxService,
 } from "../services/inbox.service.js";
@@ -85,6 +86,7 @@ const updateInboxBody = z
     displayName: z.string().max(255).optional(),
     dailySendLimit: z.number().int().positive().optional(),
     status: z.enum(["active", "paused", "inactive"]).optional(),
+    sendingDomainId: z.string().uuid().nullable().optional(),
   })
   .refine((d) => Object.values(d).some((v) => v !== undefined), {
     message: "At least one field is required",
@@ -125,6 +127,8 @@ const listThreadsQuerySchema = z.object({
     .string()
     .optional()
     .transform((v) => v === "true" || v === "1"),
+  inboxId: z.string().uuid().optional(),
+  folder: z.enum(["all", "inbound", "sent"]).optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
   offset: z.coerce.number().int().min(0).optional(),
 });
@@ -305,7 +309,7 @@ export async function inboxRoutes(app: FastifyInstance) {
     const workspaceId = request.workspaceId ?? "unknown";
     if (!db) return reply.status(503).send({ error: "database_unavailable" });
     const { domain } = z.object({ domain: z.string().min(1) }).parse(request.body ?? {});
-    const row = await createDomain(db, workspaceId, domain);
+    const row = await addDomain(db, workspaceId, domain);
     return reply.status(201).send(row);
   });
 
@@ -329,6 +333,70 @@ export async function inboxRoutes(app: FastifyInstance) {
     return reply.send(result);
   });
 
+  // POST /domains/:id/verify — live DNS check, updates dns_records + status
+  app.post("/domains/:id/verify", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    if (!db) return reply.status(503).send({ error: "database_unavailable" });
+    const result = await verifyDomain(db, workspaceId, id);
+    if (!result) return reply.status(404).send({ error: "domain_not_found" });
+    return reply.send(result);
+  });
+
+  // POST /domains/:id/warmup/start
+  app.post("/domains/:id/warmup/start", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    if (!db) return reply.status(503).send({ error: "database_unavailable" });
+    // Update all inboxes linked to this sending domain
+    const { schema: s } = await import("@skout/db");
+    await db
+      .update(s.inboxes)
+      .set({ warmupStatus: "warming", warmupDay: 0, warmupStartedAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(s.inboxes.workspaceId, workspaceId), eq(s.inboxes.sendingDomainId, id)));
+    return reply.send({ ok: true });
+  });
+
+  // POST /domains/:id/warmup/stop
+  app.post("/domains/:id/warmup/stop", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    if (!db) return reply.status(503).send({ error: "database_unavailable" });
+    const { schema: s } = await import("@skout/db");
+    await db
+      .update(s.inboxes)
+      .set({ warmupStatus: "cold", updatedAt: new Date() })
+      .where(and(eq(s.inboxes.workspaceId, workspaceId), eq(s.inboxes.sendingDomainId, id)));
+    return reply.send({ ok: true });
+  });
+
+  // POST /domains/:id/blacklist-check — manual trigger
+  app.post("/domains/:id/blacklist-check", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    if (!db) return reply.status(503).send({ error: "database_unavailable" });
+    const { checkDomainBlacklist } = await import("../services/blacklist-check.service.js");
+    const { schema: s } = await import("@skout/db");
+    const [row] = await db
+      .select({ domain: s.sendingDomains.domain })
+      .from(s.sendingDomains)
+      .where(and(eq(s.sendingDomains.workspaceId, workspaceId), eq(s.sendingDomains.id, id)))
+      .limit(1);
+    if (!row) return reply.status(404).send({ error: "domain_not_found" });
+    const result = await checkDomainBlacklist(row.domain);
+    await db
+      .update(s.sendingDomains)
+      .set({
+        blacklistStatus: result.status,
+        blacklistedOn: result.listedOn,
+        lastCheckedAt: new Date(),
+        checkError: result.error ?? null,
+        updatedAt: new Date(),
+      })
+      .where(eq(s.sendingDomains.id, id));
+    return reply.send(result);
+  });
+
   // GET /deliverability/metrics — warmup + bounce/spam chart data + summary
   app.get("/deliverability/metrics", async (request, reply) => {
     const workspaceId = request.workspaceId ?? "unknown";
@@ -341,12 +409,14 @@ export async function inboxRoutes(app: FastifyInstance) {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = buildInboxService(db, app.config);
     if (!svc) return reply.send({ workspaceId, data: [], total: 0 });
-    const { status, unread, limit, offset } = listThreadsQuerySchema.parse(request.query ?? {});
+    const { status, unread, inboxId, folder, limit, offset } = listThreadsQuerySchema.parse(request.query ?? {});
     try {
       return reply.send(
         await svc.listThreads(workspaceId, {
           status: status as ThreadStatus | undefined,
           unreadOnly: unread,
+          inboxId,
+          folder: folder === "all" ? undefined : folder,
           limit,
           offset,
         })

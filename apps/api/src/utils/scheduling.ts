@@ -2,6 +2,8 @@
 const BIZ_START_HOUR = 9;
 const BIZ_END_HOUR = 17;
 
+export type DelayUnit = "minutes" | "hours" | "days" | "weeks";
+
 export function isBusinessHour(date: Date): boolean {
   const day = date.getUTCDay(); // 0=Sun … 6=Sat
   const hour = date.getUTCHours();
@@ -44,10 +46,34 @@ export function addCalendarDays(date: Date, days: number): Date {
   return d;
 }
 
+export function delayToMs(value: number, unit: DelayUnit = "days"): number {
+  const n = Math.max(0, value);
+  switch (unit) {
+    case "minutes":
+      return n * 60_000;
+    case "hours":
+      return n * 3_600_000;
+    case "weeks":
+      return n * 7 * 86_400_000;
+    case "days":
+    default:
+      return n * 86_400_000;
+  }
+}
+
 /**
- * Returns the scheduledAt for a step:
- *   nextBusinessHour(referenceDate + delayDays calendar days)
+ * Returns the scheduledAt for a step.
+ * - days / weeks: calendar delay then snap to next business hour
+ * - minutes / hours: exact wall-clock delay (no business-hour snap) so short waits work for testing
  */
-export function stepScheduledAt(referenceDate: Date, delayDays: number): Date {
-  return nextBusinessHour(addCalendarDays(referenceDate, delayDays));
+export function stepScheduledAt(
+  referenceDate: Date,
+  delayValue: number,
+  delayUnit: DelayUnit = "days"
+): Date {
+  if (delayUnit === "minutes" || delayUnit === "hours") {
+    return new Date(referenceDate.getTime() + delayToMs(delayValue, delayUnit));
+  }
+  const calendarDays = delayUnit === "weeks" ? delayValue * 7 : delayValue;
+  return nextBusinessHour(addCalendarDays(referenceDate, calendarDays));
 }

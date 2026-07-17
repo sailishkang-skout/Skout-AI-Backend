@@ -1,4 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import { eq } from "drizzle-orm";
+import { schema } from "@skout/db";
 import { createBillingService } from "../services/billing.service.js";
 import { errorResponse } from "../utils/http.js";
 
@@ -14,7 +16,8 @@ export async function billingRoutes(app: FastifyInstance) {
     return;
   }
 
-  const billing = createBillingService(app.db, app.config);
+  const db = app.db;
+  const billing = createBillingService(db, app.config);
 
   app.get("/billing/config", async (_request, reply) => {
     return reply.send({ data: billing.getConfig() });
@@ -77,6 +80,45 @@ export async function billingRoutes(app: FastifyInstance) {
       app.log.error({ err }, "Razorpay payment verification failed");
       return reply.code(500).send(errorResponse("Could not verify payment", 500));
     }
+  });
+
+  /** List paid Razorpay invoices, grouped by calendar month. */
+  app.get("/billing/invoices", async (request, reply) => {
+    if (!request.workspaceId) {
+      return reply.code(401).send(errorResponse("Not authenticated", 401));
+    }
+    const data = await billing.listInvoices(request.workspaceId);
+    return reply.send({ data });
+  });
+
+  /** Download a single paid invoice as HTML (print / Save as PDF). */
+  app.get("/billing/invoices/:id", async (request, reply) => {
+    if (!request.workspaceId) {
+      return reply.code(401).send(errorResponse("Not authenticated", 401));
+    }
+    const { id } = request.params as { id: string };
+    const format = ((request.query as { format?: string })?.format ?? "json").toLowerCase();
+    const invoice = await billing.getInvoice(request.workspaceId, id);
+    if (!invoice) {
+      return reply.code(404).send(errorResponse("Invoice not found", 404));
+    }
+
+    if (format === "html" || format === "download") {
+      const [ws] = await db
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.id, request.workspaceId))
+        .limit(1);
+      const html = billing.renderInvoiceHtml(invoice, {
+        name: ws?.name ?? "Workspace",
+        id: request.workspaceId,
+      });
+      reply.header("Content-Type", "text/html; charset=utf-8");
+      reply.header("Content-Disposition", `attachment; filename="${invoice.invoiceNumber}.html"`);
+      return reply.send(html);
+    }
+
+    return reply.send({ data: invoice });
   });
 
   app.post("/billing/webhooks/razorpay", async (request: FastifyRequest, reply) => {

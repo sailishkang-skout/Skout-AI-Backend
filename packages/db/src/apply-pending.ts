@@ -66,6 +66,141 @@ try {
       ADD COLUMN IF NOT EXISTS "oauth_token_expires_at" timestamp with time zone,
       ADD COLUMN IF NOT EXISTS "oauth_scope" text`);
 
+  // 0014 — domain warmup + blacklist monitoring columns
+  await run("0014 blacklist columns on sending_domains", () => sql`
+    ALTER TABLE "sending_domains"
+      ADD COLUMN IF NOT EXISTS "blacklist_status" text NOT NULL DEFAULT 'clean',
+      ADD COLUMN IF NOT EXISTS "blacklisted_on"   jsonb NOT NULL DEFAULT '[]',
+      ADD COLUMN IF NOT EXISTS "last_checked_at"  timestamptz,
+      ADD COLUMN IF NOT EXISTS "check_error"      text`);
+
+  await run("0014 warmup ramp columns on inboxes", () => sql`
+    ALTER TABLE "inboxes"
+      ADD COLUMN IF NOT EXISTS "warmup_day"        integer NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS "warmup_started_at" timestamptz`);
+
+  // 0015 — R7.2 outbound webhooks (alter existing stub tables)
+  await run("0015 webhook_endpoints new columns", () => sql`
+    ALTER TABLE "webhook_endpoints"
+      ADD COLUMN IF NOT EXISTS "description" text,
+      ADD COLUMN IF NOT EXISTS "enabled" boolean NOT NULL DEFAULT true,
+      ADD COLUMN IF NOT EXISTS "event_types" jsonb NOT NULL DEFAULT '[]'`);
+
+  await run("0015 webhook_endpoints drop old stubs", () => sql`
+    ALTER TABLE "webhook_endpoints"
+      DROP COLUMN IF EXISTS "events",
+      DROP COLUMN IF EXISTS "status"`);
+
+  await run("0015 webhook_deliveries new columns", () => sql`
+    ALTER TABLE "webhook_deliveries"
+      ADD COLUMN IF NOT EXISTS "workspace_id" uuid,
+      ADD COLUMN IF NOT EXISTS "event_id" text NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS "attempt" integer NOT NULL DEFAULT 1,
+      ADD COLUMN IF NOT EXISTS "status_code" integer,
+      ADD COLUMN IF NOT EXISTS "response_body" text,
+      ADD COLUMN IF NOT EXISTS "duration_ms" integer,
+      ADD COLUMN IF NOT EXISTS "error_message" text,
+      ADD COLUMN IF NOT EXISTS "delivered_at" timestamptz`);
+
+  await run("0015 webhook_deliveries drop old stubs", () => sql`
+    ALTER TABLE "webhook_deliveries"
+      DROP COLUMN IF EXISTS "attempts",
+      DROP COLUMN IF EXISTS "response_status",
+      DROP COLUMN IF EXISTS "last_attempt_at"`);
+
+  await run("0017 sequence_steps.delay_unit", () => sql`
+    ALTER TABLE "sequence_steps"
+      ADD COLUMN IF NOT EXISTS "delay_unit" text DEFAULT 'days' NOT NULL`);
+
+  await run("0018 drop old enrollment unique", () => sql`
+    ALTER TABLE "sequence_enrollments" DROP CONSTRAINT IF EXISTS "sequence_enrollments_sequence_id_prospect_id_unique"`);
+
+  await run("0018 drop old enrollment unique index", () => sql`
+    DROP INDEX IF EXISTS "sequence_enrollments_sequence_id_prospect_id_unique"`);
+
+  await run("0018 active enrollment unique index", () => sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS "sequence_enrollments_active_unique"
+      ON "sequence_enrollments" ("sequence_id", "prospect_id")
+      WHERE "status" = 'active'`);
+
+  await run("0018 sequence_steps.linkedin_action", () => sql`
+    ALTER TABLE "sequence_steps"
+      ADD COLUMN IF NOT EXISTS "linkedin_action" text`);
+
+  await run("0018 linkedin_outreach_jobs table", () => sql`
+    CREATE TABLE IF NOT EXISTS "linkedin_outreach_jobs" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "workspace_id" uuid NOT NULL REFERENCES "workspaces"("id") ON DELETE cascade,
+      "enrollment_id" uuid NOT NULL REFERENCES "sequence_enrollments"("id") ON DELETE cascade,
+      "enrollment_step_id" uuid NOT NULL REFERENCES "sequence_enrollment_steps"("id") ON DELETE cascade,
+      "prospect_id" text NOT NULL,
+      "linkedin_url" text NOT NULL,
+      "action" text NOT NULL,
+      "message" text,
+      "status" text NOT NULL DEFAULT 'pending',
+      "failure_reason" text,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "completed_at" timestamp with time zone,
+      CONSTRAINT "linkedin_outreach_jobs_enrollment_step_id_unique" UNIQUE ("enrollment_step_id")
+    )`);
+
+  await run("0018 linkedin_outreach_jobs pending index", () => sql`
+    CREATE INDEX IF NOT EXISTS "linkedin_outreach_jobs_pending_idx"
+      ON "linkedin_outreach_jobs" ("workspace_id", "status", "created_at")
+      WHERE "status" = 'pending'`);
+
+  await run("0019 linkedin_accounts table", () => sql`
+    CREATE TABLE IF NOT EXISTS "linkedin_accounts" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "workspace_id" uuid NOT NULL REFERENCES "workspaces"("id") ON DELETE cascade,
+      "unipile_account_id" text NOT NULL,
+      "display_name" text,
+      "linkedin_url" text,
+      "status" text NOT NULL DEFAULT 'active',
+      "daily_send_limit" integer NOT NULL DEFAULT 40,
+      "sent_count" integer NOT NULL DEFAULT 0,
+      "last_used_at" timestamp with time zone,
+      "last_error" text,
+      "is_default" boolean NOT NULL DEFAULT false,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+    )`);
+
+  await run("0019 linkedin_accounts unique", () => sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS "linkedin_accounts_workspace_unipile_unique"
+      ON "linkedin_accounts" ("workspace_id", "unipile_account_id")`);
+
+  // 0020 — R8.3 workspace invites
+  await run("0020 workspace_invites table", () => sql`
+    CREATE TABLE IF NOT EXISTS "workspace_invites" (
+      "id"                  uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "workspace_id"        uuid NOT NULL REFERENCES "public"."workspaces"("id") ON DELETE CASCADE,
+      "invited_by_user_id"  uuid REFERENCES "public"."users"("id") ON DELETE SET NULL,
+      "email"               text NOT NULL,
+      "role"                text NOT NULL DEFAULT 'member',
+      "token"               text NOT NULL,
+      "expires_at"          timestamp with time zone NOT NULL,
+      "accepted_at"         timestamp with time zone,
+      "created_at"          timestamp with time zone NOT NULL DEFAULT now(),
+      CONSTRAINT "workspace_invites_token_unique" UNIQUE("token")
+    )`);
+
+  // 0021 — email deliverability verdicts (bulk list verification before send)
+  await run("0021 email_verifications table", () => sql`
+    CREATE TABLE IF NOT EXISTS "email_verifications" (
+      "workspace_id"          uuid NOT NULL REFERENCES "public"."workspaces"("id") ON DELETE CASCADE,
+      "prospect_id"           text NOT NULL,
+      "email"                 text NOT NULL,
+      "status"                text NOT NULL,
+      "deliverability_score"  integer NOT NULL DEFAULT 0,
+      "catch_all"             boolean NOT NULL DEFAULT false,
+      "risky"                 boolean NOT NULL DEFAULT false,
+      "provider"              text,
+      "verified_at"           timestamp with time zone NOT NULL DEFAULT now(),
+      CONSTRAINT "email_verifications_workspace_id_prospect_id_pk" PRIMARY KEY("workspace_id","prospect_id")
+    )`);
+
 } finally {
   await sql.end();
 }

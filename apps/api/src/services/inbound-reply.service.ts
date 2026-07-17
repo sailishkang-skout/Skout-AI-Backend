@@ -3,11 +3,18 @@ import { createDb, schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { getReplyTagQueue } from "../workers/reply-tag.queue.js";
+import { dispatchWebhookEvent } from "./webhook.service.js";
 
 const log = createLogger("inbound-reply.service");
 
-const { inboxThreads, inboxMessages, sequenceEnrollments, sequenceEnrollmentSteps, suppressions } =
-  schema;
+const {
+  inboxThreads,
+  inboxMessages,
+  sequenceEnrollments,
+  sequenceEnrollmentSteps,
+  suppressions,
+  inboxes,
+} = schema;
 
 type DbClient = ReturnType<typeof createDb>["db"];
 
@@ -125,7 +132,7 @@ export async function ingestInboundMessage(
   workspaceId: string,
   inboxId: string,
   payload: InboundMessagePayload,
-  config?: Pick<Env, "REDIS_URL" | "OPENAI_API_KEY">
+  config?: Pick<Env, "REDIS_URL" | "OPENROUTER_API_KEY">
 ): Promise<void> {
   // Deduplicate: skip if we've already stored this RFC 5322 message
   if (payload.messageId) {
@@ -281,6 +288,11 @@ export async function ingestInboundMessage(
     }
 
     if (classification === "bounce") {
+      // Keep deliverability counters in sync with classified bounces
+      await tx
+        .update(inboxes)
+        .set({ bounceCount: sql`${inboxes.bounceCount} + 1`, updatedAt: now })
+        .where(eq(inboxes.id, inboxId));
       // Suppress the bounced address to stop future sends
       await tx
         .insert(suppressions)
@@ -295,7 +307,7 @@ export async function ingestInboundMessage(
     threadId &&
     payload.bodyText &&
     config?.REDIS_URL &&
-    config?.OPENAI_API_KEY
+    config?.OPENROUTER_API_KEY
   ) {
     try {
       const q = getReplyTagQueue(config as Parameters<typeof getReplyTagQueue>[0]);
@@ -317,4 +329,16 @@ export async function ingestInboundMessage(
     classification,
     messageId: normalizedMessageId,
   });
+
+  if (classification === "human" && config?.REDIS_URL) {
+    dispatchWebhookEvent(db, config as Env, "reply.received", workspaceId, {
+      threadId: threadId ?? null,
+      inboxId,
+      enrollmentId,
+      prospectId,
+      fromAddress: payload.fromAddress,
+      subject: payload.subject ?? null,
+      messageId: normalizedMessageId,
+    }).catch((err: unknown) => log.warn("webhook dispatch failed", { err, event: "reply.received" }));
+  }
 }

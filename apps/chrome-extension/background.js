@@ -1,6 +1,15 @@
 import { saveAuthToken, getStoredAuth, ensureSession, proactiveAuthRefresh, ensureFreshAuth } from "./auth.js";
 import { readLinkedInProfile, injectLinkedInBridge } from "./linkedin-profile.js";
-import { activateProspect, addProspectToList, activateProspects, addProspectBatchToList, getListMemberIds, enrichProspect, scoreProspect, resolveProspectId } from "./api.js";
+import {
+  activateProspect,
+  addProspectToList,
+  activateProspects,
+  addProspectBatchToList,
+  getListMemberIds,
+  enrichProspect,
+  scoreProspect,
+  resolveProspectId,
+} from "./api.js";
 import { friendlyTabError, isUsableTab, isUsableTabUrl, nameFromLinkedInUrl } from "./tab-utils.js";
 import { getLists, prefetchLists, saveLastListId, getLastListId } from "./lists-cache.js";
 import { log, logError, timeStep, withTimeout } from "./debug.js";
@@ -67,6 +76,7 @@ chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => 
 const AUTH_REFRESH_ALARM = "skout-auth-refresh";
 
 chrome.alarms.create(AUTH_REFRESH_ALARM, { periodInMinutes: 0.75 });
+// LinkedIn sequence sends are server-side (Unipile) — no extension outreach poller.
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === AUTH_REFRESH_ALARM) {
     void proactiveAuthRefresh().catch(() => undefined);

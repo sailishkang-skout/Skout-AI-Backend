@@ -56,7 +56,11 @@ describe("markInboxUsed", () => {
     await markInboxUsed(db, "inbox-1");
 
     expect(chain.set).toHaveBeenCalledWith(
-      expect.objectContaining({ lastUsedAt: expect.any(Date), updatedAt: expect.any(Date) })
+      expect.objectContaining({
+        lastUsedAt: expect.any(Date),
+        updatedAt: expect.any(Date),
+        sentCount: expect.anything(),
+      })
     );
     expect(chain.where).toHaveBeenCalled();
   });

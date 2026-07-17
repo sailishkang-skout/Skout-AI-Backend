@@ -172,4 +172,19 @@ describe("stepScheduledAt", () => {
     expect(step2.getTime()).toBeGreaterThan(step1.getTime());
     expect(step3.getTime()).toBeGreaterThan(step2.getTime());
   });
+
+  it("minutes delay is exact wall-clock (no business-hour snap)", () => {
+    const ref = SAT(12);
+    expect(stepScheduledAt(ref, 30, "minutes").toISOString()).toBe(SAT(12, 30).toISOString());
+  });
+
+  it("hours delay is exact wall-clock", () => {
+    const ref = MON(10);
+    expect(stepScheduledAt(ref, 2, "hours").toISOString()).toBe(MON(12).toISOString());
+  });
+
+  it("weeks delay uses calendar days then business hours", () => {
+    // Fri 10:00 + 1 week = next Fri 10:00 (still biz hours)
+    expect(stepScheduledAt(FRI(10), 1, "weeks").toISOString()).toBe(utc(2026, 1, 16, 10).toISOString());
+  });
 });

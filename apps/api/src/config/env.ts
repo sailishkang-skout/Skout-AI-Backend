@@ -62,6 +62,8 @@ const envSchema = z
       .string()
       .optional()
       .transform((v) => v === "true" || v === "1"),
+    /** Default email for stub auth when no x-stub-user-email header is sent. */
+    AUTH_STUB_EMAIL: z.string().email().optional(),
     /** When true, skip business-hours check and send emails immediately (testing only). */
     BYPASS_BUSINESS_HOURS: z
       .string()
@@ -90,11 +92,16 @@ const envSchema = z
     SMART_LIST_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(120),
     CLICKHOUSE_URL: z.string().optional(),
     AI_SERVICE_URL: z.string().optional(),
-    OPENAI_API_KEY: z.string().optional(),
+    /** OpenRouter API key (preferred). Also accepts OPEN_ROUTER_API_KEY via transform. */
+    OPENROUTER_API_KEY: z.string().optional(),
+    OPEN_ROUTER_API_KEY: z.string().optional(),
     OPENCORPORATES_API_KEY: z.string().optional(),
     OPENCORPORATES_BASE_URL: z.string().default("https://api.opencorporates.com/v0.4"),
     SEC_EDGAR_BASE_URL: z.string().default("https://efts.sec.gov/LATEST/search-index"),
     LINKEDIN_ACCOUNTS_JSON: z.string().optional(),
+    /** Unipile DSN (e.g. https://api1.unipile.com:13111) for LinkedIn sequence sends. */
+    UNIPILE_DSN: z.string().url().optional(),
+    UNIPILE_API_KEY: z.string().optional(),
     INTEGRATION_ENCRYPTION_KEY: z.string().optional(),
     /** HMAC secret for signed tracking/unsubscribe tokens. Falls back to INTEGRATION_ENCRYPTION_KEY. */
     TRACKING_SIGNING_SECRET: z.string().optional(),
@@ -151,6 +158,15 @@ const envSchema = z
     API_PUBLIC_URL: z.string().optional(),
     /** Frontend origin for post-OAuth redirects. Defaults to first CORS_ORIGIN. */
     FRONTEND_URL: z.string().optional(),
+    /** Base URL used in invite-accept links (defaults to FRONTEND_URL). */
+    INVITE_BASE_URL: z.string().optional(),
+    /** From-address for transactional invite emails. */
+    INVITE_FROM_EMAIL: z.string().default("noreply@skoutai.io"),
+    /** SMTP host for transactional emails (invites). When absent, links are logged only. */
+    INVITE_SMTP_HOST: z.string().optional(),
+    INVITE_SMTP_PORT: z.coerce.number().optional(),
+    INVITE_SMTP_USER: z.string().optional(),
+    INVITE_SMTP_PASS: z.string().optional(),
     // --- Enrichment tunables. ---
     ENRICHMENT_REQUEST_TIMEOUT_MS: z.coerce.number().default(8000),
     ENRICHMENT_PHONE_SCORE_GATE: z.coerce.number().default(80),
@@ -159,6 +175,12 @@ const envSchema = z
     INBOX_BOUNCE_RATE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.05),
     INBOX_SPAM_RATE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.01),
     INBOX_MIN_SENT_BEFORE_HEALTH_CHECK: z.coerce.number().int().positive().default(20),
+    // --- Sending domain warmup. ---
+    WARMUP_MAX_DAYS: z.coerce.number().int().positive().default(30),
+    WARMUP_MAX_DAILY_LIMIT: z.coerce.number().int().positive().default(200),
+    // --- DNSBL blacklist monitoring. ---
+    DNSBL_CHECK_INTERVAL_HOURS: z.coerce.number().int().positive().default(6),
+    DNS_RESOLVER_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
   })
   .transform((data) => {
     let next = data;
@@ -171,6 +193,10 @@ const envSchema = z
     }
     if (!next.FRONTEND_URL && next.CORS_ORIGIN[0]) {
       next = { ...next, FRONTEND_URL: next.CORS_ORIGIN[0] };
+    }
+    // Alias OPEN_ROUTER_API_KEY → OPENROUTER_API_KEY (common env naming)
+    if (!next.OPENROUTER_API_KEY && next.OPEN_ROUTER_API_KEY) {
+      next = { ...next, OPENROUTER_API_KEY: next.OPEN_ROUTER_API_KEY };
     }
     return next;
   });

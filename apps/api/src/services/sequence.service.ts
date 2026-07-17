@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { HttpError } from "../utils/http.js";
@@ -11,6 +11,7 @@ const {
   sequenceEnrollmentSteps,
   sequenceTrackingEvents,
   listMembers,
+  lists,
 } = schema;
 
 const ENROLLMENT_STATUSES = ["active", "completed", "bounced", "replied"] as const;
@@ -49,6 +50,8 @@ function validateMergeTokens(template: string): void {
 export interface AddStepInput {
   stepType: StepType;
   delayDays: number;
+  delayUnit?: "minutes" | "hours" | "days" | "weeks";
+  linkedinAction?: "connect" | "message";
   subject?: string;
   bodyTemplate?: string;
 }
@@ -56,6 +59,8 @@ export interface AddStepInput {
 export interface UpdateStepInput {
   stepType?: StepType;
   delayDays?: number;
+  delayUnit?: "minutes" | "hours" | "days" | "weeks";
+  linkedinAction?: "connect" | "message" | null;
   subject?: string | null;
   bodyTemplate?: string | null;
 }
@@ -77,6 +82,78 @@ export class SequenceService {
       .values({ workspaceId, name, status: "draft" })
       .returning();
     return row!;
+  }
+
+  /** Atomically creates a draft sequence with all its steps (used by AI generation). */
+  async createGeneratedSequence(
+    workspaceId: string,
+    generated: {
+      name: string;
+      steps: {
+        stepType: StepType;
+        delayDays: number;
+        delayUnit?: "minutes" | "hours" | "days" | "weeks";
+        linkedinAction?: "connect" | "message";
+        subject?: string | null;
+        bodyTemplate?: string | null;
+      }[];
+    }
+  ) {
+    return this.db.transaction(async (tx) => {
+      const [seq] = await tx
+        .insert(sequences)
+        .values({ workspaceId, name: generated.name, status: "draft" })
+        .returning();
+      const steps = [];
+      for (let i = 0; i < generated.steps.length; i++) {
+        const s = generated.steps[i]!;
+        const [row] = await tx
+          .insert(sequenceSteps)
+          .values({
+            sequenceId: seq!.id,
+            stepOrder: i + 1,
+            stepType: s.stepType,
+            delayDays: s.delayDays,
+            delayUnit: s.delayUnit ?? "days",
+            linkedinAction:
+              s.stepType === "linkedin" ? (s.linkedinAction ?? "connect") : null,
+            subject: s.subject ?? null,
+            bodyTemplate: s.bodyTemplate ?? null,
+          })
+          .returning();
+        steps.push(row!);
+      }
+      return { ...seq!, steps };
+    });
+  }
+
+  /** Recent sequences with their email steps — style reference for AI generation. */
+  async getStyleExamples(workspaceId: string, limit = 3) {
+    const recent = await this.db
+      .select({ id: sequences.id, name: sequences.name })
+      .from(sequences)
+      .where(eq(sequences.workspaceId, workspaceId))
+      .orderBy(desc(sequences.createdAt))
+      .limit(limit);
+    if (recent.length === 0) return [];
+
+    const ids = recent.map((s) => s.id);
+    const steps = await this.db
+      .select({
+        sequenceId: sequenceSteps.sequenceId,
+        stepOrder: sequenceSteps.stepOrder,
+        stepType: sequenceSteps.stepType,
+        subject: sequenceSteps.subject,
+        bodyTemplate: sequenceSteps.bodyTemplate,
+      })
+      .from(sequenceSteps)
+      .where(inArray(sequenceSteps.sequenceId, ids))
+      .orderBy(asc(sequenceSteps.stepOrder));
+
+    return recent.map((s) => ({
+      name: s.name,
+      steps: steps.filter((st) => st.sequenceId === s.id),
+    }));
   }
 
   async getSequenceById(workspaceId: string, id: string) {
@@ -162,6 +239,11 @@ export class SequenceService {
         stepOrder: nextOrder,
         stepType: input.stepType,
         delayDays: input.delayDays,
+        delayUnit: input.delayUnit ?? "days",
+        linkedinAction:
+          input.stepType === "linkedin"
+            ? (input.linkedinAction ?? "connect")
+            : null,
         subject: input.subject,
         bodyTemplate: input.bodyTemplate,
       })
@@ -185,6 +267,8 @@ export class SequenceService {
       .set({
         ...(input.stepType !== undefined ? { stepType: input.stepType } : {}),
         ...(input.delayDays !== undefined ? { delayDays: input.delayDays } : {}),
+        ...(input.delayUnit !== undefined ? { delayUnit: input.delayUnit } : {}),
+        ...(input.linkedinAction !== undefined ? { linkedinAction: input.linkedinAction } : {}),
         ...(input.subject !== undefined ? { subject: input.subject } : {}),
         ...(input.bodyTemplate !== undefined ? { bodyTemplate: input.bodyTemplate } : {}),
       })
@@ -336,19 +420,8 @@ export class SequenceService {
     let skipped = 0;
 
     for (const prospectId of prospectIds) {
-      // Remove terminal-state enrollments so re-enrollment creates a fresh row.
-      // Active enrollments still conflict and get skipped (idempotent).
-      await this.db
-        .delete(sequenceEnrollments)
-        .where(
-          and(
-            eq(sequenceEnrollments.sequenceId, sequenceId),
-            eq(sequenceEnrollments.prospectId, prospectId),
-            inArray(sequenceEnrollments.status, ["cancelled", "completed", "bounced", "replied"])
-          )
-        );
-
-      // Insert enrollment — silently skip duplicates via UNIQUE(sequenceId, prospectId)
+      // Insert enrollment — unique partial index allows only one *active* row.
+      // Terminal enrollments are kept so analytics (sent/skipped) are not wiped on re-run.
       const inserted = await this.db
         .insert(sequenceEnrollments)
         .values({ workspaceId, sequenceId, prospectId, listId: input.listId ?? null, status: "active" })
@@ -367,7 +440,8 @@ export class SequenceService {
       let firstScheduledAt: Date | null = null;
 
       for (const step of steps) {
-        const scheduled = stepScheduledAt(previousScheduledAt, step.delayDays);
+        const unit = (step.delayUnit ?? "days") as "minutes" | "hours" | "days" | "weeks";
+        const scheduled = stepScheduledAt(previousScheduledAt, step.delayDays, unit);
         if (firstScheduledAt === null) firstScheduledAt = scheduled;
         previousScheduledAt = scheduled;
 
@@ -571,6 +645,95 @@ export class SequenceService {
       .from(sequenceEnrollments)
       .where(and(eq(sequenceEnrollments.sequenceId, sequenceId), eq(sequenceEnrollments.workspaceId, workspaceId)))
       .orderBy(desc(sequenceEnrollments.enrolledAt));
+  }
+
+  /** Lists that have at least one enrollment in this sequence, with prospect counts per status. */
+  async listEnrolledLists(workspaceId: string, sequenceId: string) {
+    const [seq] = await this.db
+      .select()
+      .from(sequences)
+      .where(and(eq(sequences.id, sequenceId), eq(sequences.workspaceId, workspaceId)));
+    if (!seq) return null;
+
+    // Join via listMembers so we catch both list-enrolled AND member-selected enrollments
+    const rows = await this.db
+      .select({
+        listId: listMembers.listId,
+        listName: lists.name,
+        total: count(sequenceEnrollments.id),
+        active: sql<number>`count(*) filter (where ${sequenceEnrollments.status} = 'active')`,
+        completed: sql<number>`count(*) filter (where ${sequenceEnrollments.status} = 'completed')`,
+        enrolledAt: sql<string>`min(${sequenceEnrollments.enrolledAt})`,
+      })
+      .from(sequenceEnrollments)
+      .innerJoin(listMembers, eq(listMembers.prospectId, sequenceEnrollments.prospectId))
+      .innerJoin(lists, and(eq(lists.id, listMembers.listId), eq(lists.workspaceId, workspaceId)))
+      .where(
+        and(
+          eq(sequenceEnrollments.sequenceId, sequenceId),
+          eq(sequenceEnrollments.workspaceId, workspaceId),
+        )
+      )
+      .groupBy(listMembers.listId, lists.name)
+      .orderBy(sql`min(${sequenceEnrollments.enrolledAt}) desc`);
+
+    return rows.map((r) => ({
+      listId: r.listId,
+      listName: r.listName ?? "Deleted list",
+      total: Number(r.total),
+      active: Number(r.active),
+      completed: Number(r.completed),
+      enrolledAt: r.enrolledAt,
+    }));
+  }
+
+  /** Sequences that have enrollments sourced from a specific list. */
+  async listSequencesForList(workspaceId: string, listId: string) {
+    const [list] = await this.db
+      .select({ id: lists.id })
+      .from(lists)
+      .where(and(eq(lists.id, listId), eq(lists.workspaceId, workspaceId)));
+    if (!list) return null;
+
+    // Collect all prospectIds in this list so we can match enrollments done via prospectIds too
+    const memberRows = await this.db
+      .select({ prospectId: listMembers.prospectId })
+      .from(listMembers)
+      .where(eq(listMembers.listId, listId));
+    const memberIds = memberRows.map((m) => m.prospectId);
+
+    const rows = await this.db
+      .select({
+        sequenceId: sequenceEnrollments.sequenceId,
+        sequenceName: sequences.name,
+        sequenceStatus: sequences.status,
+        total: count(sequenceEnrollments.id),
+        active: sql<number>`count(*) filter (where ${sequenceEnrollments.status} = 'active')`,
+        completed: sql<number>`count(*) filter (where ${sequenceEnrollments.status} = 'completed')`,
+        enrolledAt: sql<string>`min(${sequenceEnrollments.enrolledAt})`,
+      })
+      .from(sequenceEnrollments)
+      .leftJoin(sequences, eq(sequences.id, sequenceEnrollments.sequenceId))
+      .where(
+        and(
+          eq(sequenceEnrollments.workspaceId, workspaceId),
+          memberIds.length > 0
+            ? inArray(sequenceEnrollments.prospectId, memberIds)
+            : eq(sequenceEnrollments.listId, listId),
+        )
+      )
+      .groupBy(sequenceEnrollments.sequenceId, sequences.name, sequences.status)
+      .orderBy(sql`min(${sequenceEnrollments.enrolledAt}) desc`);
+
+    return rows.map((r) => ({
+      sequenceId: r.sequenceId,
+      sequenceName: r.sequenceName ?? "Deleted sequence",
+      sequenceStatus: r.sequenceStatus ?? "archived",
+      total: Number(r.total),
+      active: Number(r.active),
+      completed: Number(r.completed),
+      enrolledAt: r.enrolledAt,
+    }));
   }
 }
 

@@ -69,5 +69,15 @@ export function loadEnv(overrides?: Partial<Env>): Env {
     databaseUrl = `postgresql://${parsed.data.DATABASE_USER}:${encodeURIComponent(password)}@${parsed.data.DATABASE_HOST}:${parsed.data.DATABASE_PORT ?? 5432}/${parsed.data.DATABASE_NAME}`;
   }
 
-  return { ...parsed.data, DATABASE_URL: databaseUrl, ...overrides };
+  // Root monorepo `.env` sets PORT=3001 for the API. Do not let CRM steal that port
+  // unless the caller explicitly exports CRM_PORT (or a non-3001 PORT).
+  const crmPortEnv = process.env.CRM_PORT;
+  let port = parsed.data.PORT;
+  if (crmPortEnv && Number.isFinite(Number(crmPortEnv))) {
+    port = Number(crmPortEnv);
+  } else if (port === 3001) {
+    port = 3002;
+  }
+
+  return { ...parsed.data, PORT: port, DATABASE_URL: databaseUrl, ...overrides };
 }

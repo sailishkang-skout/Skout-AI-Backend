@@ -10,7 +10,7 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as servicediscovery from "aws-cdk-lib/aws-servicediscovery";
 import * as iam from "aws-cdk-lib/aws-iam";
-import { Stack, StackProps, CfnOutput, Tags } from "aws-cdk-lib";
+import { Stack, StackProps, CfnOutput, Tags, Duration } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import type { EnvironmentConfig } from "../config/environments.js";
 import type { SkoutAppSecrets } from "../constructs/skout-app-secrets.js";
@@ -101,7 +101,8 @@ export class ComputeStack extends Stack {
 
     const listener = this.loadBalancer.addListener("HttpListener", {
       port: 80,
-      open: true,
+      // CloudFront mode: restrict ALB SG to CloudFront prefix list instead of 0.0.0.0/0
+      open: httpsMode !== "cloudfront",
       defaultAction: httpsFrontDoor
         ? elbv2.ListenerAction.fixedResponse(403, {
             contentType: "text/plain",
@@ -114,6 +115,32 @@ export class ComputeStack extends Stack {
     });
 
     const albDns = this.loadBalancer.loadBalancerDnsName;
+
+    // CloudFront managed prefix list IDs per region — stable AWS resource IDs
+    const CF_ORIGIN_PREFIX_LISTS: Record<string, string> = {
+      "us-east-1": "pl-3b927c52",
+      "us-east-2": "pl-b6a144df",
+      "us-west-1": "pl-4ea04527",
+      "us-west-2": "pl-82a045eb",
+      "eu-west-1": "pl-4fa04526",
+      "eu-west-2": "pl-93a247fa",
+      "eu-central-1": "pl-a3a144ca",
+      "ap-southeast-1": "pl-31a34658",
+      "ap-northeast-1": "pl-58a04531",
+      "ap-south-1": "pl-f54a9829",
+    };
+
+    if (httpsMode === "cloudfront") {
+      const cfPrefixListId =
+        (this.node.tryGetContext("cfPrefixListId") as string | undefined) ??
+        CF_ORIGIN_PREFIX_LISTS[config.region] ??
+        "pl-3b927c52";
+      this.loadBalancer.connections.allowFrom(
+        ec2.Peer.prefixList(cfPrefixListId),
+        ec2.Port.tcp(80),
+        "CloudFront origin-facing IPs to ALB port 80"
+      );
+    }
 
     /** Headers injected on API Gateway → ALB so Next/Clerk see the public HTTPS host, not the ALB DNS. */
     const buildApigwProxyMapping = (apigwHost: string, publicOrigin: string) =>
@@ -131,18 +158,71 @@ export class ComputeStack extends Stack {
     if (config.domainName) {
       publicUrl = `https://${config.webSubdomain}.${config.domainName}`;
     } else if (httpsMode === "cloudfront") {
-      httpsDistribution = new cloudfront.Distribution(this, "HttpsDistribution", {
-        comment: `Skout ${config.name} HTTPS via CloudFront`,
-        defaultBehavior: {
-          origin: new origins.LoadBalancerV2Origin(this.loadBalancer, {
-            protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
-            customHeaders: { [ORIGIN_VERIFY_HEADER]: originVerifySecret },
-          }),
-          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+      const albOrigin = new origins.LoadBalancerV2Origin(this.loadBalancer, {
+        protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+        customHeaders: { [ORIGIN_VERIFY_HEADER]: originVerifySecret },
+        httpPort: 80,
+        connectionAttempts: 3,
+        connectionTimeout: Duration.seconds(10),
+      });
+
+      // HSTS + standard security headers on every CloudFront response
+      const securityHeadersPolicy = new cloudfront.ResponseHeadersPolicy(this, "CfSecurityHeaders", {
+        responseHeadersPolicyName: `${config.stackPrefix}-security-headers`,
+        securityHeadersBehavior: {
+          strictTransportSecurity: {
+            accessControlMaxAge: Duration.days(365),
+            includeSubdomains: true,
+            preload: true,
+            override: true,
+          },
+          contentTypeOptions: { override: true },
+          frameOptions: {
+            frameOption: cloudfront.HeadersFrameOption.DENY,
+            override: true,
+          },
+          referrerPolicy: {
+            referrerPolicy: cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN,
+            override: true,
+          },
+          xssProtection: { protection: true, modeBlock: true, override: true },
         },
+      });
+
+      // All API paths are dynamic — no caching, forward all headers/cookies/query strings.
+      // ALL_VIEWER_EXCEPT_HOST_HEADER: CloudFront sets Host to ALB DNS (avoids host mismatch).
+      const apiDynamicBehavior: cloudfront.BehaviorOptions = {
+        origin: albOrigin,
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+        responseHeadersPolicy: securityHeadersPolicy,
+      };
+
+      httpsDistribution = new cloudfront.Distribution(this, "HttpsDistribution", {
+        comment: `Skout ${config.name} HTTPS edge`,
+        defaultBehavior: apiDynamicBehavior,
+        additionalBehaviors: {
+          // Explicit API catch-all — same policy, listed for clarity
+          "/api/*": apiDynamicBehavior,
+          // Health endpoint: cache 1 min to reduce ALB hits from monitors
+          "/api/v1/health": {
+            origin: albOrigin,
+            viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+            allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+            cachePolicy: new cloudfront.CachePolicy(this, "HealthCachePolicy", {
+              cachePolicyName: `${config.stackPrefix}-health-1min`,
+              defaultTtl: Duration.minutes(1),
+              minTtl: Duration.seconds(0),
+              maxTtl: Duration.minutes(1),
+            }),
+            originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+            responseHeadersPolicy: securityHeadersPolicy,
+          },
+        },
+        priceClass: cloudfront.PriceClass.PRICE_CLASS_ALL,
+        enableLogging: false,
       });
       publicUrl = `https://${httpsDistribution.distributionDomainName}`;
     } else if (httpsMode === "apigateway") {
@@ -228,6 +308,8 @@ export class ComputeStack extends Stack {
         ...(config.name === "dev"
           ? {
               ENRICHMENT_PHONE_SCORE_GATE: "39",
+              // Allow sequence sends on weekends / outside Mon–Fri 09–17 UTC (testing).
+              BYPASS_BUSINESS_HOURS: "true",
               RAZORPAY_KEY_ID: "rzp_test_T7RSEsGBVeHtUD",
               RAZORPAY_CREDIT_PACKS_JSON:
                 '[{"id":"starter","label":"Starter","credits":500,"amountInr":499},{"id":"growth","label":"Growth","credits":2000,"amountInr":1499},{"id":"scale","label":"Scale","credits":10000,"amountInr":4999}]',
@@ -250,6 +332,7 @@ export class ComputeStack extends Stack {
         CONTACTOUT_API_KEY: ecs.Secret.fromSecretsManager(secrets.enrichmentProviders, "CONTACTOUT_API_KEY"),
         COGNISM_API_KEY: ecs.Secret.fromSecretsManager(secrets.enrichmentProviders, "COGNISM_API_KEY"),
         OPENCORPORATES_API_KEY: ecs.Secret.fromSecretsManager(secrets.enrichmentProviders, "OPENCORPORATES_API_KEY"),
+        OPENROUTER_API_KEY: ecs.Secret.fromSecretsManager(secrets.enrichmentProviders, "OPENROUTER_API_KEY"),
         HUBSPOT_CLIENT_ID: ecs.Secret.fromSecretsManager(secrets.hubspot, "HUBSPOT_CLIENT_ID"),
         HUBSPOT_CLIENT_SECRET: ecs.Secret.fromSecretsManager(secrets.hubspot, "HUBSPOT_CLIENT_SECRET"),
         OPENSEARCH_URL: ecs.Secret.fromSecretsManager(secrets.opensearch, "OPENSEARCH_URL"),
@@ -500,6 +583,11 @@ export class ComputeStack extends Stack {
       new CfnOutput(this, "CloudFrontDomain", {
         value: httpsDistribution.distributionDomainName,
         exportName: `${config.stackPrefix}-CloudFrontDomain`,
+      });
+      new CfnOutput(this, "CloudFrontDistributionId", {
+        value: httpsDistribution.distributionId,
+        description: "CloudFront distribution ID — use for cache invalidations",
+        exportName: `${config.stackPrefix}-CloudFrontDistributionId`,
       });
     }
 

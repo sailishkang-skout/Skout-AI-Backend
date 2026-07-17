@@ -1,8 +1,9 @@
-import { and, asc, count, desc, eq, gt, gte, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, exists, gt, gte, inArray, sql } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { encryptSecret, decryptSecret } from "../utils/integration-crypto.js";
 import { HttpError } from "../utils/http.js";
+import { markInboxUsed } from "./inbox-rotation.service.js";
 import nodemailer from "nodemailer";
 import { randomBytes } from "node:crypto";
 
@@ -14,7 +15,7 @@ export type ThreadStatus = "new" | "replied" | "bounced" | "meeting_booked" | "c
 
 const ALLOWED_MANUAL_TRANSITIONS: Partial<Record<ThreadStatus, ThreadStatus[]>> = {
   replied: ["meeting_booked", "closed"],
-  new: ["closed"],
+  new: ["closed", "meeting_booked", "replied"],
   meeting_booked: ["closed"],
   bounced: ["closed"],
   closed: [],
@@ -97,12 +98,13 @@ export async function updateInbox(
   db: Db,
   workspaceId: string,
   id: string,
-  patch: { displayName?: string; dailySendLimit?: number; status?: string }
+  patch: { displayName?: string; dailySendLimit?: number; status?: string; sendingDomainId?: string | null }
 ) {
   const set: Record<string, unknown> = { updatedAt: new Date() };
   if (patch.displayName !== undefined) set.displayName = patch.displayName;
   if (patch.dailySendLimit !== undefined) set.dailySendLimit = patch.dailySendLimit;
   if (patch.status !== undefined) set.status = patch.status;
+  if (patch.sendingDomainId !== undefined) set.sendingDomainId = patch.sendingDomainId;
   const [row] = await db
     .update(inboxes)
     .set(set)
@@ -206,10 +208,15 @@ function shapeDomain(row: typeof sendingDomains.$inferSelect) {
     id: row.id,
     workspaceId: row.workspaceId,
     domain: row.domain,
+    status: row.status,
     spfStatus: (byPurpose["SPF"] ?? "unknown") as StoredDnsRecord["status"],
     dkimStatus: (byPurpose["DKIM"] ?? "unknown") as StoredDnsRecord["status"],
     dmarcStatus: (byPurpose["DMARC"] ?? "unknown") as StoredDnsRecord["status"],
     mxStatus: (byPurpose["MX"] ?? "unknown") as StoredDnsRecord["status"],
+    blacklistStatus: row.blacklistStatus,
+    blacklistedOn: (row.blacklistedOn as string[]) ?? [],
+    lastCheckedAt: row.lastCheckedAt ? row.lastCheckedAt.toISOString() : null,
+    dnsRecords: records,
     verifiedAt: row.verifiedAt ? row.verifiedAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
   };
@@ -252,18 +259,56 @@ export async function getDomainDns(db: Db, workspaceId: string, id: string) {
   return { domain: row.domain, records: (row.dnsRecords as StoredDnsRecord[]) ?? [] };
 }
 
+export async function verifyDomain(db: Db, workspaceId: string, id: string) {
+  const [row] = await db
+    .select()
+    .from(sendingDomains)
+    .where(and(eq(sendingDomains.workspaceId, workspaceId), eq(sendingDomains.id, id)))
+    .limit(1);
+  if (!row) return null;
+
+  const { checkDomainDns } = await import("./domain-dns.service.js");
+  const result = await checkDomainDns(row.domain);
+
+  const allPass = result.spf === "pass" && result.dkim === "pass" && result.dmarc === "pass" && result.mx === "pass";
+  const now = new Date();
+
+  const [updated] = await db
+    .update(sendingDomains)
+    .set({
+      dnsRecords: result.records,
+      status: allPass ? "verified" : "pending_verification",
+      verifiedAt: allPass ? now : row.verifiedAt,
+      updatedAt: now,
+    })
+    .where(eq(sendingDomains.id, id))
+    .returning();
+
+  return updated ? shapeDomain(updated) : null;
+}
+
+/** Warmup daily limit schedule (mirrors warmup-ramp.worker). */
+function warmupDailyLimit(warmupDay: number, maxLimit: number): number {
+  let limit: number;
+  if (warmupDay <= 0) limit = 0;
+  else if (warmupDay <= 7) limit = warmupDay * 5;
+  else if (warmupDay <= 14) limit = 7 * 5 + (warmupDay - 7) * 10;
+  else limit = 7 * 5 + 7 * 10 + (warmupDay - 14) * 20;
+  return Math.min(limit, maxLimit);
+}
+
 export async function getDeliverabilityMetrics(db: Db, workspaceId: string) {
   const now = new Date();
   const thirtyDaysAgo = new Date(now);
   thirtyDaysAgo.setUTCDate(thirtyDaysAgo.getUTCDate() - 29);
   thirtyDaysAgo.setUTCHours(0, 0, 0, 0);
 
-  // All inboxes for this workspace
   const allInboxes = await db
     .select({
       id: inboxes.id,
       status: inboxes.status,
       warmupStatus: inboxes.warmupStatus,
+      warmupDay: inboxes.warmupDay,
       dailySendLimit: inboxes.dailySendLimit,
       sentCount: inboxes.sentCount,
       bounceCount: inboxes.bounceCount,
@@ -272,10 +317,10 @@ export async function getDeliverabilityMetrics(db: Db, workspaceId: string) {
     .from(inboxes)
     .where(eq(inboxes.workspaceId, workspaceId));
 
-  // Daily outbound message counts for warmup chart (last 30 days)
+  // Daily outbound message counts (source of truth for volume)
   const dailySent = await db
     .select({
-      date: sql<string>`date_trunc('day', ${inboxMessages.sentAt})::date::text`,
+      date: sql<string>`(date_trunc('day', ${inboxMessages.sentAt} AT TIME ZONE 'UTC'))::date::text`,
       sent: count(inboxMessages.id),
     })
     .from(inboxMessages)
@@ -288,54 +333,115 @@ export async function getDeliverabilityMetrics(db: Db, workspaceId: string) {
         gte(inboxMessages.sentAt, thirtyDaysAgo),
       )
     )
-    .groupBy(sql`date_trunc('day', ${inboxMessages.sentAt})::date`)
-    .orderBy(sql`date_trunc('day', ${inboxMessages.sentAt})::date`);
+    .groupBy(sql`(date_trunc('day', ${inboxMessages.sentAt} AT TIME ZONE 'UTC'))::date`)
+    .orderBy(sql`(date_trunc('day', ${inboxMessages.sentAt} AT TIME ZONE 'UTC'))::date`);
 
-  // Build warmup array — fill in gaps for days with no sends
+  // Daily bounce / spam classifications from inbound messages
+  const dailyBounceSpam = await db
+    .select({
+      date: sql<string>`(date_trunc('day', ${inboxMessages.sentAt} AT TIME ZONE 'UTC'))::date::text`,
+      bounce: sql<number>`count(*) filter (where ${inboxMessages.classification} = 'bounce')`,
+      spam: sql<number>`count(*) filter (where ${inboxMessages.classification} = 'spam')`,
+    })
+    .from(inboxMessages)
+    .innerJoin(inboxThreads, eq(inboxMessages.threadId, inboxThreads.id))
+    .innerJoin(inboxes, eq(inboxThreads.inboxId, inboxes.id))
+    .where(
+      and(
+        eq(inboxes.workspaceId, workspaceId),
+        eq(inboxMessages.direction, "inbound"),
+        gte(inboxMessages.sentAt, thirtyDaysAgo),
+      )
+    )
+    .groupBy(sql`(date_trunc('day', ${inboxMessages.sentAt} AT TIME ZONE 'UTC'))::date`)
+    .orderBy(sql`(date_trunc('day', ${inboxMessages.sentAt} AT TIME ZONE 'UTC'))::date`);
+
   const sentByDate = Object.fromEntries(dailySent.map((r) => [r.date, Number(r.sent)]));
-  const totalDailyLimit = allInboxes.reduce((acc, i) => acc + i.dailySendLimit, 0);
-  const warmupRampTarget = Math.max(totalDailyLimit, 1);
+  const bounceByDate = Object.fromEntries(
+    dailyBounceSpam.map((r) => [r.date, { bounce: Number(r.bounce), spam: Number(r.spam) }])
+  );
+
+  // Daily capacity target: warmup schedule for warming inboxes, else sum of daily limits
+  const warming = allInboxes.filter((i) => i.warmupStatus === "warming");
+  const targetBase =
+    warming.length > 0
+      ? warming.reduce((acc, i) => acc + warmupDailyLimit(i.warmupDay || 1, i.dailySendLimit), 0)
+      : allInboxes
+          .filter((i) => i.status === "active" || i.status === "warming")
+          .reduce((acc, i) => acc + i.dailySendLimit, 0);
 
   const warmup: Array<{ date: string; sent: number; target: number }> = [];
+  const bounce: Array<{
+    date: string;
+    bounceRate: number;
+    spamRate: number;
+    sent: number;
+    bounces: number;
+    spam: number;
+  }> = [];
+
   for (let i = 0; i < 30; i++) {
     const d = new Date(thirtyDaysAgo);
     d.setUTCDate(d.getUTCDate() + i);
     const dateStr = d.toISOString().slice(0, 10);
-    const dayFraction = (i + 1) / 30;
+    const sent = sentByDate[dateStr] ?? 0;
+    const dayBounce = bounceByDate[dateStr]?.bounce ?? 0;
+    const daySpam = bounceByDate[dateStr]?.spam ?? 0;
+    // Flat daily capacity line (not a fake historical ramp of today's limit)
     warmup.push({
       date: dateStr,
-      sent: sentByDate[dateStr] ?? 0,
-      target: Math.round(warmupRampTarget * dayFraction),
+      sent,
+      target: Math.max(0, targetBase),
+    });
+    bounce.push({
+      date: dateStr,
+      sent,
+      bounces: dayBounce,
+      spam: daySpam,
+      bounceRate: sent > 0 ? (dayBounce / sent) * 100 : 0,
+      spamRate: sent > 0 ? (daySpam / sent) * 100 : 0,
     });
   }
 
-  // Bounce / spam chart — one aggregate point per inbox, last 30 days
-  // (we don't store daily bounce logs, so we surface total rates as a single point)
-  const totalSent = allInboxes.reduce((acc, i) => acc + i.sentCount, 0);
-  const totalBounce = allInboxes.reduce((acc, i) => acc + i.bounceCount, 0);
-  const totalSpam = allInboxes.reduce((acc, i) => acc + i.spamCount, 0);
+  // Summary uses the same 30-day message window as the charts (not mixed with lifetime counters)
+  const messagesSent30d = warmup.reduce((acc, d) => acc + d.sent, 0);
+  const bounces30d = bounce.reduce((acc, d) => acc + d.bounces, 0);
+  const spamClassified30d = bounce.reduce((acc, d) => acc + d.spam, 0);
+  // Spam is rarely classified on inbound; fall back to lifetime inbox counters for the rate card
+  const counterSent = allInboxes.reduce((acc, i) => acc + i.sentCount, 0);
+  const counterSpam = allInboxes.reduce((acc, i) => acc + i.spamCount, 0);
+  const counterBounce = allInboxes.reduce((acc, i) => acc + i.bounceCount, 0);
 
-  const bounceRate = totalSent > 0 ? (totalBounce / totalSent) * 100 : 0;
-  const spamRate = totalSent > 0 ? (totalSpam / totalSent) * 100 : 0;
+  const bounceRate =
+    messagesSent30d > 0
+      ? (bounces30d / messagesSent30d) * 100
+      : counterSent > 0
+        ? (counterBounce / counterSent) * 100
+        : 0;
+  const spamRate =
+    messagesSent30d > 0 && spamClassified30d > 0
+      ? (spamClassified30d / messagesSent30d) * 100
+      : counterSent > 0
+        ? (counterSpam / counterSent) * 100
+        : 0;
 
-  const bounce =
-    totalSent > 0
-      ? [{ date: now.toISOString().slice(0, 10), bounceRate, spamRate }]
-      : [];
-
-  // Summary
   const inboxCount = allInboxes.filter((i) => i.status === "active").length;
-  const warmingCount = allInboxes.filter((i) => i.warmupStatus === "warming").length;
+  const warmingCount = warming.length;
 
   return {
     warmup,
     bounce,
     summary: {
-      totalSent,
+      totalSent: messagesSent30d,
+      sentLast30Days: messagesSent30d,
+      lifetimeSent: counterSent,
       avgBounceRate: bounceRate,
       avgSpamRate: spamRate,
+      bounceCount30d: bounces30d,
+      spamCount30d: Math.max(spamClassified30d, 0),
       inboxCount,
       warmingCount,
+      dailyCapacity: targetBase,
     },
   };
 }
@@ -444,15 +550,50 @@ export class InboxService {
 
   async listThreads(
     workspaceId: string,
-    options: { status?: ThreadStatus; unreadOnly?: boolean; limit?: number; offset?: number } = {}
+    options: {
+      status?: ThreadStatus;
+      unreadOnly?: boolean;
+      inboxId?: string;
+      folder?: "all" | "inbound" | "sent";
+      limit?: number;
+      offset?: number;
+    } = {}
   ) {
     const conditions = [eq(inboxThreads.workspaceId, workspaceId)];
 
+    if (options.inboxId) {
+      conditions.push(eq(inboxThreads.inboxId, options.inboxId));
+    }
     if (options.status) {
       conditions.push(eq(inboxThreads.status, options.status));
     }
     if (options.unreadOnly) {
       conditions.push(gt(inboxThreads.unreadCount, 0));
+    }
+    if (options.folder === "inbound") {
+      // Threads that received at least one inbound message
+      conditions.push(
+        exists(
+          this.db
+            .select({ id: inboxMessages.id })
+            .from(inboxMessages)
+            .where(
+              and(eq(inboxMessages.threadId, inboxThreads.id), eq(inboxMessages.direction, "inbound"))
+            )
+        )
+      );
+    } else if (options.folder === "sent") {
+      // Any thread with an outbound send — including replies on inbound threads
+      conditions.push(
+        exists(
+          this.db
+            .select({ id: inboxMessages.id })
+            .from(inboxMessages)
+            .where(
+              and(eq(inboxMessages.threadId, inboxThreads.id), eq(inboxMessages.direction, "outbound"))
+            )
+        )
+      );
     }
 
     const limit = Math.min(options.limit ?? 50, 200);
@@ -465,11 +606,97 @@ export class InboxService {
       .select()
       .from(inboxThreads)
       .where(where)
-      .orderBy(desc(inboxThreads.updatedAt))
+      .orderBy(desc(inboxThreads.lastMessageAt), desc(inboxThreads.updatedAt))
       .limit(limit)
       .offset(offset);
 
-    return { workspaceId, data: rows, total, limit, offset };
+    const prospectIds = [...new Set(rows.map((r) => r.prospectId).filter((id): id is string => !!id))];
+    const prospectById = new Map<
+      string,
+      { fullName?: string; companyName?: string; email?: string; title?: string; icpBand?: string | null }
+    >();
+
+    if (prospectIds.length > 0) {
+      const activations = await this.db
+        .select({
+          prospectId: prospectActivations.prospectId,
+          snapshot: prospectActivations.snapshot,
+        })
+        .from(prospectActivations)
+        .where(
+          and(
+            eq(prospectActivations.workspaceId, workspaceId),
+            inArray(prospectActivations.prospectId, prospectIds)
+          )
+        );
+
+      for (const a of activations) {
+        const snap = (a.snapshot ?? {}) as Record<string, unknown>;
+        prospectById.set(a.prospectId, {
+          fullName: typeof snap.fullName === "string" ? snap.fullName : undefined,
+          companyName: typeof snap.companyName === "string" ? snap.companyName : undefined,
+          email: typeof snap.email === "string" ? snap.email : undefined,
+          title: typeof snap.title === "string" ? snap.title : undefined,
+        });
+      }
+
+      const scores = await this.db
+        .select({
+          prospectId: prospectScores.prospectId,
+          priority: prospectScores.priority,
+        })
+        .from(prospectScores)
+        .where(
+          and(eq(prospectScores.workspaceId, workspaceId), inArray(prospectScores.prospectId, prospectIds))
+        );
+      for (const s of scores) {
+        const existing = prospectById.get(s.prospectId) ?? {};
+        prospectById.set(s.prospectId, { ...existing, icpBand: s.priority ?? null });
+      }
+    }
+
+    // Latest message from-address for display when no prospect name
+    const threadIds = rows.map((r) => r.id);
+    const latestFromByThread = new Map<string, string>();
+    if (threadIds.length > 0) {
+      const latestMsgs = await this.db
+        .select({
+          threadId: inboxMessages.threadId,
+          fromAddress: inboxMessages.fromAddress,
+          direction: inboxMessages.direction,
+          sentAt: inboxMessages.sentAt,
+        })
+        .from(inboxMessages)
+        .where(inArray(inboxMessages.threadId, threadIds))
+        .orderBy(desc(inboxMessages.sentAt));
+
+      for (const m of latestMsgs) {
+        if (!latestFromByThread.has(m.threadId)) {
+          latestFromByThread.set(m.threadId, m.fromAddress);
+        }
+      }
+    }
+
+    const data = rows.map((row) => {
+      const prospect = row.prospectId ? prospectById.get(row.prospectId) : undefined;
+      const fromHint = latestFromByThread.get(row.id);
+      return {
+        ...row,
+        prospect: prospect
+          ? {
+              fullName: prospect.fullName ?? fromHint ?? "Unknown",
+              companyName: prospect.companyName ?? null,
+              email: prospect.email ?? null,
+              title: prospect.title ?? null,
+              icpBand: prospect.icpBand ?? null,
+            }
+          : fromHint
+            ? { fullName: fromHint, companyName: null, email: fromHint, title: null, icpBand: null }
+            : null,
+      };
+    });
+
+    return { workspaceId, data, total, limit, offset };
   }
 
   async getThread(workspaceId: string, threadId: string) {
@@ -668,6 +895,8 @@ export class InboxService {
       .update(inboxThreads)
       .set({ lastMessageAt: now, updatedAt: now })
       .where(and(eq(inboxThreads.workspaceId, workspaceId), eq(inboxThreads.id, threadId)));
+
+    await markInboxUsed(this.db, inbox.id);
 
     return inserted!;
   }

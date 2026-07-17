@@ -42,6 +42,8 @@ export function decodeTrackingToken(config: Env, token: string): TrackingTokenPa
 }
 
 const URL_REGEX = /https?:\/\/[^\s<>"]+/g;
+/** TipTap / email-builder bodies are HTML; plain templates usually are not. */
+const HTML_BODY_RE = /<\/?[a-z][\s\S]*>/i;
 
 function escapeHtml(text: string): string {
   return text
@@ -51,26 +53,73 @@ function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
+export function looksLikeHtml(body: string): boolean {
+  return HTML_BODY_RE.test(body.trim());
+}
+
+/** Strip tags for the multipart text/plain part (and Inbox fallbacks). */
+export function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(?:p|div|h[1-6]|li|tr)>/gi, "\n")
+    .replace(/<\/(?:ul|ol|table)>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function rewriteHtmlHrefs(
+  html: string,
+  config: Env,
+  enrollmentId: string,
+  enrollmentStepId: string
+): string {
+  return html.replace(/href=(["'])(https?:\/\/[^"']+)\1/gi, (_match, quote: string, url: string) => {
+    const trackedUrl = buildClickUrl(config, enrollmentId, enrollmentStepId, url);
+    return `href=${quote}${trackedUrl}${quote}`;
+  });
+}
+
+function trackingPixel(config: Env, enrollmentId: string, enrollmentStepId: string): string {
+  const pixelUrl = buildOpenPixelUrl(config, enrollmentId, enrollmentStepId);
+  return `<img src="${pixelUrl}" width="1" height="1" alt="" style="display:none" />`;
+}
+
 /**
- * Converts a plain-text rendered email body into a tracked HTML body: bare URLs become
- * click-tracked links, newlines become <br>, and an invisible open-tracking pixel is appended.
+ * Builds tracked HTML + plain-text parts for a sequence email.
+ * HTML bodies (from the email builder) are preserved; plain text is escaped and
+ * converted to HTML. Bare URLs / hrefs get click tracking; an open pixel is appended.
  */
 export function injectTracking(
   config: Env,
-  plainText: string,
+  body: string,
   enrollmentId: string,
   enrollmentStepId: string
 ): { html: string; text: string } {
-  const escaped = escapeHtml(plainText);
+  const pixel = trackingPixel(config, enrollmentId, enrollmentStepId);
+
+  if (looksLikeHtml(body)) {
+    const withTrackedLinks = rewriteHtmlHrefs(body, config, enrollmentId, enrollmentStepId);
+    return {
+      html: `${withTrackedLinks}${pixel}`,
+      text: htmlToPlainText(body),
+    };
+  }
+
+  const escaped = escapeHtml(body);
   const withLinks = escaped.replace(URL_REGEX, (url) => {
     const trackedUrl = buildClickUrl(config, enrollmentId, enrollmentStepId, url);
     return `<a href="${trackedUrl}">${url}</a>`;
   });
   const withBreaks = withLinks.replace(/\n/g, "<br>\n");
-  const pixelUrl = buildOpenPixelUrl(config, enrollmentId, enrollmentStepId);
-  const pixel = `<img src="${pixelUrl}" width="1" height="1" alt="" style="display:none" />`;
 
-  return { html: `${withBreaks}${pixel}`, text: plainText };
+  return { html: `${withBreaks}${pixel}`, text: body };
 }
 
 export async function recordTrackingEvent(

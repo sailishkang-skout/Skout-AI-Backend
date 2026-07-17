@@ -103,8 +103,64 @@
     {
       "idx": 14,
       "version": "7",
+      "when": 1783464000000,
+      "tag": "0014_domain_warmup_blacklist",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
       "when": 1784000000000,
-      "tag": "0014_crm_entities",
+      "tag": "0015_repair_inbox_domain_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1784100000000,
+      "tag": "0016_outbound_webhooks",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1784200000000,
+      "tag": "0017_sequence_delay_unit",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1784300000000,
+      "tag": "0018_linkedin_outreach_and_enrollment_history",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1784400000000,
+      "tag": "0019_linkedin_accounts",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1784500000000,
+      "tag": "0020_workspace_invites",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1784600000000,
+      "tag": "0021_email_verifications",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1784700000000,
+      "tag": "0022_crm_entities",
       "breakpoints": true
     }
   ]

@@ -1,6 +1,7 @@
 """Skout AI — Python AI orchestration service (FastAPI + LangGraph + LiteLLM)."""
 
 import atexit
+import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -99,44 +100,58 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Skout AI Service", version="0.1.0", lifespan=lifespan)
 
 
-class ClassifyRequest(BaseModel):
-    thread_id: str
-    content: str
+# ---------------------------------------------------------------------------
+# LLM helpers
+# ---------------------------------------------------------------------------
 
 
-class ClassifyResponse(BaseModel):
-    intent: str
-    confidence: float
-    requires_hitl: bool
+def _llm_available() -> bool:
+    return bool(os.getenv("OPENROUTER_API_KEY"))
 
 
-@app.get("/health")
-def health():
-    return {"status": "ok", "service": "skout-ai"}
+def _default_model() -> str:
+    if os.getenv("AI_MODEL"):
+        return os.getenv("AI_MODEL")
+    return "openrouter/openai/gpt-4o-mini"
 
 
-@app.post("/v1/classify", response_model=ClassifyResponse)
-def classify(request: ClassifyRequest):
-    """Intent classification stub — wire LiteLLM router + HITL escalation."""
-    result = ClassifyResponse(
-        intent="interested",
-        confidence=0.72,
-        requires_hitl=True,
+def _llm_json(system_prompt: str, user_prompt: str) -> dict:
+    """
+    Call the LLM and return parsed JSON.
+
+    The system_prompt is the stable, cacheable part (ICP config + instructions).
+    OpenAI automatically caches prompts ≥1024 tokens that share the same prefix,
+    so keeping the ICP config in the system message amortises cost across all
+    prospects scored against the same ICP in a short window.
+    """
+    from litellm import completion
+
+    model = _default_model()
+    timeout = float(os.getenv("LLM_TIMEOUT_SECS", "4.0"))
+
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": user_prompt})
+
+    extra_kwargs: dict = {
+        "api_key": os.getenv("OPENROUTER_API_KEY"),
+        "api_base": "https://openrouter.ai/api/v1",
+    }
+
+    res = completion(
+        model=model,
+        messages=messages,
+        response_format={"type": "json_object"},
+        timeout=timeout,
+        **extra_kwargs,
     )
-    analytics_capture(
-        distinct_id=request.thread_id,
-        event="prospect_classified",
-        properties={
-            "intent": result.intent,
-            "confidence": result.confidence,
-            "requires_hitl": result.requires_hitl,
-        },
-    )
-    return result
+    content = res.choices[0].message.content or "{}"
+    return json.loads(content)
 
 
 # ---------------------------------------------------------------------------
-# ICP / lead scoring (strategy §9, ticket E6.1)
+# ICP / lead scoring
 # ---------------------------------------------------------------------------
 
 
@@ -162,6 +177,12 @@ class IcpConfig(BaseModel):
     max_employees: Optional[int] = None
 
 
+class DimensionScore(BaseModel):
+    score: int  # 0–100 fit quality for this dimension
+    matched: bool
+    explanation: str
+
+
 class ScoreRequest(BaseModel):
     prospect: ProspectInput
     icp: IcpConfig = IcpConfig()
@@ -176,6 +197,32 @@ class ScoreResponse(BaseModel):
     outreach_readiness: str  # ready | warm | nurture | not_qualified
     reasoning: str
     source: str  # llm | heuristic
+    dimensions: dict[str, DimensionScore]
+
+
+class ClassifyRequest(BaseModel):
+    """Message thread and/or prospect buying-intent context."""
+
+    thread_id: Optional[str] = None
+    content: Optional[str] = None
+    prospect_id: Optional[str] = None
+    title: Optional[str] = None
+    industry: Optional[str] = None
+    company_domain: Optional[str] = None
+    seniority: Optional[str] = None
+    employee_count: Optional[int] = None
+    signals: list[str] = []
+    job_post_snippets: list[str] = []
+
+
+class ClassifyResponse(BaseModel):
+    intent: str  # buy | respond | need | interested | not_interested | meeting | unsubscribe | other
+    confidence: float
+    requires_hitl: bool
+    rationale: str = ""
+    intent_score: int = 0  # 0–100 — feeds scoring / outreach readiness
+    source: str = "heuristic"  # llm | heuristic
+    outreach_readiness: str = "not_qualified"
 
 
 _INTENT_SIGNALS = {
@@ -185,6 +232,258 @@ _INTENT_SIGNALS = {
     "market_expansion": "Scaling Sales Team",
     "product_launch": "Lead Generation Issues",
 }
+
+# Typed intents for /v1/classify (R5.2) — buy/respond/need plus reply-oriented labels.
+INTENT_LABELS = frozenset(
+    {
+        "buy",
+        "respond",
+        "need",
+        "interested",
+        "not_interested",
+        "meeting",
+        "unsubscribe",
+        "other",
+    }
+)
+
+# Map typed intent → 0–100 intent_score (feeds outreach readiness).
+_INTENT_SCORE_BY_LABEL: dict[str, int] = {
+    "buy": 90,
+    "meeting": 85,
+    "need": 72,
+    "interested": 65,
+    "respond": 55,
+    "other": 35,
+    "not_interested": 10,
+    "unsubscribe": 5,
+}
+
+_HITL_CONFIDENCE_THRESHOLD = float(os.getenv("INTENT_HITL_THRESHOLD", "0.65"))
+
+
+def _intent_score_from_signals(signals: list[str], job_post_snippets: list[str] | None = None) -> int:
+    """Deterministic buying-intent score from corpus signals + hiring evidence."""
+    base = min(100, len(signals) * 25)
+    if job_post_snippets:
+        base = min(100, base + min(20, len(job_post_snippets) * 5))
+    # Stronger weights for high-intent signal types
+    strong = {"recent_funding", "recent_hiring", "product_launch", "market_expansion"}
+    if any(s in strong for s in signals):
+        base = min(100, max(base, 50 + 15 * sum(1 for s in signals if s in strong)))
+    return max(0, min(100, base))
+
+
+def _label_from_intent_score(score: int) -> str:
+    if score >= 80:
+        return "buy"
+    if score >= 65:
+        return "need"
+    if score >= 45:
+        return "respond"
+    if score >= 25:
+        return "interested"
+    return "other"
+
+
+def _classify_message_heuristic(content: str) -> tuple[str, float, str]:
+    """Keyword heuristic for reply / message thread text."""
+    text = (content or "").strip().lower()
+    if not text:
+        return "other", 0.35, "Empty message — no intent signals"
+
+    checks: list[tuple[str, tuple[str, ...], float, str]] = [
+        (
+            "unsubscribe",
+            ("unsubscribe", "remove me", "stop emailing", "opt out", "do not contact", "don't contact"),
+            0.92,
+            "Opt-out / unsubscribe language",
+        ),
+        (
+            "not_interested",
+            ("not interested", "no thanks", "no thank you", "pass for now", "please remove"),
+            0.88,
+            "Clear rejection language",
+        ),
+        (
+            "meeting",
+            ("book a call", "schedule a", "calendar", "meet next", "demo next", "available for a call", "let's meet"),
+            0.9,
+            "Meeting / calendar request",
+        ),
+        (
+            "buy",
+            ("pricing", "purchase", "buy", "procurement", "contract", "invoice", "ready to purchase"),
+            0.85,
+            "Purchase / pricing language",
+        ),
+        (
+            "need",
+            ("looking for", "we need", "evaluating", "rfp", "vendor", "solution for", "pain point"),
+            0.8,
+            "Active need / evaluation language",
+        ),
+        (
+            "interested",
+            ("interested", "tell me more", "sounds good", "learn more", "send more info", "curious about"),
+            0.78,
+            "Positive interest language",
+        ),
+        (
+            "respond",
+            ("thanks for reaching", "got your note", "following up", "circling back", "who is this"),
+            0.7,
+            "Acknowledgement / reply without clear buying signal",
+        ),
+    ]
+
+    for label, needles, conf, rationale in checks:
+        if any(n in text for n in needles):
+            return label, conf, rationale
+
+    # Short generic replies
+    if len(text.split()) <= 6:
+        return "respond", 0.45, "Short reply without strong intent keywords"
+    return "other", 0.4, "No strong intent keywords matched"
+
+
+def _classify_prospect_heuristic(
+    signals: list[str],
+    job_post_snippets: list[str],
+    title: str | None,
+    industry: str | None,
+) -> tuple[str, float, str, int]:
+    score = _intent_score_from_signals(signals, job_post_snippets)
+    label = _label_from_intent_score(score)
+    parts: list[str] = []
+    if signals:
+        parts.append(f"signals={','.join(signals)}")
+    if job_post_snippets:
+        parts.append(f"{len(job_post_snippets)} job-post snippet(s)")
+    if title:
+        parts.append(f"title={title}")
+    if industry:
+        parts.append(f"industry={industry}")
+    rationale = "; ".join(parts) or "No firmographic or signal evidence"
+    # Confidence rises with evidence volume
+    evidence = len(signals) + (1 if job_post_snippets else 0) + (1 if title else 0)
+    confidence = min(0.95, 0.4 + 0.12 * evidence)
+    if not signals and not job_post_snippets:
+        confidence = 0.35
+        label = "other"
+    return label, confidence, rationale, score
+
+
+def _normalize_intent_label(raw: str) -> str:
+    label = (raw or "other").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "buying": "buy",
+        "purchase": "buy",
+        "response": "respond",
+        "reply": "respond",
+        "needs": "need",
+        "interest": "interested",
+        "positive": "interested",
+        "negative": "not_interested",
+        "meeting_request": "meeting",
+        "demo": "meeting",
+        "opt_out": "unsubscribe",
+    }
+    label = aliases.get(label, label)
+    return label if label in INTENT_LABELS else "other"
+
+
+def classify_intent(
+    *,
+    content: str | None = None,
+    signals: list[str] | None = None,
+    job_post_snippets: list[str] | None = None,
+    title: str | None = None,
+    industry: str | None = None,
+    company_domain: str | None = None,
+    seniority: str | None = None,
+    employee_count: int | None = None,
+) -> ClassifyResponse:
+    """
+    Real intent classifier (R5.2): LLM when OpenRouter is configured, else heuristic.
+    Supports message-thread content and/or prospect signals + firmographics + job posts.
+    """
+    signals = signals or []
+    job_post_snippets = job_post_snippets or []
+    content = (content or "").strip()
+
+    # Heuristic baseline (always computed — used as fallback and for score merge)
+    if content and not signals and not job_post_snippets:
+        h_label, h_conf, h_rationale = _classify_message_heuristic(content)
+        h_score = _INTENT_SCORE_BY_LABEL.get(h_label, 35)
+    else:
+        h_label, h_conf, h_rationale, h_score = _classify_prospect_heuristic(
+            signals, job_post_snippets, title, industry
+        )
+        if content:
+            m_label, m_conf, m_rationale = _classify_message_heuristic(content)
+            # Message evidence can override when stronger
+            if m_conf >= h_conf and m_label != "other":
+                h_label, h_conf, h_rationale = m_label, m_conf, f"{m_rationale}; {h_rationale}"
+                h_score = max(h_score, _INTENT_SCORE_BY_LABEL.get(m_label, h_score))
+
+    source = "heuristic"
+    label, confidence, rationale, intent_score = h_label, h_conf, h_rationale, h_score
+
+    if _llm_available():
+        try:
+            system = (
+                "You are a B2B sales intent classifier for Skout AI.\n"
+                "Return JSON only with keys:\n"
+                '  intent: one of buy|respond|need|interested|not_interested|meeting|unsubscribe|other\n'
+                "  confidence: float 0-1\n"
+                "  rationale: short string\n"
+                "  intent_score: integer 0-100 (buying readiness; higher = more likely to engage/buy)\n"
+                "Definitions: buy=purchase-ready, need=active problem, respond=will reply/engage, "
+                "interested=curious, meeting=wants a call, not_interested=rejection, "
+                "unsubscribe=opt-out, other=unclear."
+            )
+            user = {
+                "content": content or None,
+                "signals": signals,
+                "job_post_snippets": job_post_snippets[:8],
+                "title": title,
+                "industry": industry,
+                "company_domain": company_domain,
+                "seniority": seniority,
+                "employee_count": employee_count,
+                "heuristic_baseline": {
+                    "intent": h_label,
+                    "confidence": h_conf,
+                    "intent_score": h_score,
+                    "rationale": h_rationale,
+                },
+            }
+            data = _llm_json(system, json.dumps(user))
+            label = _normalize_intent_label(str(data.get("intent", h_label)))
+            confidence = float(data.get("confidence", h_conf))
+            confidence = max(0.0, min(1.0, confidence))
+            rationale = str(data.get("rationale") or h_rationale)
+            intent_score = int(data.get("intent_score", h_score))
+            intent_score = max(0, min(100, intent_score))
+            # Prefer label-mapped score if LLM omitted a sensible score
+            if "intent_score" not in data:
+                intent_score = max(intent_score, _INTENT_SCORE_BY_LABEL.get(label, intent_score))
+            source = "llm"
+        except Exception as e:
+            print(f"[classify] LLM failed, using heuristic: {e}")
+
+    requires_hitl = confidence < _HITL_CONFIDENCE_THRESHOLD or label == "other"
+
+    return ClassifyResponse(
+        intent=label,
+        confidence=round(confidence, 4),
+        requires_hitl=requires_hitl,
+        rationale=rationale[:1000],
+        intent_score=intent_score,
+        source=source,
+        outreach_readiness=_readiness(70, intent_score) if intent_score else "not_qualified",
+    )
 
 
 def _band(score: int) -> str:
@@ -210,44 +509,85 @@ def _score_heuristic(request: ScoreRequest) -> ScoreResponse:
     p = request.prospect
     icp = request.icp
     score = 40
-    reasons: list[str] = []
+    dims: dict[str, dict] = {}
 
+    # Industry
     if icp.industries and p.industry:
         if p.industry in icp.industries:
             score += 20
-            reasons.append("industry match")
+            dims["industry"] = {"score": 80, "matched": True, "explanation": f"{p.industry} is in target industries"}
         else:
             score -= 10
+            dims["industry"] = {"score": 20, "matched": False, "explanation": f"{p.industry} not in target industries"}
+    else:
+        dims["industry"] = {"score": 50, "matched": True, "explanation": "Industry not specified in ICP"}
+
+    # Seniority
     if icp.seniorities and p.seniority:
         if p.seniority in icp.seniorities:
             score += 15
-            reasons.append("seniority match")
+            dims["seniority"] = {"score": 80, "matched": True, "explanation": f"{p.seniority} matches target seniority"}
+        else:
+            dims["seniority"] = {"score": 30, "matched": False, "explanation": f"{p.seniority} not in target seniorities"}
+    else:
+        dims["seniority"] = {"score": 50, "matched": True, "explanation": "Seniority not specified in ICP"}
+
+    # Geography
     if icp.countries and p.country:
         if p.country in icp.countries:
             score += 10
-            reasons.append("geo match")
+            dims["geography"] = {"score": 80, "matched": True, "explanation": f"{p.country} is in target countries"}
         else:
             score -= 5
+            dims["geography"] = {"score": 20, "matched": False, "explanation": f"{p.country} not in target countries"}
+    else:
+        dims["geography"] = {"score": 50, "matched": True, "explanation": "Geography not specified in ICP"}
+
+    # Company size
     if p.employee_count is not None:
         lo = icp.min_employees if icp.min_employees is not None else 0
         hi = icp.max_employees if icp.max_employees is not None else 10**9
         if lo <= p.employee_count <= hi:
             score += 10
-            reasons.append("size fit")
+            dims["company_size"] = {"score": 80, "matched": True, "explanation": f"{p.employee_count} employees fits {lo}–{hi} range"}
+        else:
+            dims["company_size"] = {"score": 20, "matched": False, "explanation": f"{p.employee_count} employees outside {lo}–{hi} range"}
+    else:
+        dims["company_size"] = {"score": 50, "matched": True, "explanation": "Employee count unknown"}
+
+    # Title / keywords
     if icp.titles and p.title:
         title_l = p.title.lower()
         if any(t.lower() in title_l or title_l in t.lower() for t in icp.titles):
             score += 10
-            reasons.append("title fit")
-    if icp.keywords and p.title:
+            dims["title"] = {"score": 80, "matched": True, "explanation": f"{p.title} matches target titles"}
+        else:
+            dims["title"] = {"score": 30, "matched": False, "explanation": f"{p.title} not in target titles"}
+    elif icp.keywords and p.title:
         title_l = p.title.lower()
         if any(kw.lower() in title_l for kw in icp.keywords):
             score += 5
-            reasons.append("keyword match")
+            dims["title"] = {"score": 65, "matched": True, "explanation": f"{p.title} matches target keywords"}
+        else:
+            dims["title"] = {"score": 40, "matched": False, "explanation": "Title does not match keywords"}
+    else:
+        dims["title"] = {"score": 50, "matched": True, "explanation": "Title not specified in ICP"}
+
+    # Signals / intent — shared with /v1/classify (R5.2)
+    intent_score = _intent_score_from_signals(p.signals)
+    if p.signals:
+        dims["signals"] = {"score": intent_score, "matched": True, "explanation": f"{len(p.signals)} signal(s): {', '.join(p.signals)}"}
+    else:
+        dims["signals"] = {"score": 0, "matched": False, "explanation": "No intent signals detected"}
 
     icp_score = max(0, min(100, score))
-    intent_score = min(100, len(p.signals) * 25)
     pain_points = sorted({_INTENT_SIGNALS[s] for s in p.signals if s in _INTENT_SIGNALS})
+    reasons = [
+        v["explanation"] for k, v in dims.items()
+        if v["matched"] and k != "signals"
+        and "not specified" not in v["explanation"]
+        and "unknown" not in v["explanation"].lower()
+    ]
 
     return ScoreResponse(
         prospect_id=p.prospect_id,
@@ -258,28 +598,111 @@ def _score_heuristic(request: ScoreRequest) -> ScoreResponse:
         outreach_readiness=_readiness(icp_score, intent_score),
         reasoning=", ".join(reasons) or "baseline score (no ICP signals matched)",
         source="heuristic",
+        dimensions={k: DimensionScore(**v) for k, v in dims.items()},
+    )
+
+
+def _build_system_prompt(icp: IcpConfig) -> str:
+    """
+    Build a stable, ICP-keyed system prompt.
+
+    Keeping the ICP in the system message means repeated calls for different
+    prospects against the same ICP share a common prefix — OpenAI automatically
+    caches prompts ≥1024 tokens that share the same prefix, reducing latency
+    and cost on the second+ prospect scored in a short window.
+    """
+    size_range = (
+        f"{icp.min_employees}–{icp.max_employees} employees"
+        if icp.min_employees or icp.max_employees
+        else "not specified"
+    )
+    return f"""You are a B2B sales intelligence engine specialised in ICP (Ideal Customer Profile) scoring.
+
+## Your Task
+Score a B2B prospect against the ICP configuration below. Return a single JSON object — no markdown, no text outside the JSON.
+
+## ICP Configuration
+Industries (target): {icp.industries or 'not specified'}
+Seniorities (target): {icp.seniorities or 'not specified'}
+Countries / Geographies (target): {icp.countries or 'not specified'}
+Job Titles (target): {icp.titles or 'not specified'}
+Keywords (must appear in title or role): {icp.keywords or 'not specified'}
+Company Size Range: {size_range}
+
+## Scoring Dimensions
+Evaluate each dimension independently and assign a 0–100 fit score:
+
+1. industry      — Does the prospect's industry match a target industry?  (weight ~20 pts toward icp_score)
+2. seniority     — Does the seniority level match?                        (weight ~15 pts)
+3. geography     — Does the country match?                                (weight ~10 pts)
+4. company_size  — Does headcount fall within the target range?           (weight ~10 pts)
+5. title         — Does the job title match target titles or keywords?    (weight ~15 pts)
+6. signals       — Intent signals indicating buying readiness.            (drives intent_score)
+
+## Required JSON Output Schema
+{{
+  "icp_score": <integer 0–100>,
+  "intent_score": <integer 0–100>,
+  "pain_points": ["<short string>", ...],
+  "reasoning": "<one concise sentence summarising overall fit>",
+  "dimensions": {{
+    "industry":     {{"score": <0–100>, "matched": <bool>, "explanation": "<why, one sentence>"}},
+    "seniority":    {{"score": <0–100>, "matched": <bool>, "explanation": "<why, one sentence>"}},
+    "geography":    {{"score": <0–100>, "matched": <bool>, "explanation": "<why, one sentence>"}},
+    "company_size": {{"score": <0–100>, "matched": <bool>, "explanation": "<why, one sentence>"}},
+    "title":        {{"score": <0–100>, "matched": <bool>, "explanation": "<why, one sentence>"}},
+    "signals":      {{"score": <0–100>, "matched": <bool>, "explanation": "<why, one sentence>"}}
+  }}
+}}
+
+## Scoring Guidelines
+- icp_score: weighted composite of all ICP dimensions (not signals)
+- intent_score: driven purely by signals — 0 for no signals, up to 100 for multiple strong signals
+- pain_points: infer from signals and role; keep to 1–4 short strings
+- reasoning: one sentence; name the single biggest driver of the score
+- dimension score: fit quality for that dimension (0 = terrible fit, 100 = perfect fit)
+- matched: true when the dimension criterion is met OR when the ICP has no constraint for that dimension
+- If an ICP field is empty / not specified, treat that dimension as neutral (score: 50, matched: true, explanation: "Not specified in ICP")
+
+## Intent Signal Reference
+{json.dumps(_INTENT_SIGNALS)}
+"""
+
+
+def _build_user_prompt(p: ProspectInput, baseline: ScoreResponse) -> str:
+    return f"""Score this prospect:
+Name: {p.full_name or 'unknown'}
+Title: {p.title or 'unknown'}
+Seniority: {p.seniority or 'unknown'}
+Industry: {p.industry or 'unknown'}
+Country: {p.country or 'unknown'}
+Employee Count: {p.employee_count or 'unknown'}
+Company Domain: {p.company_domain or 'unknown'}
+Intent Signals: {p.signals or []}
+
+Heuristic baseline — icp_score={baseline.icp_score}, intent_score={baseline.intent_score}
+Refine with judgment; do not copy the baseline blindly."""
+
+
+def _parse_dimension(raw: Any, fallback: DimensionScore) -> DimensionScore:
+    if not isinstance(raw, dict):
+        return fallback
+    return DimensionScore(
+        score=max(0, min(100, int(raw.get("score", fallback.score)))),
+        matched=bool(raw.get("matched", fallback.matched)),
+        explanation=str(raw.get("explanation", fallback.explanation)),
     )
 
 
 def _score_llm(request: ScoreRequest, baseline: ScoreResponse) -> ScoreResponse:
     p = request.prospect
-    icp = request.icp
-    prompt = (
-        "You are a B2B sales ICP scoring engine. Score how well this prospect matches the ICP. "
-        "Return JSON with: icp_score (0-100 int), intent_score (0-100 int), "
-        "pain_points (array of short strings), reasoning (one concise sentence). "
-        f"Prospect: name={p.full_name}, title={p.title}, seniority={p.seniority}, "
-        f"industry={p.industry}, country={p.country}, employees={p.employee_count}, "
-        f"domain={p.company_domain}, signals={p.signals}. "
-        f"ICP: industries={icp.industries}, countries={icp.countries}, seniorities={icp.seniorities}, "
-        f"titles={icp.titles}, keywords={icp.keywords}, "
-        f"min_employees={icp.min_employees}, max_employees={icp.max_employees}. "
-        f"Signal themes: {_INTENT_SIGNALS}. "
-        f"Heuristic baseline icp_score={baseline.icp_score} — refine with judgment, do not copy blindly."
-    )
-    data = _llm_json(prompt)
+    system_prompt = _build_system_prompt(request.icp)
+    user_prompt = _build_user_prompt(p, baseline)
+    data = _llm_json(system_prompt, user_prompt)
+
     icp_score = max(0, min(100, int(data.get("icp_score", baseline.icp_score))))
     intent_score = max(0, min(100, int(data.get("intent_score", baseline.intent_score))))
+
     raw_pain = data.get("pain_points", baseline.pain_points)
     if isinstance(raw_pain, str):
         pain_points = [raw_pain] if raw_pain else []
@@ -287,7 +710,20 @@ def _score_llm(request: ScoreRequest, baseline: ScoreResponse) -> ScoreResponse:
         pain_points = [str(x) for x in raw_pain if x]
     else:
         pain_points = baseline.pain_points
+
     reasoning = str(data.get("reasoning") or baseline.reasoning)
+
+    raw_dims = data.get("dimensions") or {}
+    dimensions = {
+        key: _parse_dimension(raw_dims.get(key), fallback)
+        for key, fallback in baseline.dimensions.items()
+    }
+    # Include any extra dimensions the LLM returned that aren't in the baseline
+    for key, raw in raw_dims.items():
+        if key not in dimensions:
+            neutral = DimensionScore(score=50, matched=True, explanation="")
+            dimensions[key] = _parse_dimension(raw, neutral)
+
     return ScoreResponse(
         prospect_id=p.prospect_id,
         icp_score=icp_score,
@@ -297,23 +733,69 @@ def _score_llm(request: ScoreRequest, baseline: ScoreResponse) -> ScoreResponse:
         outreach_readiness=_readiness(icp_score, intent_score),
         reasoning=reasoning,
         source="llm",
+        dimensions=dimensions,
     )
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "service": "skout-ai"}
 
 
 @app.post("/v1/score", response_model=ScoreResponse)
 def score(request: ScoreRequest):
-    """ICP + intent scoring via LLM when OPENAI_API_KEY is set, else heuristic."""
+    """ICP + intent scoring via LLM when configured, else heuristic.
+
+    Intent score is aligned with /v1/classify (R5.2) so buying signals feed
+    the same intent_score → outreach_readiness path.
+    """
     baseline = _score_heuristic(request)
-    p = request.prospect
+
+    # Merge classify-derived intent so score and classify stay consistent (R5.2)
+    try:
+        classified = classify_intent(
+            signals=request.prospect.signals,
+            title=request.prospect.title,
+            industry=request.prospect.industry,
+            company_domain=request.prospect.company_domain,
+            seniority=request.prospect.seniority,
+            employee_count=request.prospect.employee_count,
+        )
+        dims = dict(baseline.dimensions)
+        prev = dims.get("signals")
+        dims["signals"] = DimensionScore(
+            score=classified.intent_score,
+            matched=classified.intent_score > 0,
+            explanation=classified.rationale
+            or (prev.explanation if prev else "No intent signals detected"),
+        )
+        baseline = baseline.model_copy(
+            update={
+                "intent_score": classified.intent_score,
+                "outreach_readiness": _readiness(baseline.icp_score, classified.intent_score),
+                "dimensions": dims,
+                "reasoning": (
+                    f"{baseline.reasoning}; intent={classified.intent} ({classified.source})"
+                    if baseline.reasoning
+                    else f"intent={classified.intent}"
+                ),
+            }
+        )
+    except Exception as e:
+        print(f"[score] classify merge skipped: {e}")
+
     result = baseline
     if _llm_available():
         try:
             result = _score_llm(request, baseline)
-        except Exception:
+        except Exception as e:
+            import traceback
+            print(f"[score] LLM failed, falling back to heuristic: {e}")
+            traceback.print_exc()
             result = baseline
 
     analytics_capture(
-        distinct_id=p.prospect_id,
+        distinct_id=request.prospect.prospect_id,
         event="prospect_scored",
         properties={
             "icp_score": result.icp_score,
@@ -321,7 +803,7 @@ def score(request: ScoreRequest):
             "intent_score": result.intent_score,
             "outreach_readiness": result.outreach_readiness,
             "num_pain_points": len(result.pain_points),
-            "num_signals": len(p.signals),
+            "num_signals": len(request.prospect.signals),
             "source": result.source,
         },
     )
@@ -365,36 +847,60 @@ class PersonalizeResponse(BaseModel):
     source: str
 
 
-def _llm_available() -> bool:
-    import os
-    return bool(os.getenv("OPENAI_API_KEY"))
+@app.post("/v1/classify", response_model=ClassifyResponse)
+def classify(request: ClassifyRequest):
+    """
+    Intent classification (R5.2) — LiteLLM when configured, else heuristic.
+    Low-confidence / unclear results set requires_hitl=True for human review.
+    intent_score feeds ICP outreach readiness when callers merge with /v1/score.
+    """
+    if not request.content and not request.signals and not request.job_post_snippets:
+        # Keep backward-compat for empty observability pings — still not a hardcoded "interested"
+        result = ClassifyResponse(
+            intent="other",
+            confidence=0.3,
+            requires_hitl=True,
+            rationale="No content or signals provided",
+            intent_score=0,
+            source="heuristic",
+            outreach_readiness="not_qualified",
+        )
+    else:
+        result = classify_intent(
+            content=request.content,
+            signals=request.signals,
+            job_post_snippets=request.job_post_snippets,
+            title=request.title,
+            industry=request.industry,
+            company_domain=request.company_domain,
+            seniority=request.seniority,
+            employee_count=request.employee_count,
+        )
 
-
-def _llm_json(prompt: str) -> dict:
-    import os
-    from litellm import completion
-
-    model = os.getenv("AI_MODEL", "gpt-4o-mini")
-    res = completion(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"},
+    analytics_capture(
+        distinct_id=request.thread_id or request.prospect_id or "anonymous",
+        event="prospect_classified",
+        properties={
+            "intent": result.intent,
+            "confidence": result.confidence,
+            "requires_hitl": result.requires_hitl,
+            "intent_score": result.intent_score,
+            "source": result.source,
+        },
     )
-    import json
-    content = res.choices[0].message.content or "{}"
-    return json.loads(content)
+    return result
 
 
 @app.post("/v1/pain-points", response_model=PainPointResponse)
 def pain_points(request: PainPointRequest):
-    """Detect pain points via LLM when OPENAI_API_KEY is set, else heuristic."""
+    """Detect pain points via LLM when OpenRouter is set, else heuristic."""
     if _llm_available():
         prompt = (
             "Analyze this B2B prospect and return JSON with key pain_points (array of strings). "
             f"Title: {request.title}, Industry: {request.industry}, Domain: {request.company_domain}, "
             f"Description: {request.description}, Signals: {request.signals}, Jobs: {request.job_post_snippets}"
         )
-        data = _llm_json(prompt)
+        data = _llm_json("", prompt)
         result = PainPointResponse(
             prospect_id=request.prospect_id,
             pain_points=data.get("pain_points", []),
@@ -428,7 +934,7 @@ def personalize(request: PersonalizeRequest):
             f"Prospect: {request.full_name}, {request.title} at {request.company_domain}. "
             f"Pain points: {request.pain_points}. ICP score: {request.icp_score}"
         )
-        data = _llm_json(prompt)
+        data = _llm_json("", prompt)
         result = PersonalizeResponse(
             prospect_id=request.prospect_id,
             opener=data.get("opener", ""),

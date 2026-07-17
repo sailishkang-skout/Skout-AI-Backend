@@ -2,7 +2,8 @@ import type { FastifyInstance } from "fastify";
 import { dashboardRoutes } from "./dashboard.routes.js";
 import { analyticsRoutes } from "./analytics.routes.js";
 import { aiRoutes } from "./ai.routes.js";
-import { crmRoutes, webhookRoutes } from "./crm.routes.js";
+import { crmRoutes } from "./crm.routes.js";
+import { webhookRoutes } from "./webhooks.routes.js";
 import { enrichmentRoutes } from "./enrichment.routes.js";
 import { icpRoutes } from "./icp.routes.js";
 import { smartListRoutes } from "./smart-list.routes.js";
@@ -13,12 +14,16 @@ import { listRoutes } from "./list.routes.js";
 import { prospectRoutes } from "./prospect.routes.js";
 import { searchRoutes } from "./search.routes.js";
 import { sequenceRoutes } from "./sequence.routes.js";
+import { linkedinOutreachRoutes } from "./linkedin-outreach.routes.js";
+import { linkedinAccountRoutes } from "./linkedin-account.routes.js";
 import { integrationRoutes } from "./integration.routes.js";
 import { billingRoutes } from "./billing.routes.js";
+import { importRoutes } from "./import.routes.js";
 import { workspaceRoutes } from "./workspace.routes.js";
 import { userRoutes } from "./user.routes.js";
 import { trackingRoutes } from "./tracking.routes.js";
 import { unsubscribeRoutes } from "./unsubscribe.routes.js";
+import { teamRoutes } from "./team.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoutes, { prefix: "/api/v1" });
@@ -36,7 +41,10 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(smartListRoutes);
     await v1.register(scrapeRoutes);
     await v1.register(billingRoutes);
+    await v1.register(importRoutes);
     await v1.register(sequenceRoutes);
+    await v1.register(linkedinOutreachRoutes);
+    await v1.register(linkedinAccountRoutes);
     await v1.register(inboxRoutes);
     await v1.register(aiRoutes);
     await v1.register(crmRoutes);
@@ -44,5 +52,6 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(integrationRoutes);
     await v1.register(trackingRoutes);
     await v1.register(unsubscribeRoutes);
+    await v1.register(teamRoutes);
   }, { prefix: "/api/v1" });
 }

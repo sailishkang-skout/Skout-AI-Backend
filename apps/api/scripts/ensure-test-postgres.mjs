@@ -1,10 +1,16 @@
 /**
  * Ensures local Postgres is up for route integration tests (docker-compose port 5434).
- * No-op when Docker is unavailable — vitest setup clears DATABASE_URL in that case.
+ *
+ * CI already runs `pnpm db:migrate` once before `pnpm test` against DATABASE_URL (:5432).
+ * Skip compose + migrate in CI to avoid racing CRM pretest on __drizzle_migrations.
  */
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+if (process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true") {
+  process.exit(0);
+}
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const DATABASE_URL = "postgresql://skout:skout@localhost:5434/skout";
@@ -38,4 +44,17 @@ const migrate = spawnSync("pnpm", ["db:migrate"], {
   env: { ...process.env, DATABASE_URL },
 });
 
-process.exit(migrate.status === 0 ? 0 : migrate.status ?? 1);
+if (migrate.status !== 0) {
+  process.exit(migrate.status ?? 1);
+}
+
+// Idempotent repairs for columns drizzle migrate may skip when journal `when`
+// timestamps are stale relative to already-applied migrations.
+const applyPending = spawnSync("pnpm", ["--filter", "@skout/db", "exec", "tsx", "src/apply-pending.ts"], {
+  cwd: repoRoot,
+  stdio: "inherit",
+  shell: true,
+  env: { ...process.env, DATABASE_URL },
+});
+
+process.exit(applyPending.status === 0 ? 0 : applyPending.status ?? 1);

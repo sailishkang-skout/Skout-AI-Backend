@@ -1,12 +1,18 @@
 /**
  * Ensures local Postgres is up for CRM route integration tests (docker-compose port 5434).
+ *
+ * Does NOT run migrations — API pretest (local) or CI workflow owns `pnpm db:migrate`
+ * so parallel `pnpm -r test` cannot race on __drizzle_migrations.
  */
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+if (process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true") {
+  process.exit(0);
+}
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-const DATABASE_URL = "postgresql://skout:skout@localhost:5434/skout";
 
 function dockerAvailable() {
   const r = spawnSync("docker", ["info"], { stdio: "ignore" });
@@ -25,14 +31,6 @@ const up = spawnSync(
 
 if (up.status !== 0) {
   console.warn("ensure-test-postgres: Postgres did not become healthy — CRM integration tests may skip DB.");
-  process.exit(0);
 }
 
-const migrate = spawnSync("pnpm", ["db:migrate"], {
-  cwd: repoRoot,
-  stdio: "inherit",
-  shell: true,
-  env: { ...process.env, DATABASE_URL },
-});
-
-process.exit(migrate.status === 0 ? 0 : migrate.status ?? 1);
+process.exit(0);
