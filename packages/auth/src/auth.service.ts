@@ -102,10 +102,59 @@ export async function resolveOrProvisionUser(
         });
       }
 
-        // Auto-accept any pending invites for this email
       await autoAcceptPendingInvites(tx, userId, userEmail, membership.workspaceId);
 
       return { userId, userEmail, workspaceId: membership.workspaceId, role: membership.role };
+    }
+
+    // No membership yet — check for pending invites before creating a new workspace.
+    // If the user arrived via an invite link, accept those invites and join that workspace
+    // instead of provisioning a brand-new workspace as owner.
+    const now = new Date();
+    const pendingInvites = await tx
+      .select({
+        id: schema.workspaceInvites.id,
+        workspaceId: schema.workspaceInvites.workspaceId,
+        role: schema.workspaceInvites.role,
+      })
+      .from(schema.workspaceInvites)
+      .where(
+        and(
+          eq(schema.workspaceInvites.email, email.toLowerCase()),
+          isNull(schema.workspaceInvites.acceptedAt),
+          gt(schema.workspaceInvites.expiresAt, now)
+        )
+      );
+
+    if (pendingInvites.length > 0) {
+      for (const invite of pendingInvites) {
+        await tx
+          .insert(schema.workspaceMembers)
+          .values({ workspaceId: invite.workspaceId, userId, role: invite.role })
+          .onConflictDoNothing();
+        await tx
+          .update(schema.workspaceInvites)
+          .set({ acceptedAt: now })
+          .where(eq(schema.workspaceInvites.id, invite.id));
+      }
+
+      const primary = pendingInvites[0]!;
+      const [balance] = await tx
+        .select({ workspaceId: schema.creditBalances.workspaceId })
+        .from(schema.creditBalances)
+        .where(eq(schema.creditBalances.workspaceId, primary.workspaceId))
+        .limit(1);
+
+      if (!balance) {
+        await tx.insert(schema.creditBalances).values({ workspaceId: primary.workspaceId, balance: 500 });
+        await tx.insert(schema.creditTransactions).values({
+          workspaceId: primary.workspaceId,
+          amount: 500,
+          action: "provision",
+        });
+      }
+
+      return { userId, userEmail, workspaceId: primary.workspaceId, role: primary.role };
     }
 
     const slug =
