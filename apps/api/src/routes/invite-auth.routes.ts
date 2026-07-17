@@ -4,7 +4,7 @@ import { and, eq, gt } from "drizzle-orm";
 import { schema } from "@skout/db";
 import { generateOtp, hashOtp, verifyOtp } from "../utils/otp.js";
 import { sendMail, buildOtpEmail } from "../services/mail.service.js";
-import { errorResponse } from "../utils/http.js";
+import { errorResponse, HttpError } from "../utils/http.js";
 
 const OTP_TTL_MS = 10 * 60 * 1000;       // 10 minutes
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -172,6 +172,55 @@ export async function inviteAuthRoutes(app: FastifyInstance) {
           email: invite.email,
         },
       });
+    }
+  );
+
+  // POST /invite-auth/set-password  — protected (requires isk_ session token)
+  // Creates/updates Clerk user with the given password so they can sign in permanently
+  app.post<{ Body: { password: string } }>(
+    "/invite-auth/set-password",
+    async (request, reply) => {
+      if (!request.userId || !request.userEmail) {
+        return reply.code(401).send(errorResponse("Unauthorized", 401));
+      }
+
+      const { password } = request.body ?? {};
+      if (!password || password.length < 8) {
+        return reply.code(400).send(errorResponse("Password must be at least 8 characters", 400));
+      }
+
+      const secretKey = app.config.CLERK_SECRET_KEY;
+      if (!secretKey || secretKey.trim().toLowerCase() === "replace-me") {
+        // Dev stub mode — skip Clerk, just confirm
+        return reply.send({ data: { message: "Password set (stub mode). Sign in with SSO or email." } });
+      }
+
+      try {
+        const { createClerkClient } = await import("@clerk/backend");
+        const clerk = createClerkClient({ secretKey });
+
+        const { data: existing } = await clerk.users.getUserList({ emailAddress: [request.userEmail] });
+
+        if (existing[0]) {
+          await clerk.users.updateUser(existing[0].id, { password, skipPasswordChecks: true });
+        } else {
+          await clerk.users.createUser({
+            emailAddress: [request.userEmail],
+            password,
+            skipPasswordChecks: true,
+          });
+        }
+
+        return reply.send({ data: { message: "Password set. You can now sign in." } });
+      } catch (err: unknown) {
+        const clerkErr = err as { errors?: Array<{ longMessage?: string; message?: string }> };
+        const msg =
+          clerkErr.errors?.[0]?.longMessage ??
+          clerkErr.errors?.[0]?.message ??
+          (err instanceof Error ? err.message : "Failed to set password");
+        app.log.error({ err }, "[set-password] Clerk error");
+        throw new HttpError(msg, 400);
+      }
     }
   );
 }

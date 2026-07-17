@@ -162,8 +162,6 @@ const envSchema = z
     INVITE_BASE_URL: z.string().optional(),
     /** From-address for transactional emails (invites, OTP). */
     SES_FROM_EMAIL: z.string().default("noreply@skoutai.io"),
-    /** Dev-only: redirect ALL outgoing emails to this address (useful in SES sandbox). */
-    MAIL_REDIRECT_TO: z.string().optional(),
     /** AWS SES SMTP credentials. When SMTP_HOST absent, emails are logged only. */
     SMTP_HOST: z.string().optional(),
     SMTP_PORT: z.coerce.number().default(587),

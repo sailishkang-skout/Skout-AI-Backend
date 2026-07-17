@@ -32,22 +32,16 @@ export async function sendMail(config: Env, opts: MailOptions): Promise<void> {
     return;
   }
 
-  const actualTo = config.MAIL_REDIRECT_TO ?? opts.to;
-  if (config.MAIL_REDIRECT_TO) {
-    console.log(`[MAIL] ⚠️  REDIRECT: ${opts.to} → ${config.MAIL_REDIRECT_TO}`);
-  }
-  console.log(`[MAIL] Sending → From: ${config.SES_FROM_EMAIL} | To: ${actualTo} | Subject: ${opts.subject}`);
+  console.log(`[MAIL] Sending → From: ${config.SES_FROM_EMAIL} | To: ${opts.to} | Subject: ${opts.subject}`);
   console.log(`[MAIL] SMTP Host: ${config.SMTP_HOST}:${config.SMTP_PORT}`);
 
   try {
     const info = await transport.sendMail({
       from: config.SES_FROM_EMAIL,
-      to: actualTo,
+      to: opts.to,
       subject: opts.subject,
-      text: config.MAIL_REDIRECT_TO ? `[DEV REDIRECT — original to: ${opts.to}]\n\n${opts.text}` : opts.text,
-      html: config.MAIL_REDIRECT_TO
-        ? `<p style="background:#fef3c7;padding:8px;border-radius:4px;font-size:12px">⚠️ DEV REDIRECT — original to: <strong>${opts.to}</strong></p>${opts.html}`
-        : opts.html,
+      text: opts.text,
+      html: opts.html,
     });
     console.log(`[MAIL] ✅ Sent successfully | MessageId: ${info.messageId} | Response: ${info.response}`);
   } catch (err: unknown) {

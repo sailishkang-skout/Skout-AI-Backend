@@ -28,7 +28,8 @@ function isPublicRoute(url: string, method?: string): boolean {
     url.startsWith("/api/v1/billing/webhooks/") ||
     url.startsWith("/api/v1/track/") ||
     url.startsWith("/api/v1/unsubscribe/") ||
-    url.startsWith("/api/v1/invite-auth/") ||
+    url.startsWith("/api/v1/invite-auth/send-otp") ||
+    url.startsWith("/api/v1/invite-auth/verify-otp") ||
     isInviteTokenLookup
   );
 }
