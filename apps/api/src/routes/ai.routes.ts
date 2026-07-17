@@ -4,6 +4,7 @@ import { aiService } from "../services/ai.service.js";
 import { AI_DRAFT_STATUSES, buildAiDraftService } from "../services/ai-draft.service.js";
 import { sendApprovedDraftEmail, type DraftSendResult } from "../services/ai-draft-send.service.js";
 import { computeOutcomeInsights, insightsToPrompt } from "../services/outcome-insights.service.js";
+import { buildChatGrounding } from "../services/ai-chat-context.service.js";
 import { buildSequenceService } from "../services/sequence.service.js";
 import { HttpError } from "../utils/http.js";
 
@@ -25,6 +26,8 @@ const chatSchema = z.object({
       subject: z.string().max(500).optional(),
       body: z.string().max(20000).optional(),
       kind: z.enum(["email", "sequence", "general"]).optional(),
+      /** Current app path, e.g. /lists or /import — helps pick product guides. */
+      page: z.string().max(200).optional(),
       prospectId: z.string().min(1).max(200).optional(),
       threadId: z.string().uuid().optional(),
     })
@@ -208,7 +211,9 @@ export async function aiRoutes(app: FastifyInstance) {
   });
 
   /**
-   * POST /ai/chat — conversational assistant for templates/emails/sequences.
+   * POST /ai/chat — workspace + product Q&A, plus templates/emails/sequences.
+   *
+   * Grounding: live workspace facts (credits, lists, sequences, …) and product guide snippets.
    *
    * AI segregation:
    * - **Auto** — persist/apply immediately (sequences created server-side; emails applied client-side).
@@ -218,11 +223,27 @@ export async function aiRoutes(app: FastifyInstance) {
     const workspaceId = request.workspaceId ?? "unknown";
     const body = chatSchema.parse(request.body ?? {});
     try {
-      const insights = app.db
-        ? insightsToPrompt(await computeOutcomeInsights(app.db, workspaceId).catch(() => null))
-        : null;
+      const lastUser = [...body.messages].reverse().find((m) => m.role === "user")?.content;
+      const [insights, grounding] = await Promise.all([
+        app.db
+          ? computeOutcomeInsights(app.db, workspaceId)
+              .then(insightsToPrompt)
+              .catch(() => null)
+          : Promise.resolve(null),
+        buildChatGrounding(app.db ?? null, app.config, workspaceId, {
+          userMessage: lastUser,
+          page: body.context?.page,
+        }),
+      ]);
+
       const result = await aiService.chat(
-        { messages: body.messages, context: body.context, insights },
+        {
+          messages: body.messages,
+          context: body.context,
+          insights,
+          workspaceFacts: grounding.workspaceFacts,
+          appGuides: grounding.appGuides,
+        },
         app.config.OPENROUTER_API_KEY
       );
 

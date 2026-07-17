@@ -73,17 +73,29 @@ export type ChatAction =
   | { type: "email"; subject: string; html: string }
   | { type: "sequence"; name: string; steps: GeneratedSequenceStep[] };
 
-const CHAT_SYSTEM_PROMPT = `You are Skout's outbound copy assistant embedded in the app. You help
-users write email templates and design multi-step sequences through conversation.
+const CHAT_SYSTEM_PROMPT = `You are Skout AI — the in-app assistant for this workspace.
 
-Merge tokens — use ONLY these in any subject/body:
+You do three jobs:
+1) Answer questions about THIS workspace using only the "Workspace facts" block (credits, lists,
+   prospects, sequences, inboxes, ICP, drafts, weekly activity). Never invent numbers.
+2) Answer how-to questions about the Skout product using the "Product guides" block. Point users
+   to the right in-app path (e.g. /import, /lists, /sequences, /ai/review, /settings/workspace).
+3) Help write outbound email templates and multi-step sequences when asked.
+
+If Workspace facts are missing a number, say you don't have that data — do not guess.
+For product questions not covered by guides, give a short best-effort answer and suggest /guides.
+When a Product guides section is provided, use it as the source of truth — do not say you lack
+instructions if the guide already answers the question.
+
+Merge tokens — use ONLY these in any subject/body you generate:
   {{firstName}} {{fullName}} {{companyName}} {{title}} {{senderName}} {{unsubscribeUrl}}
 Never invent names/companies or use square-bracket placeholders like [Your Name].
 
 Always reply with ONLY a valid JSON object (no markdown, no code fences):
-  "reply": a short conversational message to the user (what you did / a question / a suggestion)
+  "reply": a short conversational message (answer, clarification, or suggestion). Use plain text;
+       you may mention paths like /import or /guides/import-prospects.
   "action": one of:
-    { "type": "none" }  — when just chatting, clarifying, or answering a question
+    { "type": "none" }  — Q&A, how-tos, workspace facts, clarifying questions
     { "type": "email", "subject": "...", "html": "..." }  — when the user wants an email/template.
        html uses only <p>,<strong>,<em>,<a>,<br>,<ul>,<li>; greeting "Hi {{firstName}},";
        sign off {{senderName}}; end with the unsubscribe paragraph:
@@ -95,7 +107,8 @@ Always reply with ONLY a valid JSON object (no markdown, no code fences):
        4–6 steps, first delayDays 0, later steps 2–4 days apart.
 
 If the user asks to tweak the current subject/body provided in context, return an "email" action
-with the full revised version. Keep copy concise and deliverability-safe.`;
+with the full revised version. Keep copy concise and deliverability-safe.
+For pure Q&A (credits, how to import, what is AI Review, etc.) always use action type "none".`;
 
 function coerceChatAction(raw: unknown): ChatAction {
   if (!raw || typeof raw !== "object") return { type: "none" };
@@ -214,8 +227,15 @@ export class AiService {
   async chat(
     input: {
       messages: { role: "user" | "assistant"; content: string }[];
-      context?: { subject?: string; body?: string; kind?: "email" | "sequence" | "general" };
+      context?: {
+        subject?: string;
+        body?: string;
+        kind?: "email" | "sequence" | "general";
+        page?: string;
+      };
       insights?: string | null;
+      workspaceFacts?: string | null;
+      appGuides?: string | null;
     },
     apiKey: string | undefined
   ): Promise<{ reply: string; action: ChatAction }> {
@@ -233,14 +253,21 @@ export class AiService {
 
     const contextLines: string[] = [];
     if (input.context?.kind) contextLines.push(`The user is working on: ${input.context.kind}.`);
+    if (input.context?.page) contextLines.push(`Current page: ${input.context.page}`);
     if (input.context?.subject) contextLines.push(`Current subject: ${input.context.subject}`);
     if (input.context?.body) contextLines.push(`Current body:\n${input.context.body}`);
+    if (input.workspaceFacts?.trim()) {
+      contextLines.push(`Workspace facts (authoritative — do not invent beyond this):\n${input.workspaceFacts.trim()}`);
+    }
+    if (input.appGuides?.trim()) {
+      contextLines.push(`Product guides (how Skout works):\n${input.appGuides.trim()}`);
+    }
     if (input.insights?.trim()) contextLines.push(`What works for this workspace:\n${input.insights.trim()}`);
 
     const messages = [
       { role: "system" as const, content: CHAT_SYSTEM_PROMPT },
       ...(contextLines.length
-        ? [{ role: "system" as const, content: contextLines.join("\n") }]
+        ? [{ role: "system" as const, content: contextLines.join("\n\n") }]
         : []),
       ...input.messages.map((m) => ({ role: m.role, content: m.content })),
     ];
