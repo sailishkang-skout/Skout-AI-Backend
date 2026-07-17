@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { contactCreateSchema, contactListQuerySchema, contactUpdateSchema } from "@skout/shared";
 import { HttpError } from "@skout/auth";
+import { requireRole } from "../utils/require-role.js";
 import { buildCompaniesService } from "../services/companies.service.js";
 import { buildContactsService } from "../services/contacts.service.js";
 
@@ -56,6 +57,7 @@ export async function contactsRoutes(app: FastifyInstance) {
   app.delete("/contacts/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
     const workspaceId = request.workspaceId ?? "unknown";
+    requireRole(request, ["owner", "admin"]);
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
 

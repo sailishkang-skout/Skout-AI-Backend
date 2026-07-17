@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { dealCreateSchema, dealListQuerySchema, dealUpdateSchema } from "@skout/shared";
 import { HttpError } from "@skout/auth";
+import { requireRole } from "../utils/require-role.js";
 import { buildActivitiesService } from "../services/activities.service.js";
 import { buildCompaniesService } from "../services/companies.service.js";
 import { buildDealsService } from "../services/deals.service.js";
@@ -71,6 +72,7 @@ export async function dealsRoutes(app: FastifyInstance) {
   app.delete("/deals/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
     const workspaceId = request.workspaceId ?? "unknown";
+    requireRole(request, ["owner", "admin"]);
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
 

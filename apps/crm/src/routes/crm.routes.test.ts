@@ -105,6 +105,43 @@ describe("activities routes (unit)", () => {
   });
 });
 
+describe("meetings routes (unit)", () => {
+  it("GET /meetings returns empty scaffold list without a database", async () => {
+    const app = await buildRouteTestApp();
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/meetings",
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { total: number }).total).toBe(0);
+
+    await app.close();
+  });
+});
+
+describe("dashboard routes (unit)", () => {
+  it("GET /dashboard/overview returns zeroed overview without a database", async () => {
+    const app = await buildRouteTestApp();
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/dashboard/overview",
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      companies: 0,
+      contacts: 0,
+      openDeals: 0,
+      openTasks: 0,
+      upcomingMeetings: 0,
+      recentActivities: [],
+    });
+
+    await app.close();
+  });
+});
+
 describe.skipIf(!hasDatabase)("CRM routes (integration)", () => {
   let app: FastifyInstance;
 

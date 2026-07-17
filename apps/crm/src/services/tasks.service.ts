@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, lt } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { TaskCreateInput, TaskUpdateInput } from "@skout/shared";
@@ -129,6 +129,28 @@ export class TasksService {
       .set({ deletedAt: new Date(), updatedAt: new Date() })
       .where(and(eq(tasks.id, id), eq(tasks.workspaceId, workspaceId)));
     return true;
+  }
+
+  /** Open + overdue task counts for the dashboard overview. */
+  async counts(workspaceId: string): Promise<{ open: number; overdue: number }> {
+    const openRows = await this.db
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(and(eq(tasks.workspaceId, workspaceId), eq(tasks.status, "open"), isNull(tasks.deletedAt)));
+
+    const overdueRows = await this.db
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.workspaceId, workspaceId),
+          eq(tasks.status, "open"),
+          isNull(tasks.deletedAt),
+          lt(tasks.dueDate, new Date())
+        )
+      );
+
+    return { open: openRows.length, overdue: overdueRows.length };
   }
 }
 

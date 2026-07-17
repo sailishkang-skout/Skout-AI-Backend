@@ -631,7 +631,79 @@ export const activityResponseSchema = z.object({
   createdAt: z.string().datetime(),
 });
 
+export const MEETING_TYPES = ["call", "video", "in_person"] as const;
+
+export const meetingListQuerySchema = paginationQuerySchema.extend({
+  dealId: z.string().uuid().optional(),
+  contactId: z.string().uuid().optional(),
+  companyId: z.string().uuid().optional(),
+});
+
+export const meetingCreateSchema = z.object({
+  title: z.string().min(1).max(255),
+  scheduledAt: z.string().datetime(),
+  durationMinutes: z.number().int().min(0).optional(),
+  meetingType: z.enum(MEETING_TYPES).default("call"),
+  contactId: z.string().uuid().optional(),
+  companyId: z.string().uuid().optional(),
+  dealId: z.string().uuid().optional(),
+  organizerId: z.string().uuid().optional(),
+  summary: z.string().optional(),
+  outcome: z.string().optional(),
+});
+
+export const meetingUpdateSchema = z
+  .object({
+    title: z.string().min(1).max(255).optional(),
+    scheduledAt: z.string().datetime().optional(),
+    durationMinutes: z.number().int().min(0).optional(),
+    meetingType: z.enum(MEETING_TYPES).optional(),
+    contactId: z.string().uuid().optional(),
+    companyId: z.string().uuid().optional(),
+    dealId: z.string().uuid().optional(),
+    organizerId: z.string().uuid().optional(),
+    summary: z.string().optional(),
+    outcome: z.string().optional(),
+  })
+  .refine((d) => Object.values(d).some((v) => v !== undefined), {
+    message: "At least one field is required",
+  });
+
+export const meetingResponseSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  contactId: z.string().uuid().nullable(),
+  companyId: z.string().uuid().nullable(),
+  dealId: z.string().uuid().nullable(),
+  organizerId: z.string().uuid().nullable(),
+  title: z.string(),
+  scheduledAt: z.string().datetime(),
+  durationMinutes: z.number().nullable(),
+  meetingType: z.enum(MEETING_TYPES),
+  summary: z.string().nullable(),
+  outcome: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const dashboardOverviewResponseSchema = z.object({
+  workspaceId: z.string().uuid(),
+  companies: z.number(),
+  contacts: z.number(),
+  openDeals: z.number(),
+  pipelineValue: z.number(),
+  currency: z.string(),
+  openTasks: z.number(),
+  overdueTasks: z.number(),
+  upcomingMeetings: z.number(),
+  recentActivities: z.array(activityResponseSchema),
+});
+
 export type PaginationQuery = z.infer<typeof paginationQuerySchema>;
+export type MeetingType = (typeof MEETING_TYPES)[number];
+export type MeetingListQuery = z.infer<typeof meetingListQuerySchema>;
+export type MeetingCreateInput = z.infer<typeof meetingCreateSchema>;
+export type MeetingUpdateInput = z.infer<typeof meetingUpdateSchema>;
 export type CompanyListQuery = z.infer<typeof companyListQuerySchema>;
 export type ContactListQuery = z.infer<typeof contactListQuerySchema>;
 export type DealListQuery = z.infer<typeof dealListQuerySchema>;

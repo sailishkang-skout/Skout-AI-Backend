@@ -182,3 +182,31 @@ export const activities = pgTable(
     index("activities_workspace_entity_idx").on(table.workspaceId, table.entityType, table.entityId),
   ]
 );
+
+export const meetings = pgTable(
+  "meetings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+    companyId: uuid("company_id").references(() => companies.id, { onDelete: "set null" }),
+    dealId: uuid("deal_id").references(() => deals.id, { onDelete: "set null" }),
+    organizerId: uuid("organizer_id").references(() => users.id, { onDelete: "set null" }),
+    title: text("title").notNull(),
+    scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
+    durationMinutes: integer("duration_minutes"),
+    meetingType: text("meeting_type").notNull().default("call"),
+    summary: text("summary"),
+    outcome: text("outcome"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("meetings_workspace_id_idx").on(table.workspaceId),
+    index("meetings_workspace_scheduled_idx").on(table.workspaceId, table.scheduledAt),
+    index("meetings_workspace_deal_idx").on(table.workspaceId, table.dealId),
+  ]
+);

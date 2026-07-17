@@ -64,6 +64,17 @@ export class ActivitiesService {
     return { data: rows.map(toDto), total: all.length };
   }
 
+  /** Workspace-wide recent activity feed (not filtered by entity) — used by the dashboard overview. */
+  async recent(workspaceId: string, limit: number): Promise<ActivityDto[]> {
+    const rows = await this.db
+      .select()
+      .from(activities)
+      .where(eq(activities.workspaceId, workspaceId))
+      .orderBy(desc(activities.occurredAt))
+      .limit(limit);
+    return rows.map(toDto);
+  }
+
   async create(workspaceId: string, ownerId: string | undefined, input: ActivityCreateInput): Promise<ActivityDto> {
     return this.record(workspaceId, ownerId, input.entityType, input.entityId, input.activityType, input.subject, input.body);
   }

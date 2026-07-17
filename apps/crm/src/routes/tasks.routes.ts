@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { taskCreateSchema, taskListQuerySchema, taskUpdateSchema } from "@skout/shared";
 import { HttpError } from "@skout/auth";
+import { requireRole } from "../utils/require-role.js";
 import { buildTasksService } from "../services/tasks.service.js";
 
 export async function tasksRoutes(app: FastifyInstance) {
@@ -52,6 +53,7 @@ export async function tasksRoutes(app: FastifyInstance) {
   app.delete("/tasks/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
     const workspaceId = request.workspaceId ?? "unknown";
+    requireRole(request, ["owner", "admin"]);
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
 

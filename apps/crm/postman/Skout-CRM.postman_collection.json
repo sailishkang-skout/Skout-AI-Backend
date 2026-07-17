@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "b7e2f7b0-6e0e-4a2b-9a1a-skoutcrm00001",
     "name": "Skout CRM (@skout/crm)",
-    "description": "Native Revenue Workspace API — companies, contacts, deals, pipelines/stages, tasks, activities.\n\nAuth: local/dev uses stub auth via the `x-stub-user-email` header (set in the collection variable `stubEmail`). All requests in a workspace share the same `x-stub-user-email` → same workspace. Change `stubEmail` to simulate a different workspace/user.\n\nRun order for the golden path: Health → Companies → Contacts → Pipelines → Deals → Deal stage change → Activities → Tasks. IDs are captured automatically into collection variables by each request's test script, so requests later in the collection can reuse them.",
+    "description": "Native Revenue Workspace API — companies, contacts, deals, pipelines/stages, tasks, activities, meetings, and a dashboard overview.\n\nAuth: local/dev uses stub auth via the `x-stub-user-email` header (set in the collection variable `stubEmail`). All requests in a workspace share the same `x-stub-user-email` → same workspace. Change `stubEmail` to simulate a different workspace/user.\n\nRun order for the golden path: Health → Companies → Contacts → Pipelines → Deals → Deal stage change → Activities → Tasks → Meetings → Dashboard. IDs are captured automatically into collection variables by each request's test script, so requests later in the collection can reuse them.\n\nDestructive actions (DELETE) require the `owner` role — the first stub user in a workspace is always `owner`; there's no invite/join flow yet, so testing the `member`-role 403 path requires directly inserting a `workspace_members` row (see the e2e test `role-based permissions` cases for the pattern).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -16,6 +16,7 @@
     { "key": "dealId", "value": "", "type": "string" },
     { "key": "taskId", "value": "", "type": "string" },
     { "key": "activityId", "value": "", "type": "string" },
+    { "key": "meetingId", "value": "", "type": "string" },
     { "key": "workspaceId", "value": "", "type": "string" }
   ],
   "auth": {
@@ -733,6 +734,179 @@
               "listen": "test",
               "script": {
                 "exec": ["pm.test('status 204', () => pm.response.to.have.status(204));"],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Meetings",
+      "item": [
+        {
+          "name": "POST /meetings (linked to the deal)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "x-stub-user-email", "value": "{{stubEmail}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Discovery call\",\n  \"scheduledAt\": \"2030-01-01T15:00:00.000Z\",\n  \"durationMinutes\": 30,\n  \"meetingType\": \"video\",\n  \"dealId\": \"{{dealId}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/meetings", "host": ["{{baseUrl}}"], "path": ["api", "v1", "meetings"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('meetingId', body.id);",
+                  "pm.test('linked to deal', () => pm.expect(body.dealId).to.eql(pm.collectionVariables.get('dealId')));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /meetings?dealId=",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-stub-user-email", "value": "{{stubEmail}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/meetings?dealId={{dealId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "meetings"],
+              "query": [{ "key": "dealId", "value": "{{dealId}}" }]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"], "type": "text/javascript" }
+            }
+          ]
+        },
+        {
+          "name": "GET /meetings/:id",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-stub-user-email", "value": "{{stubEmail}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/meetings/{{meetingId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "meetings", "{{meetingId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"], "type": "text/javascript" }
+            }
+          ]
+        },
+        {
+          "name": "PATCH /meetings/:id (add outcome)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "x-stub-user-email", "value": "{{stubEmail}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"outcome\": \"Positive — moving to proposal\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/meetings/{{meetingId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "meetings", "{{meetingId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('outcome updated', () => pm.expect(pm.response.json().outcome).to.eql('Positive — moving to proposal'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /activities?entityType=deal (includes the meeting)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-stub-user-email", "value": "{{stubEmail}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/activities?entityType=deal&entityId={{dealId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "activities"],
+              "query": [
+                { "key": "entityType", "value": "deal" },
+                { "key": "entityId", "value": "{{dealId}}" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('has a meeting activity entry', () => pm.expect(body.data.some(a => a.activityType === 'meeting')).to.be.true);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "DELETE /meetings/:id (requires owner role)",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "x-stub-user-email", "value": "{{stubEmail}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/meetings/{{meetingId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "meetings", "{{meetingId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('status 204', () => pm.response.to.have.status(204));"], "type": "text/javascript" }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Dashboard",
+      "item": [
+        {
+          "name": "GET /dashboard/overview",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-stub-user-email", "value": "{{stubEmail}}" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/dashboard/overview", "host": ["{{baseUrl}}"], "path": ["api", "v1", "dashboard", "overview"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('has at least one open deal', () => pm.expect(body.openDeals).to.be.at.least(1));",
+                  "pm.test('recentActivities is an array', () => pm.expect(Array.isArray(body.recentActivities)).to.be.true);"
+                ],
                 "type": "text/javascript"
               }
             }
