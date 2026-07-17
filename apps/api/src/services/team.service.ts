@@ -196,7 +196,6 @@ export function createTeamService(db: Db) {
         .limit(1);
 
       if (!invite) throw new HttpError("Invite not found.", 404);
-      if (invite.acceptedAt) throw new HttpError("This invite has already been accepted.", 409);
       if (new Date() > invite.expiresAt) throw new HttpError("This invite has expired.", 410);
 
       if (invite.email.toLowerCase() !== userEmail.toLowerCase()) {
@@ -206,7 +205,8 @@ export function createTeamService(db: Db) {
         );
       }
 
-      // idempotent: already a member → just mark accepted
+      // If already accepted (e.g. auto-accepted by SSO resolveOrProvisionUser),
+      // check if this user is already a member — if so return idempotent 200
       const [alreadyMember] = await db
         .select({ userId: schema.workspaceMembers.userId })
         .from(schema.workspaceMembers)
@@ -218,13 +218,24 @@ export function createTeamService(db: Db) {
         )
         .limit(1);
 
-      if (!alreadyMember) {
-        await db.insert(schema.workspaceMembers).values({
-          workspaceId: invite.workspaceId,
-          userId,
-          role: invite.role,
-        });
+      if (alreadyMember) {
+        // Already a member — idempotent (invite may have been auto-accepted via SSO flow)
+        if (!invite.acceptedAt) {
+          await db
+            .update(schema.workspaceInvites)
+            .set({ acceptedAt: new Date() })
+            .where(eq(schema.workspaceInvites.id, invite.id));
+        }
+        return { workspaceId: invite.workspaceId, role: invite.role as WorkspaceRole };
       }
+
+      if (invite.acceptedAt) throw new HttpError("This invite has already been accepted.", 409);
+
+      await db.insert(schema.workspaceMembers).values({
+        workspaceId: invite.workspaceId,
+        userId,
+        role: invite.role,
+      });
 
       await db
         .update(schema.workspaceInvites)

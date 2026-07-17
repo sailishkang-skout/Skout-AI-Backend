@@ -162,6 +162,7 @@ describe("resolveOrProvisionUser", () => {
           [],  // clerkUserId miss
           [],  // email miss
           [],  // membership miss
+          [],  // pending invites → none
         ],
         inserts: [
           { mode: "returning+conflict", result: [NEW_USER] },    // insert user
@@ -187,7 +188,7 @@ describe("resolveOrProvisionUser", () => {
 
     it("grants 500 credits in the credit_transactions insert", async () => {
       const tx = makeTx({
-        selects: [[], [], []],
+        selects: [[], [], [], []],  // byClerk, byEmail, membership, pendingInvites
         inserts: [
           { mode: "returning+conflict", result: [NEW_USER] },
           { mode: "returning",          result: [NEW_WORKSPACE] },
@@ -214,6 +215,7 @@ describe("resolveOrProvisionUser", () => {
         selects: [
           [BASE_USER], // clerkUserId hit
           [],          // membership miss
+          [],          // pending invites → none
         ],
         inserts: [
           { mode: "returning", result: [NEW_WORKSPACE] },
@@ -264,7 +266,7 @@ describe("resolveOrProvisionUser", () => {
   describe("error propagation", () => {
     it("throws when workspace insert returns empty (DB constraint violation)", async () => {
       const tx = makeTx({
-        selects: [[], [], []],
+        selects: [[], [], [], []],  // byClerk, byEmail, membership, pendingInvites
         inserts: [
           { mode: "returning+conflict", result: [NEW_USER] },
           { mode: "returning", result: [] }, // workspace insert returns nothing
