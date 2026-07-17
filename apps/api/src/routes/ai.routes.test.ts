@@ -103,13 +103,29 @@ describe("ai routes — draft review", () => {
   });
 
   it("POST /ai/drafts/:id/approve approves and sends a standalone draft", async () => {
+    mockDrafts.getById.mockResolvedValueOnce({
+      ...draft,
+      status: "sent",
+      threadId: "t-1",
+    });
     const res = await app.inject({ method: "POST", url: `/ai/drafts/${draft.id}/approve` });
     expect(res.statusCode).toBe(200);
-    expect(res.json().status).toBe("approved");
+    expect(res.json().status).toBe("sent");
     expect(mockDrafts.approve).toHaveBeenCalledWith("ws-1", draft.id, "u-1");
-    // Standalone draft (no enrollmentStepId, no threadId) is delivered on approval.
+    // Standalone draft (no enrollmentStepId) is delivered on approval and marked sent.
     expect(mockSend).toHaveBeenCalledTimes(1);
     expect(res.json().send).toEqual({ sent: true, threadId: "t-1", to: "ada@acme.com" });
+  });
+
+  it("POST /ai/drafts/:id/approve skips send when draft is already sent", async () => {
+    mockDrafts.approve.mockResolvedValueOnce({
+      ...draft,
+      status: "sent",
+      threadId: "t-1",
+    });
+    const res = await app.inject({ method: "POST", url: `/ai/drafts/${draft.id}/approve` });
+    expect(res.statusCode).toBe(200);
+    expect(mockSend).not.toHaveBeenCalled();
   });
 
   it("POST /ai/drafts/:id/approve does not send an enrollment-linked draft", async () => {

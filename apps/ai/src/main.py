@@ -200,6 +200,31 @@ class ScoreResponse(BaseModel):
     dimensions: dict[str, DimensionScore]
 
 
+class ClassifyRequest(BaseModel):
+    """Message thread and/or prospect buying-intent context."""
+
+    thread_id: Optional[str] = None
+    content: Optional[str] = None
+    prospect_id: Optional[str] = None
+    title: Optional[str] = None
+    industry: Optional[str] = None
+    company_domain: Optional[str] = None
+    seniority: Optional[str] = None
+    employee_count: Optional[int] = None
+    signals: list[str] = []
+    job_post_snippets: list[str] = []
+
+
+class ClassifyResponse(BaseModel):
+    intent: str  # buy | respond | need | interested | not_interested | meeting | unsubscribe | other
+    confidence: float
+    requires_hitl: bool
+    rationale: str = ""
+    intent_score: int = 0  # 0–100 — feeds scoring / outreach readiness
+    source: str = "heuristic"  # llm | heuristic
+    outreach_readiness: str = "not_qualified"
+
+
 _INTENT_SIGNALS = {
     "recent_funding": "Scaling Sales Team",
     "recent_hiring": "Lead Generation Issues",
@@ -207,6 +232,258 @@ _INTENT_SIGNALS = {
     "market_expansion": "Scaling Sales Team",
     "product_launch": "Lead Generation Issues",
 }
+
+# Typed intents for /v1/classify (R5.2) — buy/respond/need plus reply-oriented labels.
+INTENT_LABELS = frozenset(
+    {
+        "buy",
+        "respond",
+        "need",
+        "interested",
+        "not_interested",
+        "meeting",
+        "unsubscribe",
+        "other",
+    }
+)
+
+# Map typed intent → 0–100 intent_score (feeds outreach readiness).
+_INTENT_SCORE_BY_LABEL: dict[str, int] = {
+    "buy": 90,
+    "meeting": 85,
+    "need": 72,
+    "interested": 65,
+    "respond": 55,
+    "other": 35,
+    "not_interested": 10,
+    "unsubscribe": 5,
+}
+
+_HITL_CONFIDENCE_THRESHOLD = float(os.getenv("INTENT_HITL_THRESHOLD", "0.65"))
+
+
+def _intent_score_from_signals(signals: list[str], job_post_snippets: list[str] | None = None) -> int:
+    """Deterministic buying-intent score from corpus signals + hiring evidence."""
+    base = min(100, len(signals) * 25)
+    if job_post_snippets:
+        base = min(100, base + min(20, len(job_post_snippets) * 5))
+    # Stronger weights for high-intent signal types
+    strong = {"recent_funding", "recent_hiring", "product_launch", "market_expansion"}
+    if any(s in strong for s in signals):
+        base = min(100, max(base, 50 + 15 * sum(1 for s in signals if s in strong)))
+    return max(0, min(100, base))
+
+
+def _label_from_intent_score(score: int) -> str:
+    if score >= 80:
+        return "buy"
+    if score >= 65:
+        return "need"
+    if score >= 45:
+        return "respond"
+    if score >= 25:
+        return "interested"
+    return "other"
+
+
+def _classify_message_heuristic(content: str) -> tuple[str, float, str]:
+    """Keyword heuristic for reply / message thread text."""
+    text = (content or "").strip().lower()
+    if not text:
+        return "other", 0.35, "Empty message — no intent signals"
+
+    checks: list[tuple[str, tuple[str, ...], float, str]] = [
+        (
+            "unsubscribe",
+            ("unsubscribe", "remove me", "stop emailing", "opt out", "do not contact", "don't contact"),
+            0.92,
+            "Opt-out / unsubscribe language",
+        ),
+        (
+            "not_interested",
+            ("not interested", "no thanks", "no thank you", "pass for now", "please remove"),
+            0.88,
+            "Clear rejection language",
+        ),
+        (
+            "meeting",
+            ("book a call", "schedule a", "calendar", "meet next", "demo next", "available for a call", "let's meet"),
+            0.9,
+            "Meeting / calendar request",
+        ),
+        (
+            "buy",
+            ("pricing", "purchase", "buy", "procurement", "contract", "invoice", "ready to purchase"),
+            0.85,
+            "Purchase / pricing language",
+        ),
+        (
+            "need",
+            ("looking for", "we need", "evaluating", "rfp", "vendor", "solution for", "pain point"),
+            0.8,
+            "Active need / evaluation language",
+        ),
+        (
+            "interested",
+            ("interested", "tell me more", "sounds good", "learn more", "send more info", "curious about"),
+            0.78,
+            "Positive interest language",
+        ),
+        (
+            "respond",
+            ("thanks for reaching", "got your note", "following up", "circling back", "who is this"),
+            0.7,
+            "Acknowledgement / reply without clear buying signal",
+        ),
+    ]
+
+    for label, needles, conf, rationale in checks:
+        if any(n in text for n in needles):
+            return label, conf, rationale
+
+    # Short generic replies
+    if len(text.split()) <= 6:
+        return "respond", 0.45, "Short reply without strong intent keywords"
+    return "other", 0.4, "No strong intent keywords matched"
+
+
+def _classify_prospect_heuristic(
+    signals: list[str],
+    job_post_snippets: list[str],
+    title: str | None,
+    industry: str | None,
+) -> tuple[str, float, str, int]:
+    score = _intent_score_from_signals(signals, job_post_snippets)
+    label = _label_from_intent_score(score)
+    parts: list[str] = []
+    if signals:
+        parts.append(f"signals={','.join(signals)}")
+    if job_post_snippets:
+        parts.append(f"{len(job_post_snippets)} job-post snippet(s)")
+    if title:
+        parts.append(f"title={title}")
+    if industry:
+        parts.append(f"industry={industry}")
+    rationale = "; ".join(parts) or "No firmographic or signal evidence"
+    # Confidence rises with evidence volume
+    evidence = len(signals) + (1 if job_post_snippets else 0) + (1 if title else 0)
+    confidence = min(0.95, 0.4 + 0.12 * evidence)
+    if not signals and not job_post_snippets:
+        confidence = 0.35
+        label = "other"
+    return label, confidence, rationale, score
+
+
+def _normalize_intent_label(raw: str) -> str:
+    label = (raw or "other").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "buying": "buy",
+        "purchase": "buy",
+        "response": "respond",
+        "reply": "respond",
+        "needs": "need",
+        "interest": "interested",
+        "positive": "interested",
+        "negative": "not_interested",
+        "meeting_request": "meeting",
+        "demo": "meeting",
+        "opt_out": "unsubscribe",
+    }
+    label = aliases.get(label, label)
+    return label if label in INTENT_LABELS else "other"
+
+
+def classify_intent(
+    *,
+    content: str | None = None,
+    signals: list[str] | None = None,
+    job_post_snippets: list[str] | None = None,
+    title: str | None = None,
+    industry: str | None = None,
+    company_domain: str | None = None,
+    seniority: str | None = None,
+    employee_count: int | None = None,
+) -> ClassifyResponse:
+    """
+    Real intent classifier (R5.2): LLM when OpenRouter is configured, else heuristic.
+    Supports message-thread content and/or prospect signals + firmographics + job posts.
+    """
+    signals = signals or []
+    job_post_snippets = job_post_snippets or []
+    content = (content or "").strip()
+
+    # Heuristic baseline (always computed — used as fallback and for score merge)
+    if content and not signals and not job_post_snippets:
+        h_label, h_conf, h_rationale = _classify_message_heuristic(content)
+        h_score = _INTENT_SCORE_BY_LABEL.get(h_label, 35)
+    else:
+        h_label, h_conf, h_rationale, h_score = _classify_prospect_heuristic(
+            signals, job_post_snippets, title, industry
+        )
+        if content:
+            m_label, m_conf, m_rationale = _classify_message_heuristic(content)
+            # Message evidence can override when stronger
+            if m_conf >= h_conf and m_label != "other":
+                h_label, h_conf, h_rationale = m_label, m_conf, f"{m_rationale}; {h_rationale}"
+                h_score = max(h_score, _INTENT_SCORE_BY_LABEL.get(m_label, h_score))
+
+    source = "heuristic"
+    label, confidence, rationale, intent_score = h_label, h_conf, h_rationale, h_score
+
+    if _llm_available():
+        try:
+            system = (
+                "You are a B2B sales intent classifier for Skout AI.\n"
+                "Return JSON only with keys:\n"
+                '  intent: one of buy|respond|need|interested|not_interested|meeting|unsubscribe|other\n'
+                "  confidence: float 0-1\n"
+                "  rationale: short string\n"
+                "  intent_score: integer 0-100 (buying readiness; higher = more likely to engage/buy)\n"
+                "Definitions: buy=purchase-ready, need=active problem, respond=will reply/engage, "
+                "interested=curious, meeting=wants a call, not_interested=rejection, "
+                "unsubscribe=opt-out, other=unclear."
+            )
+            user = {
+                "content": content or None,
+                "signals": signals,
+                "job_post_snippets": job_post_snippets[:8],
+                "title": title,
+                "industry": industry,
+                "company_domain": company_domain,
+                "seniority": seniority,
+                "employee_count": employee_count,
+                "heuristic_baseline": {
+                    "intent": h_label,
+                    "confidence": h_conf,
+                    "intent_score": h_score,
+                    "rationale": h_rationale,
+                },
+            }
+            data = _llm_json(system, json.dumps(user))
+            label = _normalize_intent_label(str(data.get("intent", h_label)))
+            confidence = float(data.get("confidence", h_conf))
+            confidence = max(0.0, min(1.0, confidence))
+            rationale = str(data.get("rationale") or h_rationale)
+            intent_score = int(data.get("intent_score", h_score))
+            intent_score = max(0, min(100, intent_score))
+            # Prefer label-mapped score if LLM omitted a sensible score
+            if "intent_score" not in data:
+                intent_score = max(intent_score, _INTENT_SCORE_BY_LABEL.get(label, intent_score))
+            source = "llm"
+        except Exception as e:
+            print(f"[classify] LLM failed, using heuristic: {e}")
+
+    requires_hitl = confidence < _HITL_CONFIDENCE_THRESHOLD or label == "other"
+
+    return ClassifyResponse(
+        intent=label,
+        confidence=round(confidence, 4),
+        requires_hitl=requires_hitl,
+        rationale=rationale[:1000],
+        intent_score=intent_score,
+        source=source,
+        outreach_readiness=_readiness(70, intent_score) if intent_score else "not_qualified",
+    )
 
 
 def _band(score: int) -> str:
@@ -296,8 +573,8 @@ def _score_heuristic(request: ScoreRequest) -> ScoreResponse:
     else:
         dims["title"] = {"score": 50, "matched": True, "explanation": "Title not specified in ICP"}
 
-    # Signals / intent
-    intent_score = min(100, len(p.signals) * 25)
+    # Signals / intent — shared with /v1/classify (R5.2)
+    intent_score = _intent_score_from_signals(p.signals)
     if p.signals:
         dims["signals"] = {"score": intent_score, "matched": True, "explanation": f"{len(p.signals)} signal(s): {', '.join(p.signals)}"}
     else:
@@ -467,8 +744,46 @@ def health():
 
 @app.post("/v1/score", response_model=ScoreResponse)
 def score(request: ScoreRequest):
-    """ICP + intent scoring via LLM when OPENAI_API_KEY is set, else heuristic."""
+    """ICP + intent scoring via LLM when configured, else heuristic.
+
+    Intent score is aligned with /v1/classify (R5.2) so buying signals feed
+    the same intent_score → outreach_readiness path.
+    """
     baseline = _score_heuristic(request)
+
+    # Merge classify-derived intent so score and classify stay consistent (R5.2)
+    try:
+        classified = classify_intent(
+            signals=request.prospect.signals,
+            title=request.prospect.title,
+            industry=request.prospect.industry,
+            company_domain=request.prospect.company_domain,
+            seniority=request.prospect.seniority,
+            employee_count=request.prospect.employee_count,
+        )
+        dims = dict(baseline.dimensions)
+        prev = dims.get("signals")
+        dims["signals"] = DimensionScore(
+            score=classified.intent_score,
+            matched=classified.intent_score > 0,
+            explanation=classified.rationale
+            or (prev.explanation if prev else "No intent signals detected"),
+        )
+        baseline = baseline.model_copy(
+            update={
+                "intent_score": classified.intent_score,
+                "outreach_readiness": _readiness(baseline.icp_score, classified.intent_score),
+                "dimensions": dims,
+                "reasoning": (
+                    f"{baseline.reasoning}; intent={classified.intent} ({classified.source})"
+                    if baseline.reasoning
+                    else f"intent={classified.intent}"
+                ),
+            }
+        )
+    except Exception as e:
+        print(f"[score] classify merge skipped: {e}")
+
     result = baseline
     if _llm_available():
         try:
@@ -498,17 +813,6 @@ def score(request: ScoreRequest):
 # ---------------------------------------------------------------------------
 # LLM pain points + personalization (strategy §9)
 # ---------------------------------------------------------------------------
-
-
-class ClassifyRequest(BaseModel):
-    thread_id: str
-    content: str
-
-
-class ClassifyResponse(BaseModel):
-    intent: str
-    confidence: float
-    requires_hitl: bool
 
 
 class PainPointRequest(BaseModel):
@@ -545,19 +849,43 @@ class PersonalizeResponse(BaseModel):
 
 @app.post("/v1/classify", response_model=ClassifyResponse)
 def classify(request: ClassifyRequest):
-    """Intent classification stub — wire LiteLLM router + HITL escalation."""
-    result = ClassifyResponse(
-        intent="interested",
-        confidence=0.72,
-        requires_hitl=True,
-    )
+    """
+    Intent classification (R5.2) — LiteLLM when configured, else heuristic.
+    Low-confidence / unclear results set requires_hitl=True for human review.
+    intent_score feeds ICP outreach readiness when callers merge with /v1/score.
+    """
+    if not request.content and not request.signals and not request.job_post_snippets:
+        # Keep backward-compat for empty observability pings — still not a hardcoded "interested"
+        result = ClassifyResponse(
+            intent="other",
+            confidence=0.3,
+            requires_hitl=True,
+            rationale="No content or signals provided",
+            intent_score=0,
+            source="heuristic",
+            outreach_readiness="not_qualified",
+        )
+    else:
+        result = classify_intent(
+            content=request.content,
+            signals=request.signals,
+            job_post_snippets=request.job_post_snippets,
+            title=request.title,
+            industry=request.industry,
+            company_domain=request.company_domain,
+            seniority=request.seniority,
+            employee_count=request.employee_count,
+        )
+
     analytics_capture(
-        distinct_id=request.thread_id,
+        distinct_id=request.thread_id or request.prospect_id or "anonymous",
         event="prospect_classified",
         properties={
             "intent": result.intent,
             "confidence": result.confidence,
             "requires_hitl": result.requires_hitl,
+            "intent_score": result.intent_score,
+            "source": result.source,
         },
     )
     return result
@@ -565,7 +893,7 @@ def classify(request: ClassifyRequest):
 
 @app.post("/v1/pain-points", response_model=PainPointResponse)
 def pain_points(request: PainPointRequest):
-    """Detect pain points via LLM when OPENAI_API_KEY is set, else heuristic."""
+    """Detect pain points via LLM when OpenRouter is set, else heuristic."""
     if _llm_available():
         prompt = (
             "Analyze this B2B prospect and return JSON with key pain_points (array of strings). "

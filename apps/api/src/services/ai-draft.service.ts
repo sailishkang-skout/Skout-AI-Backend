@@ -5,7 +5,7 @@ import { HttpError } from "../utils/http.js";
 
 const { aiDrafts, prospectActivations, prospectScores } = schema;
 
-export const AI_DRAFT_STATUSES = ["pending_review", "edited", "approved", "rejected"] as const;
+export const AI_DRAFT_STATUSES = ["pending_review", "edited", "approved", "rejected", "sent"] as const;
 export type AiDraftStatus = (typeof AI_DRAFT_STATUSES)[number];
 
 export const REVIEWABLE_STATUSES: AiDraftStatus[] = ["pending_review", "edited"];
@@ -234,11 +234,31 @@ export class AiDraftService {
   }
 
   async approve(workspaceId: string, id: string, reviewedBy?: string): Promise<AiDraftRow> {
+    const existing = await this.requireDraft(workspaceId, id);
+    // Idempotent: already-approved drafts can be re-sent if SMTP failed previously.
+    if (existing.status === "approved" || existing.status === "sent") {
+      return existing;
+    }
     return this.transition(workspaceId, id, "approved", reviewedBy);
   }
 
   async reject(workspaceId: string, id: string, reviewedBy?: string): Promise<AiDraftRow> {
     return this.transition(workspaceId, id, "rejected", reviewedBy);
+  }
+
+  /** After a successful SMTP send — status becomes `sent` and the inbox thread is linked. */
+  async markSent(workspaceId: string, id: string, threadId: string): Promise<AiDraftRow> {
+    const [row] = await this.db
+      .update(aiDrafts)
+      .set({
+        status: "sent",
+        threadId,
+        reviewedAt: new Date(),
+      })
+      .where(and(eq(aiDrafts.id, id), eq(aiDrafts.workspaceId, workspaceId)))
+      .returning();
+    if (!row) throw new HttpError("draft_not_found", 404);
+    return toDto(row);
   }
 
   async bulkApprove(

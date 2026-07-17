@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { schema } from "@skout/db";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
 import { ensureDemoIcp } from "../test/ensure-demo-icp.js";
@@ -32,6 +33,24 @@ beforeAll(async () => {
   const config = loadEnv();
   app = await buildApp({ ...config, ...BASE_OVERRIDES });
   await ensureDemoIcp(app, WORKSPACE);
+
+  // Stub auth provisions its own workspace and ignores x-workspace-id. Local runs can
+  // deplete that balance — top it up so credit-gated enrich/score tests stay green.
+  if (app.db) {
+    const probe = await app.inject({
+      method: "GET",
+      url: "/api/v1/enrichment/credits",
+      headers: { "x-workspace-id": WORKSPACE },
+    });
+    const { workspaceId } = probe.json() as { workspaceId: string };
+    await app.db
+      .insert(schema.creditBalances)
+      .values({ workspaceId, balance: 5000 })
+      .onConflictDoUpdate({
+        target: schema.creditBalances.workspaceId,
+        set: { balance: 5000, updatedAt: new Date() },
+      });
+  }
 }, 60000);
 
 afterAll(async () => {

@@ -100,10 +100,18 @@ export function scoreLocally(input: ScoreInput, icp: IcpConfig = {}): ScoreResul
 
   dimensions.title = { score: 50, matched: true, explanation: "Title not evaluated in local fallback" };
 
-  const intentScore = Math.min(100, (input.signals?.length ?? 0) * 25);
-  dimensions.signals = (input.signals?.length ?? 0) > 0
-    ? { score: intentScore, matched: true, explanation: `${input.signals!.length} signal(s): ${input.signals!.join(", ")}` }
-    : { score: 0, matched: false, explanation: "No intent signals detected" };
+  // Signals / intent — mirrors apps/ai _intent_score_from_signals (R5.2)
+  const signals = input.signals ?? [];
+  let intentScore = Math.min(100, signals.length * 25);
+  const strong = new Set(["recent_funding", "recent_hiring", "product_launch", "market_expansion"]);
+  const strongCount = signals.filter((s) => strong.has(s)).length;
+  if (strongCount > 0) {
+    intentScore = Math.min(100, Math.max(intentScore, 50 + 15 * strongCount));
+  }
+  dimensions.signals =
+    signals.length > 0
+      ? { score: intentScore, matched: true, explanation: `${signals.length} signal(s): ${signals.join(", ")}` }
+      : { score: 0, matched: false, explanation: "No intent signals detected" };
 
   const icpScore = Math.max(0, Math.min(100, score));
   const reasons = Object.entries(dimensions)

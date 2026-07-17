@@ -92,13 +92,15 @@ describe("scoreLocally", () => {
     expect(result.dimensions.company_size.score).toBe(20);
   });
 
-  it("adds 25 intent points per signal, capped at 100", () => {
-    const one = scoreLocally({ ...baseInput, signals: ["recent_hiring"] }, baseIcp);
+  it("scores intent from signals with a boost for strong buying signals (R5.2)", () => {
+    const weak = scoreLocally({ ...baseInput, signals: ["news"] }, baseIcp);
+    const strong = scoreLocally({ ...baseInput, signals: ["recent_hiring"] }, baseIcp);
     const four = scoreLocally(
       { ...baseInput, signals: ["recent_hiring", "job_posting", "funding", "news"] },
       baseIcp
     );
-    expect(one.intentScore).toBe(25);
+    expect(weak.intentScore).toBe(25);
+    expect(strong.intentScore).toBe(65); // max(25, 50+15)
     expect(four.intentScore).toBe(100);
   });
 

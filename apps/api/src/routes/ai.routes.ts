@@ -18,11 +18,15 @@ const chatSchema = z.object({
     .min(1)
     .max(30),
   mode: z.enum(["auto", "ask"]).default("ask"),
+  /** When true (Ask mode), email actions are also queued in AI Review for human approval. */
+  stageForReview: z.boolean().optional().default(false),
   context: z
     .object({
       subject: z.string().max(500).optional(),
       body: z.string().max(20000).optional(),
       kind: z.enum(["email", "sequence", "general"]).optional(),
+      prospectId: z.string().min(1).max(200).optional(),
+      threadId: z.string().uuid().optional(),
     })
     .optional(),
 });
@@ -93,7 +97,7 @@ export async function aiRoutes(app: FastifyInstance) {
     if (app.db) {
       for (const id of body.ids) {
         const draft = await drafts.getById(workspaceId, id);
-        if (!draft || draft.status !== "approved" || draft.enrollmentStepId || draft.threadId) continue;
+        if (!draft || draft.enrollmentStepId || draft.status !== "approved") continue;
         const res = await sendApprovedDraftEmail(app.db, app.config, {
           id: draft.id,
           workspaceId,
@@ -172,13 +176,13 @@ export async function aiRoutes(app: FastifyInstance) {
     const workspaceId = request.workspaceId ?? "unknown";
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const drafts = draftsOr503(app);
-    const draft = await drafts.approve(workspaceId, id, request.userId);
+    let draft = await drafts.approve(workspaceId, id, request.userId);
 
-    // Complete AI Review: a standalone approved draft (not tied to a sequence step and not yet
-    // sent) is delivered to the prospect immediately. Enrollment-linked drafts are sent by the
-    // sequence worker when their step runs, so we skip those here to avoid double-sending.
+    // Standalone drafts (not tied to a sequence step) send immediately on approve.
+    // Enrollment-linked drafts are delivered by the sequence worker to avoid double-send.
+    // sendApprovedDraftEmail creates the outbound Inbox message and marks status `sent`.
     let send: DraftSendResult | undefined;
-    if (app.db && !draft.enrollmentStepId && !draft.threadId) {
+    if (app.db && !draft.enrollmentStepId && draft.status !== "sent") {
       send = await sendApprovedDraftEmail(app.db, app.config, {
         id: draft.id,
         workspaceId,
@@ -186,7 +190,9 @@ export async function aiRoutes(app: FastifyInstance) {
         subject: draft.subject,
         body: draft.body,
       });
-      if (send && !send.sent) {
+      if (send?.sent) {
+        draft = (await drafts.getById(workspaceId, id)) ?? draft;
+      } else if (send && !send.sent) {
         app.log.warn({ draftId: draft.id, reason: send.reason }, "Approved draft could not be sent");
       }
     }
@@ -203,9 +209,10 @@ export async function aiRoutes(app: FastifyInstance) {
 
   /**
    * POST /ai/chat — conversational assistant for templates/emails/sequences.
-   * Returns a reply + an optional structured action (email or sequence). In "auto" mode a
-   * proposed sequence is persisted immediately (returns sequenceId); "ask" mode returns the
-   * proposal for the client to confirm. Email actions are adopted client-side.
+   *
+   * AI segregation:
+   * - **Auto** — persist/apply immediately (sequences created server-side; emails applied client-side).
+   * - **Ask** — propose only; client confirms. Optionally `stageForReview` queues email into AI Review.
    */
   app.post("/ai/chat", async (request, reply) => {
     const workspaceId = request.workspaceId ?? "unknown";
@@ -221,6 +228,8 @@ export async function aiRoutes(app: FastifyInstance) {
 
       let applied = false;
       let sequenceId: string | undefined;
+      let draftId: string | undefined;
+
       if (body.mode === "auto" && result.action.type === "sequence" && app.db) {
         const seqSvc = buildSequenceService(app.db);
         if (seqSvc) {
@@ -233,7 +242,40 @@ export async function aiRoutes(app: FastifyInstance) {
         }
       }
 
-      return reply.send({ reply: result.reply, action: result.action, applied, sequenceId });
+      // Ask + stageForReview: segregate AI email into the review queue (never auto-send).
+      if (
+        body.mode === "ask" &&
+        body.stageForReview &&
+        result.action.type === "email" &&
+        body.context?.prospectId &&
+        app.db
+      ) {
+        try {
+          const drafts = buildAiDraftService(app.db);
+          const draft = await drafts.create(workspaceId, {
+            prospectId: body.context.prospectId,
+            subject: result.action.subject || "(no subject)",
+            body: result.action.html,
+            model: process.env.AI_MODEL ?? "openai/gpt-4o-mini",
+            // Do not attach inbox threadId here — approve+send creates the Sent/Outbox thread.
+            threadId: null,
+            status: "pending_review",
+          });
+          draftId = draft.id;
+        } catch (err) {
+          app.log.warn({ err }, "Could not stage AI chat email for review");
+        }
+      }
+
+      return reply.send({
+        reply: result.reply,
+        action: result.action,
+        applied,
+        sequenceId,
+        draftId,
+        mode: body.mode,
+        segregated: Boolean(draftId),
+      });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
       return reply.status(e.statusCode ?? 500).send({ error: e.message ?? "chat_failed" });

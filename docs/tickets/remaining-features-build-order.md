@@ -182,11 +182,12 @@ Suggested ClickUp setup:
 ### R5.2 — Real intent classification model
 **Description:** Replace hardcoded `/v1/classify` with a real intent model over signals + firmographics + job posts; typed intent (`buy/respond/need`) with rationale + HITL gating.
 **Acceptance Criteria:**
-- [ ] `/v1/classify` returns model-derived intent + confidence (not hardcoded).
-- [ ] Intent feeds `intentScore` and outreach readiness.
-- [ ] Low-confidence results flagged for human review.
+- [x] `/v1/classify` returns model-derived intent + confidence (not hardcoded).
+- [x] Intent feeds `intentScore` and outreach readiness.
+- [x] Low-confidence results flagged for human review.
 **Dependencies:** R5.1, R6.2 (signals)
 **Estimate:** 8 · **Labels:** ai, ai-service
+**Status:** Done (2026-07-17) — LLM via OpenRouter + heuristic fallback; `/v1/score` merges classify intent.
 
 ### R5.3 — First-class pain-point surfacing
 **Description:** Promote LLM pain-points from personalize-only to a stored, typed field surfaced on prospect detail.

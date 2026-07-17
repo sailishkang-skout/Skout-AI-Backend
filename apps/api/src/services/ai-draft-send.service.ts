@@ -130,7 +130,10 @@ export async function sendApprovedDraftEmail(
       messageId: externalId,
       sentAt: now,
     });
-    await tx.update(aiDrafts).set({ threadId: thread.id }).where(eq(aiDrafts.id, draft.id));
+    await tx
+      .update(aiDrafts)
+      .set({ threadId: thread.id, status: "sent" })
+      .where(eq(aiDrafts.id, draft.id));
     return thread.id;
   });
 
