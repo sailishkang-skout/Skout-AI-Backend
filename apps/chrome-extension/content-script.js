@@ -144,6 +144,9 @@
         }
         #skout-ai-bulk-add:disabled { opacity: 0.6; cursor: wait; }
         #skout-ai-bulk-status { margin-top: 8px; font-size: 11px; color: #94a3b8; }
+        #skout-ai-bulk-progress { margin-top: 4px; font-size: 10px; color: #64748b; display: none; }
+        .skout-bulk-row-status { flex-shrink: 0; width: 14px; text-align: center; font-size: 12px; }
+        .skout-bulk-row input[type="checkbox"]:disabled + label { opacity: 0.45; }
       </style>
       <div id="skout-ai-bulk-header">
         <h2>Bulk capture</h2>
@@ -160,6 +163,7 @@
       <div id="skout-ai-bulk-rows"></div>
       <button id="skout-ai-bulk-add" type="button">Add selected to list</button>
       <div id="skout-ai-bulk-status">Ready</div>
+      <div id="skout-ai-bulk-progress"></div>
     `;
 
     panel.querySelector("#skout-ai-bulk-close")?.addEventListener("click", () => {
@@ -184,6 +188,11 @@
       if (event.target?.matches('.skout-bulk-row input[type="checkbox"]')) {
         updateBulkSelectionSummary(panel);
       }
+      if (event.target?.matches("#skout-ai-bulk-list-select")) {
+        // Reset processed state when switching lists — profiles may not be in the new list.
+        panel.__skoutProcessedUrls = new Map();
+        renderBulkRows(panel);
+      }
     });
 
     document.body.appendChild(panel);
@@ -193,8 +202,8 @@
   }
 
   function updateBulkSelectionSummary(panel) {
-    const total = panel.querySelectorAll('.skout-bulk-row input[type="checkbox"]').length;
-    const selected = panel.querySelectorAll('.skout-bulk-row input[type="checkbox"]:checked').length;
+    const total = panel.querySelectorAll('.skout-bulk-row input[type="checkbox"]:not(:disabled)').length;
+    const selected = panel.querySelectorAll('.skout-bulk-row input[type="checkbox"]:checked:not(:disabled)').length;
     const summary = panel.querySelector("#skout-ai-bulk-summary");
     if (summary) {
       summary.textContent =
@@ -213,6 +222,8 @@
       String(s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
     const { results } = readSearchResults();
     panel.__skoutBulkResults = results;
+    // Processed URLs from previous add operations: url -> { icon, color }
+    const processed = panel.__skoutProcessedUrls || new Map();
     if (!results.length) {
       rowsEl.innerHTML = `<p style="margin:0;font-size:11px;color:#94a3b8;">No profile cards detected. Open LinkedIn people search results and click Rescan.</p>`;
       updateBulkSelectionSummary(panel);
@@ -221,13 +232,15 @@
     rowsEl.innerHTML = results
       .map((profile, index) => {
         const subtitle = [profile.title, profile.companyName].filter(Boolean).join(" @ ");
+        const done = processed.get(profile.linkedinUrl);
         return `
           <div class="skout-bulk-row">
-            <input type="checkbox" id="skout-bulk-${index}" data-index="${index}" checked />
+            <input type="checkbox" id="skout-bulk-${index}" data-index="${index}"${done ? " disabled" : " checked"} />
             <label for="skout-bulk-${index}">
               ${esc(profile.fullName)}
               ${subtitle ? `<small>${esc(subtitle)}</small>` : ""}
             </label>
+            <span class="skout-bulk-row-status"${done ? ` style="color:${done.color}"` : ""}>${done ? done.icon : ""}</span>
           </div>`;
       })
       .join("");
@@ -284,6 +297,53 @@
         120_000
       );
       if (!result?.ok) throw new Error(result?.error || "Bulk add failed");
+
+      // Persist processed URLs so re-renders keep them disabled.
+      if (!panel.__skoutProcessedUrls) panel.__skoutProcessedUrls = new Map();
+      (result.results || []).forEach((r) => {
+        if (r.status === "added") {
+          panel.__skoutProcessedUrls.set(r.linkedinUrl, { icon: "✓", color: "#86efac" });
+        } else if (r.status === "skipped") {
+          panel.__skoutProcessedUrls.set(r.linkedinUrl, { icon: "⊘", color: "#64748b" });
+        }
+      });
+
+      // Apply per-row status icons and disable processed rows.
+      const statusByUrl = new Map((result.results || []).map((r) => [r.linkedinUrl, r]));
+      panel.querySelectorAll('.skout-bulk-row input[type="checkbox"]').forEach((cb) => {
+        const index = Number(cb.getAttribute("data-index"));
+        const profile = (panel.__skoutBulkResults || [])[index];
+        if (!profile) return;
+        const r = statusByUrl.get(profile.linkedinUrl);
+        if (!r) return;
+        const row = cb.closest(".skout-bulk-row");
+        const statusSpan = row?.querySelector(".skout-bulk-row-status");
+        if (r.status === "added") {
+          if (statusSpan) { statusSpan.textContent = "✓"; statusSpan.style.color = "#86efac"; }
+          cb.checked = false;
+          cb.disabled = true;
+        } else if (r.status === "skipped") {
+          if (statusSpan) { statusSpan.textContent = "⊘"; statusSpan.style.color = "#64748b"; }
+          cb.checked = false;
+          cb.disabled = true;
+        } else if (r.status === "failed") {
+          if (statusSpan) { statusSpan.textContent = "✗"; statusSpan.style.color = "#fca5a5"; }
+        }
+      });
+
+      // Cumulative session progress across pages.
+      panel.__skoutTotalAdded = (panel.__skoutTotalAdded || 0) + (result.added ?? 0);
+      panel.__skoutTotalSkipped = (panel.__skoutTotalSkipped || 0) + (result.skipped ?? 0);
+      panel.__skoutTotalFailed = (panel.__skoutTotalFailed || 0) + (result.failed ?? 0);
+      const progressEl = panel.querySelector("#skout-ai-bulk-progress");
+      if (progressEl) {
+        const parts = [`Session: ${panel.__skoutTotalAdded} added`];
+        if (panel.__skoutTotalSkipped) parts.push(`${panel.__skoutTotalSkipped} already in list`);
+        if (panel.__skoutTotalFailed) parts.push(`${panel.__skoutTotalFailed} failed`);
+        progressEl.textContent = parts.join(" · ");
+        progressEl.style.display = "block";
+      }
+
       setBulkStatus(
         panel,
         `Done — added ${result.added ?? 0}, skipped ${result.skipped ?? 0}${result.failed ? `, failed ${result.failed}` : ""}.`
