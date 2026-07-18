@@ -41,6 +41,15 @@ export function initPanel() {
   const stubEmailEl = document.getElementById("stub-email");
   const useStubAuthEl = document.getElementById("use-stub-auth");
   const listSelectEl = document.getElementById("list-select");
+  const sequenceSelectEl = document.getElementById("sequence-select");
+  const hitlWarningEl = document.getElementById("hitl-warning");
+  const enrollBtn = document.getElementById("enroll-sequence");
+  const enrollConfirmEl = document.getElementById("enroll-confirm");
+  const enrollConfirmLinkEl = document.getElementById("enroll-confirm-link");
+
+  // Tracks the HITL state from the most recent ICP score so enroll can gate on it.
+  let lastRequiresHitl = false;
+  let hitlConfirmed = false;
 
   function setStatus(message, isError = false) {
     if (!statusEl) return;
@@ -288,7 +297,15 @@ export function initPanel() {
       const tabId = await findLinkedInTabId();
       await runInBackground("ping").catch(() => undefined);
       const result = await runInBackground("score-profile", { tabId });
-      setStatus(result.message || `Scored ${result.fullName}.`);
+      // Store HITL state so the enroll handler can gate on it.
+      lastRequiresHitl = Boolean(result.requiresHitl);
+      hitlConfirmed = false;
+      if (hitlWarningEl) hitlWarningEl.classList.toggle("hidden", !lastRequiresHitl);
+      if (enrollConfirmEl) enrollConfirmEl.classList.add("hidden");
+      const hitlNote = result.requiresHitl
+        ? " — low confidence, flagged for review"
+        : "";
+      setStatus((result.message || `Scored ${result.fullName}.`) + hitlNote);
     } catch (error) {
       setStatus(
         error instanceof Error ? error.message : "Score failed — connect Skout and configure ICP.",
@@ -296,6 +313,84 @@ export function initPanel() {
       );
     } finally {
       setBusy(button, false, "Score ICP");
+    }
+  });
+
+  async function refreshSequences({ quiet = false } = {}) {
+    if (!sequenceSelectEl) return;
+    if (!quiet) {
+      sequenceSelectEl.innerHTML = `<option value="">Loading sequences…</option>`;
+      setStatus("Loading sequences…");
+    }
+    try {
+      const config = await getConfig();
+      if (!config.useStubAuth && !(await isSignedIn())) {
+        await runInBackground("connect-skout", { focus: false });
+        await loadConfig();
+      }
+      if (!(await isSignedIn())) {
+        sequenceSelectEl.innerHTML = `<option value="">Sign in to Skout first</option>`;
+        return;
+      }
+      const result = await runInBackground("get-sequences");
+      const sequences = result.sequences || [];
+      sequenceSelectEl.innerHTML =
+        sequences.length > 0
+          ? sequences
+              .map((s) => `<option value="${s.id}">${s.name}</option>`)
+              .join("")
+          : `<option value="">No active sequences — create one in Skout</option>`;
+      if (!quiet) {
+        setStatus(sequences.length > 0 ? `${sequences.length} sequence(s) ready.` : "Create a sequence in Skout.");
+      }
+    } catch (error) {
+      const message = friendlyTabError(error instanceof Error ? error.message : "Failed to load sequences");
+      sequenceSelectEl.innerHTML = `<option value="">Could not load sequences</option>`;
+      if (!quiet) setStatus(message, true);
+    }
+  }
+
+  document.getElementById("refresh-sequences")?.addEventListener("click", () => refreshSequences());
+
+  enrollBtn?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const sequenceId = sequenceSelectEl?.value;
+    if (!sequenceId) {
+      setStatus("Pick a sequence first.", true);
+      return;
+    }
+
+    // HITL gate: if the last ICP score was low-confidence and not yet confirmed, require a second click.
+    if (lastRequiresHitl && !hitlConfirmed) {
+      hitlWarningEl?.classList.remove("hidden");
+      hitlConfirmed = true;
+      setStatus("Low-confidence score — click Enroll again to confirm enrollment.", true);
+      return;
+    }
+
+    hitlWarningEl?.classList.add("hidden");
+    hitlConfirmed = false;
+    if (enrollConfirmEl) enrollConfirmEl.classList.add("hidden");
+    setBusy(button, true, "Enrolling…");
+    try {
+      if (!(await ensurePanelSignedIn())) return;
+      const tabId = await findLinkedInTabId();
+      await runInBackground("ping").catch(() => undefined);
+      const result = await runInBackground("enroll-sequence", { sequenceId, tabId });
+      const config = await getConfig();
+      const sequenceUrl = `${config.webUrl.replace(/\/$/, "")}/sequences/${sequenceId}`;
+      if (enrollConfirmLinkEl) enrollConfirmLinkEl.href = sequenceUrl;
+      if (enrollConfirmEl) enrollConfirmEl.classList.remove("hidden");
+      setStatus(`Enrolled ${result.fullName} in sequence.`);
+    } catch (error) {
+      setStatus(
+        error instanceof Error
+          ? error.message
+          : "Enroll failed — connect Skout and try again.",
+        true
+      );
+    } finally {
+      setBusy(button, false, "Enroll in sequence");
     }
   });
 
@@ -314,6 +409,7 @@ export function initPanel() {
       }
     }
     await refreshLists({ quiet: true });
+    await refreshSequences({ quiet: true });
   })();
 
   chrome.storage.onChanged.addListener((changes, area) => {
@@ -321,6 +417,7 @@ export function initPanel() {
     void (async () => {
       await loadConfig();
       await refreshLists({ quiet: true });
+      await refreshSequences({ quiet: true });
       setStatus("Connected to Skout.");
     })();
   });

@@ -31,6 +31,21 @@
       <button id="score-profile" type="button">Score ICP</button>
     </section>
 
+    <section class="card" id="sequence-section">
+      <label for="sequence-select">Enroll in sequence</label>
+      <select id="sequence-select">
+        <option value="">Loading sequences…</option>
+      </select>
+      <p id="hitl-warning" class="hitl-warning hidden" role="alert">
+        ⚠ Low-confidence ICP score — this prospect is flagged for human review. Click Enroll again to confirm.
+      </p>
+      <button id="enroll-sequence" type="button" class="primary">Enroll in sequence</button>
+      <button id="refresh-sequences" type="button">Refresh sequences</button>
+      <p id="enroll-confirm" class="enroll-confirm hidden">
+        Enrolled! <a id="enroll-confirm-link" href="#" target="_blank" rel="noopener">View sequence →</a>
+      </p>
+    </section>
+
     <details id="dev-settings" class="dev-details">
       <summary>Developer settings</summary>
       <label for="api-url">API URL</label>

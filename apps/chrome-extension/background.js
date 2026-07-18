@@ -9,6 +9,8 @@ import {
   enrichProspect,
   scoreProspect,
   resolveProspectId,
+  listSequences,
+  enrollInSequence,
 } from "./api.js";
 import { friendlyTabError, isUsableTab, isUsableTabUrl, nameFromLinkedInUrl } from "./tab-utils.js";
 import { getLists, prefetchLists, saveLastListId, getLastListId } from "./lists-cache.js";
@@ -406,19 +408,115 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           "Score timed out — open Skout, sign in, and connect your account."
         );
         log(`score-profile DONE (${Date.now() - t0}ms)`);
+        const ic = result?.intentClassification;
+        const intentPart = ic
+          ? ` · Intent: ${ic.intent}${ic.requiresHitl ? " ⚠ review" : ""}`
+          : "";
         sendResponse({
           ok: true,
           fullName,
           icpScore: result?.icpScore ?? null,
           icpBand: result?.icpBand ?? null,
           outreachReadiness: result?.outreachReadiness ?? null,
-          message: `ICP score: ${result?.icpScore ?? "—"} (${result?.icpBand ?? "n/a"})`,
+          intent: ic?.intent ?? null,
+          intentScore: ic?.intentScore ?? null,
+          requiresHitl: ic?.requiresHitl ?? false,
+          message: `ICP score: ${result?.icpScore ?? "—"} (${result?.icpBand ?? "n/a"})${intentPart}`,
         });
       } catch (error) {
         logError(`score-profile FAILED (${Date.now() - t0}ms):`, error);
         sendResponse({
           ok: false,
           error: friendlyTabError(error instanceof Error ? error.message : "Score failed"),
+        });
+      }
+    })();
+    return true;
+  }
+
+  if (message.type === "get-sequences") {
+    void (async () => {
+      try {
+        await ensureAuthForApi();
+        const sequences = await listSequences();
+        sendResponse({ ok: true, sequences });
+      } catch (error) {
+        sendResponse({
+          ok: false,
+          sequences: [],
+          error: error instanceof Error ? error.message : "Failed to load sequences",
+        });
+      }
+    })();
+    return true;
+  }
+
+  if (message.type === "enroll-sequence") {
+    void (async () => {
+      const t0 = Date.now();
+      log("enroll-sequence START", { sequenceId: message.sequenceId });
+      try {
+        const result = await withTimeout(
+          (async () => {
+            await ensureAuthForApi();
+            const profile = await timeStep("resolveProfile", () =>
+              resolveProfile(message, sender.tab?.id)
+            );
+            const prospectId = await timeStep("activateProspect", () => activateProspect(profile));
+            await ensureAuthForApi();
+            await timeStep("enrollInSequence", () =>
+              enrollInSequence(message.sequenceId, [prospectId])
+            );
+            return { fullName: profile.fullName, prospectId };
+          })(),
+          HANDLER_TIMEOUT_MS,
+          "Enroll timed out — open Skout, sign in, and connect your account."
+        );
+        log(`enroll-sequence DONE (${Date.now() - t0}ms)`);
+        sendResponse({ ok: true, fullName: result.fullName, prospectId: result.prospectId });
+      } catch (error) {
+        logError(`enroll-sequence FAILED (${Date.now() - t0}ms):`, error);
+        sendResponse({
+          ok: false,
+          error: friendlyTabError(
+            error instanceof Error ? error.message : "Enroll failed"
+          ),
+        });
+      }
+    })();
+    return true;
+  }
+
+  if (message.type === "bulk-enroll-sequence") {
+    void (async () => {
+      const t0 = Date.now();
+      const profiles = Array.isArray(message.profiles) ? message.profiles : [];
+      log("bulk-enroll-sequence START", { sequenceId: message.sequenceId, count: profiles.length });
+      try {
+        const summary = await withTimeout(
+          (async () => {
+            await ensureAuthForApi();
+            const sequenceId = message.sequenceId;
+            if (!sequenceId) throw new Error("Pick a sequence first.");
+            if (!profiles.length) throw new Error("No profiles selected.");
+            const prospectIds = await timeStep("activateProspects", () =>
+              activateProspects(profiles)
+            );
+            await timeStep("enrollInSequence", () => enrollInSequence(sequenceId, prospectIds));
+            return { enrolled: prospectIds.length };
+          })(),
+          BULK_HANDLER_TIMEOUT_MS,
+          "Bulk enroll timed out — try fewer profiles or check your Skout session."
+        );
+        log(`bulk-enroll-sequence DONE (${Date.now() - t0}ms)`, summary);
+        sendResponse({ ok: true, ...summary });
+      } catch (error) {
+        logError(`bulk-enroll-sequence FAILED (${Date.now() - t0}ms):`, error);
+        sendResponse({
+          ok: false,
+          error: friendlyTabError(
+            error instanceof Error ? error.message : "Bulk enroll failed"
+          ),
         });
       }
     })();
