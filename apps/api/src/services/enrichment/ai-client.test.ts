@@ -3,6 +3,7 @@ import { mockCreate } from "../../test/mocks/openai.js";
 import {
   scoreLocally,
   scoreProspect,
+  classifyIntent,
   type ScoreInput,
   type IcpConfig,
 } from "./ai-client.js";
@@ -92,13 +93,15 @@ describe("scoreLocally", () => {
     expect(result.dimensions.company_size.score).toBe(20);
   });
 
-  it("adds 25 intent points per signal, capped at 100", () => {
-    const one = scoreLocally({ ...baseInput, signals: ["recent_hiring"] }, baseIcp);
+  it("scores intent from signals with a boost for strong buying signals (R5.2)", () => {
+    const weak = scoreLocally({ ...baseInput, signals: ["news"] }, baseIcp);
+    const strong = scoreLocally({ ...baseInput, signals: ["recent_hiring"] }, baseIcp);
     const four = scoreLocally(
       { ...baseInput, signals: ["recent_hiring", "job_posting", "funding", "news"] },
       baseIcp
     );
-    expect(one.intentScore).toBe(25);
+    expect(weak.intentScore).toBe(25);
+    expect(strong.intentScore).toBe(65); // max(25, 50+15)
     expect(four.intentScore).toBe(100);
   });
 
@@ -360,6 +363,198 @@ describe("scoreProspect — OpenRouter LLM path", () => {
 
     const result = await scoreProspect(undefined, baseInput, baseIcp, 5000, "sk-or-test");
     expect(Array.isArray(result.painPoints)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// classifyIntent — /v1/classify client
+// ---------------------------------------------------------------------------
+
+const baseClassifyInput: ScoreInput = {
+  prospectId: "intent-001",
+  title: "VP of Sales",
+  seniority: "vp",
+  industry: "SaaS",
+  country: "US",
+  employeeCount: 150,
+  companyDomain: "acme.com",
+  signals: ["recent_funding", "market_expansion"],
+  jobPosts: [{ title: "Head of Revenue Operations", department: "Sales" }],
+};
+
+function mockClassify(payload: Record<string, unknown>, ok = true) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({
+      ok,
+      status: ok ? 200 : 503,
+      json: vi.fn().mockResolvedValue(payload),
+    })
+  );
+}
+
+describe("classifyIntent — response parsing", () => {
+  it("returns parsed IntentClassification on 200", async () => {
+    mockClassify({
+      prospect_id: "intent-001",
+      intent: "in_market",
+      intent_score: 90,
+      confidence: 0.76,
+      rationale: "Series B + EU expansion",
+      signals_used: ["recent_funding", "market_expansion"],
+      outreach_readiness: "warm",
+      requires_hitl: false,
+      source: "heuristic",
+    });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result).not.toBeNull();
+    expect(result!.intent).toBe("in_market");
+    expect(result!.intentScore).toBe(90);
+    expect(result!.confidence).toBe(0.76);
+    expect(result!.rationale).toBe("Series B + EU expansion");
+    expect(result!.signalsUsed).toEqual(["recent_funding", "market_expansion"]);
+    expect(result!.outreachReadiness).toBe("warm");
+  });
+
+  it("returns null on non-200 response", async () => {
+    mockClassify({}, false);
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result).toBeNull();
+  });
+
+  it("returns null when service is unreachable", async () => {
+    const result = await classifyIntent("http://localhost:19999", baseClassifyInput, 300);
+    expect(result).toBeNull();
+  });
+
+  it("returns null when response JSON throws", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockRejectedValue(new SyntaxError("Bad JSON")),
+    }));
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result).toBeNull();
+  });
+});
+
+describe("classifyIntent — HITL gating", () => {
+  it("sets requiresHitl=false when confidence >= 0.65", async () => {
+    mockClassify({ intent: "in_market", intent_score: 90, confidence: 0.76,
+      rationale: "x", signals_used: [], outreach_readiness: "warm" });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result!.requiresHitl).toBe(false);
+  });
+
+  it("sets requiresHitl=true when confidence < 0.65", async () => {
+    mockClassify({ intent: "researching", intent_score: 60, confidence: 0.55,
+      rationale: "x", signals_used: [], outreach_readiness: "warm" });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result!.requiresHitl).toBe(true);
+  });
+
+  it("sets requiresHitl=true at exactly the boundary (0.64)", async () => {
+    mockClassify({ intent: "researching", intent_score: 60, confidence: 0.64,
+      rationale: "x", signals_used: [], outreach_readiness: "warm" });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result!.requiresHitl).toBe(true);
+  });
+
+  it("sets requiresHitl=false at exactly the threshold (0.65)", async () => {
+    mockClassify({ intent: "in_market", intent_score: 90, confidence: 0.65,
+      rationale: "x", signals_used: [], outreach_readiness: "warm" });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result!.requiresHitl).toBe(false);
+  });
+});
+
+describe("classifyIntent — value clamping and normalisation", () => {
+  it("clamps intentScore above 100 down to 100", async () => {
+    mockClassify({ intent: "in_market", intent_score: 999, confidence: 0.80,
+      rationale: "x", signals_used: [], outreach_readiness: "warm" });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result!.intentScore).toBeLessThanOrEqual(100);
+  });
+
+  it("clamps intentScore below 0 up to 0", async () => {
+    mockClassify({ intent: "unknown", intent_score: -50, confidence: 0.30,
+      rationale: "x", signals_used: [], outreach_readiness: "nurture" });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result!.intentScore).toBeGreaterThanOrEqual(0);
+  });
+
+  it("clamps confidence above 1 down to 1", async () => {
+    mockClassify({ intent: "in_market", intent_score: 90, confidence: 5.0,
+      rationale: "x", signals_used: [], outreach_readiness: "warm" });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result!.confidence).toBeLessThanOrEqual(1);
+  });
+
+  it("clamps confidence below 0 up to 0", async () => {
+    mockClassify({ intent: "unknown", intent_score: 0, confidence: -2.0,
+      rationale: "x", signals_used: [], outreach_readiness: "nurture" });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result!.confidence).toBeGreaterThanOrEqual(0);
+  });
+
+  it("normalises unknown intent string to 'unknown'", async () => {
+    mockClassify({ intent: "definitely_buying", intent_score: 90, confidence: 0.80,
+      rationale: "x", signals_used: [], outreach_readiness: "warm" });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result!.intent).toBe("unknown");
+  });
+
+  it("maps non-array signals_used to empty array", async () => {
+    mockClassify({ intent: "in_market", intent_score: 90, confidence: 0.80,
+      rationale: "x", signals_used: "not-an-array", outreach_readiness: "warm" });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(Array.isArray(result!.signalsUsed)).toBe(true);
+    expect(result!.signalsUsed).toHaveLength(0);
+  });
+
+  it("falls back outreachReadiness to 'nurture' when missing", async () => {
+    mockClassify({ intent: "unknown", intent_score: 0, confidence: 0.30, rationale: "x", signals_used: [] });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result!.outreachReadiness).toBe("nurture");
+  });
+});
+
+describe("classifyIntent — request body shape", () => {
+  it("sends prospect_id, signals, firmographics, job_posts in snake_case", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        intent: "in_market", intent_score: 90, confidence: 0.76,
+        rationale: "x", signals_used: [], outreach_readiness: "warm",
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://localhost:8000/v1/classify");
+    const body = JSON.parse(init.body as string);
+    expect(body.prospect_id).toBe("intent-001");
+    expect(Array.isArray(body.signals)).toBe(true);
+    expect(body.signals[0]).toHaveProperty("type");
+    expect(body.firmographics).toHaveProperty("employee_count");
+    expect(Array.isArray(body.job_posts)).toBe(true);
+  });
+
+  it("maps signals array of strings to [{type}] objects", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        intent: "unknown", intent_score: 0, confidence: 0.30,
+        rationale: "x", signals_used: [], outreach_readiness: "nurture",
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await classifyIntent("http://localhost:8000", { ...baseClassifyInput, signals: ["recent_funding"] }, 5000);
+
+    const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string);
+    expect(body.signals).toEqual([{ type: "recent_funding" }]);
   });
 });
 

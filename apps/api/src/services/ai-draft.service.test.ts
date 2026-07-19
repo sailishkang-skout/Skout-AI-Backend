@@ -128,7 +128,7 @@ describe("AiDraftService", () => {
     expect(row.reviewedBy).toBe("u-1");
   });
 
-  it("rejects approving an already approved draft", async () => {
+  it("returns an already approved draft without error (idempotent for retry send)", async () => {
     const db = makeDb({});
     db.select = vi.fn(() => {
       const c: Record<string, ReturnType<typeof vi.fn>> = {};
@@ -138,7 +138,8 @@ describe("AiDraftService", () => {
       return c;
     });
     const svc = new AiDraftService(db);
-    await expect(svc.approve("ws-1", baseDraft.id)).rejects.toBeInstanceOf(HttpError);
+    const row = await svc.approve("ws-1", baseDraft.id);
+    expect(row.status).toBe("approved");
   });
 
   it("bulk-approves matching reviewable ids", async () => {

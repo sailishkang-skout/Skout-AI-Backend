@@ -95,6 +95,11 @@ const envSchema = z
     /** OpenRouter API key (preferred). Also accepts OPEN_ROUTER_API_KEY via transform. */
     OPENROUTER_API_KEY: z.string().optional(),
     OPEN_ROUTER_API_KEY: z.string().optional(),
+    /**
+     * Legacy / alternate slot for the LLM key (SkoutDev/openai). Used as fallback when
+     * OPENROUTER_API_KEY is missing or still the CDK placeholder.
+     */
+    OPENAI_API_KEY: z.string().optional(),
     OPENCORPORATES_API_KEY: z.string().optional(),
     OPENCORPORATES_BASE_URL: z.string().default("https://api.opencorporates.com/v0.4"),
     SEC_EDGAR_BASE_URL: z.string().default("https://efts.sec.gov/LATEST/search-index"),
@@ -197,6 +202,20 @@ const envSchema = z
     // Alias OPEN_ROUTER_API_KEY → OPENROUTER_API_KEY (common env naming)
     if (!next.OPENROUTER_API_KEY && next.OPEN_ROUTER_API_KEY) {
       next = { ...next, OPENROUTER_API_KEY: next.OPEN_ROUTER_API_KEY };
+    }
+    // Treat CDK placeholders as unset; fall back to OPENAI_API_KEY when that holds the
+    // real OpenRouter key (historically stored in SkoutDev/openai during the migration).
+    const isPlaceholder = (v?: string) =>
+      !v ||
+      v.trim() === "" ||
+      v.trim().toLowerCase() === "replace-me" ||
+      v.trim().toLowerCase() === "changeme";
+    if (isPlaceholder(next.OPENROUTER_API_KEY)) {
+      const fallback = next.OPENAI_API_KEY;
+      next = {
+        ...next,
+        OPENROUTER_API_KEY: isPlaceholder(fallback) ? undefined : fallback,
+      };
     }
     return next;
   });

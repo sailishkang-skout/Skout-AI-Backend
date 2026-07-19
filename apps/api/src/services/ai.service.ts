@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { createLogger } from "@skout/observability";
+import type { WorkspaceToolRunner } from "./ai-workspace-tools.service.js";
 
 const log = createLogger("ai.service");
 
@@ -68,22 +69,81 @@ export interface GeneratedSequence {
   steps: GeneratedSequenceStep[];
 }
 
+export type ChartKind = "pie" | "bar" | "line" | "area" | "table" | "metric";
+
+/**
+ * A single visualization the frontend can render. `data` holds the already-aggregated rows the
+ * model built from tool results; the frontend just draws them (no server-side rendering).
+ */
+export interface ChartSpec {
+  kind: ChartKind;
+  title: string;
+  description?: string;
+  /** Row objects, e.g. [{ label: "search", value: 120 }, …]. */
+  data: Array<Record<string, string | number | null>>;
+  /** Field used for the category / x-axis (pie/bar/line/area). */
+  xKey?: string;
+  /** Numeric field(s) to plot as series/values. */
+  yKeys?: string[];
+  /** Column definitions for kind "table". */
+  columns?: Array<{ key: string; label: string }>;
+  /** Single headline number for kind "metric". */
+  value?: string | number;
+  unit?: string;
+}
+
 export type ChatAction =
   | { type: "none" }
   | { type: "email"; subject: string; html: string }
-  | { type: "sequence"; name: string; steps: GeneratedSequenceStep[] };
+  | { type: "sequence"; name: string; steps: GeneratedSequenceStep[] }
+  | { type: "analysis"; title?: string; summary?: string; charts: ChartSpec[] };
 
-const CHAT_SYSTEM_PROMPT = `You are Skout's outbound copy assistant embedded in the app. You help
-users write email templates and design multi-step sequences through conversation.
+const CHAT_SYSTEM_PROMPT = `You are Skout AI — the in-app assistant for this workspace.
 
-Merge tokens — use ONLY these in any subject/body:
+You do three jobs:
+1) Answer questions about THIS workspace using live data. You have TOOLS that read any workspace
+   data on demand (overview, credit analytics + usage by action, credit ledger, lists & members,
+   ICP, sequences & their analytics, inboxes, threads/messages, deliverability, AI drafts,
+   integrations, team, invoices). ALWAYS call the relevant tool to get real numbers before
+   answering a data question — never guess or invent numbers. The "Workspace facts" block (if
+   present) is only a quick summary; prefer tools for anything specific (e.g. credit usage by
+   week/category, a list's members, a sequence's reply rate).
+2) Answer how-to questions about the Skout product using the "Product guides" block. Point users
+   to the right in-app path (e.g. /import, /lists, /sequences, /ai/review, /settings/workspace).
+3) Help write outbound email templates and multi-step sequences when asked.
+
+Tool use rules:
+- Call tools whenever a question depends on workspace data. You may call several tools (in sequence)
+  to gather what you need, then give ONE final answer.
+- For credit usage breakdowns (e.g. "credit usage by week" or a pie chart), call get_credit_analytics
+  — its "credits.byAction" is the spend per category and "credits.daily" is the daily series.
+- To EXPORT / download data as CSV, call export_dataset. The download link is delivered to the user
+  automatically — do not paste CSV rows into your reply; just confirm the export is ready.
+- If a tool returns an error or no data, say so plainly — do not fabricate values.
+
+Charts & analysis:
+- When the user asks for a chart, graph, pie/bar/line chart, dashboard, breakdown, or visual
+  analysis, first fetch the real data with tools, then return an "analysis" action containing one or
+  more chart specs built from that data. Also give a short natural-language "summary" of what the
+  data shows in the "reply".
+- Choose the right chart kind: "pie" for share/composition (e.g. credits by action), "bar" for
+  comparisons across categories, "line"/"area" for trends over time (e.g. daily/weekly credit spend),
+  "table" for detailed rows, "metric" for a single headline number.
+- Never invent data points — every value in a chart must come from a tool result.
+
+For product questions not covered by guides, give a short best-effort answer and suggest /guides.
+When a Product guides section is provided, use it as the source of truth — do not say you lack
+instructions if the guide already answers the question.
+
+Merge tokens — use ONLY these in any subject/body you generate:
   {{firstName}} {{fullName}} {{companyName}} {{title}} {{senderName}} {{unsubscribeUrl}}
 Never invent names/companies or use square-bracket placeholders like [Your Name].
 
 Always reply with ONLY a valid JSON object (no markdown, no code fences):
-  "reply": a short conversational message to the user (what you did / a question / a suggestion)
+  "reply": a short conversational message (answer, clarification, or suggestion). Use plain text;
+       you may mention paths like /import or /guides/import-prospects.
   "action": one of:
-    { "type": "none" }  — when just chatting, clarifying, or answering a question
+    { "type": "none" }  — Q&A, how-tos, workspace facts, clarifying questions
     { "type": "email", "subject": "...", "html": "..." }  — when the user wants an email/template.
        html uses only <p>,<strong>,<em>,<a>,<br>,<ul>,<li>; greeting "Hi {{firstName}},";
        sign off {{senderName}}; end with the unsubscribe paragraph:
@@ -93,9 +153,21 @@ Always reply with ONLY a valid JSON object (no markdown, no code fences):
        "linkedinAction": "connect"|"message" (linkedin only),
        "subject": "..." (email only), "bodyTemplate": "..." (email HTML / linkedin plain text) }.
        4–6 steps, first delayDays 0, later steps 2–4 days apart.
+    { "type": "analysis", "title": "...", "summary": "...", "charts": [ ... ] }  — when the user
+       wants a chart/graph/visual breakdown/dashboard. Each chart:
+       { "kind": "pie"|"bar"|"line"|"area"|"table"|"metric", "title": "...",
+         "data": [ { ... } ],           // rows built from tool results
+         "xKey": "category-field",       // category/x-axis key (pie/bar/line/area)
+         "yKeys": ["value-field"],       // numeric series key(s)
+         "columns": [ { "key": "...", "label": "..." } ],  // for "table"
+         "value": 123, "unit": "credits" }.               // for "metric"
+       Example pie for credits by action:
+       { "kind": "pie", "title": "Credit usage by action", "xKey": "action", "yKeys": ["credits"],
+         "data": [ { "action": "enrichment", "credits": 120 }, { "action": "search", "credits": 40 } ] }
 
 If the user asks to tweak the current subject/body provided in context, return an "email" action
-with the full revised version. Keep copy concise and deliverability-safe.`;
+with the full revised version. Keep copy concise and deliverability-safe.
+For pure Q&A (credits, how to import, what is AI Review, etc.) always use action type "none".`;
 
 function coerceChatAction(raw: unknown): ChatAction {
   if (!raw || typeof raw !== "object") return { type: "none" };
@@ -119,7 +191,60 @@ function coerceChatAction(raw: unknown): ChatAction {
         : "AI-generated sequence";
     return { type: "sequence", name, steps };
   }
+  if (r.type === "analysis") {
+    const chartsRaw = Array.isArray(r.charts) ? r.charts : [];
+    const charts = chartsRaw
+      .map(coerceChart)
+      .filter((c): c is ChartSpec => c !== null)
+      .slice(0, 8);
+    if (charts.length === 0) return { type: "none" };
+    const action: Extract<ChatAction, { type: "analysis" }> = { type: "analysis", charts };
+    if (typeof r.title === "string" && r.title.trim()) action.title = r.title.trim().slice(0, 120);
+    if (typeof r.summary === "string" && r.summary.trim())
+      action.summary = r.summary.trim().slice(0, 2000);
+    return action;
+  }
   return { type: "none" };
+}
+
+const CHART_KINDS: ChartKind[] = ["pie", "bar", "line", "area", "table", "metric"];
+const MAX_CHART_ROWS = 200;
+
+function coerceChart(raw: unknown): ChartSpec | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const kind = CHART_KINDS.includes(r.kind as ChartKind) ? (r.kind as ChartKind) : "bar";
+  const title = typeof r.title === "string" && r.title.trim() ? r.title.trim().slice(0, 120) : "Chart";
+
+  const dataRaw = Array.isArray(r.data) ? r.data : [];
+  const data = dataRaw
+    .filter((row): row is Record<string, unknown> => !!row && typeof row === "object")
+    .slice(0, MAX_CHART_ROWS)
+    .map((row) => {
+      const clean: Record<string, string | number | null> = {};
+      for (const [k, v] of Object.entries(row)) {
+        clean[k] = typeof v === "number" || v === null ? v : String(v);
+      }
+      return clean;
+    });
+
+  // metric charts may carry only a headline value; everything else needs rows.
+  if (kind !== "metric" && data.length === 0) return null;
+
+  const chart: ChartSpec = { kind, title, data };
+  if (typeof r.description === "string" && r.description.trim())
+    chart.description = r.description.trim().slice(0, 500);
+  if (typeof r.xKey === "string") chart.xKey = r.xKey;
+  if (Array.isArray(r.yKeys)) chart.yKeys = r.yKeys.filter((k): k is string => typeof k === "string");
+  if (Array.isArray(r.columns)) {
+    chart.columns = r.columns
+      .filter((c): c is Record<string, unknown> => !!c && typeof c === "object")
+      .map((c) => ({ key: String(c.key ?? ""), label: String(c.label ?? c.key ?? "") }))
+      .filter((c) => c.key);
+  }
+  if (typeof r.value === "number" || typeof r.value === "string") chart.value = r.value;
+  if (typeof r.unit === "string") chart.unit = r.unit;
+  return chart;
 }
 
 function coerceStep(raw: unknown): GeneratedSequenceStep | null {
@@ -214,8 +339,17 @@ export class AiService {
   async chat(
     input: {
       messages: { role: "user" | "assistant"; content: string }[];
-      context?: { subject?: string; body?: string; kind?: "email" | "sequence" | "general" };
+      context?: {
+        subject?: string;
+        body?: string;
+        kind?: "email" | "sequence" | "general";
+        page?: string;
+      };
       insights?: string | null;
+      workspaceFacts?: string | null;
+      appGuides?: string | null;
+      /** Optional read-only workspace tools the model may call to fetch live data on demand. */
+      toolRunner?: WorkspaceToolRunner | null;
     },
     apiKey: string | undefined
   ): Promise<{ reply: string; action: ChatAction }> {
@@ -233,31 +367,111 @@ export class AiService {
 
     const contextLines: string[] = [];
     if (input.context?.kind) contextLines.push(`The user is working on: ${input.context.kind}.`);
+    if (input.context?.page) contextLines.push(`Current page: ${input.context.page}`);
     if (input.context?.subject) contextLines.push(`Current subject: ${input.context.subject}`);
     if (input.context?.body) contextLines.push(`Current body:\n${input.context.body}`);
+    if (input.workspaceFacts?.trim()) {
+      contextLines.push(`Workspace facts (authoritative — do not invent beyond this):\n${input.workspaceFacts.trim()}`);
+    }
+    if (input.appGuides?.trim()) {
+      contextLines.push(`Product guides (how Skout works):\n${input.appGuides.trim()}`);
+    }
     if (input.insights?.trim()) contextLines.push(`What works for this workspace:\n${input.insights.trim()}`);
 
-    const messages = [
-      { role: "system" as const, content: CHAT_SYSTEM_PROMPT },
+    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+      { role: "system", content: CHAT_SYSTEM_PROMPT },
       ...(contextLines.length
-        ? [{ role: "system" as const, content: contextLines.join("\n") }]
+        ? [{ role: "system" as const, content: contextLines.join("\n\n") }]
         : []),
       ...input.messages.map((m) => ({ role: m.role, content: m.content })),
     ];
 
-    let raw: string;
+    const toolRunner = input.toolRunner ?? null;
+    const model = process.env.AI_MODEL ?? "openai/gpt-4o-mini";
+    // Cap tool-calling rounds so a misbehaving model can't loop forever.
+    const MAX_TOOL_ROUNDS = 6;
+
+    let raw = "{}";
+    let toolsEnabled = Boolean(toolRunner);
+
+    const formatChatErr = (err: unknown): string => {
+      if (err instanceof Error) {
+        const anyErr = err as Error & { status?: number; error?: unknown; code?: string };
+        const detail =
+          anyErr.error != null
+            ? typeof anyErr.error === "string"
+              ? anyErr.error
+              : JSON.stringify(anyErr.error)
+            : "";
+        return [anyErr.message, anyErr.status ? `status=${anyErr.status}` : "", detail]
+          .filter(Boolean)
+          .join(" | ");
+      }
+      try {
+        return JSON.stringify(err);
+      } catch {
+        return String(err);
+      }
+    };
+
     try {
-      const result = await client.chat.completions.create({
-        model: process.env.AI_MODEL ?? "openai/gpt-4o-mini",
-        max_tokens: 2500,
-        temperature: 0.6,
-        response_format: { type: "json_object" },
-        messages,
-      });
-      raw = result.choices[0]?.message?.content ?? "{}";
+      for (let round = 0; ; round += 1) {
+        // Tool rounds must NOT force json_object — providers reject / confuse tool_calls with
+        // JSON mode. Only lock JSON on the final answer turn (no tools / after max rounds).
+        const allowTools = toolsEnabled && round < MAX_TOOL_ROUNDS;
+        let result;
+        try {
+          result = await client.chat.completions.create({
+            model,
+            max_tokens: 2500,
+            temperature: 0.6,
+            messages,
+            ...(allowTools
+              ? { tools: toolRunner!.tools, tool_choice: "auto" as const }
+              : { response_format: { type: "json_object" as const } }),
+          });
+        } catch (toolErr) {
+          // If OpenRouter/provider rejects the tool schema, fall back to plain JSON chat once.
+          if (allowTools && round === 0) {
+            log.warn("ai.service: tools rejected — retrying without tools", {
+              err: formatChatErr(toolErr),
+            });
+            toolsEnabled = false;
+            continue;
+          }
+          throw toolErr;
+        }
+
+        const message = result.choices[0]?.message;
+        const toolCalls = message?.tool_calls ?? [];
+
+        if (allowTools && toolCalls.length > 0) {
+          // Record the assistant turn that requested tools, then run each and feed results back.
+          messages.push({
+            role: "assistant",
+            content: message?.content ?? null,
+            tool_calls: toolCalls,
+          });
+          for (const call of toolCalls) {
+            if (call.type !== "function") continue;
+            let args: Record<string, unknown> = {};
+            try {
+              args = call.function.arguments ? JSON.parse(call.function.arguments) : {};
+            } catch {
+              args = {};
+            }
+            const output = await toolRunner!.run(call.function.name, args);
+            messages.push({ role: "tool", tool_call_id: call.id, content: output });
+          }
+          continue;
+        }
+
+        raw = message?.content ?? "{}";
+        break;
+      }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.error("ai.service: chat failed", { err });
+      const msg = formatChatErr(err);
+      log.error("ai.service: chat failed", { err: msg });
       throw Object.assign(new Error(`AI chat failed: ${msg}`), { statusCode: 502 });
     }
 

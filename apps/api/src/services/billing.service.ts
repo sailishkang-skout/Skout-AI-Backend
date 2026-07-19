@@ -1,9 +1,26 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { createWorkspaceService } from "./workspace.service.js";
+
+export interface BillingInvoice {
+  id: string;
+  invoiceNumber: string;
+  monthKey: string;
+  packId: string;
+  packLabel: string;
+  credits: number;
+  amountPaise: number;
+  amountInr: number;
+  currency: string;
+  status: string;
+  providerOrderId: string;
+  razorpayPaymentId: string | null;
+  paidAt: string | null;
+  createdAt: string;
+}
 
 export interface CreditPack {
   id: string;
@@ -200,5 +217,126 @@ export function createBillingService(db: Db, config: Env) {
 
       return this.captureOrder(orderId, paymentId);
     },
+
+    toInvoice(order: typeof schema.paymentOrders.$inferSelect): BillingInvoice {
+      const pack = packs.find((p) => p.id === order.packId);
+      const paidAt = order.paidAt ?? order.createdAt;
+      const monthKey = `${paidAt.getUTCFullYear()}-${String(paidAt.getUTCMonth() + 1).padStart(2, "0")}`;
+      const short = order.id.replace(/-/g, "").slice(0, 8).toUpperCase();
+      return {
+        id: order.id,
+        invoiceNumber: `SKOUT-${monthKey.replace("-", "")}-${short}`,
+        monthKey,
+        packId: order.packId,
+        packLabel: pack?.label ?? order.packId,
+        credits: order.credits,
+        amountPaise: order.amountPaise,
+        amountInr: Math.round(order.amountPaise / 100),
+        currency: "INR",
+        status: order.status,
+        providerOrderId: order.providerOrderId,
+        razorpayPaymentId: order.razorpayPaymentId,
+        paidAt: order.paidAt?.toISOString() ?? null,
+        createdAt: order.createdAt.toISOString(),
+      };
+    },
+
+    /** Paid Razorpay orders as downloadable monthly invoices. */
+    async listInvoices(workspaceId: string): Promise<{
+      invoices: BillingInvoice[];
+      byMonth: { monthKey: string; invoices: BillingInvoice[]; totalInr: number }[];
+    }> {
+      const rows = await db
+        .select()
+        .from(schema.paymentOrders)
+        .where(and(eq(schema.paymentOrders.workspaceId, workspaceId), eq(schema.paymentOrders.status, "paid")))
+        .orderBy(desc(schema.paymentOrders.paidAt), desc(schema.paymentOrders.createdAt));
+
+      const invoices = rows.map((r) => this.toInvoice(r));
+      const monthMap = new Map<string, BillingInvoice[]>();
+      for (const inv of invoices) {
+        const list = monthMap.get(inv.monthKey) ?? [];
+        list.push(inv);
+        monthMap.set(inv.monthKey, list);
+      }
+      const byMonth = [...monthMap.entries()].map(([monthKey, monthInvoices]) => ({
+        monthKey,
+        invoices: monthInvoices,
+        totalInr: monthInvoices.reduce((sum, i) => sum + i.amountInr, 0),
+      }));
+
+      return { invoices, byMonth };
+    },
+
+    async getInvoice(workspaceId: string, invoiceId: string): Promise<BillingInvoice | null> {
+      const [row] = await db
+        .select()
+        .from(schema.paymentOrders)
+        .where(
+          and(
+            eq(schema.paymentOrders.id, invoiceId),
+            eq(schema.paymentOrders.workspaceId, workspaceId),
+            eq(schema.paymentOrders.status, "paid")
+          )
+        )
+        .limit(1);
+      return row ? this.toInvoice(row) : null;
+    },
+
+    renderInvoiceHtml(
+      invoice: BillingInvoice,
+      workspace: { name: string; id: string }
+    ): string {
+      const paidLabel = invoice.paidAt
+        ? new Date(invoice.paidAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })
+        : "—";
+      return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>${invoice.invoiceNumber}</title>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, sans-serif; color: #0f172a; margin: 40px; }
+    h1 { font-size: 22px; margin: 0 0 4px; }
+    .muted { color: #64748b; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 28px; }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #e2e8f0; font-size: 14px; }
+    th { color: #64748b; font-weight: 600; }
+    .total { font-size: 18px; font-weight: 700; margin-top: 24px; }
+    .badge { display: inline-block; background: #ecfdf5; color: #047857; padding: 2px 8px; border-radius: 999px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Skout AI — Tax Invoice</h1>
+  <p class="muted">${invoice.invoiceNumber} · Month ${invoice.monthKey}</p>
+  <p><span class="badge">PAID</span></p>
+  <p><strong>Bill to:</strong> ${escapeHtml(workspace.name)}<br/>
+  <span class="muted">Workspace ${escapeHtml(workspace.id)}</span></p>
+  <p class="muted">Payment via Razorpay · Order ${escapeHtml(invoice.providerOrderId)}
+  ${invoice.razorpayPaymentId ? `· Payment ${escapeHtml(invoice.razorpayPaymentId)}` : ""}</p>
+  <table>
+    <thead><tr><th>Description</th><th>Credits</th><th>Amount (INR)</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>${escapeHtml(invoice.packLabel)} credit pack</td>
+        <td>${invoice.credits.toLocaleString("en-IN")}</td>
+        <td>₹${invoice.amountInr.toLocaleString("en-IN")}</td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="total">Total paid: ₹${invoice.amountInr.toLocaleString("en-IN")}</p>
+  <p class="muted">Paid at: ${escapeHtml(paidLabel)}</p>
+  <p class="muted">This invoice was generated by Skout AI for your records.</p>
+</body>
+</html>`;
+    },
   };
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }

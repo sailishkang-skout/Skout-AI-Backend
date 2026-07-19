@@ -550,7 +550,7 @@ These routes exist with "Coming soon" placeholders and are the clearest next mil
 | Item | Today | Plan |
 |------|-------|------|
 | ICP scoring | 🟡 Heuristic + optional LLM | Full LLM scoring as default with explainable reasoning. |
-| Intent classification | 🔴 Stub (`/v1/classify` hardcoded) | Real intent model with HITL gating. |
+| Intent classification | 🟢 Live (`/v1/classify` LLM + heuristic, HITL on low confidence) | Typed buy/respond/need (+ reply labels); feeds intent_score. |
 | Pain-point detection | 🟡 LLM in personalize | First-class pain-point surfacing on prospect detail. |
 | Auto re-scoring | 🔴 | Re-score stored prospects automatically when ICP changes. |
 

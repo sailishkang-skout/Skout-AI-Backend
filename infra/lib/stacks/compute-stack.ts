@@ -333,6 +333,8 @@ export class ComputeStack extends Stack {
         COGNISM_API_KEY: ecs.Secret.fromSecretsManager(secrets.enrichmentProviders, "COGNISM_API_KEY"),
         OPENCORPORATES_API_KEY: ecs.Secret.fromSecretsManager(secrets.enrichmentProviders, "OPENCORPORATES_API_KEY"),
         OPENROUTER_API_KEY: ecs.Secret.fromSecretsManager(secrets.enrichmentProviders, "OPENROUTER_API_KEY"),
+        /** Fallback when enrichment-providers still has the CDK placeholder. */
+        OPENAI_API_KEY: ecs.Secret.fromSecretsManager(secrets.openai, "OPENAI_API_KEY"),
         HUBSPOT_CLIENT_ID: ecs.Secret.fromSecretsManager(secrets.hubspot, "HUBSPOT_CLIENT_ID"),
         HUBSPOT_CLIENT_SECRET: ecs.Secret.fromSecretsManager(secrets.hubspot, "HUBSPOT_CLIENT_SECRET"),
         OPENSEARCH_URL: ecs.Secret.fromSecretsManager(secrets.opensearch, "OPENSEARCH_URL"),
@@ -463,6 +465,7 @@ export class ComputeStack extends Stack {
       secrets.apollo,
       secrets.hunter,
       secrets.enrichmentProviders,
+      secrets.openai,
       secrets.hubspot,
       secrets.opensearch,
       secrets.clickhouse,
