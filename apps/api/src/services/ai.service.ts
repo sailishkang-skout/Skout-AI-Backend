@@ -392,20 +392,55 @@ export class AiService {
     const MAX_TOOL_ROUNDS = 6;
 
     let raw = "{}";
+    let toolsEnabled = Boolean(toolRunner);
+
+    const formatChatErr = (err: unknown): string => {
+      if (err instanceof Error) {
+        const anyErr = err as Error & { status?: number; error?: unknown; code?: string };
+        const detail =
+          anyErr.error != null
+            ? typeof anyErr.error === "string"
+              ? anyErr.error
+              : JSON.stringify(anyErr.error)
+            : "";
+        return [anyErr.message, anyErr.status ? `status=${anyErr.status}` : "", detail]
+          .filter(Boolean)
+          .join(" | ");
+      }
+      try {
+        return JSON.stringify(err);
+      } catch {
+        return String(err);
+      }
+    };
+
     try {
       for (let round = 0; ; round += 1) {
         // Tool rounds must NOT force json_object — providers reject / confuse tool_calls with
         // JSON mode. Only lock JSON on the final answer turn (no tools / after max rounds).
-        const allowTools = Boolean(toolRunner) && round < MAX_TOOL_ROUNDS;
-        const result = await client.chat.completions.create({
-          model,
-          max_tokens: 2500,
-          temperature: 0.6,
-          messages,
-          ...(allowTools
-            ? { tools: toolRunner!.tools, tool_choice: "auto" as const }
-            : { response_format: { type: "json_object" as const } }),
-        });
+        const allowTools = toolsEnabled && round < MAX_TOOL_ROUNDS;
+        let result;
+        try {
+          result = await client.chat.completions.create({
+            model,
+            max_tokens: 2500,
+            temperature: 0.6,
+            messages,
+            ...(allowTools
+              ? { tools: toolRunner!.tools, tool_choice: "auto" as const }
+              : { response_format: { type: "json_object" as const } }),
+          });
+        } catch (toolErr) {
+          // If OpenRouter/provider rejects the tool schema, fall back to plain JSON chat once.
+          if (allowTools && round === 0) {
+            log.warn("ai.service: tools rejected — retrying without tools", {
+              err: formatChatErr(toolErr),
+            });
+            toolsEnabled = false;
+            continue;
+          }
+          throw toolErr;
+        }
 
         const message = result.choices[0]?.message;
         const toolCalls = message?.tool_calls ?? [];
@@ -435,8 +470,8 @@ export class AiService {
         break;
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.error("ai.service: chat failed", { err });
+      const msg = formatChatErr(err);
+      log.error("ai.service: chat failed", { err: msg });
       throw Object.assign(new Error(`AI chat failed: ${msg}`), { statusCode: 502 });
     }
 

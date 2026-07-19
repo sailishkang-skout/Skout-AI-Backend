@@ -68,7 +68,7 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
       name: "get_workspace_overview",
       description:
         "High-level snapshot of the current workspace: name, credit balance, list/prospect counts, ICP status, and this-week activity (searches, enrich/score jobs, exports).",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
+      parameters: { type: "object", properties: {} },
     },
   },
   {
@@ -81,11 +81,10 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
         type: "object",
         properties: {
           days: {
-            type: "integer",
+            type: "number",
             description: "Lookback window in days (7-90). Use 7 for 'this week'. Default 30.",
           },
         },
-        additionalProperties: false,
       },
     },
   },
@@ -98,10 +97,9 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
       parameters: {
         type: "object",
         properties: {
-          limit: { type: "integer", description: "Max rows (1-50). Default 25." },
-          offset: { type: "integer", description: "Rows to skip for pagination. Default 0." },
+          limit: { type: "number", description: "Max rows (1-50). Default 25." },
+          offset: { type: "number", description: "Rows to skip for pagination. Default 0." },
         },
-        additionalProperties: false,
       },
     },
   },
@@ -110,7 +108,7 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
     function: {
       name: "list_lists",
       description: "All prospect lists in the workspace with their prospect counts.",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
+      parameters: { type: "object", properties: {} },
     },
   },
   {
@@ -123,7 +121,6 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
         type: "object",
         properties: { listId: { type: "string", description: "The list id." } },
         required: ["listId"],
-        additionalProperties: false,
       },
     },
   },
@@ -133,7 +130,7 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
       name: "get_icp",
       description:
         "The workspace's Ideal Customer Profile config (industries, countries, seniorities, titles, keywords, employee range).",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
+      parameters: { type: "object", properties: {} },
     },
   },
   {
@@ -141,7 +138,7 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
     function: {
       name: "list_sequences",
       description: "All outbound sequences (cadences) in the workspace with their status.",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
+      parameters: { type: "object", properties: {} },
     },
   },
   {
@@ -153,7 +150,6 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
         type: "object",
         properties: { sequenceId: { type: "string", description: "The sequence id." } },
         required: ["sequenceId"],
-        additionalProperties: false,
       },
     },
   },
@@ -167,7 +163,6 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
         type: "object",
         properties: { sequenceId: { type: "string", description: "The sequence id." } },
         required: ["sequenceId"],
-        additionalProperties: false,
       },
     },
   },
@@ -177,7 +172,7 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
       name: "list_inboxes",
       description:
         "Sending inboxes with health/warmup status and today's send counts (secrets excluded).",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
+      parameters: { type: "object", properties: {} },
     },
   },
   {
@@ -185,7 +180,7 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
     function: {
       name: "get_inbox_unread_counts",
       description: "Count of inbox threads by status (new/replied/bounced/meeting_booked/closed).",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
+      parameters: { type: "object", properties: {} },
     },
   },
   {
@@ -202,10 +197,9 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
             enum: ["new", "replied", "bounced", "meeting_booked", "closed"],
             description: "Optional status filter.",
           },
-          limit: { type: "integer", description: "Max threads (1-50). Default 25." },
-          offset: { type: "integer", description: "Rows to skip. Default 0." },
+          limit: { type: "number", description: "Max threads (1-50). Default 25." },
+          offset: { type: "number", description: "Rows to skip. Default 0." },
         },
-        additionalProperties: false,
       },
     },
   },
@@ -219,7 +213,6 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
         type: "object",
         properties: { threadId: { type: "string", description: "The thread id (uuid)." } },
         required: ["threadId"],
-        additionalProperties: false,
       },
     },
   },
@@ -229,7 +222,7 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
       name: "get_deliverability",
       description:
         "30-day deliverability metrics: warmup progress, bounce/spam rates, and summary health.",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
+      parameters: { type: "object", properties: {} },
     },
   },
   {
@@ -246,9 +239,8 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
             enum: ["pending_review", "edited", "approved", "rejected", "sent"],
             description: "Optional status filter.",
           },
-          limit: { type: "integer", description: "Max drafts (1-50). Default 25." },
+          limit: { type: "number", description: "Max drafts (1-50). Default 25." },
         },
-        additionalProperties: false,
       },
     },
   },
@@ -257,7 +249,7 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
     function: {
       name: "list_integrations",
       description: "Connected integrations (CRM, etc.) and their connection status (no secrets).",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
+      parameters: { type: "object", properties: {} },
     },
   },
   {
@@ -265,7 +257,7 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
     function: {
       name: "list_team_members",
       description: "Workspace team members with their roles.",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
+      parameters: { type: "object", properties: {} },
     },
   },
   {
@@ -273,7 +265,7 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
     function: {
       name: "list_invoices",
       description: "Paid credit-pack invoices for the workspace, grouped by month.",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
+      parameters: { type: "object", properties: {} },
     },
   },
   {
@@ -281,7 +273,7 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
     function: {
       name: "export_dataset",
       description:
-        "Generate a downloadable CSV export of a workspace dataset. The file is created server-side and a download link is returned to the user automatically — you do NOT need to include the CSV contents in your reply, just tell the user their export is ready. Use this when the user asks to export, download, or 'get a CSV/spreadsheet' of data.",
+        "Generate a downloadable CSV export of a workspace dataset (opens in Excel). The file is created server-side and a download link is returned to the user automatically — you do NOT need to include the CSV contents in your reply, just tell the user their export is ready. Use this when the user asks to export, download, Excel, or spreadsheet.",
       parameters: {
         type: "object",
         properties: {
@@ -296,12 +288,11 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
             description: "Required only when dataset is 'list_members'.",
           },
           days: {
-            type: "integer",
+            type: "number",
             description: "Optional lookback window (7-90) for credit_by_action / credit_daily.",
           },
         },
         required: ["dataset"],
-        additionalProperties: false,
       },
     },
   },
