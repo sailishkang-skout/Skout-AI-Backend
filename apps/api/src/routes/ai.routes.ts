@@ -5,6 +5,8 @@ import { AI_DRAFT_STATUSES, buildAiDraftService } from "../services/ai-draft.ser
 import { sendApprovedDraftEmail, type DraftSendResult } from "../services/ai-draft-send.service.js";
 import { computeOutcomeInsights, insightsToPrompt } from "../services/outcome-insights.service.js";
 import { buildChatGrounding } from "../services/ai-chat-context.service.js";
+import { createWorkspaceToolRunner } from "../services/ai-workspace-tools.service.js";
+import { readAiExport } from "../services/ai-export.service.js";
 import { buildSequenceService } from "../services/sequence.service.js";
 import { HttpError } from "../utils/http.js";
 
@@ -236,6 +238,8 @@ export async function aiRoutes(app: FastifyInstance) {
         }),
       ]);
 
+      const toolRunner = createWorkspaceToolRunner(app.db ?? null, app.config, workspaceId);
+
       const result = await aiService.chat(
         {
           messages: body.messages,
@@ -243,6 +247,7 @@ export async function aiRoutes(app: FastifyInstance) {
           insights,
           workspaceFacts: grounding.workspaceFacts,
           appGuides: grounding.appGuides,
+          toolRunner,
         },
         app.config.OPENROUTER_API_KEY
       );
@@ -294,12 +299,37 @@ export async function aiRoutes(app: FastifyInstance) {
         applied,
         sequenceId,
         draftId,
+        exports: toolRunner.getCreatedExports(),
         mode: body.mode,
         segregated: Boolean(draftId),
       });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
       return reply.status(e.statusCode ?? 500).send({ error: e.message ?? "chat_failed" });
+    }
+  });
+
+  /**
+   * GET /ai/exports/download — stream a CSV the assistant generated via export_dataset.
+   * The key is namespaced to the caller's workspace, so cross-workspace access is rejected.
+   */
+  app.get("/ai/exports/download", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const { key } = z.object({ key: z.string().min(1) }).parse(request.query ?? {});
+
+    if (!key.startsWith(`exports/${workspaceId}/`)) {
+      return reply.status(403).send({ error: "invalid_export_key" });
+    }
+
+    try {
+      const content = await readAiExport(app.config, key);
+      const filename = key.split("/").pop() ?? "export.csv";
+      return reply
+        .header("Content-Type", "text/csv; charset=utf-8")
+        .header("Content-Disposition", `attachment; filename="${filename}"`)
+        .send(content);
+    } catch {
+      return reply.status(404).send({ error: "export_not_found" });
     }
   });
 
