@@ -465,6 +465,7 @@ export function createWorkspaceToolRunner(
         filename: artifact.filename,
         rowCount: artifact.rowCount,
         downloadUrl: artifact.downloadUrl,
+        path: artifact.path,
         ready: true,
       };
     },

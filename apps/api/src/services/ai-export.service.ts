@@ -28,7 +28,10 @@ export interface ExportArtifact {
   dataset: string;
   filename: string;
   rowCount: number;
+  /** Absolute URL when API_PUBLIC_URL is set; otherwise a root-relative path. */
   downloadUrl: string;
+  /** Always root-relative path for authenticated client downloads. */
+  path: string;
   exportKey: string;
   inline: boolean;
 }
@@ -151,25 +154,51 @@ export async function buildDatasetCsv(
       const svc = buildSequenceService(db);
       if (!svc) throw new Error("database_unavailable");
       const seqs = await svc.listSequences(workspaceId);
-      rows = seqs.map((s) => ({ ...(s as unknown as Record<string, unknown>) }));
+      rows = seqs.map((s) => {
+        const row = s as unknown as Record<string, unknown>;
+        return {
+          id: row.id,
+          name: row.name ?? "",
+          status: row.status ?? "",
+          createdAt:
+            row.createdAt instanceof Date
+              ? row.createdAt.toISOString()
+              : (row.createdAt ?? ""),
+          updatedAt:
+            row.updatedAt instanceof Date
+              ? row.updatedAt.toISOString()
+              : (row.updatedAt ?? ""),
+        };
+      });
       break;
     }
     case "ai_drafts": {
       if (!db) throw new Error("database_unavailable");
       const drafts = buildAiDraftService(db);
-      const res = await drafts.list(workspaceId, { limit: MAX_EXPORT_ROWS });
-      rows = res.data.map((d) => {
-        const row = d as unknown as Record<string, unknown>;
-        return {
-          id: row.id,
-          status: row.status,
-          prospectName: row.prospectName ?? "",
-          companyName: row.companyName ?? "",
-          subject: row.subject ?? "",
-          icpScore: row.icpScore ?? "",
-          createdAt: row.createdAt,
-        };
-      });
+      // list() clamps to 100 per page — page until we hit the export cap or exhaust.
+      const pageSize = 100;
+      const collected: Record<string, unknown>[] = [];
+      for (let offset = 0; collected.length < MAX_EXPORT_ROWS; offset += pageSize) {
+        const res = await drafts.list(workspaceId, { limit: pageSize, offset });
+        for (const d of res.data) {
+          const row = d as unknown as Record<string, unknown>;
+          collected.push({
+            id: row.id,
+            status: row.status,
+            prospectName: row.prospectName ?? "",
+            companyName: row.companyName ?? "",
+            subject: row.subject ?? "",
+            icpScore: row.icpScore ?? "",
+            createdAt:
+              row.createdAt instanceof Date
+                ? row.createdAt.toISOString()
+                : (row.createdAt ?? ""),
+          });
+          if (collected.length >= MAX_EXPORT_ROWS) break;
+        }
+        if (res.data.length < pageSize || collected.length >= (res.total ?? 0)) break;
+      }
+      rows = collected;
       break;
     }
     case "inbox_threads": {
@@ -181,7 +210,10 @@ export async function buildDatasetCsv(
         status: t.status,
         subject: t.subject ?? "",
         prospectName: t.prospectName ?? t.prospectEmail ?? "",
-        lastMessageAt: t.lastMessageAt ?? t.updatedAt ?? "",
+        lastMessageAt:
+          t.lastMessageAt instanceof Date
+            ? t.lastMessageAt.toISOString()
+            : (t.lastMessageAt ?? t.updatedAt ?? ""),
       }));
       break;
     }
@@ -197,9 +229,14 @@ export async function buildDatasetCsv(
   };
 }
 
+function exportPath(key: string): string {
+  return `/api/v1/ai/exports/download?key=${encodeURIComponent(key)}`;
+}
+
 function downloadUrl(config: Env, key: string): string {
   const base = (config.API_PUBLIC_URL ?? "").replace(/\/$/, "");
-  return `${base}/api/v1/ai/exports/download?key=${encodeURIComponent(key)}`;
+  const path = exportPath(key);
+  return base ? `${base}${path}` : path;
 }
 
 /** Stores a generated CSV (S3 if configured, in-memory dev cache otherwise) and returns a link. */
@@ -223,6 +260,7 @@ export async function storeAiExport(
     filename: built.filename,
     rowCount: built.rowCount,
     exportKey: stored.key,
+    path: exportPath(stored.key),
     downloadUrl: downloadUrl(config, stored.key),
     inline: stored.inline,
   };

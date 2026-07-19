@@ -394,21 +394,23 @@ export class AiService {
     let raw = "{}";
     try {
       for (let round = 0; ; round += 1) {
+        // Tool rounds must NOT force json_object — providers reject / confuse tool_calls with
+        // JSON mode. Only lock JSON on the final answer turn (no tools / after max rounds).
+        const allowTools = Boolean(toolRunner) && round < MAX_TOOL_ROUNDS;
         const result = await client.chat.completions.create({
           model,
           max_tokens: 2500,
           temperature: 0.6,
-          response_format: { type: "json_object" },
           messages,
-          ...(toolRunner && round < MAX_TOOL_ROUNDS
-            ? { tools: toolRunner.tools, tool_choice: "auto" as const }
-            : {}),
+          ...(allowTools
+            ? { tools: toolRunner!.tools, tool_choice: "auto" as const }
+            : { response_format: { type: "json_object" as const } }),
         });
 
         const message = result.choices[0]?.message;
         const toolCalls = message?.tool_calls ?? [];
 
-        if (toolRunner && toolCalls.length > 0 && round < MAX_TOOL_ROUNDS) {
+        if (allowTools && toolCalls.length > 0) {
           // Record the assistant turn that requested tools, then run each and feed results back.
           messages.push({
             role: "assistant",
@@ -423,7 +425,7 @@ export class AiService {
             } catch {
               args = {};
             }
-            const output = await toolRunner.run(call.function.name, args);
+            const output = await toolRunner!.run(call.function.name, args);
             messages.push({ role: "tool", tool_call_id: call.id, content: output });
           }
           continue;
