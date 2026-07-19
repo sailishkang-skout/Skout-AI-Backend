@@ -2,12 +2,15 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { resolveOrProvisionUser } from "./auth.service.js";
 import { HttpError } from "../utils/http.js";
 
-// Build a chainable select mock that resolves with `result` at .limit()
+// Build a chainable select mock that resolves with `result` at .limit() OR when awaited directly.
 function selectChain(result: unknown[]) {
+  const resolved = Promise.resolve(result);
   const c: Record<string, unknown> = {};
   c.from = vi.fn().mockReturnValue(c);
   c.where = vi.fn().mockReturnValue(c);
   c.limit = vi.fn().mockResolvedValue(result);
+  // make chain directly awaitable (for queries that omit .limit())
+  (c as { then?: unknown }).then = resolved.then.bind(resolved);
   return c;
 }
 
@@ -88,6 +91,7 @@ describe("resolveOrProvisionUser", () => {
           [BASE_USER],                   // user by clerkUserId
           [BASE_MEMBERSHIP],             // membership
           [{ workspaceId: "ws-1" }],     // credit_balance → exists, no heal
+          [],                            // autoAcceptPendingInvites → no pending invites
         ],
       });
       const db = makeDb(tx);
@@ -113,6 +117,7 @@ describe("resolveOrProvisionUser", () => {
           [BASE_USER],                     // user by email → hit
           [BASE_MEMBERSHIP],               // membership → hit
           [{ workspaceId: "ws-1" }],       // credit_balance → exists, no heal needed
+          [],                              // autoAcceptPendingInvites → no pending invites
         ],
         withUpdate: true,
       });
@@ -133,6 +138,7 @@ describe("resolveOrProvisionUser", () => {
           [BASE_USER],       // user by email → hit
           [BASE_MEMBERSHIP], // membership → hit
           [],                // credit_balance → MISSING → heal
+          [],                // autoAcceptPendingInvites → no pending invites
         ],
         inserts: [
           { mode: "void" }, // INSERT credit_balances
@@ -156,6 +162,7 @@ describe("resolveOrProvisionUser", () => {
           [],  // clerkUserId miss
           [],  // email miss
           [],  // membership miss
+          [],  // pending invites → none
         ],
         inserts: [
           { mode: "returning+conflict", result: [NEW_USER] },    // insert user
@@ -181,7 +188,7 @@ describe("resolveOrProvisionUser", () => {
 
     it("grants 500 credits in the credit_transactions insert", async () => {
       const tx = makeTx({
-        selects: [[], [], []],
+        selects: [[], [], [], []],  // byClerk, byEmail, membership, pendingInvites
         inserts: [
           { mode: "returning+conflict", result: [NEW_USER] },
           { mode: "returning",          result: [NEW_WORKSPACE] },
@@ -208,6 +215,7 @@ describe("resolveOrProvisionUser", () => {
         selects: [
           [BASE_USER], // clerkUserId hit
           [],          // membership miss
+          [],          // pending invites → none
         ],
         inserts: [
           { mode: "returning", result: [NEW_WORKSPACE] },
@@ -258,7 +266,7 @@ describe("resolveOrProvisionUser", () => {
   describe("error propagation", () => {
     it("throws when workspace insert returns empty (DB constraint violation)", async () => {
       const tx = makeTx({
-        selects: [[], [], []],
+        selects: [[], [], [], []],  // byClerk, byEmail, membership, pendingInvites
         inserts: [
           { mode: "returning+conflict", result: [NEW_USER] },
           { mode: "returning", result: [] }, // workspace insert returns nothing

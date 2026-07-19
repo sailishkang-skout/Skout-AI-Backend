@@ -1,6 +1,6 @@
 import { schema } from "@skout/db";
 import type { Db } from "@skout/db";
-import { eq } from "drizzle-orm";
+import { and, eq, gt, isNull } from "drizzle-orm";
 import { HttpError } from "./http.js";
 
 export interface ProvisionResult {
@@ -102,7 +102,59 @@ export async function resolveOrProvisionUser(
         });
       }
 
+      await autoAcceptPendingInvites(tx, userId, userEmail, membership.workspaceId);
+
       return { userId, userEmail, workspaceId: membership.workspaceId, role: membership.role };
+    }
+
+    // No membership yet — check for pending invites before creating a new workspace.
+    // If the user arrived via an invite link, accept those invites and join that workspace
+    // instead of provisioning a brand-new workspace as owner.
+    const now = new Date();
+    const pendingInvites = await tx
+      .select({
+        id: schema.workspaceInvites.id,
+        workspaceId: schema.workspaceInvites.workspaceId,
+        role: schema.workspaceInvites.role,
+      })
+      .from(schema.workspaceInvites)
+      .where(
+        and(
+          eq(schema.workspaceInvites.email, email.toLowerCase()),
+          isNull(schema.workspaceInvites.acceptedAt),
+          gt(schema.workspaceInvites.expiresAt, now)
+        )
+      );
+
+    if (pendingInvites.length > 0) {
+      for (const invite of pendingInvites) {
+        await tx
+          .insert(schema.workspaceMembers)
+          .values({ workspaceId: invite.workspaceId, userId, role: invite.role })
+          .onConflictDoNothing();
+        await tx
+          .update(schema.workspaceInvites)
+          .set({ acceptedAt: now })
+          .where(eq(schema.workspaceInvites.id, invite.id));
+      }
+
+      const primary = pendingInvites[0]!;
+      const [balance] = await tx
+        .select({ workspaceId: schema.creditBalances.workspaceId })
+        .from(schema.creditBalances)
+        .where(eq(schema.creditBalances.workspaceId, primary.workspaceId))
+        .limit(1);
+
+      if (!balance) {
+        await tx.insert(schema.creditBalances).values({ workspaceId: primary.workspaceId, balance: 500 });
+        await tx.insert(schema.creditTransactions).values({
+          workspaceId: primary.workspaceId,
+          amount: 500,
+          action: "provision",
+        });
+      }
+
+      return { userId, userEmail, workspaceId: primary.workspaceId, role: primary.role };
     }
 
     const slug =
@@ -135,4 +187,44 @@ export async function resolveOrProvisionUser(
 
     return { userId, userEmail, workspaceId: workspace.id, role: "owner" };
   });
+}
+
+async function autoAcceptPendingInvites(
+  tx: Parameters<Parameters<Db["transaction"]>[0]>[0],
+  userId: string,
+  email: string,
+  currentWorkspaceId: string
+): Promise<void> {
+  const now = new Date();
+  const pending = await tx
+    .select({ id: schema.workspaceInvites.id, workspaceId: schema.workspaceInvites.workspaceId, role: schema.workspaceInvites.role })
+    .from(schema.workspaceInvites)
+    .where(
+      and(
+        eq(schema.workspaceInvites.email, email.toLowerCase()),
+        isNull(schema.workspaceInvites.acceptedAt),
+        gt(schema.workspaceInvites.expiresAt, now)
+      )
+    );
+
+  for (const invite of pending) {
+    if (invite.workspaceId === currentWorkspaceId) continue;
+
+    const [alreadyMember] = await tx
+      .select({ userId: schema.workspaceMembers.userId })
+      .from(schema.workspaceMembers)
+      .where(
+        and(
+          eq(schema.workspaceMembers.workspaceId, invite.workspaceId),
+          eq(schema.workspaceMembers.userId, userId)
+        )
+      )
+      .limit(1);
+
+    if (!alreadyMember) {
+      await tx.insert(schema.workspaceMembers).values({ workspaceId: invite.workspaceId, userId, role: invite.role });
+    }
+
+    await tx.update(schema.workspaceInvites).set({ acceptedAt: now }).where(eq(schema.workspaceInvites.id, invite.id));
+  }
 }

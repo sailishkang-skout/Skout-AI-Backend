@@ -1,13 +1,14 @@
 import { randomBytes } from "node:crypto";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
-import { and, eq, gt, isNull, ne } from "drizzle-orm";
+import { and, count, eq, gt, isNull, ne } from "drizzle-orm";
 import { HttpError } from "../utils/http.js";
 
 export type WorkspaceRole = "owner" | "admin" | "member";
 
 const VALID_ROLES: WorkspaceRole[] = ["owner", "admin", "member"];
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const WORKSPACE_MEMBER_LIMIT = 50;
 
 function assertRole(role: string): asserts role is WorkspaceRole {
   if (!VALID_ROLES.includes(role as WorkspaceRole)) {
@@ -71,16 +72,39 @@ export function createTeamService(db: Db) {
       workspaceId: string,
       invitedByUserId: string,
       email: string,
-      role: WorkspaceRole,
+      _role: WorkspaceRole,
       requestingRole: string | undefined
     ) {
       requireMinRole(requestingRole, "owner", "admin");
 
-      // admins can only invite members
-      if (requestingRole === "admin" && role !== "member") {
-        throw new HttpError("Admins can only invite members.", 403);
+      // All invited users get "member" role — no exceptions
+      const role: WorkspaceRole = "member";
+
+      // Enforce workspace member limit (members + pending invites)
+      const [memberCount] = await db
+        .select({ value: count() })
+        .from(schema.workspaceMembers)
+        .where(eq(schema.workspaceMembers.workspaceId, workspaceId));
+
+      const now = new Date();
+      const [pendingCount] = await db
+        .select({ value: count() })
+        .from(schema.workspaceInvites)
+        .where(
+          and(
+            eq(schema.workspaceInvites.workspaceId, workspaceId),
+            isNull(schema.workspaceInvites.acceptedAt),
+            gt(schema.workspaceInvites.expiresAt, now)
+          )
+        );
+
+      const total = (memberCount?.value ?? 0) + (pendingCount?.value ?? 0);
+      if (total >= WORKSPACE_MEMBER_LIMIT) {
+        throw new HttpError(
+          `Workspace has reached the ${WORKSPACE_MEMBER_LIMIT}-member limit.`,
+          409
+        );
       }
-      assertRole(role);
 
       // check not already a member
       const [existing] = await db
@@ -100,7 +124,6 @@ export function createTeamService(db: Db) {
       }
 
       // upsert: if a pending invite exists for this email, replace it
-      const now = new Date();
       const [pendingForEmail] = await db
         .select({ id: schema.workspaceInvites.id })
         .from(schema.workspaceInvites)
@@ -173,7 +196,6 @@ export function createTeamService(db: Db) {
         .limit(1);
 
       if (!invite) throw new HttpError("Invite not found.", 404);
-      if (invite.acceptedAt) throw new HttpError("This invite has already been accepted.", 409);
       if (new Date() > invite.expiresAt) throw new HttpError("This invite has expired.", 410);
 
       if (invite.email.toLowerCase() !== userEmail.toLowerCase()) {
@@ -183,7 +205,8 @@ export function createTeamService(db: Db) {
         );
       }
 
-      // idempotent: already a member → just mark accepted
+      // If already accepted (e.g. auto-accepted by SSO resolveOrProvisionUser),
+      // check if this user is already a member — if so return idempotent 200
       const [alreadyMember] = await db
         .select({ userId: schema.workspaceMembers.userId })
         .from(schema.workspaceMembers)
@@ -195,13 +218,24 @@ export function createTeamService(db: Db) {
         )
         .limit(1);
 
-      if (!alreadyMember) {
-        await db.insert(schema.workspaceMembers).values({
-          workspaceId: invite.workspaceId,
-          userId,
-          role: invite.role,
-        });
+      if (alreadyMember) {
+        // Already a member — idempotent (invite may have been auto-accepted via SSO flow)
+        if (!invite.acceptedAt) {
+          await db
+            .update(schema.workspaceInvites)
+            .set({ acceptedAt: new Date() })
+            .where(eq(schema.workspaceInvites.id, invite.id));
+        }
+        return { workspaceId: invite.workspaceId, role: invite.role as WorkspaceRole };
       }
+
+      if (invite.acceptedAt) throw new HttpError("This invite has already been accepted.", 409);
+
+      await db.insert(schema.workspaceMembers).values({
+        workspaceId: invite.workspaceId,
+        userId,
+        role: invite.role,
+      });
 
       await db
         .update(schema.workspaceInvites)
