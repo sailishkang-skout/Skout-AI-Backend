@@ -224,16 +224,14 @@ export class EnrichmentService {
     };
     const result = await scoreProspect(this.aiServiceUrl, input, resolvedIcp, this.aiTimeoutMs, this.openrouterApiKey);
     await this.store.deductCredits(workspaceId, SCORE_CREDIT_COST, "ai_score", prospectId);
-    const reasoning =
-      result.painPoints.length > 0
-        ? `${result.reasoning} | Pain: ${result.painPoints.join(", ")}`
-        : result.reasoning;
     await this.store.setScore({
       workspaceId,
       prospectId,
       score: result.icpScore,
       priority: result.outreachReadiness,
-      reasoning,
+      reasoning: result.reasoning,
+      painPoints: result.painPoints,
+      painPointsRationale: result.painPointsRationale ?? null,
       scoredAt: new Date().toISOString(),
     });
     if (this.afterScore) await this.afterScore(result);

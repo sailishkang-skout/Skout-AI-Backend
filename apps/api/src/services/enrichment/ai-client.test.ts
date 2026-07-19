@@ -195,7 +195,7 @@ describe("scoreProspect — Python service path", () => {
       icp_score: 82,
       icp_band: "strong",
       intent_score: 50,
-      pain_points: ["scaling ops"],
+      pain_points: ["scaling"],
       outreach_readiness: "ready",
       reasoning: "Good fit",
       source: "llm",
@@ -214,7 +214,7 @@ describe("scoreProspect — Python service path", () => {
     expect(result.icpBand).toBe("strong");
     expect(result.intentScore).toBe(50);
     expect(result.source).toBe("llm");
-    expect(result.painPoints).toEqual(["scaling ops"]);
+    expect(result.painPoints).toEqual(["scaling"]);
     expect(result.dimensions.industry.score).toBe(90);
     expect(result.dimensions.seniority.matched).toBe(true);
   });
@@ -253,7 +253,7 @@ describe("scoreProspect — OpenRouter LLM path", () => {
       icp_score: 78,
       intent_score: 50,
       reasoning: "Good tech fit",
-      pain_points: ["hiring bottleneck"],
+      pain_points: ["hiring"],
       dimensions: {
         industry:     { score: 88, matched: true,  explanation: "Software match" },
         seniority:    { score: 82, matched: true,  explanation: "c_level match" },
@@ -268,7 +268,7 @@ describe("scoreProspect — OpenRouter LLM path", () => {
     expect(result.source).toBe("llm");
     expect(result.icpScore).toBe(78);
     expect(result.intentScore).toBe(50);
-    expect(result.painPoints).toContain("hiring bottleneck");
+    expect(result.painPoints).toContain("hiring");
     expect(result.dimensions.industry.matched).toBe(true);
     expect(result.dimensions.signals.matched).toBe(false);
     expect(mockCreate).toHaveBeenCalledOnce();
@@ -344,12 +344,12 @@ describe("scoreProspect — OpenRouter LLM path", () => {
       icp_score: 65,
       intent_score: 25,
       reasoning: "Issues found",
-      pain_points: ["slow onboarding", "manual reporting"],
+      pain_points: ["onboarding", "reporting"],
       dimensions: {},
     });
 
     const result = await scoreProspect(undefined, baseInput, baseIcp, 5000, "sk-or-test");
-    expect(result.painPoints).toEqual(["slow onboarding", "manual reporting"]);
+    expect(result.painPoints).toEqual(["onboarding", "reporting"]);
   });
 
   it("ignores non-array pain_points from LLM", async () => {
@@ -555,6 +555,149 @@ describe("classifyIntent — request body shape", () => {
 
     const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string);
     expect(body.signals).toEqual([{ type: "recent_funding" }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pain points — enum constraint (OpenRouter LLM path)
+// ---------------------------------------------------------------------------
+describe("pain points — enum constraint (OpenRouter LLM path)", () => {
+  it("passes valid enum values through unchanged", async () => {
+    mockLlm({
+      icp_score: 70, intent_score: 0, reasoning: "ok",
+      pain_points: ["scaling", "hiring", "technical_debt"],
+      dimensions: {},
+    });
+    const result = await scoreProspect(undefined, baseInput, baseIcp, 5000, "sk-or-test");
+    expect(result.painPoints).toEqual(["scaling", "hiring", "technical_debt"]);
+  });
+
+  it("filters out non-enum free-form strings from LLM", async () => {
+    mockLlm({
+      icp_score: 70, intent_score: 0, reasoning: "ok",
+      pain_points: ["Scaling Ops", "Lead Generation Issues", "Revenue Growth"],
+      dimensions: {},
+    });
+    const result = await scoreProspect(undefined, baseInput, baseIcp, 5000, "sk-or-test");
+    expect(result.painPoints).toEqual([]);
+  });
+
+  it("keeps valid enum values and drops invalid ones in a mixed array", async () => {
+    mockLlm({
+      icp_score: 70, intent_score: 0, reasoning: "ok",
+      pain_points: ["scaling", "not_a_valid_point", "hiring", "free form text"],
+      dimensions: {},
+    });
+    const result = await scoreProspect(undefined, baseInput, baseIcp, 5000, "sk-or-test");
+    expect(result.painPoints).toEqual(["scaling", "hiring"]);
+  });
+
+  it("returns painPointsRationale when pain_rationale is present", async () => {
+    mockLlm({
+      icp_score: 70, intent_score: 0, reasoning: "ok",
+      pain_points: ["tooling"],
+      pain_rationale: "CTO at a SaaS company typically wrestles with tooling decisions.",
+      dimensions: {},
+    });
+    const result = await scoreProspect(undefined, baseInput, baseIcp, 5000, "sk-or-test");
+    expect(result.painPointsRationale).toBe("CTO at a SaaS company typically wrestles with tooling decisions.");
+  });
+
+  it("returns painPointsRationale null when pain_rationale is absent", async () => {
+    mockLlm({
+      icp_score: 70, intent_score: 0, reasoning: "ok",
+      pain_points: ["pipeline"],
+      dimensions: {},
+    });
+    const result = await scoreProspect(undefined, baseInput, baseIcp, 5000, "sk-or-test");
+    expect(result.painPointsRationale).toBeNull();
+  });
+
+  it("returns painPointsRationale null when pain_rationale is an empty string", async () => {
+    mockLlm({
+      icp_score: 70, intent_score: 0, reasoning: "ok",
+      pain_points: ["pipeline"],
+      pain_rationale: "",
+      dimensions: {},
+    });
+    const result = await scoreProspect(undefined, baseInput, baseIcp, 5000, "sk-or-test");
+    expect(result.painPointsRationale).toBeNull();
+  });
+
+  it("returns empty painPoints when LLM omits pain_points entirely", async () => {
+    mockLlm({ icp_score: 70, intent_score: 0, reasoning: "ok", dimensions: {} });
+    const result = await scoreProspect(undefined, baseInput, baseIcp, 5000, "sk-or-test");
+    expect(result.painPoints).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pain points — enum constraint (Python service path)
+// ---------------------------------------------------------------------------
+describe("pain points — enum constraint (Python service path)", () => {
+  it("passes valid enum values from Python response through unchanged", async () => {
+    mockPythonService({
+      prospect_id: "test-001", icp_score: 78, icp_band: "strong",
+      intent_score: 0, outreach_readiness: "warm", reasoning: "ok", source: "llm",
+      pain_points: ["compliance", "data_quality"],
+      dimensions: {},
+    });
+    const result = await scoreProspect("http://localhost:8000", baseInput, baseIcp, 5000);
+    expect(result.painPoints).toEqual(["compliance", "data_quality"]);
+  });
+
+  it("filters out non-enum strings returned by Python service", async () => {
+    mockPythonService({
+      prospect_id: "test-001", icp_score: 78, icp_band: "strong",
+      intent_score: 0, outreach_readiness: "warm", reasoning: "ok", source: "llm",
+      pain_points: ["Scaling Sales Team", "Lead Generation Issues"],
+      dimensions: {},
+    });
+    const result = await scoreProspect("http://localhost:8000", baseInput, baseIcp, 5000);
+    expect(result.painPoints).toEqual([]);
+  });
+
+  it("returns painPointsRationale from pain_rationale field in Python response", async () => {
+    mockPythonService({
+      prospect_id: "test-001", icp_score: 78, icp_band: "strong",
+      intent_score: 0, outreach_readiness: "warm", reasoning: "ok", source: "llm",
+      pain_points: ["hiring"],
+      pain_rationale: "Recent hiring signals indicate active recruitment challenges.",
+      dimensions: {},
+    });
+    const result = await scoreProspect("http://localhost:8000", baseInput, baseIcp, 5000);
+    expect(result.painPointsRationale).toBe("Recent hiring signals indicate active recruitment challenges.");
+  });
+
+  it("returns painPointsRationale null when Python response omits pain_rationale", async () => {
+    mockPythonService({
+      prospect_id: "test-001", icp_score: 78, icp_band: "strong",
+      intent_score: 0, outreach_readiness: "warm", reasoning: "ok", source: "llm",
+      pain_points: ["pipeline"],
+      dimensions: {},
+    });
+    const result = await scoreProspect("http://localhost:8000", baseInput, baseIcp, 5000);
+    expect(result.painPointsRationale).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// scoreLocally — pain points always empty (heuristic produces no pain points)
+// ---------------------------------------------------------------------------
+describe("scoreLocally — pain points", () => {
+  it("always returns painPoints as empty array", () => {
+    const result = scoreLocally(baseInput, baseIcp);
+    expect(result.painPoints).toEqual([]);
+  });
+
+  it("always returns painPointsRationale as null", () => {
+    const result = scoreLocally(baseInput, baseIcp);
+    expect(result.painPointsRationale).toBeNull();
+  });
+
+  it("returns painPoints [] even when signals are present", () => {
+    const result = scoreLocally({ ...baseInput, signals: ["recent_funding", "recent_hiring"] }, baseIcp);
+    expect(result.painPoints).toEqual([]);
   });
 });
 

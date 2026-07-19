@@ -9,6 +9,7 @@ import {
   unique,
   uuid,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { workspaces } from "./workspaces.js";
 
 export const prospectActivations = pgTable(
@@ -84,6 +85,8 @@ export const prospectScores = pgTable(
     score: integer("score").notNull(),
     reasoning: text("reasoning"),
     priority: text("priority"),
+    painPoints: text("pain_points").array().notNull().default(sql`'{}'::text[]`),
+    painPointsRationale: text("pain_points_rationale"),
     scoredAt: timestamp("scored_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [primaryKey({ columns: [table.workspaceId, table.prospectId] })]
