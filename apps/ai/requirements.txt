@@ -1,8 +1,7 @@
-fastapi>=0.115.0
+fastapi[standard]>=0.115.0
 uvicorn[standard]>=0.32.0
 pydantic>=2.10.0
 litellm>=1.55.0
 posthog>=3.0.0
 python-dotenv>=1.0.0
 sentry-sdk[fastapi]>=2.19.0
-pytest>=8.0.0

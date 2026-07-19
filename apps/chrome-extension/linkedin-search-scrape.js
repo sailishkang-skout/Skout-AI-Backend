@@ -32,6 +32,8 @@
   function resultContainer(link) {
     return link.closest(
       [
+        '[role="listitem"]',
+        '[componentkey]',
         "li.reusable-search__result-container",
         'li[data-view-name="search-entity-result-universal-template"]',
         "li.artdeco-list__item",
@@ -46,7 +48,15 @@
     const hidden = link.querySelector('span[aria-hidden="true"]');
     let name = clean(hidden?.textContent || link.textContent);
     name = name.replace(/^View\s+.+'s profile$/i, "").trim();
-    name = name.replace(/\s*(•|·)\s*1st\s*$/i, "").trim();
+    // Stop at bullet separators and connection degree indicators
+    name = name.split(/\s*[•·]\s*/)[0].trim();
+    name = name.replace(/\s*(1st|2nd|3rd\+?|LION)\s*$/i, "").trim();
+    // Remove duplicated name (LinkedIn renders name twice in same anchor)
+    const words = name.split(" ");
+    const mid = Math.floor(words.length / 2);
+    if (mid > 0 && words.slice(0, mid).join(" ") === words.slice(mid).join(" ")) {
+      name = words.slice(0, mid).join(" ");
+    }
     return name;
   }
 
@@ -75,6 +85,7 @@
 
       const subtitleEl = container.querySelector(
         [
+          '[data-anonymize="job-title"]',
           ".entity-result__primary-subtitle",
           ".artdeco-entity-lockup__subtitle",
           ".entity-result__summary",

@@ -73,12 +73,13 @@ const reorderStepsSchema = z.object({
 });
 
 export async function sequenceRoutes(app: FastifyInstance) {
-  // GET /sequences — list all sequences for the workspace
+  // GET /sequences — list sequences for the workspace, optionally filtered by status
   app.get("/sequences", async (request, reply) => {
     const workspaceId = request.workspaceId ?? "unknown";
+    const { status } = request.query as { status?: string };
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.send({ workspaceId, data: [], total: 0 });
-    const data = await svc.listSequences(workspaceId);
+    const data = await svc.listSequences(workspaceId, status);
     return reply.send({ workspaceId, data, total: data.length });
   });
 
