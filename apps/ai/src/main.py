@@ -127,7 +127,7 @@ def _llm_json(system_prompt: str, user_prompt: str) -> dict:
     from litellm import completion
 
     model = _default_model()
-    timeout = float(os.getenv("LLM_TIMEOUT_SECS", "4.0"))
+    timeout = float(os.getenv("LLM_TIMEOUT_SECS", "30.0"))
 
     messages = []
     if system_prompt:
@@ -194,6 +194,7 @@ class ScoreResponse(BaseModel):
     icp_band: str  # strong | medium | weak
     intent_score: int
     pain_points: list[str]
+    pain_rationale: Optional[str] = None
     outreach_readiness: str  # ready | warm | nurture | not_qualified
     reasoning: str
     source: str  # llm | heuristic
@@ -639,11 +640,17 @@ Evaluate each dimension independently and assign a 0–100 fit score:
 5. title         — Does the job title match target titles or keywords?    (weight ~15 pts)
 6. signals       — Intent signals indicating buying readiness.            (drives intent_score)
 
+## Pain Point Enum
+pain_points values MUST be chosen only from this list (use exact strings):
+scaling, hiring, tooling, technical_debt, data_quality, compliance, cost_reduction,
+integration, customer_retention, pipeline, reporting, onboarding
+
 ## Required JSON Output Schema
 {{
   "icp_score": <integer 0–100>,
   "intent_score": <integer 0–100>,
-  "pain_points": ["<short string>", ...],
+  "pain_points": ["<value from enum above>", ...],
+  "pain_rationale": "<one sentence explaining which role/signal/industry clues led to each pain point>",
   "reasoning": "<one concise sentence summarising overall fit>",
   "dimensions": {{
     "industry":     {{"score": <0–100>, "matched": <bool>, "explanation": "<why, one sentence>"}},
@@ -658,7 +665,8 @@ Evaluate each dimension independently and assign a 0–100 fit score:
 ## Scoring Guidelines
 - icp_score: weighted composite of all ICP dimensions (not signals)
 - intent_score: driven purely by signals — 0 for no signals, up to 100 for multiple strong signals
-- pain_points: infer from signals and role; keep to 1–4 short strings
+- pain_points: ALWAYS infer 1–3 pain points from the prospect's job title, seniority, industry, and any signals — even with no signals, a CTO/VP/Director in any industry has predictable challenges; pick values from the enum only
+- pain_rationale: one sentence explaining which role, industry, or signal clues drove each pain point choice
 - reasoning: one sentence; name the single biggest driver of the score
 - dimension score: fit quality for that dimension (0 = terrible fit, 100 = perfect fit)
 - matched: true when the dimension criterion is met OR when the ICP has no constraint for that dimension
@@ -703,13 +711,20 @@ def _score_llm(request: ScoreRequest, baseline: ScoreResponse) -> ScoreResponse:
     icp_score = max(0, min(100, int(data.get("icp_score", baseline.icp_score))))
     intent_score = max(0, min(100, int(data.get("intent_score", baseline.intent_score))))
 
+    _PAIN_ENUM = {
+        "scaling", "hiring", "tooling", "technical_debt", "data_quality", "compliance",
+        "cost_reduction", "integration", "customer_retention", "pipeline", "reporting", "onboarding",
+    }
+
     raw_pain = data.get("pain_points", baseline.pain_points)
     if isinstance(raw_pain, str):
-        pain_points = [raw_pain] if raw_pain else []
+        pain_points = [raw_pain] if raw_pain in _PAIN_ENUM else []
     elif isinstance(raw_pain, list):
-        pain_points = [str(x) for x in raw_pain if x]
+        pain_points = [str(x) for x in raw_pain if str(x) in _PAIN_ENUM]
     else:
-        pain_points = baseline.pain_points
+        pain_points = []
+
+    pain_rationale = str(data["pain_rationale"]) if data.get("pain_rationale") else None
 
     reasoning = str(data.get("reasoning") or baseline.reasoning)
 
@@ -730,6 +745,7 @@ def _score_llm(request: ScoreRequest, baseline: ScoreResponse) -> ScoreResponse:
         icp_band=_band(icp_score),
         intent_score=intent_score,
         pain_points=pain_points,
+        pain_rationale=pain_rationale,
         outreach_readiness=_readiness(icp_score, intent_score),
         reasoning=reasoning,
         source="llm",

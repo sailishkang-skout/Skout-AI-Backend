@@ -677,4 +677,134 @@ describe("GET /search/prospects/:id — prospect drawer detail fields", () => {
       expect(res.json().error).toBe("prospect_not_found");
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Pain points — stored score fields surfaced on prospect detail (AC: shown
+  // on prospect detail with source rationale)
+  // -------------------------------------------------------------------------
+  describe("pain points — surfaced from score row on prospect detail", () => {
+    it("returns painPoints and painPointsRationale from a stored score row", async () => {
+      app = await buildTestApp(osEnv);
+      mockedGetById.mockResolvedValueOnce(sampleProspect);
+
+      const store = getStore(null);
+      await store.setScore({
+        workspaceId: "test-workspace-id",
+        prospectId: "prospect-001",
+        score: 82,
+        priority: "warm",
+        reasoning: "Strong ICP fit",
+        painPoints: ["scaling", "technical_debt"],
+        painPointsRationale: "CTO at a SaaS company likely faces scaling and tech-debt challenges.",
+        scoredAt: new Date().toISOString(),
+      });
+
+      const res = await app.inject({ method: "GET", url: "/search/prospects/prospect-001" });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.painPoints).toEqual(["scaling", "technical_debt"]);
+      expect(body.painPointsRationale).toBe("CTO at a SaaS company likely faces scaling and tech-debt challenges.");
+    });
+
+    it("returns icpScore and outreachReadiness from the score row alongside pain points", async () => {
+      app = await buildTestApp(osEnv);
+      mockedGetById.mockResolvedValueOnce(sampleProspect);
+
+      const store = getStore(null);
+      await store.setScore({
+        workspaceId: "test-workspace-id",
+        prospectId: "prospect-001",
+        score: 90,
+        priority: "ready",
+        reasoning: "Perfect fit",
+        painPoints: ["hiring"],
+        painPointsRationale: "Hiring signal detected.",
+        scoredAt: new Date().toISOString(),
+      });
+
+      const res = await app.inject({ method: "GET", url: "/search/prospects/prospect-001" });
+      const body = res.json();
+      expect(body.icpScore).toBe(90);
+      expect(body.outreachReadiness).toBe("ready");
+      expect(body.painPoints).toEqual(["hiring"]);
+    });
+
+    it("returns empty painPoints array when score row has no pain points", async () => {
+      app = await buildTestApp(osEnv);
+      mockedGetById.mockResolvedValueOnce(sampleProspect);
+
+      const store = getStore(null);
+      await store.setScore({
+        workspaceId: "test-workspace-id",
+        prospectId: "prospect-001",
+        score: 55,
+        priority: "nurture",
+        reasoning: "Partial fit",
+        painPoints: [],
+        painPointsRationale: null,
+        scoredAt: new Date().toISOString(),
+      });
+
+      const res = await app.inject({ method: "GET", url: "/search/prospects/prospect-001" });
+      const body = res.json();
+      expect(body.painPoints).toEqual([]);
+      expect(body.painPointsRationale).toBeUndefined();
+    });
+
+    it("omits painPointsRationale from response when score row rationale is null", async () => {
+      app = await buildTestApp(osEnv);
+      mockedGetById.mockResolvedValueOnce(sampleProspect);
+
+      const store = getStore(null);
+      await store.setScore({
+        workspaceId: "test-workspace-id",
+        prospectId: "prospect-001",
+        score: 60,
+        priority: "warm",
+        reasoning: "ok",
+        painPoints: ["pipeline"],
+        painPointsRationale: null,
+        scoredAt: new Date().toISOString(),
+      });
+
+      const res = await app.inject({ method: "GET", url: "/search/prospects/prospect-001" });
+      expect(res.json().painPointsRationale).toBeUndefined();
+    });
+
+    it("does not include painPoints or painPointsRationale when no score row exists", async () => {
+      app = await buildTestApp(osEnv, "ws-unscored");
+      mockedGetById.mockResolvedValueOnce(sampleProspect);
+
+      const res = await app.inject({ method: "GET", url: "/search/prospects/prospect-001" });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.painPoints).toBeUndefined();
+      expect(body.painPointsRationale).toBeUndefined();
+    });
+
+    it("score row pain points win over corpus pain points when both exist", async () => {
+      app = await buildTestApp(osEnv);
+      mockedGetById.mockResolvedValueOnce({
+        ...sampleProspect,
+        painPoints: ["old_corpus_value"],
+      });
+
+      const store = getStore(null);
+      await store.setScore({
+        workspaceId: "test-workspace-id",
+        prospectId: "prospect-001",
+        score: 75,
+        priority: "warm",
+        reasoning: "ok",
+        painPoints: ["cost_reduction", "reporting"],
+        painPointsRationale: "Derived from LLM scoring.",
+        scoredAt: new Date().toISOString(),
+      });
+
+      const res = await app.inject({ method: "GET", url: "/search/prospects/prospect-001" });
+      const body = res.json();
+      expect(body.painPoints).toEqual(["cost_reduction", "reporting"]);
+      expect(body.painPointsRationale).toBe("Derived from LLM scoring.");
+    });
+  });
 });

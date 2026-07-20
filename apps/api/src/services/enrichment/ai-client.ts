@@ -47,6 +47,7 @@ export interface ScoreResult {
   icpBand: string;
   intentScore: number;
   painPoints: string[];
+  painPointsRationale: string | null;
   outreachReadiness: string;
   reasoning: string;
   source: "llm" | "heuristic";
@@ -138,6 +139,7 @@ export function scoreLocally(input: ScoreInput, icp: IcpConfig = {}): ScoreResul
     icpBand: BANDS(icpScore),
     intentScore,
     painPoints: [],
+    painPointsRationale: null,
     outreachReadiness: READINESS(icpScore, intentScore),
     reasoning: reasons.join("; ") || "baseline score",
     source: "heuristic",
@@ -145,11 +147,19 @@ export function scoreLocally(input: ScoreInput, icp: IcpConfig = {}): ScoreResul
   };
 }
 
+const PAIN_POINT_ENUM = [
+  "scaling", "hiring", "tooling", "technical_debt", "data_quality",
+  "compliance", "cost_reduction", "integration", "customer_retention",
+  "pipeline", "reporting", "onboarding",
+] as const;
+
 function buildSystemPrompt(icp: IcpConfig): string {
   const lines = [
     "You are a B2B sales intelligence engine. Score a prospect against the ICP below.",
     "Return JSON with keys: icp_score (0-100), intent_score (0-100), reasoning (string),",
-    "pain_points (string[]), and dimensions (object with keys: industry, seniority, geography,",
+    `pain_points (string[] — pick only values from: ${PAIN_POINT_ENUM.join(", ")}),`,
+    "pain_rationale (string — one sentence explaining which signals led to each pain point),",
+    "and dimensions (object with keys: industry, seniority, geography,",
     "company_size, title, signals — each having score (0-100), matched (bool), explanation (string)).",
     "",
     "ICP CONFIGURATION:",
@@ -226,7 +236,12 @@ async function scoreWithLLM(
   const icpScore = Math.max(0, Math.min(100, Number(data.icp_score ?? baseline.icpScore)));
   const intentScore = Math.max(0, Math.min(100, Number(data.intent_score ?? baseline.intentScore)));
   const rawPain = data.pain_points;
-  const painPoints = Array.isArray(rawPain) ? rawPain.map(String).filter(Boolean) : baseline.painPoints;
+  const painPoints = Array.isArray(rawPain)
+    ? rawPain.map(String).filter((p) => (PAIN_POINT_ENUM as readonly string[]).includes(p))
+    : [];
+  const painPointsRationale = typeof data.pain_rationale === "string" && data.pain_rationale
+    ? data.pain_rationale
+    : null;
 
   return {
     prospectId: input.prospectId,
@@ -234,6 +249,7 @@ async function scoreWithLLM(
     icpBand: BANDS(icpScore),
     intentScore,
     painPoints,
+    painPointsRationale,
     outreachReadiness: READINESS(icpScore, intentScore),
     reasoning: String(data.reasoning ?? baseline.reasoning),
     source: "llm",
@@ -357,12 +373,21 @@ export async function scoreProspect(
       ? (intentResult.requiresHitl ? "nurture" : intentResult.outreachReadiness)
       : String(data.outreach_readiness ?? "nurture");
 
+    const rawAiPain = data.pain_points;
+    const aiPainPoints = Array.isArray(rawAiPain)
+      ? rawAiPain.map(String).filter((p) => (PAIN_POINT_ENUM as readonly string[]).includes(p))
+      : [];
+    const aiPainRationale = typeof data.pain_rationale === "string" && data.pain_rationale
+      ? data.pain_rationale
+      : null;
+
     return {
       prospectId: String(data.prospect_id ?? input.prospectId),
       icpScore: Number(data.icp_score ?? 0),
       icpBand: String(data.icp_band ?? "weak"),
       intentScore,
-      painPoints: (data.pain_points as string[]) ?? [],
+      painPoints: aiPainPoints,
+      painPointsRationale: aiPainRationale,
       outreachReadiness,
       reasoning: String(data.reasoning ?? ""),
       source: data.source === "llm" ? "llm" : "heuristic",

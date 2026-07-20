@@ -344,10 +344,19 @@ export class DbStore implements EnrichmentStore {
         score: score.score,
         reasoning: score.reasoning,
         priority: score.priority,
+        painPoints: score.painPoints,
+        painPointsRationale: score.painPointsRationale,
       })
       .onConflictDoUpdate({
         target: [prospectScores.workspaceId, prospectScores.prospectId],
-        set: { score: score.score, reasoning: score.reasoning, priority: score.priority, scoredAt: new Date() },
+        set: {
+          score: score.score,
+          reasoning: score.reasoning,
+          priority: score.priority,
+          painPoints: score.painPoints,
+          painPointsRationale: score.painPointsRationale,
+          scoredAt: new Date(),
+        },
       });
     return score;
   }
@@ -364,6 +373,8 @@ export class DbStore implements EnrichmentStore {
           score: row.score,
           priority: row.priority,
           reasoning: row.reasoning,
+          painPoints: row.painPoints ?? [],
+          painPointsRationale: row.painPointsRationale ?? null,
           scoredAt: row.scoredAt.toISOString(),
         }
       : null;
@@ -383,6 +394,8 @@ export class DbStore implements EnrichmentStore {
       score: row.score,
       priority: row.priority,
       reasoning: row.reasoning,
+      painPoints: row.painPoints ?? [],
+      painPointsRationale: row.painPointsRationale ?? null,
       scoredAt: row.scoredAt.toISOString(),
     }));
   }

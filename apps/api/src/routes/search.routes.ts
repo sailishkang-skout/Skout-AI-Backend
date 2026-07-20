@@ -82,7 +82,18 @@ export async function searchRoutes(app: FastifyInstance) {
     // Prefer the workspace's own captured/activated data (e.g. LinkedIn extension)
     // over the OpenSearch corpus or the demo fallback.
     const store = getStore(app.db);
-    const activation = await store.getActivation(workspaceId, id).catch(() => null);
+    const [activation, scoreRow] = await Promise.all([
+      store.getActivation(workspaceId, id).catch(() => null),
+      store.getScore(workspaceId, id).catch(() => null),
+    ]);
+    const scoreFields = scoreRow
+      ? {
+          painPoints: scoreRow.painPoints,
+          painPointsRationale: scoreRow.painPointsRationale ?? undefined,
+          icpScore: scoreRow.score,
+          outreachReadiness: scoreRow.priority ?? undefined,
+        }
+      : {};
     if (activation && activation.snapshot && Object.keys(activation.snapshot).length > 0) {
       const osDoc = await svc.findExistingProspect(id);
       const fromSnapshot = buildDetailFromSnapshot(
@@ -91,16 +102,17 @@ export async function searchRoutes(app: FastifyInstance) {
         activation.snapshot as Record<string, unknown>,
         activation.updatedAt
       );
-      // Snapshot fields win; backfill blanks from the corpus doc when present.
-      return reply.send({ ...(osDoc ?? {}), ...stripEmpty(fromSnapshot) });
+      // Snapshot fields win; backfill blanks from the corpus doc; score fields always included.
+      return reply.send({ ...(osDoc ?? {}), ...stripEmpty(fromSnapshot), ...scoreFields });
     }
 
     const result = await svc.getProspectById(id);
     if (!result) {
       return reply.status(404).send({ error: "prospect_not_found" });
     }
-    await cache.setById(workspaceId, id, result as Record<string, unknown>);
-    return reply.send(result);
+    const merged = { ...(result as Record<string, unknown>), ...scoreFields };
+    await cache.setById(workspaceId, id, merged);
+    return reply.send(merged);
   });
 }
 
