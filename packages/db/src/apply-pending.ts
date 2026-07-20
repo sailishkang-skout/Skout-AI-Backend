@@ -201,8 +201,14 @@ try {
       CONSTRAINT "email_verifications_workspace_id_prospect_id_pk" PRIMARY KEY("workspace_id","prospect_id")
     )`);
 
-  // 0022 — R8.3 invite OTP + session auth
-  await run("0022 invite_otps table", () => sql`
+  // 0022 — LLM pain points on prospect_scores (typed enum + rationale)
+  await run("0022 prospect_scores.pain_points", () => sql`
+    ALTER TABLE "prospect_scores"
+      ADD COLUMN IF NOT EXISTS "pain_points" text[] NOT NULL DEFAULT '{}',
+      ADD COLUMN IF NOT EXISTS "pain_points_rationale" text`);
+
+  // 0023 — R8.3 invite OTP + session auth
+  await run("0023 invite_otps table", () => sql`
     CREATE TABLE IF NOT EXISTS "invite_otps" (
       "id"            uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
       "invite_token"  text NOT NULL,
@@ -212,10 +218,10 @@ try {
       "created_at"    timestamp with time zone NOT NULL DEFAULT now()
     )`);
 
-  await run("0022 invite_otps index", () => sql`
+  await run("0023 invite_otps index", () => sql`
     CREATE INDEX IF NOT EXISTS "invite_otps_invite_token_idx" ON "invite_otps"("invite_token")`);
 
-  await run("0022 invite_sessions table", () => sql`
+  await run("0023 invite_sessions table", () => sql`
     CREATE TABLE IF NOT EXISTS "invite_sessions" (
       "id"          uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
       "user_id"     uuid NOT NULL REFERENCES "public"."users"("id") ON DELETE CASCADE,
@@ -225,7 +231,7 @@ try {
       CONSTRAINT "invite_sessions_token_unique" UNIQUE("token")
     )`);
 
-  await run("0022 invite_sessions index", () => sql`
+  await run("0023 invite_sessions index", () => sql`
     CREATE INDEX IF NOT EXISTS "invite_sessions_token_idx" ON "invite_sessions"("token")`);
 
 } finally {
