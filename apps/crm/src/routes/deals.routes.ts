@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { dealCreateSchema, dealListQuerySchema, dealUpdateSchema } from "@skout/shared";
 import { HttpError } from "@skout/auth";
+import { parseIdParam } from "../utils/http.js";
 import { requireRole } from "../utils/require-role.js";
 import { buildActivitiesService } from "../services/activities.service.js";
 import { buildCompaniesService } from "../services/companies.service.js";
@@ -47,7 +48,7 @@ export async function dealsRoutes(app: FastifyInstance) {
   });
 
   app.get("/deals/:id", async (request, reply) => {
-    const { id } = request.params as { id: string };
+    const id = parseIdParam(request);
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
@@ -58,7 +59,7 @@ export async function dealsRoutes(app: FastifyInstance) {
   });
 
   app.patch("/deals/:id", async (request, reply) => {
-    const { id } = request.params as { id: string };
+    const id = parseIdParam(request);
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
@@ -70,7 +71,7 @@ export async function dealsRoutes(app: FastifyInstance) {
   });
 
   app.delete("/deals/:id", async (request, reply) => {
-    const { id } = request.params as { id: string };
+    const id = parseIdParam(request);
     const workspaceId = request.workspaceId ?? "unknown";
     requireRole(request, ["owner", "admin"]);
     const svc = service();

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { companyCreateSchema, companyListQuerySchema, companyUpdateSchema } from "@skout/shared";
 import { HttpError } from "@skout/auth";
+import { parseIdParam } from "../utils/http.js";
 import { requireRole } from "../utils/require-role.js";
 import { buildCompaniesService } from "../services/companies.service.js";
 
@@ -28,7 +29,7 @@ export async function companiesRoutes(app: FastifyInstance) {
   });
 
   app.get("/companies/:id", async (request, reply) => {
-    const { id } = request.params as { id: string };
+    const id = parseIdParam(request);
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
@@ -39,7 +40,7 @@ export async function companiesRoutes(app: FastifyInstance) {
   });
 
   app.patch("/companies/:id", async (request, reply) => {
-    const { id } = request.params as { id: string };
+    const id = parseIdParam(request);
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
@@ -51,7 +52,7 @@ export async function companiesRoutes(app: FastifyInstance) {
   });
 
   app.delete("/companies/:id", async (request, reply) => {
-    const { id } = request.params as { id: string };
+    const id = parseIdParam(request);
     const workspaceId = request.workspaceId ?? "unknown";
     requireRole(request, ["owner", "admin"]);
     const svc = service();

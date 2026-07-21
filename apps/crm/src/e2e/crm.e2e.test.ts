@@ -507,4 +507,47 @@ describe.skipIf(!hasDatabase)("CRM service E2E", () => {
     expect(body.openTasks).toBe(1);
     expect(Array.isArray(body.recentActivities)).toBe(true);
   });
+
+  it("malformed :id path params return a clean 400, not a raw DB 500", async () => {
+    const headers = asUser(`crm-malformed-id-${randomUUID()}@test.com`);
+
+    const malformed = await app.inject({ method: "GET", url: "/api/v1/companies/not-a-uuid", headers });
+    expect(malformed.statusCode).toBe(400);
+
+    const wellFormedButMissing = await app.inject({
+      method: "GET",
+      url: "/api/v1/companies/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      headers,
+    });
+    expect(wellFormedButMissing.statusCode).toBe(404);
+  });
+
+  it("adding a duplicate pipeline stage orderIndex returns a clean 409, not a raw DB 500", async () => {
+    const headers = asUser(`crm-stage-conflict-${randomUUID()}@test.com`);
+
+    const pipelineRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/pipelines",
+      headers,
+      payload: { name: "Conflict Pipeline" },
+    });
+    const pipeline = pipelineRes.json() as { id: string };
+
+    const first = await app.inject({
+      method: "POST",
+      url: `/api/v1/pipelines/${pipeline.id}/stages`,
+      headers,
+      payload: { name: "Stage A", orderIndex: 0 },
+    });
+    expect(first.statusCode).toBe(201);
+
+    const duplicate = await app.inject({
+      method: "POST",
+      url: `/api/v1/pipelines/${pipeline.id}/stages`,
+      headers,
+      payload: { name: "Stage B", orderIndex: 0 },
+    });
+    expect(duplicate.statusCode).toBe(409);
+    expect((duplicate.json() as { error: string }).error).toBe("stage_order_conflict");
+  });
 });

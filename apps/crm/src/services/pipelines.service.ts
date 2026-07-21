@@ -3,6 +3,7 @@ import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { PipelineCreateInput, PipelineStageCreateInput } from "@skout/shared";
 import { HttpError } from "@skout/auth";
+import { pgErrorCode } from "../utils/http.js";
 
 const { pipelines, pipelineStages } = schema;
 
@@ -91,17 +92,27 @@ export class PipelinesService {
     const pipeline = await this.getById(workspaceId, pipelineId);
     if (!pipeline) throw new HttpError("pipeline_not_found", 404);
 
-    const [row] = await this.db
-      .insert(pipelineStages)
-      .values({
-        pipelineId,
-        name: input.name,
-        orderIndex: input.orderIndex,
-        probability: input.probability,
-        isClosedWon: input.isClosedWon,
-        isClosedLost: input.isClosedLost,
-      })
-      .returning();
+    let row: typeof pipelineStages.$inferSelect;
+    try {
+      [row] = await this.db
+        .insert(pipelineStages)
+        .values({
+          pipelineId,
+          name: input.name,
+          orderIndex: input.orderIndex,
+          probability: input.probability,
+          isClosedWon: input.isClosedWon,
+          isClosedLost: input.isClosedLost,
+        })
+        .returning();
+    } catch (err) {
+      // Postgres unique_violation on (pipeline_id, order_index) — surface as a clean
+      // conflict instead of letting the raw DB error bubble up as a 500.
+      if (pgErrorCode(err) === "23505") {
+        throw new HttpError("stage_order_conflict", 409, { orderIndex: input.orderIndex });
+      }
+      throw err;
+    }
     return stageToDto(row);
   }
 

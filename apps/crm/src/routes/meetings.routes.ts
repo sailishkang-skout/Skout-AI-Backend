@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { meetingCreateSchema, meetingListQuerySchema, meetingUpdateSchema } from "@skout/shared";
 import { HttpError } from "@skout/auth";
+import { parseIdParam } from "../utils/http.js";
 import { requireRole } from "../utils/require-role.js";
 import { buildActivitiesService } from "../services/activities.service.js";
 import { buildMeetingsService } from "../services/meetings.service.js";
@@ -33,7 +34,7 @@ export async function meetingsRoutes(app: FastifyInstance) {
   });
 
   app.get("/meetings/:id", async (request, reply) => {
-    const { id } = request.params as { id: string };
+    const id = parseIdParam(request);
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
@@ -44,7 +45,7 @@ export async function meetingsRoutes(app: FastifyInstance) {
   });
 
   app.patch("/meetings/:id", async (request, reply) => {
-    const { id } = request.params as { id: string };
+    const id = parseIdParam(request);
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
@@ -56,7 +57,7 @@ export async function meetingsRoutes(app: FastifyInstance) {
   });
 
   app.delete("/meetings/:id", async (request, reply) => {
-    const { id } = request.params as { id: string };
+    const id = parseIdParam(request);
     const workspaceId = request.workspaceId ?? "unknown";
     requireRole(request, ["owner", "admin"]);
     const svc = service();
