@@ -31,6 +31,9 @@ export interface IcpConfig {
   keywords?: string[];
   minEmployees?: number;
   maxEmployees?: number;
+  companyName?: string;
+  productDescription?: string;
+  customerPainPoints?: string[];
   /** When false, saving ICP does not enqueue a workspace-wide re-score. Default: true. */
   autoRescoreOnChange?: boolean;
 }
@@ -163,6 +166,9 @@ function buildSystemPrompt(icp: IcpConfig): string {
     "company_size, title, signals — each having score (0-100), matched (bool), explanation (string)).",
     "",
     "ICP CONFIGURATION:",
+    `seller_company: ${icp.companyName || "not specified"}`,
+    `product: ${icp.productDescription || "not specified"}`,
+    `customer_pains_solved: ${icp.customerPainPoints?.join(", ") || "none"}`,
     `industries: ${icp.industries?.join(", ") || "any"}`,
     `countries: ${icp.countries?.join(", ") || "any"}`,
     `seniorities: ${icp.seniorities?.join(", ") || "any"}`,
@@ -354,6 +360,9 @@ export async function scoreProspect(
             keywords: icp.keywords ?? [],
             min_employees: icp.minEmployees,
             max_employees: icp.maxEmployees,
+            company_name: icp.companyName,
+            product_description: icp.productDescription,
+            customer_pain_points: icp.customerPainPoints ?? [],
           },
         }),
         signal: AbortSignal.timeout(timeoutMs),

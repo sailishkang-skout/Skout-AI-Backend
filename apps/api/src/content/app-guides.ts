@@ -127,10 +127,47 @@ Paid orders appear as monthly invoices you can download as HTML.`,
   {
     slug: "search-icp",
     title: "Search & ICP",
-    href: "/search",
-    keywords: ["search", "icp", "ideal", "filter", "corpus"],
-    body: `Configure ICP under Settings / ICP so scoring and search match your buyer profile.
-Use Search to find companies/prospects from the corpus, then activate into lists.`,
+    href: "/prospects/search",
+    keywords: [
+      "search",
+      "icp",
+      "ideal",
+      "filter",
+      "corpus",
+      "prospect",
+      "find leads",
+      "find people",
+      "title",
+      "industry",
+    ],
+    body: `Configure ICP under Settings → ICP (/settings/icp) or the onboarding wizard (/onboarding/icp).
+Collect industries, geo, seniority, company size, buyer titles/keywords, and your company/product pains.
+Use Prospect search (/prospects/search) to find people/companies from the corpus, score against ICP,
+then activate into lists. Search costs credits per page; the AI chat search_prospects tool is a free preview.`,
+  },
+  {
+    slug: "smart-lists",
+    title: "Smart lists",
+    href: "/smart-lists",
+    keywords: ["smart list", "smart-lists", "saved search", "activate"],
+    body: `Smart lists save filter sets. Preview matches, then create an activation list for bulk enrich/enroll.
+Open /smart-lists.`,
+  },
+  {
+    slug: "analytics",
+    title: "Analytics",
+    href: "/analytics",
+    keywords: ["analytics", "dashboard", "funnel", "usage", "report", "chart"],
+    body: `Workspace analytics live at /analytics (credits, enrichment, list activity).
+Ask the assistant for charts/exports of credit usage anytime.`,
+  },
+  {
+    slug: "team",
+    title: "Team",
+    href: "/settings/team",
+    keywords: ["team", "invite", "member", "role", "sso", "otp"],
+    body: `Invite teammates under Settings → Team. Roles: owner/admin/member.
+Pending invites can use OTP or SSO. Cap is 50 members per workspace.`,
   },
   {
     slug: "inbox",
@@ -148,7 +185,7 @@ export function selectAppGuides(opts: {
   page?: string;
   limit?: number;
 }): AppGuideSnippet[] {
-  const limit = opts.limit ?? 4;
+  const limit = opts.limit ?? 6;
   const hay = `${opts.userMessage ?? ""} ${opts.page ?? ""}`.toLowerCase();
   const scored = APP_GUIDE_SNIPPETS.map((g) => {
     let score = 0;

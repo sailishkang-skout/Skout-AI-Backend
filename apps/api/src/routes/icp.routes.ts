@@ -16,6 +16,9 @@ const icpSchema = z.object({
   keywords: z.array(z.string()).optional(),
   minEmployees: z.number().optional(),
   maxEmployees: z.number().optional(),
+  companyName: z.string().max(200).optional(),
+  productDescription: z.string().max(2000).optional(),
+  customerPainPoints: z.array(z.string()).optional(),
   autoRescoreOnChange: z.boolean().optional(),
 });
 

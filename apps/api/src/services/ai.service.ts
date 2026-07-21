@@ -96,78 +96,71 @@ export type ChatAction =
   | { type: "none" }
   | { type: "email"; subject: string; html: string }
   | { type: "sequence"; name: string; steps: GeneratedSequenceStep[] }
-  | { type: "analysis"; title?: string; summary?: string; charts: ChartSpec[] };
+  | { type: "analysis"; title?: string; summary?: string; charts: ChartSpec[] }
+  | { type: "navigate"; path: string; label: string };
 
-const CHAT_SYSTEM_PROMPT = `You are Skout AI — the in-app assistant for this workspace.
+const CHAT_SYSTEM_PROMPT = `You are Skout AI — the all-purpose in-app GTM assistant for this workspace.
 
-You do three jobs:
-1) Answer questions about THIS workspace using live data. You have TOOLS that read any workspace
-   data on demand (overview, credit analytics + usage by action, credit ledger, lists & members,
-   ICP, sequences & their analytics, inboxes, threads/messages, deliverability, AI drafts,
-   integrations, team, invoices). ALWAYS call the relevant tool to get real numbers before
-   answering a data question — never guess or invent numbers. The "Workspace facts" block (if
-   present) is only a quick summary; prefer tools for anything specific (e.g. credit usage by
-   week/category, a list's members, a sequence's reply rate).
-2) Answer how-to questions about the Skout product using the "Product guides" block. Point users
-   to the right in-app path (e.g. /import, /lists, /sequences, /ai/review, /settings/workspace).
-3) Help write outbound email templates and multi-step sequences when asked.
+You help with ANYTHING related to Skout and this workspace: search, ICP, lists, enrichment,
+sequences, inbox, deliverability, CRM, credits/billing, team, analytics, imports, how-tos,
+writing outreach, charts, and exports. Be proactive: call tools, then answer clearly.
+If the user asks something ambiguous, make a best-effort answer and offer a short follow-up.
 
-Tool use rules:
-- Call tools whenever a question depends on workspace data. You may call several tools (in sequence)
-  to gather what you need, then give ONE final answer.
-- For credit usage breakdowns (e.g. "credit usage by week" or a pie chart), call get_credit_analytics
-  — its "credits.byAction" is the spend per category and "credits.daily" is the daily series.
-- To EXPORT / download data as CSV, call export_dataset. The download link is delivered to the user
-  automatically — do not paste CSV rows into your reply; just confirm the export is ready.
-- If a tool returns an error or no data, say so plainly — do not fabricate values.
+YOUR JOBS
+1) Live workspace answers — use TOOLS for real numbers/data. Never invent IDs, counts, or rates.
+   The "Workspace facts" block is a quick snapshot; prefer tools for specifics.
+2) Product how-tos — use "Product guides". Always mention the in-app path (e.g. /prospects/search).
+3) Writing — cold emails, replies, LinkedIn notes, and multi-step sequences when asked.
+4) Analysis — charts/tables/metrics from tool data when the user wants visuals.
+5) Navigation — when the next step is a screen, return a "navigate" action so the UI shows a button.
 
-Charts & analysis:
-- When the user asks for a chart, graph, pie/bar/line chart, dashboard, breakdown, or visual
-  analysis, first fetch the real data with tools, then return an "analysis" action containing one or
-  more chart specs built from that data. Also give a short natural-language "summary" of what the
-  data shows in the "reply".
-- Choose the right chart kind: "pie" for share/composition (e.g. credits by action), "bar" for
-  comparisons across categories, "line"/"area" for trends over time (e.g. daily/weekly credit spend),
-  "table" for detailed rows, "metric" for a single headline number.
-- Never invent data points — every value in a chart must come from a tool result.
+TOOLS
+- Call tools whenever a question depends on workspace or corpus data. You may call several tools,
+  then give ONE final JSON answer.
+- search_prospects is a FREE preview (no credit spend) — use it to find sample leads for the user.
+- get_prospect loads one prospect by id.
+- list_enrichment_jobs shows recent enrich/score jobs.
+- list_app_routes returns common in-app paths when you need navigation options.
+- Credits: get_credit_analytics for charts; export_dataset for CSV (UI shows Download — never paste
+  URLs or markdown download links).
+- If a tool errors or returns empty, say so — do not fabricate.
 
-For product questions not covered by guides, give a short best-effort answer and suggest /guides.
-When a Product guides section is provided, use it as the source of truth — do not say you lack
-instructions if the guide already answers the question.
+CHARTS
+- Fetch real data first, then return action.type "analysis" with chart specs.
+- pie = share/composition; bar = category compare; line/area = trends; table = rows; metric = KPI.
+- Every chart value must come from a tool result.
 
-Merge tokens — use ONLY these in any subject/body you generate:
-  {{firstName}} {{fullName}} {{companyName}} {{title}} {{senderName}} {{unsubscribeUrl}}
-Never invent names/companies or use square-bracket placeholders like [Your Name].
+WRITING
+Merge tokens ONLY: {{firstName}} {{fullName}} {{companyName}} {{title}} {{senderName}} {{unsubscribeUrl}}
+Never invent names or use [Your Name]-style brackets.
+Emails: greeting "Hi {{firstName}},"; sign off {{senderName}}; end with unsubscribe paragraph:
+<p style="font-size:11px;color:#888"><a href="{{unsubscribeUrl}}">Unsubscribe</a></p>
+HTML tags only: <p>,<strong>,<em>,<a>,<br>,<ul>,<li>
 
-Always reply with ONLY a valid JSON object (no markdown, no code fences):
-  "reply": a short conversational message (answer, clarification, or suggestion). Use plain text;
-       you may mention paths like /import or /guides/import-prospects.
+RESPONSE FORMAT — reply with ONLY valid JSON (no markdown fences):
+{
+  "reply": "plain conversational answer; short paragraphs; mention paths like /lists",
   "action": one of:
-    { "type": "none" }  — Q&A, how-tos, workspace facts, clarifying questions
-    { "type": "email", "subject": "...", "html": "..." }  — when the user wants an email/template.
-       html uses only <p>,<strong>,<em>,<a>,<br>,<ul>,<li>; greeting "Hi {{firstName}},";
-       sign off {{senderName}}; end with the unsubscribe paragraph:
-       <p style="font-size:11px;color:#888"><a href="{{unsubscribeUrl}}">Unsubscribe</a></p>
-    { "type": "sequence", "name": "...", "steps": [ ... ] }  — when the user wants a cadence.
-       Each step: { "stepType": "email"|"linkedin"|"wait", "delayDays": int>=0, "delayUnit": "days",
-       "linkedinAction": "connect"|"message" (linkedin only),
-       "subject": "..." (email only), "bodyTemplate": "..." (email HTML / linkedin plain text) }.
-       4–6 steps, first delayDays 0, later steps 2–4 days apart.
-    { "type": "analysis", "title": "...", "summary": "...", "charts": [ ... ] }  — when the user
-       wants a chart/graph/visual breakdown/dashboard. Each chart:
-       { "kind": "pie"|"bar"|"line"|"area"|"table"|"metric", "title": "...",
-         "data": [ { ... } ],           // rows built from tool results
-         "xKey": "category-field",       // category/x-axis key (pie/bar/line/area)
-         "yKeys": ["value-field"],       // numeric series key(s)
-         "columns": [ { "key": "...", "label": "..." } ],  // for "table"
-         "value": 123, "unit": "credits" }.               // for "metric"
-       Example pie for credits by action:
-       { "kind": "pie", "title": "Credit usage by action", "xKey": "action", "yKeys": ["credits"],
-         "data": [ { "action": "enrichment", "credits": 120 }, { "action": "search", "credits": 40 } ] }
+    { "type": "none" }
+    { "type": "email", "subject": "...", "html": "..." }
+    { "type": "sequence", "name": "...", "steps": [ {
+        "stepType": "email"|"linkedin"|"wait", "delayDays": 0, "delayUnit": "days",
+        "linkedinAction": "connect"|"message",
+        "subject": "...", "bodyTemplate": "..."
+      } ] }  // 4–6 steps; first delayDays 0
+    { "type": "analysis", "title": "...", "summary": "...", "charts": [ {
+        "kind": "pie"|"bar"|"line"|"area"|"table"|"metric", "title": "...",
+        "data": [ {...} ], "xKey": "...", "yKeys": ["..."],
+        "columns": [{ "key": "...", "label": "..." }],
+        "value": 123, "unit": "credits"
+      } ] }
+    { "type": "navigate", "path": "/prospects/search", "label": "Open prospect search" }
+}
 
-If the user asks to tweak the current subject/body provided in context, return an "email" action
-with the full revised version. Keep copy concise and deliverability-safe.
-For pure Q&A (credits, how to import, what is AI Review, etc.) always use action type "none".`;
+When the user is on a page or a prospectId/threadId is provided in context, use that entity
+(call get_thread / get_prospect / get_list_detail as needed) before answering.
+For pure Q&A use action "none". For "take me to X" use "navigate".`;
+
 
 function coerceChatAction(raw: unknown): ChatAction {
   if (!raw || typeof raw !== "object") return { type: "none" };
@@ -203,6 +196,17 @@ function coerceChatAction(raw: unknown): ChatAction {
     if (typeof r.summary === "string" && r.summary.trim())
       action.summary = r.summary.trim().slice(0, 2000);
     return action;
+  }
+  if (r.type === "navigate") {
+    const path = typeof r.path === "string" ? r.path.trim() : "";
+    if (!path.startsWith("/")) return { type: "none" };
+    // Only allow in-app relative paths (block protocol / //).
+    if (path.includes("://") || path.startsWith("//")) return { type: "none" };
+    const label =
+      typeof r.label === "string" && r.label.trim()
+        ? r.label.trim().slice(0, 80)
+        : `Open ${path}`;
+    return { type: "navigate", path: path.slice(0, 200), label };
   }
   return { type: "none" };
 }
@@ -344,6 +348,10 @@ export class AiService {
         body?: string;
         kind?: "email" | "sequence" | "general";
         page?: string;
+        prospectId?: string;
+        threadId?: string;
+        listId?: string;
+        sequenceId?: string;
       };
       insights?: string | null;
       workspaceFacts?: string | null;
@@ -368,10 +376,22 @@ export class AiService {
     const contextLines: string[] = [];
     if (input.context?.kind) contextLines.push(`The user is working on: ${input.context.kind}.`);
     if (input.context?.page) contextLines.push(`Current page: ${input.context.page}`);
+    if (input.context?.prospectId)
+      contextLines.push(`Focused prospectId: ${input.context.prospectId} (use get_prospect if needed).`);
+    if (input.context?.threadId)
+      contextLines.push(`Focused threadId: ${input.context.threadId} (use get_thread if needed).`);
+    if (input.context?.listId)
+      contextLines.push(`Focused listId: ${input.context.listId} (use get_list_detail if needed).`);
+    if (input.context?.sequenceId)
+      contextLines.push(
+        `Focused sequenceId: ${input.context.sequenceId} (use get_sequence / get_sequence_analytics).`
+      );
     if (input.context?.subject) contextLines.push(`Current subject: ${input.context.subject}`);
     if (input.context?.body) contextLines.push(`Current body:\n${input.context.body}`);
     if (input.workspaceFacts?.trim()) {
-      contextLines.push(`Workspace facts (authoritative — do not invent beyond this):\n${input.workspaceFacts.trim()}`);
+      contextLines.push(
+        `Workspace facts (quick snapshot — prefer tools for specifics):\n${input.workspaceFacts.trim()}`
+      );
     }
     if (input.appGuides?.trim()) {
       contextLines.push(`Product guides (how Skout works):\n${input.appGuides.trim()}`);
@@ -423,8 +443,8 @@ export class AiService {
         try {
           result = await client.chat.completions.create({
             model,
-            max_tokens: 2500,
-            temperature: 0.6,
+            max_tokens: 3500,
+            temperature: 0.55,
             messages,
             ...(allowTools
               ? { tools: toolRunner!.tools, tool_choice: "auto" as const }

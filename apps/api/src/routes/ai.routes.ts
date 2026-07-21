@@ -32,6 +32,8 @@ const chatSchema = z.object({
       page: z.string().max(200).optional(),
       prospectId: z.string().min(1).max(200).optional(),
       threadId: z.string().uuid().optional(),
+      listId: z.string().uuid().optional(),
+      sequenceId: z.string().uuid().optional(),
     })
     .optional(),
 });

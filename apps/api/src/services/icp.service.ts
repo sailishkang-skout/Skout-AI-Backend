@@ -28,6 +28,10 @@ export async function getWorkspaceIcp(db: Db | null, workspaceId: string): Promi
     keywords: cfg.keywords as string[] | undefined,
     minEmployees: cfg.minEmployees as number | undefined,
     maxEmployees: cfg.maxEmployees as number | undefined,
+    companyName: typeof cfg.companyName === "string" ? cfg.companyName : undefined,
+    productDescription:
+      typeof cfg.productDescription === "string" ? cfg.productDescription : undefined,
+    customerPainPoints: cfg.customerPainPoints as string[] | undefined,
     autoRescoreOnChange: cfg.autoRescoreOnChange as boolean | undefined,
   };
 }
@@ -67,6 +71,9 @@ export function isIcpConfigured(icp: IcpConfig): boolean {
       icp.seniorities?.length ||
       icp.titles?.length ||
       icp.keywords?.length ||
+      icp.customerPainPoints?.length ||
+      icp.companyName ||
+      icp.productDescription ||
       icp.minEmployees != null ||
       icp.maxEmployees != null
   );

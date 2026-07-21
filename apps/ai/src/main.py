@@ -175,6 +175,9 @@ class IcpConfig(BaseModel):
     keywords: list[str] = []
     min_employees: Optional[int] = None
     max_employees: Optional[int] = None
+    company_name: Optional[str] = None
+    product_description: Optional[str] = None
+    customer_pain_points: list[str] = []
 
 
 class DimensionScore(BaseModel):
@@ -623,6 +626,9 @@ def _build_system_prompt(icp: IcpConfig) -> str:
 Score a B2B prospect against the ICP configuration below. Return a single JSON object — no markdown, no text outside the JSON.
 
 ## ICP Configuration
+Seller company: {icp.company_name or 'not specified'}
+Product / value prop: {icp.product_description or 'not specified'}
+Customer pains solved: {icp.customer_pain_points or 'not specified'}
 Industries (target): {icp.industries or 'not specified'}
 Seniorities (target): {icp.seniorities or 'not specified'}
 Countries / Geographies (target): {icp.countries or 'not specified'}
