@@ -335,21 +335,19 @@ export async function addProspectToList(listId, profile) {
   });
 }
 
-export async function enrichProspect(prospectId, profile) {
-  const fields = buildProspectFields(profile);
-  const response = await skoutFetch(`/api/v1/prospects/${prospectId}/enrich`, {
+export async function enrichProspect(prospectId, profile, fields = ["company", "email", "validation"]) {
+  const built = buildProspectFields(profile);
+  return skoutFetch(`/api/v1/prospects/${prospectId}/enrich`, {
     method: "POST",
     body: JSON.stringify({
-      prospect: { prospectId, ...fields },
-      fields: ["company", "email", "validation"],
+      prospect: { prospectId, ...built },
+      fields,
     }),
   });
-  const emailResult = response.results?.find((r) => r.field === "email" && r.isPrimary);
-  return {
-    ...response,
-    email: emailResult?.value ?? null,
-    emailStatus: response.results?.find((r) => r.field === "email_status")?.value ?? null,
-  };
+}
+
+export async function getEnrichJob(jobId) {
+  return skoutFetch(`/api/v1/enrichment/jobs/${jobId}`);
 }
 
 export async function scoreProspect(prospectId, profile) {

@@ -394,6 +394,18 @@
         #skout-ai-icp-badge { margin: 0 0 8px; font-size: 11px; color: #86efac; display: none; }
         #skout-ai-panel button:disabled { opacity: 0.6; cursor: wait; }
         #skout-ai-status { margin-top: 8px; font-size: 11px; color: #94a3b8; }
+        #skout-ai-field-picker { margin-bottom: 6px; }
+        #skout-ai-field-picker p { margin: 0 0 4px; font-size: 11px; color: #64748b; }
+        .skout-field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
+        .skout-field-item { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #cbd5e1; cursor: pointer; }
+        .skout-field-item input { width: auto; margin: 0; cursor: pointer; }
+        #skout-ai-enrich-results { margin-top: 6px; border: 1px solid #1e293b; border-radius: 8px; overflow: hidden; display: none; }
+        .skout-result-row { display: flex; align-items: center; gap: 6px; padding: 5px 8px; font-size: 11px; border-bottom: 1px solid #1e293b; }
+        .skout-result-row:last-child { border-bottom: 0; }
+        .skout-result-label { color: #64748b; width: 64px; flex-shrink: 0; text-transform: capitalize; }
+        .skout-result-value { flex: 1; color: #e2e8f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .skout-result-icon { flex-shrink: 0; font-size: 11px; width: 14px; text-align: center; }
+        #skout-ai-credits-hint { margin-top: 6px; font-size: 11px; color: #fcd34d; display: none; }
       </style>
       <div id="skout-ai-panel-header">
         <h2>Skout AI</h2>
@@ -404,10 +416,28 @@
       <label for="skout-ai-list-select">Target list</label>
       <select id="skout-ai-list-select"><option value="">Loading lists…</option></select>
       <button id="skout-ai-add" type="button" class="action">Add to list</button>
-      <button id="skout-ai-enrich" type="button" class="action">Enrich email</button>
+      <div id="skout-ai-field-picker">
+        <p>Enrich fields</p>
+        <div class="skout-field-grid">
+          <label class="skout-field-item"><input type="checkbox" name="enrich-field" value="company" checked> Company</label>
+          <label class="skout-field-item"><input type="checkbox" name="enrich-field" value="email" checked> Email</label>
+          <label class="skout-field-item"><input type="checkbox" name="enrich-field" value="phone"> Phone</label>
+          <label class="skout-field-item"><input type="checkbox" name="enrich-field" value="validation" checked> Validation</label>
+        </div>
+        <p id="skout-ai-phone-credit-note" style="display:none;margin:4px 0 0;font-size:11px;color:#fcd34d;">📞 Phone lookup uses additional credits.</p>
+      </div>
+      <button id="skout-ai-enrich" type="button" class="action">Enrich contact</button>
+      <div id="skout-ai-enrich-results"></div>
+      <div id="skout-ai-credits-hint"></div>
       <button id="skout-ai-score" type="button" class="action">Score ICP</button>
       <div id="skout-ai-status">Ready</div>
     `;
+
+    // Show credit warning when phone is checked (pre-flight gate).
+    panel.querySelector('input[name="enrich-field"][value="phone"]')?.addEventListener("change", (e) => {
+      const noteEl = panel.querySelector("#skout-ai-phone-credit-note");
+      if (noteEl) noteEl.style.display = e.target.checked ? "block" : "none";
+    });
 
     panel.querySelector("#skout-ai-close")?.addEventListener("click", () => {
       panel.remove();
@@ -542,17 +572,148 @@
     }
   }
 
+  const FIELD_LABELS = { company: "Company", email: "Email", phone: "Phone", validation: "Validation" };
+  const RESULT_FIELD_MAP = { company: "company", email: "email", phone: "phone", validation: "email_status" };
+
+  function showEnrichResults(panel, fields) {
+    const el = panel.querySelector("#skout-ai-enrich-results");
+    if (!el) return;
+    const esc = (s) =>
+      String(s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+    el.style.display = "block";
+    el.innerHTML = fields
+      .map(
+        (f) => `
+      <div class="skout-result-row" data-field="${esc(f)}">
+        <span class="skout-result-label">${esc(FIELD_LABELS[f] || f)}</span>
+        <span class="skout-result-value" style="color:#475569">⏳</span>
+        <span class="skout-result-icon"></span>
+      </div>`
+      )
+      .join("");
+  }
+
+  function applyEnrichResults(panel, results) {
+    const el = panel.querySelector("#skout-ai-enrich-results");
+    if (!el) return;
+    for (const row of el.querySelectorAll(".skout-result-row")) {
+      const field = row.getAttribute("data-field");
+      const apiField = RESULT_FIELD_MAP[field] || field;
+      const match = results.find(
+        (r) => r.field === apiField && (r.isPrimary !== false || apiField === "email_status")
+      );
+      const valueEl = row.querySelector(".skout-result-value");
+      const iconEl = row.querySelector(".skout-result-icon");
+      if (!match || !match.value || match.status === "not_found") {
+        if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#475569"; }
+        if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#475569"; }
+      } else {
+        if (valueEl) { valueEl.textContent = match.value; valueEl.style.color = "#e2e8f0"; }
+        if (iconEl) { iconEl.textContent = "✓"; iconEl.style.color = "#86efac"; }
+      }
+    }
+  }
+
+  // Updates only rows that have a result — rows still in-flight stay ⏳.
+  function applyPartialEnrichResults(panel, results) {
+    const el = panel.querySelector("#skout-ai-enrich-results");
+    if (!el || !results?.length) return;
+    for (const row of el.querySelectorAll(".skout-result-row")) {
+      const field = row.getAttribute("data-field");
+      const apiField = RESULT_FIELD_MAP[field] || field;
+      const match = results.find(
+        (r) => r.field === apiField && (r.isPrimary !== false || apiField === "email_status")
+      );
+      if (!match) continue;
+      const valueEl = row.querySelector(".skout-result-value");
+      const iconEl = row.querySelector(".skout-result-icon");
+      if (!match.value || match.status === "not_found") {
+        if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#475569"; }
+        if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#475569"; }
+      } else {
+        if (valueEl) { valueEl.textContent = match.value; valueEl.style.color = "#e2e8f0"; }
+        if (iconEl) { iconEl.textContent = "✓"; iconEl.style.color = "#86efac"; }
+      }
+    }
+  }
+
+  function clearEnrichResults(panel) {
+    const el = panel.querySelector("#skout-ai-enrich-results");
+    if (el) { el.style.display = "none"; el.innerHTML = ""; }
+    const hint = panel.querySelector("#skout-ai-credits-hint");
+    if (hint) { hint.style.display = "none"; hint.innerHTML = ""; }
+  }
+
   async function onEnrich(panel) {
+    const POLL_MAX = 40;
+    const POLL_INTERVAL_MS = 1_500;
+
+    const fields = Array.from(
+      panel.querySelectorAll('input[name="enrich-field"]:checked')
+    ).map((cb) => cb.value);
+
+    if (!fields.length) {
+      setPanelStatus(panel, "Select at least one field.", true);
+      return;
+    }
+
+    clearEnrichResults(panel);
+    showEnrichResults(panel, fields);
     setProfileActionsBusy(panel, true);
     setPanelStatus(panel, "Enriching…");
 
     try {
       const profile = getProfile(panel);
-      const result = await safeRuntimeSend({ type: "enrich-profile", profile });
-      if (!result?.ok) throw new Error(result?.error || "Enrich failed");
-      setPanelStatus(panel, `Enrichment started for ${result.fullName}`);
+
+      // Start enrichment — background responds immediately with jobId.
+      const started = await safeRuntimeSend({ type: "enrich-profile", profile, fields }, 45_000);
+      if (!started?.ok) {
+        const err = new Error(started?.error || "Enrich failed");
+        err.isCreditsError = started?.isCreditsError || false;
+        throw err;
+      }
+
+      let lastResults = started.results || [];
+
+      if (started.jobId && started.status !== "completed") {
+        // Poll job and update each field row as its step completes.
+        for (let i = 0; i < POLL_MAX; i++) {
+          await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+          const job = await safeRuntimeSend(
+            { type: "poll-enrich-job", jobId: started.jobId }, 5_000
+          ).catch(() => null);
+          if (job?.results?.length) {
+            applyPartialEnrichResults(panel, job.results);
+            lastResults = job.results;
+          }
+          if (job?.status === "completed" || job?.status === "failed") break;
+        }
+      }
+
+      applyEnrichResults(panel, lastResults);
+      setPanelStatus(panel, `Enriched ${started.fullName}`);
     } catch (error) {
-      setPanelStatus(panel, error instanceof Error ? error.message : "Enrich failed", true);
+      panel.querySelectorAll("#skout-ai-enrich-results .skout-result-value").forEach((el) => {
+        if (el.textContent === "⏳") { el.textContent = "—"; el.style.color = "#475569"; }
+      });
+      const msg = error instanceof Error ? error.message : "Enrich failed";
+      const isCreditsError =
+        error?.isCreditsError ||
+        msg.includes("credit") || msg.includes("Credit") || msg.includes("402") || msg.includes("insufficient");
+      if (isCreditsError) {
+        const hint = panel.querySelector("#skout-ai-credits-hint");
+        if (hint) {
+          hint.style.display = "block";
+          hint.innerHTML = `⚠ Insufficient credits — <a href="#" target="_blank" rel="noopener" style="color:#60a5fa;text-decoration:underline">top up in Skout →</a>`;
+          chrome.storage.sync.get(["webUrl"]).then(({ webUrl }) => {
+            const link = hint.querySelector("a");
+            if (link && webUrl) link.href = `${webUrl.replace(/\/$/, "")}/billing`;
+          }).catch(() => undefined);
+        }
+        setPanelStatus(panel, "Insufficient credits.", true);
+      } else {
+        setPanelStatus(panel, msg, true);
+      }
     } finally {
       setProfileActionsBusy(panel, false);
     }

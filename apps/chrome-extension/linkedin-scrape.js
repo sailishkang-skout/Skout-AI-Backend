@@ -586,8 +586,8 @@
       companyName = merged.companyName;
     }
 
-    const location = locationFromDom() || clean(embedded.location);
-    const { city, state, country } = splitLocation(location);
+    const profileLocation = locationFromDom() || clean(embedded.location);
+    const { city, state, country } = splitLocation(profileLocation);
     const about = aboutFromDom() || clean(embedded.about);
     const connections = connectionsFromDom();
     const followers = followersFromDom();
@@ -599,7 +599,7 @@
       companyName: clean(companyName),
       linkedinUrl,
       headline: clean(headline),
-      location,
+      location: profileLocation,
       city,
       state,
       country,
