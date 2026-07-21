@@ -11,6 +11,7 @@ export * from "./inbox.js";
 export * from "./integrations.js";
 export * from "./billing.js";
 export * from "./suppressions.js";
+export * from "./crm.js";
 export * from "./linkedin-accounts.js";
 export * from "./invites.js";
 export * from "./invite-auth.js";

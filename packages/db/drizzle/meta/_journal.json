@@ -160,14 +160,28 @@
       "idx": 22,
       "version": "7",
       "when": 1784700000000,
-      "tag": "0022_pain_points",
+      "tag": "0022_crm_entities",
       "breakpoints": true
     },
     {
       "idx": 23,
       "version": "7",
       "when": 1784800000000,
-      "tag": "0023_invite_auth",
+      "tag": "0023_meetings",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1784900000000,
+      "tag": "0024_pain_points",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1785000000000,
+      "tag": "0025_invite_auth",
       "breakpoints": true
     }
   ]

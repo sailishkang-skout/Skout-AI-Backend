@@ -1,57 +1,57 @@
 import type { FastifyInstance } from "fastify";
-import { companyCreateSchema, companyListQuerySchema, companyUpdateSchema } from "@skout/shared";
+import { taskCreateSchema, taskListQuerySchema, taskUpdateSchema } from "@skout/shared";
 import { HttpError } from "@skout/auth";
 import { parseIdParam } from "../utils/http.js";
 import { requireRole } from "../utils/require-role.js";
-import { buildCompaniesService } from "../services/companies.service.js";
+import { buildTasksService } from "../services/tasks.service.js";
 
-export async function companiesRoutes(app: FastifyInstance) {
-  const service = () => buildCompaniesService(app.db ?? null);
+export async function tasksRoutes(app: FastifyInstance) {
+  const service = () => buildTasksService(app.db ?? null);
 
-  app.get("/companies", async (request) => {
+  app.get("/tasks", async (request) => {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
     if (!svc) return { data: [], total: 0, workspaceId };
 
-    const query = companyListQuerySchema.parse(request.query);
+    const query = taskListQuerySchema.parse(request.query);
     const result = await svc.list(workspaceId, query);
     return { ...result, workspaceId };
   });
 
-  app.post("/companies", async (request, reply) => {
+  app.post("/tasks", async (request, reply) => {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
 
-    const input = companyCreateSchema.parse(request.body);
-    const company = await svc.create(workspaceId, input);
-    return reply.code(201).send(company);
+    const input = taskCreateSchema.parse(request.body);
+    const task = await svc.create(workspaceId, request.userId, input);
+    return reply.code(201).send(task);
   });
 
-  app.get("/companies/:id", async (request, reply) => {
+  app.patch("/tasks/:id", async (request, reply) => {
     const id = parseIdParam(request);
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
 
-    const company = await svc.getById(workspaceId, id);
-    if (!company) throw new HttpError("company_not_found", 404);
-    return reply.send(company);
+    const input = taskUpdateSchema.parse(request.body);
+    const task = await svc.update(workspaceId, id, input);
+    if (!task) throw new HttpError("task_not_found", 404);
+    return reply.send(task);
   });
 
-  app.patch("/companies/:id", async (request, reply) => {
+  app.post("/tasks/:id/complete", async (request, reply) => {
     const id = parseIdParam(request);
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
 
-    const input = companyUpdateSchema.parse(request.body);
-    const company = await svc.update(workspaceId, id, input);
-    if (!company) throw new HttpError("company_not_found", 404);
-    return reply.send(company);
+    const task = await svc.complete(workspaceId, id);
+    if (!task) throw new HttpError("task_not_found", 404);
+    return reply.send(task);
   });
 
-  app.delete("/companies/:id", async (request, reply) => {
+  app.delete("/tasks/:id", async (request, reply) => {
     const id = parseIdParam(request);
     const workspaceId = request.workspaceId ?? "unknown";
     requireRole(request, ["owner", "admin"]);
@@ -59,7 +59,7 @@ export async function companiesRoutes(app: FastifyInstance) {
     if (!svc) throw new HttpError("database_unavailable", 503);
 
     const deleted = await svc.softDelete(workspaceId, id);
-    if (!deleted) throw new HttpError("company_not_found", 404);
+    if (!deleted) throw new HttpError("task_not_found", 404);
     return reply.code(204).send();
   });
 }

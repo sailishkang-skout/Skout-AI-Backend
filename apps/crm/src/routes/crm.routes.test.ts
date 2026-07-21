@@ -58,6 +58,90 @@ describe("contacts routes (unit)", () => {
   });
 });
 
+describe("pipelines routes (unit)", () => {
+  it("GET /pipelines returns empty scaffold list without a database", async () => {
+    const app = await buildRouteTestApp();
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/pipelines",
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { data: unknown[]; total: number };
+    expect(body.data).toEqual([]);
+    expect(body.total).toBe(0);
+
+    await app.close();
+  });
+});
+
+describe("tasks routes (unit)", () => {
+  it("GET /tasks returns empty scaffold list without a database", async () => {
+    const app = await buildRouteTestApp();
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/tasks",
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { total: number }).total).toBe(0);
+
+    await app.close();
+  });
+});
+
+describe("activities routes (unit)", () => {
+  it("GET /activities returns empty scaffold list without a database", async () => {
+    const app = await buildRouteTestApp();
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/activities?entityType=deal&entityId=aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee",
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { total: number }).total).toBe(0);
+
+    await app.close();
+  });
+});
+
+describe("meetings routes (unit)", () => {
+  it("GET /meetings returns empty scaffold list without a database", async () => {
+    const app = await buildRouteTestApp();
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/meetings",
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { total: number }).total).toBe(0);
+
+    await app.close();
+  });
+});
+
+describe("dashboard routes (unit)", () => {
+  it("GET /dashboard/overview returns zeroed overview without a database", async () => {
+    const app = await buildRouteTestApp();
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/dashboard/overview",
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      companies: 0,
+      contacts: 0,
+      openDeals: 0,
+      openTasks: 0,
+      upcomingMeetings: 0,
+      recentActivities: [],
+    });
+
+    await app.close();
+  });
+});
+
 describe.skipIf(!hasDatabase)("CRM routes (integration)", () => {
   let app: FastifyInstance;
 

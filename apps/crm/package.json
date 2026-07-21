@@ -25,6 +25,7 @@
     "@skout/observability": "workspace:*",
     "@skout/shared": "workspace:*",
     "dotenv": "^16.4.7",
+    "drizzle-orm": "^0.44.2",
     "fastify": "^5.1.0",
     "fastify-plugin": "^5.0.1",
     "zod": "^3.23.8"

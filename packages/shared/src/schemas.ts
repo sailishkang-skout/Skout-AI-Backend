@@ -393,6 +393,365 @@ export type UpdateSequenceInput = z.infer<typeof updateSequenceSchema>;
 export type CreateSequenceStepInput = z.infer<typeof createSequenceStepSchema>;
 export type UpdateSequenceStepInput = z.infer<typeof updateSequenceStepSchema>;
 
+// --- CRM (native companies/contacts/deals/pipelines/tasks/activities) ---
+
+export const paginationQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+export const companyListQuerySchema = paginationQuerySchema.extend({
+  ownerId: z.string().uuid().optional(),
+});
+
+export const contactListQuerySchema = paginationQuerySchema.extend({
+  companyId: z.string().uuid().optional(),
+});
+
+export const dealListQuerySchema = paginationQuerySchema.extend({
+  stageId: z.string().uuid().optional(),
+  status: z.enum(["open", "won", "lost"]).optional(),
+  ownerId: z.string().uuid().optional(),
+});
+
+export const taskListQuerySchema = paginationQuerySchema.extend({
+  assignedTo: z.string().uuid().optional(),
+  status: z.enum(["open", "done"]).optional(),
+  relatedEntityType: z.enum(["contact", "company", "deal"]).optional(),
+  relatedEntityId: z.string().uuid().optional(),
+});
+
+export const activityListQuerySchema = paginationQuerySchema.extend({
+  entityType: z.enum(["contact", "company", "deal"]),
+  entityId: z.string().uuid(),
+});
+
+export const COMPANY_STATUSES = ["active", "customer", "churned"] as const;
+export const CONTACT_LIFECYCLE_STAGES = ["lead", "mql", "sql", "customer"] as const;
+export const DEAL_STATUSES = ["open", "won", "lost"] as const;
+export const TASK_PRIORITIES = ["low", "medium", "high"] as const;
+export const TASK_STATUSES = ["open", "done"] as const;
+export const CRM_ENTITY_TYPES = ["contact", "company", "deal"] as const;
+export const ACTIVITY_TYPES = ["note", "call", "email", "meeting", "stage_change"] as const;
+
+export const companyCreateSchema = z.object({
+  name: z.string().min(1).max(255),
+  domain: z.string().max(255).optional(),
+  industry: z.string().max(255).optional(),
+  employeeCount: z.number().int().min(0).optional(),
+  revenue: z.number().min(0).optional(),
+  location: z.string().max(255).optional(),
+  ownerId: z.string().uuid().optional(),
+  status: z.enum(COMPANY_STATUSES).default("active"),
+  sourceProspectCompanyId: z.string().optional(),
+});
+
+export const companyUpdateSchema = companyCreateSchema
+  .partial()
+  .refine((d) => Object.values(d).some((v) => v !== undefined), {
+    message: "At least one field is required",
+  });
+
+export const companyResponseSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  name: z.string(),
+  domain: z.string().nullable(),
+  industry: z.string().nullable(),
+  employeeCount: z.number().nullable(),
+  revenue: z.number().nullable(),
+  location: z.string().nullable(),
+  ownerId: z.string().uuid().nullable(),
+  status: z.enum(COMPANY_STATUSES),
+  sourceProspectCompanyId: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const contactCreateSchema = z.object({
+  firstName: z.string().min(1).max(255),
+  lastName: z.string().max(255).optional(),
+  email: z.string().email().optional(),
+  phone: z.string().max(50).optional(),
+  title: z.string().max(255).optional(),
+  linkedinUrl: z.string().url().optional(),
+  companyId: z.string().uuid().optional(),
+  ownerId: z.string().uuid().optional(),
+  lifecycleStage: z.enum(CONTACT_LIFECYCLE_STAGES).default("lead"),
+  sourceProspectId: z.string().optional(),
+});
+
+export const contactUpdateSchema = contactCreateSchema
+  .partial()
+  .refine((d) => Object.values(d).some((v) => v !== undefined), {
+    message: "At least one field is required",
+  });
+
+export const contactResponseSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  companyId: z.string().uuid().nullable(),
+  firstName: z.string(),
+  lastName: z.string().nullable(),
+  email: z.string().nullable(),
+  phone: z.string().nullable(),
+  title: z.string().nullable(),
+  linkedinUrl: z.string().nullable(),
+  ownerId: z.string().uuid().nullable(),
+  lifecycleStage: z.enum(CONTACT_LIFECYCLE_STAGES),
+  sourceProspectId: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const pipelineCreateSchema = z.object({
+  name: z.string().min(1).max(255),
+});
+
+export const pipelineStageCreateSchema = z.object({
+  name: z.string().min(1).max(255),
+  orderIndex: z.number().int().min(0),
+  probability: z.number().int().min(0).max(100).default(0),
+  isClosedWon: z.boolean().default(false),
+  isClosedLost: z.boolean().default(false),
+});
+
+export const pipelineStageResponseSchema = z.object({
+  id: z.string().uuid(),
+  pipelineId: z.string().uuid(),
+  name: z.string(),
+  orderIndex: z.number(),
+  probability: z.number(),
+  isClosedWon: z.boolean(),
+  isClosedLost: z.boolean(),
+});
+
+export const pipelineResponseSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  name: z.string(),
+  isDefault: z.boolean(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  stages: z.array(pipelineStageResponseSchema),
+});
+
+export const dealCreateSchema = z.object({
+  name: z.string().min(1).max(255),
+  companyId: z.string().uuid(),
+  pipelineId: z.string().uuid().optional(),
+  stageId: z.string().uuid().optional(),
+  ownerId: z.string().uuid().optional(),
+  amount: z.number().min(0).optional(),
+  currency: z.string().length(3).default("USD"),
+  closeDate: z.string().date().optional(),
+  probability: z.number().int().min(0).max(100).optional(),
+});
+
+export const dealUpdateSchema = z
+  .object({
+    name: z.string().min(1).max(255).optional(),
+    companyId: z.string().uuid().optional(),
+    pipelineId: z.string().uuid().optional(),
+    stageId: z.string().uuid().optional(),
+    ownerId: z.string().uuid().optional(),
+    amount: z.number().min(0).optional(),
+    currency: z.string().length(3).optional(),
+    closeDate: z.string().date().optional(),
+    probability: z.number().int().min(0).max(100).optional(),
+    status: z.enum(DEAL_STATUSES).optional(),
+  })
+  .refine((d) => Object.values(d).some((v) => v !== undefined), {
+    message: "At least one field is required",
+  });
+
+export const dealResponseSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  companyId: z.string().uuid().nullable(),
+  pipelineId: z.string().uuid(),
+  stageId: z.string().uuid(),
+  ownerId: z.string().uuid().nullable(),
+  name: z.string(),
+  amount: z.number().nullable(),
+  currency: z.string(),
+  closeDate: z.string().nullable(),
+  probability: z.number().nullable(),
+  status: z.enum(DEAL_STATUSES),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const dealsSummaryResponseSchema = z.object({
+  workspaceId: z.string().uuid(),
+  openDeals: z.number(),
+  pipelineValue: z.number(),
+  currency: z.string(),
+  stages: z.array(
+    z.object({
+      stageId: z.string().uuid(),
+      name: z.string(),
+      count: z.number(),
+      value: z.number(),
+    })
+  ),
+});
+
+export const taskCreateSchema = z.object({
+  title: z.string().min(1).max(255),
+  assignedTo: z.string().uuid().optional(),
+  relatedEntityType: z.enum(CRM_ENTITY_TYPES).optional(),
+  relatedEntityId: z.string().uuid().optional(),
+  dueDate: z.string().datetime().optional(),
+  priority: z.enum(TASK_PRIORITIES).default("medium"),
+});
+
+export const taskUpdateSchema = z
+  .object({
+    title: z.string().min(1).max(255).optional(),
+    assignedTo: z.string().uuid().optional(),
+    relatedEntityType: z.enum(CRM_ENTITY_TYPES).optional(),
+    relatedEntityId: z.string().uuid().optional(),
+    dueDate: z.string().datetime().optional(),
+    priority: z.enum(TASK_PRIORITIES).optional(),
+    status: z.enum(TASK_STATUSES).optional(),
+  })
+  .refine((d) => Object.values(d).some((v) => v !== undefined), {
+    message: "At least one field is required",
+  });
+
+export const taskResponseSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  assignedTo: z.string().uuid().nullable(),
+  relatedEntityType: z.enum(CRM_ENTITY_TYPES).nullable(),
+  relatedEntityId: z.string().uuid().nullable(),
+  title: z.string(),
+  dueDate: z.string().nullable(),
+  priority: z.enum(TASK_PRIORITIES),
+  status: z.enum(TASK_STATUSES),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const activityCreateSchema = z.object({
+  entityType: z.enum(CRM_ENTITY_TYPES),
+  entityId: z.string().uuid(),
+  activityType: z.enum(ACTIVITY_TYPES),
+  subject: z.string().max(500).optional(),
+  body: z.string().optional(),
+});
+
+export const activityResponseSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  entityType: z.enum(CRM_ENTITY_TYPES),
+  entityId: z.string().uuid(),
+  activityType: z.enum(ACTIVITY_TYPES),
+  subject: z.string().nullable(),
+  body: z.string().nullable(),
+  ownerId: z.string().uuid().nullable(),
+  occurredAt: z.string().datetime(),
+  createdAt: z.string().datetime(),
+});
+
+export const MEETING_TYPES = ["call", "video", "in_person"] as const;
+
+export const meetingListQuerySchema = paginationQuerySchema.extend({
+  dealId: z.string().uuid().optional(),
+  contactId: z.string().uuid().optional(),
+  companyId: z.string().uuid().optional(),
+});
+
+export const meetingCreateSchema = z.object({
+  title: z.string().min(1).max(255),
+  scheduledAt: z.string().datetime(),
+  durationMinutes: z.number().int().min(0).optional(),
+  meetingType: z.enum(MEETING_TYPES).default("call"),
+  contactId: z.string().uuid().optional(),
+  companyId: z.string().uuid().optional(),
+  dealId: z.string().uuid().optional(),
+  organizerId: z.string().uuid().optional(),
+  summary: z.string().optional(),
+  outcome: z.string().optional(),
+});
+
+export const meetingUpdateSchema = z
+  .object({
+    title: z.string().min(1).max(255).optional(),
+    scheduledAt: z.string().datetime().optional(),
+    durationMinutes: z.number().int().min(0).optional(),
+    meetingType: z.enum(MEETING_TYPES).optional(),
+    contactId: z.string().uuid().optional(),
+    companyId: z.string().uuid().optional(),
+    dealId: z.string().uuid().optional(),
+    organizerId: z.string().uuid().optional(),
+    summary: z.string().optional(),
+    outcome: z.string().optional(),
+  })
+  .refine((d) => Object.values(d).some((v) => v !== undefined), {
+    message: "At least one field is required",
+  });
+
+export const meetingResponseSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  contactId: z.string().uuid().nullable(),
+  companyId: z.string().uuid().nullable(),
+  dealId: z.string().uuid().nullable(),
+  organizerId: z.string().uuid().nullable(),
+  title: z.string(),
+  scheduledAt: z.string().datetime(),
+  durationMinutes: z.number().nullable(),
+  meetingType: z.enum(MEETING_TYPES),
+  summary: z.string().nullable(),
+  outcome: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const dashboardOverviewResponseSchema = z.object({
+  workspaceId: z.string().uuid(),
+  companies: z.number(),
+  contacts: z.number(),
+  openDeals: z.number(),
+  pipelineValue: z.number(),
+  currency: z.string(),
+  openTasks: z.number(),
+  overdueTasks: z.number(),
+  upcomingMeetings: z.number(),
+  recentActivities: z.array(activityResponseSchema),
+});
+
+export type PaginationQuery = z.infer<typeof paginationQuerySchema>;
+export type MeetingType = (typeof MEETING_TYPES)[number];
+export type MeetingListQuery = z.infer<typeof meetingListQuerySchema>;
+export type MeetingCreateInput = z.infer<typeof meetingCreateSchema>;
+export type MeetingUpdateInput = z.infer<typeof meetingUpdateSchema>;
+export type CompanyListQuery = z.infer<typeof companyListQuerySchema>;
+export type ContactListQuery = z.infer<typeof contactListQuerySchema>;
+export type DealListQuery = z.infer<typeof dealListQuerySchema>;
+export type TaskListQuery = z.infer<typeof taskListQuerySchema>;
+export type ActivityListQuery = z.infer<typeof activityListQuerySchema>;
+export type CompanyStatus = (typeof COMPANY_STATUSES)[number];
+export type ContactLifecycleStage = (typeof CONTACT_LIFECYCLE_STAGES)[number];
+export type DealStatus = (typeof DEAL_STATUSES)[number];
+export type TaskPriority = (typeof TASK_PRIORITIES)[number];
+export type TaskStatus = (typeof TASK_STATUSES)[number];
+export type CrmEntityType = (typeof CRM_ENTITY_TYPES)[number];
+export type ActivityType = (typeof ACTIVITY_TYPES)[number];
+export type CompanyCreateInput = z.infer<typeof companyCreateSchema>;
+export type CompanyUpdateInput = z.infer<typeof companyUpdateSchema>;
+export type ContactCreateInput = z.infer<typeof contactCreateSchema>;
+export type ContactUpdateInput = z.infer<typeof contactUpdateSchema>;
+export type PipelineCreateInput = z.infer<typeof pipelineCreateSchema>;
+export type PipelineStageCreateInput = z.infer<typeof pipelineStageCreateSchema>;
+export type DealCreateInput = z.infer<typeof dealCreateSchema>;
+export type DealUpdateInput = z.infer<typeof dealUpdateSchema>;
+export type TaskCreateInput = z.infer<typeof taskCreateSchema>;
+export type TaskUpdateInput = z.infer<typeof taskUpdateSchema>;
+export type ActivityCreateInput = z.infer<typeof activityCreateSchema>;
+
 export type ProspectSummary = z.infer<typeof prospectSummarySchema>;
 export type ProspectDetail = z.infer<typeof prospectDetailSchema>;
 export type SearchProspectsRequest = z.infer<typeof searchProspectsRequestSchema>;
