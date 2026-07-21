@@ -36,6 +36,34 @@ export interface IcpConfig {
   customerPainPoints?: string[];
   /** When false, saving ICP does not enqueue a workspace-wide re-score. Default: true. */
   autoRescoreOnChange?: boolean;
+  /** Raw answers captured by the signup onboarding wizard (stored alongside the derived ICP). */
+  onboarding?: OnboardingProfile;
+}
+
+/** Structured answers from the signup onboarding wizard. */
+export interface OnboardingProfile {
+  company?: {
+    name?: string;
+    industry?: string;
+    size?: string;
+    website?: string;
+  };
+  goals?: string[];
+  icp?: {
+    industries?: string[];
+    employeeRanges?: string[];
+    countries?: string[];
+    revenue?: string;
+  };
+  people?: {
+    departments?: string[];
+    seniorities?: string[];
+    titles?: string[];
+  };
+  market?: string[];
+  crm?: string;
+  leadVolume?: string;
+  completedAt?: string;
 }
 
 export interface DimensionScore {

@@ -8,6 +8,37 @@ import {
 } from "../services/icp.service.js";
 import { startWorkspaceRescoreIfEnabled } from "../services/workspace-rescore.service.js";
 
+const onboardingSchema = z.object({
+  company: z
+    .object({
+      name: z.string().max(200).optional(),
+      industry: z.string().max(100).optional(),
+      size: z.string().max(50).optional(),
+      website: z.string().max(300).optional(),
+    })
+    .optional(),
+  goals: z.array(z.string().max(100)).max(20).optional(),
+  icp: z
+    .object({
+      industries: z.array(z.string().max(100)).max(50).optional(),
+      employeeRanges: z.array(z.string().max(50)).max(20).optional(),
+      countries: z.array(z.string().max(100)).max(50).optional(),
+      revenue: z.string().max(50).optional(),
+    })
+    .optional(),
+  people: z
+    .object({
+      departments: z.array(z.string().max(100)).max(30).optional(),
+      seniorities: z.array(z.string().max(50)).max(20).optional(),
+      titles: z.array(z.string().max(100)).max(50).optional(),
+    })
+    .optional(),
+  market: z.array(z.string().max(50)).max(20).optional(),
+  crm: z.string().max(100).optional(),
+  leadVolume: z.string().max(50).optional(),
+  completedAt: z.string().max(50).optional(),
+});
+
 const icpSchema = z.object({
   industries: z.array(z.string()).optional(),
   countries: z.array(z.string()).optional(),
@@ -20,6 +51,7 @@ const icpSchema = z.object({
   productDescription: z.string().max(2000).optional(),
   customerPainPoints: z.array(z.string()).optional(),
   autoRescoreOnChange: z.boolean().optional(),
+  onboarding: onboardingSchema.optional(),
 });
 
 export async function icpRoutes(app: FastifyInstance) {

@@ -1,7 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
-import type { IcpConfig } from "./enrichment/ai-client.js";
+import type { IcpConfig, OnboardingProfile } from "./enrichment/ai-client.js";
 
 const { workspaceIcp } = schema;
 
@@ -33,6 +33,7 @@ export async function getWorkspaceIcp(db: Db | null, workspaceId: string): Promi
       typeof cfg.productDescription === "string" ? cfg.productDescription : undefined,
     customerPainPoints: cfg.customerPainPoints as string[] | undefined,
     autoRescoreOnChange: cfg.autoRescoreOnChange as boolean | undefined,
+    onboarding: cfg.onboarding as OnboardingProfile | undefined,
   };
 }
 
