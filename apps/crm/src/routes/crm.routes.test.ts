@@ -105,6 +105,60 @@ describe("activities routes (unit)", () => {
   });
 });
 
+describe("audit routes (unit)", () => {
+  it("GET /audit-logs returns empty scaffold list without a database", async () => {
+    const app = await buildRouteTestApp();
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/audit-logs?entityType=company&entityId=aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { data: unknown[] }).data).toEqual([]);
+
+    await app.close();
+  });
+
+  it("GET /audit-logs rejects invalid entityId with a 400 validation error", async () => {
+    const app = await buildRouteTestApp();
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/audit-logs?entityType=deal&entityId=invalid-id`,
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: "validation_error" });
+
+    await app.close();
+  });
+
+  it("GET /audit-logs rejects invalid entityType with a 400 validation error", async () => {
+    const app = await buildRouteTestApp();
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/audit-logs?entityType=invalid&entityId=aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee`,
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: "validation_error" });
+
+    await app.close();
+  });
+
+  it("GET /audit-logs without required query params returns a 400 validation error", async () => {
+    const app = await buildRouteTestApp();
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/audit-logs`,
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: "validation_error" });
+
+    await app.close();
+  });
+});
+
 describe("meetings routes (unit)", () => {
   it("GET /meetings returns empty scaffold list without a database", async () => {
     const app = await buildRouteTestApp();

@@ -4,6 +4,7 @@ import { schema } from "@skout/db";
 import type { PipelineCreateInput, PipelineStageCreateInput } from "@skout/shared";
 import { HttpError } from "@skout/auth";
 import { pgErrorCode } from "../utils/http.js";
+import type { AuditService } from "./audit.service.js";
 
 const { pipelines, pipelineStages } = schema;
 
@@ -49,7 +50,10 @@ function stageToDto(row: typeof pipelineStages.$inferSelect): PipelineStageDto {
 }
 
 export class PipelinesService {
-  constructor(private readonly db: Db) {}
+  constructor(
+    private readonly db: Db,
+    private readonly auditService: AuditService
+  ) {}
 
   private async withStages(row: typeof pipelines.$inferSelect): Promise<PipelineDto> {
     const stageRows = await this.db
@@ -83,9 +87,11 @@ export class PipelinesService {
     return row ? this.withStages(row) : null;
   }
 
-  async create(workspaceId: string, input: PipelineCreateInput): Promise<PipelineDto> {
+  async create(workspaceId: string, actorId: string | undefined, input: PipelineCreateInput): Promise<PipelineDto> {
     const [row] = await this.db.insert(pipelines).values({ workspaceId, name: input.name }).returning();
-    return this.withStages(row);
+    const dto = await this.withStages(row);
+    await this.auditService.record(workspaceId, actorId, "create", "pipeline", dto.id, null, dto);
+    return dto;
   }
 
   async addStage(workspaceId: string, pipelineId: string, input: PipelineStageCreateInput): Promise<PipelineStageDto> {
@@ -160,6 +166,6 @@ export class PipelinesService {
   }
 }
 
-export function buildPipelinesService(db: Db | null): PipelinesService | null {
-  return db ? new PipelinesService(db) : null;
+export function buildPipelinesService(db: Db | null, auditService: AuditService | null): PipelinesService | null {
+  return db && auditService ? new PipelinesService(db, auditService) : null;
 }

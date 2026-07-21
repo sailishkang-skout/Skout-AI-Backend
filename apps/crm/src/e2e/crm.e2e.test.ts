@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb, schema, type Db } from "@skout/db";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
+import { buildAuditService } from "../services/audit.service.js";
 import type { FastifyInstance } from "fastify";
 
 const hasDatabase = Boolean(process.env.DATABASE_URL);
@@ -70,6 +71,16 @@ describe.skipIf(!hasDatabase)("CRM service E2E", () => {
     return res.json() as { id: string; workspaceId: string };
   }
 
+  async function getAuditLogs(headers: Record<string, string>, entityType: string, entityId: string) {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/audit-logs?entityType=${entityType}&entityId=${entityId}`,
+      headers,
+    });
+    expect(res.statusCode).toBe(200);
+    return res.json() as { data: { action: string; beforeState: unknown; afterState: unknown }[]; total: number };
+  }
+
   it("health → companies → deals summary flow for one workspace", async () => {
     const email = "crm-e2e@test.com";
     const headers = asUser(email);
@@ -120,6 +131,160 @@ describe.skipIf(!hasDatabase)("CRM service E2E", () => {
       headers,
     });
     expect(getAfterDelete.statusCode).toBe(404);
+  });
+
+  it("companies: audit log records create and update operations exactly once", async () => {
+    const headers = asUser("crm-audit-companies@test.com");
+    const company = await createCompany(headers, "Audit Co");
+
+    const update = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/companies/${company.id}`,
+      headers,
+      payload: { industry: "SaaS" },
+    });
+    expect(update.statusCode).toBe(200);
+
+    const auditRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/audit-logs?entityType=company&entityId=${company.id}`,
+      headers,
+    });
+    expect(auditRes.statusCode).toBe(200);
+
+    const auditBody = auditRes.json() as { data: { action: string; beforeState: unknown; afterState: unknown }[] };
+    expect(auditBody.data).toHaveLength(2);
+    expect(auditBody.data[0].action).toBe("create");
+    expect(auditBody.data[0].beforeState).toBeNull();
+    expect(auditBody.data[0].afterState).toMatchObject({ id: company.id, name: "Audit Co" });
+    expect(auditBody.data[1].action).toBe("update");
+    expect(auditBody.data[1].beforeState).toMatchObject({ id: company.id, name: "Audit Co" });
+    expect(auditBody.data[1].afterState).toMatchObject({ id: company.id, name: "Audit Co", industry: "SaaS" });
+  });
+
+  it("companies: multiple consecutive updates generate exactly one audit row per successful patch", async () => {
+    const headers = asUser("crm-audit-multi-update@test.com");
+    const company = await createCompany(headers, "Multi Update Co");
+
+    const firstPatch = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/companies/${company.id}`,
+      headers,
+      payload: { industry: "SaaS" },
+    });
+    expect(firstPatch.statusCode).toBe(200);
+
+    const secondPatch = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/companies/${company.id}`,
+      headers,
+      payload: { location: "Austin, TX" },
+    });
+    expect(secondPatch.statusCode).toBe(200);
+
+    const auditBody = await getAuditLogs(headers, "company", company.id);
+    expect(auditBody.total).toBe(3);
+    expect(auditBody.data).toHaveLength(3);
+    expect(auditBody.data.map((entry) => entry.action)).toEqual(["create", "update", "update"]);
+    expect(auditBody.data[0].createdAt).toBeDefined();
+    expect(auditBody.data[1].createdAt).toBeDefined();
+    expect(auditBody.data[2].createdAt).toBeDefined();
+    expect(new Date(auditBody.data[0].createdAt as string).getTime()).toBeLessThanOrEqual(
+      new Date(auditBody.data[1].createdAt as string).getTime()
+    );
+    expect(new Date(auditBody.data[1].createdAt as string).getTime()).toBeLessThanOrEqual(
+      new Date(auditBody.data[2].createdAt as string).getTime()
+    );
+  });
+
+  it("companies: no-op update does not create additional audit rows", async () => {
+    const headers = asUser("crm-audit-noop@test.com");
+    const company = await createCompany(headers, "Noop Co");
+
+    const noopPatch = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/companies/${company.id}`,
+      headers,
+      payload: { name: "Noop Co" },
+    });
+    expect(noopPatch.statusCode).toBe(200);
+
+    const auditBody = await getAuditLogs(headers, "company", company.id);
+    expect(auditBody.total).toBe(1);
+    expect(auditBody.data).toHaveLength(1);
+    expect(auditBody.data[0].action).toBe("create");
+  });
+
+  it("companies: failed update does not append an audit log", async () => {
+    const headers = asUser("crm-audit-failed-update@test.com");
+    const company = await createCompany(headers, "Failed Update Co");
+
+    const beforeLogs = await getAuditLogs(headers, "company", company.id);
+    expect(beforeLogs.total).toBe(1);
+
+    const failedPatch = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/companies/${company.id}`,
+      headers,
+      payload: { ownerId: randomUUID() },
+    });
+    expect(failedPatch.statusCode).toBe(500);
+
+    const afterLogs = await getAuditLogs(headers, "company", company.id);
+    expect(afterLogs.total).toBe(1);
+    expect(afterLogs.data).toHaveLength(1);
+    expect(afterLogs.data[0].action).toBe("create");
+  });
+
+  it("audit service stores null actorId and large nested payloads without serialization issues", async () => {
+    const headers = asUser("crm-audit-null-actor@test.com");
+    const company = await createCompany(headers, "Audit Payload Co");
+    const nestedBefore = {
+      profile: {
+        tags: ["a", "b", "c"],
+        meta: { deep: { value: "x" } },
+      },
+      large: Array.from({ length: 60 }, (_, index) => ({ index, nested: { ok: true, value: `item-${index}` } })),
+    };
+    const nestedAfter = {
+      ...nestedBefore,
+      profile: { ...nestedBefore.profile, meta: { deep: { value: "y" } } },
+    };
+
+    const auditService = buildAuditService(db);
+    await auditService?.record(company.workspaceId, undefined, "update", "company", company.id, nestedBefore, nestedAfter);
+
+    const auditBody = await getAuditLogs(headers, "company", company.id);
+    expect(auditBody.total).toBe(2);
+    expect(auditBody.data).toHaveLength(2);
+    expect(auditBody.data[0].action).toBe("create");
+    expect(auditBody.data[1].action).toBe("update");
+    expect(auditBody.data[1].beforeState).toMatchObject(nestedBefore);
+    expect(auditBody.data[1].afterState).toMatchObject(nestedAfter);
+  });
+
+  it("companies: concurrent updates each create one audit record", async () => {
+    const headers = asUser(`crm-audit-concurrent-${randomUUID()}@test.com`);
+    const company = await createCompany(headers, "Concurrent Co");
+
+    await Promise.all([
+      app.inject({
+        method: "PATCH",
+        url: `/api/v1/companies/${company.id}`,
+        headers,
+        payload: { industry: "SaaS" },
+      }),
+      app.inject({
+        method: "PATCH",
+        url: `/api/v1/companies/${company.id}`,
+        headers,
+        payload: { location: "Seattle, WA" },
+      }),
+    ]);
+
+    const auditBody = await getAuditLogs(headers, "company", company.id);
+    expect(auditBody.total).toBe(3);
+    expect(auditBody.data.filter((entry) => entry.action === "update")).toHaveLength(2);
   });
 
   it("contacts: create under a company, update, delete", async () => {

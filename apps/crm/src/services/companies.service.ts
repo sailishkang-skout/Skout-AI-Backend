@@ -2,6 +2,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { CompanyCreateInput, CompanyUpdateInput } from "@skout/shared";
+import { buildAuditService, type AuditService } from "./audit.service.js";
 
 const { companies } = schema;
 
@@ -39,8 +40,18 @@ function toDto(row: typeof companies.$inferSelect): CompanyDto {
   };
 }
 
+function hasMeaningfulChanges(existing: CompanyDto, patch: Partial<CompanyDto>): boolean {
+  return Object.entries(patch).some(([key, value]) => {
+    const existingValue = existing[key as keyof CompanyDto];
+    return JSON.stringify(existingValue) !== JSON.stringify(value);
+  });
+}
+
 export class CompaniesService {
-  constructor(private readonly db: Db) {}
+  constructor(
+    private readonly db: Db,
+    private readonly auditService: AuditService
+  ) {}
 
   async list(
     workspaceId: string,
@@ -73,59 +84,95 @@ export class CompaniesService {
     return row ? toDto(row) : null;
   }
 
-  async create(workspaceId: string, input: CompanyCreateInput): Promise<CompanyDto> {
-    const [row] = await this.db
-      .insert(companies)
-      .values({
-        workspaceId,
-        name: input.name,
-        domain: input.domain,
-        industry: input.industry,
-        employeeCount: input.employeeCount,
-        revenue: input.revenue?.toString(),
-        location: input.location,
-        ownerId: input.ownerId,
-        status: input.status,
-        sourceProspectCompanyId: input.sourceProspectCompanyId,
-      })
-      .returning();
-    return toDto(row);
+  async create(workspaceId: string, actorId: string | undefined, input: CompanyCreateInput): Promise<CompanyDto> {
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(companies)
+        .values({
+          workspaceId,
+          name: input.name,
+          domain: input.domain,
+          industry: input.industry,
+          employeeCount: input.employeeCount,
+          revenue: input.revenue?.toString(),
+          location: input.location,
+          ownerId: input.ownerId,
+          status: input.status,
+          sourceProspectCompanyId: input.sourceProspectCompanyId,
+        })
+        .returning();
+
+      const dto = toDto(row);
+      const txAuditService = buildAuditService(tx as never);
+      await txAuditService?.record(workspaceId, actorId, "create", "company", dto.id, null, dto);
+      return dto;
+    });
   }
 
-  async update(workspaceId: string, id: string, input: CompanyUpdateInput): Promise<CompanyDto | null> {
+  async update(
+    workspaceId: string,
+    id: string,
+    actorId: string | undefined,
+    input: CompanyUpdateInput
+  ): Promise<CompanyDto | null> {
     const existing = await this.getById(workspaceId, id);
     if (!existing) return null;
 
-    const [row] = await this.db
-      .update(companies)
-      .set({
-        ...(input.name !== undefined ? { name: input.name } : {}),
-        ...(input.domain !== undefined ? { domain: input.domain } : {}),
-        ...(input.industry !== undefined ? { industry: input.industry } : {}),
-        ...(input.employeeCount !== undefined ? { employeeCount: input.employeeCount } : {}),
-        ...(input.revenue !== undefined ? { revenue: input.revenue.toString() } : {}),
-        ...(input.location !== undefined ? { location: input.location } : {}),
-        ...(input.ownerId !== undefined ? { ownerId: input.ownerId } : {}),
-        ...(input.status !== undefined ? { status: input.status } : {}),
-        ...(input.sourceProspectCompanyId !== undefined
-          ? { sourceProspectCompanyId: input.sourceProspectCompanyId }
-          : {}),
-        updatedAt: new Date(),
-      })
-      .where(and(eq(companies.id, id), eq(companies.workspaceId, workspaceId)))
-      .returning();
-    return row ? toDto(row) : null;
+    const patch = {
+      ...(input.name !== undefined ? { name: input.name } : {}),
+      ...(input.domain !== undefined ? { domain: input.domain } : {}),
+      ...(input.industry !== undefined ? { industry: input.industry } : {}),
+      ...(input.employeeCount !== undefined ? { employeeCount: input.employeeCount } : {}),
+      ...(input.revenue !== undefined ? { revenue: input.revenue.toString() } : {}),
+      ...(input.location !== undefined ? { location: input.location } : {}),
+      ...(input.ownerId !== undefined ? { ownerId: input.ownerId } : {}),
+      ...(input.status !== undefined ? { status: input.status } : {}),
+      ...(input.sourceProspectCompanyId !== undefined
+        ? { sourceProspectCompanyId: input.sourceProspectCompanyId }
+        : {}),
+    };
+
+    if (!hasMeaningfulChanges(existing, patch)) {
+      return existing;
+    }
+
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(companies)
+        .set({
+          ...patch,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(companies.id, id), eq(companies.workspaceId, workspaceId)))
+        .returning();
+
+      const dto = row ? toDto(row) : null;
+      if (dto) {
+        const txAuditService = buildAuditService(tx as never);
+        await txAuditService?.record(workspaceId, actorId, "update", "company", id, existing, dto);
+      }
+      return dto;
+    });
   }
 
-  async softDelete(workspaceId: string, id: string): Promise<boolean> {
+  async softDelete(workspaceId: string, id: string, actorId: string | undefined): Promise<boolean> {
     const existing = await this.getById(workspaceId, id);
     if (!existing) return false;
 
-    await this.db
-      .update(companies)
-      .set({ deletedAt: new Date(), updatedAt: new Date() })
-      .where(and(eq(companies.id, id), eq(companies.workspaceId, workspaceId)));
-    return true;
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(companies)
+        .set({ deletedAt: new Date(), updatedAt: new Date() })
+        .where(and(eq(companies.id, id), eq(companies.workspaceId, workspaceId)))
+        .returning();
+
+      const dto = row ? toDto(row) : null;
+      if (dto) {
+        const txAuditService = buildAuditService(tx as never);
+        await txAuditService?.record(workspaceId, actorId, "delete", "company", id, existing, dto);
+      }
+      return Boolean(row);
+    });
   }
 
   /** Confirms a company id belongs to the given workspace (used by contacts/deals create). */
@@ -134,6 +181,6 @@ export class CompaniesService {
   }
 }
 
-export function buildCompaniesService(db: Db | null): CompaniesService | null {
-  return db ? new CompaniesService(db) : null;
+export function buildCompaniesService(db: Db | null, auditService: AuditService | null): CompaniesService | null {
+  return db && auditService ? new CompaniesService(db, auditService) : null;
 }

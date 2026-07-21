@@ -3,10 +3,15 @@ import { companyCreateSchema, companyListQuerySchema, companyUpdateSchema } from
 import { HttpError } from "@skout/auth";
 import { parseIdParam } from "../utils/http.js";
 import { requireRole } from "../utils/require-role.js";
+import { buildAuditService } from "../services/audit.service.js";
 import { buildCompaniesService } from "../services/companies.service.js";
 
 export async function companiesRoutes(app: FastifyInstance) {
-  const service = () => buildCompaniesService(app.db ?? null);
+  const service = () => {
+    const db = app.db ?? null;
+    const auditService = buildAuditService(db);
+    return buildCompaniesService(db, auditService);
+  };
 
   app.get("/companies", async (request) => {
     const workspaceId = request.workspaceId ?? "unknown";
@@ -24,7 +29,7 @@ export async function companiesRoutes(app: FastifyInstance) {
     if (!svc) throw new HttpError("database_unavailable", 503);
 
     const input = companyCreateSchema.parse(request.body);
-    const company = await svc.create(workspaceId, input);
+    const company = await svc.create(workspaceId, request.userId, input);
     return reply.code(201).send(company);
   });
 
@@ -46,7 +51,7 @@ export async function companiesRoutes(app: FastifyInstance) {
     if (!svc) throw new HttpError("database_unavailable", 503);
 
     const input = companyUpdateSchema.parse(request.body);
-    const company = await svc.update(workspaceId, id, input);
+    const company = await svc.update(workspaceId, id, request.userId, input);
     if (!company) throw new HttpError("company_not_found", 404);
     return reply.send(company);
   });
@@ -58,7 +63,7 @@ export async function companiesRoutes(app: FastifyInstance) {
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
 
-    const deleted = await svc.softDelete(workspaceId, id);
+    const deleted = await svc.softDelete(workspaceId, id, request.userId);
     if (!deleted) throw new HttpError("company_not_found", 404);
     return reply.code(204).send();
   });
