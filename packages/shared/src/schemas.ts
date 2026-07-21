@@ -272,6 +272,7 @@ export const prospectDetailSchema = prospectSummarySchema.extend({
   yearsInRole: z.number().optional(),
   totalYearsExperience: z.number().optional(),
   previousCompany: z.string().optional(),
+  painPointsRationale: z.string().optional(),
 });
 
 export const searchProspectsRequestSchema = z.object({
@@ -290,6 +291,29 @@ export const searchProspectsResponseSchema = z.object({
   creditsUsed: z.number().int().min(0).optional(),
   source: z.enum(["opensearch", "demo"]).optional(),
 });
+
+// ---------------------------------------------------------------------------
+// Pain-point enum — shared between LLM prompt, DB, and the prospect detail UI
+// ---------------------------------------------------------------------------
+
+export const PAIN_POINT_TYPES = [
+  "scaling",
+  "hiring",
+  "tooling",
+  "technical_debt",
+  "data_quality",
+  "compliance",
+  "cost_reduction",
+  "integration",
+  "customer_retention",
+  "pipeline",
+  "reporting",
+  "onboarding",
+] as const;
+
+export type PainPointType = (typeof PAIN_POINT_TYPES)[number];
+
+export const painPointSchema = z.enum(PAIN_POINT_TYPES);
 
 export const workspaceSchema = z.object({
   id: z.string().uuid(),

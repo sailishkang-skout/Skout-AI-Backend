@@ -4,6 +4,9 @@ import { aiService } from "../services/ai.service.js";
 import { AI_DRAFT_STATUSES, buildAiDraftService } from "../services/ai-draft.service.js";
 import { sendApprovedDraftEmail, type DraftSendResult } from "../services/ai-draft-send.service.js";
 import { computeOutcomeInsights, insightsToPrompt } from "../services/outcome-insights.service.js";
+import { buildChatGrounding } from "../services/ai-chat-context.service.js";
+import { createWorkspaceToolRunner } from "../services/ai-workspace-tools.service.js";
+import { readAiExport } from "../services/ai-export.service.js";
 import { buildSequenceService } from "../services/sequence.service.js";
 import { HttpError } from "../utils/http.js";
 
@@ -25,8 +28,12 @@ const chatSchema = z.object({
       subject: z.string().max(500).optional(),
       body: z.string().max(20000).optional(),
       kind: z.enum(["email", "sequence", "general"]).optional(),
+      /** Current app path, e.g. /lists or /import — helps pick product guides. */
+      page: z.string().max(200).optional(),
       prospectId: z.string().min(1).max(200).optional(),
       threadId: z.string().uuid().optional(),
+      listId: z.string().uuid().optional(),
+      sequenceId: z.string().uuid().optional(),
     })
     .optional(),
 });
@@ -208,7 +215,9 @@ export async function aiRoutes(app: FastifyInstance) {
   });
 
   /**
-   * POST /ai/chat — conversational assistant for templates/emails/sequences.
+   * POST /ai/chat — workspace + product Q&A, plus templates/emails/sequences.
+   *
+   * Grounding: live workspace facts (credits, lists, sequences, …) and product guide snippets.
    *
    * AI segregation:
    * - **Auto** — persist/apply immediately (sequences created server-side; emails applied client-side).
@@ -218,11 +227,30 @@ export async function aiRoutes(app: FastifyInstance) {
     const workspaceId = request.workspaceId ?? "unknown";
     const body = chatSchema.parse(request.body ?? {});
     try {
-      const insights = app.db
-        ? insightsToPrompt(await computeOutcomeInsights(app.db, workspaceId).catch(() => null))
-        : null;
+      const lastUser = [...body.messages].reverse().find((m) => m.role === "user")?.content;
+      const [insights, grounding] = await Promise.all([
+        app.db
+          ? computeOutcomeInsights(app.db, workspaceId)
+              .then(insightsToPrompt)
+              .catch(() => null)
+          : Promise.resolve(null),
+        buildChatGrounding(app.db ?? null, app.config, workspaceId, {
+          userMessage: lastUser,
+          page: body.context?.page,
+        }),
+      ]);
+
+      const toolRunner = createWorkspaceToolRunner(app.db ?? null, app.config, workspaceId);
+
       const result = await aiService.chat(
-        { messages: body.messages, context: body.context, insights },
+        {
+          messages: body.messages,
+          context: body.context,
+          insights,
+          workspaceFacts: grounding.workspaceFacts,
+          appGuides: grounding.appGuides,
+          toolRunner,
+        },
         app.config.OPENROUTER_API_KEY
       );
 
@@ -273,12 +301,37 @@ export async function aiRoutes(app: FastifyInstance) {
         applied,
         sequenceId,
         draftId,
+        exports: toolRunner.getCreatedExports(),
         mode: body.mode,
         segregated: Boolean(draftId),
       });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
       return reply.status(e.statusCode ?? 500).send({ error: e.message ?? "chat_failed" });
+    }
+  });
+
+  /**
+   * GET /ai/exports/download — stream a CSV the assistant generated via export_dataset.
+   * The key is namespaced to the caller's workspace, so cross-workspace access is rejected.
+   */
+  app.get("/ai/exports/download", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const { key } = z.object({ key: z.string().min(1) }).parse(request.query ?? {});
+
+    if (!key.startsWith(`exports/${workspaceId}/`)) {
+      return reply.status(403).send({ error: "invalid_export_key" });
+    }
+
+    try {
+      const content = await readAiExport(app.config, key);
+      const filename = key.split("/").pop() ?? "export.csv";
+      return reply
+        .header("Content-Type", "text/csv; charset=utf-8")
+        .header("Content-Disposition", `attachment; filename="${filename}"`)
+        .send(content);
+    } catch {
+      return reply.status(404).send({ error: "export_not_found" });
     }
   });
 

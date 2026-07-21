@@ -64,6 +64,8 @@ export interface ProspectScore {
   score: number;
   priority: string | null;
   reasoning: string | null;
+  painPoints: string[];
+  painPointsRationale: string | null;
   scoredAt: string;
 }
 

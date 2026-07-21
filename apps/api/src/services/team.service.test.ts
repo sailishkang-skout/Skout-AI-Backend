@@ -131,24 +131,26 @@ describe("createTeamService", () => {
       ).rejects.toMatchObject({ statusCode: 403 });
     });
 
-    it("throws 403 when admin tries to invite an admin", async () => {
-      const db = makeMockDb();
-      const svc = createTeamService(db as any);
-      await expect(
-        svc.inviteMember("ws-1", "uid", "x@x.com", "admin", "admin")
-      ).rejects.toMatchObject({ statusCode: 403 });
-    });
-
     it("throws 409 when email is already a workspace member", async () => {
-      const db = makeMockDb({ selects: [[{ userId: "existing" }], []] });
+      // selects: memberCount, pendingCount, existing member check
+      const db = makeMockDb({ selects: [[{ value: 5 }], [{ value: 0 }], [{ userId: "existing" }]] });
       const svc = createTeamService(db as any);
       await expect(
         svc.inviteMember("ws-1", "uid", "member@acme.com", "member", "owner")
       ).rejects.toMatchObject({ statusCode: 409 });
     });
 
+    it("throws 409 when workspace is at the 50-member limit", async () => {
+      const db = makeMockDb({ selects: [[{ value: 40 }], [{ value: 10 }]] });
+      const svc = createTeamService(db as any);
+      await expect(
+        svc.inviteMember("ws-1", "uid", "new@acme.com", "member", "owner")
+      ).rejects.toMatchObject({ statusCode: 409 });
+    });
+
     it("creates a new invite when no pending exists for this email", async () => {
-      const db = makeMockDb({ selects: [[], []], withInsert: true });
+      // selects: memberCount, pendingCount, no existing member, no pending for email
+      const db = makeMockDb({ selects: [[{ value: 5 }], [{ value: 0 }], [], []], withInsert: true });
       const svc = createTeamService(db as any);
       const result = await svc.inviteMember("ws-1", "uid", "new@acme.com", "member", "owner");
       expect(result.email).toBe("new@acme.com");
@@ -159,7 +161,8 @@ describe("createTeamService", () => {
     });
 
     it("refreshes the token when a pending invite already exists", async () => {
-      const db = makeMockDb({ selects: [[], [{ id: "existing-inv" }]], withUpdate: true });
+      // selects: memberCount, pendingCount, no existing member, pending for email found
+      const db = makeMockDb({ selects: [[{ value: 5 }], [{ value: 0 }], [], [{ id: "existing-inv" }]], withUpdate: true });
       const svc = createTeamService(db as any);
       const result = await svc.inviteMember("ws-1", "uid", "new@acme.com", "member", "admin");
       expect(result.token).toHaveLength(64);
@@ -168,17 +171,17 @@ describe("createTeamService", () => {
     });
 
     it("normalises email to lowercase", async () => {
-      const db = makeMockDb({ selects: [[], []], withInsert: true });
+      const db = makeMockDb({ selects: [[{ value: 5 }], [{ value: 0 }], [], []], withInsert: true });
       const svc = createTeamService(db as any);
       const result = await svc.inviteMember("ws-1", "uid", "NEW@ACME.COM", "member", "owner");
       expect(result.email).toBe("new@acme.com");
     });
 
-    it("owner can invite an admin", async () => {
-      const db = makeMockDb({ selects: [[], []], withInsert: true });
+    it("always assigns member role regardless of requested role", async () => {
+      const db = makeMockDb({ selects: [[{ value: 5 }], [{ value: 0 }], [], []], withInsert: true });
       const svc = createTeamService(db as any);
       const result = await svc.inviteMember("ws-1", "uid", "new@acme.com", "admin", "owner");
-      expect(result.role).toBe("admin");
+      expect(result.role).toBe("member");
     });
   });
 
@@ -229,7 +232,10 @@ describe("createTeamService", () => {
     });
 
     it("throws 409 when invite already accepted", async () => {
-      const db = makeMockDb({ selects: [[{ ...INVITE_ROW, acceptedAt: new Date() }]] });
+      const db = makeMockDb({ selects: [
+        [{ ...INVITE_ROW, acceptedAt: new Date() }],  // invite lookup
+        [],                                            // alreadyMember → not a member → throw 409
+      ] });
       const svc = createTeamService(db as any);
       await expect(svc.acceptInvite("abc123", "uid", "new@acme.com"))
         .rejects.toMatchObject({ statusCode: 409 });

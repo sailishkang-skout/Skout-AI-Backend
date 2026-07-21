@@ -8,6 +8,19 @@ export interface ScoreInput {
   employeeCount?: number;
   companyDomain?: string;
   signals?: string[];
+  jobPosts?: { title: string; department?: string }[];
+}
+
+export type IntentType = "in_market" | "researching" | "not_ready" | "unknown";
+
+export interface IntentClassification {
+  intent: IntentType;
+  intentScore: number;
+  confidence: number;
+  rationale: string;
+  signalsUsed: string[];
+  outreachReadiness: string;
+  requiresHitl: boolean;
 }
 
 export interface IcpConfig {
@@ -18,8 +31,39 @@ export interface IcpConfig {
   keywords?: string[];
   minEmployees?: number;
   maxEmployees?: number;
+  companyName?: string;
+  productDescription?: string;
+  customerPainPoints?: string[];
   /** When false, saving ICP does not enqueue a workspace-wide re-score. Default: true. */
   autoRescoreOnChange?: boolean;
+  /** Raw answers captured by the signup onboarding wizard (stored alongside the derived ICP). */
+  onboarding?: OnboardingProfile;
+}
+
+/** Structured answers from the signup onboarding wizard. */
+export interface OnboardingProfile {
+  company?: {
+    name?: string;
+    industry?: string;
+    size?: string;
+    website?: string;
+  };
+  goals?: string[];
+  icp?: {
+    industries?: string[];
+    employeeRanges?: string[];
+    countries?: string[];
+    revenue?: string;
+  };
+  people?: {
+    departments?: string[];
+    seniorities?: string[];
+    titles?: string[];
+  };
+  market?: string[];
+  crm?: string;
+  leadVolume?: string;
+  completedAt?: string;
 }
 
 export interface DimensionScore {
@@ -34,11 +78,13 @@ export interface ScoreResult {
   icpBand: string;
   intentScore: number;
   painPoints: string[];
+  painPointsRationale: string | null;
   outreachReadiness: string;
   reasoning: string;
   source: "llm" | "heuristic";
   creditsUsed?: number;
   dimensions: Record<string, DimensionScore>;
+  intentClassification?: IntentClassification;
 }
 
 const BANDS = (s: number) => (s >= 75 ? "strong" : s >= 45 ? "medium" : "weak");
@@ -124,6 +170,7 @@ export function scoreLocally(input: ScoreInput, icp: IcpConfig = {}): ScoreResul
     icpBand: BANDS(icpScore),
     intentScore,
     painPoints: [],
+    painPointsRationale: null,
     outreachReadiness: READINESS(icpScore, intentScore),
     reasoning: reasons.join("; ") || "baseline score",
     source: "heuristic",
@@ -131,14 +178,25 @@ export function scoreLocally(input: ScoreInput, icp: IcpConfig = {}): ScoreResul
   };
 }
 
+const PAIN_POINT_ENUM = [
+  "scaling", "hiring", "tooling", "technical_debt", "data_quality",
+  "compliance", "cost_reduction", "integration", "customer_retention",
+  "pipeline", "reporting", "onboarding",
+] as const;
+
 function buildSystemPrompt(icp: IcpConfig): string {
   const lines = [
     "You are a B2B sales intelligence engine. Score a prospect against the ICP below.",
     "Return JSON with keys: icp_score (0-100), intent_score (0-100), reasoning (string),",
-    "pain_points (string[]), and dimensions (object with keys: industry, seniority, geography,",
+    `pain_points (string[] — pick only values from: ${PAIN_POINT_ENUM.join(", ")}),`,
+    "pain_rationale (string — one sentence explaining which signals led to each pain point),",
+    "and dimensions (object with keys: industry, seniority, geography,",
     "company_size, title, signals — each having score (0-100), matched (bool), explanation (string)).",
     "",
     "ICP CONFIGURATION:",
+    `seller_company: ${icp.companyName || "not specified"}`,
+    `product: ${icp.productDescription || "not specified"}`,
+    `customer_pains_solved: ${icp.customerPainPoints?.join(", ") || "none"}`,
     `industries: ${icp.industries?.join(", ") || "any"}`,
     `countries: ${icp.countries?.join(", ") || "any"}`,
     `seniorities: ${icp.seniorities?.join(", ") || "any"}`,
@@ -212,7 +270,12 @@ async function scoreWithLLM(
   const icpScore = Math.max(0, Math.min(100, Number(data.icp_score ?? baseline.icpScore)));
   const intentScore = Math.max(0, Math.min(100, Number(data.intent_score ?? baseline.intentScore)));
   const rawPain = data.pain_points;
-  const painPoints = Array.isArray(rawPain) ? rawPain.map(String).filter(Boolean) : baseline.painPoints;
+  const painPoints = Array.isArray(rawPain)
+    ? rawPain.map(String).filter((p) => (PAIN_POINT_ENUM as readonly string[]).includes(p))
+    : [];
+  const painPointsRationale = typeof data.pain_rationale === "string" && data.pain_rationale
+    ? data.pain_rationale
+    : null;
 
   return {
     prospectId: input.prospectId,
@@ -220,11 +283,63 @@ async function scoreWithLLM(
     icpBand: BANDS(icpScore),
     intentScore,
     painPoints,
+    painPointsRationale,
     outreachReadiness: READINESS(icpScore, intentScore),
     reasoning: String(data.reasoning ?? baseline.reasoning),
     source: "llm",
     dimensions: parseDimensions(data.dimensions, baseline.dimensions),
   };
+}
+
+const HITL_CONFIDENCE_THRESHOLD = 0.65;
+
+/**
+ * Calls the Python AI service /v1/classify for model-derived buying-intent classification.
+ * Returns null when the service is unavailable — caller falls back to heuristic intent.
+ */
+export async function classifyIntent(
+  aiServiceUrl: string,
+  input: ScoreInput,
+  timeoutMs: number
+): Promise<IntentClassification | null> {
+  try {
+    const res = await fetch(`${aiServiceUrl}/v1/classify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prospect_id: input.prospectId,
+        signals: (input.signals ?? []).map((s) => ({ type: s })),
+        firmographics: {
+          industry: input.industry,
+          employee_count: input.employeeCount,
+          country: input.country,
+          company_domain: input.companyDomain,
+          title: input.title,
+          seniority: input.seniority,
+        },
+        job_posts: (input.jobPosts ?? []).map((j) => ({ title: j.title, department: j.department })),
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as Record<string, unknown>;
+    const intent = (["in_market", "researching", "not_ready", "unknown"].includes(String(data.intent))
+      ? data.intent
+      : "unknown") as IntentType;
+    const intentScore = Math.max(0, Math.min(100, Number(data.intent_score ?? 0)));
+    const confidence = Math.max(0, Math.min(1, Number(data.confidence ?? 0)));
+    return {
+      intent,
+      intentScore,
+      confidence,
+      rationale: String(data.rationale ?? ""),
+      signalsUsed: Array.isArray(data.signals_used) ? data.signals_used.map(String) : [],
+      outreachReadiness: String(data.outreach_readiness ?? "nurture"),
+      requiresHitl: confidence < HITL_CONFIDENCE_THRESHOLD,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Calls LLM directly (OpenRouter / Google / OpenAI) or Python AI service, with heuristic fallback. */
@@ -247,48 +362,74 @@ export async function scoreProspect(
 
   if (!aiServiceUrl) return scoreLocally(input, icp);
 
-  // Python AI service path
+  // Python AI service path — call /v1/score for ICP + /v1/classify for intent in parallel
   try {
-    const res = await fetch(`${aiServiceUrl}/v1/score`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prospect: {
-          prospect_id: input.prospectId,
-          full_name: input.fullName,
-          title: input.title,
-          seniority: input.seniority,
-          industry: input.industry,
-          country: input.country,
-          employee_count: input.employeeCount,
-          company_domain: input.companyDomain,
-          signals: input.signals ?? [],
-        },
-        icp: {
-          industries: icp.industries ?? [],
-          countries: icp.countries ?? [],
-          seniorities: icp.seniorities ?? [],
-          titles: icp.titles ?? [],
-          keywords: icp.keywords ?? [],
-          min_employees: icp.minEmployees,
-          max_employees: icp.maxEmployees,
-        },
+    const [scoreRes, intentResult] = await Promise.all([
+      fetch(`${aiServiceUrl}/v1/score`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prospect: {
+            prospect_id: input.prospectId,
+            full_name: input.fullName,
+            title: input.title,
+            seniority: input.seniority,
+            industry: input.industry,
+            country: input.country,
+            employee_count: input.employeeCount,
+            company_domain: input.companyDomain,
+            signals: input.signals ?? [],
+          },
+          icp: {
+            industries: icp.industries ?? [],
+            countries: icp.countries ?? [],
+            seniorities: icp.seniorities ?? [],
+            titles: icp.titles ?? [],
+            keywords: icp.keywords ?? [],
+            min_employees: icp.minEmployees,
+            max_employees: icp.maxEmployees,
+            company_name: icp.companyName,
+            product_description: icp.productDescription,
+            customer_pain_points: icp.customerPainPoints ?? [],
+          },
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
       }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!res.ok) return scoreLocally(input, icp);
-    const data = (await res.json()) as Record<string, unknown>;
+      classifyIntent(aiServiceUrl, input, timeoutMs),
+    ]);
+
+    if (!scoreRes.ok) return scoreLocally(input, icp);
+    const data = (await scoreRes.json()) as Record<string, unknown>;
     const localFallback = scoreLocally(input, icp);
+
+    // Intent from /v1/classify takes precedence over /v1/score's intent_score
+    const intentScore = intentResult
+      ? intentResult.intentScore
+      : Number(data.intent_score ?? 0);
+    const outreachReadiness = intentResult
+      ? (intentResult.requiresHitl ? "nurture" : intentResult.outreachReadiness)
+      : String(data.outreach_readiness ?? "nurture");
+
+    const rawAiPain = data.pain_points;
+    const aiPainPoints = Array.isArray(rawAiPain)
+      ? rawAiPain.map(String).filter((p) => (PAIN_POINT_ENUM as readonly string[]).includes(p))
+      : [];
+    const aiPainRationale = typeof data.pain_rationale === "string" && data.pain_rationale
+      ? data.pain_rationale
+      : null;
+
     return {
       prospectId: String(data.prospect_id ?? input.prospectId),
       icpScore: Number(data.icp_score ?? 0),
       icpBand: String(data.icp_band ?? "weak"),
-      intentScore: Number(data.intent_score ?? 0),
-      painPoints: (data.pain_points as string[]) ?? [],
-      outreachReadiness: String(data.outreach_readiness ?? "nurture"),
+      intentScore,
+      painPoints: aiPainPoints,
+      painPointsRationale: aiPainRationale,
+      outreachReadiness,
       reasoning: String(data.reasoning ?? ""),
       source: data.source === "llm" ? "llm" : "heuristic",
       dimensions: parseDimensions(data.dimensions, localFallback.dimensions),
+      intentClassification: intentResult ?? undefined,
     };
   } catch {
     return scoreLocally(input, icp);

@@ -1,5 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
+import { and, eq, gt } from "drizzle-orm";
+import { schema } from "@skout/db";
 import { resolveOrProvisionUser } from "../services/auth.service.js";
 import { errorResponse, HttpError } from "../utils/http.js";
 
@@ -26,6 +28,8 @@ function isPublicRoute(url: string, method?: string): boolean {
     url.startsWith("/api/v1/billing/webhooks/") ||
     url.startsWith("/api/v1/track/") ||
     url.startsWith("/api/v1/unsubscribe/") ||
+    url.startsWith("/api/v1/invite-auth/send-otp") ||
+    url.startsWith("/api/v1/invite-auth/verify-otp") ||
     isInviteTokenLookup
   );
 }
@@ -94,7 +98,7 @@ export const authPlugin = fp(async (app) => {
     if (request.method === "OPTIONS") {
       return;
     }
-    if (isHealthRoute(request.url) || isPublicRoute(request.url)) {
+    if (isHealthRoute(request.url) || isPublicRoute(request.url, request.method)) {
       return;
     }
 
@@ -111,6 +115,42 @@ export const authPlugin = fp(async (app) => {
 
     if (!token) {
       return reply.code(401).send(errorResponse("Missing bearer token", 401));
+    }
+
+    // Invite session token (issued after OTP verification)
+    if (token.startsWith("isk_")) {
+      const [session] = await db
+        .select({ userId: schema.inviteSessions.userId })
+        .from(schema.inviteSessions)
+        .where(
+          and(
+            eq(schema.inviteSessions.token, token),
+            gt(schema.inviteSessions.expiresAt, new Date())
+          )
+        )
+        .limit(1);
+
+      if (!session) {
+        return reply.code(401).send(errorResponse("Session expired or invalid", 401));
+      }
+
+      const [user] = await db
+        .select({ email: schema.users.email })
+        .from(schema.users)
+        .where(eq(schema.users.id, session.userId))
+        .limit(1);
+
+      const [membership] = await db
+        .select({ workspaceId: schema.workspaceMembers.workspaceId, role: schema.workspaceMembers.role })
+        .from(schema.workspaceMembers)
+        .where(eq(schema.workspaceMembers.userId, session.userId))
+        .limit(1);
+
+      request.userId = session.userId;
+      request.userEmail = user?.email;
+      request.workspaceId = membership?.workspaceId;
+      request.role = membership?.role;
+      return;
     }
 
     try {

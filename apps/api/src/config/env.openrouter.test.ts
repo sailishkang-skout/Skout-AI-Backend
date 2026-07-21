@@ -19,4 +19,22 @@ describe("loadEnv OpenRouter alias", () => {
       process.env = prev;
     }
   });
+
+  it("treats replace-me OPENROUTER as unset and falls back to OPENAI_API_KEY", () => {
+    const prev = { ...process.env };
+    try {
+      process.env = {
+        ...prev,
+        NODE_ENV: "test",
+        OPENROUTER_API_KEY: "replace-me",
+        OPEN_ROUTER_API_KEY: undefined,
+        OPENAI_API_KEY: "sk-or-real-key",
+      } as NodeJS.ProcessEnv;
+      if (!process.env.CORS_ORIGIN) process.env.CORS_ORIGIN = "http://localhost:3000";
+      const env = loadEnv();
+      expect(env.OPENROUTER_API_KEY).toBe("sk-or-real-key");
+    } finally {
+      process.env = prev;
+    }
+  });
 });

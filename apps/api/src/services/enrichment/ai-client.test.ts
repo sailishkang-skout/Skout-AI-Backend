@@ -3,6 +3,7 @@ import { mockCreate } from "../../test/mocks/openai.js";
 import {
   scoreLocally,
   scoreProspect,
+  classifyIntent,
   type ScoreInput,
   type IcpConfig,
 } from "./ai-client.js";
@@ -194,7 +195,7 @@ describe("scoreProspect — Python service path", () => {
       icp_score: 82,
       icp_band: "strong",
       intent_score: 50,
-      pain_points: ["scaling ops"],
+      pain_points: ["scaling"],
       outreach_readiness: "ready",
       reasoning: "Good fit",
       source: "llm",
@@ -213,7 +214,7 @@ describe("scoreProspect — Python service path", () => {
     expect(result.icpBand).toBe("strong");
     expect(result.intentScore).toBe(50);
     expect(result.source).toBe("llm");
-    expect(result.painPoints).toEqual(["scaling ops"]);
+    expect(result.painPoints).toEqual(["scaling"]);
     expect(result.dimensions.industry.score).toBe(90);
     expect(result.dimensions.seniority.matched).toBe(true);
   });
@@ -252,7 +253,7 @@ describe("scoreProspect — OpenRouter LLM path", () => {
       icp_score: 78,
       intent_score: 50,
       reasoning: "Good tech fit",
-      pain_points: ["hiring bottleneck"],
+      pain_points: ["hiring"],
       dimensions: {
         industry:     { score: 88, matched: true,  explanation: "Software match" },
         seniority:    { score: 82, matched: true,  explanation: "c_level match" },
@@ -267,7 +268,7 @@ describe("scoreProspect — OpenRouter LLM path", () => {
     expect(result.source).toBe("llm");
     expect(result.icpScore).toBe(78);
     expect(result.intentScore).toBe(50);
-    expect(result.painPoints).toContain("hiring bottleneck");
+    expect(result.painPoints).toContain("hiring");
     expect(result.dimensions.industry.matched).toBe(true);
     expect(result.dimensions.signals.matched).toBe(false);
     expect(mockCreate).toHaveBeenCalledOnce();
@@ -343,12 +344,12 @@ describe("scoreProspect — OpenRouter LLM path", () => {
       icp_score: 65,
       intent_score: 25,
       reasoning: "Issues found",
-      pain_points: ["slow onboarding", "manual reporting"],
+      pain_points: ["onboarding", "reporting"],
       dimensions: {},
     });
 
     const result = await scoreProspect(undefined, baseInput, baseIcp, 5000, "sk-or-test");
-    expect(result.painPoints).toEqual(["slow onboarding", "manual reporting"]);
+    expect(result.painPoints).toEqual(["onboarding", "reporting"]);
   });
 
   it("ignores non-array pain_points from LLM", async () => {
@@ -362,6 +363,341 @@ describe("scoreProspect — OpenRouter LLM path", () => {
 
     const result = await scoreProspect(undefined, baseInput, baseIcp, 5000, "sk-or-test");
     expect(Array.isArray(result.painPoints)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// classifyIntent — /v1/classify client
+// ---------------------------------------------------------------------------
+
+const baseClassifyInput: ScoreInput = {
+  prospectId: "intent-001",
+  title: "VP of Sales",
+  seniority: "vp",
+  industry: "SaaS",
+  country: "US",
+  employeeCount: 150,
+  companyDomain: "acme.com",
+  signals: ["recent_funding", "market_expansion"],
+  jobPosts: [{ title: "Head of Revenue Operations", department: "Sales" }],
+};
+
+function mockClassify(payload: Record<string, unknown>, ok = true) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({
+      ok,
+      status: ok ? 200 : 503,
+      json: vi.fn().mockResolvedValue(payload),
+    })
+  );
+}
+
+describe("classifyIntent — response parsing", () => {
+  it("returns parsed IntentClassification on 200", async () => {
+    mockClassify({
+      prospect_id: "intent-001",
+      intent: "in_market",
+      intent_score: 90,
+      confidence: 0.76,
+      rationale: "Series B + EU expansion",
+      signals_used: ["recent_funding", "market_expansion"],
+      outreach_readiness: "warm",
+      requires_hitl: false,
+      source: "heuristic",
+    });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result).not.toBeNull();
+    expect(result!.intent).toBe("in_market");
+    expect(result!.intentScore).toBe(90);
+    expect(result!.confidence).toBe(0.76);
+    expect(result!.rationale).toBe("Series B + EU expansion");
+    expect(result!.signalsUsed).toEqual(["recent_funding", "market_expansion"]);
+    expect(result!.outreachReadiness).toBe("warm");
+  });
+
+  it("returns null on non-200 response", async () => {
+    mockClassify({}, false);
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result).toBeNull();
+  });
+
+  it("returns null when service is unreachable", async () => {
+    const result = await classifyIntent("http://localhost:19999", baseClassifyInput, 300);
+    expect(result).toBeNull();
+  });
+
+  it("returns null when response JSON throws", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockRejectedValue(new SyntaxError("Bad JSON")),
+    }));
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result).toBeNull();
+  });
+});
+
+describe("classifyIntent — HITL gating", () => {
+  it("sets requiresHitl=false when confidence >= 0.65", async () => {
+    mockClassify({ intent: "in_market", intent_score: 90, confidence: 0.76,
+      rationale: "x", signals_used: [], outreach_readiness: "warm" });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result!.requiresHitl).toBe(false);
+  });
+
+  it("sets requiresHitl=true when confidence < 0.65", async () => {
+    mockClassify({ intent: "researching", intent_score: 60, confidence: 0.55,
+      rationale: "x", signals_used: [], outreach_readiness: "warm" });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result!.requiresHitl).toBe(true);
+  });
+
+  it("sets requiresHitl=true at exactly the boundary (0.64)", async () => {
+    mockClassify({ intent: "researching", intent_score: 60, confidence: 0.64,
+      rationale: "x", signals_used: [], outreach_readiness: "warm" });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result!.requiresHitl).toBe(true);
+  });
+
+  it("sets requiresHitl=false at exactly the threshold (0.65)", async () => {
+    mockClassify({ intent: "in_market", intent_score: 90, confidence: 0.65,
+      rationale: "x", signals_used: [], outreach_readiness: "warm" });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result!.requiresHitl).toBe(false);
+  });
+});
+
+describe("classifyIntent — value clamping and normalisation", () => {
+  it("clamps intentScore above 100 down to 100", async () => {
+    mockClassify({ intent: "in_market", intent_score: 999, confidence: 0.80,
+      rationale: "x", signals_used: [], outreach_readiness: "warm" });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result!.intentScore).toBeLessThanOrEqual(100);
+  });
+
+  it("clamps intentScore below 0 up to 0", async () => {
+    mockClassify({ intent: "unknown", intent_score: -50, confidence: 0.30,
+      rationale: "x", signals_used: [], outreach_readiness: "nurture" });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result!.intentScore).toBeGreaterThanOrEqual(0);
+  });
+
+  it("clamps confidence above 1 down to 1", async () => {
+    mockClassify({ intent: "in_market", intent_score: 90, confidence: 5.0,
+      rationale: "x", signals_used: [], outreach_readiness: "warm" });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result!.confidence).toBeLessThanOrEqual(1);
+  });
+
+  it("clamps confidence below 0 up to 0", async () => {
+    mockClassify({ intent: "unknown", intent_score: 0, confidence: -2.0,
+      rationale: "x", signals_used: [], outreach_readiness: "nurture" });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result!.confidence).toBeGreaterThanOrEqual(0);
+  });
+
+  it("normalises unknown intent string to 'unknown'", async () => {
+    mockClassify({ intent: "definitely_buying", intent_score: 90, confidence: 0.80,
+      rationale: "x", signals_used: [], outreach_readiness: "warm" });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result!.intent).toBe("unknown");
+  });
+
+  it("maps non-array signals_used to empty array", async () => {
+    mockClassify({ intent: "in_market", intent_score: 90, confidence: 0.80,
+      rationale: "x", signals_used: "not-an-array", outreach_readiness: "warm" });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(Array.isArray(result!.signalsUsed)).toBe(true);
+    expect(result!.signalsUsed).toHaveLength(0);
+  });
+
+  it("falls back outreachReadiness to 'nurture' when missing", async () => {
+    mockClassify({ intent: "unknown", intent_score: 0, confidence: 0.30, rationale: "x", signals_used: [] });
+    const result = await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+    expect(result!.outreachReadiness).toBe("nurture");
+  });
+});
+
+describe("classifyIntent — request body shape", () => {
+  it("sends prospect_id, signals, firmographics, job_posts in snake_case", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        intent: "in_market", intent_score: 90, confidence: 0.76,
+        rationale: "x", signals_used: [], outreach_readiness: "warm",
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await classifyIntent("http://localhost:8000", baseClassifyInput, 5000);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://localhost:8000/v1/classify");
+    const body = JSON.parse(init.body as string);
+    expect(body.prospect_id).toBe("intent-001");
+    expect(Array.isArray(body.signals)).toBe(true);
+    expect(body.signals[0]).toHaveProperty("type");
+    expect(body.firmographics).toHaveProperty("employee_count");
+    expect(Array.isArray(body.job_posts)).toBe(true);
+  });
+
+  it("maps signals array of strings to [{type}] objects", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        intent: "unknown", intent_score: 0, confidence: 0.30,
+        rationale: "x", signals_used: [], outreach_readiness: "nurture",
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await classifyIntent("http://localhost:8000", { ...baseClassifyInput, signals: ["recent_funding"] }, 5000);
+
+    const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string);
+    expect(body.signals).toEqual([{ type: "recent_funding" }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pain points — enum constraint (OpenRouter LLM path)
+// ---------------------------------------------------------------------------
+describe("pain points — enum constraint (OpenRouter LLM path)", () => {
+  it("passes valid enum values through unchanged", async () => {
+    mockLlm({
+      icp_score: 70, intent_score: 0, reasoning: "ok",
+      pain_points: ["scaling", "hiring", "technical_debt"],
+      dimensions: {},
+    });
+    const result = await scoreProspect(undefined, baseInput, baseIcp, 5000, "sk-or-test");
+    expect(result.painPoints).toEqual(["scaling", "hiring", "technical_debt"]);
+  });
+
+  it("filters out non-enum free-form strings from LLM", async () => {
+    mockLlm({
+      icp_score: 70, intent_score: 0, reasoning: "ok",
+      pain_points: ["Scaling Ops", "Lead Generation Issues", "Revenue Growth"],
+      dimensions: {},
+    });
+    const result = await scoreProspect(undefined, baseInput, baseIcp, 5000, "sk-or-test");
+    expect(result.painPoints).toEqual([]);
+  });
+
+  it("keeps valid enum values and drops invalid ones in a mixed array", async () => {
+    mockLlm({
+      icp_score: 70, intent_score: 0, reasoning: "ok",
+      pain_points: ["scaling", "not_a_valid_point", "hiring", "free form text"],
+      dimensions: {},
+    });
+    const result = await scoreProspect(undefined, baseInput, baseIcp, 5000, "sk-or-test");
+    expect(result.painPoints).toEqual(["scaling", "hiring"]);
+  });
+
+  it("returns painPointsRationale when pain_rationale is present", async () => {
+    mockLlm({
+      icp_score: 70, intent_score: 0, reasoning: "ok",
+      pain_points: ["tooling"],
+      pain_rationale: "CTO at a SaaS company typically wrestles with tooling decisions.",
+      dimensions: {},
+    });
+    const result = await scoreProspect(undefined, baseInput, baseIcp, 5000, "sk-or-test");
+    expect(result.painPointsRationale).toBe("CTO at a SaaS company typically wrestles with tooling decisions.");
+  });
+
+  it("returns painPointsRationale null when pain_rationale is absent", async () => {
+    mockLlm({
+      icp_score: 70, intent_score: 0, reasoning: "ok",
+      pain_points: ["pipeline"],
+      dimensions: {},
+    });
+    const result = await scoreProspect(undefined, baseInput, baseIcp, 5000, "sk-or-test");
+    expect(result.painPointsRationale).toBeNull();
+  });
+
+  it("returns painPointsRationale null when pain_rationale is an empty string", async () => {
+    mockLlm({
+      icp_score: 70, intent_score: 0, reasoning: "ok",
+      pain_points: ["pipeline"],
+      pain_rationale: "",
+      dimensions: {},
+    });
+    const result = await scoreProspect(undefined, baseInput, baseIcp, 5000, "sk-or-test");
+    expect(result.painPointsRationale).toBeNull();
+  });
+
+  it("returns empty painPoints when LLM omits pain_points entirely", async () => {
+    mockLlm({ icp_score: 70, intent_score: 0, reasoning: "ok", dimensions: {} });
+    const result = await scoreProspect(undefined, baseInput, baseIcp, 5000, "sk-or-test");
+    expect(result.painPoints).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pain points — enum constraint (Python service path)
+// ---------------------------------------------------------------------------
+describe("pain points — enum constraint (Python service path)", () => {
+  it("passes valid enum values from Python response through unchanged", async () => {
+    mockPythonService({
+      prospect_id: "test-001", icp_score: 78, icp_band: "strong",
+      intent_score: 0, outreach_readiness: "warm", reasoning: "ok", source: "llm",
+      pain_points: ["compliance", "data_quality"],
+      dimensions: {},
+    });
+    const result = await scoreProspect("http://localhost:8000", baseInput, baseIcp, 5000);
+    expect(result.painPoints).toEqual(["compliance", "data_quality"]);
+  });
+
+  it("filters out non-enum strings returned by Python service", async () => {
+    mockPythonService({
+      prospect_id: "test-001", icp_score: 78, icp_band: "strong",
+      intent_score: 0, outreach_readiness: "warm", reasoning: "ok", source: "llm",
+      pain_points: ["Scaling Sales Team", "Lead Generation Issues"],
+      dimensions: {},
+    });
+    const result = await scoreProspect("http://localhost:8000", baseInput, baseIcp, 5000);
+    expect(result.painPoints).toEqual([]);
+  });
+
+  it("returns painPointsRationale from pain_rationale field in Python response", async () => {
+    mockPythonService({
+      prospect_id: "test-001", icp_score: 78, icp_band: "strong",
+      intent_score: 0, outreach_readiness: "warm", reasoning: "ok", source: "llm",
+      pain_points: ["hiring"],
+      pain_rationale: "Recent hiring signals indicate active recruitment challenges.",
+      dimensions: {},
+    });
+    const result = await scoreProspect("http://localhost:8000", baseInput, baseIcp, 5000);
+    expect(result.painPointsRationale).toBe("Recent hiring signals indicate active recruitment challenges.");
+  });
+
+  it("returns painPointsRationale null when Python response omits pain_rationale", async () => {
+    mockPythonService({
+      prospect_id: "test-001", icp_score: 78, icp_band: "strong",
+      intent_score: 0, outreach_readiness: "warm", reasoning: "ok", source: "llm",
+      pain_points: ["pipeline"],
+      dimensions: {},
+    });
+    const result = await scoreProspect("http://localhost:8000", baseInput, baseIcp, 5000);
+    expect(result.painPointsRationale).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// scoreLocally — pain points always empty (heuristic produces no pain points)
+// ---------------------------------------------------------------------------
+describe("scoreLocally — pain points", () => {
+  it("always returns painPoints as empty array", () => {
+    const result = scoreLocally(baseInput, baseIcp);
+    expect(result.painPoints).toEqual([]);
+  });
+
+  it("always returns painPointsRationale as null", () => {
+    const result = scoreLocally(baseInput, baseIcp);
+    expect(result.painPointsRationale).toBeNull();
+  });
+
+  it("returns painPoints [] even when signals are present", () => {
+    const result = scoreLocally({ ...baseInput, signals: ["recent_funding", "recent_hiring"] }, baseIcp);
+    expect(result.painPoints).toEqual([]);
   });
 });
 

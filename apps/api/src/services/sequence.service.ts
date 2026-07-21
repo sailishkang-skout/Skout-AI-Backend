@@ -68,11 +68,15 @@ export interface UpdateStepInput {
 export class SequenceService {
   constructor(private readonly db: Db) {}
 
-  async listSequences(workspaceId: string) {
+  async listSequences(workspaceId: string, status?: string) {
     return this.db
       .select()
       .from(sequences)
-      .where(eq(sequences.workspaceId, workspaceId))
+      .where(
+        status
+          ? and(eq(sequences.workspaceId, workspaceId), eq(sequences.status, status))
+          : eq(sequences.workspaceId, workspaceId)
+      )
       .orderBy(sequences.createdAt);
   }
 

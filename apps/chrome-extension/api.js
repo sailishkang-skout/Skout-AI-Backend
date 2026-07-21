@@ -371,6 +371,18 @@ export async function scoreProspect(prospectId, profile) {
   });
 }
 
+export async function listSequences() {
+  const body = await skoutFetch("/api/v1/sequences?status=active");
+  return body.data || [];
+}
+
+export async function enrollInSequence(sequenceId, prospectIds) {
+  return skoutFetch(`/api/v1/sequences/${sequenceId}/enroll`, {
+    method: "POST",
+    body: JSON.stringify({ prospectIds: Array.isArray(prospectIds) ? prospectIds : [prospectIds] }),
+  });
+}
+
 export async function listPendingLinkedinJobs(limit = 5) {
   return skoutFetch(`/api/v1/linkedin/outreach/pending?limit=${limit}`);
 }

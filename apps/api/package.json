@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "predev": "pnpm --filter @skout/db build && pnpm --filter @skout/shared build && pnpm --filter @skout/storage build && pnpm --filter @skout/scraper-orchestrator build",
+    "predev": "pnpm --filter @skout/db build && pnpm --filter @skout/shared build && pnpm --filter @skout/auth build && pnpm --filter @skout/storage build && pnpm --filter @skout/scraper-orchestrator build",
     "dev": "tsx watch src/index.ts",
     "worker:crm-export": "tsx src/workers/crm-export.worker.ts",
     "worker:sequence": "tsx src/workers/sequence-enrollment.worker.ts",
@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-secrets-manager": "^3.758.0",
+    "@aws-sdk/client-sesv2": "^3.1087.0",
     "@clerk/backend": "^3.6.1",
     "@fastify/cors": "^10.0.1",
     "@fastify/helmet": "^13.0.1",

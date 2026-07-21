@@ -95,6 +95,11 @@ const envSchema = z
     /** OpenRouter API key (preferred). Also accepts OPEN_ROUTER_API_KEY via transform. */
     OPENROUTER_API_KEY: z.string().optional(),
     OPEN_ROUTER_API_KEY: z.string().optional(),
+    /**
+     * Legacy / alternate slot for the LLM key (SkoutDev/openai). Used as fallback when
+     * OPENROUTER_API_KEY is missing or still the CDK placeholder.
+     */
+    OPENAI_API_KEY: z.string().optional(),
     OPENCORPORATES_API_KEY: z.string().optional(),
     OPENCORPORATES_BASE_URL: z.string().default("https://api.opencorporates.com/v0.4"),
     SEC_EDGAR_BASE_URL: z.string().default("https://efts.sec.gov/LATEST/search-index"),
@@ -160,13 +165,13 @@ const envSchema = z
     FRONTEND_URL: z.string().optional(),
     /** Base URL used in invite-accept links (defaults to FRONTEND_URL). */
     INVITE_BASE_URL: z.string().optional(),
-    /** From-address for transactional invite emails. */
-    INVITE_FROM_EMAIL: z.string().default("noreply@skoutai.io"),
-    /** SMTP host for transactional emails (invites). When absent, links are logged only. */
-    INVITE_SMTP_HOST: z.string().optional(),
-    INVITE_SMTP_PORT: z.coerce.number().optional(),
-    INVITE_SMTP_USER: z.string().optional(),
-    INVITE_SMTP_PASS: z.string().optional(),
+    /** From-address for transactional emails (invites, OTP). */
+    SES_FROM_EMAIL: z.string().default("noreply@skoutai.io"),
+    /** AWS SES SMTP credentials. When SMTP_HOST absent, emails are logged only. */
+    SMTP_HOST: z.string().optional(),
+    SMTP_PORT: z.coerce.number().default(587),
+    SMTP_USERNAME: z.string().optional(),
+    SMTP_PASSWORD: z.string().optional(),
     // --- Enrichment tunables. ---
     ENRICHMENT_REQUEST_TIMEOUT_MS: z.coerce.number().default(8000),
     ENRICHMENT_PHONE_SCORE_GATE: z.coerce.number().default(80),
@@ -197,6 +202,20 @@ const envSchema = z
     // Alias OPEN_ROUTER_API_KEY → OPENROUTER_API_KEY (common env naming)
     if (!next.OPENROUTER_API_KEY && next.OPEN_ROUTER_API_KEY) {
       next = { ...next, OPENROUTER_API_KEY: next.OPEN_ROUTER_API_KEY };
+    }
+    // Treat CDK placeholders as unset; fall back to OPENAI_API_KEY when that holds the
+    // real OpenRouter key (historically stored in SkoutDev/openai during the migration).
+    const isPlaceholder = (v?: string) =>
+      !v ||
+      v.trim() === "" ||
+      v.trim().toLowerCase() === "replace-me" ||
+      v.trim().toLowerCase() === "changeme";
+    if (isPlaceholder(next.OPENROUTER_API_KEY)) {
+      const fallback = next.OPENAI_API_KEY;
+      next = {
+        ...next,
+        OPENROUTER_API_KEY: isPlaceholder(fallback) ? undefined : fallback,
+      };
     }
     return next;
   });

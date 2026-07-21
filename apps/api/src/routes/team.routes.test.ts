@@ -195,7 +195,7 @@ describe("POST /team/invites/:token/accept — accept invite", () => {
     expect(res.statusCode).toBe(403);
   });
 
-  it("returns 409 when the same invite is accepted twice", async () => {
+  it("returns 200 (idempotent) when the same invite is accepted twice", async () => {
     const idempEmail = `idemp-${suffix}@test.com`;
 
     const created = await app.inject({
@@ -217,7 +217,7 @@ describe("POST /team/invites/:token/accept — accept invite", () => {
       url: `/api/v1/team/invites/${token}/accept`,
       headers: asUser(idempEmail),
     });
-    expect(res2.statusCode).toBe(409);
+    expect(res2.statusCode).toBe(200);
   });
 });
 
