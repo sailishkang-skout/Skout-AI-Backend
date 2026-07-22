@@ -8,8 +8,11 @@ import {
   type ProspectDocument,
   type SearchFilters,
 } from "@skout/opensearch";
+import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
+
+const log = createLogger("search.service");
 
 let cachedDemoCorpus: ProspectDocument[] | null = null;
 
@@ -204,6 +207,12 @@ export class SearchService {
     if (cfg) {
       try {
         const res = await osSearch(cfg, toFilters(body), page, pageSize);
+        log.debug("prospect search completed", {
+          page,
+          pageSize,
+          total: res.total,
+          source: "opensearch",
+        });
         return {
           results: res.hits.map((h) => mapDocToSummary(h)),
           total: res.total,
@@ -213,6 +222,7 @@ export class SearchService {
           source: "opensearch" as const,
         };
       } catch (err) {
+        log.error("prospect search failed", err, { page, pageSize });
         throw new HttpError(
           "search_index_unavailable",
           502,

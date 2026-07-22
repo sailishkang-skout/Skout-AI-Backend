@@ -4,7 +4,9 @@ import { schema } from "@skout/db";
 import type { ContactCreateInput, ContactUpdateInput } from "@skout/shared";
 import { HttpError } from "@skout/auth";
 import type { CompaniesService } from "./companies.service.js";
+import { serviceLog } from "../lib/obs.js";
 
+const log = serviceLog("contacts");
 const { contacts } = schema;
 
 export interface ContactDto {
@@ -101,6 +103,7 @@ export class ContactsService {
         sourceProspectId: input.sourceProspectId,
       })
       .returning();
+    log.info("contact created", { workspaceId, contactId: row.id });
     return toDto(row);
   }
 
@@ -129,6 +132,7 @@ export class ContactsService {
       })
       .where(and(eq(contacts.id, id), eq(contacts.workspaceId, workspaceId)))
       .returning();
+    if (row) log.info("contact updated", { workspaceId, contactId: id });
     return row ? toDto(row) : null;
   }
 
@@ -140,6 +144,7 @@ export class ContactsService {
       .update(contacts)
       .set({ deletedAt: new Date(), updatedAt: new Date() })
       .where(and(eq(contacts.id, id), eq(contacts.workspaceId, workspaceId)));
+    log.info("contact soft-deleted", { workspaceId, contactId: id });
     return true;
   }
 }

@@ -2,7 +2,9 @@ import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { ActivityCreateInput, ActivityType, CrmEntityType } from "@skout/shared";
+import { serviceLog } from "../lib/obs.js";
 
+const log = serviceLog("activities");
 const { activities } = schema;
 
 export interface ActivityDto {
@@ -92,6 +94,7 @@ export class ActivitiesService {
       .insert(activities)
       .values({ workspaceId, entityType, entityId, activityType, subject, body, ownerId })
       .returning();
+    log.info("activity recorded", { workspaceId, entityType, entityId, activityType, activityId: row.id });
     return toDto(row);
   }
 }

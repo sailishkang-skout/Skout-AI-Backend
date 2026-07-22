@@ -2,8 +2,11 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
+import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { createWorkspaceService } from "./workspace.service.js";
+
+const log = createLogger("billing.service");
 
 export interface BillingInvoice {
   id: string;
@@ -103,6 +106,12 @@ export function createBillingService(db: Db, config: Env) {
 
       if (!res.ok) {
         const errText = await res.text();
+        log.error("razorpay order create failed", undefined, {
+          workspaceId,
+          packId,
+          status: res.status,
+          errText: errText.slice(0, 200),
+        });
         throw new Error(`razorpay_order_failed:${res.status}:${errText.slice(0, 200)}`);
       }
 
@@ -115,6 +124,14 @@ export function createBillingService(db: Db, config: Env) {
         amountPaise,
         credits: pack.credits,
         status: "created",
+      });
+
+      log.info("razorpay order created", {
+        workspaceId,
+        packId,
+        orderId: order.id,
+        credits: pack.credits,
+        amountPaise,
       });
 
       return {
@@ -169,12 +186,23 @@ export function createBillingService(db: Db, config: Env) {
         .limit(1);
 
       if (!order) {
+        log.warn("payment capture: order not found", { orderId, paymentId });
         return { handled: false as const, reason: "order_not_found" };
       }
       if (expectedWorkspaceId && order.workspaceId !== expectedWorkspaceId) {
+        log.warn("payment capture: workspace mismatch", {
+          orderId,
+          expectedWorkspaceId,
+          orderWorkspaceId: order.workspaceId,
+        });
         return { handled: false as const, reason: "workspace_mismatch" };
       }
       if (order.status === "paid") {
+        log.info("payment capture: already paid", {
+          orderId,
+          workspaceId: order.workspaceId,
+          credits: order.credits,
+        });
         return { handled: true as const, reason: "already_paid", credits: order.credits };
       }
 
@@ -188,6 +216,14 @@ export function createBillingService(db: Db, config: Env) {
           paidAt: new Date(),
         })
         .where(eq(schema.paymentOrders.id, order.id));
+
+      log.info("payment captured", {
+        orderId,
+        paymentId,
+        workspaceId: order.workspaceId,
+        credits: order.credits,
+        packId: order.packId,
+      });
 
       return { handled: true as const, credits: order.credits, workspaceId: order.workspaceId };
     },

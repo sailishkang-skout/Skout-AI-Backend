@@ -4,7 +4,9 @@ import { schema } from "@skout/db";
 import type { PipelineCreateInput, PipelineStageCreateInput } from "@skout/shared";
 import { HttpError } from "@skout/auth";
 import { pgErrorCode } from "../utils/http.js";
+import { logAndCapture, serviceLog } from "../lib/obs.js";
 
+const log = serviceLog("pipelines");
 const { pipelines, pipelineStages } = schema;
 
 export interface PipelineStageDto {
@@ -85,6 +87,7 @@ export class PipelinesService {
 
   async create(workspaceId: string, input: PipelineCreateInput): Promise<PipelineDto> {
     const [row] = await this.db.insert(pipelines).values({ workspaceId, name: input.name }).returning();
+    log.info("pipeline created", { workspaceId, pipelineId: row.id, name: row.name });
     return this.withStages(row);
   }
 
@@ -109,10 +112,13 @@ export class PipelinesService {
       // Postgres unique_violation on (pipeline_id, order_index) — surface as a clean
       // conflict instead of letting the raw DB error bubble up as a 500.
       if (pgErrorCode(err) === "23505") {
+        log.warn("pipeline stage order conflict", { workspaceId, pipelineId, orderIndex: input.orderIndex });
         throw new HttpError("stage_order_conflict", 409, { orderIndex: input.orderIndex });
       }
+      logAndCapture(log, err, "pipeline stage create failed", { workspaceId, pipelineId });
       throw err;
     }
+    log.info("pipeline stage added", { workspaceId, pipelineId, stageId: row.id, name: row.name });
     return stageToDto(row);
   }
 
@@ -125,7 +131,7 @@ export class PipelinesService {
       .limit(1);
     if (existing) return this.withStages(existing);
 
-    return this.db.transaction(async (tx) => {
+    const created = await this.db.transaction(async (tx) => {
       const [pipeline] = await tx
         .insert(pipelines)
         .values({ workspaceId, name: "Sales Pipeline", isDefault: true })
@@ -157,6 +163,8 @@ export class PipelinesService {
           .map(stageToDto),
       };
     });
+    log.info("default pipeline ensured", { workspaceId, pipelineId: created.id });
+    return created;
   }
 }
 

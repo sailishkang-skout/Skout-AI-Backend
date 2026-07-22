@@ -1,5 +1,6 @@
 import { EnrichmentEngine, type EnrichField } from "@skout/pal";
 import { generateCompanyId, generateProspectId } from "@skout/shared";
+import { createLogger, captureException } from "@skout/observability";
 import { scoreProspect, type IcpConfig, type ScoreInput, type ScoreResult } from "./ai-client.js";
 import {
   InsufficientCreditsError,
@@ -14,6 +15,8 @@ import { HttpError, isDatabaseError } from "../../utils/http.js";
 import { isIcpConfigured } from "../icp.service.js";
 import { isVerifiedEmailStatus, stripUnverifiedEmail } from "../../utils/verified-email.js";
 import type { CompanyData } from "@skout/pal";
+
+const log = createLogger("enrichment.service");
 
 export const SCORE_CREDIT_COST = 2;
 
@@ -124,6 +127,7 @@ export class EnrichmentService {
       const snapshot = stripUnverifiedEmail({ ...p, prospectId, companyId });
       await this.store.upsertActivation(workspaceId, prospectId, companyId, snapshot);
     }
+    log.info("prospects activated", { workspaceId, count: prospects.length });
     return prospects.length;
   }
 
@@ -383,6 +387,14 @@ export class EnrichmentService {
         await this.store.upsertActivation(workspaceId, prospectId, companyId, enriched);
       }
 
+      log.info("prospect enrichment completed", {
+        workspaceId,
+        prospectId,
+        jobId: job.id,
+        creditsUsed: outcome.creditsUsed,
+        trigger: opts.trigger ?? "manual",
+      });
+
       return (
         (await this.store.updateJob(job.id, {
           status: "completed",
@@ -398,6 +410,8 @@ export class EnrichmentService {
         isDatabaseError(err) || /failed query:/i.test(raw)
           ? "Enrichment failed due to a server error"
           : raw;
+      log.error("prospect enrichment failed", err, { workspaceId, prospectId, jobId: job.id });
+      captureException(err, { module: "enrichment.service", workspaceId, prospectId, jobId: job.id });
       return (
         (await this.store.updateJob(job.id, {
           status: "failed",
@@ -419,6 +433,7 @@ export class EnrichmentService {
   /** Bulk-enrich every activated member of a list under one batch. */
   async enrichList(workspaceId: string, listId: string, opts: EnrichOptions = {}): Promise<EnrichmentBatch> {
     const memberIds = await this.store.getListMemberIds(workspaceId, listId);
+    log.info("list enrichment started", { workspaceId, listId, total: memberIds.length });
     const batch = await this.store.createBatch({
       workspaceId,
       listId,
@@ -453,11 +468,22 @@ export class EnrichmentService {
       await this.store.updateBatch(batch.id, { done, failed });
     }
 
+    const status = failed === memberIds.length && memberIds.length > 0 ? "failed" : "completed";
+    log.info("list enrichment finished", {
+      workspaceId,
+      listId,
+      batchId: batch.id,
+      done,
+      failed,
+      total: memberIds.length,
+      status,
+    });
+
     return (
       (await this.store.updateBatch(batch.id, {
         done,
         failed,
-        status: failed === memberIds.length && memberIds.length > 0 ? "failed" : "completed",
+        status,
       })) ?? batch
     );
   }

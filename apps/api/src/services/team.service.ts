@@ -1,8 +1,11 @@
 import { randomBytes } from "node:crypto";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
+import { createLogger } from "@skout/observability";
 import { and, count, eq, gt, isNull, ne } from "drizzle-orm";
 import { HttpError } from "../utils/http.js";
+
+const log = createLogger("team.service");
 
 export type WorkspaceRole = "owner" | "admin" | "member";
 
@@ -155,6 +158,14 @@ export function createTeamService(db: Db) {
         });
       }
 
+      log.info("team invite created", {
+        workspaceId,
+        invitedByUserId,
+        email: email.toLowerCase(),
+        role,
+        refreshed: Boolean(pendingForEmail),
+      });
+
       return { token, email: email.toLowerCase(), role, expiresAt };
     },
 
@@ -242,6 +253,12 @@ export function createTeamService(db: Db) {
         .set({ acceptedAt: new Date() })
         .where(eq(schema.workspaceInvites.id, invite.id));
 
+      log.info("team invite accepted", {
+        workspaceId: invite.workspaceId,
+        userId,
+        role: invite.role,
+      });
+
       return { workspaceId: invite.workspaceId, role: invite.role as WorkspaceRole };
     },
 
@@ -287,6 +304,13 @@ export function createTeamService(db: Db) {
           )
         );
 
+      log.info("team member role updated", {
+        workspaceId,
+        targetUserId,
+        newRole,
+        requestingUserId,
+      });
+
       return { userId: targetUserId, role: newRole };
     },
 
@@ -325,6 +349,8 @@ export function createTeamService(db: Db) {
             ne(schema.workspaceMembers.role, "owner")
           )
         );
+
+      log.info("team member removed", { workspaceId, targetUserId, requestingUserId });
     },
 
     async revokeInvite(
@@ -350,6 +376,8 @@ export function createTeamService(db: Db) {
       await db
         .delete(schema.workspaceInvites)
         .where(eq(schema.workspaceInvites.id, inviteId));
+
+      log.info("team invite revoked", { workspaceId, inviteId });
     },
   };
 }

@@ -6,7 +6,9 @@ import { HttpError } from "@skout/auth";
 import type { CompaniesService } from "./companies.service.js";
 import type { PipelinesService } from "./pipelines.service.js";
 import type { ActivitiesService } from "./activities.service.js";
+import { serviceLog } from "../lib/obs.js";
 
+const log = serviceLog("deals");
 const { deals, pipelineStages } = schema;
 
 export interface DealDto {
@@ -123,6 +125,7 @@ export class DealsService {
         probability: input.probability,
       })
       .returning();
+    log.info("deal created", { workspaceId, dealId: row.id });
     return toDto(row);
   }
 
@@ -175,6 +178,7 @@ export class DealsService {
       );
     }
 
+    if (row) log.info("deal updated", { workspaceId, dealId: id });
     return row ? toDto(row) : null;
   }
 
@@ -186,6 +190,7 @@ export class DealsService {
       .update(deals)
       .set({ deletedAt: new Date(), updatedAt: new Date() })
       .where(and(eq(deals.id, id), eq(deals.workspaceId, workspaceId)));
+    log.info("deal soft-deleted", { workspaceId, dealId: id });
     return true;
   }
 

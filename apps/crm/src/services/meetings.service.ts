@@ -3,7 +3,9 @@ import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { MeetingCreateInput, MeetingUpdateInput } from "@skout/shared";
 import type { ActivitiesService } from "./activities.service.js";
+import { serviceLog } from "../lib/obs.js";
 
+const log = serviceLog("meetings");
 const { meetings } = schema;
 
 export interface MeetingDto {
@@ -110,6 +112,7 @@ export class MeetingsService {
       await this.activitiesService.record(workspaceId, dto.organizerId ?? undefined, "company", dto.companyId, "meeting", dto.title, dto.summary ?? undefined);
     }
 
+    log.info("meeting created", { workspaceId, meetingId: dto.id, dealId: dto.dealId });
     return dto;
   }
 
@@ -134,6 +137,7 @@ export class MeetingsService {
       })
       .where(and(eq(meetings.id, id), eq(meetings.workspaceId, workspaceId)))
       .returning();
+    if (row) log.info("meeting updated", { workspaceId, meetingId: id });
     return row ? toDto(row) : null;
   }
 
@@ -145,6 +149,7 @@ export class MeetingsService {
       .update(meetings)
       .set({ deletedAt: new Date(), updatedAt: new Date() })
       .where(and(eq(meetings.id, id), eq(meetings.workspaceId, workspaceId)));
+    log.info("meeting soft-deleted", { workspaceId, meetingId: id });
     return true;
   }
 

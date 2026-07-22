@@ -1,6 +1,9 @@
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
+import { createLogger } from "@skout/observability";
 import { eq, desc, sql } from "drizzle-orm";
+
+const log = createLogger("workspace.service");
 
 export function createWorkspaceService(db: Db) {
   return {
@@ -41,6 +44,7 @@ export function createWorkspaceService(db: Db) {
           slug: schema.workspaces.slug,
         });
       if (!row) return null;
+      log.info("workspace renamed", { workspaceId, name: row.name });
       return this.getWorkspaceWithCredits(workspaceId);
     },
 
@@ -66,6 +70,7 @@ export function createWorkspaceService(db: Db) {
           },
         })
         .returning();
+      log.info("workspace ICP upserted", { workspaceId, version: row?.version });
       return row;
     },
 
@@ -123,6 +128,14 @@ export function createWorkspaceService(db: Db) {
         amount,
         action,
         referenceId: referenceId ?? null,
+      });
+
+      log.info("credits adjusted", {
+        workspaceId,
+        amount,
+        action,
+        referenceId,
+        balance: next,
       });
 
       return next;

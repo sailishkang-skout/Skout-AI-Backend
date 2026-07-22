@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
+import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import { decryptSecret, encryptSecret, maskApiKey } from "../utils/integration-crypto.js";
@@ -12,6 +13,7 @@ import {
   type IntegrationProviderId,
 } from "./integration-providers.js";
 
+const log = createLogger("integration.service");
 const { workspaceIntegrations } = schema;
 
 export interface IntegrationDto {
@@ -112,6 +114,7 @@ export class IntegrationService {
     const listed = await this.list(workspaceId);
     const dto = listed.data.find((d) => d.provider === provider);
     if (!dto) throw new HttpError("integration_save_failed", 500);
+    log.info("integration saved", { workspaceId, provider });
     return dto;
   }
 
@@ -128,6 +131,7 @@ export class IntegrationService {
           eq(workspaceIntegrations.provider, provider)
         )
       );
+    log.info("integration removed", { workspaceId, provider });
   }
 
   async test(workspaceId: string, provider: string, apiKey?: string): Promise<{ ok: true }> {
@@ -156,6 +160,7 @@ export class IntegrationService {
         );
     }
 
+    log.info("integration key validated", { workspaceId, provider });
     return { ok: true };
   }
 

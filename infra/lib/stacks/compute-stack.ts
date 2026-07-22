@@ -426,6 +426,11 @@ export class ComputeStack extends Stack {
         DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(database.secret, "password"),
         CLERK_SECRET_KEY: ecs.Secret.fromSecretsManager(secrets.clerk, "CLERK_SECRET_KEY"),
         SENTRY_DSN: ecs.Secret.fromSecretsManager(secrets.sentry, "SENTRY_DSN"),
+        DD_API_KEY: ecs.Secret.fromSecretsManager(secrets.datadog, "DD_API_KEY"),
+      },
+      datadog: {
+        site: "us5.datadoghq.com",
+        apiKeySecret: ecs.Secret.fromSecretsManager(secrets.datadog, "DD_API_KEY"),
       },
     });
 
@@ -503,7 +508,7 @@ export class ComputeStack extends Stack {
       secrets.datadog
     );
 
-    grantSecretRead(crmEcs.taskDefinition, database.secret, secrets.clerk, secrets.sentry);
+    grantSecretRead(crmEcs.taskDefinition, database.secret, secrets.clerk, secrets.sentry, secrets.datadog);
 
     const aiService = new SkoutEcsService(this, "AiService", {
       vpc,
@@ -522,6 +527,10 @@ export class ComputeStack extends Stack {
       environment: {
         NODE_ENV: "production",
         POSTHOG_HOST: "https://us.i.posthog.com",
+        DD_SERVICE: "skout-ai",
+        DD_ENV: config.name,
+        DD_SITE: "us5.datadoghq.com",
+        SERVICE_NAME: "skout-ai",
       },
       secrets: {
         OPENAI_API_KEY: ecs.Secret.fromSecretsManager(secrets.openai, "OPENAI_API_KEY"),
@@ -567,6 +576,7 @@ export class ComputeStack extends Stack {
         NEXT_PUBLIC_CLERK_SIGN_UP_URL: `${publicUrl}/sign-up`,
         CLERK_SIGN_IN_URL: `${publicUrl}/sign-in`,
         CLERK_SIGN_UP_URL: `${publicUrl}/sign-up`,
+        NEXT_PUBLIC_POSTHOG_HOST: "https://us.i.posthog.com",
       },
       secrets: {
         CLERK_SECRET_KEY: ecs.Secret.fromSecretsManager(secrets.clerk, "CLERK_SECRET_KEY"),
@@ -574,9 +584,11 @@ export class ComputeStack extends Stack {
           secrets.clerk,
           "CLERK_PUBLISHABLE_KEY"
         ),
+        NEXT_PUBLIC_SENTRY_DSN: ecs.Secret.fromSecretsManager(secrets.sentry, "SENTRY_DSN_WEB"),
+        NEXT_PUBLIC_POSTHOG_KEY: ecs.Secret.fromSecretsManager(secrets.posthog, "POSTHOG_API_KEY"),
       },
     });
-    grantSecretRead(webService.taskDefinition, secrets.clerk);
+    grantSecretRead(webService.taskDefinition, secrets.clerk, secrets.sentry, secrets.posthog);
 
     new ec2.CfnSecurityGroupIngress(this, "CrmToDbIngress", {
       groupId: database.securityGroup.securityGroupId,

@@ -1,3 +1,4 @@
+import "./instrument.js";
 import { initRootLogger, initSentry } from "@skout/observability";
 import { loadEnv } from "./config/env.js";
 import { buildApp } from "./app.js";

@@ -1,10 +1,12 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
+import { createLogger } from "@skout/observability";
 import { HttpError } from "../utils/http.js";
 import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.js";
 import type { Env } from "../config/env.js";
 
+const log = createLogger("linkedin-outreach.service");
 const { linkedinOutreachJobs, sequenceEnrollmentSteps, sequenceEnrollments } = schema;
 
 export type LinkedinAction = "connect" | "message";
@@ -100,6 +102,7 @@ export class LinkedinOutreachService {
       .select()
       .from(linkedinOutreachJobs)
       .where(eq(linkedinOutreachJobs.id, jobId));
+    log.info("linkedin outreach job completed", { workspaceId, jobId });
     return updated!;
   }
 
@@ -154,6 +157,7 @@ export class LinkedinOutreachService {
       .select()
       .from(linkedinOutreachJobs)
       .where(eq(linkedinOutreachJobs.id, jobId));
+    log.warn("linkedin outreach job failed", { workspaceId, jobId, reason: reason.slice(0, 200) });
     return updated!;
   }
 

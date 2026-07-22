@@ -1,10 +1,12 @@
 import { and, count, desc, eq, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
+import { createLogger } from "@skout/observability";
 import { getProspectById, type OpenSearchConfig, type ProspectDocument } from "@skout/opensearch";
 import type { ProspectList, ProspectListMember } from "./enrichment/types.js";
 import { snapshotFromCorpusDoc } from "../utils/verified-email.js";
 
+const log = createLogger("list.service");
 const { lists, listMembers, prospectActivations } = schema;
 
 export interface AddMemberInput {
@@ -60,6 +62,7 @@ export class ListService {
       .insert(lists)
       .values({ workspaceId, name })
       .returning();
+    log.info("list created", { workspaceId, listId: row.id, name: row.name });
     return {
       id: row.id,
       workspaceId,
@@ -193,6 +196,12 @@ export class ListService {
       .insert(listMembers)
       .values(members.map((member) => ({ listId, prospectId: member.prospectId })))
       .onConflictDoNothing();
+
+    log.info("list members added", {
+      workspaceId,
+      listId,
+      requested: members.length,
+    });
 
     return this.getListByIdWithMembers(workspaceId, listId);
   }

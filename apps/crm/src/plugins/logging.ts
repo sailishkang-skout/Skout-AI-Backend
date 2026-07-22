@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 import { randomUUID } from "node:crypto";
-import { enterRequestContext, patchRequestContext } from "@skout/observability";
+import { enterRequestContext, patchRequestContext, setSentryUser } from "@skout/observability";
 
 const REQUEST_ID_HEADER = "x-request-id";
 
@@ -31,6 +31,14 @@ export const loggingPlugin = fp(async (app: FastifyInstance) => {
       userId: request.userId,
       workspaceId: request.workspaceId,
     });
+
+    if (request.userId) {
+      setSentryUser({
+        id: request.userId,
+        email: request.userEmail,
+        workspaceId: request.workspaceId,
+      });
+    }
 
     request.log = request.log.child({
       ...(request.userId ? { userId: request.userId } : {}),

@@ -2,7 +2,9 @@ import { and, eq, isNull, lt } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { TaskCreateInput, TaskUpdateInput } from "@skout/shared";
+import { serviceLog } from "../lib/obs.js";
 
+const log = serviceLog("tasks");
 const { tasks } = schema;
 
 export interface TaskDto {
@@ -92,6 +94,7 @@ export class TasksService {
         priority: input.priority,
       })
       .returning();
+    log.info("task created", { workspaceId, taskId: row.id, status: row.status });
     return toDto(row);
   }
 
@@ -113,6 +116,7 @@ export class TasksService {
       })
       .where(and(eq(tasks.id, id), eq(tasks.workspaceId, workspaceId)))
       .returning();
+    if (row) log.info("task updated", { workspaceId, taskId: id, status: row.status });
     return row ? toDto(row) : null;
   }
 
@@ -128,6 +132,7 @@ export class TasksService {
       .update(tasks)
       .set({ deletedAt: new Date(), updatedAt: new Date() })
       .where(and(eq(tasks.id, id), eq(tasks.workspaceId, workspaceId)));
+    log.info("task soft-deleted", { workspaceId, taskId: id });
     return true;
   }
 

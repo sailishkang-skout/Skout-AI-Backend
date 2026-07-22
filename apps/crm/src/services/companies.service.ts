@@ -2,7 +2,9 @@ import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { CompanyCreateInput, CompanyUpdateInput } from "@skout/shared";
+import { serviceLog } from "../lib/obs.js";
 
+const log = serviceLog("companies");
 const { companies } = schema;
 
 export interface CompanyDto {
@@ -89,6 +91,7 @@ export class CompaniesService {
         sourceProspectCompanyId: input.sourceProspectCompanyId,
       })
       .returning();
+    log.info("company created", { workspaceId, companyId: row.id });
     return toDto(row);
   }
 
@@ -114,6 +117,7 @@ export class CompaniesService {
       })
       .where(and(eq(companies.id, id), eq(companies.workspaceId, workspaceId)))
       .returning();
+    if (row) log.info("company updated", { workspaceId, companyId: id });
     return row ? toDto(row) : null;
   }
 
@@ -125,6 +129,7 @@ export class CompaniesService {
       .update(companies)
       .set({ deletedAt: new Date(), updatedAt: new Date() })
       .where(and(eq(companies.id, id), eq(companies.workspaceId, workspaceId)));
+    log.info("company soft-deleted", { workspaceId, companyId: id });
     return true;
   }
 
