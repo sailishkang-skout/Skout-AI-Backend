@@ -393,14 +393,13 @@ export class ComputeStack extends Stack {
       healthCheckPath: "/api/v1/crm/health",
       containerHealthCheckCommand: [nodeHttpHealthCheck(3002, "/api/v1/crm/health")],
       listener,
-      // ALB path-pattern conditions cap at 5 values per rule — the rest are added as a
-      // second rule on the same target group below (priority 6).
+      // ALB limits total condition VALUES per rule to 5. With origin-verify header (1),
+      // path-pattern can hold at most 4 values when httpsMode=apigateway|cloudfront.
       pathPatterns: [
         "/api/v1/crm/health",
         "/api/v1/companies*",
         "/api/v1/contacts*",
         "/api/v1/deals*",
-        "/api/v1/pipelines*",
       ],
       priority: 5,
       extraConditions: albExtraConditions,
@@ -430,19 +429,27 @@ export class ComputeStack extends Stack {
       },
     });
 
-    // Overflow of CRM path patterns (the 5-value cap on a single ALB path-pattern
-    // condition is already used up above) — same target group, next free priority.
+    // Overflow CRM paths — keep ≤4 patterns when origin-verify header is present.
+    // Use /dashboard/overview* (not /dashboard*) so API /dashboard/summary stays on api.
     if (crmEcs.targetGroup) {
       listener.addTargetGroups("crm-overflow", {
         targetGroups: [crmEcs.targetGroup],
         priority: 6,
         conditions: [
           elbv2.ListenerCondition.pathPatterns([
+            "/api/v1/pipelines*",
             "/api/v1/tasks*",
             "/api/v1/activities*",
             "/api/v1/meetings*",
-            "/api/v1/dashboard*",
           ]),
+          ...albExtraConditions,
+        ],
+      });
+      listener.addTargetGroups("crm-dashboard", {
+        targetGroups: [crmEcs.targetGroup],
+        priority: 7,
+        conditions: [
+          elbv2.ListenerCondition.pathPatterns(["/api/v1/dashboard/overview*"]),
           ...albExtraConditions,
         ],
       });
