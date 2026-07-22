@@ -2,10 +2,15 @@ import type { FastifyInstance } from "fastify";
 import { pipelineCreateSchema, pipelineStageCreateSchema } from "@skout/shared";
 import { HttpError } from "@skout/auth";
 import { parseIdParam } from "../utils/http.js";
+import { buildAuditService } from "../services/audit.service.js";
 import { buildPipelinesService } from "../services/pipelines.service.js";
 
 export async function pipelinesRoutes(app: FastifyInstance) {
-  const service = () => buildPipelinesService(app.db ?? null);
+  const service = () => {
+    const db = app.db ?? null;
+    const auditService = buildAuditService(db);
+    return buildPipelinesService(db, auditService);
+  };
 
   app.get("/pipelines", async (request) => {
     const workspaceId = request.workspaceId ?? "unknown";
@@ -22,7 +27,7 @@ export async function pipelinesRoutes(app: FastifyInstance) {
     if (!svc) throw new HttpError("database_unavailable", 503);
 
     const input = pipelineCreateSchema.parse(request.body);
-    const pipeline = await svc.create(workspaceId, input);
+    const pipeline = await svc.create(workspaceId, request.userId, input);
     return reply.code(201).send(pipeline);
   });
 

@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { activitiesRoutes } from "./activities.routes.js";
+import { auditRoutes } from "./audit.routes.js";
 import { companiesRoutes } from "./companies.routes.js";
 import { contactsRoutes } from "./contacts.routes.js";
 import { dashboardRoutes } from "./dashboard.routes.js";
@@ -19,6 +20,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(pipelinesRoutes);
     await v1.register(tasksRoutes);
     await v1.register(activitiesRoutes);
+    await v1.register(auditRoutes);
     await v1.register(meetingsRoutes);
     await v1.register(dashboardRoutes);
   }, { prefix: "/api/v1" });

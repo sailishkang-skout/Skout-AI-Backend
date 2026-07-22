@@ -2,6 +2,7 @@ import { and, eq, isNull, lt } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { TaskCreateInput, TaskUpdateInput } from "@skout/shared";
+import type { AuditService } from "./audit.service.js";
 
 const { tasks } = schema;
 
@@ -36,7 +37,10 @@ function toDto(row: typeof tasks.$inferSelect): TaskDto {
 }
 
 export class TasksService {
-  constructor(private readonly db: Db) {}
+  constructor(
+    private readonly db: Db,
+    private readonly auditService: AuditService
+  ) {}
 
   async list(
     workspaceId: string,
@@ -92,10 +96,18 @@ export class TasksService {
         priority: input.priority,
       })
       .returning();
-    return toDto(row);
+
+    const dto = toDto(row);
+    await this.auditService.record(workspaceId, assignedTo, "create", "task", dto.id, null, dto);
+    return dto;
   }
 
-  async update(workspaceId: string, id: string, input: TaskUpdateInput): Promise<TaskDto | null> {
+  async update(
+    workspaceId: string,
+    id: string,
+    actorId: string | undefined,
+    input: TaskUpdateInput
+  ): Promise<TaskDto | null> {
     const existing = await this.getById(workspaceId, id);
     if (!existing) return null;
 
@@ -113,21 +125,32 @@ export class TasksService {
       })
       .where(and(eq(tasks.id, id), eq(tasks.workspaceId, workspaceId)))
       .returning();
-    return row ? toDto(row) : null;
+
+    const dto = row ? toDto(row) : null;
+    if (dto) {
+      await this.auditService.record(workspaceId, actorId, "update", "task", id, existing, dto);
+    }
+    return dto;
   }
 
   async complete(workspaceId: string, id: string): Promise<TaskDto | null> {
-    return this.update(workspaceId, id, { status: "done" });
+    return this.update(workspaceId, id, undefined, { status: "done" });
   }
 
-  async softDelete(workspaceId: string, id: string): Promise<boolean> {
+  async softDelete(workspaceId: string, id: string, actorId: string | undefined): Promise<boolean> {
     const existing = await this.getById(workspaceId, id);
     if (!existing) return false;
 
-    await this.db
+    const [row] = await this.db
       .update(tasks)
       .set({ deletedAt: new Date(), updatedAt: new Date() })
-      .where(and(eq(tasks.id, id), eq(tasks.workspaceId, workspaceId)));
+      .where(and(eq(tasks.id, id), eq(tasks.workspaceId, workspaceId)))
+      .returning();
+
+    const dto = row ? toDto(row) : null;
+    if (dto) {
+      await this.auditService.record(workspaceId, actorId, "delete", "task", id, existing, dto);
+    }
     return true;
   }
 
@@ -154,6 +177,6 @@ export class TasksService {
   }
 }
 
-export function buildTasksService(db: Db | null): TasksService | null {
-  return db ? new TasksService(db) : null;
+export function buildTasksService(db: Db | null, auditService: AuditService | null): TasksService | null {
+  return db && auditService ? new TasksService(db, auditService) : null;
 }
