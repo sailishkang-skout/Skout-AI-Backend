@@ -63,7 +63,7 @@ export async function startBlacklistMonitorWorker(config: Env) {
           await db
             .update(schema.sendingDomains)
             .set({
-              blacklistStatus: result.status === "error" ? "clean" : result.status,
+              blacklistStatus: result.status,
               blacklistedOn: result.listedOn,
               lastCheckedAt: now,
               checkError: result.error ?? null,

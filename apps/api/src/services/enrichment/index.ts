@@ -2,10 +2,12 @@ import type { Db } from "@skout/db";
 import {
   EnrichmentEngine,
   createRegistryFromConfig,
+  hasLiveProviders,
   type EmailVerifier,
   type PalConfig,
 } from "@skout/pal";
 import type { Env } from "../../config/env.js";
+import { HttpError } from "../../utils/http.js";
 import { getWorkspaceIcp } from "../icp.service.js";
 import { writeScoreToOpenSearch } from "../score-opensearch.js";
 import { ensureDemoWorkspace } from "../demo-workspace.js";
@@ -95,13 +97,30 @@ export async function resolveEmailVerifier(
 
 /** Build a request-scoped EnrichmentService bound to the right store + providers. */
 export function buildEnrichmentService(db: Db | null, config: Env): EnrichmentService {
+  const platform = palConfigFromEnv(config);
   const platformEngine = buildEngine(config);
   const integrationSvc = createIntegrationService(db, config);
 
   const resolveEngine = async (workspaceId: string): Promise<EnrichmentEngine> => {
-    if (!db) return platformEngine;
-    const workspacePal = await integrationSvc.loadWorkspacePalConfig(workspaceId);
-    if (!hasWorkspacePalKeys(workspacePal)) return platformEngine;
+    let workspacePal: Partial<PalConfig> = {};
+    if (db) {
+      workspacePal = await integrationSvc.loadWorkspacePalConfig(workspaceId);
+    }
+
+    // Production must not invent contacts via stub providers when no API keys exist.
+    if (
+      config.NODE_ENV === "production" &&
+      !hasLiveProviders(platform) &&
+      !hasWorkspacePalKeys(workspacePal)
+    ) {
+      throw new HttpError(
+        "enrichment_providers_not_configured",
+        503,
+        "No enrichment provider API keys are configured for this environment."
+      );
+    }
+
+    if (!db || !hasWorkspacePalKeys(workspacePal)) return platformEngine;
     return buildEngine(config, workspacePal);
   };
 

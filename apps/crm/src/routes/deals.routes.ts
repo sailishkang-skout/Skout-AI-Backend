@@ -30,7 +30,7 @@ export async function dealsRoutes(app: FastifyInstance) {
   app.get("/deals", async (request) => {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
-    if (!svc) return { data: [], total: 0, workspaceId };
+    if (!svc) throw new HttpError("database_unavailable", 503);
 
     const query = dealListQuerySchema.parse(request.query);
     const result = await svc.list(workspaceId, query);

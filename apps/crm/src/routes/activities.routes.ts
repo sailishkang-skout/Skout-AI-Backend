@@ -9,7 +9,7 @@ export async function activitiesRoutes(app: FastifyInstance) {
   app.get("/activities", async (request) => {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
-    if (!svc) return { data: [], total: 0, workspaceId };
+    if (!svc) throw new HttpError("database_unavailable", 503);
 
     const { entityType, entityId, limit, offset } = activityListQuerySchema.parse(request.query);
     const result = await svc.list(workspaceId, entityType, entityId, { limit, offset });

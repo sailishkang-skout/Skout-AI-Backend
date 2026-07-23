@@ -10,7 +10,7 @@ export async function pipelinesRoutes(app: FastifyInstance) {
   app.get("/pipelines", async (request) => {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
-    if (!svc) return { data: [], total: 0, workspaceId };
+    if (!svc) throw new HttpError("database_unavailable", 503);
 
     const data = await svc.list(workspaceId);
     return { data, total: data.length, workspaceId };

@@ -16,7 +16,7 @@ function selectChain(result: unknown[]) {
   const c = {} as Record<string, ReturnType<typeof vi.fn>>;
   c.from = vi.fn().mockReturnValue(c);
   c.where = vi.fn().mockReturnValue(c);
-  c.orderBy = vi.fn().mockReturnValue(c);
+  c.orderBy = vi.fn().mockResolvedValue(result);
   c.limit = vi.fn().mockResolvedValue(result);
   return c;
 }
@@ -32,14 +32,61 @@ function updateChain() {
 // ---------------------------------------------------------------------------
 
 describe("pickNextInbox", () => {
-  it("returns the first active inbox ordered by lastUsedAt", async () => {
-    const inboxRow = { id: "inbox-1", status: "active" };
-    const db = { select: vi.fn().mockReturnValue(selectChain([inboxRow])) } as any;
+  it("returns the first active inbox under its daily send cap", async () => {
+    const inboxRow = { id: "inbox-1", status: "active", dailySendLimit: 50 };
+    const countChain = {
+      from: vi.fn().mockReturnThis(),
+      innerJoin: vi.fn().mockReturnThis(),
+      where: vi.fn().mockResolvedValue([{ sentToday: 0 }]),
+    };
+    const listChain = selectChain([inboxRow]);
+    const db = {
+      select: vi.fn()
+        .mockReturnValueOnce(listChain)
+        .mockReturnValueOnce(countChain),
+    } as any;
     await expect(pickNextInbox(db, "ws-1")).resolves.toEqual(inboxRow);
+  });
+
+  it("skips inboxes that have hit their daily send limit", async () => {
+    const capped = { id: "inbox-1", status: "active", dailySendLimit: 50 };
+    const available = { id: "inbox-2", status: "active", dailySendLimit: 50 };
+    const listChain = selectChain([capped, available]);
+    const cappedCount = {
+      from: vi.fn().mockReturnThis(),
+      innerJoin: vi.fn().mockReturnThis(),
+      where: vi.fn().mockResolvedValue([{ sentToday: 50 }]),
+    };
+    const availableCount = {
+      from: vi.fn().mockReturnThis(),
+      innerJoin: vi.fn().mockReturnThis(),
+      where: vi.fn().mockResolvedValue([{ sentToday: 10 }]),
+    };
+    const db = {
+      select: vi.fn()
+        .mockReturnValueOnce(listChain)
+        .mockReturnValueOnce(cappedCount)
+        .mockReturnValueOnce(availableCount),
+    } as any;
+    await expect(pickNextInbox(db, "ws-1")).resolves.toEqual(available);
   });
 
   it("returns null when no active inbox exists", async () => {
     const db = { select: vi.fn().mockReturnValue(selectChain([])) } as any;
+    await expect(pickNextInbox(db, "ws-1")).resolves.toBeNull();
+  });
+
+  it("returns null when every active inbox is at its daily cap", async () => {
+    const capped = { id: "inbox-1", status: "active", dailySendLimit: 10 };
+    const listChain = selectChain([capped]);
+    const countChain = {
+      from: vi.fn().mockReturnThis(),
+      innerJoin: vi.fn().mockReturnThis(),
+      where: vi.fn().mockResolvedValue([{ sentToday: 10 }]),
+    };
+    const db = {
+      select: vi.fn().mockReturnValueOnce(listChain).mockReturnValueOnce(countChain),
+    } as any;
     await expect(pickNextInbox(db, "ws-1")).resolves.toBeNull();
   });
 });
