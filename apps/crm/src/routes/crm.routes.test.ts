@@ -7,19 +7,14 @@ import type { FastifyInstance } from "fastify";
 const hasDatabase = Boolean(process.env.DATABASE_URL);
 
 describe("companies routes (unit)", () => {
-  it("GET /companies returns scaffold payload for workspace", async () => {
+  it("GET /companies returns 503 without a database", async () => {
     const app = await buildRouteTestApp();
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/companies",
     });
 
-    expect(res.statusCode).toBe(200);
-    const body = res.json() as { data: unknown[]; total: number; workspaceId: string };
-    expect(body.data).toEqual([]);
-    expect(body.total).toBe(0);
-    expect(body.workspaceId).toBe("aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee");
-
+    expect(res.statusCode).toBe(503);
     await app.close();
   });
 });
@@ -44,63 +39,53 @@ describe("deals routes (unit)", () => {
 });
 
 describe("contacts routes (unit)", () => {
-  it("GET /contacts returns empty scaffold list", async () => {
+  it("GET /contacts returns 503 without a database", async () => {
     const app = await buildRouteTestApp();
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/contacts",
     });
 
-    expect(res.statusCode).toBe(200);
-    expect((res.json() as { total: number }).total).toBe(0);
-
+    expect(res.statusCode).toBe(503);
     await app.close();
   });
 });
 
 describe("pipelines routes (unit)", () => {
-  it("GET /pipelines returns empty scaffold list without a database", async () => {
+  it("GET /pipelines returns 503 without a database", async () => {
     const app = await buildRouteTestApp();
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/pipelines",
     });
 
-    expect(res.statusCode).toBe(200);
-    const body = res.json() as { data: unknown[]; total: number };
-    expect(body.data).toEqual([]);
-    expect(body.total).toBe(0);
-
+    expect(res.statusCode).toBe(503);
     await app.close();
   });
 });
 
 describe("tasks routes (unit)", () => {
-  it("GET /tasks returns empty scaffold list without a database", async () => {
+  it("GET /tasks returns 503 without a database", async () => {
     const app = await buildRouteTestApp();
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/tasks",
     });
 
-    expect(res.statusCode).toBe(200);
-    expect((res.json() as { total: number }).total).toBe(0);
-
+    expect(res.statusCode).toBe(503);
     await app.close();
   });
 });
 
 describe("activities routes (unit)", () => {
-  it("GET /activities returns empty scaffold list without a database", async () => {
+  it("GET /activities returns 503 without a database", async () => {
     const app = await buildRouteTestApp();
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/activities?entityType=deal&entityId=aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee",
     });
 
-    expect(res.statusCode).toBe(200);
-    expect((res.json() as { total: number }).total).toBe(0);
-
+    expect(res.statusCode).toBe(503);
     await app.close();
   });
 });
@@ -160,16 +145,14 @@ describe("audit routes (unit)", () => {
 });
 
 describe("meetings routes (unit)", () => {
-  it("GET /meetings returns empty scaffold list without a database", async () => {
+  it("GET /meetings returns 503 without a database", async () => {
     const app = await buildRouteTestApp();
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/meetings",
     });
 
-    expect(res.statusCode).toBe(200);
-    expect((res.json() as { total: number }).total).toBe(0);
-
+    expect(res.statusCode).toBe(503);
     await app.close();
   });
 });

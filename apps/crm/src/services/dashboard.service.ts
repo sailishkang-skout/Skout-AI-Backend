@@ -5,7 +5,9 @@ import type { ActivitiesService, ActivityDto } from "./activities.service.js";
 import type { DealsService } from "./deals.service.js";
 import type { TasksService } from "./tasks.service.js";
 import type { MeetingsService } from "./meetings.service.js";
+import { serviceLog } from "../lib/obs.js";
 
+const log = serviceLog("dashboard");
 const { companies, contacts } = schema;
 
 export interface DashboardOverviewDto {
@@ -49,7 +51,7 @@ export class DashboardService {
         this.meetingsService?.upcomingCount(workspaceId) ?? Promise.resolve(0),
       ]);
 
-    return {
+    const result: DashboardOverviewDto = {
       workspaceId,
       companies: companyRows.length,
       contacts: contactRows.length,
@@ -61,6 +63,13 @@ export class DashboardService {
       upcomingMeetings,
       recentActivities,
     };
+    log.debug("dashboard overview loaded", {
+      workspaceId,
+      companies: result.companies,
+      contacts: result.contacts,
+      openDeals: result.openDeals,
+    });
+    return result;
   }
 }
 

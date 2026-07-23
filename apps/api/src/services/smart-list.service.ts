@@ -2,12 +2,14 @@ import { randomUUID } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
+import { createLogger } from "@skout/observability";
 import {
   runSmartListQueryWithFallback,
   type OpenSearchConfig,
   type SearchFilters,
 } from "@skout/opensearch";
 
+const log = createLogger("smart-list.service");
 const { smartLists } = schema;
 
 export interface SmartListRecord {
@@ -67,13 +69,16 @@ export async function createSmartList(
       updatedAt: new Date(),
     };
     memoryLists(workspaceId).push(row);
+    log.info("smart list created", { workspaceId, listId: row.id, name });
     return row;
   }
   const [row] = await db
     .insert(smartLists)
     .values({ workspaceId, name, filters })
     .returning();
-  return toSmartListRecord(row);
+  const record = toSmartListRecord(row);
+  log.info("smart list created", { workspaceId, listId: record.id, name });
+  return record;
 }
 
 export async function updateSmartList(
@@ -88,6 +93,7 @@ export async function updateSmartList(
     if (patch.name !== undefined) list.name = patch.name;
     if (patch.filters !== undefined) list.filters = patch.filters;
     list.updatedAt = new Date();
+    log.info("smart list updated", { workspaceId, listId });
     return list;
   }
   const [existing] = await db.select().from(smartLists).where(eq(smartLists.id, listId));
@@ -101,6 +107,7 @@ export async function updateSmartList(
     })
     .where(eq(smartLists.id, listId))
     .returning();
+  if (row) log.info("smart list updated", { workspaceId, listId });
   return row ? toSmartListRecord(row) : null;
 }
 
@@ -114,11 +121,13 @@ export async function deleteSmartList(
     const idx = lists.findIndex((l) => l.id === listId);
     if (idx === -1) return false;
     lists.splice(idx, 1);
+    log.info("smart list deleted", { workspaceId, listId });
     return true;
   }
   const [existing] = await db.select().from(smartLists).where(eq(smartLists.id, listId));
   if (!existing || existing.workspaceId !== workspaceId) return false;
   await db.delete(smartLists).where(eq(smartLists.id, listId));
+  log.info("smart list deleted", { workspaceId, listId });
   return true;
 }
 
@@ -151,6 +160,13 @@ export async function runSmartList(
       .set({ lastRunCount: hits.length, updatedAt: new Date() })
       .where(eq(smartLists.id, listId));
   }
+
+  log.info("smart list run completed", {
+    workspaceId,
+    listId,
+    total: hits.length,
+    demo,
+  });
 
   return { list, hits, total: hits.length, demo };
 }

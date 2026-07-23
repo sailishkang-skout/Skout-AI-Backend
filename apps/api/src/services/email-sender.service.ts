@@ -1,6 +1,9 @@
 import nodemailer, { type Transporter } from "nodemailer";
+import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { decryptSecret } from "../utils/integration-crypto.js";
+
+const log = createLogger("email-sender.service");
 
 export interface SendEmailInput {
   from: string;
@@ -64,14 +67,24 @@ export function buildEmailSenderFromInbox(config: Env, inbox: InboxSmtpConfig): 
 
   return {
     async send(input: SendEmailInput): Promise<SendEmailResult> {
-      const info = await transporter!.sendMail({
-        from: input.fromName ? `"${input.fromName}" <${input.from}>` : input.from,
-        to: input.to,
-        subject: input.subject,
-        text: input.text,
-        html: input.html,
-      });
-      return { externalId: info.messageId ?? "" };
+      try {
+        const info = await transporter!.sendMail({
+          from: input.fromName ? `"${input.fromName}" <${input.from}>` : input.from,
+          to: input.to,
+          subject: input.subject,
+          text: input.text,
+          html: input.html,
+        });
+        log.info("email sent", {
+          from: input.from,
+          to: input.to,
+          externalId: info.messageId ?? "",
+        });
+        return { externalId: info.messageId ?? "" };
+      } catch (err) {
+        log.error("email send failed", err, { from: input.from, to: input.to });
+        throw err;
+      }
     },
   };
 }

@@ -7,6 +7,7 @@ import {
   addProspectBatchToList,
   getListMemberIds,
   enrichProspect,
+  getEnrichJob,
   scoreProspect,
   resolveProspectId,
   listSequences,
@@ -272,6 +273,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "enrich-profile") {
     void (async () => {
+      const ENRICH_TIMEOUT_MS = 45_000;
       const t0 = Date.now();
       log("enrich-profile START");
       try {
@@ -279,35 +281,67 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const result = await withTimeout(
           (async () => {
             await ensureAuthForApi();
-            const profile = await timeStep("resolveProfile", () => resolveProfile(message, sender.tab?.id));
+            const profile = await timeStep("resolveProfile", () =>
+              resolveProfile(message, sender.tab?.id)
+            );
             fullName = profile.fullName;
             const prospectId = await timeStep("activateProspect", () => activateProspect(profile));
             await ensureAuthForApi();
+
+            const fields =
+              Array.isArray(message.fields) && message.fields.length
+                ? message.fields
+                : ["company", "email", "validation"];
+
             const enrichResult = await timeStep("enrichProspect", () =>
-              enrichProspect(prospectId, profile)
+              enrichProspect(prospectId, profile, fields)
             );
-            return enrichResult;
+
+            return { ...enrichResult, fullName };
           })(),
-          HANDLER_TIMEOUT_MS,
-          "Enrich timed out — open Skout (localhost:3000), sign in, click Connect Skout account, then reload this page."
+          ENRICH_TIMEOUT_MS,
+          "Enrich timed out — check your Skout session and try again."
         );
-        const emailLine = result?.email ? ` · ${result.email}` : "";
-        const statusLine = result?.emailStatus ? ` (${result.emailStatus})` : "";
-        log(`enrich-profile DONE (${Date.now() - t0}ms)`);
+
+        log(`enrich-profile STARTED (${Date.now() - t0}ms) jobId=${result?.jobId}`);
+        const emailResult = result?.results?.find((r) => r.field === "email" && r.isPrimary);
         sendResponse({
           ok: true,
           fullName,
-          email: result?.email ?? null,
-          emailStatus: result?.emailStatus ?? null,
-          jobStatus: result?.status ?? null,
-          message: `Enrichment ${result?.status ?? "started"}${emailLine}${statusLine}`,
+          jobId: result?.jobId ?? null,
+          status: result?.status ?? "completed",
+          results: result?.results ?? [],
+          email: emailResult?.value ?? null,
+          emailStatus: result?.results?.find((r) => r.field === "email_status")?.value ?? null,
         });
       } catch (error) {
         logError(`enrich-profile FAILED (${Date.now() - t0}ms):`, error);
+        const msg = error instanceof Error ? error.message : "Enrich failed";
+        const isCreditsError =
+          msg.includes("credits") || msg.includes("Credits") || msg.includes("402");
         sendResponse({
           ok: false,
-          error: friendlyTabError(error instanceof Error ? error.message : "Enrich failed"),
+          error: friendlyTabError(msg),
+          isCreditsError,
         });
+      }
+    })();
+    return true;
+  }
+
+  if (message.type === "poll-enrich-job") {
+    void (async () => {
+      try {
+        await ensureAuthForApi();
+        const job = await getEnrichJob(message.jobId);
+        sendResponse({
+          ok: true,
+          status: job?.status ?? "pending",
+          results: job?.results ?? [],
+        });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : "Poll failed";
+        sendResponse({ ok: false, error: friendlyTabError(msg) });
       }
     })();
     return true;

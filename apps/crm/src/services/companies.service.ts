@@ -3,7 +3,9 @@ import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { CompanyCreateInput, CompanyUpdateInput } from "@skout/shared";
 import { buildAuditService, type AuditService } from "./audit.service.js";
+import { serviceLog } from "../lib/obs.js";
 
+const log = serviceLog("companies");
 const { companies } = schema;
 
 export interface CompanyDto {
@@ -119,6 +121,7 @@ export class CompaniesService {
       const dto = toDto(row);
       const txAuditService = buildAuditService(tx as never);
       await txAuditService?.record(workspaceId, actorId, "create", "company", dto.id, null, dto);
+      log.info("company created", { workspaceId, companyId: row.id });
       return dto;
     });
   }
@@ -165,6 +168,7 @@ export class CompaniesService {
         const txAuditService = buildAuditService(tx as never);
         await txAuditService?.record(workspaceId, actorId, "update", "company", id, existing, dto);
       }
+      if (row) log.info("company updated", { workspaceId, companyId: id });
       return dto;
     });
   }
@@ -185,6 +189,7 @@ export class CompaniesService {
         const txAuditService = buildAuditService(tx as never);
         await txAuditService?.record(workspaceId, actorId, "delete", "company", id, existing, dto);
       }
+      if (row) log.info("company soft-deleted", { workspaceId, companyId: id });
       return Boolean(row);
     });
   }

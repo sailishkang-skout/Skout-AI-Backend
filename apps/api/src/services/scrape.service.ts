@@ -1,11 +1,13 @@
 import { desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
+import { createLogger } from "@skout/observability";
 import type { ScrapeJobRequest } from "@skout/scraper-contracts";
 import { enqueueScrapeJob } from "@skout/scraper-orchestrator";
 import type { Env } from "../config/env.js";
 import { isRedisAvailable } from "../lib/redis.js";
 
+const log = createLogger("scrape.service");
 const { scrapeJobs } = schema;
 
 function serializeJob(row: typeof scrapeJobs.$inferSelect) {
@@ -51,6 +53,10 @@ export async function createAndEnqueueScrapeJob(db: Db, config: Env, request: Sc
         completedAt: new Date(),
       })
       .where(eq(scrapeJobs.id, row.id));
+    log.warn("scrape job not enqueued — redis unavailable", {
+      jobId: row.id,
+      source: request.source,
+    });
     return {
       job: serializeJob({
         ...row,
@@ -74,9 +80,11 @@ export async function createAndEnqueueScrapeJob(db: Db, config: Env, request: Sc
         completedAt: new Date(),
       })
       .where(eq(scrapeJobs.id, row.id));
+    log.error("scrape job enqueue failed", err, { jobId: row.id, source: request.source });
     throw err;
   }
 
+  log.info("scrape job enqueued", { jobId: row.id, source: request.source });
   return { job: serializeJob(row) };
 }
 

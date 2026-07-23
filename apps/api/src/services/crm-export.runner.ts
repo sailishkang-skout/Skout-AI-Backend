@@ -14,11 +14,13 @@ import {
   createHubSpotCredentialsStore,
   type HubSpotCredentialsStore,
 } from "./hubspot-credentials.store.js";
+import { DbStore } from "./enrichment/db-store.js";
 
 const { crmConnections, crmProspectMappings, asyncJobs, prospectActivations, listMembers, enrichmentResults } =
   schema;
 
 const HUBSPOT_PROVIDER = "hubspot";
+const EXPORT_CREDIT_PER_CONTACT = 1;
 const log = createLogger("crm-export.runner");
 
 interface ConnectionRow {
@@ -173,6 +175,37 @@ export async function runHubSpotExportJob(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.error("HubSpot export job failed", err, { jobId, workspaceId, listId });
+
+    const [failedJob] = await db
+      .select({ payload: asyncJobs.payload })
+      .from(asyncJobs)
+      .where(eq(asyncJobs.id, jobId))
+      .limit(1);
+    const contactCount =
+      failedJob?.payload &&
+      typeof failedJob.payload === "object" &&
+      "contactCount" in failedJob.payload
+        ? Number((failedJob.payload as { contactCount?: number }).contactCount ?? 0)
+        : 0;
+    if (contactCount > 0) {
+      try {
+        const store = new DbStore(db);
+        await store.addCredits(
+          workspaceId,
+          contactCount * EXPORT_CREDIT_PER_CONTACT,
+          "export_hubspot_refund",
+          listId
+        );
+        log.info("HubSpot export credits refunded", { workspaceId, listId, contactCount });
+      } catch (refundErr) {
+        log.error("HubSpot export credit refund failed", refundErr, {
+          workspaceId,
+          listId,
+          contactCount,
+        });
+      }
+    }
+
     await db
       .update(asyncJobs)
       .set({

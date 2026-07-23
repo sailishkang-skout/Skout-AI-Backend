@@ -7,7 +7,9 @@ import type { CompaniesService } from "./companies.service.js";
 import type { PipelinesService } from "./pipelines.service.js";
 import type { ActivitiesService } from "./activities.service.js";
 import type { AuditService } from "./audit.service.js";
+import { serviceLog } from "../lib/obs.js";
 
+const log = serviceLog("deals");
 const { deals, pipelineStages } = schema;
 
 export interface DealDto {
@@ -128,6 +130,7 @@ export class DealsService {
 
     const dto = toDto(row);
     await this.auditService.record(workspaceId, ownerId, "create", "deal", dto.id, null, dto);
+    log.info("deal created", { workspaceId, dealId: row.id });
     return dto;
   }
 
@@ -185,6 +188,7 @@ export class DealsService {
       );
     }
 
+    if (row) log.info("deal updated", { workspaceId, dealId: id });
     return dto;
   }
 
@@ -202,6 +206,7 @@ export class DealsService {
     if (dto) {
       await this.auditService.record(workspaceId, actorId, "delete", "deal", id, existing, dto);
     }
+    log.info("deal soft-deleted", { workspaceId, dealId: id });
     return true;
   }
 

@@ -5,7 +5,9 @@ import type { ContactCreateInput, ContactUpdateInput } from "@skout/shared";
 import { HttpError } from "@skout/auth";
 import type { CompaniesService } from "./companies.service.js";
 import type { AuditService } from "./audit.service.js";
+import { serviceLog } from "../lib/obs.js";
 
+const log = serviceLog("contacts");
 const { contacts } = schema;
 
 export interface ContactDto {
@@ -106,6 +108,7 @@ export class ContactsService {
 
     const dto = toDto(row);
     await this.auditService.record(workspaceId, actorId, "create", "contact", dto.id, null, dto);
+    log.info("contact created", { workspaceId, contactId: row.id });
     return dto;
   }
 
@@ -144,6 +147,7 @@ export class ContactsService {
     if (dto) {
       await this.auditService.record(workspaceId, actorId, "update", "contact", id, existing, dto);
     }
+    if (row) log.info("contact updated", { workspaceId, contactId: id });
     return dto;
   }
 
@@ -161,6 +165,7 @@ export class ContactsService {
     if (dto) {
       await this.auditService.record(workspaceId, actorId, "delete", "contact", id, existing, dto);
     }
+    log.info("contact soft-deleted", { workspaceId, contactId: id });
     return true;
   }
 }

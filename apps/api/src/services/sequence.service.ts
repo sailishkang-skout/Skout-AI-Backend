@@ -1,8 +1,11 @@
 import { and, asc, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
+import { createLogger } from "@skout/observability";
 import { HttpError } from "../utils/http.js";
 import { stepScheduledAt } from "../utils/scheduling.js";
+
+const log = createLogger("sequence.service");
 
 const {
   sequences,
@@ -85,6 +88,7 @@ export class SequenceService {
       .insert(sequences)
       .values({ workspaceId, name, status: "draft" })
       .returning();
+    log.info("sequence created", { workspaceId, sequenceId: row!.id, name });
     return row!;
   }
 
@@ -127,6 +131,12 @@ export class SequenceService {
           .returning();
         steps.push(row!);
       }
+      log.info("generated sequence created", {
+        workspaceId,
+        sequenceId: seq!.id,
+        name: generated.name,
+        stepCount: steps.length,
+      });
       return { ...seq!, steps };
     });
   }
@@ -208,6 +218,12 @@ export class SequenceService {
       })
       .where(and(eq(sequences.id, id), eq(sequences.workspaceId, workspaceId)))
       .returning();
+    log.info("sequence updated", {
+      workspaceId,
+      sequenceId: id,
+      name: patch.name,
+      status: patch.status,
+    });
     return updated!;
   }
 
@@ -215,6 +231,7 @@ export class SequenceService {
     await this.db
       .delete(sequences)
       .where(and(eq(sequences.id, id), eq(sequences.workspaceId, workspaceId)));
+    log.info("sequence deleted", { workspaceId, sequenceId: id });
   }
 
   async addStep(workspaceId: string, sequenceId: string, input: AddStepInput) {
@@ -466,6 +483,15 @@ export class SequenceService {
         firstStepScheduledAt: firstScheduledAt,
       });
     }
+
+    log.info("sequence enroll completed", {
+      workspaceId,
+      sequenceId,
+      enrolled: newEnrollments.length,
+      skipped,
+      total: prospectIds.length,
+      listId: input.listId,
+    });
 
     return {
       enrolled: newEnrollments.length,

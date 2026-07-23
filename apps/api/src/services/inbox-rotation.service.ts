@@ -1,23 +1,67 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, count, eq, gte, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { createLogger } from "@skout/observability";
 
-const { inboxes } = schema;
+const { inboxes, inboxMessages, inboxThreads } = schema;
 const log = createLogger("inbox-rotation.service");
 
 export type InboxRow = typeof inboxes.$inferSelect;
 
-/** Picks the active inbox least-recently used for sending (round-robin via lastUsedAt). */
+function todayUtcMidnight(): Date {
+  const d = new Date();
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
+}
+
+/** Count outbound messages sent from an inbox since UTC midnight. */
+async function sentTodayForInbox(db: Db, inboxId: string): Promise<number> {
+  const [stat] = await db
+    .select({ sentToday: count(inboxMessages.id) })
+    .from(inboxMessages)
+    .innerJoin(inboxThreads, eq(inboxMessages.threadId, inboxThreads.id))
+    .where(
+      and(
+        eq(inboxThreads.inboxId, inboxId),
+        eq(inboxMessages.direction, "outbound"),
+        gte(inboxMessages.sentAt, todayUtcMidnight())
+      )
+    );
+  return Number(stat?.sentToday ?? 0);
+}
+
+/**
+ * Picks the active inbox least-recently used for sending (round-robin via lastUsedAt),
+ * skipping any inbox that has already hit its dailySendLimit today.
+ */
 export async function pickNextInbox(db: Db, workspaceId: string): Promise<InboxRow | null> {
-  const [inbox] = await db
+  const candidates = await db
     .select()
     .from(inboxes)
     .where(and(eq(inboxes.workspaceId, workspaceId), eq(inboxes.status, "active")))
-    .orderBy(sql`${inboxes.lastUsedAt} asc nulls first`, asc(inboxes.createdAt))
-    .limit(1);
-  return inbox ?? null;
+    .orderBy(sql`${inboxes.lastUsedAt} asc nulls first`, asc(inboxes.createdAt));
+
+  for (const inbox of candidates) {
+    const sentToday = await sentTodayForInbox(db, inbox.id);
+    if (sentToday < inbox.dailySendLimit) {
+      return inbox;
+    }
+    log.debug("inbox at daily send cap — skipping", {
+      workspaceId,
+      inboxId: inbox.id,
+      sentToday,
+      dailySendLimit: inbox.dailySendLimit,
+    });
+  }
+
+  if (candidates.length > 0) {
+    log.warn("all active inboxes at daily send cap", {
+      workspaceId,
+      inboxCount: candidates.length,
+    });
+  }
+  return null;
 }
 
 export async function markInboxUsed(db: Db, inboxId: string): Promise<void> {

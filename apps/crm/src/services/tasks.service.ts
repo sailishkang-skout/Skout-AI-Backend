@@ -3,7 +3,9 @@ import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { TaskCreateInput, TaskUpdateInput } from "@skout/shared";
 import type { AuditService } from "./audit.service.js";
+import { serviceLog } from "../lib/obs.js";
 
+const log = serviceLog("tasks");
 const { tasks } = schema;
 
 export interface TaskDto {
@@ -99,6 +101,7 @@ export class TasksService {
 
     const dto = toDto(row);
     await this.auditService.record(workspaceId, assignedTo, "create", "task", dto.id, null, dto);
+    log.info("task created", { workspaceId, taskId: row.id, status: row.status });
     return dto;
   }
 
@@ -130,6 +133,7 @@ export class TasksService {
     if (dto) {
       await this.auditService.record(workspaceId, actorId, "update", "task", id, existing, dto);
     }
+    if (row) log.info("task updated", { workspaceId, taskId: id, status: row.status });
     return dto;
   }
 
@@ -151,6 +155,7 @@ export class TasksService {
     if (dto) {
       await this.auditService.record(workspaceId, actorId, "delete", "task", id, existing, dto);
     }
+    log.info("task soft-deleted", { workspaceId, taskId: id });
     return true;
   }
 

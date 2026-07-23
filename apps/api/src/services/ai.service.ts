@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { createLogger } from "@skout/observability";
+import { captureException, createLogger } from "@skout/observability";
 import type { WorkspaceToolRunner } from "./ai-workspace-tools.service.js";
 
 const log = createLogger("ai.service");
@@ -319,7 +319,8 @@ export class AiService {
       raw = result.choices[0]?.message?.content ?? "{}";
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      log.error("ai.service: OpenAI call failed", { err });
+      log.error("ai.service: OpenAI call failed", err);
+      captureException(err, { module: "ai.service", op: "generateEmail" });
       throw Object.assign(new Error(`AI generation failed: ${msg}`), { statusCode: 502 });
     }
 
@@ -491,7 +492,8 @@ export class AiService {
       }
     } catch (err: unknown) {
       const msg = formatChatErr(err);
-      log.error("ai.service: chat failed", { err: msg });
+      log.error("ai.service: chat failed", err);
+      captureException(err, { module: "ai.service", op: "chat" });
       throw Object.assign(new Error(`AI chat failed: ${msg}`), { statusCode: 502 });
     }
 
@@ -560,7 +562,8 @@ export class AiService {
       raw = result.choices[0]?.message?.content ?? "{}";
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      log.error("ai.service: sequence generation failed", { err });
+      log.error("ai.service: sequence generation failed", err);
+      captureException(err, { module: "ai.service", op: "generateSequence" });
       throw Object.assign(new Error(`AI generation failed: ${msg}`), { statusCode: 502 });
     }
 

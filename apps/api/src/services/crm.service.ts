@@ -371,7 +371,11 @@ export class CrmService {
         listId,
       });
     } catch (err) {
-      log.error("Failed to enqueue HubSpot export — rolling back job", err, { jobId: job.id });
+      log.error("Failed to enqueue HubSpot export — rolling back job and credits", err, {
+        jobId: job.id,
+        creditCost,
+      });
+      await store.addCredits(workspaceId, creditCost, "export_hubspot_refund", listId);
       await this.db
         .update(asyncJobs)
         .set({

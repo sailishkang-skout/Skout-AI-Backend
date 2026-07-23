@@ -393,14 +393,13 @@ export class ComputeStack extends Stack {
       healthCheckPath: "/api/v1/crm/health",
       containerHealthCheckCommand: [nodeHttpHealthCheck(3002, "/api/v1/crm/health")],
       listener,
-      // ALB path-pattern conditions cap at 5 values per rule — the rest are added as a
-      // second rule on the same target group below (priority 6).
+      // ALB limits total condition VALUES per rule to 5. With origin-verify header (1),
+      // path-pattern can hold at most 4 values when httpsMode=apigateway|cloudfront.
       pathPatterns: [
         "/api/v1/crm/health",
         "/api/v1/companies*",
         "/api/v1/contacts*",
         "/api/v1/deals*",
-        "/api/v1/pipelines*",
       ],
       priority: 5,
       extraConditions: albExtraConditions,
@@ -427,22 +426,35 @@ export class ComputeStack extends Stack {
         DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(database.secret, "password"),
         CLERK_SECRET_KEY: ecs.Secret.fromSecretsManager(secrets.clerk, "CLERK_SECRET_KEY"),
         SENTRY_DSN: ecs.Secret.fromSecretsManager(secrets.sentry, "SENTRY_DSN"),
+        DD_API_KEY: ecs.Secret.fromSecretsManager(secrets.datadog, "DD_API_KEY"),
+      },
+      datadog: {
+        site: "us5.datadoghq.com",
+        apiKeySecret: ecs.Secret.fromSecretsManager(secrets.datadog, "DD_API_KEY"),
       },
     });
 
-    // Overflow of CRM path patterns (the 5-value cap on a single ALB path-pattern
-    // condition is already used up above) — same target group, next free priority.
+    // Overflow CRM paths — keep ≤4 patterns when origin-verify header is present.
+    // Use /dashboard/overview* (not /dashboard*) so API /dashboard/summary stays on api.
     if (crmEcs.targetGroup) {
       listener.addTargetGroups("crm-overflow", {
         targetGroups: [crmEcs.targetGroup],
         priority: 6,
         conditions: [
           elbv2.ListenerCondition.pathPatterns([
+            "/api/v1/pipelines*",
             "/api/v1/tasks*",
             "/api/v1/activities*",
             "/api/v1/meetings*",
-            "/api/v1/dashboard*",
           ]),
+          ...albExtraConditions,
+        ],
+      });
+      listener.addTargetGroups("crm-dashboard", {
+        targetGroups: [crmEcs.targetGroup],
+        priority: 7,
+        conditions: [
+          elbv2.ListenerCondition.pathPatterns(["/api/v1/dashboard/overview*"]),
           ...albExtraConditions,
         ],
       });
@@ -496,7 +508,7 @@ export class ComputeStack extends Stack {
       secrets.datadog
     );
 
-    grantSecretRead(crmEcs.taskDefinition, database.secret, secrets.clerk, secrets.sentry);
+    grantSecretRead(crmEcs.taskDefinition, database.secret, secrets.clerk, secrets.sentry, secrets.datadog);
 
     const aiService = new SkoutEcsService(this, "AiService", {
       vpc,
@@ -515,6 +527,10 @@ export class ComputeStack extends Stack {
       environment: {
         NODE_ENV: "production",
         POSTHOG_HOST: "https://us.i.posthog.com",
+        DD_SERVICE: "skout-ai",
+        DD_ENV: config.name,
+        DD_SITE: "us5.datadoghq.com",
+        SERVICE_NAME: "skout-ai",
       },
       secrets: {
         OPENAI_API_KEY: ecs.Secret.fromSecretsManager(secrets.openai, "OPENAI_API_KEY"),
@@ -560,6 +576,7 @@ export class ComputeStack extends Stack {
         NEXT_PUBLIC_CLERK_SIGN_UP_URL: `${publicUrl}/sign-up`,
         CLERK_SIGN_IN_URL: `${publicUrl}/sign-in`,
         CLERK_SIGN_UP_URL: `${publicUrl}/sign-up`,
+        NEXT_PUBLIC_POSTHOG_HOST: "https://us.i.posthog.com",
       },
       secrets: {
         CLERK_SECRET_KEY: ecs.Secret.fromSecretsManager(secrets.clerk, "CLERK_SECRET_KEY"),
@@ -567,9 +584,11 @@ export class ComputeStack extends Stack {
           secrets.clerk,
           "CLERK_PUBLISHABLE_KEY"
         ),
+        NEXT_PUBLIC_SENTRY_DSN: ecs.Secret.fromSecretsManager(secrets.sentry, "SENTRY_DSN_WEB"),
+        NEXT_PUBLIC_POSTHOG_KEY: ecs.Secret.fromSecretsManager(secrets.posthog, "POSTHOG_API_KEY"),
       },
     });
-    grantSecretRead(webService.taskDefinition, secrets.clerk);
+    grantSecretRead(webService.taskDefinition, secrets.clerk, secrets.sentry, secrets.posthog);
 
     new ec2.CfnSecurityGroupIngress(this, "CrmToDbIngress", {
       groupId: database.securityGroup.securityGroupId,

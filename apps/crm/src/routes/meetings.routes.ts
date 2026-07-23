@@ -16,7 +16,7 @@ export async function meetingsRoutes(app: FastifyInstance) {
   app.get("/meetings", async (request) => {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
-    if (!svc) return { data: [], total: 0, workspaceId };
+    if (!svc) throw new HttpError("database_unavailable", 503);
 
     const query = meetingListQuerySchema.parse(request.query);
     const result = await svc.list(workspaceId, query);

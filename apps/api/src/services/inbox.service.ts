@@ -1,5 +1,6 @@
 import { and, asc, count, desc, eq, exists, gt, gte, inArray, sql } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
+import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { encryptSecret, decryptSecret } from "../utils/integration-crypto.js";
 import { HttpError } from "../utils/http.js";
@@ -7,6 +8,7 @@ import { markInboxUsed } from "./inbox-rotation.service.js";
 import nodemailer from "nodemailer";
 import { randomBytes } from "node:crypto";
 
+const log = createLogger("inbox.service");
 const { inboxes, inboxThreads, inboxMessages, sendingDomains, prospectActivations, prospectScores, sequences, sequenceEnrollments } = schema;
 
 type Db = ReturnType<typeof createDb>["db"];
@@ -545,6 +547,14 @@ export class InboxService {
         },
       })
       .returning();
+    if (row) {
+      log.info("inbox created", {
+        workspaceId,
+        inboxId: row.id,
+        provider: row.provider,
+        status: row.status,
+      });
+    }
     return row ? toPublicInbox(row) : null;
   }
 
@@ -823,6 +833,12 @@ export class InboxService {
       .set({ status: targetStatus, statusChangedAt: now, updatedAt: now })
       .where(and(eq(inboxThreads.workspaceId, workspaceId), eq(inboxThreads.id, threadId)))
       .returning();
+    log.info("thread status transitioned", {
+      workspaceId,
+      threadId,
+      from: current,
+      to: targetStatus,
+    });
     return updated!;
   }
 
@@ -897,6 +913,13 @@ export class InboxService {
       .where(and(eq(inboxThreads.workspaceId, workspaceId), eq(inboxThreads.id, threadId)));
 
     await markInboxUsed(this.db, inbox.id);
+
+    log.info("thread reply sent", {
+      workspaceId,
+      threadId,
+      inboxId: inbox.id,
+      messageId: inserted?.id,
+    });
 
     return inserted!;
   }

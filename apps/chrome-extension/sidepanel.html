@@ -28,6 +28,18 @@
     <section class="card actions">
       <button id="add-to-list" type="button" class="primary">Add current profile to list</button>
       <button id="enrich-profile" type="button">Enrich contact</button>
+      <div id="enrich-field-picker">
+        <p class="field-picker-label">Enrich fields</p>
+        <div class="field-grid">
+          <label class="field-item"><input type="checkbox" name="enrich-field" value="company" checked> Company</label>
+          <label class="field-item"><input type="checkbox" name="enrich-field" value="email" checked> Email</label>
+          <label class="field-item"><input type="checkbox" name="enrich-field" value="phone"> Phone</label>
+          <label class="field-item"><input type="checkbox" name="enrich-field" value="validation" checked> Validation</label>
+        </div>
+        <p id="phone-credit-note" class="hidden credits-hint">📞 Phone lookup uses additional credits.</p>
+      </div>
+      <div id="enrich-results"></div>
+      <p id="enrich-credits-hint" class="hidden credits-hint">⚠ Insufficient credits — <a id="enrich-topup-link" href="#" target="_blank" rel="noopener">top up in Skout →</a></p>
       <button id="score-profile" type="button">Score ICP</button>
     </section>
 

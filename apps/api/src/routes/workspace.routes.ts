@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { createWorkspaceService } from "../services/workspace.service.js";
 import { getWorkspaceIcpVersion, isIcpConfigured } from "../services/icp.service.js";
 import { startWorkspaceRescoreIfEnabled } from "../services/workspace-rescore.service.js";
+import { isRazorpayEnabled } from "../services/billing.service.js";
 import type { IcpConfig } from "../services/enrichment/ai-client.js";
 import { errorResponse } from "../utils/http.js";
 
@@ -62,13 +63,24 @@ export async function workspaceRoutes(app: FastifyInstance) {
     return reply.send(result);
   });
 
-  // POST /api/v1/credits/topup — beta manual top-up (Stripe later)
+  // POST /api/v1/credits/topup — local/dev fallback when Razorpay is not the billing path
   app.post("/credits/topup", async (request, reply) => {
     if (!request.workspaceId) {
       return reply.code(401).send(errorResponse("Not authenticated", 401));
     }
+    if (!request.role || !["owner", "admin"].includes(request.role)) {
+      return reply
+        .code(403)
+        .send(errorResponse("Only workspace owners or admins can top up credits", 403));
+    }
+    if (app.config.NODE_ENV === "production" && isRazorpayEnabled(app.config)) {
+      return reply
+        .code(403)
+        .send(errorResponse("Manual top-up is disabled; buy credits via Razorpay", 403));
+    }
     const body = (request.body ?? {}) as { amount?: number };
-    const amount = Math.min(Math.max(Number(body.amount) || 100, 1), 10_000);
+    const maxAmount = app.config.NODE_ENV === "production" ? 500 : 10_000;
+    const amount = Math.min(Math.max(Number(body.amount) || 100, 1), maxAmount);
     const balance = await svc.addCredits(request.workspaceId, amount, "admin_topup");
     return reply.send({ data: { balance, amount } });
   });
