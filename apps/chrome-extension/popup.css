@@ -108,6 +108,22 @@ button.primary {
   display: none !important;
 }
 
+#enrich-field-picker { margin: 8px 0 4px; }
+.field-picker-label { margin: 0 0 4px; font-size: 11px; color: #64748b; }
+.field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.field-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #cbd5e1; cursor: pointer; }
+.field-item input[type="checkbox"] { width: auto; margin: 0; cursor: pointer; }
+
+#enrich-results { margin: 6px 0 0; border: 1px solid #1e293b; border-radius: 8px; overflow: hidden; display: none; }
+.enrich-result-row { display: flex; align-items: center; gap: 6px; padding: 5px 8px; font-size: 11px; border-bottom: 1px solid #1e293b; }
+.enrich-result-row:last-child { border-bottom: 0; }
+.enrich-result-label { color: #64748b; width: 68px; flex-shrink: 0; }
+.enrich-result-value { flex: 1; color: #e2e8f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.enrich-result-icon { flex-shrink: 0; width: 14px; text-align: center; font-size: 11px; }
+
+.credits-hint { margin: 6px 0 0; font-size: 11px; color: #fcd34d; }
+.credits-hint a { color: #60a5fa; text-decoration: underline; }
+
 .hitl-warning {
   margin: 0 0 8px;
   padding: 8px 10px;

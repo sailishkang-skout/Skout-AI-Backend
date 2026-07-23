@@ -268,22 +268,141 @@ export function initPanel() {
     }
   });
 
+  const enrichResultsEl = document.getElementById("enrich-results");
+  const enrichCreditsHintEl = document.getElementById("enrich-credits-hint");
+  const enrichTopupLinkEl = document.getElementById("enrich-topup-link");
+
+  const FIELD_LABELS = { company: "Company", email: "Email", phone: "Phone", validation: "Validation" };
+  const RESULT_FIELD_MAP = { company: "company", email: "email", phone: "phone", validation: "email_status" };
+
+  function showEnrichRows(fields) {
+    if (!enrichResultsEl) return;
+    enrichResultsEl.style.display = "block";
+    enrichResultsEl.innerHTML = fields
+      .map(
+        (f) => `
+        <div class="enrich-result-row" data-field="${f}">
+          <span class="enrich-result-label">${FIELD_LABELS[f] || f}</span>
+          <span class="enrich-result-value" style="color:#475569">⏳</span>
+          <span class="enrich-result-icon"></span>
+        </div>`
+      )
+      .join("");
+  }
+
+  function applyEnrichResults(results) {
+    if (!enrichResultsEl) return;
+    for (const row of enrichResultsEl.querySelectorAll(".enrich-result-row")) {
+      const field = row.getAttribute("data-field");
+      const apiField = RESULT_FIELD_MAP[field] || field;
+      const match = results.find(
+        (r) => r.field === apiField && (r.isPrimary !== false || apiField === "email_status")
+      );
+      const valueEl = row.querySelector(".enrich-result-value");
+      const iconEl = row.querySelector(".enrich-result-icon");
+      if (!match || !match.value || match.status === "not_found") {
+        if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#475569"; }
+        if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#475569"; }
+      } else {
+        if (valueEl) { valueEl.textContent = match.value; valueEl.style.color = "#e2e8f0"; }
+        if (iconEl) { iconEl.textContent = "✓"; iconEl.style.color = "#86efac"; }
+      }
+    }
+  }
+
+  // Updates only rows that have a result — rows still in-flight stay ⏳.
+  function applyPartialResults(results) {
+    if (!enrichResultsEl || !results?.length) return;
+    for (const row of enrichResultsEl.querySelectorAll(".enrich-result-row")) {
+      const field = row.getAttribute("data-field");
+      const apiField = RESULT_FIELD_MAP[field] || field;
+      const match = results.find(
+        (r) => r.field === apiField && (r.isPrimary !== false || apiField === "email_status")
+      );
+      if (!match) continue;
+      const valueEl = row.querySelector(".enrich-result-value");
+      const iconEl = row.querySelector(".enrich-result-icon");
+      if (!match.value || match.status === "not_found") {
+        if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#475569"; }
+        if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#475569"; }
+      } else {
+        if (valueEl) { valueEl.textContent = match.value; valueEl.style.color = "#e2e8f0"; }
+        if (iconEl) { iconEl.textContent = "✓"; iconEl.style.color = "#86efac"; }
+      }
+    }
+  }
+
+  function clearEnrichUI() {
+    if (enrichResultsEl) { enrichResultsEl.style.display = "none"; enrichResultsEl.innerHTML = ""; }
+    if (enrichCreditsHintEl) enrichCreditsHintEl.classList.add("hidden");
+  }
+
+  // Show credit warning when phone is checked (pre-flight gate).
+  document.querySelector('input[name="enrich-field"][value="phone"]')?.addEventListener("change", (e) => {
+    const noteEl = document.getElementById("phone-credit-note");
+    if (noteEl) noteEl.classList.toggle("hidden", !e.target.checked);
+  });
+
   document.getElementById("enrich-profile")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
+    const POLL_MAX = 40;
+    const POLL_INTERVAL_MS = 1_500;
+
+    const fields = Array.from(
+      document.querySelectorAll('input[name="enrich-field"]:checked')
+    ).map((cb) => cb.value);
+
+    if (!fields.length) {
+      setStatus("Select at least one field.", true);
+      return;
+    }
+
+    clearEnrichUI();
+    showEnrichRows(fields);
     setBusy(button, true, "Enriching…");
+
     try {
       if (!(await ensurePanelSignedIn())) return;
       const tabId = await findLinkedInTabId();
       await runInBackground("ping").catch(() => undefined);
-      const result = await runInBackground("enrich-profile", { tabId });
-      setStatus(result.message || `Enrichment started for ${result.fullName}.`);
+
+      // Start enrichment — background responds immediately with jobId.
+      const started = await runInBackground("enrich-profile", { tabId, fields });
+
+      let lastResults = started.results || [];
+
+      if (started.jobId && started.status !== "completed") {
+        // Poll job and update each field row as its step completes.
+        for (let i = 0; i < POLL_MAX; i++) {
+          await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+          const job = await runInBackground("poll-enrich-job", { jobId: started.jobId }).catch(() => null);
+          if (job?.results?.length) {
+            applyPartialResults(job.results);
+            lastResults = job.results;
+          }
+          if (job?.status === "completed" || job?.status === "failed") break;
+        }
+      }
+
+      applyEnrichResults(lastResults);
+      setStatus(`Enriched ${started.fullName}.`);
     } catch (error) {
-      setStatus(
-        error instanceof Error
-          ? error.message
-          : "Enrich failed — refresh LinkedIn (Cmd+Shift+R) and try again.",
-        true
-      );
+      enrichResultsEl?.querySelectorAll(".enrich-result-value").forEach((el) => {
+        if (el.textContent === "⏳") { el.textContent = "—"; el.style.color = "#475569"; }
+      });
+      const msg = error instanceof Error ? error.message : "Enrich failed";
+      const isCreditsError =
+        msg.includes("credit") || msg.includes("Credit") || msg.includes("402") || msg.includes("insufficient");
+      if (isCreditsError && enrichCreditsHintEl) {
+        enrichCreditsHintEl.classList.remove("hidden");
+        const config = await getConfig();
+        if (enrichTopupLinkEl && config.webUrl) {
+          enrichTopupLinkEl.href = `${config.webUrl.replace(/\/$/, "")}/billing`;
+        }
+        setStatus("Insufficient credits.", true);
+      } else {
+        setStatus(msg, true);
+      }
     } finally {
       setBusy(button, false, "Enrich contact");
     }
