@@ -47,7 +47,7 @@ export async function inviteAuthRoutes(app: FastifyInstance) {
         expiresAt,
       });
 
-      await sendMail(
+      const mail = await sendMail(
         app.config,
         buildOtpEmail({
           to: invite.email,
@@ -56,6 +56,11 @@ export async function inviteAuthRoutes(app: FastifyInstance) {
           expiresInMinutes: 10,
         })
       );
+      if (!mail.sent) {
+        return reply
+          .code(503)
+          .send(errorResponse("Email delivery is not configured — cannot send verification code", 503));
+      }
 
       return reply.send({ data: { email: invite.email, expiresInMinutes: 10 } });
     }

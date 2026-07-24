@@ -101,16 +101,22 @@ export async function teamRoutes(app: FastifyInstance) {
         .where(eq(schema.workspaces.id, request.workspaceId))
         .limit(1);
 
-      sendMail(
-        app.config,
-        buildInviteEmail({
-          to: invite.email,
-          inviterName: request.userEmail ?? "A teammate",
-          workspaceName: ws?.name ?? "Skout workspace",
-          role: invite.role,
-          acceptUrl,
-        })
-      ).catch((err: unknown) => app.log.warn({ err }, "Failed to send invite email"));
+      let emailSent = false;
+      try {
+        const mail = await sendMail(
+          app.config,
+          buildInviteEmail({
+            to: invite.email,
+            inviterName: request.userEmail ?? "A teammate",
+            workspaceName: ws?.name ?? "Skout workspace",
+            role: invite.role,
+            acceptUrl,
+          })
+        );
+        emailSent = mail.sent;
+      } catch (err: unknown) {
+        app.log.warn({ err }, "Failed to send invite email");
+      }
 
       return reply.code(201).send({
         data: {
@@ -118,6 +124,7 @@ export async function teamRoutes(app: FastifyInstance) {
           role: invite.role,
           expiresAt: invite.expiresAt.toISOString(),
           acceptUrl,
+          emailSent,
         },
       });
     }

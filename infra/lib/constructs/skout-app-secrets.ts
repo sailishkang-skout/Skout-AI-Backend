@@ -29,6 +29,8 @@ export class SkoutAppSecrets extends Construct {
   readonly appConfig: secretsmanager.ISecret;
   readonly datadog: secretsmanager.ISecret;
   readonly razorpay: secretsmanager.ISecret;
+  /** SES SMTP for transactional mail (invites, OTP). Replace placeholders after deploy. */
+  readonly smtp: secretsmanager.ISecret;
 
   constructor(scope: Construct, id: string, props: SkoutAppSecretsProps) {
     super(scope, id);
@@ -106,6 +108,15 @@ export class SkoutAppSecrets extends Construct {
     this.razorpay = createPlaceholder("Razorpay", "razorpay", {
       RAZORPAY_KEY_SECRET: "replace-me",
       RAZORPAY_WEBHOOK_SECRET: "replace-me",
+    });
+    // SES SMTP (email-smtp.<region>.amazonaws.com). SES_FROM_EMAIL must be a verified identity.
+    // Default From matches a verified SES identity in the SkoutDev account; replace after deploy.
+    this.smtp = createPlaceholder("Smtp", "smtp", {
+      SMTP_HOST: "email-smtp.us-east-1.amazonaws.com",
+      SMTP_PORT: "587",
+      SMTP_USERNAME: "replace-me",
+      SMTP_PASSWORD: "replace-me",
+      SES_FROM_EMAIL: "skoutaiofficial@gmail.com",
     });
   }
 }

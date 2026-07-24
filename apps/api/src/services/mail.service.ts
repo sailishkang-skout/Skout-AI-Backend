@@ -11,6 +11,12 @@ export interface MailOptions {
   html: string;
 }
 
+export interface SendMailResult {
+  /** True when SMTP accepted the message. False when SMTP is not configured. */
+  sent: boolean;
+  messageId?: string;
+}
+
 let _transport: ReturnType<typeof nodemailer.createTransport> | null = null;
 
 function getTransport(config: Env): ReturnType<typeof nodemailer.createTransport> | null {
@@ -28,11 +34,31 @@ function getTransport(config: Env): ReturnType<typeof nodemailer.createTransport
   return _transport;
 }
 
-export async function sendMail(config: Env, opts: MailOptions): Promise<void> {
+/**
+ * Sends a transactional email via SES SMTP when configured.
+ * Returns `{ sent: false }` (no throw) when SMTP_HOST is unset so callers can
+ * still return invite/OTP payloads and surface a copyable link in the UI.
+ * Throws when SMTP is configured but delivery fails.
+ */
+export async function sendMail(config: Env, opts: MailOptions): Promise<SendMailResult> {
   const transport = getTransport(config);
   if (!transport) {
     log.warn("SMTP_HOST not set — email not sent", { to: opts.to, subject: opts.subject });
-    return;
+    return { sent: false };
+  }
+
+  // Placeholder credentials from CDK — treat as unconfigured so invites still succeed.
+  if (
+    !config.SMTP_USERNAME ||
+    config.SMTP_USERNAME === "replace-me" ||
+    !config.SMTP_PASSWORD ||
+    config.SMTP_PASSWORD === "replace-me"
+  ) {
+    log.warn("SMTP credentials not configured — email not sent", {
+      to: opts.to,
+      subject: opts.subject,
+    });
+    return { sent: false };
   }
 
   try {
@@ -48,6 +74,7 @@ export async function sendMail(config: Env, opts: MailOptions): Promise<void> {
       subject: opts.subject,
       messageId: info.messageId,
     });
+    return { sent: true, messageId: info.messageId };
   } catch (err: unknown) {
     const e = err as { message?: string; code?: string; response?: string; responseCode?: number };
     log.error("system email failed", err, {

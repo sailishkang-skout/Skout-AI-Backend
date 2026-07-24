@@ -353,6 +353,11 @@ export class ComputeStack extends Stack {
           secrets.razorpay,
           "RAZORPAY_WEBHOOK_SECRET"
         ),
+        SMTP_HOST: ecs.Secret.fromSecretsManager(secrets.smtp, "SMTP_HOST"),
+        SMTP_PORT: ecs.Secret.fromSecretsManager(secrets.smtp, "SMTP_PORT"),
+        SMTP_USERNAME: ecs.Secret.fromSecretsManager(secrets.smtp, "SMTP_USERNAME"),
+        SMTP_PASSWORD: ecs.Secret.fromSecretsManager(secrets.smtp, "SMTP_PASSWORD"),
+        SES_FROM_EMAIL: ecs.Secret.fromSecretsManager(secrets.smtp, "SES_FROM_EMAIL"),
       },
       datadog: {
         apiKeySecret: ecs.Secret.fromSecretsManager(secrets.datadog, "DD_API_KEY"),
@@ -505,7 +510,9 @@ export class ComputeStack extends Stack {
       secrets.sentry,
       secrets.posthog,
       secrets.appConfig,
-      secrets.datadog
+      secrets.datadog,
+      secrets.razorpay,
+      secrets.smtp
     );
 
     grantSecretRead(crmEcs.taskDefinition, database.secret, secrets.clerk, secrets.sentry, secrets.datadog);
