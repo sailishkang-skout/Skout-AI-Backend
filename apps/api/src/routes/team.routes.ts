@@ -102,6 +102,7 @@ export async function teamRoutes(app: FastifyInstance) {
         .limit(1);
 
       let emailSent = false;
+      let emailError: string | undefined;
       try {
         const mail = await sendMail(
           app.config,
@@ -114,8 +115,19 @@ export async function teamRoutes(app: FastifyInstance) {
           })
         );
         emailSent = mail.sent;
+        if (!emailSent) {
+          emailError = "Email delivery is not configured on this environment";
+        }
       } catch (err: unknown) {
         app.log.warn({ err }, "Failed to send invite email");
+        const msg = err instanceof Error ? err.message : "Email send failed";
+        // Surface a short reason for sandbox / verification failures.
+        if (/not verified/i.test(msg)) {
+          emailError =
+            "SES rejected the send (sandbox): From and/or recipient must be a verified identity";
+        } else {
+          emailError = "Email send failed — use the invite link below";
+        }
       }
 
       return reply.code(201).send({
@@ -125,6 +137,7 @@ export async function teamRoutes(app: FastifyInstance) {
           expiresAt: invite.expiresAt.toISOString(),
           acceptUrl,
           emailSent,
+          ...(emailError ? { emailError } : {}),
         },
       });
     }
