@@ -610,5 +610,150 @@
     };
   }
 
+  // ── Company page scraper ────────────────────────────────────────────────────
+
+  function domTextNear(labelPattern) {
+    const re = new RegExp(labelPattern, "i");
+    for (const el of document.querySelectorAll("dt, th, span, div")) {
+      if (el.children.length > 0) continue;
+      if (!re.test(clean(el.textContent))) continue;
+      const sibling = el.nextElementSibling || el.parentElement?.nextElementSibling;
+      const text = clean(sibling?.textContent);
+      if (text && text.length > 0 && text.length < 200) return text;
+    }
+    return "";
+  }
+
+  function scrapeLinkedInCompany() {
+    const linkedinUrl = location.href.split("?")[0].split("#")[0];
+    if (!/linkedin\.com\/company\//i.test(linkedinUrl)) {
+      return { error: "not_a_company_page", linkedinUrl };
+    }
+
+    const html = document.documentElement.innerHTML;
+    const slugMatch = linkedinUrl.match(/linkedin\.com\/company\/([^/?#]+)/i);
+    const slug = slugMatch ? decodeURIComponent(slugMatch[1]).replace(/\/$/, "") : "";
+
+    const nameEl = document.querySelector(
+      "h1.org-top-card-summary__title, h1[class*='org-top'], main h1"
+    );
+    const name =
+      clean(nameEl?.textContent) ||
+      pickFirstMatch(html, [
+        /"localizedName"\s*:\s*"((?:\\.|[^"\\])*)"/,
+        /"name"\s*:\s*"((?:\\.|[^"\\])*)"/,
+      ]) ||
+      clean(document.title.split("|")[0]?.split(":")[0]) ||
+      "";
+
+    const websiteAnchor = document.querySelector(
+      'a[data-tracking-control-name*="website"]'
+    );
+    let website =
+      clean(websiteAnchor?.getAttribute("href") || websiteAnchor?.textContent) ||
+      pickFirstMatch(html, [/"websiteUrl"\s*:\s*"((?:\\.|[^"\\])*)"/]);
+    let domain = "";
+    try {
+      if (website) {
+        const u = new URL(website.startsWith("http") ? website : `https://${website}`);
+        domain = u.hostname.replace(/^www\./, "");
+      }
+    } catch {}
+
+    const industry =
+      pickFirstMatch(html, [
+        /"localizedIndustryName"\s*:\s*"((?:\\.|[^"\\])*)"/,
+        /"industryName"\s*:\s*"((?:\\.|[^"\\])*)"/,
+      ]) ||
+      domTextNear("industry") ||
+      "";
+
+    let employeeCount = "";
+    const staffRangeMatch = html.match(/"staffCountRange"\s*:\s*\{\s*"start"\s*:\s*(\d+)[^}]*"end"\s*:\s*(\d+)/);
+    if (staffRangeMatch) {
+      employeeCount = `${staffRangeMatch[1]}-${staffRangeMatch[2]}`;
+    } else {
+      employeeCount =
+        pickFirstMatch(html, [/"staffCount"\s*:\s*"?([\d,]+)"?/]) ||
+        domTextNear("employees") ||
+        "";
+    }
+
+    const description =
+      pickFirstMatch(html, [/"description"\s*:\s*"((?:\\.|[^"\\])*)"/]) ||
+      clean(document.querySelector(
+        ".org-about-us-organization-description__text, .break-words.whitespace-pre-wrap"
+      )?.textContent) ||
+      "";
+
+    const followers = statFromDom(/([\d,]+\+?)\s+followers?/i);
+
+    return {
+      pageType: "company",
+      fullName: name,
+      companyName: name,
+      title: industry,
+      domain,
+      industry,
+      employeeCount,
+      description: clean(description).slice(0, 2000),
+      followers,
+      linkedinUrl,
+      slug,
+    };
+  }
+
+  // ── Post / feed author scraper ───────────────────────────────────────────────
+
+  function scrapePostAuthor() {
+    const linkedinUrl = location.href.split("?")[0].split("#")[0];
+
+    const authorSelectors = [
+      '.feed-shared-actor__container a[href*="/in/"]',
+      '.update-components-actor a[href*="/in/"]',
+      '.feed-shared-actor a[href*="/in/"]',
+      'a.app-aware-link[href*="/in/"]:not([href*="company"])',
+    ];
+
+    let authorEl = null;
+    for (const sel of authorSelectors) {
+      authorEl = document.querySelector(sel);
+      if (authorEl) break;
+    }
+
+    if (!authorEl) return { error: "author_not_found", linkedinUrl };
+
+    const profileUrl = (authorEl.href || "").split("?")[0].split("#")[0];
+    if (!profileUrl || !/\/in\//i.test(profileUrl)) {
+      return { error: "author_not_found", linkedinUrl };
+    }
+
+    const actorContainer = authorEl.closest(
+      '[class*="actor"], [class*="author"], .feed-shared-actor__container, .update-components-actor'
+    );
+    const nameEl = actorContainer?.querySelector(
+      '[class*="actor__name"] span[aria-hidden="true"], h3 span[aria-hidden="true"], span.visually-hidden'
+    );
+    const fullName = clean(nameEl?.textContent) || nameFromUrl(profileUrl) || "";
+
+    const subtitleEl = actorContainer?.querySelector(
+      '[class*="actor__description"] span[aria-hidden="true"], [class*="actor__sub"] span[aria-hidden="true"]'
+    );
+    const subtitle = clean(subtitleEl?.textContent);
+    const parsed = parseHeadline(subtitle);
+
+    return {
+      pageType: "post_author",
+      fullName,
+      title: parsed.title || "",
+      companyName: parsed.companyName || "",
+      linkedinUrl: profileUrl,
+      postUrl: linkedinUrl,
+      headline: subtitle,
+    };
+  }
+
   globalThis.__SKOUT_SCRAPE_LINKEDIN__ = scrapeLinkedInProfile;
+  globalThis.__SKOUT_SCRAPE_LINKEDIN_COMPANY__ = scrapeLinkedInCompany;
+  globalThis.__SKOUT_SCRAPE_POST_AUTHOR__ = scrapePostAuthor;
 })();

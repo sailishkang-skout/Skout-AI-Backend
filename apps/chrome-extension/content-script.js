@@ -7,6 +7,17 @@
     return /linkedin\.com\/in\//i.test(location.href) || /linkedin\.com\/pub\//i.test(location.href);
   }
 
+  function isCompanyPage() {
+    return /linkedin\.com\/company\//i.test(location.href);
+  }
+
+  function isPostPage() {
+    return (
+      /linkedin\.com\/posts\//i.test(location.href) ||
+      /linkedin\.com\/feed\/update\//i.test(location.href)
+    );
+  }
+
   function isSearchResultsPage() {
     if (typeof globalThis.__SKOUT_IS_LINKEDIN_SEARCH__ === "function") {
       return globalThis.__SKOUT_IS_LINKEDIN_SEARCH__();
@@ -25,6 +36,19 @@
   }
 
   function readProfileFromLinkedIn() {
+    if (isCompanyPage()) {
+      if (typeof globalThis.__SKOUT_SCRAPE_LINKEDIN_COMPANY__ === "function") {
+        return globalThis.__SKOUT_SCRAPE_LINKEDIN_COMPANY__();
+      }
+      const linkedinUrl = location.href.split("?")[0];
+      return { pageType: "company", fullName: "", companyName: "", linkedinUrl };
+    }
+    if (isPostPage()) {
+      if (typeof globalThis.__SKOUT_SCRAPE_POST_AUTHOR__ === "function") {
+        return globalThis.__SKOUT_SCRAPE_POST_AUTHOR__();
+      }
+      return { error: "author_not_found", linkedinUrl: location.href.split("?")[0] };
+    }
     if (typeof globalThis.__SKOUT_SCRAPE_LINKEDIN__ === "function") {
       return globalThis.__SKOUT_SCRAPE_LINKEDIN__();
     }
@@ -126,6 +150,7 @@
           width: 100%; box-sizing: border-box; margin-bottom: 8px; border-radius: 8px;
           border: 1px solid #334155; padding: 7px 8px; font-size: 12px; background: #1e293b; color: #f8fafc;
         }
+        #skout-ai-bulk-list-select option { background: #1e293b; color: #f8fafc; }
         #skout-ai-bulk-toolbar { display: flex; gap: 6px; margin-bottom: 8px; font-size: 11px; }
         #skout-ai-bulk-toolbar button {
           flex: 1; border: 1px solid #334155; border-radius: 6px; background: #1e293b; color: #e2e8f0;
@@ -384,6 +409,7 @@
           width: 100%; box-sizing: border-box; margin-bottom: 8px; border-radius: 8px;
           border: 1px solid #334155; padding: 7px 8px; font-size: 12px; background: #1e293b; color: #f8fafc;
         }
+        #skout-ai-list-select option { background: #1e293b; color: #f8fafc; }
         #skout-ai-panel button.action {
           width: 100%; margin-top: 6px; border: 0; border-radius: 8px;
           padding: 8px 10px; font-size: 12px; font-weight: 600; cursor: pointer;
@@ -454,9 +480,31 @@
   }
 
   function profileSummaryHtml(profile) {
-    if (!profile.fullName) return "Loading profile…";
     const esc = (s) =>
       String(s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+    if (profile.pageType === "company") {
+      if (!profile.fullName) return "Loading company…";
+      const lines = [`<strong style="color:#f8fafc">${esc(profile.fullName)}</strong>`];
+      if (profile.industry) lines.push(esc(profile.industry));
+      const meta = [];
+      if (profile.employeeCount) meta.push(`${esc(profile.employeeCount)} employees`);
+      if (profile.domain) meta.push(esc(profile.domain));
+      if (profile.followers) meta.push(`${esc(profile.followers)} followers`);
+      if (meta.length) lines.push(`<span style="color:#94a3b8">${meta.join(" · ")}</span>`);
+      return lines.join("<br>");
+    }
+
+    if (profile.pageType === "post_author") {
+      if (!profile.fullName) return "Reading post author…";
+      const lines = [`<strong style="color:#f8fafc">${esc(profile.fullName)}</strong>`];
+      if (profile.title) lines.push(esc(profile.title));
+      if (profile.companyName) lines.push(`@ ${esc(profile.companyName)}`);
+      lines.push(`<span style="color:#94a3b8">Captured from LinkedIn post</span>`);
+      return lines.join("<br>");
+    }
+
+    if (!profile.fullName) return "Loading profile…";
     const lines = [`<strong style="color:#f8fafc">${esc(profile.fullName)}</strong>`];
     if (profile.title) lines.push(esc(profile.title));
     if (profile.companyName) lines.push(`@ ${esc(profile.companyName)}`);
@@ -468,15 +516,28 @@
     return lines.join("<br>");
   }
 
+  function adjustPanelForPageType(panel, pageType) {
+    const isCompany = pageType === "company";
+    const enrichSection = panel.querySelector("#skout-ai-field-picker");
+    const enrichBtn = panel.querySelector("#skout-ai-enrich");
+    const enrichResults = panel.querySelector("#skout-ai-enrich-results");
+    const scoreBtn = panel.querySelector("#skout-ai-score");
+    if (enrichSection) enrichSection.style.display = isCompany ? "none" : "";
+    if (enrichBtn) enrichBtn.style.display = isCompany ? "none" : "";
+    if (enrichResults) enrichResults.style.display = isCompany ? "none" : "";
+    if (scoreBtn) scoreBtn.style.display = isCompany ? "none" : "";
+  }
+
   function updatePanelProfile(panel) {
     const profile = readProfileFromLinkedIn();
-    if (profile.error === "not_a_profile") {
+    if (profile.error === "not_a_profile" || profile.error === "author_not_found") {
       panel.remove();
       return;
     }
     panel.__skoutProfile = profile;
     const summary = panel.querySelector("#skout-ai-summary");
     if (summary) summary.innerHTML = profileSummaryHtml(profile);
+    adjustPanelForPageType(panel, profile.pageType);
   }
 
   function ensurePanel() {
@@ -497,7 +558,7 @@
     }
 
     if (sessionStorage.getItem("skout-ai-panel-hidden") === "1") return;
-    if (!isProfilePage()) return;
+    if (!isProfilePage() && !isCompanyPage() && !isPostPage()) return;
     ensurePanel();
   }
 
@@ -772,7 +833,8 @@
       }
       return;
     }
-    if (sessionStorage.getItem("skout-ai-panel-hidden") === "1" || !isProfilePage()) return;
+    const isActivePage = isProfilePage() || isCompanyPage() || isPostPage();
+    if (sessionStorage.getItem("skout-ai-panel-hidden") === "1" || !isActivePage) return;
     const panel = document.getElementById("skout-ai-panel");
     if (!panel) return;
     const profile = readProfileFromLinkedIn();
@@ -784,12 +846,15 @@
       profile.location,
       profile.connections,
       profile.followers,
+      profile.domain,
+      profile.industry,
     ].join("|");
     if (key === lastSummaryKey) return;
     lastSummaryKey = key;
     panel.__skoutProfile = profile;
     const el = panel.querySelector("#skout-ai-summary");
     if (el) el.innerHTML = profileSummaryHtml(profile);
+    adjustPanelForPageType(panel, profile.pageType);
   }, 3000);
 
   boot();
