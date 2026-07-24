@@ -37,20 +37,40 @@ export async function getWorkspaceIcp(db: Db | null, workspaceId: string): Promi
   };
 }
 
+/**
+ * Persist ICP. Settings saves often omit `onboarding`; always preserve an existing
+ * onboarding profile (especially `completedAt`) so the setup gate does not reopen.
+ */
+export function mergeIcpConfig(existing: IcpConfig, incoming: IcpConfig): IcpConfig {
+  const onboarding =
+    incoming.onboarding === undefined
+      ? existing.onboarding
+      : {
+          ...existing.onboarding,
+          ...incoming.onboarding,
+          completedAt: incoming.onboarding.completedAt ?? existing.onboarding?.completedAt,
+        };
+
+  return { ...incoming, onboarding };
+}
+
 export async function setWorkspaceIcp(db: Db | null, workspaceId: string, config: IcpConfig) {
+  const existing = await getWorkspaceIcp(db, workspaceId);
+  const merged = mergeIcpConfig(existing, config);
+
   if (!db) {
     const prev = memoryIcpByWorkspace.get(workspaceId);
     const version = (prev?.version ?? 0) + 1;
-    memoryIcpByWorkspace.set(workspaceId, { config, version });
-    return { workspaceId, config, version };
+    memoryIcpByWorkspace.set(workspaceId, { config: merged, version });
+    return { workspaceId, config: merged, version };
   }
   const [row] = await db
     .insert(workspaceIcp)
-    .values({ workspaceId, config, version: 1 })
+    .values({ workspaceId, config: merged, version: 1 })
     .onConflictDoUpdate({
       target: workspaceIcp.workspaceId,
       set: {
-        config,
+        config: merged,
         version: sql`${workspaceIcp.version} + 1`,
         updatedAt: new Date(),
       },

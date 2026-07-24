@@ -68,15 +68,16 @@ export async function icpRoutes(app: FastifyInstance) {
     const previousVersion = await getWorkspaceIcpVersion(app.db, workspaceId);
     const row = await setWorkspaceIcp(app.db, workspaceId, body);
     const version = row?.version ?? 1;
+    const savedConfig = (row?.config as typeof body | undefined) ?? body;
 
     let rescoreJob = null;
-    if (isIcpConfigured(body) && version > previousVersion) {
+    if (isIcpConfigured(savedConfig) && version > previousVersion) {
       try {
         rescoreJob = await startWorkspaceRescoreIfEnabled(
           app.db,
           app.config,
           workspaceId,
-          body,
+          savedConfig,
           version,
           previousVersion
         );
@@ -87,7 +88,7 @@ export async function icpRoutes(app: FastifyInstance) {
 
     return reply.send({
       workspaceId,
-      config: body,
+      config: savedConfig,
       version,
       rescoreJob,
     });
