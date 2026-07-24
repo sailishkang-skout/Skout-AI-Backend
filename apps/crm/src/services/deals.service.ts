@@ -6,6 +6,7 @@ import { HttpError } from "@skout/auth";
 import type { CompaniesService } from "./companies.service.js";
 import type { PipelinesService } from "./pipelines.service.js";
 import type { ActivitiesService } from "./activities.service.js";
+import type { AuditService } from "./audit.service.js";
 import { serviceLog } from "../lib/obs.js";
 
 const log = serviceLog("deals");
@@ -60,7 +61,8 @@ export class DealsService {
     private readonly db: Db,
     private readonly companiesService: CompaniesService,
     private readonly pipelinesService: PipelinesService,
-    private readonly activitiesService: ActivitiesService
+    private readonly activitiesService: ActivitiesService,
+    private readonly auditService: AuditService
   ) {}
 
   async list(
@@ -125,8 +127,11 @@ export class DealsService {
         probability: input.probability,
       })
       .returning();
+
+    const dto = toDto(row);
+    await this.auditService.record(workspaceId, ownerId, "create", "deal", dto.id, null, dto);
     log.info("deal created", { workspaceId, dealId: row.id });
-    return toDto(row);
+    return dto;
   }
 
   async update(workspaceId: string, id: string, input: DealUpdateInput, actorId: string | undefined): Promise<DealDto | null> {
@@ -155,6 +160,11 @@ export class DealsService {
       .where(and(eq(deals.id, id), eq(deals.workspaceId, workspaceId)))
       .returning();
 
+    const dto = row ? toDto(row) : null;
+    if (dto) {
+      await this.auditService.record(workspaceId, actorId, "update", "deal", id, existing, dto);
+    }
+
     if (row && input.stageId && input.stageId !== existing.stageId) {
       const [oldStage] = await this.db
         .select({ name: pipelineStages.name })
@@ -179,17 +189,23 @@ export class DealsService {
     }
 
     if (row) log.info("deal updated", { workspaceId, dealId: id });
-    return row ? toDto(row) : null;
+    return dto;
   }
 
-  async softDelete(workspaceId: string, id: string): Promise<boolean> {
+  async softDelete(workspaceId: string, id: string, actorId: string | undefined): Promise<boolean> {
     const existing = await this.getById(workspaceId, id);
     if (!existing) return false;
 
-    await this.db
+    const [row] = await this.db
       .update(deals)
       .set({ deletedAt: new Date(), updatedAt: new Date() })
-      .where(and(eq(deals.id, id), eq(deals.workspaceId, workspaceId)));
+      .where(and(eq(deals.id, id), eq(deals.workspaceId, workspaceId)))
+      .returning();
+
+    const dto = row ? toDto(row) : null;
+    if (dto) {
+      await this.auditService.record(workspaceId, actorId, "delete", "deal", id, existing, dto);
+    }
     log.info("deal soft-deleted", { workspaceId, dealId: id });
     return true;
   }
@@ -225,9 +241,10 @@ export function buildDealsService(
   db: Db | null,
   companiesService: CompaniesService | null,
   pipelinesService: PipelinesService | null,
-  activitiesService: ActivitiesService | null
+  activitiesService: ActivitiesService | null,
+  auditService: AuditService | null
 ): DealsService | null {
-  return db && companiesService && pipelinesService && activitiesService
-    ? new DealsService(db, companiesService, pipelinesService, activitiesService)
+  return db && companiesService && pipelinesService && activitiesService && auditService
+    ? new DealsService(db, companiesService, pipelinesService, activitiesService, auditService)
     : null;
 }

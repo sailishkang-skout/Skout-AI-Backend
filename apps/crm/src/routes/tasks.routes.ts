@@ -3,10 +3,15 @@ import { taskCreateSchema, taskListQuerySchema, taskUpdateSchema } from "@skout/
 import { HttpError } from "@skout/auth";
 import { parseIdParam } from "../utils/http.js";
 import { requireRole } from "../utils/require-role.js";
+import { buildAuditService } from "../services/audit.service.js";
 import { buildTasksService } from "../services/tasks.service.js";
 
 export async function tasksRoutes(app: FastifyInstance) {
-  const service = () => buildTasksService(app.db ?? null);
+  const service = () => {
+    const db = app.db ?? null;
+    const auditService = buildAuditService(db);
+    return buildTasksService(db, auditService);
+  };
 
   app.get("/tasks", async (request) => {
     const workspaceId = request.workspaceId ?? "unknown";
@@ -35,7 +40,7 @@ export async function tasksRoutes(app: FastifyInstance) {
     if (!svc) throw new HttpError("database_unavailable", 503);
 
     const input = taskUpdateSchema.parse(request.body);
-    const task = await svc.update(workspaceId, id, input);
+    const task = await svc.update(workspaceId, id, request.userId, input);
     if (!task) throw new HttpError("task_not_found", 404);
     return reply.send(task);
   });
@@ -58,7 +63,7 @@ export async function tasksRoutes(app: FastifyInstance) {
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
 
-    const deleted = await svc.softDelete(workspaceId, id);
+    const deleted = await svc.softDelete(workspaceId, id, request.userId);
     if (!deleted) throw new HttpError("task_not_found", 404);
     return reply.code(204).send();
   });

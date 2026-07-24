@@ -4,6 +4,7 @@ import { schema } from "@skout/db";
 import type { ContactCreateInput, ContactUpdateInput } from "@skout/shared";
 import { HttpError } from "@skout/auth";
 import type { CompaniesService } from "./companies.service.js";
+import type { AuditService } from "./audit.service.js";
 import { serviceLog } from "../lib/obs.js";
 
 const log = serviceLog("contacts");
@@ -48,7 +49,8 @@ function toDto(row: typeof contacts.$inferSelect): ContactDto {
 export class ContactsService {
   constructor(
     private readonly db: Db,
-    private readonly companiesService: CompaniesService
+    private readonly companiesService: CompaniesService,
+    private readonly auditService: AuditService
   ) {}
 
   async list(
@@ -82,7 +84,7 @@ export class ContactsService {
     return row ? toDto(row) : null;
   }
 
-  async create(workspaceId: string, input: ContactCreateInput): Promise<ContactDto> {
+  async create(workspaceId: string, actorId: string | undefined, input: ContactCreateInput): Promise<ContactDto> {
     if (input.companyId && !(await this.companiesService.existsInWorkspace(workspaceId, input.companyId))) {
       throw new HttpError("company_not_found", 404);
     }
@@ -103,11 +105,19 @@ export class ContactsService {
         sourceProspectId: input.sourceProspectId,
       })
       .returning();
+
+    const dto = toDto(row);
+    await this.auditService.record(workspaceId, actorId, "create", "contact", dto.id, null, dto);
     log.info("contact created", { workspaceId, contactId: row.id });
-    return toDto(row);
+    return dto;
   }
 
-  async update(workspaceId: string, id: string, input: ContactUpdateInput): Promise<ContactDto | null> {
+  async update(
+    workspaceId: string,
+    id: string,
+    actorId: string | undefined,
+    input: ContactUpdateInput
+  ): Promise<ContactDto | null> {
     const existing = await this.getById(workspaceId, id);
     if (!existing) return null;
 
@@ -132,23 +142,38 @@ export class ContactsService {
       })
       .where(and(eq(contacts.id, id), eq(contacts.workspaceId, workspaceId)))
       .returning();
+
+    const dto = row ? toDto(row) : null;
+    if (dto) {
+      await this.auditService.record(workspaceId, actorId, "update", "contact", id, existing, dto);
+    }
     if (row) log.info("contact updated", { workspaceId, contactId: id });
-    return row ? toDto(row) : null;
+    return dto;
   }
 
-  async softDelete(workspaceId: string, id: string): Promise<boolean> {
+  async softDelete(workspaceId: string, id: string, actorId: string | undefined): Promise<boolean> {
     const existing = await this.getById(workspaceId, id);
     if (!existing) return false;
 
-    await this.db
+    const [row] = await this.db
       .update(contacts)
       .set({ deletedAt: new Date(), updatedAt: new Date() })
-      .where(and(eq(contacts.id, id), eq(contacts.workspaceId, workspaceId)));
+      .where(and(eq(contacts.id, id), eq(contacts.workspaceId, workspaceId)))
+      .returning();
+
+    const dto = row ? toDto(row) : null;
+    if (dto) {
+      await this.auditService.record(workspaceId, actorId, "delete", "contact", id, existing, dto);
+    }
     log.info("contact soft-deleted", { workspaceId, contactId: id });
     return true;
   }
 }
 
-export function buildContactsService(db: Db | null, companiesService: CompaniesService | null): ContactsService | null {
-  return db && companiesService ? new ContactsService(db, companiesService) : null;
+export function buildContactsService(
+  db: Db | null,
+  companiesService: CompaniesService | null,
+  auditService: AuditService | null
+): ContactsService | null {
+  return db && companiesService && auditService ? new ContactsService(db, companiesService, auditService) : null;
 }

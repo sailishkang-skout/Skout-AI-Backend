@@ -3,13 +3,16 @@ import { contactCreateSchema, contactListQuerySchema, contactUpdateSchema } from
 import { HttpError } from "@skout/auth";
 import { parseIdParam } from "../utils/http.js";
 import { requireRole } from "../utils/require-role.js";
+import { buildAuditService } from "../services/audit.service.js";
 import { buildCompaniesService } from "../services/companies.service.js";
 import { buildContactsService } from "../services/contacts.service.js";
 
 export async function contactsRoutes(app: FastifyInstance) {
   const service = () => {
-    const companiesService = buildCompaniesService(app.db ?? null);
-    return buildContactsService(app.db ?? null, companiesService);
+    const db = app.db ?? null;
+    const auditService = buildAuditService(db);
+    const companiesService = buildCompaniesService(db, auditService);
+    return buildContactsService(db, companiesService, auditService);
   };
 
   app.get("/contacts", async (request) => {
@@ -28,7 +31,7 @@ export async function contactsRoutes(app: FastifyInstance) {
     if (!svc) throw new HttpError("database_unavailable", 503);
 
     const input = contactCreateSchema.parse(request.body);
-    const contact = await svc.create(workspaceId, input);
+    const contact = await svc.create(workspaceId, request.userId, input);
     return reply.code(201).send(contact);
   });
 
@@ -50,7 +53,7 @@ export async function contactsRoutes(app: FastifyInstance) {
     if (!svc) throw new HttpError("database_unavailable", 503);
 
     const input = contactUpdateSchema.parse(request.body);
-    const contact = await svc.update(workspaceId, id, input);
+    const contact = await svc.update(workspaceId, id, request.userId, input);
     if (!contact) throw new HttpError("contact_not_found", 404);
     return reply.send(contact);
   });
@@ -62,7 +65,7 @@ export async function contactsRoutes(app: FastifyInstance) {
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
 
-    const deleted = await svc.softDelete(workspaceId, id);
+    const deleted = await svc.softDelete(workspaceId, id, request.userId);
     if (!deleted) throw new HttpError("contact_not_found", 404);
     return reply.code(204).send();
   });

@@ -426,12 +426,18 @@ export const activityListQuerySchema = paginationQuerySchema.extend({
   entityId: z.string().uuid(),
 });
 
+export const CRM_ENTITY_TYPES = ["contact", "company", "deal"] as const;
+
+export const auditLogListQuerySchema = z.object({
+  entityType: z.enum(CRM_ENTITY_TYPES),
+  entityId: z.string().uuid(),
+});
+
 export const COMPANY_STATUSES = ["active", "customer", "churned"] as const;
 export const CONTACT_LIFECYCLE_STAGES = ["lead", "mql", "sql", "customer"] as const;
 export const DEAL_STATUSES = ["open", "won", "lost"] as const;
 export const TASK_PRIORITIES = ["low", "medium", "high"] as const;
 export const TASK_STATUSES = ["open", "done"] as const;
-export const CRM_ENTITY_TYPES = ["contact", "company", "deal"] as const;
 export const ACTIVITY_TYPES = ["note", "call", "email", "meeting", "stage_change"] as const;
 
 export const companyCreateSchema = z.object({
@@ -733,6 +739,7 @@ export type ContactListQuery = z.infer<typeof contactListQuerySchema>;
 export type DealListQuery = z.infer<typeof dealListQuerySchema>;
 export type TaskListQuery = z.infer<typeof taskListQuerySchema>;
 export type ActivityListQuery = z.infer<typeof activityListQuerySchema>;
+export type AuditLogListQuery = z.infer<typeof auditLogListQuerySchema>;
 export type CompanyStatus = (typeof COMPANY_STATUSES)[number];
 export type ContactLifecycleStage = (typeof CONTACT_LIFECYCLE_STAGES)[number];
 export type DealStatus = (typeof DEAL_STATUSES)[number];

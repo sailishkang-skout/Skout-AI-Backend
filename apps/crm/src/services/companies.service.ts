@@ -2,6 +2,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { CompanyCreateInput, CompanyUpdateInput } from "@skout/shared";
+import { buildAuditService, type AuditService } from "./audit.service.js";
 import { serviceLog } from "../lib/obs.js";
 
 const log = serviceLog("companies");
@@ -23,6 +24,18 @@ export interface CompanyDto {
   updatedAt: string;
 }
 
+type CompanyDbUpdatePatch = Partial<{
+  name: string;
+  domain: string | null;
+  industry: string | null;
+  employeeCount: number | null;
+  revenue: string | null;
+  location: string | null;
+  ownerId: string | null;
+  status: string;
+  sourceProspectCompanyId: string | null;
+}>;
+
 function toDto(row: typeof companies.$inferSelect): CompanyDto {
   return {
     id: row.id,
@@ -41,8 +54,20 @@ function toDto(row: typeof companies.$inferSelect): CompanyDto {
   };
 }
 
+function hasMeaningfulChanges(existing: CompanyDto, patch: CompanyDbUpdatePatch): boolean {
+  return Object.entries(patch).some(([key, value]) => {
+    const existingValue = existing[key as keyof CompanyDto];
+    const normalizedExisting = key === "revenue" && typeof existingValue === "number" ? existingValue.toString() : existingValue;
+    const normalizedValue = key === "revenue" && value !== null ? value.toString() : value;
+    return JSON.stringify(normalizedExisting) !== JSON.stringify(normalizedValue);
+  });
+}
+
 export class CompaniesService {
-  constructor(private readonly db: Db) {}
+  constructor(
+    private readonly db: Db,
+    private readonly auditService: AuditService
+  ) {}
 
   async list(
     workspaceId: string,
@@ -75,62 +100,98 @@ export class CompaniesService {
     return row ? toDto(row) : null;
   }
 
-  async create(workspaceId: string, input: CompanyCreateInput): Promise<CompanyDto> {
-    const [row] = await this.db
-      .insert(companies)
-      .values({
-        workspaceId,
-        name: input.name,
-        domain: input.domain,
-        industry: input.industry,
-        employeeCount: input.employeeCount,
-        revenue: input.revenue?.toString(),
-        location: input.location,
-        ownerId: input.ownerId,
-        status: input.status,
-        sourceProspectCompanyId: input.sourceProspectCompanyId,
-      })
-      .returning();
-    log.info("company created", { workspaceId, companyId: row.id });
-    return toDto(row);
+  async create(workspaceId: string, actorId: string | undefined, input: CompanyCreateInput): Promise<CompanyDto> {
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(companies)
+        .values({
+          workspaceId,
+          name: input.name,
+          domain: input.domain,
+          industry: input.industry,
+          employeeCount: input.employeeCount,
+          revenue: input.revenue?.toString(),
+          location: input.location,
+          ownerId: input.ownerId,
+          status: input.status,
+          sourceProspectCompanyId: input.sourceProspectCompanyId,
+        })
+        .returning();
+
+      const dto = toDto(row);
+      const txAuditService = buildAuditService(tx as never);
+      await txAuditService?.record(workspaceId, actorId, "create", "company", dto.id, null, dto);
+      log.info("company created", { workspaceId, companyId: row.id });
+      return dto;
+    });
   }
 
-  async update(workspaceId: string, id: string, input: CompanyUpdateInput): Promise<CompanyDto | null> {
+  async update(
+    workspaceId: string,
+    id: string,
+    actorId: string | undefined,
+    input: CompanyUpdateInput
+  ): Promise<CompanyDto | null> {
     const existing = await this.getById(workspaceId, id);
     if (!existing) return null;
 
-    const [row] = await this.db
-      .update(companies)
-      .set({
-        ...(input.name !== undefined ? { name: input.name } : {}),
-        ...(input.domain !== undefined ? { domain: input.domain } : {}),
-        ...(input.industry !== undefined ? { industry: input.industry } : {}),
-        ...(input.employeeCount !== undefined ? { employeeCount: input.employeeCount } : {}),
-        ...(input.revenue !== undefined ? { revenue: input.revenue.toString() } : {}),
-        ...(input.location !== undefined ? { location: input.location } : {}),
-        ...(input.ownerId !== undefined ? { ownerId: input.ownerId } : {}),
-        ...(input.status !== undefined ? { status: input.status } : {}),
-        ...(input.sourceProspectCompanyId !== undefined
-          ? { sourceProspectCompanyId: input.sourceProspectCompanyId }
-          : {}),
-        updatedAt: new Date(),
-      })
-      .where(and(eq(companies.id, id), eq(companies.workspaceId, workspaceId)))
-      .returning();
-    if (row) log.info("company updated", { workspaceId, companyId: id });
-    return row ? toDto(row) : null;
+    const patch: CompanyDbUpdatePatch = {
+      ...(input.name !== undefined ? { name: input.name } : {}),
+      ...(input.domain !== undefined ? { domain: input.domain } : {}),
+      ...(input.industry !== undefined ? { industry: input.industry } : {}),
+      ...(input.employeeCount !== undefined ? { employeeCount: input.employeeCount } : {}),
+      ...(input.revenue !== undefined ? { revenue: input.revenue.toString() } : {}),
+      ...(input.location !== undefined ? { location: input.location } : {}),
+      ...(input.ownerId !== undefined ? { ownerId: input.ownerId } : {}),
+      ...(input.status !== undefined ? { status: input.status } : {}),
+      ...(input.sourceProspectCompanyId !== undefined
+        ? { sourceProspectCompanyId: input.sourceProspectCompanyId }
+        : {}),
+    };
+
+    if (!hasMeaningfulChanges(existing, patch)) {
+      return existing;
+    }
+
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(companies)
+        .set({
+          ...patch,
+          updatedAt: new Date(),
+        } satisfies Partial<typeof companies.$inferInsert>)
+        .where(and(eq(companies.id, id), eq(companies.workspaceId, workspaceId)))
+        .returning();
+
+      const dto = row ? toDto(row) : null;
+      if (dto) {
+        const txAuditService = buildAuditService(tx as never);
+        await txAuditService?.record(workspaceId, actorId, "update", "company", id, existing, dto);
+      }
+      if (row) log.info("company updated", { workspaceId, companyId: id });
+      return dto;
+    });
   }
 
-  async softDelete(workspaceId: string, id: string): Promise<boolean> {
+  async softDelete(workspaceId: string, id: string, actorId: string | undefined): Promise<boolean> {
     const existing = await this.getById(workspaceId, id);
     if (!existing) return false;
 
-    await this.db
-      .update(companies)
-      .set({ deletedAt: new Date(), updatedAt: new Date() })
-      .where(and(eq(companies.id, id), eq(companies.workspaceId, workspaceId)));
-    log.info("company soft-deleted", { workspaceId, companyId: id });
-    return true;
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(companies)
+        .set({ deletedAt: new Date(), updatedAt: new Date() })
+        .where(and(eq(companies.id, id), eq(companies.workspaceId, workspaceId)))
+        .returning();
+
+      const dto = row ? toDto(row) : null;
+      if (dto) {
+        const txAuditService = buildAuditService(tx as never);
+        await txAuditService?.record(workspaceId, actorId, "delete", "company", id, existing, dto);
+      }
+      if (row) log.info("company soft-deleted", { workspaceId, companyId: id });
+      return Boolean(row);
+    });
   }
 
   /** Confirms a company id belongs to the given workspace (used by contacts/deals create). */
@@ -139,6 +200,6 @@ export class CompaniesService {
   }
 }
 
-export function buildCompaniesService(db: Db | null): CompaniesService | null {
-  return db ? new CompaniesService(db) : null;
+export function buildCompaniesService(db: Db | null, auditService: AuditService | null): CompaniesService | null {
+  return db && auditService ? new CompaniesService(db, auditService) : null;
 }

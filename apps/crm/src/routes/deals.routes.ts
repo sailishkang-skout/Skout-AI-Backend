@@ -4,6 +4,7 @@ import { HttpError } from "@skout/auth";
 import { parseIdParam } from "../utils/http.js";
 import { requireRole } from "../utils/require-role.js";
 import { buildActivitiesService } from "../services/activities.service.js";
+import { buildAuditService } from "../services/audit.service.js";
 import { buildCompaniesService } from "../services/companies.service.js";
 import { buildDealsService } from "../services/deals.service.js";
 import { buildPipelinesService } from "../services/pipelines.service.js";
@@ -11,10 +12,11 @@ import { buildPipelinesService } from "../services/pipelines.service.js";
 export async function dealsRoutes(app: FastifyInstance) {
   const service = () => {
     const db = app.db ?? null;
-    const companiesService = buildCompaniesService(db);
-    const pipelinesService = buildPipelinesService(db);
+    const auditService = buildAuditService(db);
+    const companiesService = buildCompaniesService(db, auditService);
+    const pipelinesService = buildPipelinesService(db, auditService);
     const activitiesService = buildActivitiesService(db);
-    return buildDealsService(db, companiesService, pipelinesService, activitiesService);
+    return buildDealsService(db, companiesService, pipelinesService, activitiesService, auditService);
   };
 
   // Registered before "/deals/:id" so the literal path takes precedence.
@@ -77,7 +79,7 @@ export async function dealsRoutes(app: FastifyInstance) {
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
 
-    const deleted = await svc.softDelete(workspaceId, id);
+    const deleted = await svc.softDelete(workspaceId, id, request.userId);
     if (!deleted) throw new HttpError("deal_not_found", 404);
     return reply.code(204).send();
   });
