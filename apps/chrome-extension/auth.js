@@ -31,7 +31,15 @@ export function isAuthFresh(stored) {
 }
 
 export async function getStoredAuth() {
-  return chrome.storage.sync.get(["authToken", "authEmail", "authUpdatedAt"]);
+  const local = await chrome.storage.local.get(["authToken", "authEmail", "authUpdatedAt"]);
+  if (local.authToken) return local;
+
+  const legacy = await chrome.storage.sync.get(["authToken", "authEmail", "authUpdatedAt"]);
+  if (legacy.authToken) {
+    await chrome.storage.local.set(legacy);
+    await chrome.storage.sync.remove(["authToken", "authEmail", "authUpdatedAt"]);
+  }
+  return legacy;
 }
 
 export async function saveAuthToken(token, email) {
@@ -41,17 +49,19 @@ export async function saveAuthToken(token, email) {
   }
 
   try {
-    await chrome.storage.sync.set({
+    await chrome.storage.local.set({
       authToken: token,
       authEmail: email || "",
       authUpdatedAt: Date.now(),
     });
+    await chrome.storage.sync.remove(["authToken", "authEmail", "authUpdatedAt"]);
   } catch (error) {
     console.warn("[Skout Extension] could not persist auth token:", error);
   }
 }
 
 export async function clearAuthToken() {
+  await chrome.storage.local.remove(["authToken", "authEmail", "authUpdatedAt"]);
   await chrome.storage.sync.remove(["authToken", "authEmail", "authUpdatedAt"]);
 }
 

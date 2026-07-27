@@ -36,7 +36,11 @@ const onboardingSchema = z.object({
   market: z.array(z.string().max(50)).max(20).optional(),
   crm: z.string().max(100).optional(),
   leadVolume: z.string().max(50).optional(),
-  completedAt: z.string().max(50).optional(),
+  completedAt: z
+    .string()
+    .max(50)
+    .refine((value) => !Number.isNaN(Date.parse(value)), "completedAt must be a valid ISO date")
+    .optional(),
 });
 
 const icpSchema = z.object({
@@ -54,17 +58,55 @@ const icpSchema = z.object({
   onboarding: onboardingSchema.optional(),
 });
 
+/** Reject bare completedAt claims — wizard must include minimum profile answers. */
+function assertValidOnboardingCompletion(
+  onboarding: z.infer<typeof onboardingSchema> | undefined
+): void {
+  if (!onboarding?.completedAt) return;
+
+  const hasCompany =
+    Boolean(onboarding.company?.name?.trim()) &&
+    Boolean(onboarding.company?.industry?.trim()) &&
+    Boolean(onboarding.company?.size?.trim());
+  const hasGoals = (onboarding.goals?.length ?? 0) > 0;
+  const hasIcpIndustries = (onboarding.icp?.industries?.length ?? 0) > 0;
+  const hasPeople =
+    (onboarding.people?.departments?.length ?? 0) > 0 ||
+    (onboarding.people?.seniorities?.length ?? 0) > 0 ||
+    (onboarding.people?.titles?.length ?? 0) > 0;
+  const hasMarket = (onboarding.market?.length ?? 0) > 0;
+  const hasLeadVolume = Boolean(onboarding.leadVolume?.trim());
+
+  if (!hasCompany || !hasGoals || !hasIcpIndustries || !hasPeople || !hasMarket || !hasLeadVolume) {
+    const err = new Error(
+      "Onboarding completion requires company, goals, ICP industries, people targets, market, and lead volume"
+    );
+    (err as Error & { statusCode: number }).statusCode = 400;
+    throw err;
+  }
+}
+
+function requireWorkspaceId(request: { workspaceId?: string }): string {
+  if (!request.workspaceId) {
+    const err = new Error("Workspace context required");
+    (err as Error & { statusCode: number }).statusCode = 403;
+    throw err;
+  }
+  return request.workspaceId;
+}
+
 export async function icpRoutes(app: FastifyInstance) {
   app.get("/workspace/icp", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const config = await getWorkspaceIcp(app.db, workspaceId);
     const version = await getWorkspaceIcpVersion(app.db, workspaceId);
     return reply.send({ workspaceId, config, version: version || undefined });
   });
 
   app.put("/workspace/icp", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = icpSchema.parse(request.body ?? {});
+    assertValidOnboardingCompletion(body.onboarding);
     const previousVersion = await getWorkspaceIcpVersion(app.db, workspaceId);
     const row = await setWorkspaceIcp(app.db, workspaceId, body);
     const version = row?.version ?? 1;

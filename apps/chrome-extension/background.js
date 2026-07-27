@@ -560,21 +560,50 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
-chrome.runtime.onMessageExternal.addListener((message, _sender, sendResponse) => {
-  if (message.type === "ping") {
-    sendResponse({ ok: true, version: "0.7.0" });
-    return true;
+async function isAllowedExternalSender(sender) {
+  const url = sender?.url || "";
+  if (!url) return false;
+  try {
+    const origin = new URL(url).origin;
+    const { webUrl } = await getStoredSkoutUrls();
+    const allowed = new Set(["http://localhost:3000", "http://127.0.0.1:3000"]);
+    try {
+      if (webUrl) allowed.add(new URL(webUrl).origin);
+    } catch {
+      // ignore malformed stored webUrl
+    }
+    if (allowed.has(origin)) return true;
+    // First-time connect before settings are saved — allow Skout API Gateway only.
+    return /\.execute-api\.us-east-1\.amazonaws\.com$/i.test(new URL(url).hostname);
+  } catch {
+    return false;
   }
+}
 
-  if (message.type === "save-auth" && message.token) {
-    saveAuthToken(message.token, message.email || "")
-      .then(() => {
+chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+  void (async () => {
+    if (!(await isAllowedExternalSender(sender))) {
+      sendResponse({ ok: false, error: "origin_not_allowed" });
+      return;
+    }
+
+    if (message.type === "ping") {
+      sendResponse({ ok: true, version: "0.8.0" });
+      return;
+    }
+
+    if (message.type === "save-auth" && message.token) {
+      try {
+        await saveAuthToken(message.token, message.email || "");
         void prefetchLists();
         sendResponse({ ok: true });
-      })
-      .catch((err) => sendResponse({ ok: false, error: String(err) }));
-    return true;
-  }
+      } catch (err) {
+        sendResponse({ ok: false, error: String(err) });
+      }
+      return;
+    }
 
-  return false;
+    sendResponse({ ok: false, error: "unknown_message" });
+  })();
+  return true;
 });

@@ -87,16 +87,29 @@ export async function getConfig() {
   const stored = await chrome.storage.sync.get([
     "apiUrl",
     "webUrl",
-    "authToken",
-    "authEmail",
     "stubEmail",
     "useStubAuth",
   ]);
+  const localAuth = await chrome.storage.local.get(["authToken", "authEmail"]);
+  // Migrate legacy sync-stored tokens once (JWTs must not live in sync storage).
+  if (!localAuth.authToken) {
+    const legacy = await chrome.storage.sync.get(["authToken", "authEmail"]);
+    if (legacy.authToken) {
+      await chrome.storage.local.set({
+        authToken: legacy.authToken,
+        authEmail: legacy.authEmail || "",
+        authUpdatedAt: Date.now(),
+      });
+      await chrome.storage.sync.remove(["authToken", "authEmail", "authUpdatedAt"]);
+      localAuth.authToken = legacy.authToken;
+      localAuth.authEmail = legacy.authEmail || "";
+    }
+  }
   return {
     apiUrl: stored.apiUrl || DEFAULT_API_URL,
     webUrl: stored.webUrl || DEFAULT_WEB_URL,
-    authToken: stored.authToken || "",
-    authEmail: stored.authEmail || "",
+    authToken: localAuth.authToken || "",
+    authEmail: localAuth.authEmail || "",
     stubEmail: stored.stubEmail || "extension@example.com",
     useStubAuth: Boolean(stored.useStubAuth),
   };
@@ -157,11 +170,10 @@ async function request(path, options = {}, bearerOverride) {
     headers.set("x-stub-user-email", stubEmail);
   } else {
     const token = bearerOverride || authToken;
-    if (token) {
-      headers.set("Authorization", `Bearer ${token}`);
-    } else {
-      headers.set("x-stub-user-email", stubEmail);
+    if (!token) {
+      throw new Error("Not signed in — open Skout and click Connect Skout account.");
     }
+    headers.set("Authorization", `Bearer ${token}`);
   }
 
   const controller = new AbortController();

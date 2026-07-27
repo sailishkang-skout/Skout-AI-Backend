@@ -9,7 +9,7 @@
         type: "EXTENSION_INSTALLED",
         extensionId: EXTENSION_ID,
       },
-      "*"
+      window.location.origin
     );
   }
 
@@ -28,11 +28,12 @@
   window.__SKOUT_WEB_BRIDGE__ = true;
 
   window.addEventListener("message", (event) => {
-    if (event.source !== window || event.data?.source !== "skout-web") return;
+    if (event.source !== window || event.origin !== window.location.origin) return;
+    if (event.data?.source !== "skout-web") return;
 
+    // Ping only announces presence — do not REQUEST_AUTH (avoids sync storms).
     if (event.data.type === "SKOUT_EXTENSION_PING") {
       announce();
-      window.postMessage({ source: "skout-extension", type: "REQUEST_AUTH" }, "*");
       return;
     }
 
@@ -52,7 +53,7 @@
             ok: Boolean(response?.ok) && !lastError,
             error: lastError?.message || response?.error || null,
           },
-          "*"
+          window.location.origin
         );
       }
     });
