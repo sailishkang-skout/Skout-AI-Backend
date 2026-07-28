@@ -1,7 +1,7 @@
 import { boolean, integer, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { workspaces } from "./workspaces.js";
 
-/** LinkedIn sending accounts connected via Unipile (server-side outreach). */
+/** Unipile messaging accounts (LinkedIn + WhatsApp) for server-side outreach. */
 export const linkedinAccounts = pgTable(
   "linkedin_accounts",
   {
@@ -11,8 +11,12 @@ export const linkedinAccounts = pgTable(
       .references(() => workspaces.id, { onDelete: "cascade" }),
     /** Unipile account id used in API calls */
     unipileAccountId: text("unipile_account_id").notNull(),
+    /** linkedin | whatsapp */
+    channel: text("channel").notNull().default("linkedin"),
     displayName: text("display_name"),
     linkedinUrl: text("linkedin_url"),
+    /** E.164 / display phone for WhatsApp accounts */
+    phone: text("phone"),
     status: text("status").notNull().default("active"),
     dailySendLimit: integer("daily_send_limit").notNull().default(40),
     sentCount: integer("sent_count").notNull().default(0),

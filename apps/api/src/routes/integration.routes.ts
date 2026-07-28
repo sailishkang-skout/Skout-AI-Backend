@@ -5,10 +5,12 @@ import { HttpError, errorResponse } from "../utils/http.js";
 
 const saveSchema = z.object({
   apiKey: z.string().min(8).max(512),
+  dsn: z.string().url().optional(),
 });
 
 const testSchema = z.object({
   apiKey: z.string().min(8).max(512).optional(),
+  dsn: z.string().url().optional(),
 });
 
 export async function integrationRoutes(app: FastifyInstance) {
@@ -24,7 +26,7 @@ export async function integrationRoutes(app: FastifyInstance) {
     const body = saveSchema.parse(request.body ?? {});
     const svc = createIntegrationService(app.db, app.config);
     try {
-      const data = await svc.save(workspaceId, provider, body.apiKey);
+      const data = await svc.save(workspaceId, provider, body.apiKey, { dsn: body.dsn });
       return reply.send({ data });
     } catch (err) {
       if (err instanceof HttpError) {
@@ -55,7 +57,7 @@ export async function integrationRoutes(app: FastifyInstance) {
     const body = testSchema.parse(request.body ?? {});
     const svc = createIntegrationService(app.db, app.config);
     try {
-      return reply.send(await svc.test(workspaceId, provider, body.apiKey));
+      return reply.send(await svc.test(workspaceId, provider, body.apiKey, { dsn: body.dsn }));
     } catch (err) {
       if (err instanceof HttpError) {
         return reply.status(err.statusCode).send(errorResponse(err.message, err.statusCode, err.details));

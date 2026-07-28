@@ -25,6 +25,7 @@ const PERSONAL_EMAIL_DOMAINS = new Set([
 export interface ResolvedProspect {
   prospectId: string;
   email?: string;
+  phone?: string;
   linkedinUrl?: string;
   firstName: string;
   lastName: string;
@@ -103,6 +104,21 @@ export async function resolveProspectFields(
   const primary = rows.find((r) => r.isPrimary && r.fieldValue);
   const enrichedEmail = primary?.fieldValue ?? rows.find((r) => r.fieldValue)?.fieldValue ?? undefined;
 
+  const phoneRows = await db
+    .select({ fieldValue: enrichmentResults.fieldValue, isPrimary: enrichmentResults.isPrimary })
+    .from(enrichmentResults)
+    .where(
+      and(
+        eq(enrichmentResults.workspaceId, workspaceId),
+        inArray(enrichmentResults.prospectId, [prospectId]),
+        eq(enrichmentResults.fieldName, "phone")
+      )
+    )
+    .orderBy(desc(enrichmentResults.createdAt));
+  const primaryPhone = phoneRows.find((r) => r.isPrimary && r.fieldValue);
+  const enrichedPhone =
+    primaryPhone?.fieldValue ?? phoneRows.find((r) => r.fieldValue)?.fieldValue ?? undefined;
+
   let email: string | undefined;
   if (docEmail && isPersonalEmail(docEmail)) {
     email = docEmail;
@@ -118,6 +134,7 @@ export async function resolveProspectFields(
   return {
     prospectId,
     email,
+    phone: str(snap.phone) ?? enrichedPhone ?? undefined,
     linkedinUrl: str(snap.linkedinUrl) ?? doc?.linkedinUrl ?? undefined,
     firstName,
     lastName,

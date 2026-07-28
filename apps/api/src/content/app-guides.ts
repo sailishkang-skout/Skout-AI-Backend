@@ -86,9 +86,10 @@ Keep volumes gradual and suppress unsubscribes/bounces.`,
     slug: "integrations",
     title: "Integrations",
     href: "/settings/integrations",
-    keywords: ["integration", "hunter", "apollo", "byok", "api key", "provider"],
-    body: `Add enrichment provider API keys under Settings → Integrations (BYOK).
+    keywords: ["integration", "hunter", "apollo", "byok", "api key", "provider", "unipile", "linkedin", "whatsapp"],
+    body: `Add Unipile (LinkedIn/WhatsApp) and enrichment provider API keys under Settings → Integrations (BYOK).
 Workspace keys are preferred before platform defaults.
+After saving Unipile, connect accounts under Deliverability → LinkedIn / WhatsApp.
 For HubSpot CRM connect/import/export, use Settings → CRM (/settings/crm) instead.`,
   },
   {

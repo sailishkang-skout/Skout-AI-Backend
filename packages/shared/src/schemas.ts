@@ -336,7 +336,7 @@ export const enrollSequenceSchema = z
     message: "listId or prospectIds (non-empty) is required",
   });
 
-export const SEQUENCE_STEP_TYPES = ["email", "linkedin", "wait", "task"] as const;
+export const SEQUENCE_STEP_TYPES = ["email", "linkedin", "whatsapp", "wait", "task"] as const;
 export const SEQUENCE_STATUSES = ["draft", "active", "paused", "archived"] as const;
 
 export const SEQUENCE_MERGE_TOKENS = [

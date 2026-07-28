@@ -131,6 +131,22 @@ aws secretsmanager put-secret-value --secret-id SkoutDev/hunter \
 
 ---
 
+### 6b. `{Prefix}/unipile`
+
+| Field | How to get it |
+|-------|----------------|
+| `UNIPILE_DSN` | Unipile dashboard → API → DSN (e.g. `https://api1.unipile.com:13111`) |
+| `UNIPILE_API_KEY` | Unipile dashboard → API → Access token |
+
+Used by: LinkedIn + WhatsApp sequence outreach, Deliverability account connect (hosted auth).
+
+```bash
+aws secretsmanager put-secret-value --secret-id SkoutDev/unipile \
+  --secret-string '{"UNIPILE_DSN":"https://api1.unipile.com:13111","UNIPILE_API_KEY":"..."}'
+```
+
+---
+
 ### 7. `{Prefix}/hubspot`
 
 | Field | How to get it |

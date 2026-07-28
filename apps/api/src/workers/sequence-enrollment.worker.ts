@@ -20,8 +20,8 @@ import {
   type SeqAdvanceJobPayload,
 } from "./sequence-enrollment.queue.js";
 import { dispatchWebhookEvent } from "../services/webhook.service.js";
-import { LinkedinAccountService, sendLinkedinOutreach } from "../services/linkedin-account.service.js";
-import { isUnipileConfigured, UnipileError } from "../services/unipile.client.js";
+import { LinkedinAccountService, sendLinkedinOutreach, sendWhatsappOutreach } from "../services/linkedin-account.service.js";
+import { UnipileError } from "../services/unipile.client.js";
 import { LinkedinOutreachService } from "../services/linkedin-outreach.service.js";
 
 const log = createLogger("sequence-enrollment.worker");
@@ -299,13 +299,13 @@ async function executeLinkedinStep(
 ): Promise<"waiting" | "done"> {
   const { enrollmentId, workspaceId, prospectId } = payload;
 
-  if (!isUnipileConfigured(config)) {
+  const accounts = new LinkedinAccountService(db, config);
+  if (!(await accounts.isConfiguredForWorkspace(workspaceId))) {
     await markStepTerminal(db, pending.enrollmentStepId, "failed", "unipile_not_configured", now);
     log.warn("LinkedIn step failed — Unipile not configured", { enrollmentId });
     return "done";
   }
 
-  const accounts = new LinkedinAccountService(db, config);
   const account = await accounts.pickNextAccount(workspaceId);
   if (!account) {
     await markStepTerminal(db, pending.enrollmentStepId, "failed", "no_active_linkedin_account", now);
@@ -367,7 +367,7 @@ async function executeLinkedinStep(
   }
 
   try {
-    await sendLinkedinOutreach(config, account, { action, linkedinUrl, message });
+    await sendLinkedinOutreach(config, account, { action, linkedinUrl, message }, workspaceId, db);
     await accounts.markUsed(account.id);
     await outreach.completeJob(workspaceId, job.id);
     log.info("LinkedIn outreach sent via Unipile", {
@@ -399,6 +399,86 @@ async function executeLinkedinStep(
     await outreach.failJob(workspaceId, job.id, reason);
     log.warn("LinkedIn step failed", { enrollmentId, reason });
     return "waiting";
+  }
+}
+
+async function executeWhatsappStep(
+  db: DbClient,
+  config: Env,
+  payload: SeqAdvanceJobPayload,
+  pending: PendingStep,
+  now: Date
+): Promise<"waiting" | "done"> {
+  const { enrollmentId, workspaceId, prospectId } = payload;
+
+  const accounts = new LinkedinAccountService(db, config);
+  if (!(await accounts.isConfiguredForWorkspace(workspaceId))) {
+    await markStepTerminal(db, pending.enrollmentStepId, "failed", "unipile_not_configured", now);
+    log.warn("WhatsApp step failed — Unipile not configured", { enrollmentId });
+    return "done";
+  }
+
+  const account = await accounts.pickNextAccount(workspaceId, "whatsapp");
+  if (!account) {
+    await markStepTerminal(db, pending.enrollmentStepId, "failed", "no_active_whatsapp_account", now);
+    log.warn("WhatsApp step failed — no connected WhatsApp account", { enrollmentId, workspaceId });
+    return "done";
+  }
+
+  const prospect = await resolveProspectFields(config, db, workspaceId, prospectId);
+  const phone = prospect?.phone;
+  if (!phone) {
+    await markStepTerminal(db, pending.enrollmentStepId, "failed", "prospect_phone_not_found", now);
+    log.warn("WhatsApp step failed — no phone", { enrollmentId, prospectId });
+    return "done";
+  }
+
+  const mergeData: MergeData = {
+    firstName: prospect?.firstName ?? "",
+    lastName: prospect?.lastName ?? "",
+    fullName: prospect?.fullName ?? "",
+    companyName: prospect?.companyName ?? "",
+    companyDomain: prospect?.companyDomain ?? "",
+    title: prospect?.title ?? "",
+    senderName: account.displayName ?? "",
+    senderEmail: "",
+    unsubscribeUrl: "",
+  };
+  const message = pending.bodyTemplate
+    ? renderTemplate(
+        pending.bodyTemplate.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+        mergeData
+      )
+    : "";
+
+  try {
+    await sendWhatsappOutreach(config, account, { phone, message }, workspaceId, db);
+    await accounts.markUsed(account.id);
+    await markStepTerminal(db, pending.enrollmentStepId, "executed", null, now);
+    log.info("WhatsApp message sent via Unipile", {
+      enrollmentId,
+      enrollmentStepId: pending.enrollmentStepId,
+      accountId: account.id,
+    });
+    return "done";
+  } catch (err: unknown) {
+    const reason =
+      err instanceof UnipileError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : "whatsapp_send_failed";
+    const status = err instanceof UnipileError ? err.status : 0;
+    if (status === 429 || status >= 500) {
+      await accounts.markError(account.id, reason);
+      log.warn("WhatsApp send transient failure — will retry", { enrollmentId, reason, status });
+      await enqueueSequenceAdvanceJob(config, payload, LINKEDIN_RETRY_MS, false);
+      return "waiting";
+    }
+    await accounts.markError(account.id, reason);
+    await markStepTerminal(db, pending.enrollmentStepId, "failed", reason, now);
+    log.warn("WhatsApp step failed", { enrollmentId, reason });
+    return "done";
   }
 }
 
@@ -514,6 +594,9 @@ async function advanceEnrollment(
       // Extension has not finished yet — poll job already re-enqueued.
       return;
     }
+  } else if (pending.stepType === "whatsapp") {
+    const result = await executeWhatsappStep(db, config, payload, pending, now);
+    if (result === "waiting") return;
   } else {
     await db
       .update(sequenceEnrollmentSteps)

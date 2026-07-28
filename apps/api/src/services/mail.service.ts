@@ -26,12 +26,86 @@ function getTransport(config: Env): ReturnType<typeof nodemailer.createTransport
       host: config.SMTP_HOST,
       port: config.SMTP_PORT,
       secure: config.SMTP_PORT === 465,
+      requireTLS: config.SMTP_PORT === 587,
       ...(config.SMTP_USERNAME
         ? { auth: { user: config.SMTP_USERNAME, pass: config.SMTP_PASSWORD } }
         : {}),
     });
   }
   return _transport;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function fromAddress(config: Env): string {
+  const email = (config.SES_FROM_EMAIL || "noreply@skoutai.io").trim();
+  // Prefer a friendly display name in clients; SES still validates the address.
+  if (email.includes("<")) return email;
+  return `Skout AI <${email}>`;
+}
+
+function renderTransactionalLayout(opts: {
+  preheader: string;
+  title: string;
+  bodyHtml: string;
+  footerNote?: string;
+}): string {
+  const preheader = escapeHtml(opts.preheader);
+  const title = escapeHtml(opts.title);
+  const footer =
+    opts.footerNote ??
+    "You're receiving this because of an action on your Skout AI workspace.";
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="x-apple-disable-message-reformatting" />
+  <title>${title}</title>
+</head>
+<body style="margin:0;padding:0;background:#f4f4f5;color:#18181b;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">${preheader}</div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f4f4f5;padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:560px;background:#ffffff;border:1px solid #e4e4e7;border-radius:12px;overflow:hidden;">
+          <tr>
+            <td style="padding:20px 28px;background:#09090b;color:#fafafa;">
+              <div style="font-size:13px;letter-spacing:0.08em;text-transform:uppercase;opacity:0.7;margin-bottom:6px;">Skout AI</div>
+              <div style="font-size:20px;font-weight:700;line-height:1.3;">${title}</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:28px;font-size:15px;line-height:1.6;color:#27272a;">
+              ${opts.bodyHtml}
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:16px 28px 24px;border-top:1px solid #f4f4f5;font-size:12px;line-height:1.5;color:#71717a;">
+              ${escapeHtml(footer)}
+            </td>
+          </tr>
+        </table>
+        <div style="max-width:560px;margin-top:16px;font-size:11px;color:#a1a1aa;text-align:center;">
+          © ${new Date().getUTCFullYear()} Skout AI
+        </div>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+function ctaButton(href: string, label: string): string {
+  return `<a href="${escapeHtml(href)}" style="display:inline-block;padding:12px 22px;background:#09090b;color:#fafafa;text-decoration:none;border-radius:8px;font-weight:600;font-size:14px;">${escapeHtml(label)}</a>`;
 }
 
 /**
@@ -61,9 +135,11 @@ export async function sendMail(config: Env, opts: MailOptions): Promise<SendMail
     return { sent: false };
   }
 
+  const from = fromAddress(config);
+
   try {
     const info = await transport.sendMail({
-      from: config.SES_FROM_EMAIL,
+      from,
       to: opts.to,
       subject: opts.subject,
       text: opts.text,
@@ -79,7 +155,7 @@ export async function sendMail(config: Env, opts: MailOptions): Promise<SendMail
     const e = err as { message?: string; code?: string; response?: string; responseCode?: number };
     log.error("system email failed", err, {
       to: opts.to,
-      from: config.SES_FROM_EMAIL,
+      from,
       smtpHost: config.SMTP_HOST,
       smtpPort: config.SMTP_PORT,
       code: e.code,
@@ -96,21 +172,35 @@ export function buildInviteEmail(opts: {
   role: string;
   acceptUrl: string;
 }): MailOptions {
+  const inviter = escapeHtml(opts.inviterName);
+  const workspace = escapeHtml(opts.workspaceName);
+  const role = escapeHtml(opts.role);
+
+  const bodyHtml = `
+    <p style="margin:0 0 16px;">Hi,</p>
+    <p style="margin:0 0 16px;"><strong>${inviter}</strong> invited you to join <strong>${workspace}</strong> on Skout AI as a <strong>${role}</strong>.</p>
+    <p style="margin:0 0 24px;">Accept the invitation to access prospects, sequences, and inbox with your team.</p>
+    <p style="margin:0 0 8px;">${ctaButton(opts.acceptUrl, "Accept invitation")}</p>
+    <p style="margin:20px 0 0;font-size:12px;color:#71717a;word-break:break-all;">Or paste this link into your browser:<br /><a href="${escapeHtml(opts.acceptUrl)}" style="color:#3f3f46;">${escapeHtml(opts.acceptUrl)}</a></p>
+    <p style="margin:20px 0 0;font-size:12px;color:#71717a;">This link expires in 7 days. If you weren't expecting this email, you can ignore it.</p>
+  `;
+
   return {
     to: opts.to,
-    subject: `You've been invited to join ${opts.workspaceName} on Skout`,
+    subject: `Join ${opts.workspaceName} on Skout AI`,
     text: [
-      `${opts.inviterName} has invited you to join "${opts.workspaceName}" as a ${opts.role}.`,
+      `${opts.inviterName} invited you to join "${opts.workspaceName}" as a ${opts.role}.`,
       "",
       `Accept your invitation: ${opts.acceptUrl}`,
       "",
       "This link expires in 7 days.",
+      "If you weren't expecting this email, you can ignore it.",
     ].join("\n"),
-    html: `
-      <p>${opts.inviterName} has invited you to join <strong>${opts.workspaceName}</strong> as a <strong>${opts.role}</strong>.</p>
-      <p><a href="${opts.acceptUrl}" style="display:inline-block;padding:10px 20px;background:#000;color:#fff;text-decoration:none;border-radius:6px">Accept invitation</a></p>
-      <p style="color:#888;font-size:13px">This link expires in 7 days. If you weren't expecting this, you can ignore it.</p>
-    `,
+    html: renderTransactionalLayout({
+      preheader: `${opts.inviterName} invited you to ${opts.workspaceName}`,
+      title: "You're invited",
+      bodyHtml,
+    }),
   };
 }
 
@@ -120,21 +210,33 @@ export function buildOtpEmail(opts: {
   workspaceName: string;
   expiresInMinutes: number;
 }): MailOptions {
+  const workspace = escapeHtml(opts.workspaceName);
+  const otp = escapeHtml(opts.otp);
+
+  const bodyHtml = `
+    <p style="margin:0 0 16px;">Use this code to join <strong>${workspace}</strong> on Skout AI:</p>
+    <div style="margin:8px 0 24px;text-align:center;">
+      <div style="display:inline-block;padding:16px 28px;background:#f4f4f5;border:1px solid #e4e4e7;border-radius:10px;font-size:32px;font-weight:700;letter-spacing:0.35em;color:#09090b;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;">
+        ${otp}
+      </div>
+    </div>
+    <p style="margin:0;font-size:13px;color:#71717a;">Expires in ${opts.expiresInMinutes} minutes. Never share this code with anyone.</p>
+  `;
+
   return {
     to: opts.to,
-    subject: `Your verification code for ${opts.workspaceName} — ${opts.otp}`,
+    subject: `Your Skout AI code: ${opts.otp}`,
     text: [
       `Your Skout verification code is: ${opts.otp}`,
       "",
       `This code expires in ${opts.expiresInMinutes} minutes.`,
       "Do not share this code with anyone.",
     ].join("\n"),
-    html: `
-      <p style="font-size:15px">Enter this code to join <strong>${opts.workspaceName}</strong> on Skout:</p>
-      <div style="margin:24px 0;text-align:center">
-        <span style="display:inline-block;padding:16px 32px;background:#000;color:#fff;font-size:32px;font-weight:700;letter-spacing:8px;border-radius:8px">${opts.otp}</span>
-      </div>
-      <p style="color:#888;font-size:13px">Expires in ${opts.expiresInMinutes} minutes. Never share this code.</p>
-    `,
+    html: renderTransactionalLayout({
+      preheader: `Your verification code is ${opts.otp}`,
+      title: "Verification code",
+      bodyHtml,
+      footerNote: "If you didn't request this code, you can safely ignore this email.",
+    }),
   };
 }

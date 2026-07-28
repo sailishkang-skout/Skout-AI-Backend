@@ -26,6 +26,7 @@ function isPublicRoute(url: string, method?: string): boolean {
   return (
     url.startsWith("/api/v1/crm/hubspot/callback") ||
     url.startsWith("/api/v1/billing/webhooks/") ||
+    url.startsWith("/api/v1/webhooks/unipile/") ||
     url.startsWith("/api/v1/track/") ||
     url.startsWith("/api/v1/unsubscribe/") ||
     url.startsWith("/api/v1/invite-auth/send-otp") ||

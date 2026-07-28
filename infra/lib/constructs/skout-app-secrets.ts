@@ -18,6 +18,7 @@ export class SkoutAppSecrets extends Construct {
   readonly clerk: secretsmanager.ISecret;
   readonly apollo: secretsmanager.ISecret;
   readonly hunter: secretsmanager.ISecret;
+  readonly unipile: secretsmanager.ISecret;
   readonly enrichmentProviders: secretsmanager.ISecret;
   readonly hubspot: secretsmanager.ISecret;
   readonly opensearch: secretsmanager.ISecret;
@@ -53,6 +54,10 @@ export class SkoutAppSecrets extends Construct {
     });
     this.apollo = createPlaceholder("Apollo", "apollo", { APOLLO_API_KEY: "replace-me" });
     this.hunter = createPlaceholder("Hunter", "hunter", { HUNTER_API_KEY: "replace-me" });
+    this.unipile = createPlaceholder("Unipile", "unipile", {
+      UNIPILE_DSN: "https://api1.unipile.com:13111",
+      UNIPILE_API_KEY: "replace-me",
+    });
     // PAL enrichment providers — email verify, firmographics, phone.
     this.enrichmentProviders = createPlaceholder("EnrichmentProviders", "enrichment-providers", {
       MILLIONVERIFIER_API_KEY: "replace-me",

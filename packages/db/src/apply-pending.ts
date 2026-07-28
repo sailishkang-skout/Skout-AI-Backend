@@ -221,6 +221,7 @@ try {
   await runSqlMigration("0023_meetings", "0023_meetings.sql");
   await runSqlMigration("0024_pain_points", "0024_pain_points.sql");
   await runSqlMigration("0025_invite_auth", "0025_invite_auth.sql");
+  await runSqlMigration("0027_unipile_channels", "0027_unipile_channels.sql");
 
 } finally {
   await sql.end();

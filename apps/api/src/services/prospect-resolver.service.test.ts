@@ -23,11 +23,17 @@ function selectChain(result: unknown[], terminal: Terminal) {
   return c;
 }
 
-function makeDb(activationRows: unknown[], enrichmentRows: unknown[] = [], opts?: { skipEnrichment?: boolean }) {
+function makeDb(
+  activationRows: unknown[],
+  enrichmentRows: unknown[] = [],
+  opts?: { skipEnrichment?: boolean; phoneRows?: unknown[] }
+) {
   const select = vi.fn();
   select.mockReturnValueOnce(selectChain(activationRows, "where"));
   if (!opts?.skipEnrichment) {
+    // email enrichment, then phone enrichment
     select.mockReturnValueOnce(selectChain(enrichmentRows, "orderBy"));
+    select.mockReturnValueOnce(selectChain(opts?.phoneRows ?? [], "orderBy"));
   }
   return { select } as any;
 }

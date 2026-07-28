@@ -7,6 +7,7 @@ import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import { decryptSecret, encryptSecret, maskApiKey } from "../utils/integration-crypto.js";
 import {
+  DEFAULT_UNIPILE_DSN,
   INTEGRATION_PROVIDERS,
   isIntegrationProviderId,
   palConfigFromIntegrations,
@@ -21,11 +22,14 @@ export interface IntegrationDto {
   name: string;
   description: string;
   docsUrl: string;
+  category: "enrichment" | "messaging";
   connected: boolean;
   keyHint: string | null;
   status: string | null;
   lastValidatedAt: string | null;
   creditDiscount: string;
+  /** Optional Unipile DSN hint when connected */
+  dsnHint?: string | null;
 }
 
 export class IntegrationService {
@@ -54,23 +58,44 @@ export class IntegrationService {
 
     const data = INTEGRATION_PROVIDERS.map((meta) => {
       const row = byProvider.get(meta.id);
+      let dsnHint: string | null = null;
+      if (meta.id === "unipile" && row?.encryptedApiKey) {
+        try {
+          const parsed = JSON.parse(decryptSecret(row.encryptedApiKey, this.encryptionSecret)) as {
+            dsn?: string;
+          };
+          if (parsed?.dsn) dsnHint = parsed.dsn.replace(/^https?:\/\//, "").split("/")[0] ?? null;
+        } catch {
+          // legacy plain-key row
+        }
+      }
       return {
         provider: meta.id,
         name: meta.name,
         description: meta.description,
         docsUrl: meta.docsUrl,
+        category: meta.category,
         connected: Boolean(row),
         keyHint: row?.keyHint ?? null,
         status: row?.status ?? null,
         lastValidatedAt: row?.lastValidatedAt?.toISOString() ?? null,
-        creditDiscount: "25% off Skout credits when your key is used",
+        creditDiscount:
+          meta.category === "messaging"
+            ? "Powers LinkedIn & WhatsApp sends in sequences and Deliverability"
+            : "25% off Skout credits when your key is used",
+        dsnHint,
       };
     });
 
     return { workspaceId, data };
   }
 
-  async save(workspaceId: string, provider: string, apiKey: string): Promise<IntegrationDto> {
+  async save(
+    workspaceId: string,
+    provider: string,
+    apiKey: string,
+    extras?: { dsn?: string }
+  ): Promise<IntegrationDto> {
     if (!isIntegrationProviderId(provider)) {
       throw new HttpError("invalid_provider", 400);
     }
@@ -79,13 +104,20 @@ export class IntegrationService {
       throw new HttpError("api_key_too_short", 400);
     }
 
-    await this.validateProviderKey(provider, trimmed);
+    const dsn =
+      provider === "unipile"
+        ? (extras?.dsn?.trim() || this.config.UNIPILE_DSN || DEFAULT_UNIPILE_DSN).replace(/\/$/, "")
+        : undefined;
+
+    await this.validateProviderKey(provider, trimmed, dsn);
 
     if (!this.db) {
       throw new HttpError("database_unavailable", 503);
     }
 
-    const encrypted = encryptSecret(trimmed, this.encryptionSecret);
+    const secretPayload =
+      provider === "unipile" ? JSON.stringify({ apiKey: trimmed, dsn }) : trimmed;
+    const encrypted = encryptSecret(secretPayload, this.encryptionSecret);
     const hint = maskApiKey(trimmed);
     const now = new Date();
 
@@ -134,19 +166,38 @@ export class IntegrationService {
     log.info("integration removed", { workspaceId, provider });
   }
 
-  async test(workspaceId: string, provider: string, apiKey?: string): Promise<{ ok: true }> {
+  async test(
+    workspaceId: string,
+    provider: string,
+    apiKey?: string,
+    extras?: { dsn?: string }
+  ): Promise<{ ok: true }> {
     if (!isIntegrationProviderId(provider)) {
       throw new HttpError("invalid_provider", 400);
     }
 
     let key = apiKey?.trim();
+    let dsn = extras?.dsn?.trim();
     if (!key) {
-      const stored = await this.getDecryptedKey(workspaceId, provider);
-      if (!stored) throw new HttpError("integration_not_configured", 404);
-      key = stored;
+      if (provider === "unipile") {
+        const creds = await this.loadWorkspaceUnipileCredentials(workspaceId);
+        if (!creds) throw new HttpError("integration_not_configured", 404);
+        key = creds.apiKey;
+        dsn = dsn || creds.dsn;
+      } else {
+        const stored = await this.getDecryptedKey(workspaceId, provider);
+        if (!stored) throw new HttpError("integration_not_configured", 404);
+        key = stored;
+      }
     }
 
-    await this.validateProviderKey(provider, key);
+    await this.validateProviderKey(
+      provider,
+      key,
+      provider === "unipile"
+        ? (dsn || this.config.UNIPILE_DSN || DEFAULT_UNIPILE_DSN).replace(/\/$/, "")
+        : undefined
+    );
 
     if (this.db && !apiKey) {
       await this.db
@@ -174,6 +225,7 @@ export class IntegrationService {
     const keys: Partial<Record<IntegrationProviderId, string>> = {};
     for (const row of rows) {
       if (!isIntegrationProviderId(row.provider)) continue;
+      if (row.provider === "unipile") continue;
       try {
         keys[row.provider] = decryptSecret(row.encryptedApiKey, this.encryptionSecret);
       } catch {
@@ -181,6 +233,47 @@ export class IntegrationService {
       }
     }
     return palConfigFromIntegrations(keys);
+  }
+
+  /** Workspace Unipile BYOK (falls back to null — caller uses platform env). */
+  async loadWorkspaceUnipileCredentials(
+    workspaceId: string
+  ): Promise<{ apiKey: string; dsn: string } | null> {
+    if (!this.db) return null;
+    const [row] = await this.db
+      .select()
+      .from(workspaceIntegrations)
+      .where(
+        and(
+          eq(workspaceIntegrations.workspaceId, workspaceId),
+          eq(workspaceIntegrations.provider, "unipile")
+        )
+      )
+      .limit(1);
+    if (!row) return null;
+    try {
+      const raw = decryptSecret(row.encryptedApiKey, this.encryptionSecret);
+      try {
+        const parsed = JSON.parse(raw) as { apiKey?: string; dsn?: string };
+        if (parsed?.apiKey?.trim()) {
+          return {
+            apiKey: parsed.apiKey.trim(),
+            dsn: (parsed.dsn || this.config.UNIPILE_DSN || DEFAULT_UNIPILE_DSN).replace(/\/$/, ""),
+          };
+        }
+      } catch {
+        // legacy plain API key
+        if (raw.trim().length >= 8) {
+          return {
+            apiKey: raw.trim(),
+            dsn: (this.config.UNIPILE_DSN || DEFAULT_UNIPILE_DSN).replace(/\/$/, ""),
+          };
+        }
+      }
+    } catch {
+      return null;
+    }
+    return null;
   }
 
   private async getDecryptedKey(
@@ -202,13 +295,17 @@ export class IntegrationService {
     return decryptSecret(row.encryptedApiKey, this.encryptionSecret);
   }
 
-  private async validateProviderKey(provider: IntegrationProviderId, apiKey: string): Promise<void> {
+  private async validateProviderKey(
+    provider: IntegrationProviderId,
+    apiKey: string,
+    dsn?: string
+  ): Promise<void> {
     const timeoutMs = this.config.ENRICHMENT_REQUEST_TIMEOUT_MS;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      const ok = await this.pingProvider(provider, apiKey, controller.signal);
+      const ok = await this.pingProvider(provider, apiKey, controller.signal, dsn);
       if (!ok) throw new HttpError("invalid_api_key", 400, { provider });
     } catch (err) {
       if (err instanceof HttpError) throw err;
@@ -227,7 +324,8 @@ export class IntegrationService {
   private async pingProvider(
     provider: IntegrationProviderId,
     apiKey: string,
-    signal: AbortSignal
+    signal: AbortSignal,
+    dsn?: string
   ): Promise<boolean> {
     const qs = new URLSearchParams({ api_key: apiKey });
 
@@ -282,6 +380,15 @@ export class IntegrationService {
       case "contactout": {
         const res = await fetch("https://api.contactout.com/v1/stats", {
           headers: { token: apiKey, Accept: "application/json" },
+          signal,
+        });
+        if (res.status === 401 || res.status === 403) return false;
+        return res.ok;
+      }
+      case "unipile": {
+        const base = (dsn || this.config.UNIPILE_DSN || DEFAULT_UNIPILE_DSN).replace(/\/$/, "");
+        const res = await fetch(`${base}/api/v1/accounts`, {
+          headers: { "X-API-KEY": apiKey, accept: "application/json" },
           signal,
         });
         if (res.status === 401 || res.status === 403) return false;
