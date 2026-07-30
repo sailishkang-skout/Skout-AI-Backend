@@ -9,7 +9,7 @@ import nodemailer from "nodemailer";
 import { randomBytes } from "node:crypto";
 
 const log = createLogger("inbox.service");
-const { inboxes, inboxThreads, inboxMessages, sendingDomains, prospectActivations, prospectScores, sequences, sequenceEnrollments } = schema;
+const { inboxes, inboxThreads, inboxMessages, sendingDomains, prospectActivations, prospectScores, sequences, sequenceEnrollments, aiDrafts } = schema;
 
 type Db = ReturnType<typeof createDb>["db"];
 
@@ -790,7 +790,33 @@ export class InboxService {
       if (row) sequence = row;
     }
 
-    return { threadId, prospect, sequence };
+    const pausedStatuses = new Set(["replied", "bounced", "completed", "paused", "stopped"]);
+    const sequencePaused =
+      sequence != null && pausedStatuses.has(sequence.enrollmentStatus);
+
+    let suggestedDraft = null;
+    const [pendingDraft] = await this.db
+      .select({
+        id: aiDrafts.id,
+        subject: aiDrafts.subject,
+        body: aiDrafts.body,
+        status: aiDrafts.status,
+        confidenceScore: aiDrafts.confidenceScore,
+        createdAt: aiDrafts.createdAt,
+      })
+      .from(aiDrafts)
+      .where(
+        and(
+          eq(aiDrafts.workspaceId, workspaceId),
+          eq(aiDrafts.threadId, threadId),
+          inArray(aiDrafts.status, ["pending_review", "edited", "approved"])
+        )
+      )
+      .orderBy(desc(aiDrafts.createdAt))
+      .limit(1);
+    if (pendingDraft) suggestedDraft = pendingDraft;
+
+    return { threadId, prospect, sequence, sequencePaused, suggestedDraft };
   }
 
   async listMessages(
@@ -851,7 +877,13 @@ export class InboxService {
       .limit(1);
 
     if (!inbox) throw new HttpError("inbox_not_found", 404);
-    if (!inbox.smtpHost || !inbox.smtpPort || !inbox.smtpUsername || !inbox.smtpPasswordEncrypted) {
+
+    const hasSmtp =
+      !!inbox.smtpHost && !!inbox.smtpPort && !!inbox.smtpUsername && !!inbox.smtpPasswordEncrypted;
+    const hasOAuth =
+      (inbox.provider === "google" || inbox.provider === "microsoft") &&
+      !!inbox.oauthAccessTokenEncrypted;
+    if (!hasSmtp && !hasOAuth) {
       throw new HttpError("inbox_smtp_not_configured", 422);
     }
 
@@ -876,23 +908,21 @@ export class InboxService {
     const domain = inbox.emailAddress.split("@")[1] ?? "skout.ai";
     const newMessageId = `<${randomBytes(16).toString("hex")}@${domain}>`;
 
-    const password = decryptSecret(inbox.smtpPasswordEncrypted, encKey);
-    const transporter = nodemailer.createTransport({
-      host: inbox.smtpHost,
-      port: inbox.smtpPort,
-      secure: inbox.smtpSecure,
-      auth: { user: inbox.smtpUsername, pass: password },
-    });
+    const { buildEmailSenderFromInbox } = await import("./email-sender.service.js");
+    const transport = await buildEmailSenderFromInbox(this.config, inbox, this.db);
 
     const subject = thread.subject.startsWith("Re:") ? thread.subject : `Re: ${thread.subject}`;
-    const fromField = inbox.displayName ? `"${inbox.displayName}" <${inbox.emailAddress}>` : inbox.emailAddress;
 
-    await transporter.sendMail({
-      from: fromField, to: replyTo, subject,
-      text: body.text, html: body.html ?? body.text,
+    await transport.send({
+      from: inbox.emailAddress,
+      fromName: inbox.displayName,
+      to: replyTo,
+      subject,
+      text: body.text,
+      html: body.html ?? body.text,
       messageId: newMessageId,
-      ...(inReplyTo ? { inReplyTo } : {}),
-      ...(refs ? { references: refs } : {}),
+      inReplyTo,
+      references: refs,
     });
 
     const now = new Date();

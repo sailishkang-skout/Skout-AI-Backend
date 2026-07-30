@@ -135,14 +135,18 @@ aws secretsmanager put-secret-value --secret-id SkoutDev/hunter \
 
 | Field | How to get it |
 |-------|----------------|
-| `UNIPILE_DSN` | Unipile dashboard → API → DSN (e.g. `https://api1.unipile.com:13111`) |
-| `UNIPILE_API_KEY` | Unipile dashboard → API → Access token |
+| `UNIPILE_DSN` | Unipile dashboard → API → DSN for **this** API key (must match; e.g. `https://api53.unipile.com:18323`) |
+| `UNIPILE_API_KEY` | Unipile dashboard → API → Access token (not the CDK `replace-me` placeholder) |
 
 Used by: LinkedIn + WhatsApp sequence outreach, Deliverability account connect (hosted auth).
 
+> Hosted auth returns 503 / “unavailable” when `UNIPILE_API_KEY` is still `replace-me`, or when DSN does not belong to that key.
+
 ```bash
 aws secretsmanager put-secret-value --secret-id SkoutDev/unipile \
-  --secret-string '{"UNIPILE_DSN":"https://api1.unipile.com:13111","UNIPILE_API_KEY":"..."}'
+  --secret-string '{"UNIPILE_DSN":"https://apiXX.unipile.com:PORT","UNIPILE_API_KEY":"..."}'
+# Then force ECS to pick up the new secret:
+# bash infra/scripts/force-ecs-redeploy.sh
 ```
 
 ---

@@ -382,5 +382,8 @@ export function normalizeWhatsappAttendeeId(phone: string): string | null {
 }
 
 export function isUnipileConfigured(config: Env): boolean {
-  return Boolean(config.UNIPILE_API_KEY && config.UNIPILE_DSN);
+  const key = config.UNIPILE_API_KEY?.trim();
+  const dsn = config.UNIPILE_DSN?.trim();
+  // CDK seeds Secrets Manager with "replace-me" — treat that as unset.
+  return Boolean(key && dsn && key !== "replace-me");
 }

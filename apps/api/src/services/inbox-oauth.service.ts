@@ -91,6 +91,18 @@ async function storeOAuthInbox(
   const refreshEnc = tokens.refresh_token ? encryptSecret(tokens.refresh_token, key) : null;
   const expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
 
+  const imapDefaults =
+    provider === "google"
+      ? { imapHost: "imap.gmail.com", imapPort: 993, smtpHost: "smtp.gmail.com", smtpPort: 465, smtpSecure: true, smtpUsername: emailAddress }
+      : {
+          imapHost: "outlook.office365.com",
+          imapPort: 993,
+          smtpHost: "smtp.office365.com",
+          smtpPort: 587,
+          smtpSecure: false,
+          smtpUsername: emailAddress,
+        };
+
   const [row] = await db
     .insert(inboxes)
     .values({
@@ -103,6 +115,7 @@ async function storeOAuthInbox(
       oauthRefreshTokenEncrypted: refreshEnc,
       oauthTokenExpiresAt: expiresAt,
       oauthScope: tokens.scope ?? null,
+      ...imapDefaults,
     })
     .onConflictDoUpdate({
       target: [inboxes.workspaceId, inboxes.emailAddress],
@@ -114,6 +127,7 @@ async function storeOAuthInbox(
         oauthRefreshTokenEncrypted: refreshEnc,
         oauthTokenExpiresAt: expiresAt,
         oauthScope: tokens.scope ?? null,
+        ...imapDefaults,
         updatedAt: new Date(),
       },
     })

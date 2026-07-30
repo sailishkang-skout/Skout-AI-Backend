@@ -1065,6 +1065,34 @@ class PersonalizeResponse(BaseModel):
     source: str
 
 
+class SuggestReplyMessage(BaseModel):
+    direction: str  # inbound | outbound
+    body: str
+    from_address: Optional[str] = None
+
+
+class SuggestReplyRequest(BaseModel):
+    thread_id: str
+    prospect_id: Optional[str] = None
+    prospect_name: Optional[str] = None
+    prospect_title: Optional[str] = None
+    company_name: Optional[str] = None
+    company_domain: Optional[str] = None
+    icp_score: Optional[int] = None
+    reply_tag: Optional[str] = None
+    subject: Optional[str] = None
+    messages: list[SuggestReplyMessage] = []
+
+
+class SuggestReplyResponse(BaseModel):
+    thread_id: str
+    subject: str
+    body: str
+    confidence: float
+    source: str  # llm | heuristic
+    rationale: Optional[str] = None
+
+
 @app.post("/v1/classify", response_model=ClassifyResponse)
 def classify(request: ClassifyRequest):
     """
@@ -1177,6 +1205,141 @@ def personalize(request: PersonalizeRequest):
             "num_talking_points": len(result.talking_points),
             "has_icp_score": request.icp_score is not None,
             "num_pain_points_input": len(request.pain_points),
+        },
+    )
+    return result
+
+
+def _heuristic_suggest_reply(request: SuggestReplyRequest) -> SuggestReplyResponse:
+    """Fallback draft when OpenRouter is unavailable — still useful for HITL review."""
+    name = (request.prospect_name or "there").split()[0]
+    last_inbound = next(
+        (m.body.strip() for m in reversed(request.messages) if m.direction == "inbound" and m.body.strip()),
+        "",
+    )
+    tag = (request.reply_tag or "").lower()
+    subject = request.subject or "Re: following up"
+    if not subject.lower().startswith("re:"):
+        subject = f"Re: {subject}"
+
+    if tag == "meeting_request":
+        body = (
+            f"Hi {name},\n\n"
+            "Happy to connect — what times work well for you this week?\n\n"
+            "Best regards"
+        )
+        confidence = 0.55
+        rationale = "Heuristic: meeting_request tag → propose times"
+    elif tag == "question":
+        body = (
+            f"Hi {name},\n\n"
+            "Great question — happy to clarify. "
+            f"{('You asked about: ' + last_inbound[:180] + '…') if last_inbound else ''}\n\n"
+            "Let me know if that helps, or if you'd like a quick call.\n\n"
+            "Best regards"
+        )
+        confidence = 0.5
+        rationale = "Heuristic: question tag → acknowledge + offer clarity"
+    elif tag == "positive":
+        body = (
+            f"Hi {name},\n\n"
+            "Glad this resonated. Happy to share a short overview or jump on a quick call — "
+            "whichever is easier for you.\n\n"
+            "Best regards"
+        )
+        confidence = 0.55
+        rationale = "Heuristic: positive tag → advance conversation"
+    elif tag == "negative" or tag == "unsubscribe":
+        body = (
+            f"Hi {name},\n\n"
+            "Understood — thanks for letting me know. I'll make sure we don't follow up further.\n\n"
+            "Best regards"
+        )
+        confidence = 0.6
+        rationale = "Heuristic: negative/unsubscribe → graceful close"
+    else:
+        snippet = f' regarding "{last_inbound[:120]}"' if last_inbound else ""
+        body = (
+            f"Hi {name},\n\n"
+            f"Thanks for your note{snippet}. "
+            "Happy to share more detail or find a time that works for you.\n\n"
+            "Best regards"
+        )
+        confidence = 0.4
+        rationale = "Heuristic: generic polite reply"
+
+    return SuggestReplyResponse(
+        thread_id=request.thread_id,
+        subject=subject,
+        body=body,
+        confidence=confidence,
+        source="heuristic",
+        rationale=rationale,
+    )
+
+
+@app.post("/v1/suggest-reply", response_model=SuggestReplyResponse)
+def suggest_reply(request: SuggestReplyRequest):
+    """
+    Generate a contextual reply draft for an inbox thread (Phase 1 HITL).
+    Used by Inbox "Suggest reply" and optional auto-draft on inbound.
+    """
+    if not request.messages:
+        return SuggestReplyResponse(
+            thread_id=request.thread_id,
+            subject=request.subject or "Re: following up",
+            body="Thanks for your note — happy to help. What would be most useful next?",
+            confidence=0.3,
+            source="heuristic",
+            rationale="No message history provided",
+        )
+
+    if _llm_available():
+        transcript = "\n".join(
+            f"{m.direction.upper()} ({m.from_address or 'unknown'}): {m.body[:800]}"
+            for m in request.messages[-12:]
+        )
+        prompt = (
+            "You are an SDR assistant. Draft a short professional email reply. "
+            "Return JSON with keys: subject (string), body (string), confidence (0-1 float), "
+            "rationale (short string). Keep body under 120 words, no HTML, no merge tokens. "
+            f"Prospect: {request.prospect_name}, {request.prospect_title} at "
+            f"{request.company_name or request.company_domain}. "
+            f"ICP score: {request.icp_score}. Reply tag: {request.reply_tag}. "
+            f"Thread subject: {request.subject}.\n\nTranscript:\n{transcript}"
+        )
+        data = _llm_json(
+            "You write concise B2B sales replies. Never invent facts not in the transcript.",
+            prompt,
+        )
+        subject = str(data.get("subject") or request.subject or "Re: following up")
+        body = str(data.get("body") or "").strip()
+        try:
+            confidence = float(data.get("confidence", 0.7))
+        except (TypeError, ValueError):
+            confidence = 0.7
+        if body:
+            result = SuggestReplyResponse(
+                thread_id=request.thread_id,
+                subject=subject,
+                body=body,
+                confidence=max(0.0, min(1.0, confidence)),
+                source="llm",
+                rationale=str(data.get("rationale") or "") or None,
+            )
+        else:
+            result = _heuristic_suggest_reply(request)
+    else:
+        result = _heuristic_suggest_reply(request)
+
+    analytics_capture(
+        distinct_id=request.prospect_id or request.thread_id,
+        event="reply_suggested",
+        properties={
+            "source": result.source,
+            "confidence": result.confidence,
+            "reply_tag": request.reply_tag,
+            "message_count": len(request.messages),
         },
     )
     return result

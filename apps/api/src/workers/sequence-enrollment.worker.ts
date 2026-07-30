@@ -1,5 +1,5 @@
 import { Worker } from "bullmq";
-import { and, asc, desc, eq, gte, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import { createDb } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
@@ -130,6 +130,32 @@ async function findApprovedAiDraft(
   return draft ?? null;
 }
 
+/** Pending/edited drafts block template send until a human approves (or rejects). */
+async function findPendingAiDraft(
+  db: DbClient,
+  workspaceId: string,
+  prospectId: string,
+  enrollmentStepId: string
+): Promise<{ id: string } | null> {
+  const [draft] = await db
+    .select({ id: aiDrafts.id })
+    .from(aiDrafts)
+    .where(
+      and(
+        eq(aiDrafts.workspaceId, workspaceId),
+        eq(aiDrafts.prospectId, prospectId),
+        inArray(aiDrafts.status, ["pending_review", "edited"]),
+        or(eq(aiDrafts.enrollmentStepId, enrollmentStepId), isNull(aiDrafts.enrollmentStepId))
+      )
+    )
+    .orderBy(
+      sql`case when ${aiDrafts.enrollmentStepId} = ${enrollmentStepId} then 0 else 1 end`,
+      desc(aiDrafts.createdAt)
+    )
+    .limit(1);
+  return draft ?? null;
+}
+
 async function markStepTerminal(
   db: DbClient,
   enrollmentStepId: string,
@@ -148,6 +174,7 @@ async function markStepTerminal(
  * Suppression / missing-prospect-email / no-available-inbox are terminal (non-retryable) —
  * the step is marked failed/skipped and the cadence moves on. An actual send failure
  * (SMTP/network) is re-thrown so the BullMQ job retries — the step stays "scheduled".
+ * Returns "deferred" when HITL is waiting on a pending AI draft approval.
  */
 async function executeEmailStep(
   db: DbClient,
@@ -155,27 +182,27 @@ async function executeEmailStep(
   payload: SeqAdvanceJobPayload,
   pending: PendingStep,
   now: Date
-): Promise<void> {
+): Promise<"done" | "deferred"> {
   const { enrollmentId, workspaceId, prospectId } = payload;
 
   const prospect = await resolveProspectFields(config, db, workspaceId, prospectId);
   if (!prospect?.email) {
     await markStepTerminal(db, pending.enrollmentStepId, "failed", "prospect_email_not_found", now);
     log.warn("Email step skipped — no prospect email", { enrollmentId, prospectId });
-    return;
+    return "done";
   }
 
   if (await isSuppressed(db, workspaceId, prospect.email)) {
     await markStepTerminal(db, pending.enrollmentStepId, "skipped", "suppressed", now);
     log.info("Email step skipped — suppressed", { enrollmentId, email: prospect.email });
-    return;
+    return "done";
   }
 
   const inbox = await pickNextInbox(db, workspaceId);
   if (!inbox) {
     await markStepTerminal(db, pending.enrollmentStepId, "failed", "no_active_inbox", now);
     log.warn("Email step failed — no active inbox", { enrollmentId, workspaceId });
-    return;
+    return "done";
   }
 
   const mergeData: MergeData = {
@@ -199,6 +226,28 @@ async function executeEmailStep(
       enrollmentStepId: pending.enrollmentStepId,
       draftId: approvedDraft.id,
     });
+  } else {
+    // True HITL gate: if a draft is still awaiting review, do not send the template.
+    const pendingDraft = await findPendingAiDraft(
+      db,
+      workspaceId,
+      prospectId,
+      pending.enrollmentStepId
+    );
+    if (pendingDraft) {
+      const deferUntil = new Date(now.getTime() + 60 * 60 * 1000);
+      await db
+        .update(sequenceEnrollmentSteps)
+        .set({ scheduledAt: deferUntil, failureReason: "awaiting_ai_draft_approval" })
+        .where(eq(sequenceEnrollmentSteps.id, pending.enrollmentStepId));
+      log.info("Email step deferred — HITL draft pending review", {
+        enrollmentId,
+        enrollmentStepId: pending.enrollmentStepId,
+        draftId: pendingDraft.id,
+        deferUntil,
+      });
+      return "deferred";
+    }
   }
 
   const subject = renderTemplate(approvedDraft?.subject ?? pending.subject ?? "", mergeData);
@@ -210,12 +259,12 @@ async function executeEmailStep(
   // BullMQ retry forever with a step stuck in "scheduled".
   let transport;
   try {
-    transport = buildEmailSenderFromInbox(config, inbox);
+    transport = await buildEmailSenderFromInbox(config, inbox, db);
   } catch (err: unknown) {
     const reason = err instanceof Error ? err.message : "smtp_build_failed";
     await markStepTerminal(db, pending.enrollmentStepId, "failed", reason, now);
     log.warn("Email step failed — could not build SMTP transport", { enrollmentId, reason });
-    return;
+    return "done";
   }
 
   // Send the email. SMTP failures propagate so BullMQ retries (step stays "scheduled").
@@ -260,7 +309,7 @@ async function executeEmailStep(
     });
     await tx
       .update(sequenceEnrollmentSteps)
-      .set({ status: "executed", executedAt: now })
+      .set({ status: "executed", executedAt: now, failureReason: null })
       .where(eq(sequenceEnrollmentSteps.id, pending.enrollmentStepId));
 
     // Mark the approved draft as consumed by this step so it is not reused on a later send.
@@ -282,6 +331,8 @@ async function executeEmailStep(
     stepId: pending.stepId,
     stepType: pending.stepType,
   }).catch((err: unknown) => log.warn("webhook dispatch failed", { err, event: "sequence.step.completed" }));
+
+  return "done";
 }
 
 const LINKEDIN_RETRY_MS = 60_000;
@@ -587,7 +638,11 @@ async function advanceEnrollment(
 
   // Execute the step
   if (pending.stepType === "email") {
-    await executeEmailStep(db, config, payload, pending, now);
+    const result = await executeEmailStep(db, config, payload, pending, now);
+    if (result === "deferred") {
+      await enqueueSequenceAdvanceJob(config, payload, 60 * 60 * 1000, false);
+      return;
+    }
   } else if (pending.stepType === "linkedin") {
     const result = await executeLinkedinStep(db, config, payload, pending, now);
     if (result === "waiting") {

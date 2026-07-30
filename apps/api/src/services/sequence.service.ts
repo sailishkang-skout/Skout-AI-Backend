@@ -15,6 +15,7 @@ const {
   sequenceTrackingEvents,
   listMembers,
   lists,
+  prospectActivations,
 } = schema;
 
 const ENROLLMENT_STATUSES = ["active", "completed", "bounced", "replied"] as const;
@@ -663,7 +664,7 @@ export class SequenceService {
       .where(and(eq(sequences.id, sequenceId), eq(sequences.workspaceId, workspaceId)));
     if (!seq) return null;
 
-    return this.db
+    const rows = await this.db
       .select({
         id: sequenceEnrollments.id,
         prospectId: sequenceEnrollments.prospectId,
@@ -671,10 +672,23 @@ export class SequenceService {
         status: sequenceEnrollments.status,
         enrolledAt: sequenceEnrollments.enrolledAt,
         completedAt: sequenceEnrollments.completedAt,
+        prospectName: sql<string | null>`${prospectActivations.snapshot}->>'fullName'`,
+        prospectTitle: sql<string | null>`${prospectActivations.snapshot}->>'title'`,
+        companyName: sql<string | null>`coalesce(${prospectActivations.snapshot}->>'companyName', ${prospectActivations.snapshot}->>'companyDomain')`,
+        email: sql<string | null>`${prospectActivations.snapshot}->>'email'`,
       })
       .from(sequenceEnrollments)
+      .leftJoin(
+        prospectActivations,
+        and(
+          eq(prospectActivations.workspaceId, sequenceEnrollments.workspaceId),
+          eq(prospectActivations.prospectId, sequenceEnrollments.prospectId)
+        )
+      )
       .where(and(eq(sequenceEnrollments.sequenceId, sequenceId), eq(sequenceEnrollments.workspaceId, workspaceId)))
       .orderBy(desc(sequenceEnrollments.enrolledAt));
+
+    return rows;
   }
 
   /** Lists that have at least one enrollment in this sequence, with prospect counts per status. */

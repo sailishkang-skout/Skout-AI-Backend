@@ -21,6 +21,7 @@ import {
 import type { ThreadStatus } from "../services/inbox.service.js";
 import { recordBounce, recordSpam } from "../services/inbox-rotation.service.js";
 import { ingestInboundMessage } from "../services/inbound-reply.service.js";
+import { SuggestReplyService } from "../services/suggest-reply.service.js";
 import {
   getGoogleConnectUrl,
   handleGoogleCallback,
@@ -477,6 +478,21 @@ export async function inboxRoutes(app: FastifyInstance) {
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     try {
       return reply.send(await svc.getThreadContext(workspaceId, threadId));
+    } catch (err) {
+      if (err instanceof HttpError) return reply.status(err.statusCode).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  // POST /inbox/threads/:threadId/suggest-reply — one-click AI draft for HITL reply
+  app.post("/inbox/threads/:threadId/suggest-reply", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const { threadId } = request.params as { threadId: string };
+    if (!db) return reply.status(503).send({ error: "database_unavailable" });
+    try {
+      const svc = new SuggestReplyService(db, app.config);
+      const result = await svc.suggestForThread(workspaceId, threadId, { persistDraft: true });
+      return reply.send(result);
     } catch (err) {
       if (err instanceof HttpError) return reply.status(err.statusCode).send({ error: err.message });
       throw err;

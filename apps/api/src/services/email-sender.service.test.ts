@@ -7,7 +7,12 @@ vi.mock("nodemailer", () => ({
   default: { createTransport: (...args: unknown[]) => createTransport(...args) },
 }));
 
-import { buildEmailSenderFromInbox, type InboxSmtpConfig } from "./email-sender.service.js";
+import {
+  buildEmailSenderFromInbox,
+  buildSmtpEmailSenderFromInbox,
+  clearEmailTransporterCache,
+  type InboxSmtpConfig,
+} from "./email-sender.service.js";
 import { encryptSecret } from "../utils/integration-crypto.js";
 import type { Env } from "../config/env.js";
 
@@ -25,26 +30,30 @@ function validInbox(overrides: Partial<InboxSmtpConfig> = {}): InboxSmtpConfig {
   };
 }
 
-describe("buildEmailSenderFromInbox", () => {
+describe("buildEmailSenderFromInbox / SMTP", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearEmailTransporterCache();
     createTransport.mockReturnValue({ sendMail });
   });
 
-  it("throws when SMTP credentials are incomplete", () => {
-    expect(() => buildEmailSenderFromInbox(config, validInbox({ smtpHost: null }))).toThrow(
-      "inbox_missing_smtp_credentials"
-    );
+  it("throws when SMTP credentials are incomplete", async () => {
+    await expect(
+      buildEmailSenderFromInbox(config, validInbox({ smtpHost: null }))
+    ).rejects.toThrow("inbox_missing_smtp_credentials");
   });
 
-  it("throws when INTEGRATION_ENCRYPTION_KEY is not configured", () => {
-    expect(() =>
-      buildEmailSenderFromInbox({ INTEGRATION_ENCRYPTION_KEY: undefined } as unknown as Env, validInbox())
-    ).toThrow("INTEGRATION_ENCRYPTION_KEY");
+  it("throws when INTEGRATION_ENCRYPTION_KEY is not configured", async () => {
+    await expect(
+      buildEmailSenderFromInbox(
+        { INTEGRATION_ENCRYPTION_KEY: undefined } as unknown as Env,
+        validInbox()
+      )
+    ).rejects.toThrow("INTEGRATION_ENCRYPTION_KEY");
   });
 
-  it("creates a transport with decrypted credentials", () => {
-    buildEmailSenderFromInbox(config, validInbox());
+  it("creates a transport with decrypted credentials", async () => {
+    await buildEmailSenderFromInbox(config, validInbox());
     expect(createTransport).toHaveBeenCalledWith(
       expect.objectContaining({
         host: "smtp.example.com",
@@ -55,23 +64,28 @@ describe("buildEmailSenderFromInbox", () => {
     );
   });
 
-  it("uses secure: false for port 587 (STARTTLS)", () => {
-    buildEmailSenderFromInbox(config, validInbox({ smtpHost: "smtp.starttls-test.com", smtpPort: 587, smtpSecure: false }));
+  it("uses secure: false for port 587 (STARTTLS)", async () => {
+    await buildEmailSenderFromInbox(
+      config,
+      validInbox({ smtpHost: "smtp.starttls-test.com", smtpPort: 587, smtpSecure: false })
+    );
     expect(createTransport).toHaveBeenCalledWith(
       expect.objectContaining({ port: 587, secure: false })
     );
   });
 
-  it("uses secure: true for port 465 (SMTPS)", () => {
-    buildEmailSenderFromInbox(config, validInbox({ smtpHost: "smtp.smtps-test.com", smtpPort: 465, smtpSecure: true }));
+  it("uses secure: true for port 465 (SMTPS)", async () => {
+    await buildEmailSenderFromInbox(
+      config,
+      validInbox({ smtpHost: "smtp.smtps-test.com", smtpPort: 465, smtpSecure: true })
+    );
     expect(createTransport).toHaveBeenCalledWith(
       expect.objectContaining({ port: 465, secure: true })
     );
   });
 
-  it("sets connection, greeting, and socket timeouts on the transport", () => {
-    // Use distinct credentials so this test bypasses the transporter cache
-    buildEmailSenderFromInbox(config, validInbox({ smtpHost: "smtp.timeout-test.com" }));
+  it("sets connection, greeting, and socket timeouts on the transport", async () => {
+    await buildEmailSenderFromInbox(config, validInbox({ smtpHost: "smtp.timeout-test.com" }));
     expect(createTransport).toHaveBeenCalledWith(
       expect.objectContaining({
         connectionTimeout: 10_000,
@@ -83,7 +97,7 @@ describe("buildEmailSenderFromInbox", () => {
 
   it("sends mail with the from/fromName formatted and returns the messageId", async () => {
     sendMail.mockResolvedValue({ messageId: "msg-123" });
-    const transport = buildEmailSenderFromInbox(config, validInbox());
+    const transport = await buildEmailSenderFromInbox(config, validInbox());
 
     const result = await transport.send({
       from: "sender@example.com",
@@ -106,7 +120,7 @@ describe("buildEmailSenderFromInbox", () => {
 
   it("sends mail with a bare from address when fromName is not set", async () => {
     sendMail.mockResolvedValue({ messageId: "msg-456" });
-    const transport = buildEmailSenderFromInbox(config, validInbox());
+    const transport = await buildEmailSenderFromInbox(config, validInbox());
 
     await transport.send({
       from: "sender@example.com",
@@ -117,5 +131,10 @@ describe("buildEmailSenderFromInbox", () => {
     });
 
     expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({ from: "sender@example.com" }));
+  });
+
+  it("sync SMTP helper still works for tests", () => {
+    buildSmtpEmailSenderFromInbox(config, validInbox({ smtpHost: "smtp.sync-helper.com" }));
+    expect(createTransport).toHaveBeenCalled();
   });
 });

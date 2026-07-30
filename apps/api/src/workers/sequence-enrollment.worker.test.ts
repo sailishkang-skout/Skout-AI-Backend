@@ -226,6 +226,10 @@ function makeWorkerDb(opts: {
   select.mockReturnValueOnce(selectChain(opts.pendingStep ? [opts.pendingStep] : [])); // pending step
   // approved-draft lookup (executeEmailStep) — only reached once the step actually sends
   select.mockReturnValueOnce(selectChain(opts.approvedDraft ? [opts.approvedDraft] : []));
+  // pending-draft HITL check (skipped when approved draft exists, but mock still reserved)
+  if (!opts.approvedDraft) {
+    select.mockReturnValueOnce(selectChain([]));
+  }
   select.mockReturnValueOnce(selectChain([])); // next pending step (none → completed)
 
   const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
@@ -283,7 +287,7 @@ describe("sequence-enrollment worker — email step execution", () => {
       displayName: "Sender",
     } as any);
     const send = vi.fn().mockResolvedValue({ externalId: "msg-1" });
-    vi.mocked(buildEmailSenderFromInbox).mockReturnValue({ send });
+    vi.mocked(buildEmailSenderFromInbox).mockResolvedValue({ send });
 
     const { select, update, transaction, tx } = makeWorkerDb({ pendingStep: EMAIL_STEP_ROW });
     const db = { select, update, transaction };
@@ -313,7 +317,7 @@ describe("sequence-enrollment worker — email step execution", () => {
       displayName: "Sender",
     } as any);
     const send = vi.fn().mockResolvedValue({ externalId: "msg-1" });
-    vi.mocked(buildEmailSenderFromInbox).mockReturnValue({ send });
+    vi.mocked(buildEmailSenderFromInbox).mockResolvedValue({ send });
 
     const { select, update, transaction, tx } = makeWorkerDb({
       pendingStep: EMAIL_STEP_ROW,
@@ -411,9 +415,9 @@ describe("sequence-enrollment worker — email step execution", () => {
       emailAddress: "sender@example.com",
       displayName: "Sender",
     } as any);
-    vi.mocked(buildEmailSenderFromInbox).mockImplementationOnce(() => {
-      throw new Error("inbox_missing_smtp_credentials");
-    });
+    vi.mocked(buildEmailSenderFromInbox).mockRejectedValueOnce(
+      new Error("inbox_missing_smtp_credentials")
+    );
 
     const { select, update, updateSet } = makeWorkerDb({ pendingStep: EMAIL_STEP_ROW });
     const db = { select, update, transaction: vi.fn() };
@@ -444,7 +448,7 @@ describe("sequence-enrollment worker — email step execution", () => {
       displayName: "Sender",
     } as any);
     const send = vi.fn().mockResolvedValue({ externalId: "msg-1" });
-    vi.mocked(buildEmailSenderFromInbox).mockReturnValue({ send });
+    vi.mocked(buildEmailSenderFromInbox).mockResolvedValue({ send });
 
     // Override the thread insert to return an empty array (simulates DB returning no row)
     const { select, update } = makeWorkerDb({ pendingStep: EMAIL_STEP_ROW, txInsertThread: undefined });
@@ -480,7 +484,7 @@ describe("sequence-enrollment worker — email step execution", () => {
       displayName: "Sender",
     } as any);
     const send = vi.fn().mockRejectedValue(new Error("smtp_connection_failed"));
-    vi.mocked(buildEmailSenderFromInbox).mockReturnValue({ send });
+    vi.mocked(buildEmailSenderFromInbox).mockResolvedValue({ send });
 
     const { select, transaction } = makeWorkerDb({ pendingStep: EMAIL_STEP_ROW });
     const db = { select, update: vi.fn(), transaction };

@@ -4,6 +4,8 @@ import { createDb, schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
+import { applyReplyTagActions } from "../services/reply-tag-actions.service.js";
+import { SuggestReplyService } from "../services/suggest-reply.service.js";
 import { tagReply } from "../services/reply-tagger.service.js";
 import { REPLY_TAG_QUEUE, type ReplyTagJobPayload } from "./reply-tag.queue.js";
 import { isRedisAvailable } from "../lib/redis.js";
@@ -39,7 +41,7 @@ export async function startReplyTagWorker(config: Env): Promise<() => Promise<vo
   const worker = new Worker<ReplyTagJobPayload>(
     REPLY_TAG_QUEUE,
     async (job) => {
-      const { threadId, bodyText } = job.data;
+      const { threadId, bodyText, workspaceId } = job.data;
 
       const tag = await tagReply(bodyText, config.OPENROUTER_API_KEY);
       if (!tag) {
@@ -53,6 +55,29 @@ export async function startReplyTagWorker(config: Env): Promise<() => Promise<vo
         .where(eq(inboxThreads.id, threadId));
 
       log.info("reply-tag: thread tagged", { threadId, tag });
+
+      try {
+        await applyReplyTagActions(db, workspaceId, threadId, tag);
+      } catch (err) {
+        log.warn("reply-tag: tag actions failed", { threadId, tag, err });
+      }
+
+      // Auto-draft a reply for human conversation tags (self-intuitive HITL).
+      if (tag !== "unsubscribe" && tag !== "negative") {
+        try {
+          const suggest = new SuggestReplyService(db, config);
+          const draft = await suggest.suggestForThread(workspaceId, threadId, {
+            persistDraft: true,
+          });
+          log.info("reply-tag: suggested reply draft created", {
+            threadId,
+            draftId: draft.draftId,
+            source: draft.source,
+          });
+        } catch (err) {
+          log.warn("reply-tag: suggest-reply failed", { threadId, err });
+        }
+      }
     },
     {
       connection: redisConnection(config.REDIS_URL),

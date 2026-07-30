@@ -80,7 +80,7 @@ export async function sendApprovedDraftEmail(
 
   let transport;
   try {
-    transport = buildEmailSenderFromInbox(config, inbox);
+    transport = await buildEmailSenderFromInbox(config, inbox, db);
   } catch (err: unknown) {
     log.warn("Approved draft send failed — could not build SMTP transport", { draftId: draft.id, err });
     return { sent: false, reason: "smtp_build_failed", to: prospect.email };

@@ -1,5 +1,5 @@
 import { Worker } from "bullmq";
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, eq, isNotNull, or } from "drizzle-orm";
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 import { createDb, schema } from "@skout/db";
@@ -17,16 +17,27 @@ const { inboxes } = schema;
 
 type DbClient = ReturnType<typeof createDb>["db"];
 
-// ---------------------------------------------------------------------------
-// Poll a single inbox via IMAP
-// ---------------------------------------------------------------------------
+function defaultImapHost(provider: string | null): { host: string; port: number } | null {
+  if (provider === "google") return { host: "imap.gmail.com", port: 993 };
+  if (provider === "microsoft") return { host: "outlook.office365.com", port: 993 };
+  return null;
+}
 
 async function pollOneInbox(
   db: DbClient,
   config: Env,
   inbox: typeof inboxes.$inferSelect
 ): Promise<void> {
-  if (!inbox.imapHost || !inbox.smtpUsername || !inbox.smtpPasswordEncrypted) {
+  const oauthReady =
+    (inbox.provider === "google" || inbox.provider === "microsoft") &&
+    !!inbox.oauthAccessTokenEncrypted;
+  const passwordReady = !!inbox.smtpPasswordEncrypted && !!inbox.smtpUsername;
+
+  const defaults = defaultImapHost(inbox.provider);
+  const imapHost = inbox.imapHost ?? defaults?.host ?? null;
+  const imapPort = inbox.imapPort ?? defaults?.port ?? 993;
+
+  if (!imapHost || (!oauthReady && !passwordReady)) {
     return;
   }
 
@@ -38,13 +49,21 @@ async function pollOneInbox(
     return;
   }
 
-  const password = decryptSecret(inbox.smtpPasswordEncrypted, encryptionKey);
+  let auth: { user: string; pass: string } | { user: string; accessToken: string };
+  if (oauthReady) {
+    const { resolveAccessToken } = await import("../services/inbox-oauth.service.js");
+    const accessToken = await resolveAccessToken(inbox, db, config);
+    auth = { user: inbox.emailAddress, accessToken };
+  } else {
+    const password = decryptSecret(inbox.smtpPasswordEncrypted!, encryptionKey);
+    auth = { user: inbox.smtpUsername!, pass: password };
+  }
 
   const client = new ImapFlow({
-    host: inbox.imapHost,
-    port: inbox.imapPort ?? 993,
+    host: imapHost,
+    port: imapPort,
     secure: true,
-    auth: { user: inbox.smtpUsername, pass: password },
+    auth,
     logger: false,
   });
 
@@ -53,7 +72,6 @@ async function pollOneInbox(
 
     const lock = await client.getMailboxLock("INBOX");
     try {
-      // Fetch messages received since last poll (or last 7 days on first run)
       const since = inbox.imapLastPolledAt
         ? new Date(inbox.imapLastPolledAt)
         : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -98,17 +116,22 @@ async function pollOneInbox(
         }
       }
 
-      log.info("IMAP poll complete", { inboxId: inbox.id, newMessages: count });
+      log.info("IMAP poll complete", { inboxId: inbox.id, newMessages: count, oauth: oauthReady });
     } finally {
       lock.release();
     }
 
     await db
       .update(inboxes)
-      .set({ imapLastPolledAt: new Date(), updatedAt: new Date() })
+      .set({
+        imapLastPolledAt: new Date(),
+        updatedAt: new Date(),
+        // Persist discovered defaults so subsequent polls skip host resolution.
+        ...(inbox.imapHost ? {} : { imapHost, imapPort }),
+      })
       .where(eq(inboxes.id, inbox.id));
   } catch (err) {
-    log.error("IMAP connection failed", err as Error, { inboxId: inbox.id, host: inbox.imapHost });
+    log.error("IMAP connection failed", err as Error, { inboxId: inbox.id, host: imapHost });
   } finally {
     try {
       await client.logout();
@@ -117,10 +140,6 @@ async function pollOneInbox(
     }
   }
 }
-
-// ---------------------------------------------------------------------------
-// Poll all IMAP-configured inboxes (or a specific one)
-// ---------------------------------------------------------------------------
 
 async function pollInboxes(
   db: DbClient,
@@ -136,16 +155,21 @@ async function pollInboxes(
     : await db
         .select()
         .from(inboxes)
-        .where(and(eq(inboxes.status, "active"), isNotNull(inboxes.imapHost)));
+        .where(
+          and(
+            eq(inboxes.status, "active"),
+            or(
+              isNotNull(inboxes.imapHost),
+              eq(inboxes.provider, "google"),
+              eq(inboxes.provider, "microsoft")
+            )
+          )
+        );
 
   for (const inbox of rows) {
     await pollOneInbox(db, config, inbox);
   }
 }
-
-// ---------------------------------------------------------------------------
-// Worker export
-// ---------------------------------------------------------------------------
 
 function redisConnection(redisUrl: string) {
   const parsed = new URL(redisUrl);
@@ -170,7 +194,6 @@ export async function startImapPollWorker(config: Env): Promise<() => Promise<vo
 
   const { db, sql } = createDb(config.DATABASE_URL);
 
-  // Register the repeatable 5-minute poll job
   await scheduleImapPolling(config);
 
   const worker = new Worker<ImapPollJobPayload>(
@@ -197,7 +220,6 @@ export async function startImapPollWorker(config: Env): Promise<() => Promise<vo
   };
 }
 
-/** Standalone entrypoint: `node dist/workers/imap-poll.worker.js` */
 async function main() {
   const config = loadEnv();
   const stop = await startImapPollWorker(config);
