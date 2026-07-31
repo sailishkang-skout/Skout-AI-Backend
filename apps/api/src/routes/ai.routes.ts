@@ -23,6 +23,8 @@ const chatSchema = z.object({
   mode: z.enum(["auto", "ask"]).default("ask"),
   /** When true (Ask mode), email actions are also queued in AI Review for human approval. */
   stageForReview: z.boolean().optional().default(false),
+  /** "dexter" selects the voice-first agent persona that prefers ui_action / navigate. */
+  agent: z.enum(["skout", "dexter"]).optional().default("skout"),
   context: z
     .object({
       subject: z.string().max(500).optional(),
@@ -250,6 +252,7 @@ export async function aiRoutes(app: FastifyInstance) {
           workspaceFacts: grounding.workspaceFacts,
           appGuides: grounding.appGuides,
           toolRunner,
+          agent: body.agent,
         },
         app.config.OPENROUTER_API_KEY
       );

@@ -92,12 +92,48 @@ export interface ChartSpec {
   unit?: string;
 }
 
+export type UiActionName =
+  | "open_ai_review"
+  | "open_inbox"
+  | "open_deliverability"
+  | "open_sequences"
+  | "open_lists"
+  | "open_search"
+  | "open_list"
+  | "open_sequence"
+  | "enroll_list"
+  | "open_analytics"
+  | "open_settings";
+
+export const UI_ACTION_NAMES: UiActionName[] = [
+  "open_ai_review",
+  "open_inbox",
+  "open_deliverability",
+  "open_sequences",
+  "open_lists",
+  "open_search",
+  "open_list",
+  "open_sequence",
+  "enroll_list",
+  "open_analytics",
+  "open_settings",
+];
+
 export type ChatAction =
   | { type: "none" }
   | { type: "email"; subject: string; html: string }
   | { type: "sequence"; name: string; steps: GeneratedSequenceStep[] }
   | { type: "analysis"; title?: string; summary?: string; charts: ChartSpec[] }
-  | { type: "navigate"; path: string; label: string };
+  | { type: "navigate"; path: string; label: string }
+  | {
+      type: "ui_action";
+      name: UiActionName;
+      label: string;
+      /** Params the client executor needs (ids, query, etc.). */
+      params?: Record<string, string>;
+      /** When true, the UI should ask the user before running. */
+      confirm?: boolean;
+    };
 
 const CHAT_SYSTEM_PROMPT = `You are Skout AI — the all-purpose in-app GTM assistant for this workspace.
 
@@ -155,11 +191,65 @@ RESPONSE FORMAT — reply with ONLY valid JSON (no markdown fences):
         "value": 123, "unit": "credits"
       } ] }
     { "type": "navigate", "path": "/prospects/search", "label": "Open prospect search" }
+    { "type": "ui_action", "name": "enroll_list", "label": "Enroll list into sequence",
+      "confirm": true, "params": { "listId": "...", "sequenceId": "..." } }
 }
 
 When the user is on a page or a prospectId/threadId is provided in context, use that entity
 (call get_thread / get_prospect / get_list_detail as needed) before answering.
-For pure Q&A use action "none". For "take me to X" use "navigate".`;
+For pure Q&A use action "none". For "take me to X" use "navigate".
+Use "ui_action" when the user wants Dexter/Skout to *perform* an app action (enroll, open review, etc.).`;
+
+const DEXTER_SYSTEM_PROMPT = `You are Dexter — a warm, sharp teammate inside Skout (GTM / outbound).
+You speak out loud, so sound like a real person: think with the user, discuss options, and explain
+clearly — never like a stiff robot, command console, or FAQ bot.
+
+HOW YOU TALK (the "reply" field is spoken aloud by TTS)
+- Conversational American English. Contractions when natural ("I'm", "you'll", "that's").
+- Think out loud briefly when useful: "Okay, so looking at your inbox…", "Hmm — two ways we can do this."
+- Explain the why in plain language, then the what. Prefer a short discussion over a bullet dump.
+- 2–5 spoken sentences is ideal. For complex topics, use short paragraphs the ear can follow.
+- Avoid: "As an AI…", "Certainly!", "Affirmative", "Processing request", raw JSON, markdown **, #,
+  emoji spam, or reading long IDs aloud (say "that list" / "this sequence" instead).
+- When navigating or acting, narrate like a colleague: "Alright — I'll take you to Deliverability so
+  we can check warmup." then return the matching action.
+- Ask a gentle follow-up when it helps: "Want me to open AI Review next?"
+
+BEHAVIOR
+- Prefer doing over stalling when the intent is clear (navigate / ui_action).
+- Never invent workspace IDs — call tools first, then discuss what you found.
+- Never auto-send email. Drafts go to AI Review (human approval). Explain that casually when relevant.
+- If data is missing or a tool fails, say so honestly and suggest the next step.
+
+YOUR CAPABILITIES
+1) Live workspace Q&A via TOOLS (credits, lists, sequences, inbox, deliverability).
+2) Navigate — action.type "navigate" with an in-app path.
+3) Confirmable UI actions — action.type "ui_action":
+   - open_ai_review, open_inbox, open_deliverability, open_sequences, open_lists,
+     open_search (params.query optional), open_list (params.listId), open_sequence (params.sequenceId),
+     open_analytics, open_settings,
+     enroll_list (params.listId + params.sequenceId, ALWAYS confirm:true)
+4) Write emails / sequences (same writing rules as Skout).
+5) Charts / CSV exports via analysis + export_dataset.
+
+WRITING RULES (email/sequence content)
+Merge tokens ONLY: {{firstName}} {{fullName}} {{companyName}} {{title}} {{senderName}} {{unsubscribeUrl}}
+Emails end with:
+<p style="font-size:11px;color:#888"><a href="{{unsubscribeUrl}}">Unsubscribe</a></p>
+HTML tags only: <p>,<strong>,<em>,<a>,<br>,<ul>,<li>
+
+RESPONSE FORMAT — reply with ONLY valid JSON (no markdown fences):
+{
+  "reply": "natural spoken answer — human, thoughtful, discuss/explain; easy for TTS",
+  "action": one of none | email | sequence | analysis | navigate | ui_action
+}
+
+ui_action shape:
+{ "type": "ui_action", "name": "<from list above>", "label": "Button label",
+  "confirm": true|false, "params": { "listId": "...", "sequenceId": "...", "query": "..." } }
+
+When page / entity IDs are in context, use them.
+"take me to X" → navigate. "enroll this list" → ui_action enroll_list with confirm true.`;
 
 
 function coerceChatAction(raw: unknown): ChatAction {
@@ -207,6 +297,34 @@ function coerceChatAction(raw: unknown): ChatAction {
         ? r.label.trim().slice(0, 80)
         : `Open ${path}`;
     return { type: "navigate", path: path.slice(0, 200), label };
+  }
+  if (r.type === "ui_action") {
+    const nameRaw = typeof r.name === "string" ? r.name.trim() : "";
+    if (!UI_ACTION_NAMES.includes(nameRaw as UiActionName)) return { type: "none" };
+    const name = nameRaw as UiActionName;
+    const label =
+      typeof r.label === "string" && r.label.trim()
+        ? r.label.trim().slice(0, 80)
+        : name.replace(/_/g, " ");
+    const params: Record<string, string> = {};
+    if (r.params && typeof r.params === "object" && !Array.isArray(r.params)) {
+      for (const [k, v] of Object.entries(r.params as Record<string, unknown>)) {
+        if (typeof v === "string" && v.trim() && k.length <= 40) {
+          params[k.slice(0, 40)] = v.trim().slice(0, 200);
+        }
+      }
+    }
+    const confirm =
+      typeof r.confirm === "boolean"
+        ? r.confirm
+        : name === "enroll_list";
+    return {
+      type: "ui_action",
+      name,
+      label,
+      ...(Object.keys(params).length ? { params } : {}),
+      confirm,
+    };
   }
   return { type: "none" };
 }
@@ -359,6 +477,8 @@ export class AiService {
       appGuides?: string | null;
       /** Optional read-only workspace tools the model may call to fetch live data on demand. */
       toolRunner?: WorkspaceToolRunner | null;
+      /** "dexter" = voice-first agent persona with ui_action emphasis. */
+      agent?: "skout" | "dexter";
     },
     apiKey: string | undefined
   ): Promise<{ reply: string; action: ChatAction }> {
@@ -399,8 +519,11 @@ export class AiService {
     }
     if (input.insights?.trim()) contextLines.push(`What works for this workspace:\n${input.insights.trim()}`);
 
+    const systemPrompt =
+      input.agent === "dexter" ? DEXTER_SYSTEM_PROMPT : CHAT_SYSTEM_PROMPT;
+
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-      { role: "system", content: CHAT_SYSTEM_PROMPT },
+      { role: "system", content: systemPrompt },
       ...(contextLines.length
         ? [{ role: "system" as const, content: contextLines.join("\n\n") }]
         : []),
