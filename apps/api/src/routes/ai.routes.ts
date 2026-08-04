@@ -1,6 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { schema } from "@skout/db";
 import { aiService } from "../services/ai.service.js";
+import { suggestNextBestAction } from "../services/next-best-action.service.js";
 import { AI_DRAFT_STATUSES, buildAiDraftService } from "../services/ai-draft.service.js";
 import { sendApprovedDraftEmail, type DraftSendResult } from "../services/ai-draft-send.service.js";
 import { computeOutcomeInsights, insightsToPrompt } from "../services/outcome-insights.service.js";
@@ -23,8 +25,8 @@ const chatSchema = z.object({
   mode: z.enum(["auto", "ask"]).default("ask"),
   /** When true (Ask mode), email actions are also queued in AI Review for human approval. */
   stageForReview: z.boolean().optional().default(false),
-  /** "dexter" selects the voice-first agent persona that prefers ui_action / navigate. */
-  agent: z.enum(["skout", "dexter"]).optional().default("skout"),
+  /** "dexter" = voice-first agent. "cro" = R19.2 admin-only exec rollup — 403s for non-admins. */
+  agent: z.enum(["skout", "dexter", "cro"]).optional().default("skout"),
   context: z
     .object({
       subject: z.string().max(500).optional(),
@@ -228,6 +230,12 @@ export async function aiRoutes(app: FastifyInstance) {
   app.post("/ai/chat", async (request, reply) => {
     const workspaceId = request.workspaceId ?? "unknown";
     const body = chatSchema.parse(request.body ?? {});
+
+    const isAdmin = request.role === "owner" || request.role === "admin";
+    if (body.agent === "cro" && !isAdmin) {
+      return reply.status(403).send({ error: "CRO Copilot is owner/admin only" });
+    }
+
     try {
       const lastUser = [...body.messages].reverse().find((m) => m.role === "user")?.content;
       const [insights, grounding] = await Promise.all([
@@ -242,7 +250,7 @@ export async function aiRoutes(app: FastifyInstance) {
         }),
       ]);
 
-      const toolRunner = createWorkspaceToolRunner(app.db ?? null, app.config, workspaceId);
+      const toolRunner = createWorkspaceToolRunner(app.db ?? null, app.config, workspaceId, isAdmin);
 
       const result = await aiService.chat(
         {
@@ -359,5 +367,61 @@ export async function aiRoutes(app: FastifyInstance) {
       const e = err as { statusCode?: number; message?: string };
       return reply.status(e.statusCode ?? 500).send({ error: e.message ?? "Internal error" });
     }
+  });
+
+  const nextBestActionSchema = z.object({
+    entityType: z.enum(["contact", "deal"]),
+    entityId: z.string().uuid(),
+  });
+
+  // POST /ai/next-best-action — R20.3. Suggests one concrete next step for a CRM contact/deal,
+  // grounded in its own recent activity/task/meeting history (never fabricated).
+  app.post("/ai/next-best-action", async (request, reply) => {
+    const parse = nextBestActionSchema.safeParse(request.body);
+    if (!parse.success) {
+      return reply.status(400).send({ error: parse.error.errors[0]?.message ?? "Invalid request" });
+    }
+    if (!request.workspaceId) return reply.status(401).send({ error: "Unauthorized" });
+    if (!app.db) return reply.status(500).send({ error: "Database not available" });
+
+    try {
+      const result = await suggestNextBestAction(app.db, app.config, request.workspaceId, parse.data.entityType, parse.data.entityId);
+      if (!result) return reply.status(404).send({ error: "not_found" });
+      return reply.send({ data: result });
+    } catch (err: unknown) {
+      const e = err as { statusCode?: number; message?: string };
+      return reply.status(e.statusCode ?? 500).send({ error: e.message ?? "Internal error" });
+    }
+  });
+
+  const createTaskFromSuggestionSchema = z.object({
+    entityType: z.enum(["contact", "deal"]),
+    entityId: z.string().uuid(),
+    title: z.string().min(1).max(255),
+  });
+
+  // POST /ai/next-best-action/create-task — materializes a suggestion into a real CRM task.
+  app.post("/ai/next-best-action/create-task", async (request, reply) => {
+    const parse = createTaskFromSuggestionSchema.safeParse(request.body);
+    if (!parse.success) {
+      return reply.status(400).send({ error: parse.error.errors[0]?.message ?? "Invalid request" });
+    }
+    if (!request.workspaceId) return reply.status(401).send({ error: "Unauthorized" });
+    if (!app.db) return reply.status(500).send({ error: "Database not available" });
+
+    const [row] = await app.db
+      .insert(schema.tasks)
+      .values({
+        workspaceId: request.workspaceId,
+        assignedTo: request.userId,
+        title: parse.data.title,
+        dueDate: new Date(),
+        priority: "medium",
+        status: "open",
+        relatedEntityType: parse.data.entityType,
+        relatedEntityId: parse.data.entityId,
+      })
+      .returning();
+    return reply.code(201).send({ data: row });
   });
 }

@@ -64,6 +64,16 @@ const envSchema = z
       .transform((v) => v === "true" || v === "1"),
     /** Default email for stub auth when no x-stub-user-email header is sent. */
     AUTH_STUB_EMAIL: z.string().email().optional(),
+    /**
+     * Shared secret for the static-auth admin data-import page (/admin/import in the
+     * frontend). When set, requests to /api/v1/import/* may authenticate with
+     * `Authorization: Bearer admin_<this value>` instead of a Clerk JWT. Scoped to
+     * import routes only — never treated as a general-purpose API credential.
+     * Leave unset to disable this auth path entirely.
+     */
+    ADMIN_IMPORT_SECRET: z.string().min(16).optional(),
+    /** Workspace that admin-imported rows are activated into. Required if ADMIN_IMPORT_SECRET is set. */
+    ADMIN_IMPORT_WORKSPACE_ID: z.string().uuid().optional(),
     /** When true, skip business-hours check and send emails immediately (testing only). */
     BYPASS_BUSINESS_HOURS: z
       .string()
@@ -186,6 +196,21 @@ const envSchema = z
     // --- DNSBL blacklist monitoring. ---
     DNSBL_CHECK_INTERVAL_HOURS: z.coerce.number().int().positive().default(6),
     DNS_RESOLVER_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
+    // --- R20.2 — Twilio click-to-call. All optional; calling is disabled until set. ---
+    TWILIO_ACCOUNT_SID: z.string().optional(),
+    TWILIO_AUTH_TOKEN: z.string().optional(),
+    /** The Twilio number used as callerId for both legs of a bridged call. */
+    TWILIO_PHONE_NUMBER: z.string().optional(),
+    /** Publicly reachable base URL Twilio calls back for TwiML + status (defaults to API_PUBLIC_URL). */
+    TWILIO_WEBHOOK_BASE_URL: z.string().optional(),
+    // --- R16.2 — meeting-bot vendor (Recall.ai / Fireflies.ai — vendor TBD). All optional. ---
+    MEETING_BOT_PROVIDER: z.enum(["recall", "fireflies"]).optional(),
+    MEETING_BOT_API_KEY: z.string().optional(),
+    /** Shared secret to validate inbound meeting-bot webhooks (transcript/summary delivery). */
+    MEETING_BOT_WEBHOOK_SECRET: z.string().optional(),
+    // R22.1 — Apollo.io import is workspace-scoped BYOK (Settings → Integrations), not a
+    // platform env var: each workspace pulls from its own Apollo account, so a shared platform
+    // key wouldn't make sense the way TWILIO_*/MEETING_BOT_* platform keys do.
   })
   .transform((data) => {
     let next = data;
@@ -198,6 +223,9 @@ const envSchema = z
     }
     if (!next.FRONTEND_URL && next.CORS_ORIGIN[0]) {
       next = { ...next, FRONTEND_URL: next.CORS_ORIGIN[0] };
+    }
+    if (!next.TWILIO_WEBHOOK_BASE_URL && next.API_PUBLIC_URL) {
+      next = { ...next, TWILIO_WEBHOOK_BASE_URL: next.API_PUBLIC_URL };
     }
     // Alias OPEN_ROUTER_API_KEY → OPENROUTER_API_KEY (common env naming)
     if (!next.OPENROUTER_API_KEY && next.OPEN_ROUTER_API_KEY) {

@@ -16,3 +16,5 @@ export * from "./audit.js";
 export * from "./linkedin-accounts.js";
 export * from "./invites.js";
 export * from "./invite-auth.js";
+export * from "./automation.js";
+export * from "./notifications.js";

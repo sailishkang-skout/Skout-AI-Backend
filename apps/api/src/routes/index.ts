@@ -27,6 +27,9 @@ import { trackingRoutes } from "./tracking.routes.js";
 import { unsubscribeRoutes } from "./unsubscribe.routes.js";
 import { teamRoutes } from "./team.routes.js";
 import { inviteAuthRoutes } from "./invite-auth.routes.js";
+import { activationRuleRoutes } from "./activation-rule.routes.js";
+import { notificationRoutes } from "./notification.routes.js";
+import { callRoutes } from "./call.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoutes, { prefix: "/api/v1" });
@@ -59,5 +62,8 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(unsubscribeRoutes);
     await v1.register(teamRoutes);
     await v1.register(inviteAuthRoutes);
+    await v1.register(activationRuleRoutes);
+    await v1.register(notificationRoutes);
+    await v1.register(callRoutes);
   }, { prefix: "/api/v1" });
 }

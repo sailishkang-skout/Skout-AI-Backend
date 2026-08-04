@@ -21,6 +21,12 @@ export interface MeetingDto {
   meetingType: string;
   summary: string | null;
   outcome: string | null;
+  meetingUrl: string | null;
+  botExternalId: string | null;
+  botStatus: string;
+  recordingUrl: string | null;
+  transcriptUrl: string | null;
+  transcript: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -39,6 +45,12 @@ function toDto(row: typeof meetings.$inferSelect): MeetingDto {
     meetingType: row.meetingType,
     summary: row.summary,
     outcome: row.outcome,
+    meetingUrl: row.meetingUrl,
+    botExternalId: row.botExternalId,
+    botStatus: row.botStatus,
+    recordingUrl: row.recordingUrl,
+    transcriptUrl: row.transcriptUrl,
+    transcript: row.transcript,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -98,6 +110,7 @@ export class MeetingsService {
         meetingType: input.meetingType,
         summary: input.summary,
         outcome: input.outcome,
+        meetingUrl: input.meetingUrl,
       })
       .returning();
 
@@ -133,6 +146,7 @@ export class MeetingsService {
         ...(input.organizerId !== undefined ? { organizerId: input.organizerId } : {}),
         ...(input.summary !== undefined ? { summary: input.summary } : {}),
         ...(input.outcome !== undefined ? { outcome: input.outcome } : {}),
+        ...(input.meetingUrl !== undefined ? { meetingUrl: input.meetingUrl } : {}),
         updatedAt: new Date(),
       })
       .where(and(eq(meetings.id, id), eq(meetings.workspaceId, workspaceId)))
@@ -151,6 +165,48 @@ export class MeetingsService {
       .where(and(eq(meetings.id, id), eq(meetings.workspaceId, workspaceId)));
     log.info("meeting soft-deleted", { workspaceId, meetingId: id });
     return true;
+  }
+
+  /** R16.2 — record that a bot has been scheduled for this meeting. */
+  async setBotScheduled(workspaceId: string, id: string, botExternalId: string): Promise<MeetingDto | null> {
+    const [row] = await this.db
+      .update(meetings)
+      .set({ botExternalId, botStatus: "scheduled", updatedAt: new Date() })
+      .where(and(eq(meetings.id, id), eq(meetings.workspaceId, workspaceId)))
+      .returning();
+    return row ? toDto(row) : null;
+  }
+
+  /** R16.2 — webhook correlates by the vendor's bot id, not our own meeting id. */
+  async findByBotExternalId(botExternalId: string) {
+    const [row] = await this.db.select().from(meetings).where(eq(meetings.botExternalId, botExternalId)).limit(1);
+    return row ?? null;
+  }
+
+  /** R16.2/R16.3 — apply a webhook update (status + transcript/recording + optional summary). */
+  async applyWebhookUpdate(
+    id: string,
+    update: {
+      botStatus?: string;
+      transcript?: string;
+      transcriptUrl?: string;
+      recordingUrl?: string;
+      summary?: string;
+    }
+  ): Promise<MeetingDto | null> {
+    const [row] = await this.db
+      .update(meetings)
+      .set({
+        ...(update.botStatus !== undefined ? { botStatus: update.botStatus } : {}),
+        ...(update.transcript !== undefined ? { transcript: update.transcript } : {}),
+        ...(update.transcriptUrl !== undefined ? { transcriptUrl: update.transcriptUrl } : {}),
+        ...(update.recordingUrl !== undefined ? { recordingUrl: update.recordingUrl } : {}),
+        ...(update.summary !== undefined ? { summary: update.summary } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(meetings.id, id))
+      .returning();
+    return row ? toDto(row) : null;
   }
 
   /** Count of future meetings for the dashboard overview. */

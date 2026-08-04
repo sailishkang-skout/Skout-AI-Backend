@@ -53,6 +53,13 @@ const envSchema = z.object({
     .optional()
     .transform((v) => v === "true" || v === "1"),
   FRONTEND_URL: z.string().optional(),
+  // --- R16.2 — meeting-bot vendor (Recall.ai / Fireflies.ai — vendor TBD). All optional. ---
+  MEETING_BOT_PROVIDER: z.enum(["recall", "fireflies"]).optional(),
+  MEETING_BOT_API_KEY: z.string().optional(),
+  /** Shared secret checked against `?secret=` on the inbound webhook. */
+  MEETING_BOT_WEBHOOK_SECRET: z.string().optional(),
+  /** Publicly reachable base URL the meeting-bot vendor calls back (defaults to FRONTEND_URL's origin swapped to this service — set explicitly in production). */
+  CRM_PUBLIC_URL: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

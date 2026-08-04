@@ -22,7 +22,7 @@ export interface IntegrationDto {
   name: string;
   description: string;
   docsUrl: string;
-  category: "enrichment" | "messaging";
+  category: "enrichment" | "messaging" | "gtm_import";
   connected: boolean;
   keyHint: string | null;
   status: string | null;
@@ -82,7 +82,9 @@ export class IntegrationService {
         creditDiscount:
           meta.category === "messaging"
             ? "Powers LinkedIn & WhatsApp sends in sequences and Deliverability"
-            : "25% off Skout credits when your key is used",
+            : meta.category === "gtm_import"
+              ? "Browse and import your Apollo sequences from Settings → Integrations once connected"
+              : "25% off Skout credits when your key is used",
         dsnHint,
       };
     });
@@ -276,6 +278,11 @@ export class IntegrationService {
     return null;
   }
 
+  /** Public wrapper for routes that need the raw decrypted key (e.g. R22.3 Apollo import). */
+  async getDecryptedProviderKey(workspaceId: string, provider: IntegrationProviderId): Promise<string | null> {
+    return this.getDecryptedKey(workspaceId, provider);
+  }
+
   private async getDecryptedKey(
     workspaceId: string,
     provider: IntegrationProviderId
@@ -393,6 +400,19 @@ export class IntegrationService {
         });
         if (res.status === 401 || res.status === 403) return false;
         return res.ok;
+      }
+      case "apollo": {
+        // Apollo's v1 API takes the key in the JSON body, not a header.
+        const res = await fetch("https://api.apollo.io/v1/auth/health", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ api_key: apiKey }),
+          signal,
+        });
+        if (res.status === 401 || res.status === 403) return false;
+        if (!res.ok) return false;
+        const json = (await res.json().catch(() => ({}))) as { is_logged_in?: boolean };
+        return json.is_logged_in !== false;
       }
       default:
         return apiKey.length >= 8;

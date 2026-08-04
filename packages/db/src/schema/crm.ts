@@ -3,6 +3,7 @@ import {
   date,
   index,
   integer,
+  jsonb,
   numeric,
   pgTable,
   text,
@@ -29,6 +30,8 @@ export const companies = pgTable(
     ownerId: uuid("owner_id").references(() => users.id, { onDelete: "set null" }),
     status: text("status").notNull().default("active"),
     sourceProspectCompanyId: text("source_prospect_company_id"),
+    /** R13.3 — per-field provenance: { [field]: { source, confidence?, setAt } }. "manual" wins forever. */
+    fieldSources: jsonb("field_sources").notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -56,6 +59,8 @@ export const contacts = pgTable(
     ownerId: uuid("owner_id").references(() => users.id, { onDelete: "set null" }),
     lifecycleStage: text("lifecycle_stage").notNull().default("lead"),
     sourceProspectId: text("source_prospect_id"),
+    /** R13.3 — per-field provenance: { [field]: { source, confidence?, setAt } }. "manual" wins forever. */
+    fieldSources: jsonb("field_sources").notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -200,6 +205,16 @@ export const meetings = pgTable(
     meetingType: text("meeting_type").notNull().default("call"),
     summary: text("summary"),
     outcome: text("outcome"),
+    /** R16.2 — Zoom/Meet/Teams join link the bot dials into. */
+    meetingUrl: text("meeting_url"),
+    /** R16.2 — meeting-bot vendor's id for this session, for webhook correlation. */
+    botExternalId: text("bot_external_id"),
+    /** not_scheduled | scheduled | joining | in_call | completed | failed */
+    botStatus: text("bot_status").notNull().default("not_scheduled"),
+    recordingUrl: text("recording_url"),
+    transcriptUrl: text("transcript_url"),
+    /** Full transcript text, when the vendor sends it inline rather than as a fetchable URL. */
+    transcript: text("transcript"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -208,5 +223,6 @@ export const meetings = pgTable(
     index("meetings_workspace_id_idx").on(table.workspaceId),
     index("meetings_workspace_scheduled_idx").on(table.workspaceId, table.scheduledAt),
     index("meetings_workspace_deal_idx").on(table.workspaceId, table.dealId),
+    index("meetings_bot_external_id_idx").on(table.botExternalId),
   ]
 );

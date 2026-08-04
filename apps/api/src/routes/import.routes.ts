@@ -33,6 +33,18 @@ const commitSchema = z.object({
 });
 
 export async function importRoutes(app: FastifyInstance) {
+  /**
+   * Cheap auth check for the /admin/import static-auth page: confirms the
+   * `admin_<secret>` bearer token is valid before the UI shows the upload form.
+   * No side effects — just echoes back which workspace rows will land in.
+   */
+  app.get("/import/admin/ping", async (request, reply) => {
+    if (!request.workspaceId) {
+      return reply.code(401).send(errorResponse("Not authenticated", 401));
+    }
+    return reply.send({ data: { ok: true, workspaceId: request.workspaceId } });
+  });
+
   /** Preview / parse an uploaded CSV, Excel, PDF, or image (OCR). */
   app.post("/import/prospects/parse", async (request, reply) => {
     if (!request.workspaceId) {

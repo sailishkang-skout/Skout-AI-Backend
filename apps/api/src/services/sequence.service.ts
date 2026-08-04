@@ -20,7 +20,7 @@ const {
 
 const ENROLLMENT_STATUSES = ["active", "completed", "bounced", "replied"] as const;
 
-export const STEP_TYPES = ["email", "linkedin", "wait", "task"] as const;
+export const STEP_TYPES = ["email", "linkedin", "whatsapp", "call", "wait", "task"] as const;
 export type StepType = (typeof STEP_TYPES)[number];
 
 export const SEQUENCE_STATUSES = ["draft", "active", "paused", "archived"] as const;

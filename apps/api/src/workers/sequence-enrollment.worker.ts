@@ -23,6 +23,7 @@ import { dispatchWebhookEvent } from "../services/webhook.service.js";
 import { LinkedinAccountService, sendLinkedinOutreach, sendWhatsappOutreach } from "../services/linkedin-account.service.js";
 import { UnipileError } from "../services/unipile.client.js";
 import { LinkedinOutreachService } from "../services/linkedin-outreach.service.js";
+import { createNotification } from "../services/notifications.service.js";
 
 const log = createLogger("sequence-enrollment.worker");
 
@@ -453,6 +454,68 @@ async function executeLinkedinStep(
   }
 }
 
+/**
+ * R20.4 — "call" step. Twilio click-to-call (R20.2) isn't wired into automatic dialing — a
+ * cold outbound dial with no human on the line is bad practice regardless. Instead this step
+ * creates a CRM task ("Call <prospect>", due now) and an R17.1 notification to every
+ * owner/admin in the workspace, so a human places the call — via the CRM Task's "Call now"
+ * button once R20.2 credentials are configured, or manually otherwise. The step itself is
+ * "executed" the moment the reminder exists; the call itself is tracked separately via
+ * POST /calls/dial (R20.2) logging an activity on the linked task/prospect.
+ */
+async function executeCallStep(
+  db: DbClient,
+  config: Env,
+  payload: SeqAdvanceJobPayload,
+  pending: PendingStep,
+  now: Date
+): Promise<"done"> {
+  const { enrollmentId, workspaceId, prospectId } = payload;
+  const { tasks, workspaceMembers } = schema;
+
+  const prospect = await resolveProspectFields(config, db, workspaceId, prospectId);
+  const prospectLabel = prospect?.fullName || prospectId;
+  const companySuffix = prospect?.companyName ? ` (${prospect.companyName})` : "";
+
+  await db.insert(tasks).values({
+    workspaceId,
+    title: `Call ${prospectLabel}${companySuffix}`,
+    dueDate: now,
+    priority: "high",
+    status: "open",
+    relatedEntityType: "sequence_call_step",
+    // relatedEntityId is uuid-typed; prospectId is a text corpus hash, not a uuid (see R14.1 —
+    // sequence/CRM identity isn't reconciled yet), so it can't be stored here without corrupting
+    // the column. The prospect is identified in the title/notification instead until R14.1 lands.
+    relatedEntityId: null,
+  });
+
+  const owners = await db
+    .select({ userId: workspaceMembers.userId })
+    .from(workspaceMembers)
+    .where(and(eq(workspaceMembers.workspaceId, workspaceId), or(eq(workspaceMembers.role, "owner"), eq(workspaceMembers.role, "admin"))));
+
+  for (const { userId } of owners) {
+    try {
+      await createNotification(db, config, {
+        workspaceId,
+        userId,
+        type: "reminder",
+        title: `Call step due: ${prospectLabel}`,
+        body: `A "call" sequence step is due${companySuffix ? ` for ${prospectLabel}${companySuffix}` : ""}. A task has been created — dial from the CRM once ready.`,
+        entityType: "prospect",
+        entityId: prospectId,
+      });
+    } catch (err) {
+      log.warn("Failed to notify owner of due call step", { err, workspaceId, userId, enrollmentId });
+    }
+  }
+
+  await markStepTerminal(db, pending.enrollmentStepId, "executed", null, now);
+  log.info("Call step created task + notified owners", { enrollmentId, prospectId });
+  return "done";
+}
+
 async function executeWhatsappStep(
   db: DbClient,
   config: Env,
@@ -652,6 +715,8 @@ async function advanceEnrollment(
   } else if (pending.stepType === "whatsapp") {
     const result = await executeWhatsappStep(db, config, payload, pending, now);
     if (result === "waiting") return;
+  } else if (pending.stepType === "call") {
+    await executeCallStep(db, config, payload, pending, now);
   } else {
     await db
       .update(sequenceEnrollmentSteps)
