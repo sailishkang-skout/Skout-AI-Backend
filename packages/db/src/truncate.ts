@@ -22,6 +22,8 @@ const TABLES = [
   "list_members",
   "lists",
   "prospect_activations",
+  "smart_list_refreshes",
+  "smart_list_members",
   "smart_lists",
   "webhook_deliveries",
   "webhook_endpoints",
