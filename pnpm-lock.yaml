@@ -52,6 +52,9 @@ importers:
         specifier: ^3.23.8
         version: 3.25.76
     devDependencies:
+      '@types/node':
+        specifier: ^22.10.1
+        version: 22.19.20
       husky:
         specifier: ^9.1.7
         version: 9.1.7
