@@ -167,7 +167,14 @@ async function pollInboxes(
         );
 
   for (const inbox of rows) {
-    await pollOneInbox(db, config, inbox);
+    try {
+      await pollOneInbox(db, config, inbox);
+    } catch (err) {
+      log.error("IMAP poll failed for inbox — continuing with remaining inboxes", {
+        inboxId: inbox.id,
+        err,
+      });
+    }
   }
 }
 
