@@ -224,6 +224,7 @@ try {
   await runSqlMigration("0027_unipile_channels", "0027_unipile_channels.sql");
   await runSqlMigration("0028_signals", "0028_signals.sql");
   await runSqlMigration("0029_smart_list_auto_refresh", "0029_smart_list_auto_refresh.sql");
+  await runSqlMigration("0030_notifications", "0030_notifications.sql");
 
 } finally {
   await sql.end();
