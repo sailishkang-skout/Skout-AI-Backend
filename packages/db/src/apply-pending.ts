@@ -222,6 +222,8 @@ try {
   await runSqlMigration("0024_pain_points", "0024_pain_points.sql");
   await runSqlMigration("0025_invite_auth", "0025_invite_auth.sql");
   await runSqlMigration("0027_unipile_channels", "0027_unipile_channels.sql");
+  await runSqlMigration("0028_signals", "0028_signals.sql");
+  await runSqlMigration("0029_smart_list_auto_refresh", "0029_smart_list_auto_refresh.sql");
 
 } finally {
   await sql.end();

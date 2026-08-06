@@ -1,6 +1,5 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import type { OpenSearchConfig } from "@skout/opensearch";
 import { searchFiltersSchema } from "@skout/shared";
 import { buildEnrichmentService, InsufficientCreditsError } from "../services/enrichment/index.js";
 import { prospectToSnapshot, prospectToSummary } from "../services/smart-list.mapper.js";
@@ -8,10 +7,15 @@ import { createSearchCacheService } from "../services/search-cache.service.js";
 import {
   createSmartList,
   deleteSmartList,
+  getSmartListRefresh,
+  listSmartListRefreshes,
   listSmartLists,
+  osConfigFromEnv,
   runSmartList,
   updateSmartList,
+  updateSmartListRefreshSchedule,
 } from "../services/smart-list.service.js";
+import { CADENCE_VALUES } from "../services/smart-list-cadence.js";
 
 const createSchema = z.object({
   name: z.string().min(1).max(255),
@@ -32,14 +36,12 @@ const activateSchema = z.object({
   listId: z.string().uuid().optional(),
 });
 
-function osConfig(app: FastifyInstance): OpenSearchConfig | null {
-  if (!app.config.OPENSEARCH_URL) return null;
-  return {
-    url: app.config.OPENSEARCH_URL,
-    username: app.config.OPENSEARCH_USERNAME,
-    password: app.config.OPENSEARCH_PASSWORD,
-    index: app.config.OPENSEARCH_INDEX,
-  };
+const refreshScheduleSchema = z.object({
+  cadence: z.enum(CADENCE_VALUES),
+});
+
+function osConfig(app: FastifyInstance) {
+  return osConfigFromEnv(app.config);
 }
 
 function formatRunResponse(result: NonNullable<Awaited<ReturnType<typeof runSmartList>>>) {
@@ -74,6 +76,40 @@ export async function smartListRoutes(app: FastifyInstance) {
     if (!updated) return reply.status(404).send({ error: "smart_list_not_found" });
     await createSearchCacheService(app.config).invalidateSmartList(workspaceId, id);
     return reply.send(updated);
+  });
+
+  /** Configure the auto-refresh cadence (R10.2): "off" | "daily" | "weekly". */
+  app.patch("/smart-lists/:id/refresh-schedule", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const body = refreshScheduleSchema.parse(request.body ?? {});
+    const updated = await updateSmartListRefreshSchedule(app.db, workspaceId, id, body.cadence);
+    if (!updated) return reply.status(404).send({ error: "smart_list_not_found" });
+    return reply.send(updated);
+  });
+
+  /** Paginated auto-refresh history (counts + status only — no diff payload). */
+  app.get("/smart-lists/:id/refreshes", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const { limit } = request.query as { limit?: string };
+    const parsedLimit = limit ? Number(limit) : 20;
+    const data = await listSmartListRefreshes(
+      app.db,
+      workspaceId,
+      id,
+      Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 100) : 20
+    );
+    return reply.send({ workspaceId, smartListId: id, data, total: data.length });
+  });
+
+  /** Full diff (added/dropped prospects) for a single refresh. */
+  app.get("/smart-lists/:id/refreshes/:refreshId", async (request, reply) => {
+    const { id, refreshId } = request.params as { id: string; refreshId: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const detail = await getSmartListRefresh(app.db, workspaceId, id, refreshId);
+    if (!detail) return reply.status(404).send({ error: "smart_list_refresh_not_found" });
+    return reply.send(detail);
   });
 
   app.delete("/smart-lists/:id", async (request, reply) => {

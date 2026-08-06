@@ -194,70 +194,84 @@
     {
       "idx": 27,
       "version": "7",
-      "when": 1785200000000,
-      "tag": "0028_crm_field_sources",
+      "when": 1785920000000,
+      "tag": "0028_signals",
       "breakpoints": true
     },
     {
       "idx": 28,
       "version": "7",
-      "when": 1785300000000,
-      "tag": "0029_activation_rules",
+      "when": 1786000000000,
+      "tag": "0029_smart_list_auto_refresh",
       "breakpoints": true
     },
     {
       "idx": 29,
       "version": "7",
-      "when": 1785400000000,
-      "tag": "0030_notifications",
+      "when": 1786200000000,
+      "tag": "0028_crm_field_sources",
       "breakpoints": true
     },
     {
       "idx": 30,
       "version": "7",
-      "when": 1785500000000,
-      "tag": "0031_user_phone",
+      "when": 1786300000000,
+      "tag": "0029_activation_rules",
       "breakpoints": true
     },
     {
       "idx": 31,
       "version": "7",
-      "when": 1785600000000,
-      "tag": "0032_meeting_bot",
+      "when": 1786400000000,
+      "tag": "0030_notifications",
       "breakpoints": true
     },
     {
       "idx": 32,
       "version": "7",
-      "when": 1785700000000,
-      "tag": "0033_calls",
+      "when": 1786500000000,
+      "tag": "0031_user_phone",
       "breakpoints": true
     },
     {
       "idx": 33,
       "version": "7",
-      "when": 1785800000000,
-      "tag": "0034_task_call_disposition",
+      "when": 1786600000000,
+      "tag": "0032_meeting_bot",
       "breakpoints": true
     },
     {
       "idx": 34,
       "version": "7",
-      "when": 1785900000000,
-      "tag": "0035_meeting_auto_join",
+      "when": 1786700000000,
+      "tag": "0033_calls",
       "breakpoints": true
     },
     {
       "idx": 35,
       "version": "7",
-      "when": 1786000000000,
-      "tag": "0036_deal_field_sources",
+      "when": 1786800000000,
+      "tag": "0034_task_call_disposition",
       "breakpoints": true
     },
     {
       "idx": 36,
       "version": "7",
-      "when": 1786100000000,
+      "when": 1786900000000,
+      "tag": "0035_meeting_auto_join",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1787000000000,
+      "tag": "0036_deal_field_sources",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1787100000000,
       "tag": "0037_next_best_action_suggestions",
       "breakpoints": true
     }

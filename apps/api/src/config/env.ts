@@ -211,6 +211,8 @@ const envSchema = z
     // R22.1 — Apollo.io import is workspace-scoped BYOK (Settings → Integrations), not a
     // platform env var: each workspace pulls from its own Apollo account, so a shared platform
     // key wouldn't make sense the way TWILIO_*/MEETING_BOT_* platform keys do.
+    // --- Smart list auto-refresh (R10.2). ---
+    SMART_LIST_REFRESH_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(15),
   })
   .transform((data) => {
     let next = data;
