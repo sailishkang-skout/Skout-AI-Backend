@@ -1,9 +1,18 @@
 import { and, count, eq, isNull } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
+import { getProspectById, type OpenSearchConfig } from "@skout/opensearch";
+import { createLogger } from "@skout/observability";
 import { HttpError } from "../utils/http.js";
+import type { Env } from "../config/env.js";
+import { openSearchConfigFromEnv } from "../lib/opensearch-config.js";
+import { snapshotFromCorpusDoc } from "../utils/verified-email.js";
+import { buildEnrichmentService, type ProspectSnapshot } from "./enrichment/index.js";
+import { buildListService } from "./list.service.js";
+import { buildSequenceService } from "./sequence.service.js";
 
-const { activationRules, activationRuleRuns } = schema;
+const { activationRules, activationRuleRuns, prospectActivations } = schema;
+const log = createLogger("activation-rules.service");
 
 /** R13.4 — hard cap on active rules per workspace; a deliberate guardrail, not a UX limit. */
 export const MAX_ACTIVE_RULES_PER_WORKSPACE = 5;
@@ -183,4 +192,127 @@ export async function listRuleRuns(db: Db, workspaceId: string, ruleId?: string)
     .select()
     .from(activationRuleRuns)
     .where(and(...conditions));
+}
+
+/**
+ * Best-effort snapshot for the "activate" target action, which needs a full ProspectSnapshot
+ * (companyDomain in particular). Prefers the workspace's already-activated snapshot (the common
+ * case — a rule fires from the list-score pipeline, and list members are activated already), then
+ * falls back to the OpenSearch corpus doc, then a minimal placeholder so activation never throws
+ * for lack of enrichment data alone.
+ */
+async function buildSnapshotForActivate(
+  db: Db,
+  osCfg: OpenSearchConfig | null,
+  workspaceId: string,
+  prospectId: string
+): Promise<ProspectSnapshot> {
+  const [existing] = await db
+    .select()
+    .from(prospectActivations)
+    .where(and(eq(prospectActivations.workspaceId, workspaceId), eq(prospectActivations.prospectId, prospectId)))
+    .limit(1);
+  if (existing?.snapshot && typeof existing.snapshot === "object") {
+    const snap = existing.snapshot as Record<string, unknown>;
+    return {
+      prospectId,
+      companyId: existing.companyId,
+      companyDomain: typeof snap.companyDomain === "string" ? snap.companyDomain : existing.companyId,
+      fullName: typeof snap.fullName === "string" ? snap.fullName : undefined,
+      email: typeof snap.email === "string" ? snap.email : undefined,
+      title: typeof snap.title === "string" ? snap.title : undefined,
+      companyName: typeof snap.companyName === "string" ? snap.companyName : undefined,
+      linkedinUrl: typeof snap.linkedinUrl === "string" ? snap.linkedinUrl : undefined,
+    };
+  }
+  if (osCfg) {
+    const doc = await getProspectById(osCfg, prospectId).catch(() => null);
+    if (doc) {
+      const snap = snapshotFromCorpusDoc(doc) as unknown as Record<string, unknown>;
+      return {
+        prospectId,
+        companyDomain: typeof snap.companyDomain === "string" ? snap.companyDomain : prospectId,
+        fullName: typeof snap.fullName === "string" ? snap.fullName : undefined,
+        email: typeof snap.email === "string" ? snap.email : undefined,
+        title: typeof snap.title === "string" ? snap.title : undefined,
+        companyName: typeof snap.companyName === "string" ? snap.companyName : undefined,
+      };
+    }
+  }
+  return { prospectId, companyDomain: prospectId };
+}
+
+/** Runs the actual target action for one matched rule. Throws on failure — caller decides how to log it. */
+async function executeRuleAction(
+  db: Db,
+  config: Env,
+  workspaceId: string,
+  rule: ActivationRuleDto,
+  prospectId: string
+): Promise<void> {
+  switch (rule.targetAction) {
+    case "activate": {
+      const osCfg = openSearchConfigFromEnv(config);
+      const snapshot = await buildSnapshotForActivate(db, osCfg, workspaceId, prospectId);
+      const enrichmentSvc = buildEnrichmentService(db, config);
+      await enrichmentSvc.activate(workspaceId, [snapshot]);
+      return;
+    }
+    case "add_to_list": {
+      if (!rule.targetId) throw new HttpError("add_to_list rule missing targetId", 422);
+      const listSvc = buildListService(db, openSearchConfigFromEnv(config));
+      if (!listSvc) throw new HttpError("list_service_unavailable", 503);
+      const result = await listSvc.addMembers(workspaceId, rule.targetId, [{ prospectId }]);
+      if (!result) throw new HttpError(`target list ${rule.targetId} not found`, 404);
+      return;
+    }
+    case "enroll_sequence": {
+      if (!rule.targetId) throw new HttpError("enroll_sequence rule missing targetId", 422);
+      const seqSvc = buildSequenceService(db);
+      if (!seqSvc) throw new HttpError("sequence_service_unavailable", 503);
+      await seqSvc.enroll(rule.targetId, workspaceId, { prospectIds: [prospectId] });
+      return;
+    }
+  }
+}
+
+/**
+ * R13.4 — the missing half of `matchActivationRules`: actually run the target action for every
+ * matched rule and log each firing (auditable + reversible per the AC). Called from the scoring
+ * pipeline (`list-score.runner.ts`) right after a prospect's score is computed.
+ *
+ * `activeSignalTypes` is `[]` until a real R11 signal store exists (see the comment on
+ * `activation_rules.signal_type` in packages/db) — rules with a signalType simply won't match
+ * yet; score-only rules fire normally. This is a known, documented limitation, not a bug.
+ *
+ * One rule's failure never blocks another's — each is caught and counted independently so a
+ * single misconfigured target (e.g. a deleted list) can't silently swallow the rest.
+ */
+export async function executeActivationRules(
+  db: Db,
+  config: Env,
+  workspaceId: string,
+  prospectId: string,
+  prospectScore: number,
+  activeSignalTypes: string[] = []
+): Promise<{ matched: number; executed: number; failed: number }> {
+  const matches = await matchActivationRules(db, workspaceId, prospectScore, activeSignalTypes);
+  let executed = 0;
+  let failed = 0;
+  for (const rule of matches) {
+    try {
+      await executeRuleAction(db, config, workspaceId, rule, prospectId);
+      await recordRuleRun(db, workspaceId, rule.id, prospectId, rule.targetAction);
+      executed++;
+    } catch (err) {
+      failed++;
+      log.error("activation rule execution failed", err, {
+        workspaceId,
+        ruleId: rule.id,
+        prospectId,
+        targetAction: rule.targetAction,
+      });
+    }
+  }
+  return { matched: matches.length, executed, failed };
 }

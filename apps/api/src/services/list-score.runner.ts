@@ -5,6 +5,7 @@ import { schema } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { buildEnrichmentService } from "../services/enrichment/index.js";
 import { createSearchCacheService } from "./search-cache.service.js";
+import { executeActivationRules } from "./activation-rules.service.js";
 
 const { asyncJobs } = schema;
 const log = createLogger("list-score.runner");
@@ -60,6 +61,23 @@ export async function runListScoreJob(
 
     const cache = createSearchCacheService(config);
     await Promise.all(result.results.map((r) => cache.invalidateById(workspaceId, r.prospectId)));
+
+    // R13.4 — fire auto-activation rules now that fresh scores exist. Best-effort: a rule
+    // failure (e.g. a deleted target list) must never fail the scoring job itself.
+    for (const r of result.results) {
+      try {
+        const outcome = await executeActivationRules(db, config, workspaceId, r.prospectId, r.icpScore);
+        if (outcome.executed > 0 || outcome.failed > 0) {
+          log.info("activation rules fired for scored prospect", {
+            workspaceId,
+            prospectId: r.prospectId,
+            ...outcome,
+          });
+        }
+      } catch (err) {
+        log.error("activation rule pass failed for prospect", err, { workspaceId, prospectId: r.prospectId });
+      }
+    }
 
     return result;
   } catch (err) {

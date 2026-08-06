@@ -225,6 +225,41 @@
       "when": 1785600000000,
       "tag": "0032_meeting_bot",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1785700000000,
+      "tag": "0033_calls",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1785800000000,
+      "tag": "0034_task_call_disposition",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1785900000000,
+      "tag": "0035_meeting_auto_join",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1786000000000,
+      "tag": "0036_deal_field_sources",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1786100000000,
+      "tag": "0037_next_best_action_suggestions",
+      "breakpoints": true
     }
   ]
 }

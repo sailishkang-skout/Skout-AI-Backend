@@ -1,8 +1,14 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { and, eq } from "drizzle-orm";
 import { schema } from "@skout/db";
 import { aiService } from "../services/ai.service.js";
-import { suggestNextBestAction } from "../services/next-best-action.service.js";
+import {
+  suggestNextBestAction,
+  recordSuggestion,
+  markSuggestionAccepted,
+  getSuggestionStats,
+} from "../services/next-best-action.service.js";
 import { AI_DRAFT_STATUSES, buildAiDraftService } from "../services/ai-draft.service.js";
 import { sendApprovedDraftEmail, type DraftSendResult } from "../services/ai-draft-send.service.js";
 import { computeOutcomeInsights, insightsToPrompt } from "../services/outcome-insights.service.js";
@@ -369,13 +375,46 @@ export async function aiRoutes(app: FastifyInstance) {
     }
   });
 
+  const aiAuditSchema = z.object({
+    agent: z.enum(["skout", "dexter", "cro"]),
+    action: z.string().min(1).max(100),
+    entityType: z.string().min(1).max(50),
+    entityId: z.string().uuid(),
+    details: z.record(z.unknown()).optional(),
+  });
+
+  // POST /ai/audit — R15.2. Logs an AI-executed write action (e.g. Dexter's guarded
+  // enroll_list) to the shared audit_logs table, attributed to the specific user who confirmed
+  // it. Called by the client right after a confirmed action actually succeeds — not on proposal.
+  app.post("/ai/audit", async (request, reply) => {
+    const parse = aiAuditSchema.safeParse(request.body);
+    if (!parse.success) {
+      return reply.status(400).send({ error: parse.error.errors[0]?.message ?? "Invalid request" });
+    }
+    if (!request.workspaceId || !request.userId) {
+      return reply.status(401).send({ error: "Unauthorized" });
+    }
+    if (!app.db) return reply.status(500).send({ error: "Database not available" });
+
+    await app.db.insert(schema.auditLogs).values({
+      workspaceId: request.workspaceId,
+      actorId: request.userId,
+      action: `ai:${parse.data.agent}:${parse.data.action}`,
+      entityType: parse.data.entityType,
+      entityId: parse.data.entityId,
+      afterState: { ...parse.data.details, executedByAgent: parse.data.agent, onBehalfOfUserId: request.userId },
+    });
+    return reply.code(201).send({ data: { logged: true } });
+  });
+
   const nextBestActionSchema = z.object({
     entityType: z.enum(["contact", "deal"]),
     entityId: z.string().uuid(),
   });
 
   // POST /ai/next-best-action — R20.3. Suggests one concrete next step for a CRM contact/deal,
-  // grounded in its own recent activity/task/meeting history (never fabricated).
+  // grounded in its own recent activity/task/meeting history (never fabricated). Persists the
+  // suggestion (accepted or not) so acceptance rate is measurable — see GET .../stats below.
   app.post("/ai/next-best-action", async (request, reply) => {
     const parse = nextBestActionSchema.safeParse(request.body);
     if (!parse.success) {
@@ -387,7 +426,15 @@ export async function aiRoutes(app: FastifyInstance) {
     try {
       const result = await suggestNextBestAction(app.db, app.config, request.workspaceId, parse.data.entityType, parse.data.entityId);
       if (!result) return reply.status(404).send({ error: "not_found" });
-      return reply.send({ data: result });
+      const suggestionId = await recordSuggestion(
+        app.db,
+        request.workspaceId,
+        parse.data.entityType,
+        parse.data.entityId,
+        request.userId,
+        result.suggestion
+      );
+      return reply.send({ data: { ...result, suggestionId } });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
       return reply.status(e.statusCode ?? 500).send({ error: e.message ?? "Internal error" });
@@ -398,6 +445,7 @@ export async function aiRoutes(app: FastifyInstance) {
     entityType: z.enum(["contact", "deal"]),
     entityId: z.string().uuid(),
     title: z.string().min(1).max(255),
+    suggestionId: z.string().uuid().optional(),
   });
 
   // POST /ai/next-best-action/create-task — materializes a suggestion into a real CRM task.
@@ -422,6 +470,66 @@ export async function aiRoutes(app: FastifyInstance) {
         relatedEntityId: parse.data.entityId,
       })
       .returning();
+
+    if (parse.data.suggestionId && row) {
+      await markSuggestionAccepted(app.db, request.workspaceId, parse.data.suggestionId, "create_task", row.id);
+    }
     return reply.code(201).send({ data: row });
+  });
+
+  const enrollFromSuggestionSchema = z.object({
+    entityId: z.string().uuid(),
+    sequenceId: z.string().uuid(),
+    suggestionId: z.string().uuid().optional(),
+  });
+
+  // POST /ai/next-best-action/enroll — R20.3 "Enroll in sequence" accept option, alongside
+  // "Create task". Only meaningful for a contact (a deal has no single prospectId to enroll —
+  // see the R14.1 identity-gap note in docs/tickets) whose `sourceProspectId` links it back to
+  // the corpus prospect the sequence engine actually enrolls.
+  app.post("/ai/next-best-action/enroll", async (request, reply) => {
+    const parse = enrollFromSuggestionSchema.safeParse(request.body);
+    if (!parse.success) {
+      return reply.status(400).send({ error: parse.error.errors[0]?.message ?? "Invalid request" });
+    }
+    if (!request.workspaceId) return reply.status(401).send({ error: "Unauthorized" });
+    if (!app.db) return reply.status(500).send({ error: "Database not available" });
+
+    const [contact] = await app.db
+      .select({ sourceProspectId: schema.contacts.sourceProspectId })
+      .from(schema.contacts)
+      .where(and(eq(schema.contacts.id, parse.data.entityId), eq(schema.contacts.workspaceId, request.workspaceId)))
+      .limit(1);
+    if (!contact) return reply.status(404).send({ error: "contact_not_found" });
+    if (!contact.sourceProspectId) {
+      return reply.status(422).send({
+        error: "contact_not_linked_to_prospect",
+        message: "This contact isn't linked to a corpus prospect yet, so it can't be enrolled in a sequence.",
+      });
+    }
+
+    const seqSvc = buildSequenceService(app.db);
+    if (!seqSvc) return reply.status(500).send({ error: "Database not available" });
+
+    try {
+      const result = await seqSvc.enroll(parse.data.sequenceId, request.workspaceId, {
+        prospectIds: [contact.sourceProspectId],
+      });
+      if (parse.data.suggestionId) {
+        await markSuggestionAccepted(app.db, request.workspaceId, parse.data.suggestionId, "enroll_sequence", parse.data.sequenceId);
+      }
+      return reply.code(201).send({ data: result });
+    } catch (err: unknown) {
+      const e = err as { statusCode?: number; message?: string };
+      return reply.status(e.statusCode ?? 500).send({ error: e.message ?? "Could not enroll in sequence" });
+    }
+  });
+
+  // GET /ai/next-best-action/stats — R20.3 AC: acceptance rate must be measurable.
+  app.get("/ai/next-best-action/stats", async (request, reply) => {
+    if (!request.workspaceId) return reply.status(401).send({ error: "Unauthorized" });
+    if (!app.db) return reply.status(500).send({ error: "Database not available" });
+    const stats = await getSuggestionStats(app.db, request.workspaceId);
+    return reply.send({ data: stats });
   });
 }

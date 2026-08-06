@@ -25,6 +25,7 @@ export function createWorkspaceService(db: Db) {
           createdAt: schema.workspaces.createdAt,
           balance: schema.creditBalances.balance,
           slackWebhookUrl: schema.workspaces.slackWebhookUrl,
+          meetingBotAutoJoinDefault: schema.workspaces.meetingBotAutoJoinDefault,
         })
         .from(schema.workspaces)
         .leftJoin(schema.creditBalances, eq(schema.creditBalances.workspaceId, schema.workspaces.id))
@@ -40,6 +41,16 @@ export function createWorkspaceService(db: Db) {
         .set({ slackWebhookUrl, updatedAt: new Date() })
         .where(eq(schema.workspaces.id, workspaceId))
         .returning({ id: schema.workspaces.id, slackWebhookUrl: schema.workspaces.slackWebhookUrl });
+      return row ?? null;
+    },
+
+    /** R16.2 — workspace-wide default for new meetings' auto-join-bot flag. */
+    async setMeetingBotAutoJoinDefault(workspaceId: string, enabled: boolean) {
+      const [row] = await db
+        .update(schema.workspaces)
+        .set({ meetingBotAutoJoinDefault: enabled, updatedAt: new Date() })
+        .where(eq(schema.workspaces.id, workspaceId))
+        .returning({ id: schema.workspaces.id, meetingBotAutoJoinDefault: schema.workspaces.meetingBotAutoJoinDefault });
       return row ?? null;
     },
 

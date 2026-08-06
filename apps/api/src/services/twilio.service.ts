@@ -12,7 +12,10 @@ export interface BridgeCallParams {
   agentPhone: string;
   /** The prospect's number — dialed once the agent answers. */
   prospectPhone: string;
-  /** Query params appended to the status-callback webhook so it can attribute the call on completion. */
+  /**
+   * Query params appended to the status-callback AND the TwiML/recording-callback webhooks so
+   * each can attribute the call (and its eventual recording) back to the right workspace/contact.
+   */
   callbackParams: Record<string, string>;
 }
 
@@ -37,6 +40,9 @@ export async function dialBridgeCall(config: Env, params: BridgeCallParams): Pro
 
   const twimlUrl = new URL("/api/v1/calls/twiml/bridge", base);
   twimlUrl.searchParams.set("to", params.prospectPhone);
+  // Forwarded through to the TwiML handler so it can build a recording-status callback URL
+  // that still carries workspaceId/contactId/taskId once the recording finishes async.
+  for (const [key, value] of Object.entries(params.callbackParams)) twimlUrl.searchParams.set(key, value);
 
   const statusUrl = new URL("/api/v1/calls/status", base);
   for (const [key, value] of Object.entries(params.callbackParams)) statusUrl.searchParams.set(key, value);
@@ -71,8 +77,25 @@ export async function dialBridgeCall(config: Env, params: BridgeCallParams): Pro
   return { callSid: json.sid ?? "", status: json.status ?? "queued" };
 }
 
-/** TwiML for the bridge leg — Twilio calls this once the agent answers. */
-export function buildBridgeTwiml(prospectPhone: string, callerId: string): string {
+function escapeXmlAttr(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/**
+ * TwiML for the bridge leg — Twilio calls this once the agent answers.
+ * `recordingStatusCallbackUrl`, when given, turns on call recording for the bridged leg
+ * (R20.2 AC: "Record: true + RecordingUrl") — Twilio POSTs the finished RecordingUrl to that
+ * URL once processing completes, which is why it's a separate async webhook rather than
+ * something available on the call-status callback.
+ */
+export function buildBridgeTwiml(
+  prospectPhone: string,
+  callerId: string,
+  recordingStatusCallbackUrl?: string
+): string {
   const escaped = prospectPhone.replace(/[^0-9+]/g, "");
-  return `<?xml version="1.0" encoding="UTF-8"?><Response><Dial callerId="${callerId}">${escaped}</Dial></Response>`;
+  const recordingAttrs = recordingStatusCallbackUrl
+    ? ` record="record-from-answer-dual" recordingStatusCallback="${escapeXmlAttr(recordingStatusCallbackUrl)}" recordingStatusCallbackEvent="completed"`
+    : "";
+  return `<?xml version="1.0" encoding="UTF-8"?><Response><Dial callerId="${callerId}"${recordingAttrs}>${escaped}</Dial></Response>`;
 }

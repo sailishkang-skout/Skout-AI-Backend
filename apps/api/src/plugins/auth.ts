@@ -47,6 +47,7 @@ function isPublicRoute(url: string, method?: string): boolean {
     // R20.2 — Twilio calls these directly; not signature-verified yet (see dependency doc).
     url.startsWith("/api/v1/calls/twiml/") ||
     url.startsWith("/api/v1/calls/status") ||
+    url.startsWith("/api/v1/calls/recording-status") ||
     isInviteTokenLookup
   );
 }

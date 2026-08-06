@@ -439,6 +439,8 @@ export const CONTACT_LIFECYCLE_STAGES = ["lead", "mql", "sql", "customer"] as co
 export const DEAL_STATUSES = ["open", "won", "lost"] as const;
 export const TASK_PRIORITIES = ["low", "medium", "high"] as const;
 export const TASK_STATUSES = ["open", "done"] as const;
+/** R20.4 — set by the SDR after placing a sequence "call" step's call; drives cadence branching. */
+export const TASK_DISPOSITIONS = ["connected", "no_answer", "voicemail", "bad_number"] as const;
 export const ACTIVITY_TYPES = ["note", "call", "email", "meeting", "stage_change"] as const;
 
 export const companyCreateSchema = z.object({
@@ -655,6 +657,7 @@ export const taskUpdateSchema = z
     dueDate: z.string().datetime().optional(),
     priority: z.enum(TASK_PRIORITIES).optional(),
     status: z.enum(TASK_STATUSES).optional(),
+    disposition: z.enum(TASK_DISPOSITIONS).optional(),
   })
   .refine((d) => Object.values(d).some((v) => v !== undefined), {
     message: "At least one field is required",
@@ -670,6 +673,9 @@ export const taskResponseSchema = z.object({
   dueDate: z.string().nullable(),
   priority: z.enum(TASK_PRIORITIES),
   status: z.enum(TASK_STATUSES),
+  disposition: z.enum(TASK_DISPOSITIONS).nullable(),
+  /** Corpus prospectId for "call" sequence-step tasks — powers the "Call now" affordance. */
+  prospectId: z.string().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -716,6 +722,8 @@ export const meetingCreateSchema = z.object({
   outcome: z.string().optional(),
   /** R16.2 — Zoom/Meet/Teams join link. Required to schedule a meeting-bot join. */
   meetingUrl: z.string().url().optional(),
+  /** R16.2 — opt-in auto-join override. Omit to inherit the workspace default. */
+  autoJoinBot: z.boolean().optional(),
 });
 
 export const meetingUpdateSchema = z
@@ -731,6 +739,7 @@ export const meetingUpdateSchema = z
     summary: z.string().optional(),
     outcome: z.string().optional(),
     meetingUrl: z.string().url().optional(),
+    autoJoinBot: z.boolean().optional(),
   })
   .refine((d) => Object.values(d).some((v) => v !== undefined), {
     message: "At least one field is required",

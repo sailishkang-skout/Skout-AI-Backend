@@ -16,9 +16,21 @@ export type FieldSource = "manual" | "enrichment" | "meeting_bot" | "call_note";
 
 export interface FieldSourceEntry {
   source: FieldSource;
+  /** Always present for auto-fill sources (R13.3 AC); omitted only for "manual". */
   confidence?: number;
   setAt: string;
 }
+
+/**
+ * R13.3 — every auto-fill entry must carry a confidence value even when the caller doesn't
+ * supply one explicitly. These are the floor values per source when no per-call confidence is
+ * given (e.g. a vendor webhook that doesn't score its own extraction).
+ */
+export const DEFAULT_AUTO_FILL_CONFIDENCE: Record<Exclude<FieldSource, "manual">, number> = {
+  enrichment: 0.9,
+  meeting_bot: 0.7,
+  call_note: 0.6,
+};
 
 export type FieldSourcesMap = Record<string, FieldSourceEntry>;
 
@@ -56,9 +68,12 @@ export function mergeAutoFillSources(
   confidence: number | undefined
 ): FieldSourcesMap {
   const setAt = new Date().toISOString();
+  // R13.3 AC — auto-filled fields must each carry a confidence value; fall back to the
+  // per-source default when the caller (e.g. a vendor webhook) doesn't score its own output.
+  const resolvedConfidence = source === "manual" ? undefined : confidence ?? DEFAULT_AUTO_FILL_CONFIDENCE[source];
   const next: FieldSourcesMap = { ...existingSources };
   for (const field of appliedFields) {
-    next[field] = { source, confidence, setAt };
+    next[field] = { source, confidence: resolvedConfidence, setAt };
   }
   return next;
 }

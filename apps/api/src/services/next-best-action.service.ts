@@ -6,7 +6,7 @@ import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 
 const log = createLogger("next-best-action.service");
-const { contacts, companies, deals, activities, tasks, meetings } = schema;
+const { contacts, companies, deals, activities, tasks, meetings, nextBestActionSuggestions } = schema;
 
 export type SuggestedActionType = "call" | "email" | "meeting" | "wait" | "task";
 
@@ -164,4 +164,64 @@ export async function suggestNextBestAction(
       draftMessage: typeof parsed.draftMessage === "string" ? parsed.draftMessage : undefined,
     },
   };
+}
+
+/**
+ * R20.3 — persists every suggestion generated (accepted or not), so acceptance rate is a real,
+ * queryable number instead of something only visible in a chat transcript.
+ */
+export async function recordSuggestion(
+  db: Db,
+  workspaceId: string,
+  entityType: "contact" | "deal",
+  entityId: string,
+  createdBy: string | undefined,
+  suggestion: NextBestActionSuggestion
+): Promise<string> {
+  const [row] = await db
+    .insert(nextBestActionSuggestions)
+    .values({
+      workspaceId,
+      entityType,
+      entityId,
+      actionType: suggestion.actionType,
+      headline: suggestion.headline,
+      rationale: suggestion.rationale,
+      draftMessage: suggestion.draftMessage,
+      createdBy,
+    })
+    .returning({ id: nextBestActionSuggestions.id });
+  return row!.id;
+}
+
+export type SuggestionAcceptedAction = "create_task" | "enroll_sequence";
+
+/** Marks a suggestion as acted on. Idempotent-ish: re-accepting just overwrites the prior accept record. */
+export async function markSuggestionAccepted(
+  db: Db,
+  workspaceId: string,
+  suggestionId: string,
+  acceptedAction: SuggestionAcceptedAction,
+  acceptedRefId: string
+): Promise<boolean> {
+  const [row] = await db
+    .update(nextBestActionSuggestions)
+    .set({ acceptedAt: new Date(), acceptedAction, acceptedRefId })
+    .where(and(eq(nextBestActionSuggestions.id, suggestionId), eq(nextBestActionSuggestions.workspaceId, workspaceId)))
+    .returning({ id: nextBestActionSuggestions.id });
+  return Boolean(row);
+}
+
+/** R20.3 — the acceptance-rate readout the AC asks for. */
+export async function getSuggestionStats(
+  db: Db,
+  workspaceId: string
+): Promise<{ total: number; accepted: number; acceptanceRate: number }> {
+  const rows = await db
+    .select({ acceptedAt: nextBestActionSuggestions.acceptedAt })
+    .from(nextBestActionSuggestions)
+    .where(eq(nextBestActionSuggestions.workspaceId, workspaceId));
+  const total = rows.length;
+  const accepted = rows.filter((r) => r.acceptedAt !== null).length;
+  return { total, accepted, acceptanceRate: total > 0 ? accepted / total : 0 };
 }

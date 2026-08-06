@@ -10,7 +10,10 @@ import { buildMeetingsService } from "../services/meetings.service.js";
 import { buildAuditService } from "../services/audit.service.js";
 import { buildCompaniesService } from "../services/companies.service.js";
 import { buildContactsService } from "../services/contacts.service.js";
+import { buildDealsService } from "../services/deals.service.js";
+import { buildPipelinesService } from "../services/pipelines.service.js";
 import { isMeetingBotConfigured, scheduleMeetingBot } from "../services/meeting-bot.service.js";
+import { extractFieldsFromTranscript, isTranscriptExtractionConfigured } from "../services/transcript-extraction.service.js";
 
 function timingSafeEqualStrings(a: string, b: string): boolean {
   const bufA = Buffer.from(a);
@@ -37,6 +40,15 @@ export async function meetingsRoutes(app: FastifyInstance) {
     const db = app.db ?? null;
     const auditService = buildAuditService(db);
     return buildCompaniesService(db, auditService);
+  };
+
+  const dealsSvc = () => {
+    const db = app.db ?? null;
+    const auditService = buildAuditService(db);
+    const companiesService = buildCompaniesService(db, auditService);
+    const pipelinesService = buildPipelinesService(db, auditService);
+    const activitiesService = buildActivitiesService(db);
+    return buildDealsService(db, companiesService, pipelinesService, activitiesService, auditService);
   };
 
   // GET /meetings/bot-config — lets the frontend know whether to show "Schedule bot" at all.
@@ -150,6 +162,11 @@ export async function meetingsRoutes(app: FastifyInstance) {
       transcriptUrl?: string;
       recordingUrl?: string;
       summary?: string;
+      /** R16.2 AC — posted to the CRM activity timeline alongside the summary, when supplied. */
+      actionItems?: string[];
+      // R13.3 — vendor/pipeline may score its own extraction; falls back to a per-source
+      // default in mergeAutoFillSources() when omitted, so a confidence value is never missing.
+      extractedFieldsConfidence?: number;
       extractedFields?: { contact?: Record<string, unknown>; company?: Record<string, unknown> };
     };
 
@@ -169,19 +186,64 @@ export async function meetingsRoutes(app: FastifyInstance) {
       summary: body.summary,
     });
 
-    // R16.3 — auto-fill CRM fields from the transcript, when the vendor/pipeline supplies
-    // structured extractedFields. Uses the exact same provenance-tracked auto-fill target
-    // R13.3 built for enrichment, with source="meeting_bot" — manual edits still win forever.
-    if (body.extractedFields?.contact && meetingRow.contactId) {
-      const svc2 = contactsSvc();
-      if (svc2) {
-        await svc2.autoFill(meetingRow.workspaceId, meetingRow.contactId, body.extractedFields.contact, "meeting_bot");
+    // R16.3 — when the vendor/pipeline doesn't supply its own structured extractedFields, run
+    // real LLM extraction on the transcript text ourselves (see transcript-extraction.service.ts)
+    // rather than doing nothing. Vendor-supplied extractedFields, when present, still win — a
+    // vendor's own extraction is likely purpose-built for their transcript format.
+    let extraction: Awaited<ReturnType<typeof extractFieldsFromTranscript>> = {};
+    if (!body.extractedFields && body.transcript && isTranscriptExtractionConfigured(app.config)) {
+      try {
+        extraction = await extractFieldsFromTranscript(app.config, body.transcript);
+      } catch (err) {
+        app.log.warn({ err }, "Transcript LLM extraction failed");
       }
     }
-    if (body.extractedFields?.company && meetingRow.companyId) {
+
+    // R16.2 AC — post the summary/action items/next-steps/stakeholders to the linked
+    // contact/company/deal's activity timeline, not just the meeting row's own summary column.
+    if (updated) {
+      try {
+        await svc.recordTranscriptActivity(
+          meetingRow.workspaceId,
+          updated,
+          body.summary,
+          body.actionItems,
+          extraction.nextSteps,
+          extraction.stakeholders
+        );
+      } catch (err) {
+        app.log.warn({ err }, "Failed to post transcript summary to activity timeline");
+      }
+    }
+
+    // R13.3/R16.3 — auto-fill CRM fields from the transcript. Uses the exact same
+    // provenance-tracked auto-fill target R13.3 built for enrichment, with source="meeting_bot"
+    // — manual edits still win forever. Vendor-supplied extractedFields take priority; our own
+    // LLM extraction (with its own per-group confidence) fills in when the vendor didn't supply any.
+    const contactFields = body.extractedFields?.contact ?? extraction.contact;
+    const contactConfidence = body.extractedFields?.contact ? body.extractedFieldsConfidence : extraction.contactConfidence;
+    if (contactFields && meetingRow.contactId) {
+      const svc2 = contactsSvc();
+      if (svc2) {
+        await svc2.autoFill(meetingRow.workspaceId, meetingRow.contactId, contactFields, "meeting_bot", contactConfidence);
+      }
+    }
+
+    const companyFields = body.extractedFields?.company ?? extraction.company;
+    const companyConfidence = body.extractedFields?.company ? body.extractedFieldsConfidence : extraction.companyConfidence;
+    if (companyFields && meetingRow.companyId) {
       const svc3 = companiesSvc();
       if (svc3) {
-        await svc3.autoFill(meetingRow.workspaceId, meetingRow.companyId, body.extractedFields.company, "meeting_bot");
+        await svc3.autoFill(meetingRow.workspaceId, meetingRow.companyId, companyFields, "meeting_bot", companyConfidence);
+      }
+    }
+
+    // R16.3 — budget/timeline (amount/closeDate), extraction-only (no vendor extractedFields
+    // equivalent exists for deals today).
+    if (extraction.deal && meetingRow.dealId) {
+      const svc4 = dealsSvc();
+      if (svc4) {
+        await svc4.autoFill(meetingRow.workspaceId, meetingRow.dealId, extraction.deal, "meeting_bot", extraction.dealConfidence);
       }
     }
 
