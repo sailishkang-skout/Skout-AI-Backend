@@ -1,4 +1,4 @@
-import { bigint, index, integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { bigint, index, integer, jsonb, pgTable, real, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { workspaces } from "./workspaces.js";
 
 /**
@@ -48,6 +48,36 @@ export const companySnapshots = pgTable(
   (table) => [
     index("company_snapshots_domain_idx").on(table.domain),
     index("company_snapshots_domain_scraped_idx").on(table.domain, table.scrapedAt),
+  ]
+);
+
+/**
+ * Unified signal store (R11.2) — one typed timeline row per detected company-level buying/intent
+ * signal (hiring, funding, leadership change, tech-stack change, ...), replacing the ad-hoc
+ * OpenSearch-only `ProspectDocument.signals[]` nested field as the source of truth. `entityId` is
+ * the corpus `companyId` hash (see packages/shared/src/identity.ts) — not a Postgres FK, since the
+ * referenced companies live in OpenSearch, not this database (same pattern as `companySnapshots`
+ * above, keyed by domain).
+ */
+export const signals = pgTable(
+  "signals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    entityType: text("entity_type").notNull().default("company"),
+    entityId: text("entity_id").notNull(),
+    /** recent_hiring | recent_funding | leadership_change | tech_adoption | headcount_growth | ... */
+    signalType: text("signal_type").notNull(),
+    value: jsonb("value").notNull().default({}),
+    /** 0–1 confidence, matches the existing fieldProvenanceSchema range. */
+    confidence: real("confidence"),
+    detectedAt: timestamp("detected_at", { withTimezone: true }).notNull(),
+    source: text("source"),
+    provenance: jsonb("provenance").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("signals_entity_idx").on(table.entityType, table.entityId, table.detectedAt),
+    index("signals_type_idx").on(table.signalType),
   ]
 );
 

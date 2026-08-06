@@ -76,6 +76,7 @@ export const signalTypeEnum = z.enum([
   "acquisition",
   "website_change",
   "tech_adoption",
+  "headcount_growth",
 ]);
 export type SignalType = z.infer<typeof signalTypeEnum>;
 

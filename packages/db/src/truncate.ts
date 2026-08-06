@@ -23,6 +23,7 @@ const TABLES = [
   "lists",
   "prospect_activations",
   "smart_lists",
+  "signals",
   "webhook_deliveries",
   "webhook_endpoints",
   "inbox_messages",
