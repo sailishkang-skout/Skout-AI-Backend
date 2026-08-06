@@ -194,8 +194,15 @@
     {
       "idx": 27,
       "version": "7",
-      "when": 1785840000000,
-      "tag": "0028_smart_list_auto_refresh",
+      "when": 1785920000000,
+      "tag": "0028_signals",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1786000000000,
+      "tag": "0029_smart_list_auto_refresh",
       "breakpoints": true
     }
   ]

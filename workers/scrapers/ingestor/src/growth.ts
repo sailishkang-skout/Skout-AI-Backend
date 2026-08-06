@@ -1,8 +1,10 @@
 import { and, desc, eq, lte } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
-import type { CompanyCandidate } from "@skout/scraper-contracts";
+import type { CompanyCandidate, Signal } from "@skout/scraper-contracts";
 import type { ProspectDocument } from "@skout/opensearch";
+import { generateCompanyId } from "@skout/shared";
+import { recordSignals } from "./signals-store.js";
 
 const GROWTH_WINDOWS_MONTHS = [3, 6, 12] as const;
 
@@ -89,7 +91,12 @@ export async function enrichDocsWithGrowth(
 
   for (const company of companies) {
     await recordSnapshot(db, company);
+    await recordSignals(db, generateCompanyId(company.domain), company.signals ?? []);
   }
+
+  // Guard against persisting the same company's headcount-growth signal once per
+  // person-level doc — docs.map below iterates every prospect doc for a company.
+  const persistedGrowthEntityIds = new Set<string>();
 
   return Promise.all(
     docs.map(async (doc) => {
@@ -101,12 +108,19 @@ export async function enrichDocsWithGrowth(
       }
       const headcountGrowth = growthByWindow["3m"];
       const signals = [...(doc.signals ?? [])];
+      const newSignals: Signal[] = [];
       for (const [window, pct] of Object.entries(growthByWindow)) {
-        signals.push({
+        const signal: Signal = {
           type: "headcount_growth",
           observedAt: new Date().toISOString(),
           detail: `${window}: ${pct}%`,
-        });
+        };
+        signals.push(signal);
+        newSignals.push(signal);
+      }
+      if (newSignals.length && !persistedGrowthEntityIds.has(doc.companyId)) {
+        persistedGrowthEntityIds.add(doc.companyId);
+        await recordSignals(db, doc.companyId, newSignals);
       }
       return {
         ...doc,
