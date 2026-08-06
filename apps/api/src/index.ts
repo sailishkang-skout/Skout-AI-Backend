@@ -12,6 +12,8 @@ import { startReplyTagWorker } from "./workers/reply-tag.worker.js";
 import { startBlacklistMonitorWorker } from "./workers/blacklist-monitor.worker.js";
 import { startWarmupRampWorker } from "./workers/warmup-ramp.worker.js";
 import { startWebhookDeliveryWorker } from "./workers/webhook-delivery.worker.js";
+import { startSmartListRefreshWorker } from "./workers/smart-list-refresh.worker.js";
+import { startSmartListRefreshSweepWorker } from "./workers/smart-list-refresh-sweep.worker.js";
 
 async function main() {
   const config = loadEnv();
@@ -42,10 +44,14 @@ async function main() {
   const stopBlacklistMonitorWorker = await startBlacklistMonitorWorker(config);
   const stopWarmupRampWorker = await startWarmupRampWorker(config);
   const stopWebhookDeliveryWorker = await startWebhookDeliveryWorker(config);
+  const stopSmartListRefreshWorker = await startSmartListRefreshWorker(config);
+  const stopSmartListRefreshSweepWorker = await startSmartListRefreshSweepWorker(config);
 
   const app = await buildApp(config);
 
   const shutdown = async () => {
+    await stopSmartListRefreshSweepWorker();
+    await stopSmartListRefreshWorker();
     await stopWebhookDeliveryWorker();
     await stopWarmupRampWorker();
     await stopBlacklistMonitorWorker();

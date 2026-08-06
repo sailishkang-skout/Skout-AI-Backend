@@ -186,6 +186,8 @@ const envSchema = z
     // --- DNSBL blacklist monitoring. ---
     DNSBL_CHECK_INTERVAL_HOURS: z.coerce.number().int().positive().default(6),
     DNS_RESOLVER_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
+    // --- Smart list auto-refresh (R10.2). ---
+    SMART_LIST_REFRESH_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(15),
   })
   .transform((data) => {
     let next = data;
