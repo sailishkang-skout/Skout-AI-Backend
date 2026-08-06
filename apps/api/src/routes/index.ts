@@ -10,6 +10,7 @@ import { smartListRoutes } from "./smart-list.routes.js";
 import { scrapeRoutes } from "./scrape.routes.js";
 import { signalRoutes } from "./signal.routes.js";
 import { notificationRoutes } from "./notification.routes.js";
+import { taskRoutes } from "./task.routes.js";
 import { healthRoutes } from "./health.routes.js";
 import { inboxRoutes } from "./inbox.routes.js";
 import { listRoutes } from "./list.routes.js";
@@ -47,6 +48,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(scrapeRoutes);
     await v1.register(signalRoutes);
     await v1.register(notificationRoutes);
+    await v1.register(taskRoutes);
     await v1.register(billingRoutes);
     await v1.register(importRoutes);
     await v1.register(sequenceRoutes);

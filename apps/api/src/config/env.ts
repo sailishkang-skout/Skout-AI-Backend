@@ -188,6 +188,11 @@ const envSchema = z
     DNS_RESOLVER_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
     // --- Smart list auto-refresh (R10.2). ---
     SMART_LIST_REFRESH_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(15),
+    // --- Task/sequence/draft reminders (R17.2). ---
+    REMINDER_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(15),
+    /** How many hours before (task/sequence step due) or after (draft created) something is
+     * considered "needs a reminder". */
+    REMINDER_LEAD_HOURS: z.coerce.number().int().positive().default(24),
   })
   .transform((data) => {
     let next = data;
