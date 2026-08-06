@@ -92,8 +92,7 @@ export async function sweepTasks(
             .where(
               and(
                 eq(notifications.entityType, "task"),
-                eq(notifications.entityId, sql`${tasks.id}::text`),
-                isNull(notifications.readAt)
+                eq(notifications.entityId, sql`${tasks.id}::text`)
               )
             )
         )
@@ -150,8 +149,7 @@ export async function sweepSequenceSteps(
             .where(
               and(
                 eq(notifications.entityType, "sequence_enrollment_step"),
-                eq(notifications.entityId, sql`${sequenceEnrollmentSteps.id}::text`),
-                isNull(notifications.readAt)
+                eq(notifications.entityId, sql`${sequenceEnrollmentSteps.id}::text`)
               )
             )
         )
@@ -196,8 +194,7 @@ export async function sweepAiDrafts(
             .where(
               and(
                 eq(notifications.entityType, "ai_draft"),
-                eq(notifications.entityId, sql`${aiDrafts.id}::text`),
-                isNull(notifications.readAt)
+                eq(notifications.entityId, sql`${aiDrafts.id}::text`)
               )
             )
         )
