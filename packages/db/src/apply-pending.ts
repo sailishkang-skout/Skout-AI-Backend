@@ -221,10 +221,12 @@ try {
   await runSqlMigration("0023_meetings", "0023_meetings.sql");
   await runSqlMigration("0024_pain_points", "0024_pain_points.sql");
   await runSqlMigration("0025_invite_auth", "0025_invite_auth.sql");
+  await runSqlMigration("0026_audit_logs", "0026_audit_logs.sql");
   await runSqlMigration("0027_unipile_channels", "0027_unipile_channels.sql");
   await runSqlMigration("0028_signals", "0028_signals.sql");
   await runSqlMigration("0029_smart_list_auto_refresh", "0029_smart_list_auto_refresh.sql");
   await runSqlMigration("0030_notifications", "0030_notifications.sql");
+  await runSqlMigration("0031_task_type_completed_at", "0031_task_type_completed_at.sql");
 
 } finally {
   await sql.end();
