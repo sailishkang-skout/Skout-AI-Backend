@@ -19,6 +19,7 @@ export interface DashboardOverviewDto {
   currency: string;
   openTasks: number;
   overdueTasks: number;
+  dueTodayTasks: number;
   upcomingMeetings: number;
   recentActivities: ActivityDto[];
 }
@@ -60,6 +61,7 @@ export class DashboardService {
       currency: dealsSummary.currency,
       openTasks: taskCounts.open,
       overdueTasks: taskCounts.overdue,
+      dueTodayTasks: taskCounts.dueToday,
       upcomingMeetings,
       recentActivities,
     };

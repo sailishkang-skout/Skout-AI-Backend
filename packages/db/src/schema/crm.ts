@@ -144,9 +144,12 @@ export const tasks = pgTable(
     relatedEntityType: text("related_entity_type"),
     relatedEntityId: uuid("related_entity_id"),
     title: text("title").notNull(),
+    /** call | email | follow-up | custom (R21.1) — plain text, not a pg enum, so new types don't need a migration. */
+    type: text("type").notNull().default("custom"),
     dueDate: timestamp("due_date", { withTimezone: true }),
     priority: text("priority").notNull().default("medium"),
     status: text("status").notNull().default("open"),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),

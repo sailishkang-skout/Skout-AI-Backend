@@ -27,6 +27,8 @@ vi.mock("@skout/db", () => ({
     inboxThreads: "inboxThreads",
     inboxMessages: "inboxMessages",
     aiDrafts: "aiDrafts",
+    contacts: "contacts",
+    tasks: "tasks",
   },
 }));
 
@@ -90,6 +92,7 @@ import { resolveProspectFields } from "../services/prospect-resolver.service.js"
 import { isSuppressed } from "../services/suppression.service.js";
 import { pickNextInbox, markInboxUsed } from "../services/inbox-rotation.service.js";
 import { buildEmailSenderFromInbox } from "../services/email-sender.service.js";
+import { renderTemplate } from "../services/template-render.service.js";
 import { isRedisAvailable } from "../lib/redis.js";
 
 const BASE_CONFIG = {
@@ -494,5 +497,121 @@ describe("sequence-enrollment worker — email step execution", () => {
 
     expect(transaction).not.toHaveBeenCalled();
     expect(markInboxUsed).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// "Manual task" step execution (R21.3) — createTaskFromSequenceStep isn't
+// exported either, so this is exercised the same indirect way as the email tests.
+// ---------------------------------------------------------------------------
+
+const TASK_STEP_ROW = {
+  enrollmentStepId: "estep-task-1",
+  stepId: "step-task-1",
+  scheduledAt: PAST_DATE,
+  stepOrder: 1,
+  stepType: "task",
+  subject: "Call {{firstName}}",
+  bodyTemplate: null,
+};
+
+describe("sequence-enrollment worker — manual task step execution", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(Worker).mockImplementation((() => ({
+      on: vi.fn(),
+      close: vi.fn().mockResolvedValue(undefined),
+    })) as any);
+    vi.mocked(isBusinessHour).mockReturnValue(true);
+  });
+
+  function makeTaskStepDb(opts: { matchedContact?: { id: string } }) {
+    const select = vi.fn();
+    select.mockReturnValueOnce(selectChain([ENROLLMENT_ROW])); // load enrollment
+    select.mockReturnValueOnce(selectChain([])); // bounced check
+    select.mockReturnValueOnce(selectChain([])); // reply check
+    select.mockReturnValueOnce(selectChain([TASK_STEP_ROW])); // pending step
+    select.mockReturnValueOnce(selectChain(opts.matchedContact ? [opts.matchedContact] : [])); // contact lookup
+    select.mockReturnValueOnce(selectChain([])); // next pending step (none → completed)
+
+    const insertValues = vi.fn().mockResolvedValue(undefined);
+    const insert = vi.fn().mockReturnValue({ values: insertValues });
+    const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+    const update = vi.fn().mockReturnValue({ set: updateSet });
+    const transaction = vi.fn();
+
+    return { select, insert, insertValues, update, updateSet, transaction };
+  }
+
+  it("creates a CRM task due immediately, rendered from the step template, and marks the step executed", async () => {
+    vi.mocked(resolveProspectFields).mockResolvedValue({
+      prospectId: "p-1",
+      firstName: "Ada",
+      lastName: "Lovelace",
+      fullName: "Ada Lovelace",
+    } as any);
+    vi.mocked(renderTemplate).mockImplementation((template: string) => template.replace("{{firstName}}", "Ada"));
+
+    const { select, insert, insertValues, update, updateSet, transaction } = makeTaskStepDb({});
+    const db = { select, insert, update, transaction };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(insert).toHaveBeenCalledWith("tasks");
+    expect(insertValues).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "ws-1",
+        title: "Call Ada",
+        type: "custom",
+        relatedEntityType: undefined,
+        relatedEntityId: undefined,
+      })
+    );
+    expect(insertValues.mock.calls[0]![0].dueDate).toBeInstanceOf(Date);
+    expect(update).toHaveBeenCalledWith("sequenceEnrollmentSteps");
+    expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({ status: "executed" }));
+  });
+
+  it("links the task to the matching CRM contact when the prospect has already been synced", async () => {
+    vi.mocked(resolveProspectFields).mockResolvedValue({ prospectId: "p-1", firstName: "Ada" } as any);
+    vi.mocked(renderTemplate).mockImplementation((template: string) => template);
+
+    const { select, insert, insertValues, update, transaction } = makeTaskStepDb({
+      matchedContact: { id: "contact-1" },
+    });
+    const db = { select, insert, update, transaction };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(insertValues).toHaveBeenCalledWith(
+      expect.objectContaining({ relatedEntityType: "contact", relatedEntityId: "contact-1" })
+    );
+  });
+
+  it("falls back to a generic title when the step has no subject and prospect lookup fails", async () => {
+    vi.mocked(resolveProspectFields).mockRejectedValue(new Error("prospect_not_found"));
+    vi.mocked(renderTemplate).mockImplementation((template: string) => template);
+
+    const stepWithNoSubject = { ...TASK_STEP_ROW, subject: null };
+    const select = vi.fn();
+    select.mockReturnValueOnce(selectChain([ENROLLMENT_ROW]));
+    select.mockReturnValueOnce(selectChain([]));
+    select.mockReturnValueOnce(selectChain([]));
+    select.mockReturnValueOnce(selectChain([stepWithNoSubject]));
+    select.mockReturnValueOnce(selectChain([]));
+    select.mockReturnValueOnce(selectChain([]));
+
+    const insertValues = vi.fn().mockResolvedValue(undefined);
+    const insert = vi.fn().mockReturnValue({ values: insertValues });
+    const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+    const update = vi.fn().mockReturnValue({ set: updateSet });
+    const db = { select, insert, update, transaction: vi.fn() };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(insertValues).toHaveBeenCalledWith(expect.objectContaining({ title: "Follow up with prospect" }));
   });
 });

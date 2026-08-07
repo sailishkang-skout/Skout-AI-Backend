@@ -33,6 +33,8 @@ const {
   inboxThreads,
   inboxMessages,
   aiDrafts,
+  contacts,
+  tasks,
 } = schema;
 
 type DbClient = ReturnType<typeof createDb>["db"];
@@ -533,6 +535,52 @@ async function executeWhatsappStep(
   }
 }
 
+/**
+ * "Manual task" sequence step (R21.3) — creates a real CRM task (apps/crm's `tasks` table) due
+ * immediately, so it shows up on the rep's My Tasks page and picks up a reminder via the normal
+ * R17.2 sweep. Linked to the prospect's CRM contact when one already exists (matched via
+ * `contacts.sourceProspectId`); left unlinked otherwise rather than blocking step execution —
+ * sequences run against prospects that haven't necessarily been synced into the CRM yet.
+ */
+async function createTaskFromSequenceStep(
+  db: DbClient,
+  config: Env,
+  workspaceId: string,
+  prospectId: string,
+  pending: PendingStep
+): Promise<void> {
+  const [contact] = await db
+    .select({ id: contacts.id })
+    .from(contacts)
+    .where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.sourceProspectId, prospectId)))
+    .limit(1);
+
+  let title = pending.subject?.trim() || "Follow up with prospect";
+  const prospect = await resolveProspectFields(config, db, workspaceId, prospectId).catch(() => null);
+  if (prospect) {
+    title = renderTemplate(title, {
+      firstName: prospect.firstName ?? "",
+      lastName: prospect.lastName ?? "",
+      fullName: prospect.fullName ?? "",
+      companyName: prospect.companyName ?? "",
+      companyDomain: prospect.companyDomain ?? "",
+      title: prospect.title ?? "",
+      senderName: "",
+      senderEmail: "",
+      unsubscribeUrl: "",
+    });
+  }
+
+  await db.insert(tasks).values({
+    workspaceId,
+    title,
+    type: "custom",
+    dueDate: new Date(),
+    relatedEntityType: contact ? "contact" : undefined,
+    relatedEntityId: contact ? contact.id : undefined,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Core advance logic
 // ---------------------------------------------------------------------------
@@ -652,6 +700,13 @@ async function advanceEnrollment(
   } else if (pending.stepType === "whatsapp") {
     const result = await executeWhatsappStep(db, config, payload, pending, now);
     if (result === "waiting") return;
+  } else if (pending.stepType === "task") {
+    await createTaskFromSequenceStep(db, config, workspaceId, prospectId, pending);
+    await db
+      .update(sequenceEnrollmentSteps)
+      .set({ status: "executed", executedAt: now })
+      .where(eq(sequenceEnrollmentSteps.id, pending.enrollmentStepId));
+    log.info("Manual task step executed", { enrollmentId, enrollmentStepId: pending.enrollmentStepId });
   } else {
     await db
       .update(sequenceEnrollmentSteps)

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
 import { createDb, schema, type Db } from "@skout/db";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
@@ -487,8 +488,10 @@ describe.skipIf(!hasDatabase)("CRM service E2E", () => {
       payload: { title: "Call the prospect" },
     });
     expect(create.statusCode).toBe(201);
-    const task = create.json() as { id: string; status: string };
+    const task = create.json() as { id: string; status: string; type: string; completedAt: string | null };
     expect(task.status).toBe("open");
+    expect(task.type).toBe("custom");
+    expect(task.completedAt).toBeNull();
 
     const complete = await app.inject({
       method: "POST",
@@ -496,7 +499,105 @@ describe.skipIf(!hasDatabase)("CRM service E2E", () => {
       headers,
     });
     expect(complete.statusCode).toBe(200);
-    expect((complete.json() as { status: string }).status).toBe("done");
+    const completed = complete.json() as { status: string; completedAt: string | null };
+    expect(completed.status).toBe("done");
+    expect(completed.completedAt).not.toBeNull();
+  });
+
+  it("tasks: skip records completedAt too, and a valid type is accepted", async () => {
+    const headers = asUser("crm-tasks-skip@test.com");
+
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/v1/tasks",
+      headers,
+      payload: { title: "Send intro email", type: "email" },
+    });
+    expect((create.json() as { type: string }).type).toBe("email");
+    const task = create.json() as { id: string };
+
+    const skip = await app.inject({ method: "POST", url: `/api/v1/tasks/${task.id}/skip`, headers });
+    expect(skip.statusCode).toBe(200);
+    const skipped = skip.json() as { status: string; completedAt: string | null };
+    expect(skipped.status).toBe("skipped");
+    expect(skipped.completedAt).not.toBeNull();
+  });
+
+  it("tasks: assigning to a user outside the workspace is rejected", async () => {
+    const headers = asUser("crm-tasks-assign@test.com");
+    const outsider = await app.inject({
+      method: "GET",
+      url: "/api/v1/companies",
+      headers: asUser("crm-tasks-outsider@test.com"),
+    });
+    const outsiderWorkspaceId = (outsider.json() as { workspaceId: string }).workspaceId;
+    // Grab the outsider's user id from their own workspace membership — a real user, just not a member here.
+    const [outsiderMember] = await db
+      .select()
+      .from(schema.workspaceMembers)
+      .where(eq(schema.workspaceMembers.workspaceId, outsiderWorkspaceId));
+
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/v1/tasks",
+      headers,
+      payload: { title: "Assign to outsider", assignedTo: outsiderMember!.userId },
+    });
+    expect(create.statusCode).toBe(422);
+  });
+
+  it("tasks: creating with a near-term due date immediately schedules a reminder notification, and completing cancels it", async () => {
+    const email = "crm-tasks-reminder@test.com";
+    const headers = asUser(email);
+    const workspaceId = await getWorkspaceIdFor(headers);
+
+    const dueSoon = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/v1/tasks",
+      headers,
+      payload: { title: "R21.3 reminder check", dueDate: dueSoon },
+    });
+    expect(create.statusCode, create.body).toBe(201);
+    const task = create.json() as { id: string };
+
+    const notifsAfterCreate = await db
+      .select()
+      .from(schema.notifications)
+      .where(eq(schema.notifications.entityId, task.id));
+    expect(notifsAfterCreate).toHaveLength(1);
+    expect(notifsAfterCreate[0]!.readAt).toBeNull();
+    expect(notifsAfterCreate[0]!.workspaceId).toBe(workspaceId);
+
+    const complete = await app.inject({
+      method: "POST",
+      url: `/api/v1/tasks/${task.id}/complete`,
+      headers,
+    });
+    expect(complete.statusCode).toBe(200);
+
+    const notifsAfterComplete = await db
+      .select()
+      .from(schema.notifications)
+      .where(eq(schema.notifications.entityId, task.id));
+    expect(notifsAfterComplete[0]!.readAt).not.toBeNull();
+  });
+
+  it("tasks: a due date far in the future does not schedule a reminder immediately", async () => {
+    const headers = asUser("crm-tasks-far-future@test.com");
+
+    const farFuture = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/v1/tasks",
+      headers,
+      payload: { title: "Not due for months", dueDate: farFuture },
+    });
+    expect(create.statusCode, create.body).toBe(201);
+    const task = create.json() as { id: string };
+
+    const notifs = await db.select().from(schema.notifications).where(eq(schema.notifications.entityId, task.id));
+    expect(notifs).toHaveLength(0);
   });
 
   it("meetings: creating one linked to a deal logs a meeting activity on that deal's timeline", async () => {

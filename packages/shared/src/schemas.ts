@@ -416,9 +416,12 @@ export const dealListQuerySchema = paginationQuerySchema.extend({
 
 export const taskListQuerySchema = paginationQuerySchema.extend({
   assignedTo: z.string().uuid().optional(),
-  status: z.enum(["open", "done"]).optional(),
+  status: z.enum(["open", "done", "skipped"]).optional(),
+  type: z.enum(["call", "email", "follow-up", "custom"]).optional(),
   relatedEntityType: z.enum(["contact", "company", "deal"]).optional(),
   relatedEntityId: z.string().uuid().optional(),
+  dueBefore: z.string().datetime().optional(),
+  dueAfter: z.string().datetime().optional(),
 });
 
 export const activityListQuerySchema = paginationQuerySchema.extend({
@@ -437,7 +440,8 @@ export const COMPANY_STATUSES = ["active", "customer", "churned"] as const;
 export const CONTACT_LIFECYCLE_STAGES = ["lead", "mql", "sql", "customer"] as const;
 export const DEAL_STATUSES = ["open", "won", "lost"] as const;
 export const TASK_PRIORITIES = ["low", "medium", "high"] as const;
-export const TASK_STATUSES = ["open", "done"] as const;
+export const TASK_STATUSES = ["open", "done", "skipped"] as const;
+export const TASK_TYPES = ["call", "email", "follow-up", "custom"] as const;
 export const ACTIVITY_TYPES = ["note", "call", "email", "meeting", "stage_change"] as const;
 
 export const companyCreateSchema = z.object({
@@ -608,6 +612,7 @@ export const taskCreateSchema = z.object({
   assignedTo: z.string().uuid().optional(),
   relatedEntityType: z.enum(CRM_ENTITY_TYPES).optional(),
   relatedEntityId: z.string().uuid().optional(),
+  type: z.enum(TASK_TYPES).default("custom"),
   dueDate: z.string().datetime().optional(),
   priority: z.enum(TASK_PRIORITIES).default("medium"),
 });
@@ -618,6 +623,7 @@ export const taskUpdateSchema = z
     assignedTo: z.string().uuid().optional(),
     relatedEntityType: z.enum(CRM_ENTITY_TYPES).optional(),
     relatedEntityId: z.string().uuid().optional(),
+    type: z.enum(TASK_TYPES).optional(),
     dueDate: z.string().datetime().optional(),
     priority: z.enum(TASK_PRIORITIES).optional(),
     status: z.enum(TASK_STATUSES).optional(),
@@ -633,9 +639,11 @@ export const taskResponseSchema = z.object({
   relatedEntityType: z.enum(CRM_ENTITY_TYPES).nullable(),
   relatedEntityId: z.string().uuid().nullable(),
   title: z.string(),
+  type: z.enum(TASK_TYPES),
   dueDate: z.string().nullable(),
   priority: z.enum(TASK_PRIORITIES),
   status: z.enum(TASK_STATUSES),
+  completedAt: z.string().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -725,6 +733,7 @@ export const dashboardOverviewResponseSchema = z.object({
   currency: z.string(),
   openTasks: z.number(),
   overdueTasks: z.number(),
+  dueTodayTasks: z.number(),
   upcomingMeetings: z.number(),
   recentActivities: z.array(activityResponseSchema),
 });
@@ -745,6 +754,7 @@ export type ContactLifecycleStage = (typeof CONTACT_LIFECYCLE_STAGES)[number];
 export type DealStatus = (typeof DEAL_STATUSES)[number];
 export type TaskPriority = (typeof TASK_PRIORITIES)[number];
 export type TaskStatus = (typeof TASK_STATUSES)[number];
+export type TaskType = (typeof TASK_TYPES)[number];
 export type CrmEntityType = (typeof CRM_ENTITY_TYPES)[number];
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];
 export type CompanyCreateInput = z.infer<typeof companyCreateSchema>;

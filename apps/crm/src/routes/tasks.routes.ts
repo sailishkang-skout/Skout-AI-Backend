@@ -10,7 +10,7 @@ export async function tasksRoutes(app: FastifyInstance) {
   const service = () => {
     const db = app.db ?? null;
     const auditService = buildAuditService(db);
-    return buildTasksService(db, auditService);
+    return buildTasksService(db, auditService, app.config.REMINDER_LEAD_HOURS);
   };
 
   app.get("/tasks", async (request) => {
@@ -52,6 +52,17 @@ export async function tasksRoutes(app: FastifyInstance) {
     if (!svc) throw new HttpError("database_unavailable", 503);
 
     const task = await svc.complete(workspaceId, id);
+    if (!task) throw new HttpError("task_not_found", 404);
+    return reply.send(task);
+  });
+
+  app.post("/tasks/:id/skip", async (request, reply) => {
+    const id = parseIdParam(request);
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) throw new HttpError("database_unavailable", 503);
+
+    const task = await svc.skip(workspaceId, id);
     if (!task) throw new HttpError("task_not_found", 404);
     return reply.send(task);
   });
