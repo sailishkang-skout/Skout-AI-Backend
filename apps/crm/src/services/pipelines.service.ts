@@ -1,7 +1,7 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
-import type { PipelineCreateInput, PipelineStageCreateInput } from "@skout/shared";
+import type { PipelineCreateInput, PipelineStageCreateInput, PipelineUpdateInput } from "@skout/shared";
 import { HttpError } from "@skout/auth";
 import { pgErrorCode } from "../utils/http.js";
 import type { AuditService } from "./audit.service.js";
@@ -76,7 +76,10 @@ export class PipelinesService {
 
   async list(workspaceId: string): Promise<PipelineDto[]> {
     await this.ensureDefaultPipeline(workspaceId);
-    const rows = await this.db.select().from(pipelines).where(eq(pipelines.workspaceId, workspaceId));
+    const rows = await this.db
+      .select()
+      .from(pipelines)
+      .where(and(eq(pipelines.workspaceId, workspaceId), isNull(pipelines.deletedAt)));
     return Promise.all(rows.map((row) => this.withStages(row)));
   }
 
@@ -84,7 +87,7 @@ export class PipelinesService {
     const [row] = await this.db
       .select()
       .from(pipelines)
-      .where(and(eq(pipelines.id, id), eq(pipelines.workspaceId, workspaceId)))
+      .where(and(eq(pipelines.id, id), eq(pipelines.workspaceId, workspaceId), isNull(pipelines.deletedAt)))
       .limit(1);
     return row ? this.withStages(row) : null;
   }
@@ -97,7 +100,12 @@ export class PipelinesService {
     return dto;
   }
 
-  async addStage(workspaceId: string, pipelineId: string, input: PipelineStageCreateInput): Promise<PipelineStageDto> {
+  async addStage(
+    workspaceId: string,
+    pipelineId: string,
+    input: PipelineStageCreateInput,
+    actorId?: string
+  ): Promise<PipelineStageDto> {
     const pipeline = await this.getById(workspaceId, pipelineId);
     if (!pipeline) throw new HttpError("pipeline_not_found", 404);
 
@@ -124,8 +132,52 @@ export class PipelinesService {
       logAndCapture(log, err, "pipeline stage create failed", { workspaceId, pipelineId });
       throw err;
     }
+    const dto = stageToDto(row);
+    await this.auditService.record(workspaceId, actorId, "create", "pipeline_stage", dto.id, null, dto);
     log.info("pipeline stage added", { workspaceId, pipelineId, stageId: row.id, name: row.name });
-    return stageToDto(row);
+    return dto;
+  }
+
+  async update(
+    workspaceId: string,
+    id: string,
+    actorId: string | undefined,
+    input: PipelineUpdateInput
+  ): Promise<PipelineDto | null> {
+    const existing = await this.getById(workspaceId, id);
+    if (!existing) return null;
+
+    const [row] = await this.db
+      .update(pipelines)
+      .set({
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        updatedAt: new Date(),
+      })
+      .where(and(eq(pipelines.id, id), eq(pipelines.workspaceId, workspaceId)))
+      .returning();
+
+    if (!row) return null;
+    const dto = await this.withStages(row);
+    await this.auditService.record(workspaceId, actorId, "update", "pipeline", id, existing, dto);
+    log.info("pipeline updated", { workspaceId, pipelineId: id });
+    return dto;
+  }
+
+  async softDelete(workspaceId: string, id: string, actorId: string | undefined): Promise<boolean> {
+    const existing = await this.getById(workspaceId, id);
+    if (!existing) return false;
+
+    const [row] = await this.db
+      .update(pipelines)
+      .set({ deletedAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(pipelines.id, id), eq(pipelines.workspaceId, workspaceId)))
+      .returning();
+
+    if (!row) return false;
+    const dto = await this.withStages(row);
+    await this.auditService.record(workspaceId, actorId, "delete", "pipeline", id, existing, dto);
+    log.info("pipeline soft-deleted", { workspaceId, pipelineId: id });
+    return true;
   }
 
   /** Idempotent: returns the workspace's default pipeline, creating it + standard stages if none exists yet. */
