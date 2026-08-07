@@ -16,7 +16,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
     const pipelinesService = buildPipelinesService(db, auditService);
     const activitiesService = buildActivitiesService(db);
     const dealsService = buildDealsService(db, companiesService, pipelinesService, activitiesService, auditService);
-    const tasksService = buildTasksService(db, auditService, app.config.REMINDER_LEAD_HOURS);
+    const tasksService = buildTasksService(db, auditService, app.config?.REMINDER_LEAD_HOURS ?? 24);
     const meetingsService = buildMeetingsService(db, activitiesService);
     return buildDashboardService(db, dealsService, tasksService, activitiesService, meetingsService);
   };

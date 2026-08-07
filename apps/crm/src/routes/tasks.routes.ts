@@ -10,7 +10,7 @@ export async function tasksRoutes(app: FastifyInstance) {
   const service = () => {
     const db = app.db ?? null;
     const auditService = buildAuditService(db);
-    return buildTasksService(db, auditService, app.config.REMINDER_LEAD_HOURS);
+    return buildTasksService(db, auditService, app.config?.REMINDER_LEAD_HOURS ?? 24);
   };
 
   app.get("/tasks", async (request) => {
