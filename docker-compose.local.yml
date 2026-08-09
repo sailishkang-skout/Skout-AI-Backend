@@ -32,7 +32,7 @@ services:
       REDIS_URL: redis://redis:6379
       CLICKHOUSE_URL: http://skout:skout@clickhouse:8123/skout
       AI_SERVICE_URL: http://ai:8000
-      CORS_ORIGIN: http://localhost:3000
+      CORS_ORIGIN: http://localhost:3000,http://localhost:3003,http://127.0.0.1:3003,http://127.0.0.1:3000
     depends_on:
       postgres:
         condition: service_healthy
@@ -92,7 +92,7 @@ services:
       HOST: 0.0.0.0
       LOG_LEVEL: info
       DATABASE_URL: postgresql://skout:skout@postgres:5432/skout
-      CORS_ORIGIN: http://localhost:3000
+      CORS_ORIGIN: http://localhost:3000,http://localhost:3003,http://127.0.0.1:3003,http://127.0.0.1:3000
       AUTH_STUB: "true"
     depends_on:
       postgres:

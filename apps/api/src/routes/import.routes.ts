@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import * as XLSX from "xlsx";
 import { commitImport, parseImportFile } from "../services/import-prospects.service.js";
 import { errorResponse } from "../utils/http.js";
 
@@ -8,7 +9,52 @@ const parseSchema = z.object({
   mimeType: z.string().min(1).max(120),
   /** Base64-encoded file contents (no data: URL prefix). Max ~8MB decoded. */
   base64: z.string().min(1).max(12_000_000),
+  /** Optional manual column mapping (source header -> target field) from a mapping-correction UI. */
+  headerMap: z.record(z.string(), z.string()).optional(),
 });
+
+const SAMPLE_COLUMNS = [
+  "fullName",
+  "companyDomain",
+  "email",
+  "jobTitle",
+  "companyName",
+  "phone",
+  "linkedinUrl",
+  "country",
+  "city",
+] as const;
+
+const SAMPLE_ROWS: Record<(typeof SAMPLE_COLUMNS)[number], string>[] = [
+  {
+    fullName: "Jane Doe",
+    companyDomain: "acme.com",
+    email: "jane.doe@acme.com",
+    jobTitle: "VP Sales",
+    companyName: "Acme Inc.",
+    phone: "+1 415 555 0100",
+    linkedinUrl: "https://www.linkedin.com/in/janedoe",
+    country: "United States",
+    city: "San Francisco",
+  },
+  {
+    fullName: "Arjun Mehta",
+    companyDomain: "globex.io",
+    email: "arjun.mehta@globex.io",
+    jobTitle: "Head of Growth",
+    companyName: "Globex",
+    phone: "+91 98765 43210",
+    linkedinUrl: "https://www.linkedin.com/in/arjunmehta",
+    country: "India",
+    city: "Bengaluru",
+  },
+];
+
+function buildSampleCsv(): string {
+  const header = SAMPLE_COLUMNS.join(",");
+  const rows = SAMPLE_ROWS.map((r) => SAMPLE_COLUMNS.map((c) => r[c]).join(","));
+  return [header, ...rows].join("\n") + "\n";
+}
 
 const commitSchema = z.object({
   rows: z
@@ -16,7 +62,11 @@ const commitSchema = z.object({
       z.object({
         fullName: z.string().min(1),
         companyDomain: z.string().min(1),
-        email: z.string().email().optional(),
+        // Not strictly RFC-validated here — messy source spreadsheets (e.g. bulk exports) often
+        // have malformed emails (stray spaces, double dots). Rejecting the whole batch over one
+        // bad row is worse than importing it with a slightly off email; real email-format
+        // checking already happens later via the enrichment "validation" field.
+        email: z.string().trim().max(320).optional(),
         jobTitle: z.string().optional(),
         companyName: z.string().optional(),
         phone: z.string().optional(),
@@ -61,6 +111,7 @@ export async function importRoutes(app: FastifyInstance) {
       mimeType: body.mimeType,
       base64: body.base64,
       openRouterApiKey: app.config.OPENROUTER_API_KEY,
+      headerMap: body.headerMap,
     });
 
     return reply.send({
@@ -69,8 +120,39 @@ export async function importRoutes(app: FastifyInstance) {
         total: result.rows.length,
         source: result.source,
         warnings: result.warnings,
+        // Per-sheet/table header detection, so the UI can show exactly what was found and let
+        // the user manually map columns when auto-detection misses something.
+        sheets: result.sheets ?? [],
       },
     });
+  });
+
+  /**
+   * Downloadable sample template matching the exact columns the importer recognizes, so users
+   * don't have to guess header names. `format=csv` (default) or `format=xlsx`.
+   */
+  app.get("/import/sample", async (request, reply) => {
+    if (!request.workspaceId) {
+      return reply.code(401).send(errorResponse("Not authenticated", 401));
+    }
+    const format = (request.query as { format?: string } | undefined)?.format === "xlsx" ? "xlsx" : "csv";
+
+    if (format === "csv") {
+      reply.header("Content-Type", "text/csv; charset=utf-8");
+      reply.header("Content-Disposition", 'attachment; filename="skout-import-sample.csv"');
+      return reply.send(buildSampleCsv());
+    }
+
+    const ws = XLSX.utils.json_to_sheet(SAMPLE_ROWS, { header: [...SAMPLE_COLUMNS] });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Contacts");
+    const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+    reply.header(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    reply.header("Content-Disposition", 'attachment; filename="skout-import-sample.xlsx"');
+    return reply.send(buf);
   });
 
   /** Commit parsed rows into the workspace (and optionally a list). */
