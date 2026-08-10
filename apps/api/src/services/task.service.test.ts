@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const resolveNotificationsForEntity = vi.fn().mockResolvedValue(0);
 
-vi.mock("./notification.service.js", () => ({
+vi.mock("./notifications.service.js", () => ({
   resolveNotificationsForEntity: (...args: unknown[]) => resolveNotificationsForEntity(...args),
 }));
 
