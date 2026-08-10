@@ -1,5 +1,5 @@
 import { Worker, Queue } from "bullmq";
-import { and, eq, inArray, isNull, lte, ne, notExists, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, lte, notExists, sql } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
@@ -83,7 +83,7 @@ export async function sweepTasks(
     .from(tasks)
     .where(
       and(
-        ne(tasks.status, "completed"),
+        eq(tasks.status, "open"),
         isNull(tasks.deletedAt),
         sql`${tasks.dueDate} IS NOT NULL`,
         lte(tasks.dueDate, leadCutoff),
@@ -109,7 +109,7 @@ export async function sweepTasks(
         type: "task_reminder",
         entityType: "task",
         entityId: task.id,
-        title: `Task "${task.title}" is due soon`,
+        title: `${task.type === "custom" ? "Task" : task.type[0]!.toUpperCase() + task.type.slice(1)} "${task.title}" is due soon`,
         body: task.dueDate ? `Due ${task.dueDate.toISOString()}` : undefined,
       });
     } catch (err) {

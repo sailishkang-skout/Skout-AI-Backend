@@ -153,9 +153,13 @@ export const tasks = pgTable(
     relatedEntityType: text("related_entity_type"),
     relatedEntityId: uuid("related_entity_id"),
     title: text("title").notNull(),
+    /** call | email | follow-up | custom (R21.1) — plain text, not a pg enum, so new types don't need a migration. */
+    type: text("type").notNull().default("custom"),
     dueDate: timestamp("due_date", { withTimezone: true }),
     priority: text("priority").notNull().default("medium"),
     status: text("status").notNull().default("open"),
+    /** R21.1 — recorded when a task enters either terminal status (done or skipped). */
+    completedAt: timestamp("completed_at", { withTimezone: true }),
     /**
      * R20.4 — set by the SDR after placing a "call" sequence-step call:
      * "connected" | "no_answer" | "voicemail" | "bad_number". Drives sequence branching —

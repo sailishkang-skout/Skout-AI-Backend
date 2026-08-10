@@ -37,6 +37,7 @@ describe("sweepTasks", () => {
         workspaceId: "ws-1",
         assignedTo: "user-1",
         title: "Follow up with Acme",
+        type: "custom",
         dueDate: new Date("2026-01-01T12:00:00.000Z"),
       },
     ];
@@ -59,6 +60,28 @@ describe("sweepTasks", () => {
     );
   });
 
+  it("prefixes the reminder title with the task type when it isn't \"custom\"", async () => {
+    const due = [
+      {
+        id: "task-3",
+        workspaceId: "ws-1",
+        assignedTo: "user-1",
+        title: "Call Jane",
+        type: "call",
+        dueDate: new Date("2026-01-01T12:00:00.000Z"),
+      },
+    ];
+    const db = { select: vi.fn().mockReturnValue(selectChain(due)) };
+
+    await sweepTasks(db as never, CONFIG, tasks, notifications, LEAD_CUTOFF);
+
+    expect(createNotification).toHaveBeenCalledWith(
+      db,
+      CONFIG,
+      expect.objectContaining({ title: 'Call "Call Jane" is due soon' })
+    );
+  });
+
   it("does nothing when no tasks are due", async () => {
     const db = { select: vi.fn().mockReturnValue(selectChain([])) };
 
@@ -74,6 +97,7 @@ describe("sweepTasks", () => {
         workspaceId: "ws-1",
         assignedTo: null,
         title: "Unassigned task",
+        type: "custom",
         dueDate: new Date("2026-01-01T12:00:00.000Z"),
       },
     ];

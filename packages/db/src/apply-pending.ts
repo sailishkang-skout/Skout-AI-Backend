@@ -237,6 +237,7 @@ try {
   await runSqlMigration("0037_next_best_action_suggestions", "0037_next_best_action_suggestions.sql");
   await runSqlMigration("0038_call_notes", "0038_call_notes.sql");
   await runSqlMigration("0039_notification_broadcast_and_indexes", "0039_notification_broadcast_and_indexes.sql");
+  await runSqlMigration("0040_task_type_completed_at", "0040_task_type_completed_at.sql");
 
 } finally {
   await sql.end();
