@@ -364,6 +364,45 @@ pnpm infra:deploy:dev
 
 Branching: [`docs/git-workflow.md`](docs/git-workflow.md) · Environments: [`docs/deployment-environments.md`](docs/deployment-environments.md)
 
+### Manual deploy from your machine (dev)
+
+Normally dev deploys via GitHub Actions on push to `develop` (see table above). To push a change
+manually instead — e.g. testing before merging — run this from the repo root. Requires AWS CLI
+configured (`aws configure`) for the dev account, and Docker running (`Skout Ai Frontend` must be
+a sibling folder next to this repo; `push-images:dev` finds it automatically and builds all three
+images — API, AI, and Web/frontend — in one pass).
+
+**Updating an environment that's already deployed** (the common case):
+
+```bash
+cd "Skout AI Backend"
+
+# 1. Build + push new images (API, AI, Web) to ECR
+pnpm --filter @skout/infra push-images:dev
+
+# 2. Roll the new images out to ECS — fast, no CloudFormation (~2-5 min)
+pnpm --filter @skout/infra redeploy:dev
+```
+
+If the change includes a **DB migration**, run it before step 2:
+
+```bash
+bash scripts/ecs-run-migrations.sh SkoutDev
+```
+
+If the change touches **infra itself** (CDK, env vars, ECS sizing) rather than just app code, use
+a full CDK deploy instead of `redeploy:dev`:
+
+```bash
+pnpm --filter @skout/infra deploy:dev
+```
+
+**First-time setup** (nothing deployed yet in this AWS account) needs CDK bootstrap and the base
+stacks first — see [`infra/README.md`](infra/README.md#deploy-dev) for the full sequence.
+
+Prod follows the same pattern with `SkoutProd` / `deploy:prod`, but requires manual approval for
+destructive CDK changes — see [`infra/README.md`](infra/README.md#deploy-prod).
+
 ## Build order (from development plan)
 
 1. Search API + Redis cache + OpenSearch index

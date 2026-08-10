@@ -219,6 +219,22 @@ export class ListService {
     return this.getListByIdWithMembers(workspaceId, listId);
   }
 
+  /**
+   * R13.4 — undo half of `addMembers`, used by `reverseRuleRun` to actually remove a prospect an
+   * `add_to_list` rule added (previously that "reverse" only marked the audit row, never touched
+   * membership). Returns false if the list doesn't belong to this workspace or the prospect
+   * wasn't a member — both are legitimate "nothing to reverse" outcomes, not errors.
+   */
+  async removeMember(workspaceId: string, listId: string, prospectId: string): Promise<boolean> {
+    const list = await this.getListById(workspaceId, listId);
+    if (!list) return false;
+    const deleted = await this.db
+      .delete(listMembers)
+      .where(and(eq(listMembers.listId, listId), eq(listMembers.prospectId, prospectId)))
+      .returning({ prospectId: listMembers.prospectId });
+    return deleted.length > 0;
+  }
+
   async getMembers(workspaceId: string, listId: string): Promise<ProspectListMember[] | null> {
     const list = await this.getListById(workspaceId, listId);
     if (!list) return null;

@@ -17,6 +17,8 @@ import { DbStore } from "./db-store.js";
 import { MemoryStore } from "./memory-store.js";
 import { EnrichmentService } from "./service.js";
 import type { EnrichmentStore } from "./types.js";
+import type { ProspectSnapshot as ActivateSnapshot } from "./service.js";
+import { applyEnrichmentAutoFill } from "../enrichment-autofill.service.js";
 
 export * from "./types.js";
 export { EnrichmentService } from "./service.js";
@@ -132,6 +134,11 @@ export function buildEnrichmentService(db: Db | null, config: Env): EnrichmentSe
     db ? (ws) => getWorkspaceIcp(db, ws) : undefined,
     db ? (ws) => ensureDemoWorkspace(db, ws) : undefined,
     (result) => writeScoreToOpenSearch(config, result),
-    config.OPENROUTER_API_KEY
+    config.OPENROUTER_API_KEY,
+    // R13.3 — `activate` always sets prospectId/companyId on the snapshot before calling this.
+    db
+      ? (ws, snapshot) =>
+          applyEnrichmentAutoFill(db, ws, snapshot as ActivateSnapshot & { prospectId: string; companyId: string })
+      : undefined
   );
 }

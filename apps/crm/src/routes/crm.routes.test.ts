@@ -91,18 +91,32 @@ describe("activities routes (unit)", () => {
 });
 
 describe("audit routes (unit)", () => {
-  it("GET /audit-logs returns empty scaffold list without a database", async () => {
+  it("GET /audit-logs returns 503 without a database", async () => {
     const app = await buildRouteTestApp();
     const res = await app.inject({
       method: "GET",
       url: `/api/v1/audit-logs?entityType=company&entityId=aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee`,
     });
 
-    expect(res.statusCode).toBe(200);
-    expect((res.json() as { data: unknown[] }).data).toEqual([]);
+    expect(res.statusCode).toBe(503);
 
     await app.close();
   });
+
+  it.each(["contact", "company", "deal", "task", "pipeline"])(
+    "GET /audit-logs accepts entityType=%s (fails on DB availability, not validation)",
+    async (entityType) => {
+      const app = await buildRouteTestApp();
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/audit-logs?entityType=${entityType}&entityId=aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee`,
+      });
+
+      expect(res.statusCode).toBe(503);
+
+      await app.close();
+    }
+  );
 
   it("GET /audit-logs rejects invalid entityId with a 400 validation error", async () => {
     const app = await buildRouteTestApp();

@@ -28,6 +28,8 @@ export const calls = pgTable(
     recordingUrl: text("recording_url"),
     /** The `activities` row this call logged on the contact's timeline, once created. */
     activityId: uuid("activity_id"),
+    /** R13.3 — free-text notes a rep attaches after the call; source for call_note auto-fill. */
+    notes: text("notes"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

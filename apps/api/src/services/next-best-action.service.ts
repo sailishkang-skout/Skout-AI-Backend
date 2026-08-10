@@ -4,9 +4,20 @@ import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
+import { listSignalsForEntity } from "./signal.service.js";
 
 const log = createLogger("next-best-action.service");
-const { contacts, companies, deals, activities, tasks, meetings, nextBestActionSuggestions } = schema;
+const {
+  contacts,
+  companies,
+  deals,
+  activities,
+  tasks,
+  meetings,
+  prospectActivations,
+  prospectScores,
+  nextBestActionSuggestions,
+} = schema;
 
 export type SuggestedActionType = "call" | "email" | "meeting" | "wait" | "task";
 
@@ -18,12 +29,15 @@ export interface NextBestActionSuggestion {
 }
 
 const SYSTEM_PROMPT = `You are a sales-ops assistant suggesting the single best next action for a
-GTM rep to take on one CRM contact or deal, based on the recent activity/task/meeting history
-provided. Be specific and concrete, not generic. Reply with ONLY valid JSON (no markdown fences):
+GTM rep to take on one CRM contact or deal, based on the recent activity/task/meeting history,
+AND the prospect's ICP score and any active signals (funding, hiring, intent spikes, etc.) when
+given. Weigh score/signals as real inputs, not decoration — e.g. a high score plus an active
+hiring signal should push toward a more assertive next step than the same activity history alone
+would. Be specific and concrete, not generic. Reply with ONLY valid JSON (no markdown fences):
 {
   "actionType": "call" | "email" | "meeting" | "wait" | "task",
   "headline": "one short sentence — the action itself, e.g. 'Call about the paused pilot'",
-  "rationale": "1-2 sentences on why, grounded in the specific history given",
+  "rationale": "1-2 sentences on why, grounded in the specific history and score/signals given",
   "draftMessage": "optional — a short draft if actionType is email, otherwise omit"
 }
 If there's genuinely nothing to act on yet (no signal either way), use actionType "wait" and say so.`;
@@ -97,6 +111,38 @@ async function gatherContext(
       lines.push(
         `Most recent meeting (${meeting.scheduledAt.toISOString().slice(0, 10)}): outcome=${meeting.outcome ?? "not set"}${meeting.summary ? `, summary: ${meeting.summary.slice(0, 500)}` : ""}`
       );
+    }
+  }
+
+  // R20.3 AC — ground the suggestion in the prospect's actual score/signals, not just activity
+  // history. Only reachable when the CRM record is linked back to a corpus prospect (contact's
+  // `sourceProspectId`, or a deal's company `sourceProspectCompanyId` for a signal-only read).
+  let sourceProspectId: string | null = null;
+  if (contactId) {
+    const [contact] = await db.select({ sourceProspectId: contacts.sourceProspectId }).from(contacts).where(eq(contacts.id, contactId)).limit(1);
+    sourceProspectId = contact?.sourceProspectId ?? null;
+  }
+  if (sourceProspectId) {
+    const [scoreRow] = await db
+      .select()
+      .from(prospectActivations)
+      .where(and(eq(prospectActivations.workspaceId, workspaceId), eq(prospectActivations.prospectId, sourceProspectId)))
+      .limit(1);
+    const [score] = await db
+      .select()
+      .from(prospectScores)
+      .where(and(eq(prospectScores.workspaceId, workspaceId), eq(prospectScores.prospectId, sourceProspectId)))
+      .limit(1);
+    if (score) {
+      lines.push(`ICP score: ${score.score}/100${score.priority ? ` (priority: ${score.priority})` : ""}`);
+    } else if (scoreRow) {
+      lines.push(`Activated prospect, not yet scored.`);
+    }
+
+    const signalRecords = await listSignalsForEntity(db, sourceProspectId, { entityType: "prospect" });
+    if (signalRecords.length > 0) {
+      const types = [...new Set(signalRecords.map((s) => s.signalType))];
+      lines.push(`Active signals: ${types.join(", ")}`);
     }
   }
 
