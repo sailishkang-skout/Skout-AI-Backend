@@ -23,6 +23,7 @@ import {
   type ExportArtifact,
   type ExportDataset,
 } from "./ai-export.service.js";
+import { computeCroSummary } from "./cro-summary.service.js";
 
 const APP_ROUTES = [
   { path: "/dashboard", purpose: "Workspace overview and recent enrichment jobs" },
@@ -371,6 +372,15 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
   {
     type: "function",
     function: {
+      name: "get_cro_summary",
+      description:
+        "ADMIN ONLY — exec rollup for CRO Copilot: company/contact/open-deal counts, pipeline value, overdue tasks, stale deals (no update in 14+ days), and rep activity over the last 7 days. Only available when the agent is 'cro' and the caller is owner/admin.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "list_app_routes",
       description:
         "Catalog of important in-app routes and what each screen is for. Use before suggesting navigation.",
@@ -386,7 +396,9 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
 export function createWorkspaceToolRunner(
   db: Db | null,
   config: Env,
-  workspaceId: string
+  workspaceId: string,
+  /** R19.2 — gates the get_cro_summary tool. Only owner/admin callers should pass true. */
+  isAdmin = false
 ): WorkspaceToolRunner {
   const analytics = createAnalyticsService(db, config);
   const dashboard = createDashboardService(db, config);
@@ -404,6 +416,12 @@ export function createWorkspaceToolRunner(
 
   const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
     get_workspace_overview: () => dashboard.getSummary(workspaceId),
+
+    get_cro_summary: async () => {
+      if (!isAdmin) throw new Error("get_cro_summary is admin-only");
+      if (!db) throw new Error("database_unavailable");
+      return computeCroSummary(db, workspaceId);
+    },
 
     get_credit_analytics: async (args) => {
       const days = clampInt(args.days, 30, 7, 90);

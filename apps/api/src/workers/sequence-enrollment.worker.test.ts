@@ -28,7 +28,7 @@ vi.mock("@skout/db", () => ({
     inboxMessages: "inboxMessages",
     aiDrafts: "aiDrafts",
     contacts: "contacts",
-    tasks: "tasks",
+    tasks: { id: "id", disposition: "disposition", sequenceEnrollmentStepId: "sequence_enrollment_step_id" },
   },
 }));
 
@@ -226,6 +226,7 @@ function makeWorkerDb(opts: {
   select.mockReturnValueOnce(selectChain([ENROLLMENT_ROW])); // load enrollment
   select.mockReturnValueOnce(selectChain([])); // bounced check
   select.mockReturnValueOnce(selectChain([])); // reply check
+  select.mockReturnValueOnce(selectChain([])); // awaiting call disposition (none)
   select.mockReturnValueOnce(selectChain(opts.pendingStep ? [opts.pendingStep] : [])); // pending step
   // approved-draft lookup (executeEmailStep) — only reached once the step actually sends
   select.mockReturnValueOnce(selectChain(opts.approvedDraft ? [opts.approvedDraft] : []));
@@ -530,6 +531,7 @@ describe("sequence-enrollment worker — manual task step execution", () => {
     select.mockReturnValueOnce(selectChain([ENROLLMENT_ROW])); // load enrollment
     select.mockReturnValueOnce(selectChain([])); // bounced check
     select.mockReturnValueOnce(selectChain([])); // reply check
+    select.mockReturnValueOnce(selectChain([])); // awaiting-call-disposition check
     select.mockReturnValueOnce(selectChain([TASK_STEP_ROW])); // pending step
     select.mockReturnValueOnce(selectChain(opts.matchedContact ? [opts.matchedContact] : [])); // contact lookup
     select.mockReturnValueOnce(selectChain([])); // next pending step (none → completed)
@@ -558,7 +560,9 @@ describe("sequence-enrollment worker — manual task step execution", () => {
     const processor = await getProcessor(db);
     await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
 
-    expect(insert).toHaveBeenCalledWith("tasks");
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "id", disposition: "disposition", sequenceEnrollmentStepId: "sequence_enrollment_step_id" })
+    );
     expect(insertValues).toHaveBeenCalledWith(
       expect.objectContaining({
         workspaceId: "ws-1",
@@ -599,6 +603,7 @@ describe("sequence-enrollment worker — manual task step execution", () => {
     select.mockReturnValueOnce(selectChain([ENROLLMENT_ROW]));
     select.mockReturnValueOnce(selectChain([]));
     select.mockReturnValueOnce(selectChain([]));
+    select.mockReturnValueOnce(selectChain([])); // awaiting-call-disposition check
     select.mockReturnValueOnce(selectChain([stepWithNoSubject]));
     select.mockReturnValueOnce(selectChain([]));
     select.mockReturnValueOnce(selectChain([]));

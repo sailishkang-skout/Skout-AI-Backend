@@ -3,6 +3,7 @@ import {
   date,
   index,
   integer,
+  jsonb,
   numeric,
   pgTable,
   text,
@@ -12,6 +13,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { users } from "./users.js";
 import { workspaces } from "./workspaces.js";
+import { sequenceEnrollments, sequenceEnrollmentSteps } from "./sequences.js";
 
 export const companies = pgTable(
   "companies",
@@ -29,6 +31,8 @@ export const companies = pgTable(
     ownerId: uuid("owner_id").references(() => users.id, { onDelete: "set null" }),
     status: text("status").notNull().default("active"),
     sourceProspectCompanyId: text("source_prospect_company_id"),
+    /** R13.3 — per-field provenance: { [field]: { source, confidence?, setAt } }. "manual" wins forever. */
+    fieldSources: jsonb("field_sources").notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -56,6 +60,8 @@ export const contacts = pgTable(
     ownerId: uuid("owner_id").references(() => users.id, { onDelete: "set null" }),
     lifecycleStage: text("lifecycle_stage").notNull().default("lead"),
     sourceProspectId: text("source_prospect_id"),
+    /** R13.3 — per-field provenance: { [field]: { source, confidence?, setAt } }. "manual" wins forever. */
+    fieldSources: jsonb("field_sources").notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -122,6 +128,9 @@ export const deals = pgTable(
     closeDate: date("close_date"),
     probability: integer("probability"),
     status: text("status").notNull().default("open"),
+    /** R16.3 — per-field provenance for LLM-extracted deal fields (amount/closeDate), same
+     * pattern R13.3 built for contacts/companies. "manual" wins forever. */
+    fieldSources: jsonb("field_sources").notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -149,7 +158,28 @@ export const tasks = pgTable(
     dueDate: timestamp("due_date", { withTimezone: true }),
     priority: text("priority").notNull().default("medium"),
     status: text("status").notNull().default("open"),
+    /** R21.1 — recorded when a task enters either terminal status (done or skipped). */
     completedAt: timestamp("completed_at", { withTimezone: true }),
+    /**
+     * R20.4 — set by the SDR after placing a "call" sequence-step call:
+     * "connected" | "no_answer" | "voicemail" | "bad_number". Drives sequence branching —
+     * see resolveCallDisposition() in sequence-enrollment.worker.ts, which treats this the same
+     * way detectCadenceSignal() treats a reply/bounce.
+     */
+    disposition: text("disposition"),
+    /**
+     * Corpus prospectId (text hash, not the `relatedEntityId` uuid column above — see R14.1)
+     * for "call" sequence-step tasks, so the task's "Call now" button can resolve a phone
+     * number without a second round trip, and so disposition can be traced back to the
+     * enrollment/step it should unblock.
+     */
+    prospectId: text("prospect_id"),
+    sequenceEnrollmentId: uuid("sequence_enrollment_id").references(() => sequenceEnrollments.id, {
+      onDelete: "set null",
+    }),
+    sequenceEnrollmentStepId: uuid("sequence_enrollment_step_id").references(() => sequenceEnrollmentSteps.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -203,6 +233,23 @@ export const meetings = pgTable(
     meetingType: text("meeting_type").notNull().default("call"),
     summary: text("summary"),
     outcome: text("outcome"),
+    /** R16.2 — Zoom/Meet/Teams join link the bot dials into. */
+    meetingUrl: text("meeting_url"),
+    /** R16.2 — meeting-bot vendor's id for this session, for webhook correlation. */
+    botExternalId: text("bot_external_id"),
+    /** not_scheduled | scheduled | joining | in_call | completed | failed */
+    botStatus: text("bot_status").notNull().default("not_scheduled"),
+    /**
+     * R16.2 — opt-in auto-join: when true, the meeting-auto-join worker schedules the bot on
+     * its own (no manual "Schedule bot" click needed) once `meetingUrl` is set and the meeting
+     * is within its scheduling lookahead window. Defaults from the workspace setting at create
+     * time but can be overridden per meeting.
+     */
+    autoJoinBot: boolean("auto_join_bot").notNull().default(false),
+    recordingUrl: text("recording_url"),
+    transcriptUrl: text("transcript_url"),
+    /** Full transcript text, when the vendor sends it inline rather than as a fetchable URL. */
+    transcript: text("transcript"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -211,5 +258,7 @@ export const meetings = pgTable(
     index("meetings_workspace_id_idx").on(table.workspaceId),
     index("meetings_workspace_scheduled_idx").on(table.workspaceId, table.scheduledAt),
     index("meetings_workspace_deal_idx").on(table.workspaceId, table.dealId),
+    index("meetings_bot_external_id_idx").on(table.botExternalId),
+    index("meetings_auto_join_due_idx").on(table.autoJoinBot, table.botStatus, table.scheduledAt),
   ]
 );

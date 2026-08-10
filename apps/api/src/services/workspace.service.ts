@@ -24,11 +24,33 @@ export function createWorkspaceService(db: Db) {
           slug: schema.workspaces.slug,
           createdAt: schema.workspaces.createdAt,
           balance: schema.creditBalances.balance,
+          slackWebhookUrl: schema.workspaces.slackWebhookUrl,
+          meetingBotAutoJoinDefault: schema.workspaces.meetingBotAutoJoinDefault,
         })
         .from(schema.workspaces)
         .leftJoin(schema.creditBalances, eq(schema.creditBalances.workspaceId, schema.workspaces.id))
         .where(eq(schema.workspaces.id, workspaceId))
         .limit(1);
+      return row ?? null;
+    },
+
+    /** R17.4 — per-workspace Slack incoming-webhook URL for notification delivery. Pass null to disconnect. */
+    async setSlackWebhook(workspaceId: string, slackWebhookUrl: string | null) {
+      const [row] = await db
+        .update(schema.workspaces)
+        .set({ slackWebhookUrl, updatedAt: new Date() })
+        .where(eq(schema.workspaces.id, workspaceId))
+        .returning({ id: schema.workspaces.id, slackWebhookUrl: schema.workspaces.slackWebhookUrl });
+      return row ?? null;
+    },
+
+    /** R16.2 — workspace-wide default for new meetings' auto-join-bot flag. */
+    async setMeetingBotAutoJoinDefault(workspaceId: string, enabled: boolean) {
+      const [row] = await db
+        .update(schema.workspaces)
+        .set({ meetingBotAutoJoinDefault: enabled, updatedAt: new Date() })
+        .where(eq(schema.workspaces.id, workspaceId))
+        .returning({ id: schema.workspaces.id, meetingBotAutoJoinDefault: schema.workspaces.meetingBotAutoJoinDefault });
       return row ?? null;
     },
 

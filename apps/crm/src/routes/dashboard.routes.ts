@@ -7,6 +7,7 @@ import { buildDealsService } from "../services/deals.service.js";
 import { buildMeetingsService } from "../services/meetings.service.js";
 import { buildPipelinesService } from "../services/pipelines.service.js";
 import { buildTasksService } from "../services/tasks.service.js";
+import { requireRole } from "../utils/require-role.js";
 
 export async function dashboardRoutes(app: FastifyInstance) {
   const service = () => {
@@ -40,5 +41,34 @@ export async function dashboardRoutes(app: FastifyInstance) {
       };
     }
     return svc.overview(workspaceId);
+  });
+
+  /** R14.3 — internal-only "switching cost" metric. Owner/admin only; not for reps or customers. */
+  app.get("/dashboard/switching-cost", async (request) => {
+    requireRole(request, ["owner", "admin"]);
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) {
+      return {
+        workspaceId,
+        totalContacts: 0,
+        nativeLinkedContacts: 0,
+        totalCompanies: 0,
+        nativeLinkedCompanies: 0,
+        nativeLinkRatePct: 0,
+        note: "database unavailable",
+      };
+    }
+    return svc.switchingCost(workspaceId);
+  });
+
+  /** R19.1 — CRO Copilot admin-only exec rollup. 403s at the API level for non-admins (R19.3
+   * mirrors this at the nav/route level in the frontend). */
+  app.get("/dashboard/cro-summary", async (request, reply) => {
+    requireRole(request, ["owner", "admin"]);
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) return reply.code(503).send({ error: "database_unavailable" });
+    return svc.croSummary(workspaceId);
   });
 }

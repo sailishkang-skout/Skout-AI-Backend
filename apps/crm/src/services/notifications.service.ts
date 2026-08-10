@@ -15,7 +15,7 @@ export interface CreateNotificationInput {
 }
 
 /**
- * Mirrors apps/api's notification.service.ts (R17.1) — duplicated rather than shared because
+ * Mirrors apps/api's notifications.service.ts (R17.1) — duplicated rather than shared because
  * apps/crm and apps/api are independently deployed services that only share @skout/db's schema,
  * not each other's business logic (matching this monorepo's existing per-app service convention).
  */

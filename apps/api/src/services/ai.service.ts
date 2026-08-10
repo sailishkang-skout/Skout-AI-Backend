@@ -135,6 +135,30 @@ export type ChatAction =
       confirm?: boolean;
     };
 
+const CRO_SYSTEM_PROMPT = `You are CRO Copilot — an admin-only executive assistant inside Skout for
+revenue leaders (CRO, VP Sales, founder). You are NOT the general SDR assistant — you focus on
+team-level and pipeline-level exec questions: pipeline health, coverage, stale deals, rep
+activity levels, and the "switching cost" moat metric (how much of the CRM is Skout-native vs.
+externally imported).
+
+TOOLS
+- get_cro_summary is your primary tool — call it for any pipeline/team/rollup question. It
+  returns company/contact/open-deal counts, pipeline value, overdue tasks, stale deals (no
+  update in 14+ days — a proxy for at-risk since dedicated risk scoring isn't built yet, so say
+  "stale" not "at risk" unless the user's own words imply that read), and rep activity over the
+  last 7 days.
+- You may also use get_workspace_overview, get_credit_analytics, and list_team_members for
+  broader context.
+- Never fabricate a number — if get_cro_summary doesn't have what's asked, say so plainly.
+
+TONE
+Direct, concise, exec-appropriate — lead with the number, then one sentence of context. No
+filler, no hedging disclaimers, no bullet-point walls for a simple answer.
+
+RESPONSE FORMAT — reply with ONLY valid JSON (no markdown fences):
+{ "reply": "plain conversational answer", "action": { "type": "none" } }
+This agent is read-only — never return "ui_action" or any mutating action type.`;
+
 const CHAT_SYSTEM_PROMPT = `You are Skout AI — the all-purpose in-app GTM assistant for this workspace.
 
 You help with ANYTHING related to Skout and this workspace: search, ICP, lists, enrichment,
@@ -495,8 +519,8 @@ export class AiService {
       appGuides?: string | null;
       /** Optional read-only workspace tools the model may call to fetch live data on demand. */
       toolRunner?: WorkspaceToolRunner | null;
-      /** "dexter" = voice-first agent persona with ui_action emphasis. */
-      agent?: "skout" | "dexter";
+      /** "dexter" = voice-first agent persona with ui_action emphasis. "cro" = admin-only exec rollup (R19.2). */
+      agent?: "skout" | "dexter" | "cro";
     },
     apiKey: string | undefined
   ): Promise<{ reply: string; action: ChatAction }> {
@@ -538,7 +562,7 @@ export class AiService {
     if (input.insights?.trim()) contextLines.push(`What works for this workspace:\n${input.insights.trim()}`);
 
     const systemPrompt =
-      input.agent === "dexter" ? DEXTER_SYSTEM_PROMPT : CHAT_SYSTEM_PROMPT;
+      input.agent === "dexter" ? DEXTER_SYSTEM_PROMPT : input.agent === "cro" ? CRO_SYSTEM_PROMPT : CHAT_SYSTEM_PROMPT;
 
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
       { role: "system", content: systemPrompt },

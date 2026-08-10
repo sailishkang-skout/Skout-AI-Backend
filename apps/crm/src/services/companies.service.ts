@@ -4,6 +4,15 @@ import { schema } from "@skout/db";
 import type { CompanyCreateInput, CompanyUpdateInput } from "@skout/shared";
 import { buildAuditService, type AuditService } from "./audit.service.js";
 import { serviceLog } from "../lib/obs.js";
+import {
+  asFieldSourcesMap,
+  filterAutoFillablePatch,
+  markManualSources,
+  mergeAutoFillSources,
+  type FieldSource,
+  type FieldSourcesMap,
+} from "../utils/field-sources.js";
+import { HttpError } from "@skout/auth";
 
 const log = serviceLog("companies");
 const { companies } = schema;
@@ -20,9 +29,19 @@ export interface CompanyDto {
   ownerId: string | null;
   status: string;
   sourceProspectCompanyId: string | null;
+  fieldSources: FieldSourcesMap;
   createdAt: string;
   updatedAt: string;
 }
+
+/** Fields eligible for auto-fill — deliberately excludes identity/ownership fields. */
+export interface CompanyAutoFillPatch {
+  industry?: string;
+  employeeCount?: number;
+  revenue?: number;
+  location?: string;
+}
+const AUTO_FILLABLE_COMPANY_FIELDS = ["industry", "employeeCount", "revenue", "location"] as const;
 
 type CompanyDbUpdatePatch = Partial<{
   name: string;
@@ -49,6 +68,7 @@ function toDto(row: typeof companies.$inferSelect): CompanyDto {
     ownerId: row.ownerId,
     status: row.status,
     sourceProspectCompanyId: row.sourceProspectCompanyId,
+    fieldSources: asFieldSourcesMap(row.fieldSources),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -149,7 +169,15 @@ export class CompaniesService {
         : {}),
     };
 
-    if (!hasMeaningfulChanges(existing, patch)) {
+    // R13.3: a human editing an auto-fillable field via this endpoint marks it "manual" —
+    // auto-fill can never overwrite it again after this.
+    const editedAutoFillable = AUTO_FILLABLE_COMPANY_FIELDS.filter((field) => input[field] !== undefined);
+    const nextFieldSources =
+      editedAutoFillable.length > 0
+        ? markManualSources(asFieldSourcesMap(existing.fieldSources), editedAutoFillable)
+        : undefined;
+
+    if (!hasMeaningfulChanges(existing, patch) && !nextFieldSources) {
       return existing;
     }
 
@@ -158,6 +186,7 @@ export class CompaniesService {
         .update(companies)
         .set({
           ...patch,
+          ...(nextFieldSources !== undefined ? { fieldSources: nextFieldSources } : {}),
           updatedAt: new Date(),
         } satisfies Partial<typeof companies.$inferInsert>)
         .where(and(eq(companies.id, id), eq(companies.workspaceId, workspaceId)))
@@ -170,6 +199,52 @@ export class CompaniesService {
       }
       if (row) log.info("company updated", { workspaceId, companyId: id });
       return dto;
+    });
+  }
+
+  /**
+   * R13.3 — auto-fill fields from enrichment. Fields a human has already manually edited are
+   * silently skipped (never overwritten); returns which fields were applied vs. skipped.
+   */
+  async autoFill(
+    workspaceId: string,
+    id: string,
+    patch: CompanyAutoFillPatch,
+    source: FieldSource,
+    confidence?: number
+  ): Promise<{ company: CompanyDto; applied: string[]; skipped: string[] } | null> {
+    if (source === "manual") {
+      throw new HttpError("invalid_auto_fill_source", 400, { reason: "use update() for manual edits" });
+    }
+    const existing = await this.getById(workspaceId, id);
+    if (!existing) return null;
+
+    const { applied, skipped } = filterAutoFillablePatch(patch, existing.fieldSources);
+    const appliedFields = Object.keys(applied);
+    if (appliedFields.length === 0) {
+      return { company: existing, applied: [], skipped };
+    }
+
+    const nextFieldSources = mergeAutoFillSources(existing.fieldSources, appliedFields, source, confidence);
+    const dbPatch: CompanyDbUpdatePatch = {
+      ...(applied.industry !== undefined ? { industry: applied.industry } : {}),
+      ...(applied.employeeCount !== undefined ? { employeeCount: applied.employeeCount } : {}),
+      ...(applied.revenue !== undefined ? { revenue: String(applied.revenue) } : {}),
+      ...(applied.location !== undefined ? { location: applied.location } : {}),
+    };
+
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(companies)
+        .set({ ...dbPatch, fieldSources: nextFieldSources, updatedAt: new Date() })
+        .where(and(eq(companies.id, id), eq(companies.workspaceId, workspaceId)))
+        .returning();
+
+      const dto = toDto(row);
+      const txAuditService = buildAuditService(tx as never);
+      await txAuditService?.record(workspaceId, undefined, "update", "company", id, existing, dto);
+      log.info("company auto-filled", { workspaceId, companyId: id, source, applied: appliedFields, skipped });
+      return { company: dto, applied: appliedFields, skipped };
     });
   }
 

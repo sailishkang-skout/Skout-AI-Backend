@@ -6,7 +6,7 @@ import type { ActivitiesService } from "./activities.service.js";
 import { serviceLog } from "../lib/obs.js";
 
 const log = serviceLog("meetings");
-const { meetings } = schema;
+const { meetings, workspaces } = schema;
 
 export interface MeetingDto {
   id: string;
@@ -21,6 +21,14 @@ export interface MeetingDto {
   meetingType: string;
   summary: string | null;
   outcome: string | null;
+  meetingUrl: string | null;
+  botExternalId: string | null;
+  botStatus: string;
+  /** R16.2 — opt-in auto-join; when true the meeting-auto-join worker schedules the bot on its own. */
+  autoJoinBot: boolean;
+  recordingUrl: string | null;
+  transcriptUrl: string | null;
+  transcript: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -39,6 +47,13 @@ function toDto(row: typeof meetings.$inferSelect): MeetingDto {
     meetingType: row.meetingType,
     summary: row.summary,
     outcome: row.outcome,
+    meetingUrl: row.meetingUrl,
+    botExternalId: row.botExternalId,
+    botStatus: row.botStatus,
+    autoJoinBot: row.autoJoinBot,
+    recordingUrl: row.recordingUrl,
+    transcriptUrl: row.transcriptUrl,
+    transcript: row.transcript,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -83,7 +98,20 @@ export class MeetingsService {
     return row ? toDto(row) : null;
   }
 
+  /** R16.2 — resolves the effective auto-join flag: an explicit per-meeting value always wins;
+   * otherwise inherit the workspace default. */
+  private async resolveAutoJoinBot(workspaceId: string, explicit: boolean | undefined): Promise<boolean> {
+    if (explicit !== undefined) return explicit;
+    const [ws] = await this.db
+      .select({ meetingBotAutoJoinDefault: workspaces.meetingBotAutoJoinDefault })
+      .from(workspaces)
+      .where(eq(workspaces.id, workspaceId))
+      .limit(1);
+    return ws?.meetingBotAutoJoinDefault ?? false;
+  }
+
   async create(workspaceId: string, organizerId: string | undefined, input: MeetingCreateInput): Promise<MeetingDto> {
+    const autoJoinBot = await this.resolveAutoJoinBot(workspaceId, input.autoJoinBot);
     const [row] = await this.db
       .insert(meetings)
       .values({
@@ -98,6 +126,8 @@ export class MeetingsService {
         meetingType: input.meetingType,
         summary: input.summary,
         outcome: input.outcome,
+        meetingUrl: input.meetingUrl,
+        autoJoinBot,
       })
       .returning();
 
@@ -133,6 +163,8 @@ export class MeetingsService {
         ...(input.organizerId !== undefined ? { organizerId: input.organizerId } : {}),
         ...(input.summary !== undefined ? { summary: input.summary } : {}),
         ...(input.outcome !== undefined ? { outcome: input.outcome } : {}),
+        ...(input.meetingUrl !== undefined ? { meetingUrl: input.meetingUrl } : {}),
+        ...(input.autoJoinBot !== undefined ? { autoJoinBot: input.autoJoinBot } : {}),
         updatedAt: new Date(),
       })
       .where(and(eq(meetings.id, id), eq(meetings.workspaceId, workspaceId)))
@@ -151,6 +183,89 @@ export class MeetingsService {
       .where(and(eq(meetings.id, id), eq(meetings.workspaceId, workspaceId)));
     log.info("meeting soft-deleted", { workspaceId, meetingId: id });
     return true;
+  }
+
+  /** R16.2 — record that a bot has been scheduled for this meeting. */
+  async setBotScheduled(workspaceId: string, id: string, botExternalId: string): Promise<MeetingDto | null> {
+    const [row] = await this.db
+      .update(meetings)
+      .set({ botExternalId, botStatus: "scheduled", updatedAt: new Date() })
+      .where(and(eq(meetings.id, id), eq(meetings.workspaceId, workspaceId)))
+      .returning();
+    return row ? toDto(row) : null;
+  }
+
+  /** R16.2 — webhook correlates by the vendor's bot id, not our own meeting id. */
+  async findByBotExternalId(botExternalId: string) {
+    const [row] = await this.db.select().from(meetings).where(eq(meetings.botExternalId, botExternalId)).limit(1);
+    return row ?? null;
+  }
+
+  /** R16.2/R16.3 — apply a webhook update (status + transcript/recording + optional summary). */
+  async applyWebhookUpdate(
+    id: string,
+    update: {
+      botStatus?: string;
+      transcript?: string;
+      transcriptUrl?: string;
+      recordingUrl?: string;
+      summary?: string;
+    }
+  ): Promise<MeetingDto | null> {
+    const [row] = await this.db
+      .update(meetings)
+      .set({
+        ...(update.botStatus !== undefined ? { botStatus: update.botStatus } : {}),
+        ...(update.transcript !== undefined ? { transcript: update.transcript } : {}),
+        ...(update.transcriptUrl !== undefined ? { transcriptUrl: update.transcriptUrl } : {}),
+        ...(update.recordingUrl !== undefined ? { recordingUrl: update.recordingUrl } : {}),
+        ...(update.summary !== undefined ? { summary: update.summary } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(meetings.id, id))
+      .returning();
+    return row ? toDto(row) : null;
+  }
+
+  /**
+   * R16.2/R16.3 AC — post the transcript summary + action items + LLM-extracted next steps and
+   * stakeholders to the CRM activity timeline (not just the `meetings` row's own summary
+   * column), so it shows up alongside every other interaction on the contact/company/deal.
+   * `nextSteps`/`stakeholders` aren't scalar CRM fields, so unlike the typed contact/company/deal
+   * fields they're never auto-filled onto a record — this timeline post is where they live.
+   * Same entity-priority as create() above.
+   */
+  async recordTranscriptActivity(
+    workspaceId: string,
+    meeting: MeetingDto,
+    summary: string | undefined,
+    actionItems: string[] | undefined,
+    nextSteps?: string,
+    stakeholders?: string[]
+  ): Promise<void> {
+    const hasContent =
+      Boolean(summary) || (actionItems && actionItems.length > 0) || Boolean(nextSteps) || (stakeholders && stakeholders.length > 0);
+    if (!hasContent) return;
+
+    const bodyLines: string[] = [];
+    if (summary) bodyLines.push(summary);
+    if (nextSteps) bodyLines.push("", "Next steps:", nextSteps);
+    if (actionItems && actionItems.length > 0) {
+      bodyLines.push("", "Action items:", ...actionItems.map((item) => `- ${item}`));
+    }
+    if (stakeholders && stakeholders.length > 0) {
+      bodyLines.push("", "Stakeholders:", ...stakeholders.map((s) => `- ${s}`));
+    }
+    const body = bodyLines.join("\n");
+    const subject = `Meeting transcript ready: ${meeting.title}`;
+
+    if (meeting.dealId) {
+      await this.activitiesService.record(workspaceId, meeting.organizerId ?? undefined, "deal", meeting.dealId, "meeting", subject, body);
+    } else if (meeting.contactId) {
+      await this.activitiesService.record(workspaceId, meeting.organizerId ?? undefined, "contact", meeting.contactId, "meeting", subject, body);
+    } else if (meeting.companyId) {
+      await this.activitiesService.record(workspaceId, meeting.organizerId ?? undefined, "company", meeting.companyId, "meeting", subject, body);
+    }
   }
 
   /** Count of future meetings for the dashboard overview. */

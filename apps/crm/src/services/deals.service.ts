@@ -8,6 +8,13 @@ import type { PipelinesService } from "./pipelines.service.js";
 import type { ActivitiesService } from "./activities.service.js";
 import type { AuditService } from "./audit.service.js";
 import { serviceLog } from "../lib/obs.js";
+import {
+  asFieldSourcesMap,
+  filterAutoFillablePatch,
+  mergeAutoFillSources,
+  type FieldSource,
+  type FieldSourcesMap,
+} from "../utils/field-sources.js";
 
 const log = serviceLog("deals");
 const { deals, pipelineStages } = schema;
@@ -25,8 +32,15 @@ export interface DealDto {
   closeDate: string | null;
   probability: number | null;
   status: string;
+  fieldSources: FieldSourcesMap;
   createdAt: string;
   updatedAt: string;
+}
+
+/** R16.3 — fields an LLM transcript extraction (or other auto-fill source) may set: budget → amount, timeline → closeDate. */
+export interface DealAutoFillPatch {
+  amount?: number;
+  closeDate?: string;
 }
 
 export interface DealsSummaryDto {
@@ -51,6 +65,7 @@ function toDto(row: typeof deals.$inferSelect): DealDto {
     closeDate: row.closeDate,
     probability: row.probability,
     status: row.status,
+    fieldSources: asFieldSourcesMap(row.fieldSources),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -98,6 +113,49 @@ export class DealsService {
     return row ? toDto(row) : null;
   }
 
+  /**
+   * R16.3 — auto-fill budget/timeline (amount/closeDate) extracted from a meeting transcript.
+   * Same provenance rules as R13.3's contact/company autoFill: a manually-edited field is never
+   * overwritten, and every applied field carries a confidence value.
+   */
+  async autoFill(
+    workspaceId: string,
+    id: string,
+    patch: DealAutoFillPatch,
+    source: FieldSource,
+    confidence?: number
+  ): Promise<{ deal: DealDto; applied: string[]; skipped: string[] } | null> {
+    if (source === "manual") {
+      throw new HttpError("invalid_auto_fill_source", 400, { reason: "use update() for manual edits" });
+    }
+    const existing = await this.getById(workspaceId, id);
+    if (!existing) return null;
+
+    const { applied, skipped } = filterAutoFillablePatch(patch, existing.fieldSources);
+    const appliedFields = Object.keys(applied);
+    if (appliedFields.length === 0) {
+      return { deal: existing, applied: [], skipped };
+    }
+
+    const nextFieldSources = mergeAutoFillSources(existing.fieldSources, appliedFields, source, confidence);
+
+    const [row] = await this.db
+      .update(deals)
+      .set({
+        ...(applied.amount !== undefined ? { amount: String(applied.amount) } : {}),
+        ...(applied.closeDate !== undefined ? { closeDate: applied.closeDate } : {}),
+        fieldSources: nextFieldSources,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(deals.id, id), eq(deals.workspaceId, workspaceId)))
+      .returning();
+
+    const dto = toDto(row);
+    await this.auditService.record(workspaceId, undefined, "update", "deal", id, existing, dto);
+    log.info("deal auto-filled", { workspaceId, dealId: id, source, applied: appliedFields, skipped });
+    return { deal: dto, applied: appliedFields, skipped };
+  }
+
   async create(workspaceId: string, ownerId: string | undefined, input: DealCreateInput): Promise<DealDto> {
     if (!(await this.companiesService.existsInWorkspace(workspaceId, input.companyId))) {
       throw new HttpError("company_not_found", 404);
@@ -142,6 +200,18 @@ export class DealsService {
       throw new HttpError("company_not_found", 404);
     }
 
+    // R16.3 — a human editing amount/closeDate via this endpoint marks it "manual" so a later
+    // transcript-extraction auto-fill can never silently overwrite it again.
+    const editedAutoFillable = (["amount", "closeDate"] as const).filter((field) => input[field] !== undefined);
+    const nextFieldSources =
+      editedAutoFillable.length > 0
+        ? Object.fromEntries(
+            Object.entries(asFieldSourcesMap(existing.fieldSources)).concat(
+              editedAutoFillable.map((field) => [field, { source: "manual" as const, setAt: new Date().toISOString() }])
+            )
+          )
+        : undefined;
+
     const [row] = await this.db
       .update(deals)
       .set({
@@ -155,6 +225,7 @@ export class DealsService {
         ...(input.closeDate !== undefined ? { closeDate: input.closeDate } : {}),
         ...(input.probability !== undefined ? { probability: input.probability } : {}),
         ...(input.status !== undefined ? { status: input.status } : {}),
+        ...(nextFieldSources !== undefined ? { fieldSources: nextFieldSources } : {}),
         updatedAt: new Date(),
       })
       .where(and(eq(deals.id, id), eq(deals.workspaceId, workspaceId)))
