@@ -6,6 +6,14 @@ import { HttpError } from "@skout/auth";
 import type { CompaniesService } from "./companies.service.js";
 import type { AuditService } from "./audit.service.js";
 import { serviceLog } from "../lib/obs.js";
+import {
+  asFieldSourcesMap,
+  filterAutoFillablePatch,
+  markManualSources,
+  mergeAutoFillSources,
+  type FieldSource,
+  type FieldSourcesMap,
+} from "../utils/field-sources.js";
 
 const log = serviceLog("contacts");
 const { contacts } = schema;
@@ -23,8 +31,18 @@ export interface ContactDto {
   ownerId: string | null;
   lifecycleStage: string;
   sourceProspectId: string | null;
+  fieldSources: FieldSourcesMap;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Fields eligible for auto-fill — deliberately excludes identity/ownership fields. */
+export interface ContactAutoFillPatch {
+  email?: string;
+  phone?: string;
+  title?: string;
+  linkedinUrl?: string;
+  lifecycleStage?: string;
 }
 
 function toDto(row: typeof contacts.$inferSelect): ContactDto {
@@ -41,6 +59,7 @@ function toDto(row: typeof contacts.$inferSelect): ContactDto {
     ownerId: row.ownerId,
     lifecycleStage: row.lifecycleStage,
     sourceProspectId: row.sourceProspectId,
+    fieldSources: asFieldSourcesMap(row.fieldSources),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -125,6 +144,17 @@ export class ContactsService {
       throw new HttpError("company_not_found", 404);
     }
 
+    // R13.3: a human editing a field via this endpoint marks it "manual" — auto-fill can
+    // never overwrite it again after this. Only the auto-fillable subset is tracked; identity
+    // fields (name, companyId, ownerId, sourceProspectId) aren't part of the provenance map.
+    const editedAutoFillable = (["email", "phone", "title", "linkedinUrl", "lifecycleStage"] as const).filter(
+      (field) => input[field] !== undefined
+    );
+    const nextFieldSources =
+      editedAutoFillable.length > 0
+        ? markManualSources(asFieldSourcesMap(existing.fieldSources), editedAutoFillable)
+        : undefined;
+
     const [row] = await this.db
       .update(contacts)
       .set({
@@ -138,6 +168,7 @@ export class ContactsService {
         ...(input.ownerId !== undefined ? { ownerId: input.ownerId } : {}),
         ...(input.lifecycleStage !== undefined ? { lifecycleStage: input.lifecycleStage } : {}),
         ...(input.sourceProspectId !== undefined ? { sourceProspectId: input.sourceProspectId } : {}),
+        ...(nextFieldSources !== undefined ? { fieldSources: nextFieldSources } : {}),
         updatedAt: new Date(),
       })
       .where(and(eq(contacts.id, id), eq(contacts.workspaceId, workspaceId)))
@@ -149,6 +180,44 @@ export class ContactsService {
     }
     if (row) log.info("contact updated", { workspaceId, contactId: id });
     return dto;
+  }
+
+  /**
+   * R13.3 — auto-fill fields from enrichment / meeting notes / call notes. Fields a human has
+   * already manually edited are silently skipped (never overwritten); returns which fields
+   * were actually applied vs. skipped so the caller (e.g. the enrichment pipeline) can log it.
+   */
+  async autoFill(
+    workspaceId: string,
+    id: string,
+    patch: ContactAutoFillPatch,
+    source: FieldSource,
+    confidence?: number
+  ): Promise<{ contact: ContactDto; applied: string[]; skipped: string[] } | null> {
+    if (source === "manual") {
+      throw new HttpError("invalid_auto_fill_source", 400, { reason: "use update() for manual edits" });
+    }
+    const existing = await this.getById(workspaceId, id);
+    if (!existing) return null;
+
+    const { applied, skipped } = filterAutoFillablePatch(patch, existing.fieldSources);
+    const appliedFields = Object.keys(applied);
+    if (appliedFields.length === 0) {
+      return { contact: existing, applied: [], skipped };
+    }
+
+    const nextFieldSources = mergeAutoFillSources(existing.fieldSources, appliedFields, source, confidence);
+
+    const [row] = await this.db
+      .update(contacts)
+      .set({ ...applied, fieldSources: nextFieldSources, updatedAt: new Date() })
+      .where(and(eq(contacts.id, id), eq(contacts.workspaceId, workspaceId)))
+      .returning();
+
+    const dto = toDto(row);
+    await this.auditService.record(workspaceId, undefined, "update", "contact", id, existing, dto);
+    log.info("contact auto-filled", { workspaceId, contactId: id, source, applied: appliedFields, skipped });
+    return { contact: dto, applied: appliedFields, skipped };
   }
 
   async softDelete(workspaceId: string, id: string, actorId: string | undefined): Promise<boolean> {

@@ -23,6 +23,7 @@ import { dispatchWebhookEvent } from "../services/webhook.service.js";
 import { LinkedinAccountService, sendLinkedinOutreach, sendWhatsappOutreach } from "../services/linkedin-account.service.js";
 import { UnipileError } from "../services/unipile.client.js";
 import { LinkedinOutreachService } from "../services/linkedin-outreach.service.js";
+import { createNotification } from "../services/notifications.service.js";
 
 const log = createLogger("sequence-enrollment.worker");
 
@@ -453,6 +454,150 @@ async function executeLinkedinStep(
   }
 }
 
+/**
+ * R20.4 — "call" step. Twilio click-to-call (R20.2) isn't wired into automatic dialing — a
+ * cold outbound dial with no human on the line is bad practice regardless. Instead this step
+ * creates a CRM task ("Call <prospect>", due now) and an R17.1 notification to every
+ * owner/admin in the workspace, so a human places the call via the task's "Call now" affordance
+ * (once R20.2 credentials are configured) or manually otherwise.
+ *
+ * Unlike other step types, this one does NOT mark itself "executed" immediately — the step is
+ * left `awaiting_disposition` until the SDR sets `tasks.disposition` on the created task.
+ * `resolveCallDisposition()` below polls for that, then branches the cadence exactly the way
+ * `detectCadenceSignal()` branches on reply/bounce: "bad_number" stops the cadence outright,
+ * anything else (connected/no_answer/voicemail) resolves the step and lets the cadence continue.
+ */
+async function executeCallStep(
+  db: DbClient,
+  config: Env,
+  payload: SeqAdvanceJobPayload,
+  pending: PendingStep,
+  now: Date
+): Promise<"waiting"> {
+  const { enrollmentId, workspaceId, prospectId } = payload;
+  const { tasks, workspaceMembers } = schema;
+
+  const prospect = await resolveProspectFields(config, db, workspaceId, prospectId);
+  const prospectLabel = prospect?.fullName || prospectId;
+  const companySuffix = prospect?.companyName ? ` (${prospect.companyName})` : "";
+
+  await db.insert(tasks).values({
+    workspaceId,
+    title: `Call ${prospectLabel}${companySuffix}`,
+    dueDate: now,
+    priority: "high",
+    status: "open",
+    relatedEntityType: "sequence_call_step",
+    // relatedEntityId is uuid-typed; prospectId is a text corpus hash, not a uuid (see R14.1 —
+    // sequence/CRM identity isn't reconciled yet), so it can't be stored here without corrupting
+    // the column. prospectId (text) below carries it instead, and is what powers "Call now".
+    relatedEntityId: null,
+    prospectId,
+    sequenceEnrollmentId: enrollmentId,
+    sequenceEnrollmentStepId: pending.enrollmentStepId,
+  });
+
+  const owners = await db
+    .select({ userId: workspaceMembers.userId })
+    .from(workspaceMembers)
+    .where(and(eq(workspaceMembers.workspaceId, workspaceId), or(eq(workspaceMembers.role, "owner"), eq(workspaceMembers.role, "admin"))));
+
+  for (const { userId } of owners) {
+    try {
+      await createNotification(db, config, {
+        workspaceId,
+        userId,
+        type: "reminder",
+        title: `Call step due: ${prospectLabel}`,
+        body: `A "call" sequence step is due${companySuffix ? ` for ${prospectLabel}${companySuffix}` : ""}. A task has been created — dial from the CRM once ready.`,
+        entityType: "prospect",
+        entityId: prospectId,
+      });
+    } catch (err) {
+      log.warn("Failed to notify owner of due call step", { err, workspaceId, userId, enrollmentId });
+    }
+  }
+
+  await db
+    .update(sequenceEnrollmentSteps)
+    .set({ status: "awaiting_disposition", executedAt: null, failureReason: null })
+    .where(eq(sequenceEnrollmentSteps.id, pending.enrollmentStepId));
+  log.info("Call step created task + notified owners — awaiting disposition", { enrollmentId, prospectId });
+  return "waiting";
+}
+
+const CALL_DISPOSITION_POLL_MS = 15 * 60 * 1000;
+
+/**
+ * Finds an in-flight "call" step for this enrollment that's parked waiting on a human-set
+ * task disposition (see executeCallStep above).
+ */
+async function findAwaitingCallStep(db: DbClient, enrollmentId: string): Promise<{ enrollmentStepId: string } | null> {
+  const [row] = await db
+    .select({ enrollmentStepId: sequenceEnrollmentSteps.id })
+    .from(sequenceEnrollmentSteps)
+    .where(and(eq(sequenceEnrollmentSteps.enrollmentId, enrollmentId), eq(sequenceEnrollmentSteps.status, "awaiting_disposition")))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * R20.4 — the disposition equivalent of `detectCadenceSignal()`. "bad_number" is treated like a
+ * bounce (hard stop — dialing a bad number again on the next step wastes the SDR's time).
+ * "connected" / "no_answer" / "voicemail" all just resolve the step and let the cadence proceed
+ * to whatever comes next, same as a normal email/LinkedIn send completing.
+ */
+async function resolveCallDisposition(
+  db: DbClient,
+  payload: SeqAdvanceJobPayload,
+  enrollmentStepId: string,
+  now: Date
+): Promise<"resolved" | "waiting" | "stopped"> {
+  const { tasks } = schema;
+  const [task] = await db
+    .select({ id: tasks.id, disposition: tasks.disposition })
+    .from(tasks)
+    .where(eq(tasks.sequenceEnrollmentStepId, enrollmentStepId))
+    .limit(1);
+
+  if (!task?.disposition) return "waiting";
+
+  if (task.disposition === "bad_number") {
+    await db.transaction(async (tx) => {
+      await tx
+        .update(sequenceEnrollments)
+        .set({ status: "bad_number", completedAt: now })
+        .where(eq(sequenceEnrollments.id, payload.enrollmentId));
+      await tx
+        .update(sequenceEnrollmentSteps)
+        .set({ status: "skipped" })
+        .where(
+          and(
+            eq(sequenceEnrollmentSteps.enrollmentId, payload.enrollmentId),
+            inArray(sequenceEnrollmentSteps.status, ["scheduled", "awaiting_disposition"])
+          )
+        );
+    });
+    log.info("Cadence stopped — bad_number disposition", { enrollmentId: payload.enrollmentId, enrollmentStepId });
+    return "stopped";
+  }
+
+  await db
+    .update(sequenceEnrollmentSteps)
+    .set({
+      status: "executed",
+      executedAt: now,
+      failureReason: task.disposition === "connected" ? null : task.disposition,
+    })
+    .where(eq(sequenceEnrollmentSteps.id, enrollmentStepId));
+  log.info("Call step resolved via disposition", {
+    enrollmentId: payload.enrollmentId,
+    enrollmentStepId,
+    disposition: task.disposition,
+  });
+  return "resolved";
+}
+
 async function executeWhatsappStep(
   db: DbClient,
   config: Env,
@@ -584,6 +729,20 @@ async function advanceEnrollment(
     return;
   }
 
+  // R20.4 — a "call" step is parked waiting on a human-set disposition. Resolve it (or keep
+  // waiting) before looking for the next "scheduled" step, since an awaiting_disposition step
+  // deliberately won't show up in that query and must not be mistaken for "nothing left to do".
+  const awaitingCall = await findAwaitingCallStep(db, enrollmentId);
+  if (awaitingCall) {
+    const outcome = await resolveCallDisposition(db, payload, awaitingCall.enrollmentStepId, new Date());
+    if (outcome === "stopped") return;
+    if (outcome === "waiting") {
+      await enqueueSequenceAdvanceJob(config, payload, CALL_DISPOSITION_POLL_MS, false);
+      return;
+    }
+    // "resolved" — fall through and continue the cadence below in this same tick.
+  }
+
   // Find the next scheduled step in order
   const [pending] = await db
     .select({
@@ -652,6 +811,13 @@ async function advanceEnrollment(
   } else if (pending.stepType === "whatsapp") {
     const result = await executeWhatsappStep(db, config, payload, pending, now);
     if (result === "waiting") return;
+  } else if (pending.stepType === "call") {
+    const result = await executeCallStep(db, config, payload, pending, now);
+    if (result === "waiting") {
+      // Awaiting SDR disposition — poll for it on the next tick rather than advancing now.
+      await enqueueSequenceAdvanceJob(config, payload, CALL_DISPOSITION_POLL_MS, false);
+      return;
+    }
   } else {
     await db
       .update(sequenceEnrollmentSteps)

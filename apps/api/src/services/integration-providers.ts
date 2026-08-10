@@ -17,6 +17,15 @@ type MessagingProvider = {
   docsUrl: string;
 };
 
+/** R22.1 — GTM provider migration (import existing contacts/sequences from another tool). */
+type GtmImportProvider = {
+  id: string;
+  name: string;
+  description: string;
+  category: "gtm_import";
+  docsUrl: string;
+};
+
 /** Supported workspace BYOK integrations. */
 export const INTEGRATION_PROVIDERS = [
   {
@@ -98,7 +107,14 @@ export const INTEGRATION_PROVIDERS = [
     category: "messaging",
     docsUrl: "https://dashboard.unipile.com",
   },
-] as const satisfies readonly (EnrichmentProvider | MessagingProvider)[];
+  {
+    id: "apollo",
+    name: "Apollo.io",
+    description: "Import your existing contacts and email sequences from Apollo",
+    category: "gtm_import",
+    docsUrl: "https://developer.apollo.io/keys/",
+  },
+] as const satisfies readonly (EnrichmentProvider | MessagingProvider | GtmImportProvider)[];
 
 export type IntegrationProviderId = (typeof INTEGRATION_PROVIDERS)[number]["id"];
 

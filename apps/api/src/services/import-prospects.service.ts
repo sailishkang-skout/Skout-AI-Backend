@@ -35,13 +35,29 @@ export interface ImportedProspectRow {
   linkedinUrl?: string;
   country?: string;
   city?: string;
+  /** Company-level field (e.g. from a separate "Accounts" sheet) — shown in preview, not persisted on commit. */
+  companyRevenue?: string;
   raw?: Record<string, string>;
+}
+
+/** One detected header's target field, or "unmapped" if nothing recognized it. */
+export interface DetectedSheet {
+  /** Sheet name for XLSX; undefined for CSV/other single-table formats. */
+  sheetName?: string;
+  headers: string[];
+  /** Original header text -> resolved field name (or "unmapped"). */
+  mappedHeaders: Record<string, string>;
+  rowCount: number;
+  /** "accounts" = company-level rows with no name/email (e.g. an Accounts sheet used to enrich contacts by company name). */
+  kind: "contacts" | "accounts" | "unknown";
 }
 
 export interface ParseImportResult {
   rows: ImportedProspectRow[];
   source: "csv" | "xlsx" | "pdf" | "image" | "ocr" | "svg";
   warnings: string[];
+  /** Per-sheet/table header detection — used to build clearer errors and a manual column-mapping UI. */
+  sheets?: DetectedSheet[];
 }
 
 /** Decode common XML entities used in SVG text nodes. */
@@ -109,12 +125,24 @@ function parseSvg(buffer: Buffer): ParseImportResult {
   };
 }
 
-const HEADER_ALIASES: Record<string, keyof ImportedProspectRow | "ignore"> = {
+/** Fields we can populate directly, plus pseudo-targets combined/handled before building a row. */
+type MappedField = keyof ImportedProspectRow | "firstName" | "lastName" | "ignore";
+
+const HEADER_ALIASES: Record<string, MappedField> = {
   name: "fullName",
   fullname: "fullName",
   full_name: "fullName",
   "full name": "fullName",
   contact: "fullName",
+  contactname: "fullName",
+  "contact name": "fullName",
+  "first name": "firstName",
+  firstname: "firstName",
+  first_name: "firstName",
+  "last name": "lastName",
+  lastname: "lastName",
+  last_name: "lastName",
+  surname: "lastName",
   email: "email",
   "e-mail": "email",
   "email address": "email",
@@ -127,6 +155,8 @@ const HEADER_ALIASES: Record<string, keyof ImportedProspectRow | "ignore"> = {
   companyname: "companyName",
   company_name: "companyName",
   "company name": "companyName",
+  account: "companyName",
+  "account name": "companyName",
   title: "jobTitle",
   jobtitle: "jobTitle",
   job_title: "jobTitle",
@@ -134,34 +164,90 @@ const HEADER_ALIASES: Record<string, keyof ImportedProspectRow | "ignore"> = {
   role: "jobTitle",
   phone: "phone",
   mobile: "phone",
+  "direct phone": "phone",
+  "direct dial": "phone",
   linkedin: "linkedinUrl",
   linkedinurl: "linkedinUrl",
   linkedin_url: "linkedinUrl",
   "linkedin url": "linkedinUrl",
+  "linkedin profile": "linkedinUrl",
+  // "LinkedIn Location" is a free-text region, not a URL — must NOT fall into the generic
+  // "includes linkedin" fallback below, or it silently clobbers the real linkedinUrl value.
+  "linkedin location": "ignore",
   country: "country",
+  "country/region": "country",
+  "country / region": "country",
+  region: "country",
   city: "city",
+  location: "city",
+  "zoominfo revenue": "companyRevenue",
+  revenue: "companyRevenue",
+  "annual revenue": "companyRevenue",
 };
 
 function normalizeHeader(h: string): string {
   return h.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function mapHeader(h: string): keyof ImportedProspectRow | "ignore" | null {
+/**
+ * Map a raw column header to a target field. `overrides` (from a user-supplied column-mapping
+ * step) take priority over both the alias table and the heuristic fallbacks below, keyed by
+ * either the original header text or its normalized form.
+ */
+function mapHeader(h: string, overrides?: Record<string, string>): MappedField | null {
   const key = normalizeHeader(h);
+  if (overrides) {
+    const override = overrides[h] ?? overrides[key];
+    if (override) return override as MappedField;
+  }
   if (HEADER_ALIASES[key]) return HEADER_ALIASES[key];
   if (key.includes("email")) return "email";
   if (key.includes("domain") || key.includes("website")) return "companyDomain";
   if (key.includes("linkedin")) return "linkedinUrl";
+  if (key.includes("first")) return "firstName";
+  if (key.includes("last")) return "lastName";
   if ((key.includes("name") || key === "contact") && !key.includes("company")) return "fullName";
   if (key.includes("company") && key.includes("name")) return "companyName";
   if (key.includes("title") || key.includes("role")) return "jobTitle";
   if (key.includes("phone") || key.includes("mobile")) return "phone";
+  if (key.includes("country")) return "country";
+  if (key.includes("revenue")) return "companyRevenue";
   return null;
 }
 
 function domainFromEmail(email?: string): string | undefined {
   if (!email?.includes("@")) return undefined;
   return email.split("@")[1]?.trim().toLowerCase();
+}
+
+/**
+ * Turn a row's [header, value] pairs into a field->value dict, resolving each header through
+ * `mapHeader` and combining separate First/Last Name columns into `fullName` when there's no
+ * single combined name column.
+ */
+function buildRawRow(entries: [string, unknown][], overrides?: Record<string, string>): Record<string, string> {
+  const raw: Record<string, string> = {};
+  let firstName = "";
+  let lastName = "";
+  for (const [k, v] of entries) {
+    const field = mapHeader(String(k), overrides);
+    if (!field || field === "ignore") continue;
+    const val = String(v ?? "").trim();
+    if (!val) continue;
+    if (field === "firstName") {
+      firstName = val;
+      continue;
+    }
+    if (field === "lastName") {
+      lastName = val;
+      continue;
+    }
+    raw[field] = val;
+  }
+  if (!raw.fullName && (firstName || lastName)) {
+    raw.fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
+  }
+  return raw;
 }
 
 function coerceRow(raw: Record<string, string>): ImportedProspectRow | null {
@@ -185,14 +271,14 @@ function coerceRow(raw: Record<string, string>): ImportedProspectRow | null {
     linkedinUrl: raw.linkedinUrl?.trim() || undefined,
     country: raw.country?.trim() || undefined,
     city: raw.city?.trim() || undefined,
+    companyRevenue: raw.companyRevenue?.trim() || undefined,
     raw,
   };
 }
 
-function parseDelimited(text: string): ParseImportResult {
-  const warnings: string[] = [];
+function parseDelimited(text: string, overrides?: Record<string, string>): ParseImportResult {
   const lines = text
-    .replace(/^\uFEFF/, "")
+    .replace(/^﻿/, "")
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean);
@@ -222,44 +308,154 @@ function parseDelimited(text: string): ParseImportResult {
   };
 
   const headers = split(lines[0]!);
-  const mapping = headers.map(mapHeader);
-  if (!mapping.some((m) => m === "fullName") && !mapping.some((m) => m === "email")) {
-    warnings.push("Could not detect name/email columns — check header row");
-  }
+  const mappedHeaders: Record<string, string> = {};
+  headers.forEach((h) => {
+    mappedHeaders[h] = mapHeader(h, overrides) ?? "unmapped";
+  });
 
   const rows: ImportedProspectRow[] = [];
   for (const line of lines.slice(1)) {
     const cols = split(line);
-    const raw: Record<string, string> = {};
-    mapping.forEach((field, i) => {
-      if (!field || field === "ignore") return;
-      const val = cols[i] ?? "";
-      if (val) raw[field] = val;
-    });
+    const entries: [string, unknown][] = headers.map((h, i) => [h, cols[i] ?? ""]);
+    const raw = buildRawRow(entries, overrides);
     const row = coerceRow(raw);
     if (row) rows.push(row);
   }
 
-  return { rows, source: "csv", warnings };
+  const warnings: string[] = [];
+  if (!rows.length) {
+    warnings.push(
+      `No valid prospect rows found. Detected columns: ${
+        headers.join(", ") || "none"
+      }. Need a name column (or separate First Name / Last Name columns) plus an email or company domain — use column mapping if your headers use different names.`
+    );
+  }
+
+  return {
+    rows,
+    source: "csv",
+    warnings,
+    sheets: [
+      {
+        headers,
+        mappedHeaders,
+        rowCount: rows.length,
+        kind: rows.length ? "contacts" : "unknown",
+      },
+    ],
+  };
 }
 
-function sheetToRows(sheet: XLSX.WorkSheet): ParseImportResult {
+interface SheetParseResult {
+  sheetName: string;
+  headers: string[];
+  mappedHeaders: Record<string, string>;
+  rows: ImportedProspectRow[];
+  /** Rows that had a company name but no name/email — candidates for backfilling contact rows from other sheets. */
+  accountRows: Record<string, string>[];
+}
+
+function sheetToRows(
+  sheet: XLSX.WorkSheet,
+  sheetName: string,
+  overrides?: Record<string, string>
+): SheetParseResult {
   const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
-  const warnings: string[] = [];
-  const rows: ImportedProspectRow[] = [];
-  for (const obj of json) {
-    const raw: Record<string, string> = {};
-    for (const [k, v] of Object.entries(obj)) {
-      const field = mapHeader(String(k));
-      if (!field || field === "ignore") continue;
-      const val = String(v ?? "").trim();
-      if (val) raw[field] = val;
-    }
-    const row = coerceRow(raw);
-    if (row) rows.push(row);
+  const headerRow = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 })[0] as unknown[] | undefined;
+  const headers = json.length
+    ? Object.keys(json[0]!)
+    : (headerRow ?? []).map((h) => String(h ?? "").trim()).filter(Boolean);
+
+  const mappedHeaders: Record<string, string> = {};
+  for (const h of headers) {
+    mappedHeaders[h] = mapHeader(h, overrides) ?? "unmapped";
   }
-  if (!rows.length) warnings.push("No valid prospect rows found in spreadsheet");
-  return { rows, source: "xlsx", warnings };
+
+  const rows: ImportedProspectRow[] = [];
+  const accountRows: Record<string, string>[] = [];
+  for (const obj of json) {
+    const raw = buildRawRow(Object.entries(obj), overrides);
+    const row = coerceRow(raw);
+    if (row) {
+      rows.push(row);
+    } else if (raw.companyName) {
+      accountRows.push(raw);
+    }
+  }
+
+  return { sheetName, headers, mappedHeaders, rows, accountRows };
+}
+
+function normalizeCompanyKey(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/**
+ * Combine every sheet's rows (an XLSX with multiple tabs is no longer silently truncated to the
+ * first one), and backfill contact rows with company-level fields (e.g. revenue) from any sheet
+ * that looks like an accounts/company list — matched by normalized company name.
+ */
+function mergeSheetResults(results: SheetParseResult[]): ParseImportResult {
+  const accountLookup = new Map<string, Record<string, string>>();
+  for (const r of results) {
+    for (const acc of r.accountRows) {
+      if (!acc.companyName) continue;
+      accountLookup.set(normalizeCompanyKey(acc.companyName), acc);
+    }
+  }
+
+  const rows: ImportedProspectRow[] = [];
+  const seen = new Set<string>();
+  for (const r of results) {
+    for (const row of r.rows) {
+      if (row.companyName) {
+        const acc = accountLookup.get(normalizeCompanyKey(row.companyName));
+        if (acc) {
+          if (!row.country && acc.country) row.country = acc.country;
+          if (!row.phone && acc.phone) row.phone = acc.phone;
+          if (!row.companyRevenue && acc.companyRevenue) row.companyRevenue = acc.companyRevenue;
+        }
+      }
+      const dedupeKey = `${row.companyDomain}:${(row.email ?? row.fullName).toLowerCase()}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      rows.push(row);
+    }
+  }
+
+  const sheets: DetectedSheet[] = results.map((r) => ({
+    sheetName: r.sheetName,
+    headers: r.headers,
+    mappedHeaders: r.mappedHeaders,
+    rowCount: r.rows.length,
+    kind: r.rows.length > 0 ? "contacts" : r.accountRows.length > 0 ? "accounts" : "unknown",
+  }));
+
+  const warnings: string[] = [];
+  if (!rows.length) {
+    const summary = sheets
+      .map((s) => `"${s.sheetName}" (${s.headers.join(", ") || "no headers detected"})`)
+      .join("; ");
+    warnings.push(
+      `No valid prospect rows found. Need a name column (or separate First Name / Last Name columns) plus an email or company domain, on at least one sheet. Detected: ${
+        summary || "no sheets"
+      }. Use column mapping if your headers use different names.`
+    );
+  } else {
+    const accountsUsed = sheets.filter((s) => s.kind === "accounts");
+    if (accountsUsed.length) {
+      warnings.push(
+        `Company-level columns from ${accountsUsed
+          .map((s) => `"${s.sheetName}"`)
+          .join(", ")} (e.g. revenue) were matched onto contacts by company name for preview only — they are not stored on commit.`
+      );
+    }
+  }
+
+  return { rows, source: "xlsx", warnings, sheets };
 }
 
 const OCR_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"]);
@@ -367,20 +563,26 @@ export async function parseImportFile(input: {
   mimeType: string;
   base64: string;
   openRouterApiKey?: string;
+  /** Optional manual column mapping (source header -> target field), from a mapping-correction UI. */
+  headerMap?: Record<string, string>;
 }): Promise<ParseImportResult> {
   const buffer = Buffer.from(input.base64, "base64");
   const name = input.filename.toLowerCase();
   const mime = (input.mimeType || "").toLowerCase();
 
   if (name.endsWith(".csv") || mime.includes("csv") || mime === "text/plain") {
-    return parseDelimited(buffer.toString("utf8"));
+    return parseDelimited(buffer.toString("utf8"), input.headerMap);
   }
 
   if (name.endsWith(".xlsx") || name.endsWith(".xls") || mime.includes("spreadsheet") || mime.includes("excel")) {
     const wb = XLSX.read(buffer, { type: "buffer" });
-    const sheet = wb.Sheets[wb.SheetNames[0]!];
-    if (!sheet) return { rows: [], source: "xlsx", warnings: ["Empty workbook"] };
-    return sheetToRows(sheet);
+    if (!wb.SheetNames.length) return { rows: [], source: "xlsx", warnings: ["Empty workbook"] };
+    // Read every sheet — a workbook split into e.g. "Accounts" + "Contacts" tabs used to have
+    // everything but the first sheet silently dropped.
+    const sheetResults = wb.SheetNames.map((sheetName) =>
+      sheetToRows(wb.Sheets[sheetName]!, sheetName, input.headerMap)
+    );
+    return mergeSheetResults(sheetResults);
   }
 
   if (name.endsWith(".pdf") || mime === "application/pdf") {
@@ -389,7 +591,7 @@ export async function parseImportFile(input: {
       if (text.length > 40) {
         const looksTabular = /email|name|company/i.test(text) && text.includes("\n");
         if (looksTabular) {
-          const asCsv = parseDelimited(text);
+          const asCsv = parseDelimited(text, input.headerMap);
           if (asCsv.rows.length) return { ...asCsv, source: "pdf", warnings: asCsv.warnings };
         }
       }
@@ -424,7 +626,7 @@ export async function parseImportFile(input: {
   }
 
   // Last resort: treat as UTF-8 CSV
-  return parseDelimited(buffer.toString("utf8"));
+  return parseDelimited(buffer.toString("utf8"), input.headerMap);
 }
 
 async function ocrPdfTextOrImage(

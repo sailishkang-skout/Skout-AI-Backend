@@ -221,10 +221,22 @@ try {
   await runSqlMigration("0023_meetings", "0023_meetings.sql");
   await runSqlMigration("0024_pain_points", "0024_pain_points.sql");
   await runSqlMigration("0025_invite_auth", "0025_invite_auth.sql");
+  await runSqlMigration("0026_audit_logs", "0026_audit_logs.sql");
   await runSqlMigration("0027_unipile_channels", "0027_unipile_channels.sql");
   await runSqlMigration("0028_signals", "0028_signals.sql");
+  await runSqlMigration("0028_crm_field_sources", "0028_crm_field_sources.sql");
   await runSqlMigration("0029_smart_list_auto_refresh", "0029_smart_list_auto_refresh.sql");
+  await runSqlMigration("0029_activation_rules", "0029_activation_rules.sql");
   await runSqlMigration("0030_notifications", "0030_notifications.sql");
+  await runSqlMigration("0031_user_phone", "0031_user_phone.sql");
+  await runSqlMigration("0032_meeting_bot", "0032_meeting_bot.sql");
+  await runSqlMigration("0033_calls", "0033_calls.sql");
+  await runSqlMigration("0034_task_call_disposition", "0034_task_call_disposition.sql");
+  await runSqlMigration("0035_meeting_auto_join", "0035_meeting_auto_join.sql");
+  await runSqlMigration("0036_deal_field_sources", "0036_deal_field_sources.sql");
+  await runSqlMigration("0037_next_best_action_suggestions", "0037_next_best_action_suggestions.sql");
+  await runSqlMigration("0038_call_notes", "0038_call_notes.sql");
+  await runSqlMigration("0039_notification_broadcast_and_indexes", "0039_notification_broadcast_and_indexes.sql");
 
 } finally {
   await sql.end();

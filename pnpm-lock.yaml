@@ -165,6 +165,9 @@ importers:
       fastify-plugin:
         specifier: ^5.0.1
         version: 5.1.0
+      openai:
+        specifier: ^6.45.0
+        version: 6.45.0(@aws-sdk/credential-provider-node@3.972.68)(@smithy/signature-v4@5.6.5)(zod@3.25.76)
       zod:
         specifier: ^3.23.8
         version: 3.25.76

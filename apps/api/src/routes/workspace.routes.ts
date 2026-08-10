@@ -42,6 +42,49 @@ export async function workspaceRoutes(app: FastifyInstance) {
     return reply.send({ data: updated });
   });
 
+  // PUT /api/v1/workspaces/current/slack-webhook — R17.4 Slack delivery channel (owner/admin only)
+  app.put("/workspaces/current/slack-webhook", async (request, reply) => {
+    if (!request.workspaceId) {
+      return reply.code(401).send(errorResponse("Not authenticated", 401));
+    }
+    if (!request.role || !["owner", "admin"].includes(request.role)) {
+      return reply.code(403).send(errorResponse("Requires role: owner or admin", 403));
+    }
+    const { url } = (request.body ?? {}) as { url?: string | null };
+    if (url) {
+      let parsed: URL;
+      try {
+        parsed = new URL(url);
+      } catch {
+        return reply.code(400).send(errorResponse("Invalid URL", 400));
+      }
+      if (parsed.protocol !== "https:") {
+        return reply.code(400).send(errorResponse("Slack webhook URL must be https", 400));
+      }
+    }
+    const updated = await svc.setSlackWebhook(request.workspaceId, url && url.trim() ? url.trim() : null);
+    if (!updated) return reply.code(404).send(errorResponse("Workspace not found", 404));
+    return reply.send({ data: updated });
+  });
+
+  // PUT /api/v1/workspaces/current/meeting-bot-auto-join — R16.2 opt-in auto-join default
+  // (owner/admin only). New meetings inherit this unless a per-meeting override is set.
+  app.put("/workspaces/current/meeting-bot-auto-join", async (request, reply) => {
+    if (!request.workspaceId) {
+      return reply.code(401).send(errorResponse("Not authenticated", 401));
+    }
+    if (!request.role || !["owner", "admin"].includes(request.role)) {
+      return reply.code(403).send(errorResponse("Requires role: owner or admin", 403));
+    }
+    const { enabled } = (request.body ?? {}) as { enabled?: boolean };
+    if (typeof enabled !== "boolean") {
+      return reply.code(400).send(errorResponse("enabled (boolean) is required", 400));
+    }
+    const updated = await svc.setMeetingBotAutoJoinDefault(request.workspaceId, enabled);
+    if (!updated) return reply.code(404).send(errorResponse("Workspace not found", 404));
+    return reply.send({ data: updated });
+  });
+
   // GET /api/v1/credits/balance
   app.get("/credits/balance", async (request, reply) => {
     if (!request.workspaceId) {

@@ -18,6 +18,7 @@ import { SkoutEcsService } from "../constructs/skout-ecs-service.js";
 import type { SkoutDatabase } from "../constructs/skout-database.js";
 import type { SkoutRedis } from "../constructs/skout-redis.js";
 import { SkoutClickHouse } from "../constructs/skout-clickhouse.js";
+import { applyBusinessHoursSchedule, SPOT_STRATEGY } from "../constructs/skout-dev-schedule.js";
 
 export interface ComputeStackProps extends StackProps {
   readonly config: EnvironmentConfig;
@@ -72,6 +73,14 @@ export class ComputeStack extends Stack {
       vpc,
       clusterName: `${config.stackPrefix}-cluster`,
     });
+
+    // Dev-only cost levers: Fargate Spot capacity provider (needed before any service can use
+    // it) and off-hours scheduling for services that don't need to run 24/7. See
+    // skout-dev-schedule.ts. Not applied to uat/prod.
+    const isDev = config.name === "dev";
+    if (isDev) {
+      this.cluster.enableFargateCapacityProviders();
+    }
 
     this.loadBalancer = new elbv2.ApplicationLoadBalancer(this, "Alb", {
       vpc,
@@ -313,6 +322,12 @@ export class ComputeStack extends Stack {
               RAZORPAY_KEY_ID: "rzp_test_T7RSEsGBVeHtUD",
               RAZORPAY_CREDIT_PACKS_JSON:
                 '[{"id":"starter","label":"Starter","credits":500,"amountInr":499},{"id":"growth","label":"Growth","credits":2000,"amountInr":1499},{"id":"scale","label":"Scale","credits":10000,"amountInr":4999}]',
+              // Static-auth admin data-import page (frontend /admin/import). Scoped to
+              // /api/v1/import/* only — see apps/api/src/plugins/auth.ts. Seed the demo
+              // workspace into this env with `scripts/ecs-run-seed.sh SkoutDev` if it doesn't
+              // already have one.
+              ADMIN_IMPORT_SECRET: "65332d15429ed7c121af30e803127eedf7f2f5bfbc775b44",
+              ADMIN_IMPORT_WORKSPACE_ID: "00000000-0000-4000-8000-000000000001",
             }
           : {}),
       },
@@ -475,6 +490,7 @@ export class ComputeStack extends Stack {
         config,
         clickhouseSecret: secrets.clickhouse,
         clientSecurityGroups: [apiEcs.securityGroup],
+        ...(isDev ? { capacityProviderStrategies: SPOT_STRATEGY } : {}),
       });
 
       new CfnOutput(this, "ClickHouseHost", {
@@ -534,6 +550,7 @@ export class ComputeStack extends Stack {
       healthCheckPath: "/health",
       containerHealthCheckCommand: [pythonHttpHealthCheck(8000, "/health")],
       internalOnly: true,
+      ...(isDev ? { capacityProviderStrategies: SPOT_STRATEGY } : {}),
       environment: {
         NODE_ENV: "production",
         POSTHOG_HOST: "https://us.i.posthog.com",
@@ -578,6 +595,7 @@ export class ComputeStack extends Stack {
       pathPatterns: ["/*"],
       priority: 100,
       extraConditions: albExtraConditions,
+      ...(isDev ? { capacityProviderStrategies: SPOT_STRATEGY } : {}),
       environment: {
         NODE_ENV: "production",
         NEXT_PUBLIC_API_URL: apiUrl,
@@ -674,6 +692,16 @@ export class ComputeStack extends Stack {
         : "Direct ALB HTTP URL (legacy; prefer WebUrl)",
       exportName: `${config.stackPrefix}-AlbHttpUrl`,
     });
+
+    if (isDev) {
+      applyBusinessHoursSchedule(apiEcs.service, config.ecs.apiDesiredCount);
+      applyBusinessHoursSchedule(crmEcs.service, config.ecs.crmDesiredCount);
+      applyBusinessHoursSchedule(aiService.service, config.ecs.aiDesiredCount);
+      applyBusinessHoursSchedule(webService.service, config.ecs.webDesiredCount);
+      if (this.clickhouse) {
+        applyBusinessHoursSchedule(this.clickhouse.service, 1);
+      }
+    }
 
     Tags.of(this).add("skout:environment", config.name);
   }

@@ -18,6 +18,10 @@ export interface TaskDto {
   dueDate: string | null;
   priority: string;
   status: string;
+  /** R20.4 — connected | no_answer | voicemail | bad_number, set after a sequence "call" step. */
+  disposition: string | null;
+  /** Corpus prospectId for "call" sequence-step tasks — powers the "Call now" affordance. */
+  prospectId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -33,6 +37,8 @@ function toDto(row: typeof tasks.$inferSelect): TaskDto {
     dueDate: row.dueDate?.toISOString() ?? null,
     priority: row.priority,
     status: row.status,
+    disposition: row.disposition,
+    prospectId: row.prospectId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -124,6 +130,7 @@ export class TasksService {
         ...(input.dueDate !== undefined ? { dueDate: new Date(input.dueDate) } : {}),
         ...(input.priority !== undefined ? { priority: input.priority } : {}),
         ...(input.status !== undefined ? { status: input.status } : {}),
+        ...(input.disposition !== undefined ? { disposition: input.disposition } : {}),
         updatedAt: new Date(),
       })
       .where(and(eq(tasks.id, id), eq(tasks.workspaceId, workspaceId)))
@@ -133,7 +140,7 @@ export class TasksService {
     if (dto) {
       await this.auditService.record(workspaceId, actorId, "update", "task", id, existing, dto);
     }
-    if (row) log.info("task updated", { workspaceId, taskId: id, status: row.status });
+    if (row) log.info("task updated", { workspaceId, taskId: id, status: row.status, disposition: row.disposition });
     return dto;
   }
 

@@ -690,6 +690,142 @@ describe.skipIf(!hasDatabase)("CRM service E2E", () => {
     expect(wellFormedButMissing.statusCode).toBe(404);
   });
 
+  it("contacts: audit log records create, update, and delete", async () => {
+    const headers = asUser("crm-audit-contacts@test.com");
+    const company = await createCompany(headers, "Contact Audit Co");
+
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/v1/contacts",
+      headers,
+      payload: { firstName: "Jane", lastName: "Doe", companyId: company.id },
+    });
+    expect(create.statusCode).toBe(201);
+    const contact = create.json() as { id: string };
+
+    const patch = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/contacts/${contact.id}`,
+      headers,
+      payload: { lifecycleStage: "mql" },
+    });
+    expect(patch.statusCode).toBe(200);
+
+    const del = await app.inject({ method: "DELETE", url: `/api/v1/contacts/${contact.id}`, headers });
+    expect(del.statusCode).toBe(204);
+
+    const auditBody = await getAuditLogs(headers, "contact", contact.id);
+    expect(auditBody.data.map((entry) => entry.action)).toEqual(["create", "update", "delete"]);
+    expect(auditBody.data[0].beforeState).toBeNull();
+    expect(auditBody.data[1].beforeState).toMatchObject({ id: contact.id, lifecycleStage: "lead" });
+    expect(auditBody.data[1].afterState).toMatchObject({ id: contact.id, lifecycleStage: "mql" });
+    expect(auditBody.data[2].action).toBe("delete");
+  });
+
+  it("deals: audit log records create, update, and delete", async () => {
+    const headers = asUser("crm-audit-deals@test.com");
+    const company = await createCompany(headers, "Deal Audit Co");
+
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/v1/deals",
+      headers,
+      payload: { name: "Audit Deal", companyId: company.id, amount: 1000 },
+    });
+    expect(create.statusCode).toBe(201);
+    const deal = create.json() as { id: string };
+
+    const patch = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/deals/${deal.id}`,
+      headers,
+      payload: { amount: 2000 },
+    });
+    expect(patch.statusCode).toBe(200);
+
+    const del = await app.inject({ method: "DELETE", url: `/api/v1/deals/${deal.id}`, headers });
+    expect(del.statusCode).toBe(204);
+
+    const auditBody = await getAuditLogs(headers, "deal", deal.id);
+    expect(auditBody.data.map((entry) => entry.action)).toEqual(["create", "update", "delete"]);
+    expect(auditBody.data[1].beforeState).toMatchObject({ id: deal.id, amount: 1000 });
+    expect(auditBody.data[1].afterState).toMatchObject({ id: deal.id, amount: 2000 });
+  });
+
+  it("tasks: audit log records create, update, and delete", async () => {
+    const headers = asUser("crm-audit-tasks@test.com");
+
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/v1/tasks",
+      headers,
+      payload: { title: "Audit Task" },
+    });
+    expect(create.statusCode).toBe(201);
+    const task = create.json() as { id: string };
+
+    const complete = await app.inject({
+      method: "POST",
+      url: `/api/v1/tasks/${task.id}/complete`,
+      headers,
+    });
+    expect(complete.statusCode).toBe(200);
+
+    const del = await app.inject({ method: "DELETE", url: `/api/v1/tasks/${task.id}`, headers });
+    expect(del.statusCode).toBe(204);
+
+    const auditBody = await getAuditLogs(headers, "task", task.id);
+    expect(auditBody.data.map((entry) => entry.action)).toEqual(["create", "update", "delete"]);
+    expect(auditBody.data[1].beforeState).toMatchObject({ id: task.id, status: "open" });
+    expect(auditBody.data[1].afterState).toMatchObject({ id: task.id, status: "done" });
+  });
+
+  it("pipelines: audit log records create, addStage, update, and delete", async () => {
+    const headers = asUser("crm-audit-pipelines@test.com");
+
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/v1/pipelines",
+      headers,
+      payload: { name: "Audit Pipeline" },
+    });
+    expect(create.statusCode).toBe(201);
+    const pipeline = create.json() as { id: string };
+
+    const addStage = await app.inject({
+      method: "POST",
+      url: `/api/v1/pipelines/${pipeline.id}/stages`,
+      headers,
+      payload: { name: "Stage A", orderIndex: 0 },
+    });
+    expect(addStage.statusCode).toBe(201);
+
+    const patch = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/pipelines/${pipeline.id}`,
+      headers,
+      payload: { name: "Renamed Pipeline" },
+    });
+    expect(patch.statusCode).toBe(200);
+    expect((patch.json() as { name: string }).name).toBe("Renamed Pipeline");
+
+    const del = await app.inject({ method: "DELETE", url: `/api/v1/pipelines/${pipeline.id}`, headers });
+    expect(del.statusCode).toBe(204);
+
+    const getAfterDelete = await app.inject({
+      method: "GET",
+      url: "/api/v1/pipelines",
+      headers,
+    });
+    const body = getAfterDelete.json() as { data: { id: string }[] };
+    expect(body.data.some((p) => p.id === pipeline.id)).toBe(false);
+
+    const auditBody = await getAuditLogs(headers, "pipeline", pipeline.id);
+    expect(auditBody.data.map((entry) => entry.action)).toEqual(["create", "update", "delete"]);
+    expect(auditBody.data[1].beforeState).toMatchObject({ id: pipeline.id, name: "Audit Pipeline" });
+    expect(auditBody.data[1].afterState).toMatchObject({ id: pipeline.id, name: "Renamed Pipeline" });
+  });
+
   it("adding a duplicate pipeline stage orderIndex returns a clean 409, not a raw DB 500", async () => {
     const headers = asUser(`crm-stage-conflict-${randomUUID()}@test.com`);
 

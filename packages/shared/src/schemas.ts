@@ -336,7 +336,8 @@ export const enrollSequenceSchema = z
     message: "listId or prospectIds (non-empty) is required",
   });
 
-export const SEQUENCE_STEP_TYPES = ["email", "linkedin", "whatsapp", "wait", "task"] as const;
+/** "call" — R20.4: creates a task + owner notification when due; dialing itself is manual or via R20.2 Twilio click-to-call. */
+export const SEQUENCE_STEP_TYPES = ["email", "linkedin", "whatsapp", "call", "wait", "task"] as const;
 export const SEQUENCE_STATUSES = ["draft", "active", "paused", "archived"] as const;
 
 export const SEQUENCE_MERGE_TOKENS = [
@@ -426,9 +427,9 @@ export const activityListQuerySchema = paginationQuerySchema.extend({
   entityId: z.string().uuid(),
 });
 
-export const CRM_ENTITY_TYPES = ["contact", "company", "deal"] as const;
+export const CRM_ENTITY_TYPES = ["contact", "company", "deal", "task", "pipeline"] as const;
 
-export const auditLogListQuerySchema = z.object({
+export const auditLogListQuerySchema = paginationQuerySchema.extend({
   entityType: z.enum(CRM_ENTITY_TYPES),
   entityId: z.string().uuid(),
 });
@@ -438,6 +439,8 @@ export const CONTACT_LIFECYCLE_STAGES = ["lead", "mql", "sql", "customer"] as co
 export const DEAL_STATUSES = ["open", "won", "lost"] as const;
 export const TASK_PRIORITIES = ["low", "medium", "high"] as const;
 export const TASK_STATUSES = ["open", "done"] as const;
+/** R20.4 — set by the SDR after placing a sequence "call" step's call; drives cadence branching. */
+export const TASK_DISPOSITIONS = ["connected", "no_answer", "voicemail", "bad_number"] as const;
 export const ACTIVITY_TYPES = ["note", "call", "email", "meeting", "stage_change"] as const;
 
 export const companyCreateSchema = z.object({
@@ -457,6 +460,22 @@ export const companyUpdateSchema = companyCreateSchema
   .refine((d) => Object.values(d).some((v) => v !== undefined), {
     message: "At least one field is required",
   });
+
+/** R13.3 — auto-fill request body. `source` can't be "manual" — that's what update() is for. */
+export const companyAutoFillSchema = z.object({
+  patch: z
+    .object({
+      industry: z.string().max(255).optional(),
+      employeeCount: z.number().int().positive().optional(),
+      revenue: z.number().positive().optional(),
+      location: z.string().max(255).optional(),
+    })
+    .refine((d) => Object.values(d).some((v) => v !== undefined), {
+      message: "At least one field is required",
+    }),
+  source: z.enum(["enrichment", "meeting_bot", "call_note"]),
+  confidence: z.number().min(0).max(1).optional(),
+});
 
 export const companyResponseSchema = z.object({
   id: z.string().uuid(),
@@ -493,6 +512,23 @@ export const contactUpdateSchema = contactCreateSchema
     message: "At least one field is required",
   });
 
+/** R13.3 — auto-fill request body. `source` can't be "manual" — that's what update() is for. */
+export const contactAutoFillSchema = z.object({
+  patch: z
+    .object({
+      email: z.string().email().optional(),
+      phone: z.string().max(50).optional(),
+      title: z.string().max(255).optional(),
+      linkedinUrl: z.string().url().optional(),
+      lifecycleStage: z.enum(CONTACT_LIFECYCLE_STAGES).optional(),
+    })
+    .refine((d) => Object.values(d).some((v) => v !== undefined), {
+      message: "At least one field is required",
+    }),
+  source: z.enum(["enrichment", "meeting_bot", "call_note"]),
+  confidence: z.number().min(0).max(1).optional(),
+});
+
 export const contactResponseSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
@@ -513,6 +549,12 @@ export const contactResponseSchema = z.object({
 export const pipelineCreateSchema = z.object({
   name: z.string().min(1).max(255),
 });
+
+export const pipelineUpdateSchema = pipelineCreateSchema
+  .partial()
+  .refine((d) => Object.values(d).some((v) => v !== undefined), {
+    message: "At least one field is required",
+  });
 
 export const pipelineStageCreateSchema = z.object({
   name: z.string().min(1).max(255),
@@ -621,6 +663,7 @@ export const taskUpdateSchema = z
     dueDate: z.string().datetime().optional(),
     priority: z.enum(TASK_PRIORITIES).optional(),
     status: z.enum(TASK_STATUSES).optional(),
+    disposition: z.enum(TASK_DISPOSITIONS).optional(),
   })
   .refine((d) => Object.values(d).some((v) => v !== undefined), {
     message: "At least one field is required",
@@ -636,6 +679,9 @@ export const taskResponseSchema = z.object({
   dueDate: z.string().nullable(),
   priority: z.enum(TASK_PRIORITIES),
   status: z.enum(TASK_STATUSES),
+  disposition: z.enum(TASK_DISPOSITIONS).nullable(),
+  /** Corpus prospectId for "call" sequence-step tasks — powers the "Call now" affordance. */
+  prospectId: z.string().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -680,6 +726,10 @@ export const meetingCreateSchema = z.object({
   organizerId: z.string().uuid().optional(),
   summary: z.string().optional(),
   outcome: z.string().optional(),
+  /** R16.2 — Zoom/Meet/Teams join link. Required to schedule a meeting-bot join. */
+  meetingUrl: z.string().url().optional(),
+  /** R16.2 — opt-in auto-join override. Omit to inherit the workspace default. */
+  autoJoinBot: z.boolean().optional(),
 });
 
 export const meetingUpdateSchema = z
@@ -694,6 +744,8 @@ export const meetingUpdateSchema = z
     organizerId: z.string().uuid().optional(),
     summary: z.string().optional(),
     outcome: z.string().optional(),
+    meetingUrl: z.string().url().optional(),
+    autoJoinBot: z.boolean().optional(),
   })
   .refine((d) => Object.values(d).some((v) => v !== undefined), {
     message: "At least one field is required",
@@ -749,9 +801,12 @@ export type CrmEntityType = (typeof CRM_ENTITY_TYPES)[number];
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];
 export type CompanyCreateInput = z.infer<typeof companyCreateSchema>;
 export type CompanyUpdateInput = z.infer<typeof companyUpdateSchema>;
+export type CompanyAutoFillInput = z.infer<typeof companyAutoFillSchema>;
 export type ContactCreateInput = z.infer<typeof contactCreateSchema>;
 export type ContactUpdateInput = z.infer<typeof contactUpdateSchema>;
+export type ContactAutoFillInput = z.infer<typeof contactAutoFillSchema>;
 export type PipelineCreateInput = z.infer<typeof pipelineCreateSchema>;
+export type PipelineUpdateInput = z.infer<typeof pipelineUpdateSchema>;
 export type PipelineStageCreateInput = z.infer<typeof pipelineStageCreateSchema>;
 export type DealCreateInput = z.infer<typeof dealCreateSchema>;
 export type DealUpdateInput = z.infer<typeof dealUpdateSchema>;

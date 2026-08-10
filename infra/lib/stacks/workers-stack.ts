@@ -12,6 +12,7 @@ import type { SkoutAppSecrets } from "../constructs/skout-app-secrets.js";
 import type { SkoutDatabase } from "../constructs/skout-database.js";
 import type { SkoutRedis } from "../constructs/skout-redis.js";
 import { SkoutWorkerService } from "../constructs/skout-worker-service.js";
+import { applyBusinessHoursSchedule, SPOT_STRATEGY } from "../constructs/skout-dev-schedule.js";
 
 export interface WorkersStackProps extends StackProps {
   readonly config: EnvironmentConfig;
@@ -59,6 +60,10 @@ export class WorkersStack extends Stack {
       ingestorRepository,
       scraperImageTag,
     } = props;
+
+    // Dev-only cost levers: Fargate Spot + off-hours scheduling (cluster's Spot capacity
+    // provider is enabled once in ComputeStack). Not applied to uat/prod.
+    const isDev = config.name === "dev";
 
     const dlq = new sqs.Queue(this, "ScrapeScheduleDlq", {
       queueName: `${config.stackPrefix}-scrape-schedule-dlq`,
@@ -133,6 +138,7 @@ export class WorkersStack extends Stack {
         PROXY_PASSWORD: ecs.Secret.fromSecretsManager(secrets.scraperProxy, "PROXY_PASSWORD"),
         LINKEDIN_ACCOUNTS_JSON: ecs.Secret.fromSecretsManager(secrets.scraperLinkedin, "accounts"),
       },
+      ...(isDev ? { capacityProviderStrategies: SPOT_STRATEGY } : {}),
     });
 
     const cleaner = new SkoutWorkerService(this, "ScraperCleaner", {
@@ -148,6 +154,7 @@ export class WorkersStack extends Stack {
       environment: scraperEnv,
       secrets: { DATABASE_PASSWORD: dbPasswordSecret },
       healthCheckCommand: REDIS_HEALTHCHECK,
+      ...(isDev ? { capacityProviderStrategies: SPOT_STRATEGY } : {}),
     });
 
     const ingestor = new SkoutWorkerService(this, "ScraperIngestor", {
@@ -168,6 +175,7 @@ export class WorkersStack extends Stack {
         OPENSEARCH_PASSWORD: ecs.Secret.fromSecretsManager(secrets.opensearch, "OPENSEARCH_PASSWORD"),
       },
       healthCheckCommand: REDIS_HEALTHCHECK,
+      ...(isDev ? { capacityProviderStrategies: SPOT_STRATEGY } : {}),
     });
 
     this.orchestratorService = orchestrator.service;
@@ -212,6 +220,12 @@ export class WorkersStack extends Stack {
       secrets.scraperLinkedin
     );
     grantExecutionRoleRead(ingestor.taskDefinition, secrets.opensearch);
+
+    if (isDev) {
+      applyBusinessHoursSchedule(this.orchestratorService, 1);
+      applyBusinessHoursSchedule(this.cleanerService, 1);
+      applyBusinessHoursSchedule(this.ingestorService, 1);
+    }
 
     new CfnOutput(this, "ScrapeScheduleQueueUrl", {
       value: this.scrapeScheduleQueue.queueUrl,
