@@ -8,11 +8,11 @@ export async function auditRoutes(app: FastifyInstance) {
 
   app.get("/audit-logs", async (request) => {
     const workspaceId = request.workspaceId ?? "unknown";
-    const { entityType, entityId } = auditLogListQuerySchema.parse(request.query);
+    const { entityType, entityId, limit, offset } = auditLogListQuerySchema.parse(request.query);
     const svc = service();
-    if (!svc) return { data: [], total: 0, workspaceId };
+    if (!svc) throw new HttpError("database_unavailable", 503);
 
-    const result = await svc.list(workspaceId, entityType, entityId, { limit: 100, offset: 0 });
+    const result = await svc.list(workspaceId, entityType, entityId, { limit, offset });
     return { ...result, workspaceId };
   });
 }

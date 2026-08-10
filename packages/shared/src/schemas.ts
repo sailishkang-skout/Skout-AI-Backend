@@ -427,9 +427,9 @@ export const activityListQuerySchema = paginationQuerySchema.extend({
   entityId: z.string().uuid(),
 });
 
-export const CRM_ENTITY_TYPES = ["contact", "company", "deal"] as const;
+export const CRM_ENTITY_TYPES = ["contact", "company", "deal", "task", "pipeline"] as const;
 
-export const auditLogListQuerySchema = z.object({
+export const auditLogListQuerySchema = paginationQuerySchema.extend({
   entityType: z.enum(CRM_ENTITY_TYPES),
   entityId: z.string().uuid(),
 });
@@ -549,6 +549,12 @@ export const contactResponseSchema = z.object({
 export const pipelineCreateSchema = z.object({
   name: z.string().min(1).max(255),
 });
+
+export const pipelineUpdateSchema = pipelineCreateSchema
+  .partial()
+  .refine((d) => Object.values(d).some((v) => v !== undefined), {
+    message: "At least one field is required",
+  });
 
 export const pipelineStageCreateSchema = z.object({
   name: z.string().min(1).max(255),
@@ -800,6 +806,7 @@ export type ContactCreateInput = z.infer<typeof contactCreateSchema>;
 export type ContactUpdateInput = z.infer<typeof contactUpdateSchema>;
 export type ContactAutoFillInput = z.infer<typeof contactAutoFillSchema>;
 export type PipelineCreateInput = z.infer<typeof pipelineCreateSchema>;
+export type PipelineUpdateInput = z.infer<typeof pipelineUpdateSchema>;
 export type PipelineStageCreateInput = z.infer<typeof pipelineStageCreateSchema>;
 export type DealCreateInput = z.infer<typeof dealCreateSchema>;
 export type DealUpdateInput = z.infer<typeof dealUpdateSchema>;
