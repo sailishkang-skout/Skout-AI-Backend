@@ -30,7 +30,7 @@ describe("list routes — CRUD lifecycle", () => {
       method: "POST",
       url: "/api/v1/lists",
       headers: { ...asUser("list-create@test.com"), "content-type": "application/json" },
-      payload: { name: "My First List" },
+      payload: { name: "My First List", mode: "static" },
     });
 
     expect(res.statusCode).toBe(201);
@@ -49,7 +49,7 @@ describe("list routes — CRUD lifecycle", () => {
       method: "POST",
       url: "/api/v1/lists",
       headers: { ...asUser(email), "content-type": "application/json" },
-      payload: { name: "Index Test List" },
+      payload: { name: "Index Test List", mode: "static" },
     });
 
     const res = await app.inject({
@@ -72,7 +72,7 @@ describe("list routes — CRUD lifecycle", () => {
       method: "POST",
       url: "/api/v1/lists",
       headers: { ...asUser(email), "content-type": "application/json" },
-      payload: { name: "Show Me List" },
+      payload: { name: "Show Me List", mode: "static" },
     });
     const { id } = created.json() as { id: string };
 
@@ -95,7 +95,7 @@ describe("list routes — CRUD lifecycle", () => {
       method: "POST",
       url: "/api/v1/lists",
       headers: { ...asUser(email), "content-type": "application/json" },
-      payload: { name: "Members List" },
+      payload: { name: "Members List", mode: "static" },
     });
     const { id } = created.json() as { id: string };
 
@@ -127,7 +127,7 @@ describe("list routes — CRUD lifecycle", () => {
       method: "POST",
       url: "/api/v1/lists",
       headers: { ...asUser(email), "content-type": "application/json" },
-      payload: { name: "Get Members List" },
+      payload: { name: "Get Members List", mode: "static" },
     });
     const { id } = created.json() as { id: string };
 
@@ -164,7 +164,7 @@ describe("list routes — CRUD lifecycle", () => {
       method: "POST",
       url: "/api/v1/lists",
       headers: { ...asUser(email), "content-type": "application/json" },
-      payload: { name: "Idempotent List" },
+      payload: { name: "Idempotent List", mode: "static" },
     });
     const { id } = created.json() as { id: string };
 
@@ -195,7 +195,7 @@ describe("list routes — CRUD lifecycle", () => {
       method: "POST",
       url: "/api/v1/lists",
       headers: { ...asUser(email), "content-type": "application/json" },
-      payload: { name: "Count Check List" },
+      payload: { name: "Count Check List", mode: "static" },
     });
     const { id } = created.json() as { id: string };
 
@@ -223,7 +223,7 @@ describe("list routes — workspace isolation", () => {
       method: "POST",
       url: "/api/v1/lists",
       headers: { ...asUser("isolation-userA@test.com"), "content-type": "application/json" },
-      payload: { name: "User A Private List" },
+      payload: { name: "User A Private List", mode: "static" },
     });
     const { id: listAId } = resA.json() as { id: string };
 
@@ -248,7 +248,7 @@ describe("list routes — workspace isolation", () => {
       method: "POST",
       url: "/api/v1/lists",
       headers: { ...asUser("isolation-ownerA@test.com"), "content-type": "application/json" },
-      payload: { name: "Owner A List" },
+      payload: { name: "Owner A List", mode: "static" },
     });
     const { id } = resA.json() as { id: string };
 
@@ -266,7 +266,7 @@ describe("list routes — workspace isolation", () => {
       method: "POST",
       url: "/api/v1/lists",
       headers: { ...asUser("isolation-memberA@test.com"), "content-type": "application/json" },
-      payload: { name: "Secret Members List" },
+      payload: { name: "Secret Members List", mode: "static" },
     });
     const { id } = created.json() as { id: string };
 
@@ -335,7 +335,7 @@ describe("list routes — 404 and validation", () => {
       method: "POST",
       url: "/api/v1/lists",
       headers: { ...asUser(email), "content-type": "application/json" },
-      payload: { name: "Validation List" },
+      payload: { name: "Validation List", mode: "static" },
     });
     const { id } = created.json() as { id: string };
 
@@ -396,7 +396,7 @@ describe("list routes — CSV export", () => {
       method: "POST",
       url: "/api/v1/lists",
       headers: { ...asUser(email), "content-type": "application/json" },
-      payload: { name: "CSV Export List" },
+      payload: { name: "CSV Export List", mode: "static" },
     });
     const { id } = created.json() as { id: string };
 

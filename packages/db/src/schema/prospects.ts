@@ -35,6 +35,9 @@ export const lists = pgTable("lists", {
     .notNull()
     .references(() => workspaces.id),
   name: text("name").notNull(),
+  /** SearchFilters JSON this static list was built from (R10.3) — null when not reconstructable
+   * (manual/CSV-imported lists), set when a smart list was activated into a brand-new list. */
+  sourceFilters: jsonb("source_filters"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

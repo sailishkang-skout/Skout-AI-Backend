@@ -4,6 +4,7 @@ import { searchFiltersSchema } from "@skout/shared";
 import { buildEnrichmentService, InsufficientCreditsError } from "../services/enrichment/index.js";
 import { prospectToSnapshot, prospectToSummary } from "../services/smart-list.mapper.js";
 import { createSearchCacheService } from "../services/search-cache.service.js";
+import { buildListService } from "../services/list.service.js";
 import {
   createSmartList,
   deleteSmartList,
@@ -164,6 +165,10 @@ export async function smartListRoutes(app: FastifyInstance) {
       const listName =
         body.listName ?? `${result.list.name} — ${new Date().toISOString().slice(0, 10)}`;
       list = await svc.createList(workspaceId, listName, prospects);
+      // R10.3 — a brand-new list from activation has known-reconstructable filters (this smart
+      // list's), unlike a list you're merely adding matches into, so only tag this branch.
+      const listSvc = buildListService(app.db, osConfig(app));
+      await listSvc?.setSourceFilters(workspaceId, list.id, result.list.filters);
     }
 
     return reply.status(201).send({
