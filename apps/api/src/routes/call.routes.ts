@@ -1,10 +1,12 @@
 import type { FastifyInstance } from "fastify";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { schema } from "@skout/db";
+import { filterAutoFillablePatch, mergeAutoFillSources, asFieldSourcesMap } from "@skout/shared";
 import { errorResponse, HttpError } from "../utils/http.js";
 import { buildBridgeTwiml, dialBridgeCall, isTwilioConfigured } from "../services/twilio.service.js";
 import { resolveProspectFields } from "../services/prospect-resolver.service.js";
 import { createNotification } from "../services/notifications.service.js";
+import { extractFieldsFromCallNotes } from "../services/call-notes-extraction.service.js";
 
 /** R20.2 — Twilio click-to-call dialer. */
 export async function callRoutes(app: FastifyInstance) {
@@ -90,6 +92,84 @@ export async function callRoutes(app: FastifyInstance) {
       }
     }
   );
+
+  /**
+   * R13.3 — run the call-notes extraction pass and merge any typed fields it finds into the
+   * linked contact/company, tagged source: "call_note". Best-effort: never throws — a failure
+   * here must never fail the notes save itself.
+   */
+  async function applyCallNoteAutoFill(workspaceId: string, contactId: string, notes: string): Promise<void> {
+    const extraction = await extractFieldsFromCallNotes(app.config, notes);
+
+    if (extraction.contact) {
+      const [contact] = await db()
+        .select()
+        .from(schema.contacts)
+        .where(and(eq(schema.contacts.id, contactId), eq(schema.contacts.workspaceId, workspaceId)))
+        .limit(1);
+      if (contact) {
+        const existingSources = asFieldSourcesMap(contact.fieldSources);
+        const { applied } = filterAutoFillablePatch(extraction.contact, existingSources);
+        const appliedFields = Object.keys(applied);
+        if (appliedFields.length > 0) {
+          const nextFieldSources = mergeAutoFillSources(existingSources, appliedFields, "call_note", extraction.contactConfidence);
+          await db()
+            .update(schema.contacts)
+            .set({ ...applied, fieldSources: nextFieldSources, updatedAt: new Date() })
+            .where(eq(schema.contacts.id, contact.id));
+        }
+
+        if (extraction.company && contact.companyId) {
+          const [company] = await db()
+            .select()
+            .from(schema.companies)
+            .where(and(eq(schema.companies.id, contact.companyId), eq(schema.companies.workspaceId, workspaceId)))
+            .limit(1);
+          if (company) {
+            const existingCompanySources = asFieldSourcesMap(company.fieldSources);
+            const { applied: companyApplied } = filterAutoFillablePatch(extraction.company, existingCompanySources);
+            const companyAppliedFields = Object.keys(companyApplied);
+            if (companyAppliedFields.length > 0) {
+              const nextCompanySources = mergeAutoFillSources(
+                existingCompanySources,
+                companyAppliedFields,
+                "call_note",
+                extraction.companyConfidence
+              );
+              await db()
+                .update(schema.companies)
+                .set({ ...companyApplied, fieldSources: nextCompanySources, updatedAt: new Date() })
+                .where(eq(schema.companies.id, company.id));
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // PATCH /calls/:id/notes — attach free-text notes to a logged call. Triggers R13.3's
+  // call_note auto-fill pipeline on the linked contact/company; the extraction+merge failing
+  // never fails the notes save (best-effort, see applyCallNoteAutoFill above).
+  app.patch<{ Params: { id: string }; Body: { notes: string } }>("/calls/:id/notes", async (request, reply) => {
+    if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    const notes = (request.body?.notes ?? "").toString();
+    const [callRow] = await db()
+      .update(schema.calls)
+      .set({ notes, updatedAt: new Date() })
+      .where(and(eq(schema.calls.id, request.params.id), eq(schema.calls.workspaceId, request.workspaceId)))
+      .returning();
+    if (!callRow) return reply.code(404).send(errorResponse("Call not found", 404));
+
+    if (callRow.contactId && notes.trim()) {
+      try {
+        await applyCallNoteAutoFill(request.workspaceId, callRow.contactId, notes);
+      } catch (err) {
+        app.log.warn({ err }, "call-note auto-fill failed");
+      }
+    }
+
+    return reply.send({ data: callRow });
+  });
 
   // --- Public Twilio webhooks (no bearer auth — see isPublicRoute in plugins/auth.ts) ---
 

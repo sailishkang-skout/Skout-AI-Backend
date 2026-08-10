@@ -16,6 +16,8 @@ import { buildChatGrounding } from "../services/ai-chat-context.service.js";
 import { createWorkspaceToolRunner } from "../services/ai-workspace-tools.service.js";
 import { readAiExport } from "../services/ai-export.service.js";
 import { buildSequenceService } from "../services/sequence.service.js";
+import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.js";
+import { dispatchWebhookEvent } from "../services/webhook.service.js";
 import { HttpError } from "../utils/http.js";
 
 const chatSchema = z.object({
@@ -256,7 +258,7 @@ export async function aiRoutes(app: FastifyInstance) {
         }),
       ]);
 
-      const toolRunner = createWorkspaceToolRunner(app.db ?? null, app.config, workspaceId, isAdmin);
+      const toolRunner = createWorkspaceToolRunner(app.db ?? null, app.config, workspaceId, isAdmin, body.agent);
 
       const result = await aiService.chat(
         {
@@ -405,6 +407,82 @@ export async function aiRoutes(app: FastifyInstance) {
       afterState: { ...parse.data.details, executedByAgent: parse.data.agent, onBehalfOfUserId: request.userId },
     });
     return reply.code(201).send({ data: { logged: true } });
+  });
+
+  const enrollListActionSchema = z.object({
+    listId: z.string().min(1),
+    sequenceId: z.string().min(1),
+  });
+
+  /**
+   * POST /ai/actions/enroll-list — R15.2. DexterAI's one guarded write action, executed and
+   * audited in a single request instead of the previous enroll-then-separately-call-/ai/audit
+   * two-call pattern (a client that died between those two calls would enroll a list without
+   * ever recording that Dexter did it). Same enroll behavior as POST /sequences/:id/enroll
+   * (job enqueueing + webhook dispatch included) so switching Dexter to this endpoint isn't a
+   * regression for prospects it enrolls.
+   */
+  app.post("/ai/actions/enroll-list", async (request, reply) => {
+    const parse = enrollListActionSchema.safeParse(request.body);
+    if (!parse.success) {
+      return reply.status(400).send({ error: parse.error.errors[0]?.message ?? "Invalid request" });
+    }
+    if (!request.workspaceId || !request.userId) {
+      return reply.status(401).send({ error: "Unauthorized" });
+    }
+    if (!app.db) return reply.status(500).send({ error: "Database not available" });
+
+    const { listId, sequenceId } = parse.data;
+    const seqSvc = buildSequenceService(app.db);
+    if (!seqSvc) return reply.status(500).send({ error: "Database not available" });
+
+    let result: Awaited<ReturnType<typeof seqSvc.enroll>>;
+    try {
+      result = await seqSvc.enroll(sequenceId, request.workspaceId, { listId });
+    } catch (err: unknown) {
+      const e = err as { statusCode?: number; message?: string };
+      return reply.status(e.statusCode ?? 500).send({ error: e.message ?? "Could not enroll list in sequence" });
+    }
+
+    for (const e of result.newEnrollments) {
+      const delayMs =
+        app.config.BYPASS_BUSINESS_HOURS || !e.firstStepScheduledAt
+          ? 0
+          : Math.max(0, e.firstStepScheduledAt.getTime() - Date.now());
+      enqueueSequenceAdvanceJob(
+        app.config,
+        { enrollmentId: e.enrollmentId, workspaceId: request.workspaceId, prospectId: e.prospectId, sequenceId },
+        delayMs
+      ).catch((err: unknown) => {
+        app.log.error({ err, enrollmentId: e.enrollmentId }, "Failed to enqueue advance job");
+      });
+      dispatchWebhookEvent(app.db, app.config, "prospect.enrolled", request.workspaceId, {
+        enrollmentId: e.enrollmentId,
+        sequenceId,
+        prospectId: e.prospectId,
+      }).catch((err: unknown) => {
+        app.log.error({ err, enrollmentId: e.enrollmentId }, "Failed to dispatch webhook event");
+      });
+    }
+
+    // Audit write happens in the same request as the enroll itself (not a separate client
+    // call afterward) — a crash here means the enroll response never reaches the client either,
+    // so there's no window where the action succeeded silently and unaudited.
+    await app.db.insert(schema.auditLogs).values({
+      workspaceId: request.workspaceId,
+      actorId: request.userId,
+      action: "ai:dexter:enroll_list",
+      entityType: "sequence",
+      entityId: sequenceId,
+      afterState: {
+        listId,
+        enrolled: result.enrolled,
+        executedByAgent: "dexter",
+        onBehalfOfUserId: request.userId,
+      },
+    });
+
+    return reply.code(201).send({ data: result });
   });
 
   const nextBestActionSchema = z.object({

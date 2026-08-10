@@ -175,14 +175,50 @@ export async function recordRuleRun(
   await db.insert(activationRuleRuns).values({ workspaceId, ruleId, prospectId, actionTaken });
 }
 
-/** Mark a logged run as manually reversed (unenroll / remove from list), per the AC above. */
-export async function reverseRuleRun(db: Db, workspaceId: string, runId: string): Promise<boolean> {
+/**
+ * Reverse a logged run — R13.4 AC3 names "unenroll" / "remove from list" explicitly, so those two
+ * target actions actually undo the effect (sequence.unenroll / list removeMember) before the run
+ * is marked reversed. "activate" has no defined undo in the AC (there's no "deactivate" concept
+ * in this codebase) — those runs are marked reversed for bookkeeping but `undone` comes back
+ * false so callers can be honest about it rather than implying something was rolled back.
+ *
+ * If the undo action itself fails, the run is NOT marked reversed — better to leave it
+ * re-triable than to record a reversal that didn't actually happen.
+ */
+export async function reverseRuleRun(
+  db: Db,
+  config: Env,
+  workspaceId: string,
+  runId: string
+): Promise<{ reversed: boolean; undone: boolean } | null> {
+  const [run] = await db
+    .select()
+    .from(activationRuleRuns)
+    .where(and(eq(activationRuleRuns.id, runId), eq(activationRuleRuns.workspaceId, workspaceId)))
+    .limit(1);
+  if (!run) return null;
+  if (run.reversedAt) return { reversed: true, undone: false };
+
+  const [rule] = await db.select().from(activationRules).where(eq(activationRules.id, run.ruleId)).limit(1);
+
+  let undone = false;
+  if (rule?.targetId) {
+    if (rule.targetAction === "enroll_sequence") {
+      const seqSvc = buildSequenceService(db);
+      const result = seqSvc ? await seqSvc.unenroll(workspaceId, rule.targetId, run.prospectId) : null;
+      undone = Boolean(result);
+    } else if (rule.targetAction === "add_to_list") {
+      const listSvc = buildListService(db, openSearchConfigFromEnv(config));
+      undone = listSvc ? await listSvc.removeMember(workspaceId, rule.targetId, run.prospectId) : false;
+    }
+  }
+
   const [row] = await db
     .update(activationRuleRuns)
     .set({ reversedAt: new Date() })
     .where(and(eq(activationRuleRuns.id, runId), eq(activationRuleRuns.workspaceId, workspaceId)))
     .returning();
-  return Boolean(row);
+  return row ? { reversed: true, undone } : null;
 }
 
 export async function listRuleRuns(db: Db, workspaceId: string, ruleId?: string) {
@@ -281,9 +317,9 @@ async function executeRuleAction(
  * matched rule and log each firing (auditable + reversible per the AC). Called from the scoring
  * pipeline (`list-score.runner.ts`) right after a prospect's score is computed.
  *
- * `activeSignalTypes` is `[]` until a real R11 signal store exists (see the comment on
- * `activation_rules.signal_type` in packages/db) — rules with a signalType simply won't match
- * yet; score-only rules fire normally. This is a known, documented limitation, not a bug.
+ * `activeSignalTypes` comes from the R11.2 unified signal store (see `list-score.runner.ts`,
+ * which calls `listSignalsForEntity` before this) — rules with a `signalType` match against
+ * whatever's currently active for the prospect; score-only rules are unaffected either way.
  *
  * One rule's failure never blocks another's — each is caught and counted independently so a
  * single misconfigured target (e.g. a deleted list) can't silently swallow the rest.

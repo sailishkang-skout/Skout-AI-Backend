@@ -393,12 +393,23 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
  * Builds a runner bound to one workspace. All handlers are READ-ONLY — nothing here mutates data
  * or spends credits. The db may be null (returns a friendly error per call).
  */
+/**
+ * R19.2 — the "cro" agent's tool set is a real allowlist, enforced both in what's offered to the
+ * model (`tools`) and at dispatch (`run`) — not just get_cro_summary's own isAdmin check, which
+ * only ever gated that one tool while every other read-only workspace tool (get_thread,
+ * list_ai_drafts, export_dataset, …) stayed reachable. Only aggregate/admin-scoped tools belong
+ * here; nothing here mutates data.
+ */
+const CRO_AGENT_TOOLS = new Set(["get_cro_summary", "list_app_routes"]);
+
 export function createWorkspaceToolRunner(
   db: Db | null,
   config: Env,
   workspaceId: string,
   /** R19.2 — gates the get_cro_summary tool. Only owner/admin callers should pass true. */
-  isAdmin = false
+  isAdmin = false,
+  /** R19.2 — "cro" restricts both the offered tool list and dispatch to CRO_AGENT_TOOLS. */
+  agent: "skout" | "dexter" | "cro" = "skout"
 ): WorkspaceToolRunner {
   const analytics = createAnalyticsService(db, config);
   const dashboard = createDashboardService(db, config);
@@ -647,9 +658,16 @@ export function createWorkspaceToolRunner(
   };
 
   return {
-    tools: WORKSPACE_TOOL_DEFS,
+    tools:
+      agent === "cro"
+        ? WORKSPACE_TOOL_DEFS.filter((t) => t.type === "function" && CRO_AGENT_TOOLS.has(t.function.name))
+        : WORKSPACE_TOOL_DEFS,
     getCreatedExports: () => createdExports,
     async run(name, args) {
+      if (agent === "cro" && !CRO_AGENT_TOOLS.has(name)) {
+        log.warn("cro agent attempted a non-allowlisted tool call", { tool: name, workspaceId });
+        return serialize({ error: `tool_not_available_for_agent:${name}` });
+      }
       const handler = handlers[name];
       if (!handler) return serialize({ error: `unknown_tool:${name}` });
       try {

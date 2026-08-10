@@ -84,8 +84,8 @@ export async function activationRuleRoutes(app: FastifyInstance) {
     if (!request.workspaceId) return reply.code(401).send(errorResponse("Not authenticated", 401));
     if (!app.db) return reply.code(503).send(errorResponse("Database unavailable", 503));
     const { runId } = request.params as { runId: string };
-    const reversed = await reverseRuleRun(app.db, request.workspaceId, runId);
-    if (!reversed) return reply.code(404).send(errorResponse("Run not found", 404));
-    return reply.send({ data: { reversed: true } });
+    const result = await reverseRuleRun(app.db, app.config, request.workspaceId, runId);
+    if (!result) return reply.code(404).send(errorResponse("Run not found", 404));
+    return reply.send({ data: result });
   });
 }
