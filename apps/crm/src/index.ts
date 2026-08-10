@@ -2,6 +2,7 @@ import "./instrument.js";
 import { initRootLogger, initSentry } from "@skout/observability";
 import { loadEnv } from "./config/env.js";
 import { buildApp } from "./app.js";
+import { startMeetingAutoJoinWorker } from "./workers/meeting-auto-join.worker.js";
 
 async function main() {
   const config = loadEnv();
@@ -22,8 +23,10 @@ async function main() {
   });
 
   const app = await buildApp(config);
+  const autoJoinTimer = startMeetingAutoJoinWorker(app);
 
   const shutdown = async () => {
+    if (autoJoinTimer) clearInterval(autoJoinTimer);
     await app.close();
   };
   process.on("SIGINT", () => void shutdown());

@@ -2,7 +2,7 @@ import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { HttpError } from "../utils/http.js";
-import { resolveNotificationsForEntity } from "./notification.service.js";
+import { resolveNotificationsForEntity } from "./notifications.service.js";
 
 const { aiDrafts, prospectActivations, prospectScores } = schema;
 

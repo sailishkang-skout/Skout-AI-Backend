@@ -1,64 +1,111 @@
 import type { FastifyInstance } from "fastify";
-import { z } from "zod";
+import { errorResponse, HttpError } from "../utils/http.js";
 import {
-  getUnreadCount,
+  createNotification,
   listNotifications,
+  listPreferences,
   markAllRead,
   markRead,
-} from "../services/notification.service.js";
-import { errorResponse } from "../utils/http.js";
+  setPreference,
+  unreadCount,
+  type NotificationChannel,
+} from "../services/notifications.service.js";
 
-const listQuerySchema = z.object({
-  unreadOnly: z
-    .string()
-    .optional()
-    .transform((v) => v === "true" || v === "1"),
-  type: z.string().optional(),
-  limit: z.coerce.number().int().min(1).max(200).optional(),
-});
+const VALID_CHANNELS: NotificationChannel[] = ["in_app", "email", "both"];
 
-/** In-app notification center (R17.1) — the store every alert type plugs into. */
+/** R17.1 — notification center + R17.4 — email/Slack delivery channel preferences. */
 export async function notificationRoutes(app: FastifyInstance) {
-  app.get("/notifications", async (request, reply) => {
-    const workspaceId = request.workspaceId;
-    const userId = request.userId;
-    if (!workspaceId || !userId) return reply.status(401).send(errorResponse("Not authenticated", 401));
-    if (!app.db) return reply.send({ data: [], total: 0 });
+  function db() {
+    if (!app.db) throw new HttpError("Database not available", 500);
+    return app.db;
+  }
 
-    const { unreadOnly, type, limit } = listQuerySchema.parse(request.query ?? {});
-    const data = await listNotifications(app.db, workspaceId, userId, { unreadOnly, type, limit });
-    return reply.send({ data, total: data.length });
-  });
+  // GET /notifications?unread=true&type=activation_rule
+  app.get<{ Querystring: { unread?: string; type?: string; limit?: string } }>(
+    "/notifications",
+    async (request, reply) => {
+      if (!request.workspaceId || !request.userId) {
+        return reply.code(401).send(errorResponse("Unauthorized", 401));
+      }
+      const rows = await listNotifications(db(), request.workspaceId, request.userId, {
+        unreadOnly: request.query.unread === "true",
+        type: request.query.type,
+        limit: request.query.limit ? Number(request.query.limit) : undefined,
+      });
+      return reply.send({ data: rows });
+    }
+  );
 
+  // GET /notifications/unread-count — cheap poll target for the bell badge
   app.get("/notifications/unread-count", async (request, reply) => {
-    const workspaceId = request.workspaceId;
-    const userId = request.userId;
-    if (!workspaceId || !userId) return reply.status(401).send(errorResponse("Not authenticated", 401));
-    if (!app.db) return reply.send({ count: 0 });
-
-    const count = await getUnreadCount(app.db, workspaceId, userId);
-    return reply.send({ count });
+    if (!request.workspaceId || !request.userId) {
+      return reply.code(401).send(errorResponse("Unauthorized", 401));
+    }
+    const count = await unreadCount(db(), request.workspaceId, request.userId);
+    return reply.send({ data: { count } });
   });
 
-  app.post("/notifications/:id/read", async (request, reply) => {
-    const workspaceId = request.workspaceId;
-    const userId = request.userId;
-    if (!workspaceId || !userId) return reply.status(401).send(errorResponse("Not authenticated", 401));
-    if (!app.db) return reply.status(503).send(errorResponse("Database unavailable", 503));
-
-    const { id } = request.params as { id: string };
-    const updated = await markRead(app.db, workspaceId, userId, id);
-    if (!updated) return reply.status(404).send(errorResponse("notification_not_found", 404));
-    return reply.send(updated);
+  // POST /notifications/:id/read
+  app.post<{ Params: { id: string } }>("/notifications/:id/read", async (request, reply) => {
+    if (!request.workspaceId || !request.userId) {
+      return reply.code(401).send(errorResponse("Unauthorized", 401));
+    }
+    const ok = await markRead(db(), request.workspaceId, request.userId, request.params.id);
+    if (!ok) return reply.code(404).send(errorResponse("Notification not found", 404));
+    return reply.send({ data: { read: true } });
   });
 
-  app.post("/notifications/mark-all-read", async (request, reply) => {
-    const workspaceId = request.workspaceId;
-    const userId = request.userId;
-    if (!workspaceId || !userId) return reply.status(401).send(errorResponse("Not authenticated", 401));
-    if (!app.db) return reply.send({ marked: 0 });
+  // POST /notifications/read-all
+  app.post("/notifications/read-all", async (request, reply) => {
+    if (!request.workspaceId || !request.userId) {
+      return reply.code(401).send(errorResponse("Unauthorized", 401));
+    }
+    const count = await markAllRead(db(), request.workspaceId, request.userId);
+    return reply.send({ data: { markedRead: count } });
+  });
 
-    const marked = await markAllRead(app.db, workspaceId, userId);
-    return reply.send({ marked });
+  // GET /notifications/preferences
+  app.get("/notifications/preferences", async (request, reply) => {
+    if (!request.workspaceId || !request.userId) {
+      return reply.code(401).send(errorResponse("Unauthorized", 401));
+    }
+    const rows = await listPreferences(db(), request.workspaceId, request.userId);
+    return reply.send({ data: rows });
+  });
+
+  // PUT /notifications/preferences — body: { type: string, channel: "in_app"|"email"|"both" }
+  app.put<{ Body: { type: string; channel: NotificationChannel } }>(
+    "/notifications/preferences",
+    async (request, reply) => {
+      if (!request.workspaceId || !request.userId) {
+        return reply.code(401).send(errorResponse("Unauthorized", 401));
+      }
+      const { type, channel } = request.body ?? ({} as { type?: string; channel?: NotificationChannel });
+      if (!type) return reply.code(400).send(errorResponse("type is required", 400));
+      if (!channel || !VALID_CHANNELS.includes(channel)) {
+        return reply.code(400).send(errorResponse(`channel must be one of ${VALID_CHANNELS.join(", ")}`, 400));
+      }
+      const row = await setPreference(db(), request.workspaceId, request.userId, type, channel);
+      return reply.send({ data: row });
+    }
+  );
+
+  // POST /notifications/test — owner/admin only. Sends yourself a test notification so the
+  // feed/channel wiring can be verified before any real trigger (R17.2/R17.3) exists.
+  app.post("/notifications/test", async (request, reply) => {
+    if (!request.workspaceId || !request.userId || !request.role) {
+      return reply.code(401).send(errorResponse("Unauthorized", 401));
+    }
+    if (!["owner", "admin"].includes(request.role)) {
+      return reply.code(403).send(errorResponse("Requires role: owner or admin", 403));
+    }
+    const row = await createNotification(db(), app.config, {
+      workspaceId: request.workspaceId,
+      userId: request.userId,
+      type: "test",
+      title: "Test notification",
+      body: "This confirms your notification center and delivery channels are wired up correctly.",
+    });
+    return reply.code(201).send({ data: row });
   });
 }

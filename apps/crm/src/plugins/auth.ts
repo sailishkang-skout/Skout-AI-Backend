@@ -17,6 +17,12 @@ function isHealthRoute(url: string): boolean {
   return pathname === "/api/v1/crm/health" || pathname.startsWith("/health");
 }
 
+/** R16.2 — meeting-bot vendor calls this directly; verified via `?secret=`, not a Clerk JWT. */
+function isPublicRoute(url: string): boolean {
+  const pathname = url.split("?")[0];
+  return pathname === "/api/v1/meetings/webhook";
+}
+
 function normalizeOrigin(origin: string): string {
   try {
     const parsed = new URL(origin);
@@ -48,7 +54,7 @@ export const authPlugin = fp(async (app) => {
     );
     app.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {
       if (request.method === "OPTIONS") return;
-      if (isHealthRoute(request.url)) return;
+      if (isHealthRoute(request.url) || isPublicRoute(request.url)) return;
       const stubEmail =
         (request.headers["x-stub-user-email"] as string | undefined) ?? "stub@example.com";
       const db = app.db;
@@ -78,7 +84,7 @@ export const authPlugin = fp(async (app) => {
 
   app.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {
     if (request.method === "OPTIONS") return;
-    if (isHealthRoute(request.url)) return;
+    if (isHealthRoute(request.url) || isPublicRoute(request.url)) return;
 
     const db = app.db;
     if (!db) {

@@ -86,7 +86,10 @@ export class EnrichmentService {
     private readonly loadIcp?: (workspaceId: string) => Promise<IcpConfig>,
     private readonly beforeWrite?: (workspaceId: string) => Promise<void>,
     private readonly afterScore?: (result: ScoreResult) => Promise<void>,
-    private readonly openrouterApiKey?: string
+    private readonly openrouterApiKey?: string,
+    /** R13.3 — best-effort CRM auto-fill hook, called per-prospect after `activate` upserts its
+     * snapshot. Failures here must never fail activation — see call site. */
+    private readonly afterActivate?: (workspaceId: string, snapshot: ProspectSnapshot) => Promise<void>
   ) {}
 
   private async prepareWorkspace(workspaceId: string): Promise<void> {
@@ -126,6 +129,14 @@ export class EnrichmentService {
       const { companyId, prospectId } = this.resolveIds(p);
       const snapshot = stripUnverifiedEmail({ ...p, prospectId, companyId });
       await this.store.upsertActivation(workspaceId, prospectId, companyId, snapshot);
+      if (this.afterActivate) {
+        try {
+          await this.afterActivate(workspaceId, snapshot);
+        } catch (err) {
+          // R13.3 — auto-fill is a nice-to-have side effect of activation, never a blocker.
+          log.error("enrichment auto-fill hook failed", err, { workspaceId, prospectId });
+        }
+      }
     }
     log.info("prospects activated", { workspaceId, count: prospects.length });
     return prospects.length;

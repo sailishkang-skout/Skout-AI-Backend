@@ -1,9 +1,22 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 import { and, eq, gt } from "drizzle-orm";
+import { timingSafeEqual } from "node:crypto";
 import { schema } from "@skout/db";
 import { resolveOrProvisionUser } from "../services/auth.service.js";
 import { errorResponse, HttpError } from "../utils/http.js";
+
+/** Constant-time string compare so secret checks don't leak timing info. */
+function timingSafeEqualStrings(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) {
+    // Still run a compare against a same-length buffer to avoid a length-based timing signal.
+    timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return timingSafeEqual(bufA, bufB);
+}
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -31,6 +44,10 @@ function isPublicRoute(url: string, method?: string): boolean {
     url.startsWith("/api/v1/unsubscribe/") ||
     url.startsWith("/api/v1/invite-auth/send-otp") ||
     url.startsWith("/api/v1/invite-auth/verify-otp") ||
+    // R20.2 — Twilio calls these directly; not signature-verified yet (see dependency doc).
+    url.startsWith("/api/v1/calls/twiml/") ||
+    url.startsWith("/api/v1/calls/status") ||
+    url.startsWith("/api/v1/calls/recording-status") ||
     isInviteTokenLookup
   );
 }
@@ -116,6 +133,26 @@ export const authPlugin = fp(async (app) => {
 
     if (!token) {
       return reply.code(401).send(errorResponse("Missing bearer token", 401));
+    }
+
+    // Static-secret admin import auth (/admin/import page in the frontend). Deliberately
+    // scoped to import routes only — a leaked ADMIN_IMPORT_SECRET can seed data, nothing else.
+    if (token.startsWith("admin_")) {
+      const isImportRoute = request.url.split("?")[0]!.startsWith("/api/v1/import/");
+      const secret = config.ADMIN_IMPORT_SECRET;
+      const targetWorkspaceId = config.ADMIN_IMPORT_WORKSPACE_ID;
+      if (!isImportRoute || !secret || !targetWorkspaceId) {
+        return reply.code(401).send(errorResponse("Invalid authorization token", 401));
+      }
+      const provided = token.slice("admin_".length);
+      if (!timingSafeEqualStrings(provided, secret)) {
+        return reply.code(401).send(errorResponse("Invalid authorization token", 401));
+      }
+      request.userId = "admin-import";
+      request.userEmail = "admin-import@skoutai.internal";
+      request.workspaceId = targetWorkspaceId;
+      request.role = "admin";
+      return;
     }
 
     // Invite session token (issued after OTP verification)

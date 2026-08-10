@@ -3,13 +3,15 @@ import { schema } from "@skout/db";
 
 const createNotification = vi.fn().mockResolvedValue({ id: "notif-1" });
 
-vi.mock("../services/notification.service.js", () => ({
+vi.mock("../services/notifications.service.js", () => ({
   createNotification: (...args: unknown[]) => createNotification(...args),
 }));
 
 const { sweepTasks, sweepSequenceSteps, sweepAiDrafts } = await import("./reminder-sweep.worker.js");
 
 const { tasks, sequenceEnrollmentSteps, sequenceSteps, sequenceEnrollments, aiDrafts, notifications } = schema;
+
+const CONFIG = {} as never;
 
 const NOW = new Date("2026-01-01T00:00:00.000Z");
 const LEAD_CUTOFF = new Date(NOW.getTime() + 24 * 60 * 60 * 1000);
@@ -40,11 +42,12 @@ describe("sweepTasks", () => {
     ];
     const db = { select: vi.fn().mockReturnValue(selectChain(due)) };
 
-    await sweepTasks(db as never, tasks, notifications, LEAD_CUTOFF);
+    await sweepTasks(db as never, CONFIG, tasks, notifications, LEAD_CUTOFF);
 
     expect(createNotification).toHaveBeenCalledTimes(1);
     expect(createNotification).toHaveBeenCalledWith(
       db,
+      CONFIG,
       expect.objectContaining({
         workspaceId: "ws-1",
         userId: "user-1",
@@ -59,7 +62,7 @@ describe("sweepTasks", () => {
   it("does nothing when no tasks are due", async () => {
     const db = { select: vi.fn().mockReturnValue(selectChain([])) };
 
-    await sweepTasks(db as never, tasks, notifications, LEAD_CUTOFF);
+    await sweepTasks(db as never, CONFIG, tasks, notifications, LEAD_CUTOFF);
 
     expect(createNotification).not.toHaveBeenCalled();
   });
@@ -76,9 +79,13 @@ describe("sweepTasks", () => {
     ];
     const db = { select: vi.fn().mockReturnValue(selectChain(due)) };
 
-    await sweepTasks(db as never, tasks, notifications, LEAD_CUTOFF);
+    await sweepTasks(db as never, CONFIG, tasks, notifications, LEAD_CUTOFF);
 
-    expect(createNotification).toHaveBeenCalledWith(db, expect.objectContaining({ userId: null }));
+    expect(createNotification).toHaveBeenCalledWith(
+      db,
+      CONFIG,
+      expect.objectContaining({ userId: null })
+    );
   });
 });
 
@@ -96,6 +103,7 @@ describe("sweepSequenceSteps", () => {
 
     await sweepSequenceSteps(
       db as never,
+      CONFIG,
       sequenceEnrollmentSteps,
       sequenceSteps,
       sequenceEnrollments,
@@ -106,6 +114,7 @@ describe("sweepSequenceSteps", () => {
     expect(createNotification).toHaveBeenCalledTimes(1);
     expect(createNotification).toHaveBeenCalledWith(
       db,
+      CONFIG,
       expect.objectContaining({
         workspaceId: "ws-1",
         type: "sequence_reminder",
@@ -121,6 +130,7 @@ describe("sweepSequenceSteps", () => {
 
     await sweepSequenceSteps(
       db as never,
+      CONFIG,
       sequenceEnrollmentSteps,
       sequenceSteps,
       sequenceEnrollments,
@@ -144,11 +154,12 @@ describe("sweepAiDrafts", () => {
     ];
     const db = { select: vi.fn().mockReturnValue(selectChain(due)) };
 
-    await sweepAiDrafts(db as never, aiDrafts, notifications, STALE_CUTOFF);
+    await sweepAiDrafts(db as never, CONFIG, aiDrafts, notifications, STALE_CUTOFF);
 
     expect(createNotification).toHaveBeenCalledTimes(1);
     expect(createNotification).toHaveBeenCalledWith(
       db,
+      CONFIG,
       expect.objectContaining({
         workspaceId: "ws-1",
         type: "draft_reminder",
@@ -162,7 +173,7 @@ describe("sweepAiDrafts", () => {
   it("does nothing when no drafts are stale", async () => {
     const db = { select: vi.fn().mockReturnValue(selectChain([])) };
 
-    await sweepAiDrafts(db as never, aiDrafts, notifications, STALE_CUTOFF);
+    await sweepAiDrafts(db as never, CONFIG, aiDrafts, notifications, STALE_CUTOFF);
 
     expect(createNotification).not.toHaveBeenCalled();
   });
@@ -175,7 +186,7 @@ describe("sweepAiDrafts", () => {
     const db = { select: vi.fn().mockReturnValue(selectChain(due)) };
     createNotification.mockRejectedValueOnce(new Error("db down")).mockResolvedValueOnce({ id: "notif-2" });
 
-    await sweepAiDrafts(db as never, aiDrafts, notifications, STALE_CUTOFF);
+    await sweepAiDrafts(db as never, CONFIG, aiDrafts, notifications, STALE_CUTOFF);
 
     expect(createNotification).toHaveBeenCalledTimes(2);
   });

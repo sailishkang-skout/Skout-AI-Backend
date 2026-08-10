@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
-import { resolveNotificationsForEntity } from "./notification.service.js";
+import { resolveNotificationsForEntity } from "./notifications.service.js";
 
 const { tasks } = schema;
 

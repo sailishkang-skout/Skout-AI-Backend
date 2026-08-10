@@ -5,7 +5,7 @@ import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
-import { createNotification } from "../services/notification.service.js";
+import { createNotification } from "../services/notifications.service.js";
 
 const log = createLogger("reminder-sweep.worker");
 
@@ -42,16 +42,17 @@ export async function startReminderSweepWorker(config: Env) {
       const leadCutoff = new Date(now.getTime() + config.REMINDER_LEAD_HOURS * 60 * 60 * 1000);
       const staleCutoff = new Date(now.getTime() - config.REMINDER_LEAD_HOURS * 60 * 60 * 1000);
 
-      await sweepTasks(db, tasks, notifications, leadCutoff);
+      await sweepTasks(db, config, tasks, notifications, leadCutoff);
       await sweepSequenceSteps(
         db,
+        config,
         sequenceEnrollmentSteps,
         sequenceSteps,
         sequenceEnrollments,
         notifications,
         leadCutoff
       );
-      await sweepAiDrafts(db, aiDrafts, notifications, staleCutoff);
+      await sweepAiDrafts(db, config, aiDrafts, notifications, staleCutoff);
     },
     { connection, concurrency: 1 }
   );
@@ -72,6 +73,7 @@ type Db = ReturnType<typeof createDb>["db"];
 
 export async function sweepTasks(
   db: Db,
+  config: Env,
   tasks: (typeof schema)["tasks"],
   notifications: (typeof schema)["notifications"],
   leadCutoff: Date
@@ -101,14 +103,14 @@ export async function sweepTasks(
 
   for (const task of due) {
     try {
-      await createNotification(db, {
+      await createNotification(db, config, {
         workspaceId: task.workspaceId,
         userId: task.assignedTo,
         type: "task_reminder",
         entityType: "task",
         entityId: task.id,
         title: `Task "${task.title}" is due soon`,
-        body: task.dueDate ? `Due ${task.dueDate.toISOString()}` : null,
+        body: task.dueDate ? `Due ${task.dueDate.toISOString()}` : undefined,
       });
     } catch (err) {
       log.error(`Failed to create reminder for task ${task.id}`, { taskId: task.id, err });
@@ -120,6 +122,7 @@ export async function sweepTasks(
 
 export async function sweepSequenceSteps(
   db: Db,
+  config: Env,
   sequenceEnrollmentSteps: (typeof schema)["sequenceEnrollmentSteps"],
   sequenceSteps: (typeof schema)["sequenceSteps"],
   sequenceEnrollments: (typeof schema)["sequenceEnrollments"],
@@ -158,13 +161,13 @@ export async function sweepSequenceSteps(
 
   for (const step of due) {
     try {
-      await createNotification(db, {
+      await createNotification(db, config, {
         workspaceId: step.workspaceId,
         type: "sequence_reminder",
         entityType: "sequence_enrollment_step",
         entityId: step.id,
         title: `LinkedIn ${step.linkedinAction ?? "step"} is due soon`,
-        body: step.scheduledAt ? `Scheduled for ${step.scheduledAt.toISOString()}` : null,
+        body: step.scheduledAt ? `Scheduled for ${step.scheduledAt.toISOString()}` : undefined,
       });
     } catch (err) {
       log.error(`Failed to create reminder for sequence step ${step.id}`, { stepId: step.id, err });
@@ -176,6 +179,7 @@ export async function sweepSequenceSteps(
 
 export async function sweepAiDrafts(
   db: Db,
+  config: Env,
   aiDrafts: (typeof schema)["aiDrafts"],
   notifications: (typeof schema)["notifications"],
   staleCutoff: Date
@@ -203,7 +207,7 @@ export async function sweepAiDrafts(
 
   for (const draft of due) {
     try {
-      await createNotification(db, {
+      await createNotification(db, config, {
         workspaceId: draft.workspaceId,
         type: "draft_reminder",
         entityType: "ai_draft",

@@ -6,6 +6,8 @@ export const users = pgTable("users", {
   clerkUserId: text("clerk_user_id").unique(),
   email: text("email").notNull().unique(),
   fullName: text("full_name"),
+  /** R20.2 — the "agent leg" number Twilio dials first to bridge a click-to-call. E.164 format. */
+  phone: text("phone"),
   status: text("status").notNull().default("active"),
   isBlocked: boolean("is_blocked").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

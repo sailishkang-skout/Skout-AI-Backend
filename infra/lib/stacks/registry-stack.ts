@@ -1,6 +1,6 @@
 import * as ecr from "aws-cdk-lib/aws-ecr";
 import * as iam from "aws-cdk-lib/aws-iam";
-import { Stack, StackProps, CfnOutput, RemovalPolicy, Tags } from "aws-cdk-lib";
+import { Stack, StackProps, CfnOutput, RemovalPolicy, Tags, Duration } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import type { EnvironmentConfig } from "../config/environments.js";
 
@@ -34,6 +34,15 @@ export class RegistryStack extends Stack {
         removalPolicy,
         emptyOnDelete: config.name !== "prod",
         imageScanOnPush: true,
+        lifecycleRules: [
+          // Untagged images pile up from every push that overwrites `latest`/a branch tag —
+          // expire them instead of paying storage for orphaned layers indefinitely.
+          {
+            tagStatus: ecr.TagStatus.UNTAGGED,
+            maxImageAge: Duration.days(7),
+            rulePriority: 1,
+          },
+        ],
       });
 
     this.apiRepository = createRepo("ApiRepo", `skout-${config.name}-api`);
