@@ -108,7 +108,8 @@ describe("sweepTasks", () => {
     expect(createNotification).toHaveBeenCalledWith(
       db,
       CONFIG,
-      expect.objectContaining({ userId: null }));
+      expect.objectContaining({ userId: null })
+    );
   });
 });
 
