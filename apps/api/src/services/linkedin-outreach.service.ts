@@ -4,6 +4,7 @@ import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import { HttpError } from "../utils/http.js";
 import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.js";
+import { resolveNotificationsForEntity } from "./notifications.service.js";
 import type { Env } from "../config/env.js";
 
 const log = createLogger("linkedin-outreach.service");
@@ -84,6 +85,9 @@ export class LinkedinOutreachService {
         .where(eq(sequenceEnrollmentSteps.id, job.enrollmentStepId));
     });
 
+    // No longer needs a human's attention (R17.2) — resolve any pending reminder for this step.
+    await resolveNotificationsForEntity(this.db, "sequence_enrollment_step", job.enrollmentStepId);
+
     if (enrollment) {
       await enqueueSequenceAdvanceJob(
         this.config,
@@ -138,6 +142,9 @@ export class LinkedinOutreachService {
         .set({ status: "failed", executedAt: now, failureReason: reason.slice(0, 500) })
         .where(eq(sequenceEnrollmentSteps.id, job.enrollmentStepId));
     });
+
+    // Failed is still terminal — no longer needs a human's attention either (R17.2).
+    await resolveNotificationsForEntity(this.db, "sequence_enrollment_step", job.enrollmentStepId);
 
     if (enrollment) {
       await enqueueSequenceAdvanceJob(
