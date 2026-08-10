@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, or } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
@@ -15,7 +15,7 @@ export type NotificationChannel = "in_app" | "email" | "both";
 export interface NotificationDto {
   id: string;
   workspaceId: string;
-  userId: string;
+  userId: string | null;
   type: string;
   title: string;
   body: string | null;
@@ -66,7 +66,10 @@ export async function listNotifications(
   userId: string,
   opts: { unreadOnly?: boolean; type?: string; limit?: number } = {}
 ): Promise<NotificationDto[]> {
-  const conditions = [eq(notifications.workspaceId, workspaceId), eq(notifications.userId, userId)];
+  const conditions = [
+    eq(notifications.workspaceId, workspaceId),
+    or(eq(notifications.userId, userId), isNull(notifications.userId))!,
+  ];
   if (opts.unreadOnly) conditions.push(isNull(notifications.readAt));
   if (opts.type) conditions.push(eq(notifications.type, opts.type));
   const rows = await db
@@ -83,7 +86,11 @@ export async function unreadCount(db: Db, workspaceId: string, userId: string): 
     .select({ id: notifications.id })
     .from(notifications)
     .where(
-      and(eq(notifications.workspaceId, workspaceId), eq(notifications.userId, userId), isNull(notifications.readAt))
+      and(
+        eq(notifications.workspaceId, workspaceId),
+        or(eq(notifications.userId, userId), isNull(notifications.userId))!,
+        isNull(notifications.readAt)
+      )
     );
   return rows.length;
 }
@@ -92,7 +99,13 @@ export async function markRead(db: Db, workspaceId: string, userId: string, id: 
   const [row] = await db
     .update(notifications)
     .set({ readAt: new Date() })
-    .where(and(eq(notifications.id, id), eq(notifications.workspaceId, workspaceId), eq(notifications.userId, userId)))
+    .where(
+      and(
+        eq(notifications.id, id),
+        eq(notifications.workspaceId, workspaceId),
+        or(eq(notifications.userId, userId), isNull(notifications.userId))!
+      )
+    )
     .returning();
   return Boolean(row);
 }
@@ -102,9 +115,27 @@ export async function markAllRead(db: Db, workspaceId: string, userId: string): 
     .update(notifications)
     .set({ readAt: new Date() })
     .where(
-      and(eq(notifications.workspaceId, workspaceId), eq(notifications.userId, userId), isNull(notifications.readAt))
+      and(
+        eq(notifications.workspaceId, workspaceId),
+        or(eq(notifications.userId, userId), isNull(notifications.userId))!,
+        isNull(notifications.readAt)
+      )
     )
     .returning();
+  return rows.length;
+}
+
+/** Auto-resolve (R21.3 AC2) — marks any still-unread notification for an entity as read. */
+export async function resolveNotificationsForEntity(
+  db: Db,
+  entityType: string,
+  entityId: string
+): Promise<number> {
+  const rows = await db
+    .update(notifications)
+    .set({ readAt: new Date() })
+    .where(and(eq(notifications.entityType, entityType), eq(notifications.entityId, entityId), isNull(notifications.readAt)))
+    .returning({ id: notifications.id });
   return rows.length;
 }
 
@@ -200,7 +231,7 @@ async function deliverSlack(config: Env, db: Db, workspaceId: string, title: str
 
 export interface CreateNotificationInput {
   workspaceId: string;
-  userId: string;
+  userId?: string | null; // null/undefined = workspace-wide broadcast
   type: string;
   title: string;
   body?: string;
@@ -217,7 +248,7 @@ export async function createNotification(db: Db, config: Env, input: CreateNotif
     .insert(notifications)
     .values({
       workspaceId: input.workspaceId,
-      userId: input.userId,
+      userId: input.userId ?? null,
       type: input.type,
       title: input.title,
       body: input.body,
@@ -228,9 +259,9 @@ export async function createNotification(db: Db, config: Env, input: CreateNotif
     .returning();
 
   const delivered = new Set<string>(["in_app"]);
-  const channel = await resolveChannel(db, input.workspaceId, input.userId, input.type);
+  const channel = input.userId ? await resolveChannel(db, input.workspaceId, input.userId, input.type) : "in_app";
 
-  if (channel === "email" || channel === "both") {
+  if (input.userId && (channel === "email" || channel === "both")) {
     try {
       const [user] = await db.select({ email: users.email }).from(users).where(eq(users.id, input.userId)).limit(1);
       if (user?.email) {

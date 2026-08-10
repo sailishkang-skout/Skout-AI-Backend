@@ -14,9 +14,8 @@ export const notifications = pgTable(
     workspaceId: uuid("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+    /** Null = workspace-wide broadcast (e.g. unassigned task). */
+    userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
     type: text("type").notNull(),
     title: text("title").notNull(),
     body: text("body"),
@@ -31,6 +30,8 @@ export const notifications = pgTable(
   (table) => [
     index("notifications_workspace_user_idx").on(table.workspaceId, table.userId),
     index("notifications_workspace_user_unread_idx").on(table.workspaceId, table.userId, table.readAt),
+    index("notifications_workspace_type_idx").on(table.workspaceId, table.type),
+    index("notifications_entity_idx").on(table.entityType, table.entityId),
   ]
 );
 
