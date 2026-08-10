@@ -34,6 +34,8 @@ export interface SkoutEcsServiceProps {
   readonly internalOnly?: boolean;
   /** Extra ALB listener-rule conditions (e.g. require an origin-verify header so only the HTTPS front door is allowed). */
   readonly extraConditions?: elbv2.ListenerCondition[];
+  /** Use e.g. Fargate Spot for interruption-tolerant services (non-prod cost lever). Omit for on-demand FARGATE. */
+  readonly capacityProviderStrategies?: ecs.CapacityProviderStrategy[];
   /** Optional Datadog Agent sidecar (ECS Fargate APM). App keeps running if agent fails. */
   readonly datadog?: {
     readonly apiKeySecret: ecs.Secret;
@@ -125,6 +127,9 @@ export class SkoutEcsService extends Construct {
       // Generous grace: the api container runs DB migrations before listening, so first-listen
       // can be ~70s after task start. Grace must exceed (listen time + healthyThreshold*interval).
       ...(hasAlb ? { healthCheckGracePeriod: Duration.seconds(240) } : {}),
+      ...(props.capacityProviderStrategies
+        ? { capacityProviderStrategies: props.capacityProviderStrategies }
+        : {}),
     });
 
     if (hasAlb) {

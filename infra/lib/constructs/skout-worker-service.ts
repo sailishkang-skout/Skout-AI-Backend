@@ -20,6 +20,8 @@ export interface SkoutWorkerServiceProps {
   readonly secrets?: Record<string, ecs.Secret>;
   /** ECS container health check command (default: no-op). */
   readonly healthCheckCommand?: string[];
+  /** Use e.g. Fargate Spot for interruption-tolerant workers (non-prod cost lever). Omit for on-demand FARGATE. */
+  readonly capacityProviderStrategies?: ecs.CapacityProviderStrategy[];
 }
 
 /** Background BullMQ / queue consumer — no ALB, no container port. */
@@ -72,6 +74,9 @@ export class SkoutWorkerService extends Construct {
       assignPublicIp: false,
       circuitBreaker: { rollback: false },
       minHealthyPercent: 0,
+      ...(props.capacityProviderStrategies
+        ? { capacityProviderStrategies: props.capacityProviderStrategies }
+        : {}),
     });
   }
 }
