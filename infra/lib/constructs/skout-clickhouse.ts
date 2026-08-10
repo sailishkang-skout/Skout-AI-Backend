@@ -20,6 +20,8 @@ export interface SkoutClickHouseProps {
   readonly clickhouseSecret: secretsmanager.ISecret;
   /** Security groups allowed to query ClickHouse HTTP (8123). */
   readonly clientSecurityGroups: ec2.ISecurityGroup[];
+  /** Use e.g. Fargate Spot (non-prod cost lever). Omit for on-demand FARGATE. */
+  readonly capacityProviderStrategies?: ecs.CapacityProviderStrategy[];
 }
 
 /** Self-hosted ClickHouse — private Cloud Map DNS, reachable inside the VPC only. */
@@ -99,6 +101,9 @@ export class SkoutClickHouse extends Construct {
       circuitBreaker: { rollback: false },
       minHealthyPercent: 0,
       healthCheckGracePeriod: Duration.seconds(180),
+      ...(props.capacityProviderStrategies
+        ? { capacityProviderStrategies: props.capacityProviderStrategies }
+        : {}),
     });
 
     new cr.AwsCustomResource(this, "SyncClickHouseSecret", {

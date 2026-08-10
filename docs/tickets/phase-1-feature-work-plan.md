@@ -142,6 +142,10 @@ Estimate: 3 · Labels: prospecting, frontend
 > Today: signals are a search-time filter only (intent score, hiring, tech stack), computed
 > per-query. No persistent signal store, no funding/leadership signals, no overlay view.
 > Builds directly on R6.5 (`remaining-features-build-order.md`).
+>
+> **Moat (R14.2):** signals only earn their keep by being cross-referenced against the ICP,
+> score, and activity data already unified in one workspace — a downloaded contact list has no
+> live signal feed to overlay on top of it.
 
 **R11.1 — Tech-stack change signals (adopted/dropped)**
 Description: Beyond static tech-stack detection at scrape time, detect and store *changes* (tool adopted, tool dropped, migration) as a typed signal with timestamp and provenance.
@@ -176,6 +180,11 @@ Estimate: 5 · Labels: frontend, corpus
 
 > New capability: turn ICP into a sized, trackable account universe — not just an ad hoc
 > search result set.
+>
+> **Moat (R14.2):** the TAM coverage funnel (total → activated → enriched → contacted →
+> replied → deal) is only computable because enrichment, sequence, and deal data are
+> cross-referenced against the same corpus universe in one place — a CSV export has no
+> persistent, recomputable TAM to measure coverage against.
 
 **R12.1 — TAM definition from ICP**
 Description: Generate a TAM (count + account list) directly from the workspace ICP filters against the corpus; distinct from a one-off search — it's a saved, named universe.
@@ -210,6 +219,10 @@ Estimate: 8 · Labels: frontend, prospecting
 > Covers items 4 (automate things) and 12 (auto-filled fields). This is the rules/trigger
 > layer that later feeds the visual workflow builder (Phase 5) but ships now as fixed,
 > high-value automations rather than a general builder.
+>
+> **Moat (R14.2):** auto-fill and auto-activation rules only have something to trigger off of
+> because scoring, enrichment, signals, and CRM records already live in the same system —
+> there's nothing left to automate against once that data has been exported.
 
 **R13.1 — Auto re-score on ICP change (from R5.4)**
 Description: When `workspace_icp` version bumps, auto-enqueue a batch re-score of activated prospects; credit-aware, cancelable.
@@ -252,6 +265,10 @@ Estimate: 8 · Labels: automation, backend
 > "MOTE" clarified as **moat**: what keeps a user in Skout instead of falling back to a
 > spreadsheet + point tools. This is a strategic lens applied to specific initiatives below,
 > not a single feature ticket.
+>
+> **Moat (R14.2):** this epic is the mechanism that makes every other epic's moat sentence
+> below a checked, reviewed fact instead of an assumed one — R14.1 audits it, R14.2 gates it at
+> kickoff, R14.3 measures it over time.
 
 **R14.1 — Unified-record lock-in audit**
 Description: Audit every Track A/B feature for whether it writes back to the *same* prospect/company record (per PRD anti-pattern: no parallel silos). Produce a short gap list where a feature currently exports/duplicates instead of unifying.
@@ -264,8 +281,12 @@ Estimate: 3 · Labels: platform, docs
 **R14.2 — "Can't do this outside Skout" checklist per epic**
 Description: For each new Track B epic (R11–R20), require one concrete "this data/action only exists because it's cross-referenced inside Skout" capability (e.g. TAM coverage funnel needs enrichment + sequence + deal data together) — a lightweight PRD gate, not new engineering by itself.
 Acceptance Criteria:
-- [ ] Each epic's kickoff doc states its moat angle in one sentence.
-- [ ] Reviewed at epic planning, not shipped as a separate deliverable.
+- [x] Each epic's kickoff doc states its moat angle in one sentence. (Backfilled 2026-08-10 for
+      R11–R22 as a "**Moat (R14.2):**" line under each epic header in this doc; new epics from
+      here on state it at kickoff per the PR template checklist item added the same day.)
+- [x] Reviewed at epic planning, not shipped as a separate deliverable. (Gate now lives in
+      `.github/PULL_REQUEST_TEMPLATE.md`'s "Definition of sharp" checklist, so it's reviewed at
+      PR time for any PR that opens a new epic — not a standalone deliverable.)
 Dependencies: none
 Estimate: 1 · Labels: platform, docs
 
@@ -283,6 +304,10 @@ Estimate: 5 · Labels: analytics, platform
 
 > Full AI Copilot orchestration is Phase 4 in the PRD mapping. This epic ships a narrow,
 > grounded MVP under the "DexterAI" name — a few tool calls, not general NL platform control.
+>
+> **Moat (R14.2):** DexterAI's answers and actions are grounded in live workspace data
+> (prospects, sequences, credits, CRO rollups) it queries directly through the tool registry —
+> a general-purpose chatbot bolted onto an exported dataset has nothing live to ground itself in.
 
 **R15.1 — DexterAI chat surface + tool registry (v0)**
 Description: A chat entry point (web) wired to a small, fixed tool registry: `search_prospects`, `summarize_list`, `explain_score`. No open-ended write actions yet.
@@ -312,6 +337,10 @@ Estimate: 5 · Labels: ai, frontend
 ---
 
 ### R16 — Meeting bot + calendar sync
+
+> **Moat (R14.2):** meeting summaries and extracted fields post straight to the same prospect
+> activity timeline and auto-fill pipeline that enrichment and call notes already write to — a
+> standalone meeting-notes tool has no CRM record to attach itself to.
 
 **R16.1 — Calendar OAuth sync (Google first)**
 Description: Connect Google Calendar (Outlook stretch); pull upcoming meetings tied to a prospect/company by attendee email match.
@@ -345,6 +374,10 @@ Estimate: 5 · Labels: ai, backend
 
 > Covers items 10 and 14. No notification system exists today — this is new platform
 > infrastructure that R10.2 (list refresh), R11 (signals), R18 (risk) all depend on.
+>
+> **Moat (R14.2):** alerts fire off signals, scores, and sequence/task state that only exist
+> because they're unified in one workspace — a spreadsheet has nothing to watch and nothing to
+> alert on.
 
 **R17.1 — Notification center (in-app)**
 Description: Central notification store + UI (bell icon, unread count, feed) as the landing surface for all downstream alert types.
@@ -386,6 +419,10 @@ Estimate: 5 · Labels: platform, backend
 
 > Scoped-down MVP of "deal coach" risk signals (Phase 4 in the PRD mapping), limited to
 > account/engagement-level risk since native `deals` don't exist yet (Phase 2).
+>
+> **Moat (R14.2):** risk flags are computed from engagement and signal data already unified
+> across sequences, inbox, and enrichment on one record — there's no equivalent signal to
+> compute risk from once that activity is fragmented across separate point tools.
 
 **R18.1 — Engagement-decay risk flag**
 Description: Flag accounts/prospects with declining engagement (no opens/replies/activity over a rolling window) as at-risk, using existing activity data (sequence steps, inbox, enrichment).
@@ -409,6 +446,10 @@ Estimate: 8 · Labels: ai, backend
 
 > A restricted, exec-facing rollup — explicitly gated to `owner`/`admin` roles, distinct from
 > the SDR-facing DexterAI (R15). Read-only in Phase 1; no write actions.
+>
+> **Moat (R14.2):** the exec rollup is only possible because pipeline, activity, signal, and
+> switching-cost data are all cross-referenced in one place — no exported dataset gives you a
+> live, cross-rep pipeline view without someone manually stitching it back together.
 
 **R19.1 — Admin-gated rollup API**
 Description: Aggregate endpoint(s) for team-level pipeline/activity/signal summary, restricted to `owner`/`admin` role (existing role model).
@@ -437,6 +478,11 @@ Estimate: 5 · Labels: frontend, platform
 ---
 
 ### R20 — Notes, suggestions & calling (Sales + Marketing)
+
+> **Moat (R14.2):** call notes, dispositions, and next-best-action suggestions write straight
+> into the same activity timeline and scoring pipeline every other channel already uses — a
+> standalone dialer app has no unified record to log against or score/signal context to suggest
+> from.
 
 **R20.1 — Call notes capture**
 Description: Manual + (where available) auto-transcribed notes attached to a prospect/company timeline for phone calls, usable by both sales and marketing users (not sequence-specific).
@@ -482,6 +528,10 @@ Estimate: 5 · Labels: outreach, backend, frontend
 > only has implicit, system-generated reminders (R17.2). This epic adds user-created,
 > manually manageable tasks as a first-class object, which R17 (reminders), R20.4 (call
 > steps), and R20.3 (AI suggestions → task) all build on.
+>
+> **Moat (R14.2):** every task links back to the same prospect/company/deal record every other
+> feature writes to, so a task's context (score, signals, activity history) is always one click
+> away — a generic to-do app has no such record to link a task to.
 
 **R21.1 — Task entity + CRUD API**
 Description: Native `tasks` table: type (call/email/follow-up/custom), due date, owner, optional link to a prospect/company/deal, status (`open → done | skipped`).
@@ -519,6 +569,10 @@ Estimate: 3 · Labels: platform, backend
 > lists, and (stretch) sequences **out of** Apollo.io/Outreach/Salesloft/similar tools and
 > **into** Skout — the same shape as the HubSpot import path (feature guide §3.10) but for
 > GTM/prospecting tools rather than a CRM.
+>
+> **Moat (R14.2):** imported contacts and sequences land in the same unified prospect/CRM
+> identity space as everything else in the workspace (never auto-activated — always a draft for
+> review) — they don't sit in a separate imported-data silo the way a raw CSV import would.
 
 **R22.1 — Apollo.io connect + contact/list import**
 Description: Connect a user's Apollo.io account (API key, matching Apollo's own auth model) and import their contacts/saved lists into Skout — activate + add to a chosen Skout list, same shape as HubSpot import.
