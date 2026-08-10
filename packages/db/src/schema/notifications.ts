@@ -14,14 +14,16 @@ export const notifications = pgTable(
     workspaceId: uuid("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+    /** Null = workspace-wide broadcast (e.g. an unassigned task's reminder). */
+    userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
     type: text("type").notNull(),
     title: text("title").notNull(),
     body: text("body"),
-    /** Optional deep link target, e.g. entityType="prospect", entityId=<prospectId>. */
+    /** Optional deep link target, e.g. entityType="prospect", entityId=<prospectId>. Also
+     * powers R17.2's auto-resolve — resolveNotificationsForEntity marks unread notifications
+     * for an (entityType, entityId) pair as read once the underlying thing no longer needs it. */
     entityType: text("entity_type"),
+    /** Text, not uuid — some entities (signals, corpus prospects) are identified by hash strings. */
     entityId: text("entity_id"),
     /** Which channels this notification was actually delivered through — for debugging/audit, not preference. */
     deliveredChannels: jsonb("delivered_channels").notNull().default([]),
@@ -31,6 +33,8 @@ export const notifications = pgTable(
   (table) => [
     index("notifications_workspace_user_idx").on(table.workspaceId, table.userId),
     index("notifications_workspace_user_unread_idx").on(table.workspaceId, table.userId, table.readAt),
+    index("notifications_workspace_type_idx").on(table.workspaceId, table.type),
+    index("notifications_entity_idx").on(table.entityType, table.entityId),
   ]
 );
 

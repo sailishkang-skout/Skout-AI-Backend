@@ -18,6 +18,7 @@ const TABLES = [
   "enrichment_batches",
   "async_jobs",
   "ai_drafts",
+  "notifications",
   "prospect_scores",
   "list_members",
   "lists",

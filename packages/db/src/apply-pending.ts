@@ -236,7 +236,9 @@ try {
   await runSqlMigration("0036_deal_field_sources", "0036_deal_field_sources.sql");
   await runSqlMigration("0037_next_best_action_suggestions", "0037_next_best_action_suggestions.sql");
   await runSqlMigration("0038_call_notes", "0038_call_notes.sql");
-  await runSqlMigration("0039_list_source_filters", "0039_list_source_filters.sql");
+  await runSqlMigration("0039_notification_broadcast_and_indexes", "0039_notification_broadcast_and_indexes.sql");
+  await runSqlMigration("0040_task_type_completed_at", "0040_task_type_completed_at.sql");
+  await runSqlMigration("0041_list_source_filters", "0041_list_source_filters.sql");
 
 } finally {
   await sql.end();

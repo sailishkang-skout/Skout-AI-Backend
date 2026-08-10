@@ -14,6 +14,7 @@ import { startWarmupRampWorker } from "./workers/warmup-ramp.worker.js";
 import { startWebhookDeliveryWorker } from "./workers/webhook-delivery.worker.js";
 import { startSmartListRefreshWorker } from "./workers/smart-list-refresh.worker.js";
 import { startSmartListRefreshSweepWorker } from "./workers/smart-list-refresh-sweep.worker.js";
+import { startReminderSweepWorker } from "./workers/reminder-sweep.worker.js";
 
 async function main() {
   const config = loadEnv();
@@ -46,10 +47,12 @@ async function main() {
   const stopWebhookDeliveryWorker = await startWebhookDeliveryWorker(config);
   const stopSmartListRefreshWorker = await startSmartListRefreshWorker(config);
   const stopSmartListRefreshSweepWorker = await startSmartListRefreshSweepWorker(config);
+  const stopReminderSweepWorker = await startReminderSweepWorker(config);
 
   const app = await buildApp(config);
 
   const shutdown = async () => {
+    await stopReminderSweepWorker();
     await stopSmartListRefreshSweepWorker();
     await stopSmartListRefreshWorker();
     await stopWebhookDeliveryWorker();
