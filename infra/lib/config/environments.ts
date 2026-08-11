@@ -43,6 +43,12 @@ export interface EnvironmentConfig {
     readonly webCpu: number;
     readonly webMemoryMiB: number;
     readonly webDesiredCount: number;
+    readonly emailIntelApiCpu: number;
+    readonly emailIntelApiMemoryMiB: number;
+    readonly emailIntelApiDesiredCount: number;
+    readonly emailIntelWorkerCpu: number;
+    readonly emailIntelWorkerMemoryMiB: number;
+    readonly emailIntelWorkerDesiredCount: number;
   };
   readonly s3: {
     readonly exportsRetentionDays: number;
@@ -92,6 +98,12 @@ export const ENVIRONMENTS: Record<SkoutEnvironment, EnvironmentConfig> = {
       webCpu: 256,
       webMemoryMiB: 512,
       webDesiredCount: 1,
+      emailIntelApiCpu: 256,
+      emailIntelApiMemoryMiB: 512,
+      emailIntelApiDesiredCount: 1,
+      emailIntelWorkerCpu: 256,
+      emailIntelWorkerMemoryMiB: 512,
+      emailIntelWorkerDesiredCount: 1,
     },
     s3: { exportsRetentionDays: 7, versioning: false },
     github: baseGithub,
@@ -127,6 +139,12 @@ export const ENVIRONMENTS: Record<SkoutEnvironment, EnvironmentConfig> = {
       webCpu: 256,
       webMemoryMiB: 512,
       webDesiredCount: 1,
+      emailIntelApiCpu: 256,
+      emailIntelApiMemoryMiB: 512,
+      emailIntelApiDesiredCount: 1,
+      emailIntelWorkerCpu: 256,
+      emailIntelWorkerMemoryMiB: 512,
+      emailIntelWorkerDesiredCount: 1,
     },
     s3: { exportsRetentionDays: 30, versioning: true },
     github: baseGithub,
@@ -163,6 +181,12 @@ export const ENVIRONMENTS: Record<SkoutEnvironment, EnvironmentConfig> = {
       webCpu: 256,
       webMemoryMiB: 512,
       webDesiredCount: 1,
+      emailIntelApiCpu: 256,
+      emailIntelApiMemoryMiB: 512,
+      emailIntelApiDesiredCount: 1,
+      emailIntelWorkerCpu: 256,
+      emailIntelWorkerMemoryMiB: 512,
+      emailIntelWorkerDesiredCount: 1,
     },
     s3: { exportsRetentionDays: 60, versioning: true },
     github: baseGithub,
@@ -198,6 +222,12 @@ export const ENVIRONMENTS: Record<SkoutEnvironment, EnvironmentConfig> = {
       webCpu: 512,
       webMemoryMiB: 1024,
       webDesiredCount: 2,
+      emailIntelApiCpu: 256,
+      emailIntelApiMemoryMiB: 512,
+      emailIntelApiDesiredCount: 1,
+      emailIntelWorkerCpu: 256,
+      emailIntelWorkerMemoryMiB: 512,
+      emailIntelWorkerDesiredCount: 1,
     },
     s3: { exportsRetentionDays: 90, versioning: true },
     github: baseGithub,

@@ -42,6 +42,7 @@ export class ComputeStack extends Stack {
   readonly cluster: ecs.Cluster;
   readonly apiService: ecs.FargateService;
   readonly apiLogGroupName: string;
+  readonly namespace: servicediscovery.PrivateDnsNamespace;
   readonly clickhouse?: SkoutClickHouse;
 
   constructor(scope: Construct, id: string, props: ComputeStackProps) {
@@ -93,6 +94,7 @@ export class ComputeStack extends Stack {
       vpc,
       description: `Skout ${config.name} internal service discovery`,
     });
+    this.namespace = namespace;
 
     // When an HTTPS front door (API Gateway / CloudFront) is used, lock the public ALB so plain
     // HTTP is rejected: only requests carrying the secret origin-verify header (injected by the
@@ -271,6 +273,7 @@ export class ComputeStack extends Stack {
       : `${publicUrl},http://${albDns}`;
 
     const aiServiceUrl = `http://ai.${namespace.namespaceName}:8000`;
+    const emailIntelServiceUrl = `http://email-intel.${namespace.namespaceName}:3001`;
 
     const apiEcs = new SkoutEcsService(this, "ApiService", {
       vpc,
@@ -300,6 +303,7 @@ export class ComputeStack extends Stack {
         EXPORTS_BUCKET: exportsBucket.bucketName,
         SCRAPE_BUCKET: scrapeBucket.bucketName,
         AI_SERVICE_URL: aiServiceUrl,
+        EMAIL_INTEL_SERVICE_URL: emailIntelServiceUrl,
         DATABASE_HOST: database.instance.dbInstanceEndpointAddress,
         DATABASE_PORT: database.instance.dbInstanceEndpointPort,
         DATABASE_NAME: "skout",

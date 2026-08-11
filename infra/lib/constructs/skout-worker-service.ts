@@ -20,6 +20,8 @@ export interface SkoutWorkerServiceProps {
   readonly secrets?: Record<string, ecs.Secret>;
   /** ECS container health check command (default: no-op). */
   readonly healthCheckCommand?: string[];
+  /** Override the image's default container command (e.g. running a worker entrypoint out of an API image). */
+  readonly command?: string[];
   /** Use e.g. Fargate Spot for interruption-tolerant workers (non-prod cost lever). Omit for on-demand FARGATE. */
   readonly capacityProviderStrategies?: ecs.CapacityProviderStrategy[];
 }
@@ -49,6 +51,7 @@ export class SkoutWorkerService extends Construct {
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: props.serviceName, logGroup }),
       environment: props.environment,
       secrets: props.secrets,
+      ...(props.command ? { command: props.command } : {}),
       healthCheck: {
         command: props.healthCheckCommand ?? ["CMD-SHELL", "node -e \"process.exit(0)\""],
         interval: Duration.seconds(30),

@@ -6,6 +6,7 @@ import { DataStack } from "../lib/stacks/data-stack.js";
 import { RegistryStack } from "../lib/stacks/registry-stack.js";
 import { ComputeStack } from "../lib/stacks/compute-stack.js";
 import { WorkersStack } from "../lib/stacks/workers-stack.js";
+import { EmailIntelStack } from "../lib/stacks/email-intel-stack.js";
 import { ObservabilityStack } from "../lib/stacks/observability-stack.js";
 import { LocalConfigStack } from "../lib/stacks/local-config-stack.js";
 
@@ -91,6 +92,22 @@ if (!config.deployToAws) {
     description: `Skout AI ${config.name} corpus workers (orchestrator, cleaner, ingestor)`,
   });
   workers.addDependency(compute);
+
+  const emailIntel = new EmailIntelStack(app, `${config.stackPrefix}-EmailIntel`, {
+    env: stackEnv,
+    config,
+    vpc: network.vpc,
+    cluster: compute.cluster,
+    namespace: compute.namespace,
+    database: data.database,
+    redis: data.redis,
+    bucket: data.storage.emailIntelBucket,
+    repository: registry.emailIntelRepository,
+    apiService: compute.apiService,
+    imageTag,
+    description: `Skout AI ${config.name} Email Intelligence service (api + worker)`,
+  });
+  emailIntel.addDependency(compute);
 
   new ObservabilityStack(app, `${config.stackPrefix}-Observability`, {
     env: stackEnv,

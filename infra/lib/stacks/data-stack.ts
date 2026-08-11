@@ -51,6 +51,11 @@ export class DataStack extends Stack {
       exportName: `${config.stackPrefix}-ScrapeBucketData`,
     });
 
+    new CfnOutput(this, "EmailIntelBucketName", {
+      value: this.storage.emailIntelBucket.bucketName,
+      exportName: `${config.stackPrefix}-EmailIntelBucket`,
+    });
+
     Tags.of(this).add("skout:environment", config.name);
   }
 }

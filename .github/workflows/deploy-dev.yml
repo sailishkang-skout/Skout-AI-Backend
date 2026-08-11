@@ -109,6 +109,22 @@ jobs:
           build_scraper cleaner @skout/scraper-cleaner skout-dev-scraper-cleaner
           build_scraper ingestor @skout/scraper-ingestor skout-dev-scraper-ingestor
 
+      - name: Checkout Email Intelligence Tool
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/Skout-Email-Intelligence-Tool
+          ref: main
+          path: email-intel
+
+      - name: Build and push Email Intelligence image
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          EMAIL_INTEL_REPO=$(aws ecr describe-repositories --repository-names skout-dev-email-intel --query 'repositories[0].repositoryUri' --output text)
+          docker build -f email-intel/Dockerfile -t "$EMAIL_INTEL_REPO:$IMAGE_TAG" -t "$EMAIL_INTEL_REPO:latest" email-intel
+          docker push "$EMAIL_INTEL_REPO:$IMAGE_TAG"
+          docker push "$EMAIL_INTEL_REPO:latest"
+
       - name: Checkout frontend
         uses: actions/checkout@v4
         with:
@@ -169,9 +185,12 @@ jobs:
       - name: Run database migrations (ECS one-off task)
         run: bash scripts/ecs-run-migrations.sh SkoutDev
 
+      - name: Run Email Intelligence database migrations (ECS one-off task)
+        run: bash scripts/ecs-run-email-intel-migrations.sh SkoutDev
+
       - name: Force ECS redeploy
         run: |
           CLUSTER=$(aws ecs list-clusters --query "clusterArns[?contains(@, 'SkoutDev')]" --output text)
-          for svc in api crm ai web scraper-orchestrator scraper-cleaner scraper-ingestor; do
+          for svc in api crm ai web scraper-orchestrator scraper-cleaner scraper-ingestor email-intel-api email-intel-worker; do
             aws ecs update-service --cluster "$CLUSTER" --service "$svc" --force-new-deployment || true
           done
