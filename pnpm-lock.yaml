@@ -35,6 +35,9 @@ importers:
       '@skout/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@skout/crm-bridge':
+        specifier: workspace:*
+        version: link:../../packages/crm-bridge
       '@skout/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -144,6 +147,9 @@ importers:
       '@skout/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@skout/crm-bridge':
+        specifier: workspace:*
+        version: link:../../packages/crm-bridge
       '@skout/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -208,6 +214,25 @@ importers:
         version: 5.9.3
 
   packages/auth:
+    dependencies:
+      '@skout/db':
+        specifier: workspace:*
+        version: link:../db
+      drizzle-orm:
+        specifier: ^0.44.2
+        version: 0.44.7(@opentelemetry/api@1.9.1)(@types/pg@8.6.1)(postgres@3.4.9)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.1
+        version: 22.19.20
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.20)
+
+  packages/crm-bridge:
     dependencies:
       '@skout/db':
         specifier: workspace:*
