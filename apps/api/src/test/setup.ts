@@ -20,6 +20,7 @@ for (const candidate of [path.join(root, ".env"), path.join(root, ".env.local")]
 // never tries to connect to services that aren't running in test.
 delete process.env.CLICKHOUSE_URL;
 delete process.env.AI_SERVICE_URL;
+delete process.env.EMAIL_INTEL_SERVICE_URL;
 
 const DEFAULT_TEST_DATABASE_URL = "postgresql://skout:skout@localhost:5434/skout";
 
