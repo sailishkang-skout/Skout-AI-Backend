@@ -42,6 +42,7 @@ export class ComputeStack extends Stack {
   readonly cluster: ecs.Cluster;
   readonly apiService: ecs.FargateService;
   readonly apiLogGroupName: string;
+  readonly namespace: servicediscovery.PrivateDnsNamespace;
   readonly clickhouse?: SkoutClickHouse;
 
   constructor(scope: Construct, id: string, props: ComputeStackProps) {
@@ -93,6 +94,7 @@ export class ComputeStack extends Stack {
       vpc,
       description: `Skout ${config.name} internal service discovery`,
     });
+    this.namespace = namespace;
 
     // When an HTTPS front door (API Gateway / CloudFront) is used, lock the public ALB so plain
     // HTTP is rejected: only requests carrying the secret origin-verify header (injected by the
@@ -271,6 +273,7 @@ export class ComputeStack extends Stack {
       : `${publicUrl},http://${albDns}`;
 
     const aiServiceUrl = `http://ai.${namespace.namespaceName}:8000`;
+    const emailIntelServiceUrl = `http://email-intel.${namespace.namespaceName}:3001`;
 
     const apiEcs = new SkoutEcsService(this, "ApiService", {
       vpc,
@@ -300,6 +303,7 @@ export class ComputeStack extends Stack {
         EXPORTS_BUCKET: exportsBucket.bucketName,
         SCRAPE_BUCKET: scrapeBucket.bucketName,
         AI_SERVICE_URL: aiServiceUrl,
+        EMAIL_INTEL_SERVICE_URL: emailIntelServiceUrl,
         DATABASE_HOST: database.instance.dbInstanceEndpointAddress,
         DATABASE_PORT: database.instance.dbInstanceEndpointPort,
         DATABASE_NAME: "skout",
@@ -375,6 +379,11 @@ export class ComputeStack extends Stack {
         SMTP_USERNAME: ecs.Secret.fromSecretsManager(secrets.smtp, "SMTP_USERNAME"),
         SMTP_PASSWORD: ecs.Secret.fromSecretsManager(secrets.smtp, "SMTP_PASSWORD"),
         SES_FROM_EMAIL: ecs.Secret.fromSecretsManager(secrets.smtp, "SES_FROM_EMAIL"),
+        MEETING_BOT_PROVIDER: ecs.Secret.fromSecretsManager(secrets.meetingBot, "MEETING_BOT_PROVIDER"),
+        MEETING_BOT_API_KEY: ecs.Secret.fromSecretsManager(secrets.meetingBot, "MEETING_BOT_API_KEY"),
+        MEETING_BOT_WEBHOOK_SECRET: ecs.Secret.fromSecretsManager(secrets.meetingBot, "MEETING_BOT_WEBHOOK_SECRET"),
+        GOOGLE_CLIENT_ID: ecs.Secret.fromSecretsManager(secrets.google, "GOOGLE_CLIENT_ID"),
+        GOOGLE_CLIENT_SECRET: ecs.Secret.fromSecretsManager(secrets.google, "GOOGLE_CLIENT_SECRET"),
       },
       datadog: {
         apiKeySecret: ecs.Secret.fromSecretsManager(secrets.datadog, "DD_API_KEY"),
@@ -449,6 +458,12 @@ export class ComputeStack extends Stack {
         CLERK_SECRET_KEY: ecs.Secret.fromSecretsManager(secrets.clerk, "CLERK_SECRET_KEY"),
         SENTRY_DSN: ecs.Secret.fromSecretsManager(secrets.sentry, "SENTRY_DSN"),
         DD_API_KEY: ecs.Secret.fromSecretsManager(secrets.datadog, "DD_API_KEY"),
+        MEETING_BOT_PROVIDER: ecs.Secret.fromSecretsManager(secrets.meetingBot, "MEETING_BOT_PROVIDER"),
+        MEETING_BOT_API_KEY: ecs.Secret.fromSecretsManager(secrets.meetingBot, "MEETING_BOT_API_KEY"),
+        MEETING_BOT_WEBHOOK_SECRET: ecs.Secret.fromSecretsManager(secrets.meetingBot, "MEETING_BOT_WEBHOOK_SECRET"),
+        GOOGLE_CLIENT_ID: ecs.Secret.fromSecretsManager(secrets.google, "GOOGLE_CLIENT_ID"),
+        GOOGLE_CLIENT_SECRET: ecs.Secret.fromSecretsManager(secrets.google, "GOOGLE_CLIENT_SECRET"),
+        INTEGRATION_ENCRYPTION_KEY: ecs.Secret.fromSecretsManager(secrets.appConfig, "INTEGRATION_ENCRYPTION_KEY"),
       },
       datadog: {
         site: "us5.datadoghq.com",

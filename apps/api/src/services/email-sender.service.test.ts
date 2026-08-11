@@ -13,7 +13,7 @@ import {
   clearEmailTransporterCache,
   type InboxSmtpConfig,
 } from "./email-sender.service.js";
-import { encryptSecret } from "../utils/integration-crypto.js";
+import { encryptSecret } from "@skout/shared";
 import type { Env } from "../config/env.js";
 
 const ENCRYPTION_KEY = "test-encryption-key";

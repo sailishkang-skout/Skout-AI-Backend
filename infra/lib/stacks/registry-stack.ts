@@ -19,6 +19,7 @@ export class RegistryStack extends Stack {
   readonly scraperBotRepository: ecr.Repository;
   readonly scraperCleanerRepository: ecr.Repository;
   readonly scraperIngestorRepository: ecr.Repository;
+  readonly emailIntelRepository: ecr.Repository;
   readonly deployRole: iam.Role;
 
   constructor(scope: Construct, id: string, props: RegistryStackProps) {
@@ -58,6 +59,7 @@ export class RegistryStack extends Stack {
     this.scraperBotRepository = createRepo("ScraperBotRepo", `skout-${config.name}-scraper-bot`);
     this.scraperCleanerRepository = createRepo("ScraperCleanerRepo", `skout-${config.name}-scraper-cleaner`);
     this.scraperIngestorRepository = createRepo("ScraperIngestorRepo", `skout-${config.name}-scraper-ingestor`);
+    this.emailIntelRepository = createRepo("EmailIntelRepo", `skout-${config.name}-email-intel`);
 
     const githubOrg = config.github?.org ?? "sailishkang-skout";
     const backendRepo = config.github?.backendRepo ?? "Skout-AI-Backend";
@@ -99,6 +101,7 @@ export class RegistryStack extends Stack {
       this.scraperBotRepository,
       this.scraperCleanerRepository,
       this.scraperIngestorRepository,
+      this.emailIntelRepository,
     ];
     for (const repo of repos) {
       repo.grantPullPush(this.deployRole);
@@ -169,6 +172,11 @@ export class RegistryStack extends Stack {
     new CfnOutput(this, "CrmRepositoryUri", {
       value: this.crmRepository.repositoryUri,
       exportName: `${config.stackPrefix}-CrmRepoUri`,
+    });
+
+    new CfnOutput(this, "EmailIntelRepositoryUri", {
+      value: this.emailIntelRepository.repositoryUri,
+      exportName: `${config.stackPrefix}-EmailIntelRepoUri`,
     });
 
     new CfnOutput(this, "GitHubDeployRoleArn", {

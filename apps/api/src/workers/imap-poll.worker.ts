@@ -6,7 +6,7 @@ import { createDb, schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
-import { decryptSecret } from "../utils/integration-crypto.js";
+import { decryptSecret } from "@skout/shared";
 import { ingestInboundMessage } from "../services/inbound-reply.service.js";
 import { IMAP_POLL_QUEUE, scheduleImapPolling, type ImapPollJobPayload } from "./imap-poll.queue.js";
 import { isRedisAvailable } from "../lib/redis.js";

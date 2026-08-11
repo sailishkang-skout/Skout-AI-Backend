@@ -102,6 +102,8 @@ const envSchema = z
     SMART_LIST_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(120),
     CLICKHOUSE_URL: z.string().optional(),
     AI_SERVICE_URL: z.string().optional(),
+    EMAIL_INTEL_SERVICE_URL: z.string().optional(),
+    EMAIL_INTEL_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
     /** OpenRouter API key (preferred). Also accepts OPEN_ROUTER_API_KEY via transform. */
     OPENROUTER_API_KEY: z.string().optional(),
     OPEN_ROUTER_API_KEY: z.string().optional(),

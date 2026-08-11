@@ -7,7 +7,7 @@ import {
   resolveAccessToken,
 } from "./inbox-oauth.service.js";
 import { HttpError } from "../utils/http.js";
-import { encryptSecret } from "../utils/integration-crypto.js";
+import { encryptSecret } from "@skout/shared";
 import { signOAuthState } from "../utils/oauth-state.js";
 import type { Env } from "../config/env.js";
 

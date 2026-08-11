@@ -18,7 +18,9 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "@skout/db": "workspace:*",
+    "drizzle-orm": "^0.44.2"
   },
   "devDependencies": {
     "@types/node": "^22.19.20",

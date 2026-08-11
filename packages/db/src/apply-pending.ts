@@ -238,7 +238,8 @@ try {
   await runSqlMigration("0038_call_notes", "0038_call_notes.sql");
   await runSqlMigration("0039_notification_broadcast_and_indexes", "0039_notification_broadcast_and_indexes.sql");
   await runSqlMigration("0040_task_type_completed_at", "0040_task_type_completed_at.sql");
-  await runSqlMigration("0041_list_source_filters", "0041_list_source_filters.sql");
+  await runSqlMigration("0041_google_calendar", "0041_google_calendar.sql");
+  await runSqlMigration("0042_list_source_filters", "0042_list_source_filters.sql");
 
 } finally {
   await sql.end();
