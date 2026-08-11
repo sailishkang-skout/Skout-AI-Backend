@@ -379,6 +379,9 @@ export class ComputeStack extends Stack {
         SMTP_USERNAME: ecs.Secret.fromSecretsManager(secrets.smtp, "SMTP_USERNAME"),
         SMTP_PASSWORD: ecs.Secret.fromSecretsManager(secrets.smtp, "SMTP_PASSWORD"),
         SES_FROM_EMAIL: ecs.Secret.fromSecretsManager(secrets.smtp, "SES_FROM_EMAIL"),
+        MEETING_BOT_PROVIDER: ecs.Secret.fromSecretsManager(secrets.meetingBot, "MEETING_BOT_PROVIDER"),
+        MEETING_BOT_API_KEY: ecs.Secret.fromSecretsManager(secrets.meetingBot, "MEETING_BOT_API_KEY"),
+        MEETING_BOT_WEBHOOK_SECRET: ecs.Secret.fromSecretsManager(secrets.meetingBot, "MEETING_BOT_WEBHOOK_SECRET"),
       },
       datadog: {
         apiKeySecret: ecs.Secret.fromSecretsManager(secrets.datadog, "DD_API_KEY"),
@@ -453,6 +456,9 @@ export class ComputeStack extends Stack {
         CLERK_SECRET_KEY: ecs.Secret.fromSecretsManager(secrets.clerk, "CLERK_SECRET_KEY"),
         SENTRY_DSN: ecs.Secret.fromSecretsManager(secrets.sentry, "SENTRY_DSN"),
         DD_API_KEY: ecs.Secret.fromSecretsManager(secrets.datadog, "DD_API_KEY"),
+        MEETING_BOT_PROVIDER: ecs.Secret.fromSecretsManager(secrets.meetingBot, "MEETING_BOT_PROVIDER"),
+        MEETING_BOT_API_KEY: ecs.Secret.fromSecretsManager(secrets.meetingBot, "MEETING_BOT_API_KEY"),
+        MEETING_BOT_WEBHOOK_SECRET: ecs.Secret.fromSecretsManager(secrets.meetingBot, "MEETING_BOT_WEBHOOK_SECRET"),
       },
       datadog: {
         site: "us5.datadoghq.com",

@@ -32,6 +32,8 @@ export class SkoutAppSecrets extends Construct {
   readonly razorpay: secretsmanager.ISecret;
   /** SES SMTP for transactional mail (invites, OTP). Managed outside CDK after first create. */
   readonly smtp: secretsmanager.ISecret;
+  /** Recall.ai meeting-bot creds (R16.2). Created directly in Secrets Manager, imported by name so CDK doesn't fight the real value. */
+  readonly meetingBot: secretsmanager.ISecret;
 
   constructor(scope: Construct, id: string, props: SkoutAppSecretsProps) {
     super(scope, id);
@@ -116,5 +118,6 @@ export class SkoutAppSecrets extends Construct {
     });
     // Created/rotated by infra/scripts/setup-ses-smtp.sh — import by name so CDK does not fight Secrets Manager.
     this.smtp = secretsmanager.Secret.fromSecretNameV2(this, "Smtp", `${prefix}/smtp`);
+    this.meetingBot = secretsmanager.Secret.fromSecretNameV2(this, "MeetingBot", `${prefix}/meeting-bot`);
   }
 }
