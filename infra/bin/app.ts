@@ -19,6 +19,8 @@ const imageTag = app.node.tryGetContext("imageTag") as string | undefined;
 const scraperImageTag =
   (app.node.tryGetContext("scraperImageTag") as string | undefined) ?? imageTag;
 const skipWeb = app.node.tryGetContext("skipWeb") === "true";
+/** First-deploy-per-environment escape hatch — see EmailIntelStackProps.bootstrapMode. */
+const emailIntelBootstrap = app.node.tryGetContext("emailIntelBootstrap") === "true";
 // CloudFront is the default HTTPS edge for all environments (AWS account verified — R8.1).
 // Fall back to -c httpsMode=apigateway if CloudFront is unavailable in a region or needs bypass.
 const httpsMode =
@@ -105,6 +107,7 @@ if (!config.deployToAws) {
     repository: registry.emailIntelRepository,
     apiService: compute.apiService,
     imageTag,
+    bootstrapMode: emailIntelBootstrap,
     description: `Skout AI ${config.name} Email Intelligence service (api + worker)`,
   });
   emailIntel.addDependency(compute);

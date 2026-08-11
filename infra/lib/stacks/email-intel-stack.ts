@@ -22,6 +22,23 @@ export interface EmailIntelStackProps extends StackProps {
   readonly repository: ecr.IRepository;
   readonly apiService: ecs.FargateService;
   readonly imageTag?: string;
+  /**
+   * Deploys both services with desiredCount 0 regardless of config, so ECS
+   * never launches a task and the deployment circuit breaker can't trip.
+   *
+   * Needed on a fresh environment (or a fresh RDS instance) because both
+   * server.ts and worker.ts run `runMigrations()` unconditionally at
+   * startup, which requires the "email_intelligence" database to already
+   * exist — but on the shared RDS instance used here, only the default
+   * "skout" database is auto-created (see skout-database.ts). Bootstrap
+   * sequence: deploy with this flag set (0 tasks, nothing to crash) → run
+   * scripts/ecs-run-email-intel-migrations.sh (creates the database via a
+   * one-off task against the now-existing task definition, then migrates)
+   * → redeploy without this flag to bring the services up for real.
+   * A one-time step per environment; once the database exists it persists
+   * across all future redeploys.
+   */
+  readonly bootstrapMode?: boolean;
 }
 
 const WORKER_HEALTHCHECK = [
@@ -44,6 +61,7 @@ export class EmailIntelStack extends Stack {
 
     const { config, vpc, cluster, namespace, database, redis, bucket, repository, apiService, imageTag } =
       props;
+    const bootstrapMode = props.bootstrapMode ?? false;
 
     const nodeHttpHealthCheck = (port: number, path: string) =>
       `node -e "fetch('http://127.0.0.1:${port}${path}').then((r)=>process.exit(r.status<400?0:1)).catch(()=>process.exit(1))"`;
@@ -74,7 +92,7 @@ export class EmailIntelStack extends Stack {
       containerPort: 3001,
       cpu: config.ecs.emailIntelApiCpu,
       memoryMiB: config.ecs.emailIntelApiMemoryMiB,
-      desiredCount: config.ecs.emailIntelApiDesiredCount,
+      desiredCount: bootstrapMode ? 0 : config.ecs.emailIntelApiDesiredCount,
       healthCheckPath: "/liveness",
       containerHealthCheckCommand: [nodeHttpHealthCheck(3001, "/liveness")],
       internalOnly: true,
@@ -104,7 +122,7 @@ export class EmailIntelStack extends Stack {
       environmentName: config.name,
       cpu: config.ecs.emailIntelWorkerCpu,
       memoryMiB: config.ecs.emailIntelWorkerMemoryMiB,
-      desiredCount: config.ecs.emailIntelWorkerDesiredCount,
+      desiredCount: bootstrapMode ? 0 : config.ecs.emailIntelWorkerDesiredCount,
       command: ["node", "dist/worker.js"],
       environment: sharedEnvironment,
       secrets: {
