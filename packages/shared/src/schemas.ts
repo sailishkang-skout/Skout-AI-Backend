@@ -717,10 +717,18 @@ export const activityResponseSchema = z.object({
 
 export const MEETING_TYPES = ["call", "video", "in_person"] as const;
 
+export const meetingInviteeSchema = z.object({
+  email: z.string().email(),
+  name: z.string().optional(),
+});
+
 export const meetingListQuerySchema = paginationQuerySchema.extend({
   dealId: z.string().uuid().optional(),
   contactId: z.string().uuid().optional(),
   companyId: z.string().uuid().optional(),
+  /** Calendar view — filters on scheduledAt, inclusive. */
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
 });
 
 export const meetingCreateSchema = z.object({
@@ -738,6 +746,8 @@ export const meetingCreateSchema = z.object({
   meetingUrl: z.string().url().optional(),
   /** R16.2 — opt-in auto-join override. Omit to inherit the workspace default. */
   autoJoinBot: z.boolean().optional(),
+  /** Google Calendar — attendees to invite when scheduling via /schedule-google. */
+  invitees: z.array(meetingInviteeSchema).optional(),
 });
 
 export const meetingUpdateSchema = z
@@ -754,6 +764,7 @@ export const meetingUpdateSchema = z
     outcome: z.string().optional(),
     meetingUrl: z.string().url().optional(),
     autoJoinBot: z.boolean().optional(),
+    invitees: z.array(meetingInviteeSchema).optional(),
   })
   .refine((d) => Object.values(d).some((v) => v !== undefined), {
     message: "At least one field is required",
@@ -772,6 +783,8 @@ export const meetingResponseSchema = z.object({
   meetingType: z.enum(MEETING_TYPES),
   summary: z.string().nullable(),
   outcome: z.string().nullable(),
+  invitees: z.array(meetingInviteeSchema),
+  googleEventId: z.string().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -794,6 +807,7 @@ export type PaginationQuery = z.infer<typeof paginationQuerySchema>;
 export type MeetingType = (typeof MEETING_TYPES)[number];
 export type MeetingListQuery = z.infer<typeof meetingListQuerySchema>;
 export type MeetingCreateInput = z.infer<typeof meetingCreateSchema>;
+export type MeetingInvitee = z.infer<typeof meetingInviteeSchema>;
 export type MeetingUpdateInput = z.infer<typeof meetingUpdateSchema>;
 export type CompanyListQuery = z.infer<typeof companyListQuerySchema>;
 export type ContactListQuery = z.infer<typeof contactListQuerySchema>;

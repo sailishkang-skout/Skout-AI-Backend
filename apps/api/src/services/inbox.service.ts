@@ -2,7 +2,7 @@ import { and, asc, count, desc, eq, exists, gt, gte, inArray, sql } from "drizzl
 import { createDb, schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
-import { encryptSecret, decryptSecret } from "../utils/integration-crypto.js";
+import { encryptSecret, decryptSecret } from "@skout/shared";
 import { HttpError } from "../utils/http.js";
 import { markInboxUsed } from "./inbox-rotation.service.js";
 import nodemailer from "nodemailer";

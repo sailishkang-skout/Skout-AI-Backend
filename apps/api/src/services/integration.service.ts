@@ -5,7 +5,7 @@ import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
-import { decryptSecret, encryptSecret, maskApiKey } from "../utils/integration-crypto.js";
+import { decryptSecret, encryptSecret, maskApiKey } from "@skout/shared";
 import {
   DEFAULT_UNIPILE_DSN,
   INTEGRATION_PROVIDERS,

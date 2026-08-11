@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
 import type { Env } from "../config/env.js";
-import { encryptSecret, decryptSecret } from "../utils/integration-crypto.js";
+import { encryptSecret, decryptSecret } from "@skout/shared";
 import { signOAuthState, verifyOAuthState } from "../utils/oauth-state.js";
 import { HttpError } from "../utils/http.js";
 

@@ -12,7 +12,7 @@ import {
   updateInbox,
 } from "./inbox.service.js";
 import { HttpError } from "../utils/http.js";
-import { encryptSecret } from "../utils/integration-crypto.js";
+import { encryptSecret } from "@skout/shared";
 import type { Env } from "../config/env.js";
 
 // Hoist nodemailer mock so inbox.service.ts picks it up at import time

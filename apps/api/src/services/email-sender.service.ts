@@ -2,7 +2,7 @@ import nodemailer, { type Transporter } from "nodemailer";
 import type { Db } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
-import { decryptSecret } from "../utils/integration-crypto.js";
+import { decryptSecret } from "@skout/shared";
 
 const log = createLogger("email-sender.service");
 

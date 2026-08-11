@@ -250,6 +250,11 @@ export const meetings = pgTable(
     transcriptUrl: text("transcript_url"),
     /** Full transcript text, when the vendor sends it inline rather than as a fetchable URL. */
     transcript: text("transcript"),
+    /** Google Calendar — attendees invited when the meeting was scheduled via Google Meet. */
+    invitees: jsonb("invitees").notNull().default([]),
+    /** Google Calendar — this meeting's event id, for future updates/cancellation. */
+    googleEventId: text("google_event_id"),
+    googleCalendarId: text("google_calendar_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -260,5 +265,28 @@ export const meetings = pgTable(
     index("meetings_workspace_deal_idx").on(table.workspaceId, table.dealId),
     index("meetings_bot_external_id_idx").on(table.botExternalId),
     index("meetings_auto_join_due_idx").on(table.autoJoinBot, table.botStatus, table.scheduledAt),
+    index("meetings_google_event_id_idx").on(table.googleEventId),
   ]
+);
+
+export const calendarConnections = pgTable(
+  "calendar_connections",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    connectedEmail: text("connected_email").notNull(),
+    /** AES-256-GCM encrypted at rest — see @skout/shared's integration-crypto. */
+    oauthAccessTokenEncrypted: text("oauth_access_token_encrypted").notNull(),
+    oauthRefreshTokenEncrypted: text("oauth_refresh_token_encrypted"),
+    oauthTokenExpiresAt: timestamp("oauth_token_expires_at", { withTimezone: true }),
+    oauthScope: text("oauth_scope"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [unique().on(table.workspaceId, table.userId)]
 );
