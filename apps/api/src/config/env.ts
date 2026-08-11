@@ -213,6 +213,11 @@ const envSchema = z
     // key wouldn't make sense the way TWILIO_*/MEETING_BOT_* platform keys do.
     // --- Smart list auto-refresh (R10.2). ---
     SMART_LIST_REFRESH_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(15),
+    // --- Task/sequence/draft reminders (R17.2). ---
+    REMINDER_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(15),
+    /** How many hours before (task/sequence step due) or after (draft created) something is
+     * considered "needs a reminder". */
+    REMINDER_LEAD_HOURS: z.coerce.number().int().positive().default(24),
   })
   .transform((data) => {
     let next = data;

@@ -9,6 +9,7 @@ import { icpRoutes } from "./icp.routes.js";
 import { smartListRoutes } from "./smart-list.routes.js";
 import { scrapeRoutes } from "./scrape.routes.js";
 import { signalRoutes } from "./signal.routes.js";
+import { notificationRoutes } from "./notification.routes.js";
 import { healthRoutes } from "./health.routes.js";
 import { inboxRoutes } from "./inbox.routes.js";
 import { listRoutes } from "./list.routes.js";
@@ -29,7 +30,6 @@ import { unsubscribeRoutes } from "./unsubscribe.routes.js";
 import { teamRoutes } from "./team.routes.js";
 import { inviteAuthRoutes } from "./invite-auth.routes.js";
 import { activationRuleRoutes } from "./activation-rule.routes.js";
-import { notificationRoutes } from "./notification.routes.js";
 import { callRoutes } from "./call.routes.js";
 import { croRoutes } from "./cro.routes.js";
 
@@ -49,6 +49,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(smartListRoutes);
     await v1.register(scrapeRoutes);
     await v1.register(signalRoutes);
+    await v1.register(notificationRoutes);
     await v1.register(billingRoutes);
     await v1.register(importRoutes);
     await v1.register(sequenceRoutes);
@@ -66,7 +67,6 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(teamRoutes);
     await v1.register(inviteAuthRoutes);
     await v1.register(activationRuleRoutes);
-    await v1.register(notificationRoutes);
     await v1.register(callRoutes);
     await v1.register(croRoutes);
   }, { prefix: "/api/v1" });

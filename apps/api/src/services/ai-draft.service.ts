@@ -2,6 +2,7 @@ import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { HttpError } from "../utils/http.js";
+import { resolveNotificationsForEntity } from "./notifications.service.js";
 
 const { aiDrafts, prospectActivations, prospectScores } = schema;
 
@@ -258,6 +259,8 @@ export class AiDraftService {
       .where(and(eq(aiDrafts.id, id), eq(aiDrafts.workspaceId, workspaceId)))
       .returning();
     if (!row) throw new HttpError("draft_not_found", 404);
+    // No longer sitting in the review queue (R17.2) — resolve any pending stale-draft reminder.
+    await resolveNotificationsForEntity(this.db, "ai_draft", id);
     return toDto(row);
   }
 
@@ -285,6 +288,8 @@ export class AiDraftService {
       )
       .returning({ id: aiDrafts.id });
 
+    await Promise.all(updated.map((row) => resolveNotificationsForEntity(this.db, "ai_draft", row.id)));
+
     return { approved: updated.length, skipped: unique.length - updated.length };
   }
 
@@ -308,6 +313,9 @@ export class AiDraftService {
       })
       .where(and(eq(aiDrafts.id, id), eq(aiDrafts.workspaceId, workspaceId)))
       .returning();
+
+    // No longer sitting in the review queue (R17.2) — resolve any pending stale-draft reminder.
+    await resolveNotificationsForEntity(this.db, "ai_draft", id);
 
     return toDto(row!);
   }

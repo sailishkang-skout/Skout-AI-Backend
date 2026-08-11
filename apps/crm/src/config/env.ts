@@ -53,6 +53,8 @@ const envSchema = z.object({
     .optional()
     .transform((v) => v === "true" || v === "1"),
   FRONTEND_URL: z.string().optional(),
+  /** How many hours before a task's due date it's considered "needs a reminder" (R21.3). Mirrors apps/api's REMINDER_LEAD_HOURS so both apps agree on the same window. */
+  REMINDER_LEAD_HOURS: z.coerce.number().int().positive().default(24),
   // --- R16.2 — meeting-bot vendor (Recall.ai / Fireflies.ai — vendor TBD). All optional. ---
   MEETING_BOT_PROVIDER: z.enum(["recall", "fireflies"]).optional(),
   MEETING_BOT_API_KEY: z.string().optional(),
