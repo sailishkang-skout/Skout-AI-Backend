@@ -382,6 +382,8 @@ export class ComputeStack extends Stack {
         MEETING_BOT_PROVIDER: ecs.Secret.fromSecretsManager(secrets.meetingBot, "MEETING_BOT_PROVIDER"),
         MEETING_BOT_API_KEY: ecs.Secret.fromSecretsManager(secrets.meetingBot, "MEETING_BOT_API_KEY"),
         MEETING_BOT_WEBHOOK_SECRET: ecs.Secret.fromSecretsManager(secrets.meetingBot, "MEETING_BOT_WEBHOOK_SECRET"),
+        GOOGLE_CLIENT_ID: ecs.Secret.fromSecretsManager(secrets.google, "GOOGLE_CLIENT_ID"),
+        GOOGLE_CLIENT_SECRET: ecs.Secret.fromSecretsManager(secrets.google, "GOOGLE_CLIENT_SECRET"),
       },
       datadog: {
         apiKeySecret: ecs.Secret.fromSecretsManager(secrets.datadog, "DD_API_KEY"),
@@ -459,6 +461,9 @@ export class ComputeStack extends Stack {
         MEETING_BOT_PROVIDER: ecs.Secret.fromSecretsManager(secrets.meetingBot, "MEETING_BOT_PROVIDER"),
         MEETING_BOT_API_KEY: ecs.Secret.fromSecretsManager(secrets.meetingBot, "MEETING_BOT_API_KEY"),
         MEETING_BOT_WEBHOOK_SECRET: ecs.Secret.fromSecretsManager(secrets.meetingBot, "MEETING_BOT_WEBHOOK_SECRET"),
+        GOOGLE_CLIENT_ID: ecs.Secret.fromSecretsManager(secrets.google, "GOOGLE_CLIENT_ID"),
+        GOOGLE_CLIENT_SECRET: ecs.Secret.fromSecretsManager(secrets.google, "GOOGLE_CLIENT_SECRET"),
+        INTEGRATION_ENCRYPTION_KEY: ecs.Secret.fromSecretsManager(secrets.appConfig, "INTEGRATION_ENCRYPTION_KEY"),
       },
       datadog: {
         site: "us5.datadoghq.com",
