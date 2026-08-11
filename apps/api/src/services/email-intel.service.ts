@@ -26,15 +26,31 @@ export class EmailIntelUnavailableError extends Error {
   }
 }
 
+/** Canonical status vocabulary — see verificationStatus.ts in the email-intel repo. */
+export type EmailIntelStatus =
+  | "VERIFIED"
+  | "INVALID"
+  | "CATCH_ALL"
+  | "TEMPORARY"
+  | "NO_MX"
+  | "DNS_ERROR"
+  | "SMTP_ERROR"
+  | "UNKNOWN";
+
 export interface EmailIntelVerifyResult {
   success: boolean;
   email: string;
   domain: string | null;
   disposable: boolean;
-  status?: string;
-  deliverabilityScore?: number;
+  verificationId?: string;
+  verificationStatus?: { status: EmailIntelStatus; [key: string]: unknown };
   catchAll?: boolean;
-  risky?: boolean;
+  sendEligibility?: {
+    allowed: boolean;
+    decision: string;
+    decisionConfidence: number; // 0-100
+    [key: string]: unknown;
+  };
   error?: string;
   [key: string]: unknown;
 }
@@ -101,6 +117,74 @@ export function verifyEmail(
   email: string
 ): Promise<EmailIntelVerifyResult> {
   return post(config, "/verify", { email });
+}
+
+/*
+==================================================
+PAL-COMPATIBLE ADAPTER
+==================================================
+
+Maps the email-intel service's richer 8-state status
+(see EmailIntelStatus above) onto @skout/pal's simpler
+5-state EmailVerdict, so it can be dropped in ahead of
+the existing ZeroBounce/NeverBounce/MillionVerifier
+waterfall in resolveEmailVerifier() without that
+caller needing to know which provider answered.
+
+deliverabilityScore comes straight from the service's
+own sendEligibility.decisionConfidence (0-100) rather
+than a guessed constant — it's already the tool's
+policy-engine confidence in this exact result.
+==================================================
+*/
+
+export interface EmailIntelVerdict {
+  status: "valid" | "invalid" | "catch_all" | "risky" | "unknown";
+  deliverabilityScore: number;
+  catchAll: boolean;
+  risky: boolean;
+}
+
+const STATUS_TO_VERDICT: Record<EmailIntelStatus, EmailIntelVerdict["status"]> = {
+  VERIFIED: "valid",
+  INVALID: "invalid",
+  CATCH_ALL: "catch_all",
+  TEMPORARY: "unknown",
+  NO_MX: "unknown",
+  DNS_ERROR: "unknown",
+  SMTP_ERROR: "unknown",
+  UNKNOWN: "unknown",
+};
+
+/**
+ * POST /verify, then adapt into the same shape resolveEmailVerifier()'s
+ * PAL providers return. Returns null (never throws) when the service is
+ * unreachable/unconfigured or the response can't be interpreted — callers
+ * fall back to the existing PAL waterfall in that case.
+ */
+export async function verifyEmailAsVerdict(
+  config: Pick<Env, "EMAIL_INTEL_SERVICE_URL" | "EMAIL_INTEL_TIMEOUT_MS">,
+  email: string
+): Promise<EmailIntelVerdict | null> {
+  let result: EmailIntelVerifyResult;
+  try {
+    result = await verifyEmail(config, email);
+  } catch {
+    return null;
+  }
+
+  const status = result.verificationStatus?.status;
+  if (!result.success || !status) return null;
+
+  const verdict = STATUS_TO_VERDICT[status] ?? "unknown";
+  const confidence = result.sendEligibility?.decisionConfidence;
+
+  return {
+    status: verdict,
+    deliverabilityScore: typeof confidence === "number" ? confidence : verdict === "valid" ? 90 : 0,
+    catchAll: result.catchAll ?? verdict === "catch_all",
+    risky: verdict === "catch_all" || verdict === "unknown",
+  };
 }
 
 /** POST /verify/batch — synchronous bounded batch (caller waits for all results). */

@@ -8,6 +8,7 @@ import type { Env } from "../config/env.js";
 import { buildListService } from "./list.service.js";
 import { resolveEmailVerifier } from "./enrichment/index.js";
 import { resolveProspectFields } from "./prospect-resolver.service.js";
+import { isEmailIntelConfigured, verifyEmailAsVerdict } from "./email-intel.service.js";
 
 const log = createLogger("email-verification.service");
 const { emailVerifications } = schema;
@@ -119,6 +120,26 @@ export class EmailVerificationService {
           catchAll: false,
           risky: false,
         };
+      }
+
+      // Try the in-house email-intel service first (own SMTP verification,
+      // no per-lookup vendor cost) — falls through to the existing
+      // ZeroBounce/NeverBounce/MillionVerifier waterfall below whenever it's
+      // unconfigured, unreachable, or returns nothing usable.
+      if (isEmailIntelConfigured(this.config)) {
+        const v = await verifyEmailAsVerdict(this.config, email);
+        if (v) {
+          return {
+            prospectId: m.prospectId,
+            email,
+            status: v.status,
+            deliverabilityScore: v.deliverabilityScore,
+            catchAll: v.catchAll,
+            risky: v.risky,
+            provider: "email-intel",
+            verifiedAt: now.toISOString(),
+          };
+        }
       }
 
       try {
