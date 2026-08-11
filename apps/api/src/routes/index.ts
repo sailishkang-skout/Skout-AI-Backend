@@ -33,6 +33,7 @@ import { activationRuleRoutes } from "./activation-rule.routes.js";
 import { callRoutes } from "./call.routes.js";
 import { croRoutes } from "./cro.routes.js";
 import { emailIntelRoutes } from "./email-intel.routes.js";
+import { calendarRoutes } from "./calendar.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoutes, { prefix: "/api/v1" });
@@ -71,5 +72,6 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(callRoutes);
     await v1.register(croRoutes);
     await v1.register(emailIntelRoutes);
+    await v1.register(calendarRoutes);
   }, { prefix: "/api/v1" });
 }

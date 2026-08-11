@@ -1,7 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
+import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { schema } from "@skout/db";
-import { meetingCreateSchema, meetingListQuerySchema, meetingUpdateSchema } from "@skout/shared";
+import { meetingCreateSchema, meetingInviteeSchema, meetingListQuerySchema, meetingUpdateSchema, resolveGoogleCalendarAccessToken } from "@skout/shared";
+import { z } from "zod";
 import { HttpError } from "@skout/auth";
 import { parseIdParam } from "../utils/http.js";
 import { requireRole } from "../utils/require-role.js";
@@ -13,6 +15,7 @@ import { buildContactsService } from "../services/contacts.service.js";
 import { buildDealsService } from "../services/deals.service.js";
 import { buildPipelinesService } from "../services/pipelines.service.js";
 import { isMeetingBotConfigured, scheduleMeetingBot } from "../services/meeting-bot.service.js";
+import { createCalendarEvent } from "../services/google-calendar.service.js";
 import { extractFieldsFromTranscript, isTranscriptExtractionConfigured } from "../services/transcript-extraction.service.js";
 
 function timingSafeEqualStrings(a: string, b: string): boolean {
@@ -139,6 +142,60 @@ export async function meetingsRoutes(app: FastifyInstance) {
 
     const { botExternalId } = await scheduleMeetingBot(app.config, meeting.meetingUrl, webhookUrl.toString());
     const updated = await svc.setBotScheduled(workspaceId, id, botExternalId);
+    return reply.send(updated);
+  });
+
+  // POST /meetings/:id/schedule-google — creates a real Google Calendar event with a Meet
+  // link + invites attendees (Google sends the invite emails itself). Requires the organizer
+  // to have connected their Google Calendar via apps/api's /calendar/connect/google first.
+  app.post("/meetings/:id/schedule-google", async (request, reply) => {
+    const id = parseIdParam(request);
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) throw new HttpError("database_unavailable", 503);
+    if (!app.db) throw new HttpError("database_unavailable", 503);
+
+    const body = z.object({ invitees: z.array(meetingInviteeSchema).optional() }).parse(request.body ?? {});
+
+    const meeting = await svc.getById(workspaceId, id);
+    if (!meeting) throw new HttpError("meeting_not_found", 404);
+    if (!meeting.organizerId) {
+      throw new HttpError("meeting_organizer_required", 400, {
+        reason: "Set an organizer on this meeting before scheduling it on Google Calendar.",
+      });
+    }
+
+    const [connection] = await app.db
+      .select()
+      .from(schema.calendarConnections)
+      .where(
+        and(
+          eq(schema.calendarConnections.workspaceId, workspaceId),
+          eq(schema.calendarConnections.userId, meeting.organizerId)
+        )
+      )
+      .limit(1);
+    if (!connection) {
+      throw new HttpError("google_calendar_not_connected", 422, {
+        reason: "The meeting organizer hasn't connected their Google Calendar yet.",
+      });
+    }
+
+    const invitees = body.invitees ?? meeting.invitees;
+    const accessToken = await resolveGoogleCalendarAccessToken(connection, app.db, app.config);
+    const event = await createCalendarEvent(accessToken, {
+      title: meeting.title,
+      scheduledAt: new Date(meeting.scheduledAt),
+      durationMinutes: meeting.durationMinutes,
+      attendees: invitees.map((i) => ({ email: i.email, displayName: i.name })),
+    });
+
+    const updated = await svc.setGoogleEvent(workspaceId, id, {
+      meetingUrl: event.hangoutLink,
+      googleEventId: event.googleEventId,
+      googleCalendarId: event.googleCalendarId,
+      invitees,
+    });
     return reply.send(updated);
   });
 

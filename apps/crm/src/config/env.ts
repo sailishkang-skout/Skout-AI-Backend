@@ -67,6 +67,12 @@ const envSchema = z.object({
   // extraction is skipped and only vendor-supplied `extractedFields` (if any) are used. ---
   OPENROUTER_API_KEY: z.string().optional(),
   AI_MODEL: z.string().default("openai/gpt-4o-mini"),
+  // --- Google Calendar (schedule-google) — same OAuth client apps/api uses for Gmail inbox
+  // connection; the calendar_connections tokens themselves are created by apps/api's OAuth
+  // flow, this app only needs these to decrypt/refresh them when creating an event. ---
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  INTEGRATION_ENCRYPTION_KEY: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

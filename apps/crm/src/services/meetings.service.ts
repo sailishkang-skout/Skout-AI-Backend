@@ -1,7 +1,7 @@
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, eq, gt, gte, isNull, lte } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
-import type { MeetingCreateInput, MeetingUpdateInput } from "@skout/shared";
+import type { MeetingCreateInput, MeetingInvitee, MeetingUpdateInput } from "@skout/shared";
 import type { ActivitiesService } from "./activities.service.js";
 import { serviceLog } from "../lib/obs.js";
 
@@ -29,6 +29,8 @@ export interface MeetingDto {
   recordingUrl: string | null;
   transcriptUrl: string | null;
   transcript: string | null;
+  invitees: MeetingInvitee[];
+  googleEventId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -54,6 +56,8 @@ function toDto(row: typeof meetings.$inferSelect): MeetingDto {
     recordingUrl: row.recordingUrl,
     transcriptUrl: row.transcriptUrl,
     transcript: row.transcript,
+    invitees: (row.invitees ?? []) as MeetingInvitee[],
+    googleEventId: row.googleEventId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -67,12 +71,23 @@ export class MeetingsService {
 
   async list(
     workspaceId: string,
-    options: { limit: number; offset: number; dealId?: string; contactId?: string; companyId?: string }
+    options: {
+      limit: number;
+      offset: number;
+      dealId?: string;
+      contactId?: string;
+      companyId?: string;
+      /** Calendar view — inclusive range on scheduledAt. */
+      from?: string;
+      to?: string;
+    }
   ): Promise<{ data: MeetingDto[]; total: number }> {
     const conditions = [eq(meetings.workspaceId, workspaceId), isNull(meetings.deletedAt)];
     if (options.dealId) conditions.push(eq(meetings.dealId, options.dealId));
     if (options.contactId) conditions.push(eq(meetings.contactId, options.contactId));
     if (options.companyId) conditions.push(eq(meetings.companyId, options.companyId));
+    if (options.from) conditions.push(gte(meetings.scheduledAt, new Date(options.from)));
+    if (options.to) conditions.push(lte(meetings.scheduledAt, new Date(options.to)));
 
     const rows = await this.db
       .select()
@@ -128,6 +143,7 @@ export class MeetingsService {
         outcome: input.outcome,
         meetingUrl: input.meetingUrl,
         autoJoinBot,
+        ...(input.invitees ? { invitees: input.invitees } : {}),
       })
       .returning();
 
@@ -165,6 +181,7 @@ export class MeetingsService {
         ...(input.outcome !== undefined ? { outcome: input.outcome } : {}),
         ...(input.meetingUrl !== undefined ? { meetingUrl: input.meetingUrl } : {}),
         ...(input.autoJoinBot !== undefined ? { autoJoinBot: input.autoJoinBot } : {}),
+        ...(input.invitees !== undefined ? { invitees: input.invitees } : {}),
         updatedAt: new Date(),
       })
       .where(and(eq(meetings.id, id), eq(meetings.workspaceId, workspaceId)))
@@ -192,6 +209,31 @@ export class MeetingsService {
       .set({ botExternalId, botStatus: "scheduled", updatedAt: new Date() })
       .where(and(eq(meetings.id, id), eq(meetings.workspaceId, workspaceId)))
       .returning();
+    return row ? toDto(row) : null;
+  }
+
+  /**
+   * Records a created Google Calendar event: the real Meet link lands in the same meetingUrl
+   * column R16.2's "Schedule bot" already reads, so scheduling a notetaker on a Google-created
+   * meeting needs no changes there.
+   */
+  async setGoogleEvent(
+    workspaceId: string,
+    id: string,
+    update: { meetingUrl: string; googleEventId: string; googleCalendarId: string; invitees: MeetingInvitee[] }
+  ): Promise<MeetingDto | null> {
+    const [row] = await this.db
+      .update(meetings)
+      .set({
+        meetingUrl: update.meetingUrl,
+        googleEventId: update.googleEventId,
+        googleCalendarId: update.googleCalendarId,
+        invitees: update.invitees,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(meetings.id, id), eq(meetings.workspaceId, workspaceId)))
+      .returning();
+    if (row) log.info("google calendar event scheduled", { workspaceId, meetingId: id });
     return row ? toDto(row) : null;
   }
 
