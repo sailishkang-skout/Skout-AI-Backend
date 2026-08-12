@@ -15,6 +15,9 @@ import { startWebhookDeliveryWorker } from "./workers/webhook-delivery.worker.js
 import { startSmartListRefreshWorker } from "./workers/smart-list-refresh.worker.js";
 import { startSmartListRefreshSweepWorker } from "./workers/smart-list-refresh-sweep.worker.js";
 import { startReminderSweepWorker } from "./workers/reminder-sweep.worker.js";
+import { startSignalAlertSweepWorker } from "./workers/signal-alert-sweep.worker.js";
+import { startAlertDigestSweepWorker } from "./workers/alert-digest-sweep.worker.js";
+import { startRiskDecaySweepWorker } from "./workers/risk-decay-sweep.worker.js";
 
 async function main() {
   const config = loadEnv();
@@ -48,10 +51,16 @@ async function main() {
   const stopSmartListRefreshWorker = await startSmartListRefreshWorker(config);
   const stopSmartListRefreshSweepWorker = await startSmartListRefreshSweepWorker(config);
   const stopReminderSweepWorker = await startReminderSweepWorker(config);
+  const stopSignalAlertSweepWorker = await startSignalAlertSweepWorker(config);
+  const stopAlertDigestSweepWorker = await startAlertDigestSweepWorker(config);
+  const stopRiskDecaySweepWorker = await startRiskDecaySweepWorker(config);
 
   const app = await buildApp(config);
 
   const shutdown = async () => {
+    await stopRiskDecaySweepWorker();
+    await stopAlertDigestSweepWorker();
+    await stopSignalAlertSweepWorker();
     await stopReminderSweepWorker();
     await stopSmartListRefreshSweepWorker();
     await stopSmartListRefreshWorker();

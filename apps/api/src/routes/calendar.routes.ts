@@ -10,14 +10,18 @@ import { HttpError } from "../utils/http.js";
 export async function calendarRoutes(app: FastifyInstance) {
   const db = app.db;
 
-  // GET /calendar/connect/google — initiate Google OAuth for Calendar access
+  // GET /calendar/connect/google — returns the Google consent URL as JSON rather than
+  // redirecting: this route requires the caller's own Bearer token (like every other
+  // authenticated route), which a bare top-level browser navigation can't carry. The
+  // frontend calls this via an authenticated fetch, then navigates the browser to the
+  // returned URL itself — same shape as the existing Unipile hosted-auth flow.
   app.get("/calendar/connect/google", async (request, reply) => {
     const workspaceId = request.workspaceId ?? "unknown";
     const userId = request.userId;
     if (!userId) return reply.status(401).send({ error: "unauthenticated" });
     try {
       const url = getGoogleCalendarConnectUrl(workspaceId, userId, app.config);
-      return reply.redirect(url);
+      return reply.send({ url });
     } catch (err) {
       if (err instanceof HttpError) return reply.status(err.statusCode).send({ error: err.message });
       throw err;

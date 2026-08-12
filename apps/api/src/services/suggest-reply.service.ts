@@ -84,7 +84,7 @@ function heuristicFallback(opts: {
 export class SuggestReplyService {
   constructor(
     private readonly db: Db,
-    private readonly config: Pick<Env, "AI_SERVICE_URL">
+    private readonly config: Env
   ) {}
 
   async suggestForThread(
@@ -250,6 +250,10 @@ export class SuggestReplyService {
           .where(eq(aiDrafts.id, row.id));
       }
 
+      // create() may auto-approve this draft against the workspace's R13.2 thresholds (visible
+      // in the review queue as auto-approved either way), but it's never auto-sent here —
+      // sendApprovedDraftEmail always opens a brand-new thread, which is wrong for a reply
+      // that must land in this existing thread. Sending stays a manual/reply-flow action.
       const created = await drafts.create(workspaceId, {
         prospectId: thread.prospectId,
         subject: draft.subject,

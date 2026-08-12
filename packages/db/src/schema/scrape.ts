@@ -43,6 +43,8 @@ export const companySnapshots = pgTable(
     employeeCount: integer("employee_count"),
     openJobs: integer("open_jobs"),
     annualRevenue: bigint("annual_revenue", { mode: "number" }),
+    /** { category, technology }[] snapshot (R11.1) — diffed against the prior snapshot to emit tech_adopted/tech_dropped signals. */
+    techStack: jsonb("tech_stack"),
     scrapedAt: timestamp("scraped_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -74,10 +76,13 @@ export const signals = pgTable(
     source: text("source"),
     provenance: jsonb("provenance").notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    /** R17.3 — set once the alert-sweep worker has matched this row against alert_rules, so the sweep is resumable/idempotent instead of re-scanning the whole table. */
+    alertedAt: timestamp("alerted_at", { withTimezone: true }),
   },
   (table) => [
     index("signals_entity_idx").on(table.entityType, table.entityId, table.detectedAt),
     index("signals_type_idx").on(table.signalType),
+    index("signals_unalerted_idx").on(table.alertedAt, table.createdAt),
   ]
 );
 

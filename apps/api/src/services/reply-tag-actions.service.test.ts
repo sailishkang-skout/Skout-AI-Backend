@@ -22,10 +22,31 @@ function makeDb(thread: Record<string, unknown> | null, email?: string) {
       email ? [{ snapshot: { email } }] : [{ snapshot: {} }]
     );
 
+  const insertValues = vi.fn().mockReturnValue({
+    returning: vi.fn().mockImplementation(() =>
+      Promise.resolve([
+        {
+          id: "sig-1",
+          entityType: "prospect",
+          entityId: "p1",
+          signalType: "negative_sentiment",
+          value: {},
+          confidence: null,
+          detectedAt: new Date(),
+          source: null,
+          provenance: {},
+          createdAt: new Date(),
+        },
+      ])
+    ),
+  });
+
   return {
     select: vi.fn().mockReturnValue(selectChain),
     update: vi.fn().mockReturnValue({ set: updateSet }),
+    insert: vi.fn().mockReturnValue({ values: insertValues }),
     _updateSet: updateSet,
+    _insertValues: insertValues,
   } as any;
 }
 
@@ -57,5 +78,26 @@ describe("applyReplyTagActions", () => {
     const db = makeDb({ id: "t1", prospectId: "p1", status: "replied" });
     await applyReplyTagActions(db, "ws1", "t1", "neutral");
     expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it("records a negative_sentiment signal with a quoted snippet on negative", async () => {
+    const db = makeDb({ id: "t1", prospectId: "p1", status: "replied" });
+    await applyReplyTagActions(db, "ws1", "t1", "negative", "This isn't working for us, please stop emailing.");
+    expect(db._insertValues).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityType: "prospect",
+        entityId: "p1",
+        signalType: "negative_sentiment",
+        value: expect.objectContaining({ reason: expect.stringContaining("This isn't working for us") }),
+      })
+    );
+  });
+
+  it("still records a signal (without a snippet) when no bodyText is passed", async () => {
+    const db = makeDb({ id: "t1", prospectId: "p1", status: "replied" });
+    await applyReplyTagActions(db, "ws1", "t1", "negative");
+    expect(db._insertValues).toHaveBeenCalledWith(
+      expect.objectContaining({ signalType: "negative_sentiment" })
+    );
   });
 });

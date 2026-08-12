@@ -10,6 +10,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import { users } from "./users.js";
 import { workspaces } from "./workspaces.js";
 
 export const prospectActivations = pgTable(
@@ -23,6 +24,8 @@ export const prospectActivations = pgTable(
     companyId: text("company_id").notNull(),
     snapshot: jsonb("snapshot").notNull().default({}),
     recordVersion: integer("record_version").notNull().default(1),
+    /** R17.3 — the SDR this account/prospect is routed to for signal alerts. Null = no owner yet, alerts broadcast workspace-wide. */
+    ownerId: uuid("owner_id").references(() => users.id, { onDelete: "set null" }),
     activatedAt: timestamp("activated_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

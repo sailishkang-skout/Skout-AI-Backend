@@ -73,19 +73,21 @@ export async function notificationRoutes(app: FastifyInstance) {
     return reply.send({ data: rows });
   });
 
-  // PUT /notifications/preferences — body: { type: string, channel: "in_app"|"email"|"both" }
-  app.put<{ Body: { type: string; channel: NotificationChannel } }>(
+  // PUT /notifications/preferences — body: { type, channel: "in_app"|"email"|"both", digest?: boolean }
+  // `digest` (R17.3) only takes effect when channel includes email: batches delivery into the
+  // daily digest sweep instead of a real-time send for that notification type.
+  app.put<{ Body: { type: string; channel: NotificationChannel; digest?: boolean } }>(
     "/notifications/preferences",
     async (request, reply) => {
       if (!request.workspaceId || !request.userId) {
         return reply.code(401).send(errorResponse("Unauthorized", 401));
       }
-      const { type, channel } = request.body ?? ({} as { type?: string; channel?: NotificationChannel });
+      const { type, channel, digest } = request.body ?? ({} as { type?: string; channel?: NotificationChannel; digest?: boolean });
       if (!type) return reply.code(400).send(errorResponse("type is required", 400));
       if (!channel || !VALID_CHANNELS.includes(channel)) {
         return reply.code(400).send(errorResponse(`channel must be one of ${VALID_CHANNELS.join(", ")}`, 400));
       }
-      const row = await setPreference(db(), request.workspaceId, request.userId, type, channel);
+      const row = await setPreference(db(), request.workspaceId, request.userId, type, channel, digest ?? false);
       return reply.send({ data: row });
     }
   );

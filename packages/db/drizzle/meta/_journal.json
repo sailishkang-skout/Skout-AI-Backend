@@ -302,6 +302,13 @@
       "when": 1787500000000,
       "tag": "0041_google_calendar",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1787600000000,
+      "tag": "0042_r13_r17_r18_r12_r11_foundation",
+      "breakpoints": true
     }
   ]
 }

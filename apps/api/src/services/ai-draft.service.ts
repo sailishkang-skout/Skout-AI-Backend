@@ -2,6 +2,12 @@ import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { HttpError } from "../utils/http.js";
+import {
+  getDraftAutoApproveSettings,
+  getIcpScore,
+  isOnAlwaysReviewList,
+  passesAutoApproveThreshold,
+} from "./draft-auto-approve.service.js";
 import { resolveNotificationsForEntity } from "./notifications.service.js";
 
 const { aiDrafts, prospectActivations, prospectScores } = schema;
@@ -22,6 +28,7 @@ export interface AiDraftRow {
   status: string;
   model: string | null;
   confidenceScore: string | null;
+  autoApproved: boolean;
   createdAt: Date;
   reviewedAt: Date | null;
   reviewedBy: string | null;
@@ -42,6 +49,7 @@ function toDto(row: {
   status: string;
   model: string | null;
   confidenceScore: string | null;
+  autoApproved: boolean;
   createdAt: Date;
   reviewedAt: Date | null;
   reviewedBy: string | null;
@@ -61,6 +69,7 @@ function toDto(row: {
     status: row.status,
     model: row.model,
     confidenceScore: row.confidenceScore,
+    autoApproved: row.autoApproved,
     createdAt: row.createdAt,
     reviewedAt: row.reviewedAt,
     reviewedBy: row.reviewedBy,
@@ -98,6 +107,7 @@ export class AiDraftService {
         status: aiDrafts.status,
         model: aiDrafts.model,
         confidenceScore: aiDrafts.confidenceScore,
+        autoApproved: aiDrafts.autoApproved,
         createdAt: aiDrafts.createdAt,
         reviewedAt: aiDrafts.reviewedAt,
         reviewedBy: aiDrafts.reviewedBy,
@@ -146,6 +156,7 @@ export class AiDraftService {
         status: aiDrafts.status,
         model: aiDrafts.model,
         confidenceScore: aiDrafts.confidenceScore,
+        autoApproved: aiDrafts.autoApproved,
         createdAt: aiDrafts.createdAt,
         reviewedAt: aiDrafts.reviewedAt,
         reviewedBy: aiDrafts.reviewedBy,
@@ -186,8 +197,19 @@ export class AiDraftService {
       threadId?: string | null;
       enrollmentStepId?: string | null;
       status?: AiDraftStatus;
+      /** Opt this draft out of R13.2 auto-approve — e.g. Dexter's "stageForReview" chat action
+       * is a deliberate always-human-review path, not eligible for the score/confidence bar. */
+      skipAutoApprove?: boolean;
     }
   ): Promise<AiDraftRow> {
+    // Auto-approve only ever applies to the default "pending_review" path — a caller that
+    // explicitly asks for some other status (none do today) means something more specific.
+    const requestedStatus = input.status ?? "pending_review";
+    const { status, autoApproved } =
+      requestedStatus === "pending_review" && !input.skipAutoApprove
+        ? await this.resolveAutoApprove(workspaceId, input)
+        : { status: requestedStatus, autoApproved: false };
+
     const [row] = await this.db
       .insert(aiDrafts)
       .values({
@@ -202,10 +224,43 @@ export class AiDraftService {
             : String(input.confidenceScore),
         threadId: input.threadId ?? null,
         enrollmentStepId: input.enrollmentStepId ?? null,
-        status: input.status ?? "pending_review",
+        status,
+        autoApproved,
       })
       .returning();
     return toDto(row!);
+  }
+
+  /**
+   * R13.2 — auto-route: if the caller didn't force an explicit status, check the workspace's
+   * auto-approve settings (ICP score + AI confidence threshold, minus an always-review list
+   * escape hatch) and pre-approve the draft instead of leaving it for human review. Runs for
+   * every caller of `create()` (manual generation, reply-suggestion auto-draft, ...) since
+   * they all funnel through this one method.
+   */
+  private async resolveAutoApprove(
+    workspaceId: string,
+    input: { prospectId: string; confidenceScore?: string | number | null }
+  ): Promise<{ status: AiDraftStatus; autoApproved: boolean }> {
+    const fallback = { status: "pending_review" as AiDraftStatus, autoApproved: false };
+    try {
+      const settings = await getDraftAutoApproveSettings(this.db, workspaceId);
+      if (!settings?.enabled) return fallback;
+
+      const confidenceScore =
+        input.confidenceScore === undefined || input.confidenceScore === null
+          ? null
+          : Number(input.confidenceScore);
+      const icpScore = await getIcpScore(this.db, workspaceId, input.prospectId);
+
+      if (!passesAutoApproveThreshold(settings, { icpScore, confidenceScore })) return fallback;
+      if (await isOnAlwaysReviewList(this.db, input.prospectId, settings.alwaysReviewListIds)) return fallback;
+
+      return { status: "approved", autoApproved: true };
+    } catch {
+      // Never let an auto-approve check failure block draft creation — fall back to review.
+      return fallback;
+    }
   }
 
   async update(

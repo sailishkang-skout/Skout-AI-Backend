@@ -3,7 +3,7 @@ import { buildDemoCorpus, filterDemoCorpus, postProcessSearchHits } from "./demo
 /** Default OpenSearch index for the global prospect corpus. */
 export const PROSPECTS_INDEX = process.env.OPENSEARCH_INDEX ?? "prospects";
 
-export { buildDemoCorpus, filterDemoCorpus, postProcessSearchHits } from "./demo-corpus.js";
+export { aggregateDemoCorpus, buildDemoCorpus, filterDemoCorpus, postProcessSearchHits } from "./demo-corpus.js";
 
 export interface OpenSearchConfig {
   url: string;
@@ -93,6 +93,11 @@ export interface SearchFilters {
   city?: string;
   minEmployees?: number;
   maxEmployees?: number;
+  // Multi-select OR variants (R12.1 — ICP config is multi-select; search filters above stay
+  // single-value for the existing search UI). Applied alongside, not instead of, the above.
+  industries?: string[];
+  countries?: string[];
+  seniorities?: string[];
   // Company — stage & funding
   companyStage?: string;
   lastFundingRound?: string;
@@ -352,6 +357,9 @@ export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25
   if (filters.industry)    filter.push({ term: { industry: filters.industry } });
   if (filters.subIndustry) filter.push({ term: { subIndustry: filters.subIndustry } });
   if (filters.country)     filter.push({ term: { country: filters.country } });
+  if (filters.industries?.length)  filter.push({ terms: { industry: filters.industries } });
+  if (filters.countries?.length)   filter.push({ terms: { country: filters.countries } });
+  if (filters.seniorities?.length) filter.push({ terms: { seniority: filters.seniorities } });
   if (filters.state?.trim()) filter.push({ term: { state: filters.state.trim() } });
   if (filters.city?.trim())  filter.push({ match: { city: filters.city.trim() } });
   if (filters.minEmployees != null || filters.maxEmployees != null) {
@@ -448,6 +456,51 @@ export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25
     },
     sort: [{ updatedAt: "desc" }],
   };
+}
+
+export interface SegmentBucket {
+  dimension: "industry" | "size" | "geo";
+  value: string;
+  count: number;
+}
+
+export interface AggregateResult {
+  total: number;
+  segments: SegmentBucket[];
+}
+
+/**
+ * R12.1 — total count + industry/size/geo breakdown for a filter set, without paginating
+ * through hits. `size: 0` — this is a pure aggregation query, no documents returned.
+ */
+export async function aggregateProspects(cfg: OpenSearchConfig, filters: SearchFilters): Promise<AggregateResult> {
+  const index = cfg.index ?? PROSPECTS_INDEX;
+  const { query } = buildSearchQuery(filters, 1, 0);
+  const MAX_BUCKETS = 25;
+
+  const body = {
+    size: 0,
+    query,
+    aggs: {
+      industry: { terms: { field: "industry", size: MAX_BUCKETS, missing: "unknown" } },
+      size: { terms: { field: "employeeBucket", size: MAX_BUCKETS, missing: "unknown" } },
+      geo: { terms: { field: "country", size: MAX_BUCKETS, missing: "unknown" } },
+    },
+  };
+
+  const res = await osFetch<{
+    hits: { total: { value: number } };
+    aggregations: Record<"industry" | "size" | "geo", { buckets: { key: string; doc_count: number }[] }>;
+  }>(cfg, `/${index}/_search`, { method: "POST", body: JSON.stringify(body) });
+
+  const segments: SegmentBucket[] = [];
+  for (const dimension of ["industry", "size", "geo"] as const) {
+    for (const bucket of res.aggregations[dimension]?.buckets ?? []) {
+      segments.push({ dimension, value: bucket.key, count: bucket.doc_count });
+    }
+  }
+
+  return { total: res.hits.total.value, segments };
 }
 
 function needsSearchPostProcess(filters: SearchFilters): boolean {

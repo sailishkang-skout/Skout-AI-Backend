@@ -19,6 +19,8 @@ export const aiDrafts = pgTable("ai_drafts", {
   status: text("status").notNull().default("pending_review"),
   model: text("model"),
   confidenceScore: numeric("confidence_score", { precision: 5, scale: 4 }),
+  /** R13.2 — set when the draft cleared the workspace auto-approve thresholds instead of a human approving it. */
+  autoApproved: boolean("auto_approved").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
   reviewedBy: uuid("reviewed_by").references(() => users.id, { onDelete: "set null" }),

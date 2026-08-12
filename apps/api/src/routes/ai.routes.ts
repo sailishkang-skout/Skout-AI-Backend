@@ -9,8 +9,12 @@ import {
   markSuggestionAccepted,
   getSuggestionStats,
 } from "../services/next-best-action.service.js";
-import { AI_DRAFT_STATUSES, buildAiDraftService } from "../services/ai-draft.service.js";
+import { AI_DRAFT_STATUSES, buildAiDraftService, type AiDraftRow } from "../services/ai-draft.service.js";
 import { sendApprovedDraftEmail, type DraftSendResult } from "../services/ai-draft-send.service.js";
+import {
+  getDraftAutoApproveSettings,
+  setDraftAutoApproveSettings,
+} from "../services/draft-auto-approve.service.js";
 import { computeOutcomeInsights, insightsToPrompt } from "../services/outcome-insights.service.js";
 import { buildChatGrounding } from "../services/ai-chat-context.service.js";
 import { createWorkspaceToolRunner } from "../services/ai-workspace-tools.service.js";
@@ -89,7 +93,69 @@ function draftsOr503(app: FastifyInstance) {
   return buildAiDraftService(app.db);
 }
 
+/**
+ * Standalone drafts (not tied to a sequence step) send immediately once approved — whether a
+ * human approved them via POST /approve or R13.2's auto-approve set the status at creation.
+ * Enrollment-linked drafts are delivered by the sequence worker to avoid double-send.
+ */
+async function sendIfApproved(
+  app: FastifyInstance,
+  workspaceId: string,
+  draft: AiDraftRow
+): Promise<{ draft: AiDraftRow; send?: DraftSendResult }> {
+  if (!app.db || draft.enrollmentStepId || draft.status !== "approved") return { draft };
+
+  const send = await sendApprovedDraftEmail(app.db, app.config, {
+    id: draft.id,
+    workspaceId,
+    prospectId: draft.prospectId,
+    subject: draft.subject,
+    body: draft.body,
+  });
+  if (send?.sent) {
+    const refreshed = await buildAiDraftService(app.db).getById(workspaceId, draft.id);
+    return { draft: refreshed ?? draft, send };
+  }
+  if (send && !send.sent) {
+    app.log.warn({ draftId: draft.id, reason: send.reason }, "Approved draft could not be sent");
+  }
+  return { draft, send };
+}
+
+const draftAutoApproveSettingsSchema = z.object({
+  enabled: z.boolean(),
+  minIcpScore: z.number().int().min(0).max(100).nullable().optional(),
+  minConfidence: z.number().min(0).max(1).nullable().optional(),
+  alwaysReviewListIds: z.array(z.string().uuid()).optional(),
+});
+
 export async function aiRoutes(app: FastifyInstance) {
+  // R13.2 — workspace-level auto-approve thresholds for AI drafts.
+  app.get("/ai/draft-auto-approve-settings", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    if (!app.db) return reply.code(503).send({ error: "database_unavailable" });
+    const settings = await getDraftAutoApproveSettings(app.db, workspaceId);
+    return reply.send({
+      data: settings ?? {
+        workspaceId,
+        enabled: false,
+        minIcpScore: null,
+        minConfidence: null,
+        alwaysReviewListIds: [],
+        updatedBy: null,
+        updatedAt: null,
+      },
+    });
+  });
+
+  app.put("/ai/draft-auto-approve-settings", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    if (!app.db) return reply.code(503).send({ error: "database_unavailable" });
+    const input = draftAutoApproveSettingsSchema.parse(request.body ?? {});
+    const settings = await setDraftAutoApproveSettings(app.db, workspaceId, input, request.userId);
+    return reply.send({ data: settings });
+  });
+
   app.get("/ai/drafts", async (request, reply) => {
     const workspaceId = request.workspaceId ?? "unknown";
     const query = listQuerySchema.parse(request.query ?? {});
@@ -179,7 +245,10 @@ export async function aiRoutes(app: FastifyInstance) {
       body: content!,
       model,
     });
-    return reply.status(201).send(draft);
+    // R13.2 — create() may have already auto-approved this draft against the workspace's
+    // thresholds; if so, send it now instead of leaving it approved-but-undelivered.
+    const result = await sendIfApproved(app, workspaceId, draft);
+    return reply.status(201).send({ ...result.draft, send: result.send });
   });
 
   app.patch("/ai/drafts/:id", async (request, reply) => {
@@ -195,27 +264,9 @@ export async function aiRoutes(app: FastifyInstance) {
     const workspaceId = request.workspaceId ?? "unknown";
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const drafts = draftsOr503(app);
-    let draft = await drafts.approve(workspaceId, id, request.userId);
-
-    // Standalone drafts (not tied to a sequence step) send immediately on approve.
-    // Enrollment-linked drafts are delivered by the sequence worker to avoid double-send.
-    // sendApprovedDraftEmail creates the outbound Inbox message and marks status `sent`.
-    let send: DraftSendResult | undefined;
-    if (app.db && !draft.enrollmentStepId && draft.status !== "sent") {
-      send = await sendApprovedDraftEmail(app.db, app.config, {
-        id: draft.id,
-        workspaceId,
-        prospectId: draft.prospectId,
-        subject: draft.subject,
-        body: draft.body,
-      });
-      if (send?.sent) {
-        draft = (await drafts.getById(workspaceId, id)) ?? draft;
-      } else if (send && !send.sent) {
-        app.log.warn({ draftId: draft.id, reason: send.reason }, "Approved draft could not be sent");
-      }
-    }
-    return reply.send({ ...draft, send });
+    const draft = await drafts.approve(workspaceId, id, request.userId);
+    const result = await sendIfApproved(app, workspaceId, draft);
+    return reply.send({ ...result.draft, send: result.send });
   });
 
   app.post("/ai/drafts/:id/reject", async (request, reply) => {
@@ -307,6 +358,8 @@ export async function aiRoutes(app: FastifyInstance) {
             // Do not attach inbox threadId here — approve+send creates the Sent/Outbox thread.
             threadId: null,
             status: "pending_review",
+            // "never auto-send" per the comment above — this path always needs a human look.
+            skipAutoApprove: true,
           });
           draftId = draft.id;
         } catch (err) {

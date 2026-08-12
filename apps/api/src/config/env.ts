@@ -220,6 +220,16 @@ const envSchema = z
     /** How many hours before (task/sequence step due) or after (draft created) something is
      * considered "needs a reminder". */
     REMINDER_LEAD_HOURS: z.coerce.number().int().positive().default(24),
+    // --- R17.3 signal-triggered SDR alerts. ---
+    /** How often the alert-sweep worker matches newly-recorded signals against alert_rules. */
+    ALERT_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(5),
+    /** How often the digest worker batches pending digest-preference notifications into one email. */
+    ALERT_DIGEST_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(1440),
+    // --- R18.1 engagement-decay risk flag. ---
+    /** How often the risk-decay sweep re-evaluates activated prospects. */
+    RISK_DECAY_SWEEP_INTERVAL_HOURS: z.coerce.number().int().positive().default(24),
+    /** No opens/replies/activity for this many days -> engagement_decay signal. */
+    RISK_DECAY_INACTIVITY_DAYS: z.coerce.number().int().positive().default(21),
   })
   .transform((data) => {
     let next = data;

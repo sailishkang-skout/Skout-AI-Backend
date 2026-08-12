@@ -77,6 +77,9 @@ export const signalTypeEnum = z.enum([
   "website_change",
   "tech_adoption",
   "headcount_growth",
+  /** R11.1 — per-tool delta vs. the prior snapshot, distinct from the always-fired aggregate "tech_adoption" above. */
+  "tech_adopted",
+  "tech_dropped",
 ]);
 export type SignalType = z.infer<typeof signalTypeEnum>;
 
