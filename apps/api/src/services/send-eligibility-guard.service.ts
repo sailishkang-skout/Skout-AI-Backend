@@ -4,6 +4,15 @@ import { checkSendEligibility } from "./email-intel.service.js";
 
 const log = createLogger("send-eligibility-guard");
 
+/** Policy decisions that should hard-block a send. */
+const BLOCKING_DECISIONS = new Set(["DO_NOT_USE", "MANUAL_REVIEW"]);
+
+/**
+ * Inconclusive verification (SMTP timeout, port-25 blocked in VPC, etc.) must not block
+ * sending — same fail-open posture as an unreachable email-intel service.
+ */
+const INCONCLUSIVE_DECISIONS = new Set(["RETRY_VERIFICATION", "SMTP_ERROR", "UNAVAILABLE", "NO_DECISION"]);
+
 export interface SendEligibilityGateResult {
   blocked: boolean;
   reason?: string;
@@ -25,6 +34,14 @@ export async function isSendBlockedByEligibility(
   try {
     const check = await checkSendEligibility(config, email);
     if (!check.allowed) {
+      if (INCONCLUSIVE_DECISIONS.has(check.decision) || !BLOCKING_DECISIONS.has(check.decision)) {
+        log.info("send-eligibility inconclusive — failing open", {
+          email,
+          decision: check.decision,
+          reason: check.reason,
+        });
+        return { blocked: false };
+      }
       log.info("send blocked by email-intel eligibility policy", {
         email,
         decision: check.decision,

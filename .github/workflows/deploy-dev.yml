@@ -170,6 +170,7 @@ jobs:
           docker build -f frontend/Dockerfile \
             --build-arg NEXT_PUBLIC_API_URL="${WEB_URL}" \
             --build-arg NEXT_PUBLIC_APP_URL="${WEB_URL}" \
+            --build-arg NEXT_PUBLIC_CRM_API_URL="${WEB_URL}" \
             --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}" \
             --build-arg CLERK_SECRET_KEY="${{ secrets.CLERK_SECRET_KEY }}" \
             -t "$WEB_REPO:$IMAGE_TAG" -t "$WEB_REPO:latest" frontend

@@ -39,4 +39,14 @@ describe("isSendBlockedByEligibility", () => {
     const result = await isSendBlockedByEligibility(CONFIG, "ada@acme.com");
     expect(result.blocked).toBe(false);
   });
+
+  it("fails open when verification is inconclusive (SMTP timeout / RETRY_VERIFICATION)", async () => {
+    checkSendEligibility.mockResolvedValue({
+      allowed: false,
+      decision: "RETRY_VERIFICATION",
+      reason: "SMTP verification did not produce a definitive mailbox result",
+    });
+    const result = await isSendBlockedByEligibility(CONFIG, "ada@acme.com");
+    expect(result.blocked).toBe(false);
+  });
 });

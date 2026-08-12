@@ -491,7 +491,11 @@ export class ComputeStack extends Stack {
         targetGroups: [crmEcs.targetGroup],
         priority: 7,
         conditions: [
-          elbv2.ListenerCondition.pathPatterns(["/api/v1/dashboard/overview*"]),
+          elbv2.ListenerCondition.pathPatterns([
+            "/api/v1/dashboard/overview*",
+            "/api/v1/dashboard/switching-cost*",
+            "/api/v1/dashboard/cro-summary*",
+          ]),
           ...albExtraConditions,
         ],
       });
