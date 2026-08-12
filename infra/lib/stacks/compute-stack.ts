@@ -384,6 +384,9 @@ export class ComputeStack extends Stack {
         MEETING_BOT_WEBHOOK_SECRET: ecs.Secret.fromSecretsManager(secrets.meetingBot, "MEETING_BOT_WEBHOOK_SECRET"),
         GOOGLE_CLIENT_ID: ecs.Secret.fromSecretsManager(secrets.google, "GOOGLE_CLIENT_ID"),
         GOOGLE_CLIENT_SECRET: ecs.Secret.fromSecretsManager(secrets.google, "GOOGLE_CLIENT_SECRET"),
+        TWILIO_ACCOUNT_SID: ecs.Secret.fromSecretsManager(secrets.twilio, "TWILIO_ACCOUNT_SID"),
+        TWILIO_AUTH_TOKEN: ecs.Secret.fromSecretsManager(secrets.twilio, "TWILIO_AUTH_TOKEN"),
+        TWILIO_PHONE_NUMBER: ecs.Secret.fromSecretsManager(secrets.twilio, "TWILIO_PHONE_NUMBER"),
       },
       datadog: {
         apiKeySecret: ecs.Secret.fromSecretsManager(secrets.datadog, "DD_API_KEY"),
@@ -550,7 +553,10 @@ export class ComputeStack extends Stack {
       secrets.appConfig,
       secrets.datadog,
       secrets.razorpay,
-      secrets.smtp
+      secrets.smtp,
+      secrets.meetingBot,
+      secrets.google,
+      secrets.twilio
     );
 
     grantSecretRead(crmEcs.taskDefinition, database.secret, secrets.clerk, secrets.sentry, secrets.datadog);
