@@ -26,4 +26,9 @@ describe("app-guides chat grounding", () => {
     const guides = selectAppGuides({ page: "/settings/calling", userMessage: "dial", limit: 3 });
     expect(guides.some((g) => g.slug === "calling")).toBe(true);
   });
+
+  it("picks lists guide for signal overlay questions", () => {
+    const guides = selectAppGuides({ userMessage: "How do I turn on signal overlay on a list?", limit: 3 });
+    expect(guides.some((g) => g.slug === "lists-enrich")).toBe(true);
+  });
 });

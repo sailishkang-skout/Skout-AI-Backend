@@ -34,9 +34,10 @@ Sample files live in the backend docs/samples/import folder for testing.`,
     slug: "lists-enrich",
     title: "Lists, enrich & enroll",
     href: "/lists",
-    keywords: ["list", "enrich", "enroll", "verify", "member", "score", "email intel"],
+    keywords: ["list", "enrich", "enroll", "verify", "member", "score", "email intel", "signal overlay"],
     body: `Create lists under Lists. Add prospects from search, import, smart lists, or enrichment.
 Enrich members to find email/phone; Verify uses email-intel then SMTP before outreach.
+Signal overlay on a list shows funding/hiring/tech/risk badges on each row (click for source + confidence).
 Enroll a list into an active sequence (Enroll tab) or into a 50/50 A/B experiment.`,
   },
   {
@@ -228,9 +229,9 @@ HubSpot import/export is Settings → CRM (/settings/crm).`,
     slug: "tam",
     title: "TAM",
     href: "/tam",
-    keywords: ["tam", "market", "coverage", "addressable"],
+    keywords: ["tam", "market", "coverage", "addressable", "signal overlay"],
     body: `Market (TAM) sizes ICP universes and tracks coverage: activated → enriched → contacted → replied → deal.
-Drill a segment into a list to enrich or enroll.`,
+Turn on Signal overlay, then drill a segment into a list — account rows show funding/hiring/tech/risk badges.`,
   },
   {
     slug: "enrichment",

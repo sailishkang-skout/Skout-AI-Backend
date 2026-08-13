@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 
@@ -56,6 +56,74 @@ export async function listSignalsForEntity(
     .limit(opts.limit ?? 100);
 
   return rows.map(serialize);
+}
+
+/** Lightweight overlay payload for list/TAM/search rows (R11.3). */
+export interface OverlaySignal {
+  type: string;
+  observedAt: string;
+  detail?: string;
+}
+
+const OVERLAY_PER_ENTITY = 8;
+
+/** Batch-load signal timelines for many entity ids (prospect + company) in one query. */
+export async function listSignalsForEntities(db: Db, entityIds: string[]): Promise<Map<string, SignalRecord[]>> {
+  const ids = [...new Set(entityIds.filter((id) => id.length > 0))];
+  if (ids.length === 0) return new Map();
+
+  const rows = await db
+    .select()
+    .from(signals)
+    .where(inArray(signals.entityId, ids))
+    .orderBy(desc(signals.detectedAt));
+
+  const map = new Map<string, SignalRecord[]>();
+  for (const row of rows) {
+    const list = map.get(row.entityId) ?? [];
+    if (list.length >= OVERLAY_PER_ENTITY) continue;
+    list.push(serialize(row));
+    map.set(row.entityId, list);
+  }
+  return map;
+}
+
+function overlayDetail(value: Record<string, unknown>): string | undefined {
+  for (const key of ["reason", "detail", "tool", "technology"]) {
+    const v = value[key];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return undefined;
+}
+
+/** Merge prospect + company signals, newest first, cap at `max` (default 3). */
+export function overlaySignalsForMember(
+  byEntity: Map<string, SignalRecord[]>,
+  prospectId: string,
+  companyId: string,
+  max = 3
+): OverlaySignal[] {
+  const merged = [
+    ...(byEntity.get(prospectId) ?? []),
+    ...(companyId && companyId !== prospectId ? (byEntity.get(companyId) ?? []) : []),
+  ];
+  const seen = new Set<string>();
+  const unique: SignalRecord[] = [];
+  for (const signal of merged) {
+    const key = `${signal.signalType}:${signal.detectedAt}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(signal);
+  }
+  unique.sort((a, b) => new Date(b.detectedAt).getTime() - new Date(a.detectedAt).getTime());
+  return unique.slice(0, max).map((signal) => {
+    const detail = overlayDetail(signal.value);
+    return {
+      type: signal.signalType,
+      observedAt: signal.detectedAt,
+      ...(detail ? { detail } : {}),
+    };
+  });
 }
 
 export interface RecordSignalInput {
