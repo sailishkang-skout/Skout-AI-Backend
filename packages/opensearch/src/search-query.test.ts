@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildSearchQuery } from "./index.js";
+import { aggregateDemoCorpus, buildSearchQuery } from "./index.js";
+import type { ProspectDocument } from "./index.js";
 
 describe("buildSearchQuery", () => {
   describe("empty filters", () => {
@@ -297,5 +298,68 @@ describe("buildSearchQuery", () => {
       expect(bool.must).toHaveLength(1);
       expect(bool.filter).toHaveLength(1);
     });
+  });
+
+  describe("R12.1 multi-select filters (industries/countries/seniorities)", () => {
+    it("adds a terms clause per non-empty plural filter", () => {
+      const q = buildSearchQuery({
+        industries: ["SaaS", "Fintech"],
+        countries: ["US", "CA"],
+        seniorities: ["director", "vp"],
+      });
+      const bool = q.query.bool as { filter?: object[] };
+      expect(bool.filter).toContainEqual({ terms: { industry: ["SaaS", "Fintech"] } });
+      expect(bool.filter).toContainEqual({ terms: { country: ["US", "CA"] } });
+      expect(bool.filter).toContainEqual({ terms: { seniority: ["director", "vp"] } });
+    });
+
+    it("omits the terms clause for an empty array", () => {
+      const q = buildSearchQuery({ industries: [] });
+      expect(q.query.bool).toEqual({ must: [{ match_all: {} }] });
+    });
+  });
+});
+
+describe("aggregateDemoCorpus", () => {
+  function doc(overrides: Partial<ProspectDocument>): ProspectDocument {
+    return {
+      prospectId: "p1",
+      companyId: "c1",
+      companyDomain: "acme.com",
+      ...overrides,
+    } as ProspectDocument;
+  }
+
+  it("counts total and buckets industry/size/geo for matched docs", () => {
+    const docs = [
+      doc({ industry: "SaaS", employeeBucket: "11-50", country: "US" }),
+      doc({ industry: "SaaS", employeeBucket: "51-200", country: "US" }),
+      doc({ industry: "Fintech", employeeBucket: "11-50", country: "CA" }),
+    ];
+
+    const result = aggregateDemoCorpus(docs, {});
+
+    expect(result.total).toBe(3);
+    expect(result.segments).toContainEqual({ dimension: "industry", value: "SaaS", count: 2 });
+    expect(result.segments).toContainEqual({ dimension: "industry", value: "Fintech", count: 1 });
+    expect(result.segments).toContainEqual({ dimension: "geo", value: "US", count: 2 });
+    expect(result.segments).toContainEqual({ dimension: "size", value: "11-50", count: 2 });
+  });
+
+  it("respects the same filters as filterDemoCorpus, including multi-select", () => {
+    const docs = [
+      doc({ industry: "SaaS", country: "US" }),
+      doc({ industry: "Fintech", country: "US" }),
+    ];
+
+    const result = aggregateDemoCorpus(docs, { industries: ["SaaS"] });
+
+    expect(result.total).toBe(1);
+    expect(result.segments).toContainEqual({ dimension: "industry", value: "SaaS", count: 1 });
+  });
+
+  it("buckets missing fields as unknown", () => {
+    const result = aggregateDemoCorpus([doc({})], {});
+    expect(result.segments).toContainEqual({ dimension: "industry", value: "unknown", count: 1 });
   });
 });

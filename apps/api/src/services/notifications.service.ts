@@ -32,6 +32,7 @@ export interface NotificationPreferenceDto {
   userId: string;
   type: string;
   channel: NotificationChannel;
+  digest: boolean;
 }
 
 function toDto(row: typeof notifications.$inferSelect): NotificationDto {
@@ -57,6 +58,7 @@ function prefToDto(row: typeof notificationPreferences.$inferSelect): Notificati
     userId: row.userId,
     type: row.type,
     channel: row.channel as NotificationChannel,
+    digest: row.digest,
   };
 }
 
@@ -152,7 +154,8 @@ export async function setPreference(
   workspaceId: string,
   userId: string,
   type: string,
-  channel: NotificationChannel
+  channel: NotificationChannel,
+  digest = false
 ): Promise<NotificationPreferenceDto> {
   const [existing] = await db
     .select()
@@ -169,7 +172,7 @@ export async function setPreference(
   if (existing) {
     const [row] = await db
       .update(notificationPreferences)
-      .set({ channel, updatedAt: new Date() })
+      .set({ channel, digest, updatedAt: new Date() })
       .where(eq(notificationPreferences.id, existing.id))
       .returning();
     return prefToDto(row);
@@ -177,12 +180,17 @@ export async function setPreference(
 
   const [row] = await db
     .insert(notificationPreferences)
-    .values({ workspaceId, userId, type, channel })
+    .values({ workspaceId, userId, type, channel, digest })
     .returning();
   return prefToDto(row);
 }
 
-async function resolveChannel(db: Db, workspaceId: string, userId: string, type: string): Promise<NotificationChannel> {
+async function resolvePreference(
+  db: Db,
+  workspaceId: string,
+  userId: string,
+  type: string
+): Promise<{ channel: NotificationChannel; digest: boolean }> {
   const [specific] = await db
     .select()
     .from(notificationPreferences)
@@ -194,7 +202,7 @@ async function resolveChannel(db: Db, workspaceId: string, userId: string, type:
       )
     )
     .limit(1);
-  if (specific) return specific.channel as NotificationChannel;
+  if (specific) return { channel: specific.channel as NotificationChannel, digest: specific.digest };
 
   const [fallback] = await db
     .select()
@@ -207,10 +215,10 @@ async function resolveChannel(db: Db, workspaceId: string, userId: string, type:
       )
     )
     .limit(1);
-  if (fallback) return fallback.channel as NotificationChannel;
+  if (fallback) return { channel: fallback.channel as NotificationChannel, digest: fallback.digest };
 
   // Safe default: in-app only. Never opt someone into email/Slack without an explicit preference row.
-  return "in_app";
+  return { channel: "in_app", digest: false };
 }
 
 async function deliverSlack(config: Env, db: Db, workspaceId: string, title: string, body: string | null): Promise<boolean> {
@@ -259,9 +267,13 @@ export async function createNotification(db: Db, config: Env, input: CreateNotif
     .returning();
 
   const delivered = new Set<string>(["in_app"]);
-  const channel = input.userId ? await resolveChannel(db, input.workspaceId, input.userId, input.type) : "in_app";
+  const { channel, digest } = input.userId
+    ? await resolvePreference(db, input.workspaceId, input.userId, input.type)
+    : { channel: "in_app" as NotificationChannel, digest: false };
 
-  if (input.userId && (channel === "email" || channel === "both")) {
+  // R17.3 — digest-preferring users get their email folded into the daily digest sweep instead
+  // of a real-time send; the in-app row above is still created immediately either way.
+  if (input.userId && !digest && (channel === "email" || channel === "both")) {
     try {
       const [user] = await db.select({ email: users.email }).from(users).where(eq(users.id, input.userId)).limit(1);
       if (user?.email) {

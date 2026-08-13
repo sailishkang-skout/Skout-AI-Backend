@@ -1,4 +1,4 @@
-import { index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { users } from "./users.js";
 import { workspaces } from "./workspaces.js";
 
@@ -28,6 +28,8 @@ export const notifications = pgTable(
     /** Which channels this notification was actually delivered through — for debugging/audit, not preference. */
     deliveredChannels: jsonb("delivered_channels").notNull().default([]),
     readAt: timestamp("read_at", { withTimezone: true }),
+    /** R17.3 digest delivery — set once this row has been folded into a daily digest email, so the sweep doesn't re-send it. Null for real-time-delivered or not-yet-digested rows. */
+    digestedAt: timestamp("digested_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -56,6 +58,8 @@ export const notificationPreferences = pgTable(
     type: text("type").notNull(),
     /** "in_app" | "email" | "both" */
     channel: text("channel").notNull().default("in_app"),
+    /** R17.3 — when true and channel includes email, email delivery is batched into the daily digest sweep instead of sent real-time. */
+    digest: boolean("digest").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

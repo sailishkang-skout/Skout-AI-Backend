@@ -100,6 +100,91 @@ describe("AiDraftService", () => {
     expect(db.insert).toHaveBeenCalled();
   });
 
+  describe("R13.2 auto-approve on create", () => {
+    /** Queue-based select mock: each `.select().from().where().limit()` call resolves the next
+     * entry of `results` in order — settings, then icpScore, then (if reached) always-review list. */
+    function makeAutoApproveDb(results: unknown[][], insertRow: unknown) {
+      let i = 0;
+      return {
+        select: vi.fn(() => ({
+          from: vi.fn(() => ({
+            where: vi.fn(() => ({
+              limit: vi.fn(() => Promise.resolve(results[i++] ?? [])),
+            })),
+          })),
+        })),
+        insert: vi.fn(() => ({
+          values: vi.fn((values: unknown) => ({
+            returning: vi.fn().mockResolvedValue([{ ...(insertRow as object), ...(values as object) }]),
+          })),
+        })),
+      } as any;
+    }
+
+    it("auto-approves when settings are enabled and the draft clears both thresholds", async () => {
+      const db = makeAutoApproveDb(
+        [
+          [{ workspaceId: "ws-1", enabled: true, minIcpScore: 80, minConfidence: 0.9, alwaysReviewListIds: [], updatedBy: null, updatedAt: new Date() }],
+          [{ score: 90 }],
+        ],
+        baseDraft
+      );
+      const svc = new AiDraftService(db);
+      const row = await svc.create("ws-1", {
+        prospectId: "p-1",
+        subject: "Hello",
+        body: "Body text",
+        confidenceScore: 0.95,
+      });
+      expect(row.status).toBe("approved");
+      expect(row.autoApproved).toBe(true);
+    });
+
+    it("stays pending_review when auto-approve settings are disabled", async () => {
+      const db = makeAutoApproveDb(
+        [[{ workspaceId: "ws-1", enabled: false, minIcpScore: null, minConfidence: null, alwaysReviewListIds: [], updatedBy: null, updatedAt: new Date() }]],
+        baseDraft
+      );
+      const svc = new AiDraftService(db);
+      const row = await svc.create("ws-1", { prospectId: "p-1", subject: "Hello", body: "Body text" });
+      expect(row.status).toBe("pending_review");
+      expect(row.autoApproved).toBe(false);
+    });
+
+    it("stays pending_review when the prospect is on an always-review list, even above threshold", async () => {
+      const db = makeAutoApproveDb(
+        [
+          [{ workspaceId: "ws-1", enabled: true, minIcpScore: 80, minConfidence: 0.9, alwaysReviewListIds: ["list-1"], updatedBy: null, updatedAt: new Date() }],
+          [{ score: 95 }],
+          [{ listId: "list-1" }],
+        ],
+        baseDraft
+      );
+      const svc = new AiDraftService(db);
+      const row = await svc.create("ws-1", {
+        prospectId: "p-1",
+        subject: "Hello",
+        body: "Body text",
+        confidenceScore: 0.99,
+      });
+      expect(row.status).toBe("pending_review");
+      expect(row.autoApproved).toBe(false);
+    });
+
+    it("skips auto-approve entirely when the caller opts out (skipAutoApprove)", async () => {
+      const db = makeAutoApproveDb([], baseDraft);
+      const svc = new AiDraftService(db);
+      const row = await svc.create("ws-1", {
+        prospectId: "p-1",
+        subject: "Hello",
+        body: "Body text",
+        skipAutoApprove: true,
+      });
+      expect(row.status).toBe("pending_review");
+      expect(db.select).not.toHaveBeenCalled();
+    });
+  });
+
   it("approves a reviewable draft", async () => {
     const approved = { ...baseDraft, status: "approved", reviewedAt: new Date(), reviewedBy: "u-1" };
     const db = makeDb({

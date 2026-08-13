@@ -10,6 +10,7 @@ import { isBusinessHour, nextBusinessHour } from "../utils/scheduling.js";
 import { resolveProspectFields } from "../services/prospect-resolver.service.js";
 import { isSuppressed } from "../services/suppression.service.js";
 import { buildUnsubscribeUrl } from "../services/suppression.service.js";
+import { isSendBlockedByEligibility } from "../services/send-eligibility-guard.service.js";
 import { pickNextInbox, markInboxUsed } from "../services/inbox-rotation.service.js";
 import { renderTemplate, type MergeData } from "../services/template-render.service.js";
 import { injectTracking } from "../services/tracking.service.js";
@@ -198,6 +199,12 @@ async function executeEmailStep(
   if (await isSuppressed(db, workspaceId, prospect.email)) {
     await markStepTerminal(db, pending.enrollmentStepId, "skipped", "suppressed", now);
     log.info("Email step skipped — suppressed", { enrollmentId, email: prospect.email });
+    return "done";
+  }
+
+  if ((await isSendBlockedByEligibility(config, prospect.email)).blocked) {
+    await markStepTerminal(db, pending.enrollmentStepId, "skipped", "not_send_eligible", now);
+    log.info("Email step skipped — send-eligibility policy blocked it", { enrollmentId, email: prospect.email });
     return "done";
   }
 

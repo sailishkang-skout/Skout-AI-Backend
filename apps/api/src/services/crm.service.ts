@@ -102,7 +102,9 @@ function displayNameFromEmail(email: string): string | undefined {
     .join(" ");
 }
 
-function hubSpotContactToSnapshot(contact: {
+/** Exported for the R22.2 generic import adapter framework's HubSpot adapter — same mapping
+ * this service has always used for its own import path, now shared instead of duplicated. */
+export function hubSpotContactToSnapshot(contact: {
   id: string;
   properties: HubSpotContactProperties;
 }): ProspectSnapshot | null {

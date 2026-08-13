@@ -48,6 +48,7 @@ if [[ -f "$FRONTEND_DIR/package.json" ]]; then
   if [[ -n "${NEXT_PUBLIC_API_URL:-}" ]]; then
     WEB_BUILD_ARGS+=(--build-arg "NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}")
     WEB_BUILD_ARGS+=(--build-arg "NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-${NEXT_PUBLIC_API_URL}}")
+    WEB_BUILD_ARGS+=(--build-arg "NEXT_PUBLIC_CRM_API_URL=${NEXT_PUBLIC_CRM_API_URL:-${NEXT_PUBLIC_API_URL}}")
   fi
 
   # Clerk keys: env → frontend .env.local → Secrets Manager.

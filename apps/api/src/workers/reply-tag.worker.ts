@@ -57,7 +57,7 @@ export async function startReplyTagWorker(config: Env): Promise<() => Promise<vo
       log.info("reply-tag: thread tagged", { threadId, tag });
 
       try {
-        await applyReplyTagActions(db, workspaceId, threadId, tag);
+        await applyReplyTagActions(db, workspaceId, threadId, tag, bodyText, config.OPENROUTER_API_KEY);
       } catch (err) {
         log.warn("reply-tag: tag actions failed", { threadId, tag, err });
       }

@@ -187,6 +187,50 @@ export async function verifyEmailAsVerdict(
   };
 }
 
+export interface SendEligibilityCheck {
+  /** True = OK to send. False = the policy engine says don't (or defer/review) — caller should block the send. */
+  allowed: boolean;
+  decision: string;
+  reason?: string;
+  decisionConfidence?: number;
+}
+
+/**
+ * POST /verify, then extract just the send-eligibility gate — the policy decision (SAFE vs.
+ * catch-all/pattern-risk/etc.), not the raw mailbox-existence verdict `verifyEmailAsVerdict`
+ * returns. This is deliberately more conservative than `EmailVerdict.status === "valid"`: e.g.
+ * catch-all domains are `sendable` in Skout's own SENDABLE_STATUSES today, but the email-intel
+ * policy engine never marks catch-all `allowed` — it always requires manual review.
+ *
+ * Fails OPEN (returns `allowed: true`) when the service is unconfigured or unreachable, same
+ * as `verifyEmailAsVerdict` — this is a safety *enhancement* layered on top of the existing
+ * suppression-list gate, not a replacement for it, so its own unavailability must never block
+ * sending outright.
+ */
+export async function checkSendEligibility(
+  config: Pick<Env, "EMAIL_INTEL_SERVICE_URL" | "EMAIL_INTEL_TIMEOUT_MS">,
+  email: string
+): Promise<SendEligibilityCheck> {
+  if (!isEmailIntelConfigured(config)) return { allowed: true, decision: "NOT_CONFIGURED" };
+
+  let result: EmailIntelVerifyResult;
+  try {
+    result = await verifyEmail(config, email);
+  } catch {
+    return { allowed: true, decision: "UNAVAILABLE" };
+  }
+
+  const eligibility = result.sendEligibility;
+  if (!result.success || !eligibility) return { allowed: true, decision: "NO_DECISION" };
+
+  return {
+    allowed: eligibility.allowed,
+    decision: eligibility.decision,
+    reason: typeof eligibility.reason === "string" ? eligibility.reason : undefined,
+    decisionConfidence: eligibility.decisionConfidence,
+  };
+}
+
 /** POST /verify/batch — synchronous bounded batch (caller waits for all results). */
 export function verifyEmailBatch(
   config: Pick<Env, "EMAIL_INTEL_SERVICE_URL" | "EMAIL_INTEL_TIMEOUT_MS">,

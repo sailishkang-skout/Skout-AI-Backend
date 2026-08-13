@@ -57,3 +57,39 @@ export async function listSignalsForEntity(
 
   return rows.map(serialize);
 }
+
+export interface RecordSignalInput {
+  entityType?: string;
+  entityId: string;
+  signalType: string;
+  /** Plain-language explanation — required for risk-type signals (R18.1/R18.2 AC2), optional otherwise. */
+  reason?: string;
+  score?: number;
+  confidence?: number;
+  detectedAt?: Date;
+  source?: string;
+}
+
+/**
+ * Write a signal from apps/api itself (as opposed to the corpus ingestor's `recordSignals` in
+ * workers/scrapers/ingestor). Used by workspace-local signal producers — the risk-decay sweep
+ * (R18.1), reply-derived risk detection (R18.2) — that don't have a corpus crawl to hang off of.
+ */
+export async function recordSignal(db: Db, input: RecordSignalInput): Promise<SignalRecord> {
+  const [row] = await db
+    .insert(signals)
+    .values({
+      entityType: input.entityType ?? "prospect",
+      entityId: input.entityId,
+      signalType: input.signalType,
+      value: {
+        ...(input.reason !== undefined ? { reason: input.reason } : {}),
+        ...(input.score !== undefined ? { score: input.score } : {}),
+      },
+      confidence: input.confidence ?? null,
+      detectedAt: input.detectedAt ?? new Date(),
+      source: input.source ?? null,
+    })
+    .returning();
+  return serialize(row!);
+}
