@@ -337,7 +337,7 @@ export const enrollSequenceSchema = z
   });
 
 /** "call" — R20.4: creates a task + owner notification when due; dialing itself is manual or via R20.2 Twilio click-to-call. */
-export const SEQUENCE_STEP_TYPES = ["email", "linkedin", "whatsapp", "call", "wait", "task"] as const;
+export const SEQUENCE_STEP_TYPES = ["email", "linkedin", "whatsapp", "call", "wait", "task", "condition", "goal"] as const;
 export const SEQUENCE_STATUSES = ["draft", "active", "paused", "archived"] as const;
 
 export const SEQUENCE_MERGE_TOKENS = [
@@ -364,7 +364,7 @@ export const createSequenceStepSchema = z.object({
   stepType: z.enum(SEQUENCE_STEP_TYPES),
   delayDays: z.number().int().min(0).default(0),
   delayUnit: z.enum(SEQUENCE_DELAY_UNITS).default("days"),
-  linkedinAction: z.enum(["connect", "message"]).optional(),
+  linkedinAction: z.enum(["connect", "message", "inmail", "like", "follow"]).optional(),
   subject: z.string().max(500).optional(),
   bodyTemplate: z.string().optional(),
 });
@@ -374,7 +374,7 @@ export const updateSequenceStepSchema = z
     stepType: z.enum(SEQUENCE_STEP_TYPES).optional(),
     delayDays: z.number().int().min(0).optional(),
     delayUnit: z.enum(SEQUENCE_DELAY_UNITS).optional(),
-    linkedinAction: z.enum(["connect", "message"]).nullable().optional(),
+    linkedinAction: z.enum(["connect", "message", "inmail", "like", "follow"]).nullable().optional(),
     subject: z.string().max(500).nullable().optional(),
     bodyTemplate: z.string().nullable().optional(),
   })

@@ -25,6 +25,14 @@ import { LinkedinAccountService, sendLinkedinOutreach, sendWhatsappOutreach } fr
 import { UnipileError } from "../services/unipile.client.js";
 import { LinkedinOutreachService } from "../services/linkedin-outreach.service.js";
 import { createNotification } from "../services/notifications.service.js";
+import { getIcpScore } from "../services/draft-auto-approve.service.js";
+import {
+  evaluateConditionExpression,
+  expressionFromSingle,
+  parseConditionExpression,
+  type ConditionLeafType,
+} from "../services/sequence-condition.js";
+import { recordSequenceEvent } from "../services/sequence-events.js";
 
 const log = createLogger("sequence-enrollment.worker");
 
@@ -32,6 +40,10 @@ const {
   sequenceEnrollments,
   sequenceEnrollmentSteps,
   sequenceSteps,
+  sequenceStepVariants,
+  sequenceTrackingEvents,
+  linkedinOutreachJobs,
+  sequenceVersions,
   inboxThreads,
   inboxMessages,
   aiDrafts,
@@ -101,6 +113,11 @@ interface PendingStep {
   linkedinAction: string | null;
   subject: string | null;
   bodyTemplate: string | null;
+  conditionType?: string | null;
+  conditionWaitDays?: number | null;
+  conditionExpression?: unknown;
+  yesNextStepId?: string | null;
+  noNextStepId?: string | null;
 }
 
 /**
@@ -158,6 +175,177 @@ async function findPendingAiDraft(
     )
     .limit(1);
   return draft ?? null;
+}
+
+function pickWeightedVariant<T extends { variantKey: string; weight: number }>(variants: T[]): T | null {
+  const enabled = variants.filter((v) => v.weight > 0);
+  if (enabled.length === 0) return variants[0] ?? null;
+  const total = enabled.reduce((sum, v) => sum + v.weight, 0);
+  let roll = Math.random() * total;
+  for (const v of enabled) {
+    roll -= v.weight;
+    if (roll <= 0) return v;
+  }
+  return enabled[enabled.length - 1] ?? null;
+}
+
+async function applyStepVariant(db: DbClient, pending: PendingStep): Promise<PendingStep> {
+  let variants: { variantKey: string; weight: number; subject: string | null; bodyTemplate: string | null }[] = [];
+  try {
+    const rows = await db
+      .select()
+      .from(sequenceStepVariants)
+      .where(and(eq(sequenceStepVariants.stepId, pending.stepId), eq(sequenceStepVariants.enabled, true)));
+    variants = Array.isArray(rows) ? rows : [];
+  } catch {
+    return pending;
+  }
+  if (variants.length === 0) return pending;
+  const chosen = pickWeightedVariant(variants);
+  if (!chosen) return pending;
+  await db
+    .update(sequenceEnrollmentSteps)
+    .set({ variantKey: chosen.variantKey })
+    .where(eq(sequenceEnrollmentSteps.id, pending.enrollmentStepId));
+  return {
+    ...pending,
+    subject: chosen.subject ?? pending.subject,
+    bodyTemplate: chosen.bodyTemplate ?? pending.bodyTemplate,
+  };
+}
+
+type LinkedinInviteState = "not_sent" | "pending" | "accepted" | "declined" | "failed";
+
+async function linkedinInviteState(
+  db: DbClient,
+  workspaceId: string,
+  enrollmentId: string
+): Promise<LinkedinInviteState> {
+  const [job] = await db
+    .select({
+      status: linkedinOutreachJobs.status,
+      failureReason: linkedinOutreachJobs.failureReason,
+    })
+    .from(linkedinOutreachJobs)
+    .where(
+      and(
+        eq(linkedinOutreachJobs.workspaceId, workspaceId),
+        eq(linkedinOutreachJobs.enrollmentId, enrollmentId),
+        eq(linkedinOutreachJobs.action, "connect")
+      )
+    )
+    .orderBy(desc(linkedinOutreachJobs.createdAt))
+    .limit(1);
+  if (!job) return "not_sent";
+  if (job.status === "completed") return "accepted";
+  if (job.status === "failed") {
+    const reason = (job.failureReason ?? "").toLowerCase();
+    if (reason.includes("declin") || reason.includes("reject")) return "declined";
+    return "failed";
+  }
+  return "pending";
+}
+
+async function evaluateCondition(
+  db: DbClient,
+  workspaceId: string,
+  prospectId: string,
+  enrollmentId: string,
+  conditionType: string | null | undefined
+): Promise<boolean> {
+  if (!conditionType) return false;
+  if (conditionType === "linkedin_connected" || conditionType === "linkedin_invite_accepted") {
+    return (await linkedinInviteState(db, workspaceId, enrollmentId)) === "accepted";
+  }
+  if (conditionType === "linkedin_invite_declined") {
+    return (await linkedinInviteState(db, workspaceId, enrollmentId)) === "declined";
+  }
+  if (conditionType === "email_opened" || conditionType === "email_clicked") {
+    const eventType = conditionType === "email_opened" ? "open" : "click";
+    const [evt] = await db
+      .select({ id: sequenceTrackingEvents.id })
+      .from(sequenceTrackingEvents)
+      .where(
+        and(
+          eq(sequenceTrackingEvents.workspaceId, workspaceId),
+          eq(sequenceTrackingEvents.enrollmentId, enrollmentId),
+          eq(sequenceTrackingEvents.eventType, eventType)
+        )
+      )
+      .limit(1);
+    return Boolean(evt);
+  }
+  if (conditionType === "email_replied") {
+    const signal = await detectCadenceSignal(db, workspaceId, prospectId, new Date(0));
+    return signal === "replied";
+  }
+  if (conditionType === "call_connected") {
+    const [row] = await db
+      .select({ disposition: tasks.disposition })
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.workspaceId, workspaceId),
+          eq(tasks.sequenceEnrollmentId, enrollmentId),
+          eq(tasks.disposition, "connected")
+        )
+      )
+      .limit(1);
+    return Boolean(row);
+  }
+  return false;
+}
+
+async function activateConditionBranch(
+  db: DbClient,
+  enrollmentId: string,
+  conditionStepId: string,
+  branch: "yes" | "no",
+  now: Date
+): Promise<void> {
+  const branchSteps = await db
+    .select({
+      enrollmentStepId: sequenceEnrollmentSteps.id,
+      delayDays: sequenceSteps.delayDays,
+      delayUnit: sequenceSteps.delayUnit,
+      branch: sequenceSteps.branch,
+    })
+    .from(sequenceEnrollmentSteps)
+    .innerJoin(sequenceSteps, eq(sequenceEnrollmentSteps.stepId, sequenceSteps.id))
+    .where(
+      and(
+        eq(sequenceEnrollmentSteps.enrollmentId, enrollmentId),
+        eq(sequenceSteps.parentStepId, conditionStepId)
+      )
+    )
+    .orderBy(asc(sequenceSteps.stepOrder));
+
+  let cursor = now;
+  for (const step of branchSteps) {
+    if (step.branch && step.branch !== branch) {
+      await db
+        .update(sequenceEnrollmentSteps)
+        .set({
+          status: "skipped",
+          executedAt: now,
+          failureReason: `condition_${branch === "yes" ? "no" : "yes"}_branch`,
+        })
+        .where(eq(sequenceEnrollmentSteps.id, step.enrollmentStepId));
+      continue;
+    }
+    const unit = (step.delayUnit ?? "days") as "minutes" | "hours" | "days" | "weeks";
+    const scheduled = new Date(cursor.getTime());
+    const amount = step.delayDays ?? 0;
+    if (unit === "minutes") scheduled.setMinutes(scheduled.getMinutes() + amount);
+    else if (unit === "hours") scheduled.setHours(scheduled.getHours() + amount);
+    else if (unit === "weeks") scheduled.setDate(scheduled.getDate() + amount * 7);
+    else scheduled.setDate(scheduled.getDate() + amount);
+    cursor = scheduled;
+    await db
+      .update(sequenceEnrollmentSteps)
+      .set({ status: "scheduled", scheduledAt: scheduled })
+      .where(eq(sequenceEnrollmentSteps.id, step.enrollmentStepId));
+  }
 }
 
 async function markStepTerminal(
@@ -765,10 +953,11 @@ async function advanceEnrollment(
   const signal = await detectCadenceSignal(db, workspaceId, prospectId, enrollment.enrolledAt);
   if (signal !== "none") {
     const newStatus = signal === "bounced" ? "bounced" : "replied";
+    const stopReason = signal === "bounced" ? "BOUNCED" : "POSITIVE_REPLY";
     await db.transaction(async (tx) => {
       await tx
         .update(sequenceEnrollments)
-        .set({ status: newStatus, completedAt: new Date() })
+        .set({ status: newStatus, completedAt: new Date(), stopReason })
         .where(eq(sequenceEnrollments.id, enrollmentId));
       await tx
         .update(sequenceEnrollmentSteps)
@@ -779,6 +968,16 @@ async function advanceEnrollment(
             eq(sequenceEnrollmentSteps.status, "scheduled")
           )
         );
+    });
+    await recordSequenceEvent(db, {
+      workspaceId,
+      sequenceId,
+      enrollmentId,
+      sequenceVersionId: enrollment.sequenceVersionId,
+      prospectId,
+      eventType: "sequence_stopped",
+      reason: stopReason,
+      result: newStatus,
     });
     log.info("Cadence stopped", { enrollmentId, reason: newStatus });
     return;
@@ -809,6 +1008,11 @@ async function advanceEnrollment(
       linkedinAction: sequenceSteps.linkedinAction,
       subject: sequenceSteps.subject,
       bodyTemplate: sequenceSteps.bodyTemplate,
+      conditionType: sequenceSteps.conditionType,
+      conditionWaitDays: sequenceSteps.conditionWaitDays,
+      conditionExpression: sequenceSteps.conditionExpression,
+      yesNextStepId: sequenceSteps.yesNextStepId,
+      noNextStepId: sequenceSteps.noNextStepId,
     })
     .from(sequenceEnrollmentSteps)
     .innerJoin(sequenceSteps, eq(sequenceEnrollmentSteps.stepId, sequenceSteps.id))
@@ -850,36 +1054,166 @@ async function advanceEnrollment(
     return;
   }
 
+  let step = pending as PendingStep & typeof pending;
+  if (enrollment.sequenceVersionId) {
+    const [version] = await db
+      .select({ snapshot: sequenceVersions.snapshot })
+      .from(sequenceVersions)
+      .where(eq(sequenceVersions.id, enrollment.sequenceVersionId))
+      .limit(1);
+    const snapSteps = (version?.snapshot as { steps?: Array<Record<string, unknown>> } | null)?.steps;
+    const snap = Array.isArray(snapSteps) ? snapSteps.find((s) => s.id === pending.stepId) : undefined;
+    if (snap) {
+      step = {
+        ...pending,
+        subject: (snap.subject as string | null) ?? pending.subject,
+        bodyTemplate: (snap.bodyTemplate as string | null) ?? pending.bodyTemplate,
+        linkedinAction: (snap.linkedinAction as string | null) ?? pending.linkedinAction,
+        conditionType: (snap.conditionType as string | null) ?? pending.conditionType,
+        conditionWaitDays: (snap.conditionWaitDays as number | null) ?? pending.conditionWaitDays,
+        conditionExpression: snap.conditionExpression ?? pending.conditionExpression,
+      };
+    }
+  }
+
   // Execute the step
-  if (pending.stepType === "email") {
-    const result = await executeEmailStep(db, config, payload, pending, now);
+  if (step.stepType === "condition") {
+    const waitDays = step.conditionWaitDays ?? 2;
+    const due = pending.scheduledAt
+      ? new Date(pending.scheduledAt.getTime() + waitDays * 24 * 60 * 60 * 1000)
+      : new Date(now.getTime() + waitDays * 24 * 60 * 60 * 1000);
+    const expr =
+      parseConditionExpression(step.conditionExpression) ?? expressionFromSingle(step.conditionType);
+    const evalLeaf = async (type: ConditionLeafType, value?: number) => {
+      if (type === "icp_score_gte") {
+        const score = await getIcpScore(db, workspaceId, prospectId);
+        return (score ?? 0) >= (value ?? 80);
+      }
+      if (type === "has_email") {
+        const prospect = await resolveProspectFields(config, db, workspaceId, prospectId);
+        return Boolean(prospect?.email);
+      }
+      if (type === "has_linkedin") {
+        const prospect = await resolveProspectFields(config, db, workspaceId, prospectId);
+        return Boolean((prospect as { linkedinUrl?: string | null } | null)?.linkedinUrl);
+      }
+      return evaluateCondition(db, workspaceId, prospectId, enrollmentId, type);
+    };
+    const invite = await linkedinInviteState(db, workspaceId, enrollmentId);
+    const singleInvite =
+      expr && "type" in expr &&
+      (expr.type === "linkedin_invite_accepted" || expr.type === "linkedin_connected" || expr.type === "linkedin_invite_declined");
+
+    if (singleInvite && (invite === "declined" || invite === "failed" || invite === "accepted")) {
+      const evaluated = await evaluateConditionExpression(expr!, evalLeaf);
+      const branch: "yes" | "no" = evaluated.passed ? "yes" : "no";
+      await markStepTerminal(db, pending.enrollmentStepId, "executed", `condition_${branch}_${invite}`, now);
+      await activateConditionBranch(db, enrollmentId, pending.stepId, branch, now);
+      await recordSequenceEvent(db, {
+        workspaceId, sequenceId, enrollmentId,
+        sequenceVersionId: enrollment.sequenceVersionId, prospectId, stepId: pending.stepId,
+        eventType: "condition_evaluated", branch, result: String(evaluated.passed), reason: invite,
+        evidence: evaluated.evidence,
+      });
+      await recordSequenceEvent(db, {
+        workspaceId, sequenceId, enrollmentId,
+        sequenceVersionId: enrollment.sequenceVersionId, prospectId, stepId: pending.stepId,
+        eventType: branch === "no" ? "fallback_triggered" : "branch_selected", branch, reason: invite,
+      });
+    } else if (due > now && !config.BYPASS_BUSINESS_HOURS) {
+      if (expr) {
+        const early = await evaluateConditionExpression(expr, evalLeaf);
+        if (early.passed) {
+          await markStepTerminal(db, pending.enrollmentStepId, "executed", "condition_yes_early", now);
+          await activateConditionBranch(db, enrollmentId, pending.stepId, "yes", now);
+          await recordSequenceEvent(db, {
+            workspaceId, sequenceId, enrollmentId,
+            sequenceVersionId: enrollment.sequenceVersionId, prospectId, stepId: pending.stepId,
+            eventType: "condition_evaluated", branch: "yes", result: "true", reason: "early",
+            evidence: early.evidence,
+          });
+        } else {
+          await enqueueSequenceAdvanceJob(config, payload, Math.max(60_000, due.getTime() - now.getTime()), false);
+          return;
+        }
+      } else {
+        await enqueueSequenceAdvanceJob(config, payload, Math.max(60_000, due.getTime() - now.getTime()), false);
+        return;
+      }
+    } else {
+      const evaluated = expr
+        ? await evaluateConditionExpression(expr, evalLeaf)
+        : { passed: false, evidence: { reason: "no_condition" } };
+      const branch: "yes" | "no" = evaluated.passed ? "yes" : "no";
+      await markStepTerminal(db, pending.enrollmentStepId, "executed", `condition_${branch}`, now);
+      await activateConditionBranch(db, enrollmentId, pending.stepId, branch, now);
+      await recordSequenceEvent(db, {
+        workspaceId, sequenceId, enrollmentId,
+        sequenceVersionId: enrollment.sequenceVersionId, prospectId, stepId: pending.stepId,
+        eventType: "condition_evaluated", branch, result: String(evaluated.passed),
+        reason: due <= now ? "timeout" : "evaluated",
+        evidence: evaluated.evidence,
+      });
+      if (branch === "no") {
+        await recordSequenceEvent(db, {
+          workspaceId, sequenceId, enrollmentId,
+          sequenceVersionId: enrollment.sequenceVersionId, prospectId, stepId: pending.stepId,
+          eventType: "fallback_triggered", branch: "no", reason: "timeout_or_failed",
+        });
+      }
+    }
+  } else if (step.stepType === "email") {
+    const withVariant = await applyStepVariant(db, step);
+    const result = await executeEmailStep(db, config, payload, withVariant, now);
+    if (result === "done") {
+      await recordSequenceEvent(db, {
+        workspaceId, sequenceId, enrollmentId,
+        sequenceVersionId: enrollment.sequenceVersionId, prospectId, stepId: pending.stepId,
+        eventType: "action_sent", variantKey: withVariant === step ? null : "A",
+        reason: "email",
+      });
+    }
     if (result === "deferred") {
       await enqueueSequenceAdvanceJob(config, payload, 60 * 60 * 1000, false);
       return;
     }
-  } else if (pending.stepType === "linkedin") {
-    const result = await executeLinkedinStep(db, config, payload, pending, now);
+  } else if (step.stepType === "linkedin") {
+    const withVariant = await applyStepVariant(db, step);
+    const result = await executeLinkedinStep(db, config, payload, withVariant, now);
     if (result === "waiting") {
       // Extension has not finished yet — poll job already re-enqueued.
       return;
     }
-  } else if (pending.stepType === "whatsapp") {
+  } else if (step.stepType === "whatsapp") {
     const result = await executeWhatsappStep(db, config, payload, pending, now);
     if (result === "waiting") return;
-  } else if (pending.stepType === "task") {
+  } else if (step.stepType === "task") {
     await createTaskFromSequenceStep(db, config, workspaceId, prospectId, pending);
     await db
       .update(sequenceEnrollmentSteps)
       .set({ status: "executed", executedAt: now })
       .where(eq(sequenceEnrollmentSteps.id, pending.enrollmentStepId));
     log.info("Manual task step executed", { enrollmentId, enrollmentStepId: pending.enrollmentStepId });
-  } else if (pending.stepType === "call") {
+  } else if (step.stepType === "call") {
     const result = await executeCallStep(db, config, payload, pending, now);
     if (result === "waiting") {
       // Awaiting SDR disposition — poll for it on the next tick rather than advancing now.
       await enqueueSequenceAdvanceJob(config, payload, CALL_DISPOSITION_POLL_MS, false);
       return;
     }
+  } else if (step.stepType === "goal") {
+    await markStepTerminal(db, pending.enrollmentStepId, "executed", null, now);
+    await db
+      .update(sequenceEnrollments)
+      .set({ status: "completed", completedAt: now, stopReason: "SEQUENCE_COMPLETED" })
+      .where(eq(sequenceEnrollments.id, enrollmentId));
+    await recordSequenceEvent(db, {
+      workspaceId, sequenceId, enrollmentId,
+      sequenceVersionId: enrollment.sequenceVersionId, prospectId, stepId: pending.stepId,
+      eventType: "sequence_completed", reason: "SEQUENCE_COMPLETED",
+    });
+    log.info("Goal reached — enrollment completed", { enrollmentId, goal: step.subject });
+    return;
   } else {
     await db
       .update(sequenceEnrollmentSteps)
@@ -914,8 +1248,13 @@ async function advanceEnrollment(
   if (!nextPending) {
     await db
       .update(sequenceEnrollments)
-      .set({ status: "completed", completedAt: new Date() })
+      .set({ status: "completed", completedAt: new Date(), stopReason: "SEQUENCE_COMPLETED" })
       .where(eq(sequenceEnrollments.id, enrollmentId));
+    await recordSequenceEvent(db, {
+      workspaceId, sequenceId, enrollmentId,
+      sequenceVersionId: enrollment.sequenceVersionId, prospectId,
+      eventType: "sequence_completed", reason: "SEQUENCE_COMPLETED",
+    });
     log.info("Enrollment completed after last step", { enrollmentId });
     return;
   }

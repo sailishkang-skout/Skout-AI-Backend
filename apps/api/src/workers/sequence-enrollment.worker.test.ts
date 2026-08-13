@@ -29,6 +29,11 @@ vi.mock("@skout/db", () => ({
     aiDrafts: "aiDrafts",
     contacts: "contacts",
     tasks: { id: "id", disposition: "disposition", sequenceEnrollmentStepId: "sequence_enrollment_step_id" },
+    sequenceStepVariants: "sequenceStepVariants",
+    sequenceTrackingEvents: "sequenceTrackingEvents",
+    linkedinOutreachJobs: "linkedinOutreachJobs",
+    sequenceVersions: "sequenceVersions",
+    sequenceEvents: "sequenceEvents",
   },
 }));
 
@@ -228,6 +233,7 @@ function makeWorkerDb(opts: {
   select.mockReturnValueOnce(selectChain([])); // reply check
   select.mockReturnValueOnce(selectChain([])); // awaiting call disposition (none)
   select.mockReturnValueOnce(selectChain(opts.pendingStep ? [opts.pendingStep] : [])); // pending step
+  select.mockReturnValueOnce(selectChain([])); // A/B/C variants (none → use step template)
   // approved-draft lookup (executeEmailStep) — only reached once the step actually sends
   select.mockReturnValueOnce(selectChain(opts.approvedDraft ? [opts.approvedDraft] : []));
   // pending-draft HITL check (skipped when approved draft exists, but mock still reserved)

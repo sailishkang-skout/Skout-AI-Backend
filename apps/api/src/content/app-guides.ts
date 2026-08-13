@@ -34,20 +34,41 @@ Sample files live in the backend docs/samples/import folder for testing.`,
     slug: "lists-enrich",
     title: "Lists, enrich & enroll",
     href: "/lists",
-    keywords: ["list", "enrich", "enroll", "verify", "member", "score"],
-    body: `Create lists under Lists. Add prospects from search, import, or enrichment.
-Enrich members to find email/phone; verify emails before outreach.
-Enroll a list into a sequence from the list detail page.`,
+    keywords: ["list", "enrich", "enroll", "verify", "member", "score", "email intel"],
+    body: `Create lists under Lists. Add prospects from search, import, smart lists, or enrichment.
+Enrich members to find email/phone; Verify uses email-intel then SMTP before outreach.
+Enroll a list into an active sequence (Enroll tab) or into a 50/50 A/B experiment.`,
   },
   {
     slug: "sequences-ai",
-    title: "Sequences & AI Auto/Ask",
+    title: "Sequences, A/B tests & Dexter",
     href: "/sequences",
-    keywords: ["sequence", "cadence", "auto", "ask", "step", "linkedin", "email step"],
-    body: `Build multi-step cadences (email, LinkedIn, wait) under Sequences.
-AI chat Ask mode proposes copy/sequences for you to confirm.
-Auto mode applies email to the editor or creates the sequence immediately.
-Email drafts can be segregated into AI Review before send.`,
+    keywords: [
+      "sequence",
+      "cadence",
+      "auto",
+      "ask",
+      "step",
+      "linkedin",
+      "email step",
+      "dexter",
+      "god mode",
+      "a/b",
+      "50/50",
+      "experiment",
+      "condition",
+      "fallback",
+      "version",
+      "template",
+    ],
+    body: `Sequences (/sequences) — one engine, three starts:
+1) Manually from scratch = God Mode (C) visual builder (email, LinkedIn, call, WhatsApp, condition, delay, goal).
+2) Templates = Mode A email-first or Mode B LinkedIn-first.
+3) Dexter AI = describe the goal; drafts a Mode C cadence.
+Condition nodes: LinkedIn invite accepted/declined/timeout → Yes/No fallback. Compound AND/OR/NOT supported.
+Activate publishes a version snapshot so in-flight enrollments don't pick up later edits. Publish version after live changes. Activity tab is the event ledger.
+50/50 experiment: Sequences → A/B experiment. Assignment is sha256(experimentId:prospectId). Compare reply rates on the experiment page.
+Ask vs Auto still applies for AI copy. Connect an inbox (and Unipile for LinkedIn) before live sends.`,
   },
   {
     slug: "ai-review",
@@ -90,6 +111,7 @@ Keep volumes gradual and suppress unsubscribes/bounces.`,
     body: `Add Unipile (LinkedIn/WhatsApp) and enrichment provider API keys under Settings → Integrations (BYOK).
 Workspace keys are preferred before platform defaults.
 After saving Unipile, connect accounts under Deliverability → LinkedIn / WhatsApp.
+Email-intel (when configured) powers Verify + send eligibility.
 For HubSpot CRM connect/import/export, use Settings → CRM (/settings/crm) instead.`,
   },
   {
@@ -172,11 +194,75 @@ Pending invites can use OTP or SSO. Cap is 50 members per workspace.`,
   },
   {
     slug: "inbox",
-    title: "Inbox & Sent",
+    title: "Inbox, LinkedIn & WhatsApp",
     href: "/inbox",
-    keywords: ["inbox", "reply", "thread", "sent", "outbox", "folder"],
-    body: `Inbox shows conversations. Use folder Sent for outbound / Outbox messages.
-Approve AI drafts to send and see them under Inbox → Sent.`,
+    keywords: ["inbox", "reply", "thread", "sent", "outbox", "folder", "whatsapp", "linkedin chat"],
+    body: `Inbox shows email (IMAP) plus LinkedIn/WhatsApp after Unipile accounts are connected under Deliverability.
+Approve AI drafts to send; they appear under Inbox → Sent.`,
+  },
+  {
+    slug: "calling",
+    title: "Click-to-call",
+    href: "/settings/calling",
+    keywords: ["call", "calling", "dial", "twilio", "phone", "click to call"],
+    body: `Settings → Calling: save your agent number (E.164). Twilio dials you first, then the prospect.
+Sequence Call steps and CRM contacts use the same dialer. Twilio Suspended accounts fail dials until unsuspended.`,
+  },
+  {
+    slug: "google-calendar",
+    title: "Google Calendar & Meet",
+    href: "/settings/calendar",
+    keywords: ["calendar", "google", "meet", "meeting", "schedule", "invite"],
+    body: `Settings → Google Calendar → Connect (OAuth). Then create meetings from CRM → Meetings/Calendar with a real Meet link.
+Requires GOOGLE_CLIENT_ID/SECRET on the API.`,
+  },
+  {
+    slug: "crm-hubspot",
+    title: "CRM & HubSpot",
+    href: "/crm",
+    keywords: ["crm", "deal", "company", "contact", "pipeline", "task", "meeting"],
+    body: `CRM Overview, Companies, Contacts, Deals, Tasks, Meetings live under /crm.
+HubSpot import/export is Settings → CRM (/settings/crm).`,
+  },
+  {
+    slug: "tam",
+    title: "TAM",
+    href: "/tam",
+    keywords: ["tam", "market", "coverage", "addressable"],
+    body: `Market (TAM) sizes ICP universes and tracks coverage: activated → enriched → contacted → replied → deal.
+Drill a segment into a list to enrich or enroll.`,
+  },
+  {
+    slug: "enrichment",
+    title: "Enrichment jobs",
+    href: "/enrichment",
+    keywords: ["enrichment", "job", "verify email", "phone", "firmographic"],
+    body: `Activate → Enrichment tracks email/phone/firmographic jobs and credit spend.
+Run Enrich/Score/Verify from a list detail page.`,
+  },
+  {
+    slug: "draft-auto-approve",
+    title: "Draft auto-approve",
+    href: "/settings/draft-auto-approve",
+    keywords: ["auto-approve", "auto approve", "confidence", "threshold"],
+    body: `Settings → Draft auto-approve: set ICP + confidence thresholds. Always-review lists never auto-approve.
+Auto-approved drafts still show in AI Review, tagged.`,
+  },
+  {
+    slug: "automation-rules",
+    title: "Auto-activation rules",
+    href: "/settings/automation-rules",
+    keywords: ["automation", "auto-activation", "rule", "threshold", "signal rule"],
+    body: `Settings → Automation rules: when score/signal thresholds hit, activate, list, or enroll.
+Max 5 active rules.`,
+  },
+  {
+    slug: "alert-notifications",
+    title: "Signal alerts",
+    href: "/settings/alert-rules",
+    keywords: ["alert", "signal", "slack", "notification", "funding", "hiring"],
+    body: `Settings → Signal alerts to subscribe to funding/hiring/tech/risk signals.
+Settings → Notifications for in-app vs Slack delivery.`,
   },
 ];
 
@@ -200,7 +286,7 @@ export function selectAppGuides(opts: {
   });
   scored.sort((a, b) => b.score - a.score);
   const picked = scored.filter((s) => s.score > 0).slice(0, limit).map((s) => s.g);
-  if (picked.length >= 2) return picked;
+  if (picked.length >= 1) return picked;
   // Always give a small baseline set so the model knows core product paths.
   return APP_GUIDE_SNIPPETS.slice(0, Math.min(limit, 4));
 }
