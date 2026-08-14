@@ -123,7 +123,7 @@ jobs:
           WEB_REPO=$(aws ecr describe-repositories --repository-names skout-uat-web --query 'repositories[0].repositoryUri' --output text)
           docker build -f frontend/Dockerfile \
             --build-arg NEXT_PUBLIC_API_URL="${API_URL:-http://localhost:3001}" \
-            --build-arg NEXT_PUBLIC_APP_URL="${API_URL:-http://localhost:3001}" \
+            --build-arg NEXT_PUBLIC_APP_URL="https://www.skoutai.io/app" \
             --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}" \
             --build-arg CLERK_SECRET_KEY="${{ secrets.CLERK_SECRET_KEY }}" \
             -t "$WEB_REPO:$IMAGE_TAG" -t "$WEB_REPO:latest" frontend

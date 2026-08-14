@@ -271,6 +271,9 @@ export class ComputeStack extends Stack {
     const corsOrigin = config.domainName
       ? publicUrl
       : `${publicUrl},http://${albDns}`;
+    const marketingOrigin = "https://www.skoutai.io";
+    const frontendPublicUrl = `${marketingOrigin}/app`;
+    const corsOriginWithMarketing = `${corsOrigin},${marketingOrigin},https://skoutai.io`;
 
     const aiServiceUrl = `http://ai.${namespace.namespaceName}:8000`;
     const emailIntelServiceUrl = `http://email-intel.${namespace.namespaceName}:3001`;
@@ -296,9 +299,9 @@ export class ComputeStack extends Stack {
         NODE_ENV: "production",
         PORT: "3001",
         HOST: "0.0.0.0",
-        CORS_ORIGIN: corsOrigin,
+        CORS_ORIGIN: corsOriginWithMarketing,
         API_PUBLIC_URL: publicUrl,
-        FRONTEND_URL: publicUrl,
+        FRONTEND_URL: frontendPublicUrl,
         REDIS_URL: `redis://${redis.endpoint}:6379`,
         EXPORTS_BUCKET: exportsBucket.bucketName,
         SCRAPE_BUCKET: scrapeBucket.bucketName,
@@ -441,8 +444,8 @@ export class ComputeStack extends Stack {
         NODE_ENV: "production",
         PORT: "3002",
         HOST: "0.0.0.0",
-        CORS_ORIGIN: corsOrigin,
-        FRONTEND_URL: publicUrl,
+        CORS_ORIGIN: corsOriginWithMarketing,
+        FRONTEND_URL: frontendPublicUrl,
         DATABASE_HOST: database.instance.dbInstanceEndpointAddress,
         DATABASE_PORT: database.instance.dbInstanceEndpointPort,
         DATABASE_NAME: "skout",
@@ -614,7 +617,7 @@ export class ComputeStack extends Stack {
       cpu: config.ecs.webCpu,
       memoryMiB: config.ecs.webMemoryMiB,
       desiredCount: config.ecs.webDesiredCount,
-      healthCheckPath: "/",
+      healthCheckPath: "/app",
       healthyHttpCodes: "200-399",
       listener,
       pathPatterns: ["/*"],
@@ -624,11 +627,11 @@ export class ComputeStack extends Stack {
       environment: {
         NODE_ENV: "production",
         NEXT_PUBLIC_API_URL: apiUrl,
-        NEXT_PUBLIC_APP_URL: publicUrl,
-        NEXT_PUBLIC_CLERK_SIGN_IN_URL: `${publicUrl}/sign-in`,
-        NEXT_PUBLIC_CLERK_SIGN_UP_URL: `${publicUrl}/sign-up`,
-        CLERK_SIGN_IN_URL: `${publicUrl}/sign-in`,
-        CLERK_SIGN_UP_URL: `${publicUrl}/sign-up`,
+        NEXT_PUBLIC_APP_URL: frontendPublicUrl,
+        NEXT_PUBLIC_CLERK_SIGN_IN_URL: `${frontendPublicUrl}/login`,
+        NEXT_PUBLIC_CLERK_SIGN_UP_URL: `${frontendPublicUrl}/sign-up`,
+        CLERK_SIGN_IN_URL: `${frontendPublicUrl}/login`,
+        CLERK_SIGN_UP_URL: `${frontendPublicUrl}/sign-up`,
         NEXT_PUBLIC_POSTHOG_HOST: "https://us.i.posthog.com",
       },
       secrets: {
