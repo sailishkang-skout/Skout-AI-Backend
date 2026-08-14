@@ -104,6 +104,8 @@ const envSchema = z
     AI_SERVICE_URL: z.string().optional(),
     EMAIL_INTEL_SERVICE_URL: z.string().optional(),
     EMAIL_INTEL_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
+    /** n8n / external callers of /api/v1/email-intel/* (header x-api-key). */
+    EMAIL_INTEL_EXTERNAL_API_KEY: z.string().optional(),
     /** OpenRouter API key (preferred). Also accepts OPEN_ROUTER_API_KEY via transform. */
     OPENROUTER_API_KEY: z.string().optional(),
     OPEN_ROUTER_API_KEY: z.string().optional(),
