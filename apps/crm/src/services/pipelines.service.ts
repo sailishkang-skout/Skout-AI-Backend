@@ -189,40 +189,55 @@ export class PipelinesService {
       .limit(1);
     if (existing) return this.withStages(existing);
 
-    const created = await this.db.transaction(async (tx) => {
-      const [pipeline] = await tx
-        .insert(pipelines)
-        .values({ workspaceId, name: "Sales Pipeline", isDefault: true })
-        .returning();
+    try {
+      const created = await this.db.transaction(async (tx) => {
+        const [pipeline] = await tx
+          .insert(pipelines)
+          .values({ workspaceId, name: "Sales Pipeline", isDefault: true })
+          .returning();
 
-      const stageRows = await tx
-        .insert(pipelineStages)
-        .values(
-          DEFAULT_STAGES.map((stage, index) => ({
-            pipelineId: pipeline.id,
-            name: stage.name,
-            orderIndex: index,
-            probability: stage.probability,
-            isClosedWon: stage.isClosedWon,
-            isClosedLost: stage.isClosedLost,
-          }))
-        )
-        .returning();
+        const stageRows = await tx
+          .insert(pipelineStages)
+          .values(
+            DEFAULT_STAGES.map((stage, index) => ({
+              pipelineId: pipeline.id,
+              name: stage.name,
+              orderIndex: index,
+              probability: stage.probability,
+              isClosedWon: stage.isClosedWon,
+              isClosedLost: stage.isClosedLost,
+            }))
+          )
+          .returning();
 
-      return {
-        id: pipeline.id,
-        workspaceId: pipeline.workspaceId,
-        name: pipeline.name,
-        isDefault: pipeline.isDefault,
-        createdAt: pipeline.createdAt.toISOString(),
-        updatedAt: pipeline.updatedAt.toISOString(),
-        stages: stageRows
-          .sort((a, b) => a.orderIndex - b.orderIndex)
-          .map(stageToDto),
-      };
-    });
-    log.info("default pipeline ensured", { workspaceId, pipelineId: created.id });
-    return created;
+        return {
+          id: pipeline.id,
+          workspaceId: pipeline.workspaceId,
+          name: pipeline.name,
+          isDefault: pipeline.isDefault,
+          createdAt: pipeline.createdAt.toISOString(),
+          updatedAt: pipeline.updatedAt.toISOString(),
+          stages: stageRows
+            .sort((a, b) => a.orderIndex - b.orderIndex)
+            .map(stageToDto),
+        };
+      });
+      log.info("default pipeline ensured", { workspaceId, pipelineId: created.id });
+      return created;
+    } catch (err) {
+      if (pgErrorCode(err) === "23505") {
+        // Lost the race to a concurrent ensureDefaultPipeline() call for the same workspace —
+        // the partial unique index on (workspaceId) WHERE isDefault already let the other
+        // request's insert through. Return the winner's row instead of surfacing the DB error.
+        const [winner] = await this.db
+          .select()
+          .from(pipelines)
+          .where(and(eq(pipelines.workspaceId, workspaceId), eq(pipelines.isDefault, true)))
+          .limit(1);
+        if (winner) return this.withStages(winner);
+      }
+      throw err;
+    }
   }
 }
 

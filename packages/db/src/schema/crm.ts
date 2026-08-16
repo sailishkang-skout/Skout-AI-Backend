@@ -9,8 +9,10 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { users } from "./users.js";
 import { workspaces } from "./workspaces.js";
 import { sequenceEnrollments, sequenceEnrollmentSteps } from "./sequences.js";
@@ -86,7 +88,12 @@ export const pipelines = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
-  (table) => [index("pipelines_workspace_id_idx").on(table.workspaceId)]
+  (table) => [
+    index("pipelines_workspace_id_idx").on(table.workspaceId),
+    uniqueIndex("pipelines_workspace_default_unique_idx")
+      .on(table.workspaceId)
+      .where(sql`${table.isDefault} = true`),
+  ]
 );
 
 export const pipelineStages = pgTable(
