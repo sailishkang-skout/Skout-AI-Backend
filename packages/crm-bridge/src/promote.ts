@@ -2,7 +2,17 @@ import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 
-const { promotionCandidates, prospectActivations, workspaces } = schema;
+const {
+  promotionCandidates,
+  prospectActivations,
+  workspaces,
+  contacts,
+  companies,
+  deals,
+  pipelines,
+  pipelineStages,
+  auditLogs,
+} = schema;
 
 interface ProspectSnapshotPreview {
   fullName?: string;
@@ -95,5 +105,170 @@ export async function listPendingCandidates(db: Db, workspaceId: string): Promis
       companyName: snapshot.companyName ?? null,
       createdAt: row.createdAt.toISOString(),
     };
+  });
+}
+
+function splitName(fullName: string | undefined): { firstName: string; lastName: string | null } {
+  const trimmed = (fullName ?? "").trim();
+  if (!trimmed) return { firstName: "Unknown", lastName: null };
+  const [firstName, ...rest] = trimmed.split(/\s+/);
+  return { firstName, lastName: rest.length > 0 ? rest.join(" ") : null };
+}
+
+export interface PromoteResult {
+  companyId: string;
+  contactId: string;
+  dealId: string;
+}
+
+/**
+ * Promotes a pending candidate into a real Company + Contact + Deal, matched/upserted by the
+ * sourceProspectId/sourceProspectCompanyId correlation key. Never creates a pipeline itself —
+ * the caller must call apps/crm's PipelinesService.ensureDefaultPipeline(workspaceId) first.
+ */
+export async function promoteProspectToDeal(
+  db: Db,
+  workspaceId: string,
+  candidateId: string,
+  actorId: string | undefined
+): Promise<PromoteResult> {
+  const [candidate] = await db
+    .select()
+    .from(promotionCandidates)
+    .where(and(eq(promotionCandidates.id, candidateId), eq(promotionCandidates.workspaceId, workspaceId)))
+    .limit(1);
+  if (!candidate) throw new Error("promotion_candidate_not_found");
+  if (candidate.status === "promoted") throw new Error("promotion_candidate_already_promoted");
+
+  return db.transaction(async (tx) => {
+    const [activation] = await tx
+      .select({ snapshot: prospectActivations.snapshot })
+      .from(prospectActivations)
+      .where(
+        and(
+          eq(prospectActivations.workspaceId, workspaceId),
+          eq(prospectActivations.prospectId, candidate.prospectId)
+        )
+      )
+      .limit(1);
+    const snapshot = (activation?.snapshot ?? {}) as ProspectSnapshotPreview;
+
+    const [existingCompany] = await tx
+      .select({ id: companies.id })
+      .from(companies)
+      .where(
+        and(eq(companies.workspaceId, workspaceId), eq(companies.sourceProspectCompanyId, candidate.prospectId))
+      )
+      .limit(1);
+
+    let companyId: string;
+    if (existingCompany) {
+      companyId = existingCompany.id;
+    } else {
+      const [company] = await tx
+        .insert(companies)
+        .values({
+          workspaceId,
+          name: snapshot.companyName ?? snapshot.companyDomain ?? "Unknown Company",
+          domain: snapshot.companyDomain ?? null,
+          industry: snapshot.industry ?? null,
+          employeeCount: snapshot.employeeCount ?? null,
+          location: snapshot.location ?? null,
+          sourceProspectCompanyId: candidate.prospectId,
+        })
+        .returning();
+      companyId = company.id;
+      await tx.insert(auditLogs).values({
+        workspaceId,
+        actorId: actorId ?? null,
+        action: "promotion",
+        entityType: "company",
+        entityId: companyId,
+        beforeState: null,
+        afterState: company,
+      });
+    }
+
+    const [existingContact] = await tx
+      .select({ id: contacts.id })
+      .from(contacts)
+      .where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.sourceProspectId, candidate.prospectId)))
+      .limit(1);
+
+    let contactId: string;
+    if (existingContact) {
+      contactId = existingContact.id;
+    } else {
+      const { firstName, lastName } = splitName(snapshot.fullName);
+      const [contact] = await tx
+        .insert(contacts)
+        .values({
+          workspaceId,
+          companyId,
+          firstName,
+          lastName,
+          email: snapshot.email ?? null,
+          phone: snapshot.phone ?? null,
+          title: snapshot.title ?? null,
+          linkedinUrl: snapshot.linkedinUrl ?? null,
+          sourceProspectId: candidate.prospectId,
+        })
+        .returning();
+      contactId = contact.id;
+      await tx.insert(auditLogs).values({
+        workspaceId,
+        actorId: actorId ?? null,
+        action: "promotion",
+        entityType: "contact",
+        entityId: contactId,
+        beforeState: null,
+        afterState: contact,
+      });
+    }
+
+    const [defaultPipeline] = await tx
+      .select()
+      .from(pipelines)
+      .where(and(eq(pipelines.workspaceId, workspaceId), eq(pipelines.isDefault, true)))
+      .limit(1);
+    if (!defaultPipeline) throw new Error("default_pipeline_missing");
+
+    // No .limit(1) here — takes the first of the ordered rows via destructuring, same as
+    // listPendingCandidates above.
+    const [firstStage] = await tx
+      .select({ id: pipelineStages.id })
+      .from(pipelineStages)
+      .where(eq(pipelineStages.pipelineId, defaultPipeline.id))
+      .orderBy(pipelineStages.orderIndex);
+    if (!firstStage) throw new Error("default_pipeline_missing");
+
+    const [deal] = await tx
+      .insert(deals)
+      .values({
+        workspaceId,
+        companyId,
+        pipelineId: defaultPipeline.id,
+        stageId: firstStage.id,
+        ownerId: actorId ?? null,
+        name: `${snapshot.companyName ?? snapshot.fullName ?? "New"} — promoted lead`,
+        currency: "USD",
+      })
+      .returning();
+    await tx.insert(auditLogs).values({
+      workspaceId,
+      actorId: actorId ?? null,
+      action: "promotion",
+      entityType: "deal",
+      entityId: deal.id,
+      beforeState: null,
+      afterState: deal,
+    });
+
+    await tx
+      .update(promotionCandidates)
+      .set({ status: "promoted", updatedAt: new Date() })
+      .where(eq(promotionCandidates.id, candidateId));
+
+    return { companyId, contactId, dealId: deal.id };
   });
 }

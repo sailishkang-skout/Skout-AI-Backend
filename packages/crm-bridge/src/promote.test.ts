@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { flagIfQualified, listPendingCandidates } from "./promote.js";
+import { flagIfQualified, listPendingCandidates, promoteProspectToDeal } from "./promote.js";
 
 function selectChain(result: unknown[], terminal: "limit" | "where" | "orderBy" = "limit") {
   const c: Record<string, unknown> = {};
@@ -85,5 +85,67 @@ describe("listPendingCandidates", () => {
         createdAt: "2026-01-01T00:00:00.000Z",
       },
     ]);
+  });
+});
+
+function insertReturning(result: unknown[]) {
+  return { values: vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue(result) }) };
+}
+
+function makeTx(selects: { result: unknown[]; terminal?: "limit" | "where" | "orderBy" }[], inserts: (() => unknown)[]) {
+  const tx = { select: vi.fn(), insert: vi.fn(), update: vi.fn() };
+  for (const { result, terminal } of selects) {
+    tx.select.mockReturnValueOnce(selectChain(result, terminal));
+  }
+  for (const factory of inserts) {
+    tx.insert.mockReturnValueOnce(factory());
+  }
+  tx.update.mockReturnValue({ set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) }) });
+  return tx;
+}
+
+describe("promoteProspectToDeal", () => {
+  it("throws when the candidate does not exist", async () => {
+    const db = makeDb([{ result: [] }]);
+    await expect(promoteProspectToDeal(db as any, "ws-1", "cand-1", "user-1")).rejects.toThrow(
+      "promotion_candidate_not_found"
+    );
+  });
+
+  it("throws when the candidate is already promoted", async () => {
+    const db = makeDb([{ result: [{ id: "cand-1", status: "promoted", prospectId: "prospect-1" }] }]);
+    await expect(promoteProspectToDeal(db as any, "ws-1", "cand-1", "user-1")).rejects.toThrow(
+      "promotion_candidate_already_promoted"
+    );
+  });
+
+  it("creates company, contact, and deal, and marks the candidate promoted", async () => {
+    const candidate = { id: "cand-1", status: "pending", prospectId: "prospect-1" };
+    const tx = makeTx(
+      [
+        { result: [{ snapshot: { fullName: "Alice Chen", companyName: "Acme Inc", companyDomain: "acme.com" } }] }, // prospectActivations
+        { result: [] }, // no existing company
+        { result: [] }, // no existing contact
+        { result: [{ id: "pipeline-1", workspaceId: "ws-1", isDefault: true }] }, // default pipeline
+        { result: [{ id: "stage-1" }], terminal: "orderBy" }, // first stage
+      ],
+      [
+        () => insertReturning([{ id: "company-1" }]),
+        () => insertReturning([]), // audit log for company
+        () => insertReturning([{ id: "contact-1" }]),
+        () => insertReturning([]), // audit log for contact
+        () => insertReturning([{ id: "deal-1" }]),
+        () => insertReturning([]), // audit log for deal
+      ]
+    );
+    const db = {
+      select: vi.fn().mockReturnValueOnce(selectChain([candidate])),
+      transaction: vi.fn(async (cb: (tx: unknown) => unknown) => cb(tx)),
+    };
+
+    const result = await promoteProspectToDeal(db as any, "ws-1", "cand-1", "user-1");
+
+    expect(result).toEqual({ companyId: "company-1", contactId: "contact-1", dealId: "deal-1" });
+    expect(tx.update).toHaveBeenCalled(); // candidate marked promoted
   });
 });
