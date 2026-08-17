@@ -13,6 +13,12 @@ export const CONDITION_LEAF_TYPES = [
   "icp_score_gte",
   "has_email",
   "has_linkedin",
+  /** Account-level: another contact at the same company already replied positively
+   * (condition-engine spec §26/§28) — "the system should never continue automated outreach
+   * after a confirmed positive sales conversation" applied at the account, not just contact,
+   * level. Broader account-level conditions (already customer, has open opportunity) need the
+   * CRM↔GTM prospect identity reconciliation tracked separately (R14.1) as a prerequisite. */
+  "account_has_positive_reply",
 ] as const;
 export type ConditionLeafType = (typeof CONDITION_LEAF_TYPES)[number];
 

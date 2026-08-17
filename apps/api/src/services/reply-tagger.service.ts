@@ -22,14 +22,64 @@ const VALID_TAGS = new Set<ReplyTag>([
   "other",
 ]);
 
+/** Only meaningful when tag === "negative" — see condition-engine spec §11. */
+export type NegativeSubtype =
+  | "not_interested"
+  | "do_not_contact"
+  | "wrong_person"
+  | "competitor"
+  | "timing"
+  | "already_customer"
+  | "other";
+
+const VALID_NEGATIVE_SUBTYPES = new Set<NegativeSubtype>([
+  "not_interested",
+  "do_not_contact",
+  "wrong_person",
+  "competitor",
+  "timing",
+  "already_customer",
+  "other",
+]);
+
 /**
- * Tag an inbound human reply with intent/sentiment via OpenRouter.
+ * Three-tier confidence policy (condition-engine spec §14/§41):
+ *   >= AUTO_CONFIDENCE_THRESHOLD        → auto-apply silently.
+ *   MANUAL_REVIEW..AUTO (exclusive)     → "cautious": still auto-apply (spec says
+ *                                         "configurable / cautious branch", not "block"), but
+ *                                         raise a non-blocking FYI notification so a human can
+ *                                         double-check after the fact rather than before.
+ *   < MANUAL_REVIEW_CONFIDENCE_THRESHOLD → route to MANUAL_REVIEW: skip the automatic branch
+ *                                         entirely and notify before anything is decided.
+ */
+export const MANUAL_REVIEW_CONFIDENCE_THRESHOLD = 0.6;
+export const AUTO_CONFIDENCE_THRESHOLD = 0.85;
+
+export type ConfidenceTier = "auto" | "cautious" | "manual_review";
+
+export function classifyConfidenceTier(confidence: number): ConfidenceTier {
+  if (confidence >= AUTO_CONFIDENCE_THRESHOLD) return "auto";
+  if (confidence >= MANUAL_REVIEW_CONFIDENCE_THRESHOLD) return "cautious";
+  return "manual_review";
+}
+
+export interface ReplyClassification {
+  tag: ReplyTag;
+  /** 0–1. */
+  confidence: number;
+  /** Short human-readable justification, surfaced in the manual-review notification. */
+  reason: string;
+  negativeSubtype?: NegativeSubtype;
+}
+
+/**
+ * Tag an inbound human reply with intent/sentiment/confidence via OpenRouter.
  * Returns null when OPENROUTER_API_KEY is absent or the call fails (caller logs + skips).
  */
 export async function tagReply(
   bodyText: string,
   apiKey: string | undefined
-): Promise<ReplyTag | null> {
+): Promise<ReplyClassification | null> {
   if (!apiKey) return null;
 
   const client = new OpenAI({
@@ -42,14 +92,21 @@ export async function tagReply(
   try {
     result = await client.chat.completions.create({
       model: process.env.AI_MODEL ?? "openai/gpt-4o-mini",
-      max_tokens: 10,
+      max_tokens: 150,
       messages: [
         {
           role: "system",
           content:
-            "Classify the sentiment and intent of the email reply below. " +
-            "Respond with ONLY one of these labels (no explanation, no punctuation): " +
-            "positive, negative, neutral, question, meeting_request, unsubscribe, other.",
+            "Classify the sentiment and intent of the email reply below, for a sales outreach sequence engine.\n\n" +
+            "Respond with ONLY strict JSON, no markdown fences, no explanation outside the JSON:\n" +
+            '{"tag": "positive" | "negative" | "neutral" | "question" | "meeting_request" | "unsubscribe" | "other", ' +
+            '"confidence": number between 0 and 1, ' +
+            '"reason": "one short sentence justifying the tag", ' +
+            '"negative_subtype": "not_interested" | "do_not_contact" | "wrong_person" | "competitor" | "timing" | "already_customer" | "other" | null}\n\n' +
+            'negative_subtype is only meaningful when tag is "negative" — use null otherwise. ' +
+            'Use "do_not_contact" specifically when the reply asks to stop being contacted / be removed / not to be emailed again — ' +
+            "that subtype triggers an automatic opt-out, so only use it when the prospect is actually asking to stop hearing from us, " +
+            'not for a plain "not interested".',
         },
         { role: "user", content: bodyText.slice(0, 2000) },
       ],
@@ -62,13 +119,40 @@ export async function tagReply(
   const raw = result.choices[0]?.message?.content;
   if (!raw) return null;
 
-  const tag = raw.trim().toLowerCase() as ReplyTag;
-  if (!VALID_TAGS.has(tag)) {
-    log.warn("reply-tagger: unexpected label from model", { raw });
+  let parsed: {
+    tag?: unknown;
+    confidence?: unknown;
+    reason?: unknown;
+    negative_subtype?: unknown;
+  };
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    log.warn("reply-tagger: unexpected non-JSON response", { raw });
     return null;
   }
 
-  return tag;
+  const tag = typeof parsed.tag === "string" ? (parsed.tag.trim().toLowerCase() as ReplyTag) : undefined;
+  if (!tag || !VALID_TAGS.has(tag)) {
+    log.warn("reply-tagger: unexpected tag from model", { raw });
+    return null;
+  }
+
+  const confidence =
+    typeof parsed.confidence === "number" && Number.isFinite(parsed.confidence)
+      ? Math.max(0, Math.min(1, parsed.confidence))
+      : 0.5; // model omitted it — treat as uncertain rather than crashing or auto-applying
+
+  const reason = typeof parsed.reason === "string" ? parsed.reason.slice(0, 500) : "";
+
+  const rawSubtype =
+    typeof parsed.negative_subtype === "string" ? parsed.negative_subtype.trim().toLowerCase() : undefined;
+  const negativeSubtype =
+    tag === "negative" && rawSubtype && VALID_NEGATIVE_SUBTYPES.has(rawSubtype as NegativeSubtype)
+      ? (rawSubtype as NegativeSubtype)
+      : undefined;
+
+  return { tag, confidence, reason, negativeSubtype };
 }
 
 export interface BudgetFreezeDetection {

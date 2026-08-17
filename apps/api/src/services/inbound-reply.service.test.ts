@@ -437,12 +437,14 @@ describe("ingestInboundMessage — auto_reply", () => {
     subject: "Out of Office: Back on Monday",
   };
 
-  it("does not update enrollment on auto_reply", async () => {
+  it("defers the scheduled step (not the enrollment's own status) on auto_reply", async () => {
     const parentMsg = { threadId: "t-1", enrollmentId: "enroll-1", prospectId: "p-1" };
     const { db, updateFn } = makeDb({ selectPages: [[], [parentMsg]] });
     await ingestInboundMessage(db as any, "ws-1", "inbox-1", OOO_PAYLOAD);
-    // Only thread lastMessageAt update — no enrollment updates
-    expect(updateFn).toHaveBeenCalledTimes(1);
+    // 2 updates: thread lastMessageAt, and the OOO re-schedule of pending enrollment steps.
+    // Deliberately NOT a sequenceEnrollments.status update — see the comment in
+    // inbound-reply.service.ts on why OOO re-schedules steps instead of pausing the enrollment.
+    expect(updateFn).toHaveBeenCalledTimes(2);
   });
 
   it("does not create a suppression on auto_reply", async () => {

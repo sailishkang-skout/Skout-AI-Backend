@@ -50,6 +50,7 @@ export const CONDITION_TYPES = [
   "icp_score_gte",
   "has_email",
   "has_linkedin",
+  "account_has_positive_reply",
 ] as const;
 export type ConditionType = (typeof CONDITION_TYPES)[number];
 

@@ -18,6 +18,10 @@ const {
 
 type DbClient = ReturnType<typeof createDb>["db"];
 
+/** How long an OOO auto-reply defers the next cadence step by default — condition-engine
+ * spec §12's "If no return date exists: Wait configured period → Resume". */
+export const OOO_RESUME_WAIT_MS = 14 * 24 * 60 * 60 * 1000;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -285,6 +289,35 @@ export async function ingestInboundMessage(
           )
         );
       log.info("Bounce received — enrollment stopped", { enrollmentId, workspaceId });
+    }
+
+    // Condition-engine spec §12: OOO must not be treated as no signal at all — the cadence
+    // should pause rather than fire its next step while the prospect is confirmed away, then
+    // resume automatically. This is deliberately a re-schedule, not an enrollment-status change:
+    // sequence_enrollments_active_unique only constrains rows where status='active', so a
+    // distinct "paused" status here would let a second enrollment attempt slip in underneath
+    // this one. Pushing scheduledAt out (same mechanism as the HITL awaiting-draft defer in
+    // executeEmailStep) keeps the enrollment legitimately "active" and lets the existing
+    // enrollment worker just pick the step back up when it's due — no separate resume job needed.
+    // We don't parse a return date out of the OOO body (spec's optional `ooo_until`) — that would
+    // need its own AI call — so every OOO defers by the same fixed window regardless of what the
+    // auto-reply says.
+    if (classification === "auto_reply" && enrollmentId) {
+      const resumeAt = new Date(now.getTime() + OOO_RESUME_WAIT_MS);
+      await tx
+        .update(sequenceEnrollmentSteps)
+        .set({ scheduledAt: resumeAt, failureReason: "ooo_detected" })
+        .where(
+          and(
+            eq(sequenceEnrollmentSteps.enrollmentId, enrollmentId),
+            eq(sequenceEnrollmentSteps.status, "scheduled")
+          )
+        );
+      log.info("Out-of-office auto-reply detected — cadence paused until return window", {
+        enrollmentId,
+        workspaceId,
+        resumeAt,
+      });
     }
 
     if (classification === "bounce") {

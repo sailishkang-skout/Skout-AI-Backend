@@ -1,5 +1,5 @@
 import { Worker } from "bullmq";
-import { and, asc, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { createDb } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
@@ -24,6 +24,7 @@ import { dispatchWebhookEvent } from "../services/webhook.service.js";
 import { LinkedinAccountService, sendLinkedinOutreach, sendWhatsappOutreach } from "../services/linkedin-account.service.js";
 import { UnipileError } from "../services/unipile.client.js";
 import { LinkedinOutreachService } from "../services/linkedin-outreach.service.js";
+import { checkLinkedinConnectionStatus } from "../services/linkedin-connection.service.js";
 import { createNotification } from "../services/notifications.service.js";
 import { getIcpScore } from "../services/draft-auto-approve.service.js";
 import {
@@ -49,6 +50,7 @@ const {
   aiDrafts,
   contacts,
   tasks,
+  prospectActivations,
 } = schema;
 
 type DbClient = ReturnType<typeof createDb>["db"];
@@ -118,6 +120,70 @@ interface PendingStep {
   conditionExpression?: unknown;
   yesNextStepId?: string | null;
   noNextStepId?: string | null;
+  /** Per-step retry policy (condition-engine spec §40) — see retryTransientFailure(). */
+  retryMaxAttempts?: number;
+  retryDelayMs?: number;
+  retryBackoffStrategy?: string | null;
+  attemptCount?: number;
+}
+
+/**
+ * Shared transient-failure handler for LinkedIn/WhatsApp sends — bounded by the step's own
+ * retryMaxAttempts instead of the old hardcoded "always retry every 60s forever" behavior
+ * (that loop bypassed BullMQ's own attempts cap entirely, since each retry created a brand new
+ * non-deduplicated job rather than throwing to let the current job's attempt count run out).
+ * Returns "retry" (caller should re-enqueue and return "waiting") or "exhausted" (caller should
+ * mark the step failed and let the cadence fall through to whatever comes next).
+ */
+export async function retryTransientFailure(
+  db: DbClient,
+  config: Env,
+  payload: SeqAdvanceJobPayload,
+  pending: PendingStep,
+  reason: string,
+  now: Date
+): Promise<"retry" | "exhausted"> {
+  const maxAttempts = pending.retryMaxAttempts ?? 3;
+  const nextAttempt = (pending.attemptCount ?? 0) + 1;
+
+  if (nextAttempt > maxAttempts) {
+    await markStepTerminal(db, pending.enrollmentStepId, "failed", `retry_exhausted: ${reason}`, now);
+    log.warn("Step retries exhausted — falling back", {
+      enrollmentId: payload.enrollmentId,
+      enrollmentStepId: pending.enrollmentStepId,
+      attempts: pending.attemptCount ?? 0,
+      maxAttempts,
+      reason,
+    });
+    await recordSequenceEvent(db, {
+      workspaceId: payload.workspaceId,
+      sequenceId: payload.sequenceId,
+      enrollmentId: payload.enrollmentId,
+      prospectId: payload.prospectId,
+      eventType: "fallback_triggered",
+      reason: `retry_exhausted: ${reason}`,
+    });
+    return "exhausted";
+  }
+
+  const baseDelay = pending.retryDelayMs ?? LINKEDIN_RETRY_MS;
+  const delayMs =
+    pending.retryBackoffStrategy === "exponential" ? baseDelay * 2 ** (nextAttempt - 1) : baseDelay;
+
+  await db
+    .update(sequenceEnrollmentSteps)
+    .set({ attemptCount: nextAttempt, failureReason: reason })
+    .where(eq(sequenceEnrollmentSteps.id, pending.enrollmentStepId));
+  await recordSequenceEvent(db, {
+    workspaceId: payload.workspaceId,
+    sequenceId: payload.sequenceId,
+    enrollmentId: payload.enrollmentId,
+    prospectId: payload.prospectId,
+    eventType: "retry_scheduled",
+    reason: `${reason} (attempt ${nextAttempt}/${maxAttempts}, ${pending.retryBackoffStrategy ?? "fixed"} backoff)`,
+  });
+  await enqueueSequenceAdvanceJob(config, payload, delayMs, false);
+  return "retry";
 }
 
 /**
@@ -218,6 +284,7 @@ type LinkedinInviteState = "not_sent" | "pending" | "accepted" | "declined" | "f
 
 async function linkedinInviteState(
   db: DbClient,
+  config: Env,
   workspaceId: string,
   enrollmentId: string
 ): Promise<LinkedinInviteState> {
@@ -225,6 +292,8 @@ async function linkedinInviteState(
     .select({
       status: linkedinOutreachJobs.status,
       failureReason: linkedinOutreachJobs.failureReason,
+      prospectId: linkedinOutreachJobs.prospectId,
+      linkedinUrl: linkedinOutreachJobs.linkedinUrl,
     })
     .from(linkedinOutreachJobs)
     .where(
@@ -237,7 +306,17 @@ async function linkedinInviteState(
     .orderBy(desc(linkedinOutreachJobs.createdAt))
     .limit(1);
   if (!job) return "not_sent";
-  if (job.status === "completed") return "accepted";
+  if (job.status === "completed") {
+    // "completed" on this job only ever meant "the connection REQUEST was sent successfully" —
+    // it says nothing about whether the prospect actually accepted it. Check the real,
+    // dedicated connection-state tracking instead of treating "sent" as "accepted".
+    const status = await checkLinkedinConnectionStatus(config, db, {
+      workspaceId,
+      prospectId: job.prospectId,
+      linkedinUrl: job.linkedinUrl,
+    });
+    return status === "accepted" ? "accepted" : "pending";
+  }
   if (job.status === "failed") {
     const reason = (job.failureReason ?? "").toLowerCase();
     if (reason.includes("declin") || reason.includes("reject")) return "declined";
@@ -248,6 +327,7 @@ async function linkedinInviteState(
 
 async function evaluateCondition(
   db: DbClient,
+  config: Env,
   workspaceId: string,
   prospectId: string,
   enrollmentId: string,
@@ -255,10 +335,10 @@ async function evaluateCondition(
 ): Promise<boolean> {
   if (!conditionType) return false;
   if (conditionType === "linkedin_connected" || conditionType === "linkedin_invite_accepted") {
-    return (await linkedinInviteState(db, workspaceId, enrollmentId)) === "accepted";
+    return (await linkedinInviteState(db, config, workspaceId, enrollmentId)) === "accepted";
   }
   if (conditionType === "linkedin_invite_declined") {
-    return (await linkedinInviteState(db, workspaceId, enrollmentId)) === "declined";
+    return (await linkedinInviteState(db, config, workspaceId, enrollmentId)) === "declined";
   }
   if (conditionType === "email_opened" || conditionType === "email_clicked") {
     const eventType = conditionType === "email_opened" ? "open" : "click";
@@ -293,7 +373,47 @@ async function evaluateCondition(
       .limit(1);
     return Boolean(row);
   }
+  if (conditionType === "account_has_positive_reply") {
+    const prospect = await resolveProspectFields(config, db, workspaceId, prospectId);
+    const companyDomain = (prospect as { companyDomain?: string | null } | null)?.companyDomain;
+    if (!companyDomain) return false; // can't determine "same account" without one
+    return hasPositiveReplyAtAccount(db, workspaceId, companyDomain, prospectId);
+  }
   return false;
+}
+
+/**
+ * Account-level condition (spec §26/§28): has any OTHER prospect at the same company already
+ * replied positively? Scoped to companyDomain since that's the only cross-prospect account key
+ * resolveProspectFields exposes today — a real CRM company_id join would be more precise once
+ * the CRM↔GTM prospect identity reconciliation (R14.1) lands.
+ */
+async function hasPositiveReplyAtAccount(
+  db: DbClient,
+  workspaceId: string,
+  companyDomain: string,
+  excludeProspectId: string
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: inboxThreads.id })
+    .from(inboxThreads)
+    .innerJoin(
+      prospectActivations,
+      and(
+        eq(prospectActivations.workspaceId, inboxThreads.workspaceId),
+        eq(prospectActivations.prospectId, inboxThreads.prospectId)
+      )
+    )
+    .where(
+      and(
+        eq(inboxThreads.workspaceId, workspaceId),
+        eq(inboxThreads.replyTag, "positive"),
+        ne(inboxThreads.prospectId, excludeProspectId),
+        sql`${prospectActivations.snapshot} ->> 'companyDomain' = ${companyDomain}`
+      )
+    )
+    .limit(1);
+  return Boolean(row);
 }
 
 async function activateConditionBranch(
@@ -570,6 +690,16 @@ async function executeLinkedinStep(
     return "done";
   }
 
+  // Suppression is keyed by email (unsubscribe/opt-out/bounce all arrive over email today),
+  // but must still gate every channel — a "do not contact" prospect must not keep getting
+  // LinkedIn touches just because the block only ever checked email sends. Skipped only when
+  // the prospect has no known email to check against.
+  if (prospect?.email && (await isSuppressed(db, workspaceId, prospect.email))) {
+    await markStepTerminal(db, pending.enrollmentStepId, "skipped", "suppressed", now);
+    log.info("LinkedIn step skipped — suppressed", { enrollmentId, email: prospect.email });
+    return "done";
+  }
+
   const action = pending.linkedinAction === "message" ? "message" : ("connect" as const);
   const mergeData: MergeData = {
     firstName: prospect?.firstName ?? "",
@@ -635,12 +765,16 @@ async function executeLinkedinStep(
           ? err.message
           : "linkedin_send_failed";
 
-    // Rate limits / transient — retry later without failing the step
+    // Rate limits / transient — retry later without failing the step, up to the step's own
+    // retryMaxAttempts (see retryTransientFailure — this used to retry every 60s forever).
     const status = err instanceof UnipileError ? err.status : 0;
     if (status === 429 || status >= 500) {
       await accounts.markError(account.id, reason);
-      log.warn("LinkedIn send transient failure — will retry", { enrollmentId, reason, status });
-      await enqueueSequenceAdvanceJob(config, payload, LINKEDIN_RETRY_MS, false);
+      log.warn("LinkedIn send transient failure", { enrollmentId, reason, status });
+      const outcome = await retryTransientFailure(db, config, payload, pending, reason, now);
+      if (outcome === "exhausted") {
+        await outreach.failJob(workspaceId, job.id, `retry_exhausted: ${reason}`);
+      }
       return "waiting";
     }
 
@@ -826,6 +960,14 @@ async function executeWhatsappStep(
     return "done";
   }
 
+  // See the matching check in executeLinkedinStep — suppression must gate every channel, not
+  // just email, even though it's keyed by email.
+  if (prospect?.email && (await isSuppressed(db, workspaceId, prospect.email))) {
+    await markStepTerminal(db, pending.enrollmentStepId, "skipped", "suppressed", now);
+    log.info("WhatsApp step skipped — suppressed", { enrollmentId, email: prospect.email });
+    return "done";
+  }
+
   const mergeData: MergeData = {
     firstName: prospect?.firstName ?? "",
     lastName: prospect?.lastName ?? "",
@@ -864,9 +1006,12 @@ async function executeWhatsappStep(
     const status = err instanceof UnipileError ? err.status : 0;
     if (status === 429 || status >= 500) {
       await accounts.markError(account.id, reason);
-      log.warn("WhatsApp send transient failure — will retry", { enrollmentId, reason, status });
-      await enqueueSequenceAdvanceJob(config, payload, LINKEDIN_RETRY_MS, false);
-      return "waiting";
+      log.warn("WhatsApp send transient failure", { enrollmentId, reason, status });
+      const outcome = await retryTransientFailure(db, config, payload, pending, reason, now);
+      // "exhausted" already marked the step terminal (via retryTransientFailure) — falling
+      // through to "done" lets the normal cadence pick up the next step, same as any other
+      // terminal failure below. "retry" re-enqueued its own job, so wait for that instead.
+      return outcome === "exhausted" ? "done" : "waiting";
     }
     await accounts.markError(account.id, reason);
     await markStepTerminal(db, pending.enrollmentStepId, "failed", reason, now);
@@ -1013,6 +1158,10 @@ async function advanceEnrollment(
       conditionExpression: sequenceSteps.conditionExpression,
       yesNextStepId: sequenceSteps.yesNextStepId,
       noNextStepId: sequenceSteps.noNextStepId,
+      retryMaxAttempts: sequenceSteps.retryMaxAttempts,
+      retryDelayMs: sequenceSteps.retryDelayMs,
+      retryBackoffStrategy: sequenceSteps.retryBackoffStrategy,
+      attemptCount: sequenceEnrollmentSteps.attemptCount,
     })
     .from(sequenceEnrollmentSteps)
     .innerJoin(sequenceSteps, eq(sequenceEnrollmentSteps.stepId, sequenceSteps.id))
@@ -1097,9 +1246,9 @@ async function advanceEnrollment(
         const prospect = await resolveProspectFields(config, db, workspaceId, prospectId);
         return Boolean((prospect as { linkedinUrl?: string | null } | null)?.linkedinUrl);
       }
-      return evaluateCondition(db, workspaceId, prospectId, enrollmentId, type);
+      return evaluateCondition(db, config, workspaceId, prospectId, enrollmentId, type);
     };
-    const invite = await linkedinInviteState(db, workspaceId, enrollmentId);
+    const invite = await linkedinInviteState(db, config, workspaceId, enrollmentId);
     const singleInvite =
       expr && "type" in expr &&
       (expr.type === "linkedin_invite_accepted" || expr.type === "linkedin_connected" || expr.type === "linkedin_invite_declined");

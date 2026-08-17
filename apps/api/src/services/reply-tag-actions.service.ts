@@ -2,12 +2,43 @@ import { and, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
-import { detectBudgetFreeze, type ReplyTag } from "./reply-tagger.service.js";
+import type { Env } from "../config/env.js";
+import {
+  classifyConfidenceTier,
+  detectBudgetFreeze,
+  type NegativeSubtype,
+  type ReplyTag,
+} from "./reply-tagger.service.js";
 import { recordSignal } from "./signal.service.js";
 import { addSuppression } from "./suppression.service.js";
+import { createNotification } from "./notifications.service.js";
 
 const log = createLogger("reply-tag-actions");
 const { inboxThreads, prospectActivations } = schema;
+
+async function suppressThreadSender(db: Db, workspaceId: string, prospectId: string | null, reason: string): Promise<void> {
+  if (!prospectId) return;
+  const [activation] = await db
+    .select({ snapshot: prospectActivations.snapshot })
+    .from(prospectActivations)
+    .where(and(eq(prospectActivations.workspaceId, workspaceId), eq(prospectActivations.prospectId, prospectId)))
+    .limit(1);
+  const email = (activation?.snapshot as Record<string, unknown> | undefined)?.email;
+  if (typeof email === "string" && email.includes("@")) {
+    await addSuppression(db, workspaceId, email, reason);
+    log.info("reply-tag-actions: suppressed", { workspaceId, prospectId, reason });
+  }
+}
+
+export interface ApplyReplyTagActionsOptions {
+  bodyText?: string;
+  openRouterApiKey?: string;
+  /** 0–1. Below MANUAL_REVIEW_CONFIDENCE_THRESHOLD, branch-deciding actions (suppression,
+   * meeting_request status flip) are skipped in favor of a manual-review notification —
+   * condition-engine spec §14/§41. Omit (or 1) to always auto-apply, e.g. for a human-set tag. */
+  confidence?: number;
+  negativeSubtype?: NegativeSubtype;
+}
 
 /**
  * Apply self-intuitive follow-up actions after an inbound reply is tagged.
@@ -18,12 +49,15 @@ const { inboxThreads, prospectActivations } = schema;
  */
 export async function applyReplyTagActions(
   db: Db,
+  config: Env,
   workspaceId: string,
   threadId: string,
   tag: ReplyTag,
-  bodyText?: string,
-  openRouterApiKey?: string
+  options: ApplyReplyTagActionsOptions = {}
 ): Promise<void> {
+  const { bodyText, openRouterApiKey, negativeSubtype } = options;
+  const confidence = options.confidence ?? 1;
+
   const [thread] = await db
     .select({
       id: inboxThreads.id,
@@ -78,6 +112,60 @@ export async function applyReplyTagActions(
     }
   }
 
+  // Everything below decides a sequence branch or suppresses a prospect — both irreversible-ish
+  // (a suppressed prospect stops hearing from us entirely; a wrongly-flipped meeting_booked
+  // status hides a thread that still needs outreach). Risk-signal logging above
+  // (negative_sentiment, budget_freeze) already ran regardless — that's informational, not a
+  // branch decision, so there's nothing to get "wrong" there.
+  //
+  // Three-tier confidence policy (condition-engine spec §14/§41):
+  //   manual_review → skip the branch entirely, notify BEFORE anything is decided.
+  //   cautious      → still apply the branch (spec: "configurable / cautious branch", not
+  //                   "block"), but also raise a non-blocking FYI notification afterward.
+  //   auto          → apply the branch silently, as before.
+  const tier = classifyConfidenceTier(confidence);
+
+  if (tier === "manual_review") {
+    log.info("reply-tag-actions: low-confidence classification routed to manual review", {
+      threadId,
+      workspaceId,
+      tag,
+      confidence,
+    });
+    try {
+      await createNotification(db, config, {
+        workspaceId,
+        type: "reply_needs_review",
+        title: "A reply needs manual review",
+        body: `AI classified this reply as "${tag}"${negativeSubtype ? ` (${negativeSubtype})` : ""} with low confidence (${Math.round(
+          confidence * 100
+        )}%) — review it in the inbox before the sequence branch is decided automatically.`,
+        entityType: "inbox_thread",
+        entityId: threadId,
+      });
+    } catch (err) {
+      log.warn("reply-tag-actions: failed to create manual-review notification", { threadId, err });
+    }
+    return;
+  }
+
+  if (tier === "cautious") {
+    try {
+      await createNotification(db, config, {
+        workspaceId,
+        type: "reply_auto_processed_fyi",
+        title: "A reply was auto-processed with moderate confidence",
+        body: `AI classified this reply as "${tag}"${negativeSubtype ? ` (${negativeSubtype})` : ""} at ${Math.round(
+          confidence * 100
+        )}% confidence and took the matching action automatically — worth a quick double-check.`,
+        entityType: "inbox_thread",
+        entityId: threadId,
+      });
+    } catch (err) {
+      log.warn("reply-tag-actions: failed to create cautious-tier FYI notification", { threadId, err });
+    }
+  }
+
   if (tag === "meeting_request" && thread.status !== "meeting_booked" && thread.status !== "closed") {
     await db
       .update(inboxThreads)
@@ -92,26 +180,14 @@ export async function applyReplyTagActions(
       .update(inboxThreads)
       .set({ status: "closed", statusChangedAt: now, updatedAt: now })
       .where(eq(inboxThreads.id, threadId));
+    await suppressThreadSender(db, workspaceId, thread.prospectId, "unsubscribed");
+    return;
+  }
 
-    if (thread.prospectId) {
-      const [activation] = await db
-        .select({ snapshot: prospectActivations.snapshot })
-        .from(prospectActivations)
-        .where(
-          and(
-            eq(prospectActivations.workspaceId, workspaceId),
-            eq(prospectActivations.prospectId, thread.prospectId)
-          )
-        )
-        .limit(1);
-      const email = (activation?.snapshot as Record<string, unknown> | undefined)?.email;
-      if (typeof email === "string" && email.includes("@")) {
-        await addSuppression(db, workspaceId, email, "unsubscribed");
-        log.info("reply-tag-actions: suppressed on unsubscribe tag", {
-          threadId,
-          workspaceId,
-        });
-      }
-    }
+  // A "negative" reply that's actually asking to stop being contacted must suppress just like
+  // an explicit unsubscribe (condition-engine spec §11: DO_NOT_CONTACT → GLOBAL SUPPRESSION),
+  // not just stop the current sequence — a plain "not interested" only stops this sequence.
+  if (tag === "negative" && negativeSubtype === "do_not_contact") {
+    await suppressThreadSender(db, workspaceId, thread.prospectId, "do_not_contact");
   }
 }

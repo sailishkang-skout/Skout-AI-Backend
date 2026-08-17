@@ -89,7 +89,13 @@ vi.mock("../lib/redis.js", () => ({
   }),
 }));
 
-import { startSequenceEnrollmentWorker } from "./sequence-enrollment.worker.js";
+vi.mock("../services/sequence-events.js", () => ({
+  recordSequenceEvent: vi.fn().mockResolvedValue(undefined),
+}));
+
+import { startSequenceEnrollmentWorker, retryTransientFailure } from "./sequence-enrollment.worker.js";
+import { recordSequenceEvent } from "../services/sequence-events.js";
+import { enqueueSequenceAdvanceJob } from "./sequence-enrollment.queue.js";
 import { Worker } from "bullmq";
 import { createDb } from "@skout/db";
 import { isBusinessHour } from "../utils/scheduling.js";
@@ -624,5 +630,119 @@ describe("sequence-enrollment worker — manual task step execution", () => {
     await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
 
     expect(insertValues).toHaveBeenCalledWith(expect.objectContaining({ title: "Follow up with prospect" }));
+  });
+});
+
+describe("retryTransientFailure", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const PAYLOAD = {
+    enrollmentId: "enr-1",
+    workspaceId: "ws-1",
+    prospectId: "prospect-1",
+    sequenceId: "seq-1",
+  };
+
+  function makeDb() {
+    const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+    const update = vi.fn().mockReturnValue({ set: updateSet });
+    return { update, _updateSet: updateSet };
+  }
+
+  it("re-enqueues with the fixed delay and increments attemptCount when under the max", async () => {
+    const db = makeDb();
+    const pending = {
+      enrollmentStepId: "estep-1",
+      stepId: "step-1",
+      stepType: "linkedin",
+      linkedinAction: "connect",
+      subject: null,
+      bodyTemplate: null,
+      attemptCount: 0,
+      retryMaxAttempts: 3,
+      retryDelayMs: 60_000,
+      retryBackoffStrategy: "fixed",
+    } as any;
+
+    const outcome = await retryTransientFailure(db as any, {} as any, PAYLOAD, pending, "rate_limited", new Date());
+
+    expect(outcome).toBe("retry");
+    expect(db._updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({ attemptCount: 1, failureReason: "rate_limited" })
+    );
+    expect(enqueueSequenceAdvanceJob).toHaveBeenCalledWith({}, PAYLOAD, 60_000, false);
+    expect(recordSequenceEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ eventType: "retry_scheduled" })
+    );
+  });
+
+  it("doubles the delay each attempt with exponential backoff", async () => {
+    const db = makeDb();
+    const pending = {
+      enrollmentStepId: "estep-1",
+      stepId: "step-1",
+      stepType: "linkedin",
+      linkedinAction: "connect",
+      subject: null,
+      bodyTemplate: null,
+      attemptCount: 2, // this will be the 3rd attempt
+      retryMaxAttempts: 5,
+      retryDelayMs: 1_000,
+      retryBackoffStrategy: "exponential",
+    } as any;
+
+    await retryTransientFailure(db as any, {} as any, PAYLOAD, pending, "rate_limited", new Date());
+
+    // attempt 3 → 1000 * 2^(3-1) = 4000
+    expect(enqueueSequenceAdvanceJob).toHaveBeenCalledWith({}, PAYLOAD, 4_000, false);
+  });
+
+  it("marks the step failed and emits fallback_triggered once max attempts is exceeded — never retries forever", async () => {
+    const db = makeDb();
+    const pending = {
+      enrollmentStepId: "estep-1",
+      stepId: "step-1",
+      stepType: "linkedin",
+      linkedinAction: "connect",
+      subject: null,
+      bodyTemplate: null,
+      attemptCount: 3,
+      retryMaxAttempts: 3,
+      retryDelayMs: 60_000,
+      retryBackoffStrategy: "fixed",
+    } as any;
+
+    const outcome = await retryTransientFailure(db as any, {} as any, PAYLOAD, pending, "rate_limited", new Date());
+
+    expect(outcome).toBe("exhausted");
+    expect(db._updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "failed", failureReason: "retry_exhausted: rate_limited" })
+    );
+    expect(enqueueSequenceAdvanceJob).not.toHaveBeenCalled();
+    expect(recordSequenceEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ eventType: "fallback_triggered", reason: "retry_exhausted: rate_limited" })
+    );
+  });
+
+  it("defaults to 3 max attempts and a fixed 60s delay when the step has no retry policy set", async () => {
+    const db = makeDb();
+    const pending = {
+      enrollmentStepId: "estep-1",
+      stepId: "step-1",
+      stepType: "linkedin",
+      linkedinAction: "connect",
+      subject: null,
+      bodyTemplate: null,
+      // no attemptCount/retry* fields — exercises the ?? defaults
+    } as any;
+
+    const outcome = await retryTransientFailure(db as any, {} as any, PAYLOAD, pending, "rate_limited", new Date());
+
+    expect(outcome).toBe("retry");
+    expect(enqueueSequenceAdvanceJob).toHaveBeenCalledWith({}, PAYLOAD, 60_000, false);
   });
 });

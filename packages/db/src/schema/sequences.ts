@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { boolean, integer, jsonb, pgTable, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { inboxes } from "./inbox.js";
+import { linkedinAccounts } from "./linkedin-accounts.js";
 import { lists } from "./prospects.js";
 import { workspaces } from "./workspaces.js";
 
@@ -49,6 +50,13 @@ export const sequenceSteps = pgTable(
     /** yes | no | null (main trunk) */
     branch: text("branch"),
     goalLabel: text("goal_label"),
+    /** Per-step retry policy (condition-engine spec §40) — previously hardcoded per channel
+     * (LinkedIn/WhatsApp: fixed 60s, uncapped; email: BullMQ default). retryMaxAttempts caps
+     * transient-failure retries so a step can never retry forever. */
+    retryMaxAttempts: integer("retry_max_attempts").notNull().default(3),
+    retryDelayMs: integer("retry_delay_ms").notNull().default(60_000),
+    /** fixed | exponential — exponential multiplies retryDelayMs by 2^(attempt-1). */
+    retryBackoffStrategy: text("retry_backoff_strategy").notNull().default("fixed"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [unique().on(table.sequenceId, table.stepOrder)]
@@ -119,6 +127,9 @@ export const sequenceEnrollmentSteps = pgTable(
     /** A | B | C — which variant was sent for this enrollment step */
     variantKey: text("variant_key"),
     inboxId: uuid("inbox_id").references(() => inboxes.id, { onDelete: "set null" }),
+    /** Transient-failure retries so far — checked against the step's retryMaxAttempts so a
+     * step can never retry forever (condition-engine spec §40's "never allow infinite retries"). */
+    attemptCount: integer("attempt_count").notNull().default(0),
   },
   (table) => [unique().on(table.enrollmentId, table.stepId)]
 );
@@ -209,6 +220,40 @@ export const linkedinOutreachJobs = pgTable("linkedin_outreach_jobs", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   completedAt: timestamp("completed_at", { withTimezone: true }),
 });
+
+/**
+ * Dedicated LinkedIn connection-state tracking (condition-engine spec — replaces inferring
+ * "accepted" from linkedin_outreach_jobs.status, which only ever reflected whether the invite
+ * was successfully SENT, not whether the prospect actually accepted it).
+ *
+ * Populated by polling Unipile's first-degree relations list (see linkedin-connection.service.ts)
+ * — Unipile has no reliable signal for an explicit decline, so status is honestly one of
+ * pending → accepted, or pending → timed_out once conditionWaitDays elapses with no match
+ * (matching condition-engine spec §19's own guidance not to treat non-acceptance as negative).
+ */
+export const linkedinConnections = pgTable(
+  "linkedin_connections",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    prospectId: text("prospect_id").notNull(),
+    linkedinAccountId: uuid("linkedin_account_id")
+      .notNull()
+      .references(() => linkedinAccounts.id, { onDelete: "cascade" }),
+    /** pending | accepted | timed_out */
+    status: text("status").notNull().default("pending"),
+    invitedAt: timestamp("invited_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Last time we actually polled Unipile — lets callers avoid re-polling on every condition
+     * evaluation (see LINKEDIN_CONNECTION_RECHECK_MS in linkedin-connection.service.ts). */
+    checkedAt: timestamp("checked_at", { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [unique().on(table.workspaceId, table.prospectId)]
+);
 
 /** Open/click events for a sent sequence step email, attributed to enrollment + step. */
 export const sequenceTrackingEvents = pgTable("sequence_tracking_events", {

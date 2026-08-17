@@ -35,7 +35,7 @@ export class LinkedinAccountService {
   ) {}
 
   /** Prefer workspace Unipile BYOK; fall back to platform env. */
-  private async resolveConfig(workspaceId: string): Promise<Env> {
+  async resolveConfig(workspaceId: string): Promise<Env> {
     const integrations = createIntegrationService(this.db, this.config);
     const creds = await integrations.loadWorkspaceUnipileCredentials(workspaceId);
     if (!creds) return this.config;
