@@ -1,11 +1,18 @@
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import {
   getGoogleCalendarConnectUrl,
   handleGoogleCalendarCallback,
   getCalendarConnectionStatus,
   disconnectCalendar,
+  listConnectedGoogleCalendarEvents,
 } from "../services/google-calendar-oauth.service.js";
 import { HttpError } from "../utils/http.js";
+
+const calendarEventsQuery = z.object({
+  from: z.string().min(1),
+  to: z.string().min(1),
+});
 
 export async function calendarRoutes(app: FastifyInstance) {
   const db = app.db;
@@ -42,6 +49,39 @@ export async function calendarRoutes(app: FastifyInstance) {
     } catch (err) {
       app.log.error({ err }, "Google calendar OAuth callback failed");
       return reply.redirect(failUrl);
+    }
+  });
+
+  // GET /calendar/events?from=&to= — overlay for CRM → Calendar. Lives here (not CRM)
+  // because calendar_connections and the OAuth tokens are owned by this service.
+  app.get("/calendar/events", async (request, reply) => {
+    const userId = request.userId;
+    if (!userId) return reply.status(401).send({ error: "unauthenticated" });
+    if (!db) return reply.send({ data: [], connected: false });
+
+    const query = calendarEventsQuery.parse(request.query);
+    const timeMin = new Date(query.from);
+    const timeMax = new Date(query.to);
+    if (Number.isNaN(timeMin.getTime()) || Number.isNaN(timeMax.getTime())) {
+      return reply.status(400).send({ error: "invalid_datetime_range" });
+    }
+
+    try {
+      const result = await listConnectedGoogleCalendarEvents(
+        db,
+        request.workspaceId ?? "unknown",
+        userId,
+        app.config,
+        { timeMin, timeMax }
+      );
+      return reply.send(result);
+    } catch (err) {
+      app.log.warn({ err }, "Failed to fetch Google Calendar events");
+      return reply.send({
+        data: [],
+        connected: true,
+        error: "google_fetch_failed",
+      });
     }
   });
 

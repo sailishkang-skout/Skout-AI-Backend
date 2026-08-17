@@ -5,6 +5,25 @@ import { decryptSecret, encryptSecret } from "./integration-crypto.js";
 
 const { calendarConnections } = schema;
 
+/** Prefer the connection for this workspace, but fall back to any row for the user.
+ * Google Calendar is per-user; API vs CRM can pick different memberships when a user
+ * belongs to more than one workspace, which previously made the calendar UI look empty. */
+export async function findCalendarConnectionForUser(
+  db: Db,
+  userId: string,
+  workspaceId?: string
+): Promise<(typeof calendarConnections.$inferSelect) | null> {
+  const rows = await db
+    .select()
+    .from(calendarConnections)
+    .where(eq(calendarConnections.userId, userId));
+  if (workspaceId) {
+    const match = rows.find((row) => row.workspaceId === workspaceId);
+    if (match) return match;
+  }
+  return rows[0] ?? null;
+}
+
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 /**

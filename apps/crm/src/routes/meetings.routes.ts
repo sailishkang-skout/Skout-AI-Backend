@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { schema } from "@skout/db";
-import { meetingCreateSchema, meetingInviteeSchema, meetingListQuerySchema, meetingUpdateSchema, resolveGoogleCalendarAccessToken } from "@skout/shared";
+import { meetingCreateSchema, meetingInviteeSchema, meetingListQuerySchema, meetingUpdateSchema, findCalendarConnectionForUser, listGoogleCalendarEvents, resolveGoogleCalendarAccessToken } from "@skout/shared";
 import { z } from "zod";
 import { HttpError } from "@skout/auth";
 import { parseIdParam } from "../utils/http.js";
@@ -15,7 +15,7 @@ import { buildContactsService } from "../services/contacts.service.js";
 import { buildDealsService } from "../services/deals.service.js";
 import { buildPipelinesService } from "../services/pipelines.service.js";
 import { isMeetingBotConfigured, scheduleMeetingBot } from "../services/meeting-bot.service.js";
-import { createCalendarEvent, listCalendarEvents } from "../services/google-calendar.service.js";
+import { createCalendarEvent } from "../services/google-calendar.service.js";
 import { extractFieldsFromTranscript, isTranscriptExtractionConfigured } from "../services/transcript-extraction.service.js";
 
 function timingSafeEqualStrings(a: string, b: string): boolean {
@@ -78,25 +78,23 @@ export async function meetingsRoutes(app: FastifyInstance) {
     if (!app.db) throw new HttpError("database_unavailable", 503);
     if (!request.userId) throw new HttpError("unauthenticated", 401);
 
-    const { from, to } = z.object({ from: z.string().datetime(), to: z.string().datetime() }).parse(request.query);
+    const { from, to } = z
+      .object({ from: z.string().min(1), to: z.string().min(1) })
+      .parse(request.query);
+    const timeMin = new Date(from);
+    const timeMax = new Date(to);
+    if (Number.isNaN(timeMin.getTime()) || Number.isNaN(timeMax.getTime())) {
+      throw new HttpError("invalid_datetime_range", 400);
+    }
 
-    const [connection] = await app.db
-      .select()
-      .from(schema.calendarConnections)
-      .where(
-        and(
-          eq(schema.calendarConnections.workspaceId, workspaceId),
-          eq(schema.calendarConnections.userId, request.userId)
-        )
-      )
-      .limit(1);
+    const connection = await findCalendarConnectionForUser(app.db, request.userId, workspaceId);
     // Not connected isn't an error for this endpoint — the calendar just shows Skout-native
     // meetings only, same as it did before this existed.
     if (!connection) return reply.send({ data: [], connected: false });
 
     try {
       const accessToken = await resolveGoogleCalendarAccessToken(connection, app.db, app.config);
-      const events = await listCalendarEvents(accessToken, { timeMin: new Date(from), timeMax: new Date(to) });
+      const events = await listGoogleCalendarEvents(accessToken, { timeMin, timeMax });
       return reply.send({ data: events, connected: true });
     } catch (err) {
       // Best-effort overlay — a transient Google API hiccup must not break the whole calendar
