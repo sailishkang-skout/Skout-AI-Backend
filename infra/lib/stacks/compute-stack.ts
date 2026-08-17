@@ -505,6 +505,17 @@ export class ComputeStack extends Stack {
           ...albExtraConditions,
         ],
       });
+      // apps/crm registers GET /api/v1/audit-logs (see routes/audit.routes.ts). Without this
+      // rule the request falls through to the priority-10 "/api/*" catch-all and 404s on the
+      // api service, which has no such route.
+      listener.addTargetGroups("crm-audit", {
+        targetGroups: [crmEcs.targetGroup],
+        priority: 8,
+        conditions: [
+          elbv2.ListenerCondition.pathPatterns(["/api/v1/audit-logs*"]),
+          ...albExtraConditions,
+        ],
+      });
     }
 
     if (config.clickhouse?.enabled) {

@@ -723,6 +723,9 @@ export const meetingInviteeSchema = z.object({
 });
 
 export const meetingListQuerySchema = paginationQuerySchema.extend({
+  // Calendar month view requests everything in a date range at once (no real pagination
+  // concept there), so this needs a higher ceiling than the generic 100-row list cap.
+  limit: z.coerce.number().int().min(1).max(500).default(20),
   dealId: z.string().uuid().optional(),
   contactId: z.string().uuid().optional(),
   companyId: z.string().uuid().optional(),
