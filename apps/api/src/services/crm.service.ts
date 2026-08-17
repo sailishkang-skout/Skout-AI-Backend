@@ -224,7 +224,8 @@ export class CrmService {
       .slice(0, 12);
 
     await saveHubSpotTokens(this.db, this.credentialsStore, parsed.workspaceId, tokens, portalId);
-    return `${this.frontendUrl.replace(/\/$/, "")}/settings/crm?hubspot=connected`;
+    // Next.js basePath is "/app" — omitting it 404'd this redirect.
+    return `${this.frontendUrl.replace(/\/$/, "")}/app/settings/crm?hubspot=connected`;
   }
 
   async disconnectHubSpot(workspaceId: string): Promise<void> {

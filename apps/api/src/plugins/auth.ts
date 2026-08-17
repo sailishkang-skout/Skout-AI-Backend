@@ -64,6 +64,15 @@ function isPublicRoute(url: string, method?: string): boolean {
     url.startsWith("/api/v1/unsubscribe/") ||
     url.startsWith("/api/v1/invite-auth/send-otp") ||
     url.startsWith("/api/v1/invite-auth/verify-otp") ||
+    // OAuth callbacks — Google/Microsoft redirect the browser here directly after consent, a
+    // top-level navigation that can never carry our Authorization header. These were never
+    // reachable without this: the global auth hook 401'd them with "Missing bearer token"
+    // before the handler below got a chance to run. Each handler independently verifies the
+    // signed `state` param (verifyOAuthState, same HMAC pattern as the already-public HubSpot
+    // callback above) — that's the real auth here, not this header.
+    url.startsWith("/api/v1/calendar/connect/google/callback") ||
+    url.startsWith("/api/v1/inboxes/connect/google/callback") ||
+    url.startsWith("/api/v1/inboxes/connect/microsoft/callback") ||
     // R20.2 — Twilio calls these directly; not signature-verified yet (see dependency doc).
     url.startsWith("/api/v1/calls/twiml/") ||
     url.startsWith("/api/v1/calls/status") ||

@@ -142,7 +142,8 @@ export async function handleGoogleCalendarCallback(
   const frontend = (config.FRONTEND_URL ?? config.CORS_ORIGIN[0] ?? "http://localhost:3000").replace(/\/$/, "");
   return {
     workspaceId,
-    redirectUrl: `${frontend}/settings/calendar?connected=google`,
+    // Next.js basePath is "/app" — omitting it 404'd this redirect.
+    redirectUrl: `${frontend}/app/settings/calendar?connected=google`,
   };
 }
 

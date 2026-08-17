@@ -260,7 +260,8 @@ export async function inboxRoutes(app: FastifyInstance) {
   app.get("/inboxes/connect/google/callback", async (request, reply) => {
     const { code, state, error } = request.query as { code?: string; state?: string; error?: string };
     const frontend = (app.config.FRONTEND_URL ?? app.config.CORS_ORIGIN[0] ?? "http://localhost:3000").replace(/\/$/, "");
-    const failUrl = `${frontend}/deliverability?connected=google_error`;
+    // Next.js basePath is "/app" — omitting it 404'd this redirect even on success.
+    const failUrl = `${frontend}/app/deliverability?connected=google_error`;
     if (error || !code || !state || !db) return reply.redirect(failUrl);
     try {
       const { redirectUrl } = await handleGoogleCallback(code, state, db, app.config);
@@ -287,7 +288,8 @@ export async function inboxRoutes(app: FastifyInstance) {
   app.get("/inboxes/connect/microsoft/callback", async (request, reply) => {
     const { code, state, error } = request.query as { code?: string; state?: string; error?: string };
     const frontend = (app.config.FRONTEND_URL ?? app.config.CORS_ORIGIN[0] ?? "http://localhost:3000").replace(/\/$/, "");
-    const failUrl = `${frontend}/deliverability?connected=microsoft_error`;
+    // Next.js basePath is "/app" — omitting it 404'd this redirect even on success.
+    const failUrl = `${frontend}/app/deliverability?connected=microsoft_error`;
     if (error || !code || !state || !db) return reply.redirect(failUrl);
     try {
       const { redirectUrl } = await handleMicrosoftCallback(code, state, db, app.config);

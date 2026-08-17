@@ -32,7 +32,9 @@ export async function calendarRoutes(app: FastifyInstance) {
   app.get("/calendar/connect/google/callback", async (request, reply) => {
     const { code, state, error } = request.query as { code?: string; state?: string; error?: string };
     const frontend = (app.config.FRONTEND_URL ?? app.config.CORS_ORIGIN[0] ?? "http://localhost:3000").replace(/\/$/, "");
-    const failUrl = `${frontend}/settings/calendar?connected=google_error`;
+    // The frontend is served under Next.js basePath "/app" — every route lives at
+    // <frontend>/app/... Omitting it here 404'd this redirect even on a successful connect.
+    const failUrl = `${frontend}/app/settings/calendar?connected=google_error`;
     if (error || !code || !state || !db) return reply.redirect(failUrl);
     try {
       const { redirectUrl } = await handleGoogleCalendarCallback(code, state, db, app.config);
