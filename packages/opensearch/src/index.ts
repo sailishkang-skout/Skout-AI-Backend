@@ -180,7 +180,9 @@ export async function ensureProspectsIndex(cfg: OpenSearchConfig): Promise<void>
           state: { type: "keyword" },
           city: { type: "text" },
           employeeCount: { type: "integer" },
-          employeeBucket: { type: "keyword" },
+          // `.keyword` subfield so TAM terms aggs work on both this mapping and
+          // dynamically mapped text fields (Bonsai default for unmapped strings).
+          employeeBucket: { type: "keyword", fields: { keyword: { type: "keyword", ignore_above: 256 } } },
           companyStage: { type: "keyword" },
           annualRevenue: { type: "long" },
           lastFundingRound: { type: "keyword" },
@@ -483,7 +485,9 @@ export async function aggregateProspects(cfg: OpenSearchConfig, filters: SearchF
     query,
     aggs: {
       industry: { terms: { field: "industry", size: MAX_BUCKETS, missing: "unknown" } },
-      size: { terms: { field: "employeeBucket", size: MAX_BUCKETS, missing: "unknown" } },
+      // Bonsai dynamic mapping stored employeeBucket as text + `.keyword`; aggregating
+      // on the text field 400s. `.keyword` works there and on indexes we create.
+      size: { terms: { field: "employeeBucket.keyword", size: MAX_BUCKETS, missing: "unknown" } },
       geo: { terms: { field: "country", size: MAX_BUCKETS, missing: "unknown" } },
     },
   };

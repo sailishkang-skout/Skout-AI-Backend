@@ -32,6 +32,11 @@ services:
       REDIS_URL: redis://redis:6379
       CLICKHOUSE_URL: http://skout:skout@clickhouse:8123/skout
       AI_SERVICE_URL: http://ai:8000
+      # .env's OPENSEARCH_URL (http://localhost:9200) is only correct for `pnpm dev` on the
+      # host — inside this container "localhost" is the container itself, not the opensearch
+      # service, so every OpenSearch call (search, TAM aggregation) failed with a connection
+      # error. `opensearch` is the compose network hostname for that service.
+      OPENSEARCH_URL: http://opensearch:9200
       CORS_ORIGIN: http://localhost:3000,http://localhost:3003,http://127.0.0.1:3003,http://127.0.0.1:3000
     depends_on:
       postgres:
@@ -41,6 +46,8 @@ services:
       clickhouse:
         condition: service_healthy
       ai:
+        condition: service_healthy
+      opensearch:
         condition: service_healthy
     healthcheck:
       test:

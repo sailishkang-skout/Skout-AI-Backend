@@ -15,7 +15,7 @@ import { buildContactsService } from "../services/contacts.service.js";
 import { buildDealsService } from "../services/deals.service.js";
 import { buildPipelinesService } from "../services/pipelines.service.js";
 import { isMeetingBotConfigured, scheduleMeetingBot } from "../services/meeting-bot.service.js";
-import { createCalendarEvent } from "../services/google-calendar.service.js";
+import { createCalendarEvent, listCalendarEvents } from "../services/google-calendar.service.js";
 import { extractFieldsFromTranscript, isTranscriptExtractionConfigured } from "../services/transcript-extraction.service.js";
 
 function timingSafeEqualStrings(a: string, b: string): boolean {
@@ -67,6 +67,43 @@ export async function meetingsRoutes(app: FastifyInstance) {
     const query = meetingListQuerySchema.parse(request.query);
     const result = await svc.list(workspaceId, query);
     return { ...result, workspaceId };
+  });
+
+  // GET /meetings/google-events?from=&to= — everything on the current user's connected Google
+  // Calendar in range, for the calendar view to overlay alongside native `meetings` rows. This
+  // is what makes events created directly in Google Calendar (not through Skout) show up too.
+  // Read-only display merge, not a sync: nothing here is written back to `meetings`.
+  app.get("/meetings/google-events", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    if (!app.db) throw new HttpError("database_unavailable", 503);
+    if (!request.userId) throw new HttpError("unauthenticated", 401);
+
+    const { from, to } = z.object({ from: z.string().datetime(), to: z.string().datetime() }).parse(request.query);
+
+    const [connection] = await app.db
+      .select()
+      .from(schema.calendarConnections)
+      .where(
+        and(
+          eq(schema.calendarConnections.workspaceId, workspaceId),
+          eq(schema.calendarConnections.userId, request.userId)
+        )
+      )
+      .limit(1);
+    // Not connected isn't an error for this endpoint — the calendar just shows Skout-native
+    // meetings only, same as it did before this existed.
+    if (!connection) return reply.send({ data: [], connected: false });
+
+    try {
+      const accessToken = await resolveGoogleCalendarAccessToken(connection, app.db, app.config);
+      const events = await listCalendarEvents(accessToken, { timeMin: new Date(from), timeMax: new Date(to) });
+      return reply.send({ data: events, connected: true });
+    } catch (err) {
+      // Best-effort overlay — a transient Google API hiccup must not break the whole calendar
+      // page, which still has its own native meetings to fall back to.
+      app.log.warn({ err }, "Failed to fetch Google Calendar events");
+      return reply.send({ data: [], connected: true, error: "google_fetch_failed" });
+    }
   });
 
   app.post("/meetings", async (request, reply) => {
@@ -188,6 +225,10 @@ export async function meetingsRoutes(app: FastifyInstance) {
       scheduledAt: new Date(meeting.scheduledAt),
       durationMinutes: meeting.durationMinutes,
       attendees: invitees.map((i) => ({ email: i.email, displayName: i.name })),
+      // Patch the existing event in place when this meeting was already scheduled on Google —
+      // otherwise every re-save (e.g. adding an invitee) minted a duplicate event with a
+      // different Meet link instead of updating attendees on the one everyone already has.
+      existingEventId: meeting.googleEventId ?? undefined,
     });
 
     const updated = await svc.setGoogleEvent(workspaceId, id, {
