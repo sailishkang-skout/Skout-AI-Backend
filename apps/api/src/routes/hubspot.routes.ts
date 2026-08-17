@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { createCrmService } from "../services/crm.service.js";
 import { HttpError, errorResponse } from "../utils/http.js";
 
-export async function crmRoutes(app: FastifyInstance) {
+export async function hubspotRoutes(app: FastifyInstance) {
   const svc = () => createCrmService(app.db, app.config);
 
   app.get("/crm/connections", async (request, reply) => {
