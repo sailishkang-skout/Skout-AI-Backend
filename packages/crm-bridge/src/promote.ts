@@ -1,31 +1,17 @@
 import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
+import { upsertCompanyBySourceProspect, upsertContactBySourceProspect, type ProspectSnapshotPreview } from "./upsert.js";
 
 const {
   promotionCandidates,
   prospectActivations,
   workspaces,
-  contacts,
-  companies,
   deals,
   pipelines,
   pipelineStages,
   auditLogs,
 } = schema;
-
-interface ProspectSnapshotPreview {
-  fullName?: string;
-  companyName?: string;
-  email?: string;
-  phone?: string;
-  title?: string;
-  linkedinUrl?: string;
-  companyDomain?: string;
-  industry?: string;
-  employeeCount?: number;
-  location?: string;
-}
 
 export interface PendingCandidateDto {
   id: string;
@@ -108,13 +94,6 @@ export async function listPendingCandidates(db: Db, workspaceId: string): Promis
   });
 }
 
-function splitName(fullName: string | undefined): { firstName: string; lastName: string | null } {
-  const trimmed = (fullName ?? "").trim();
-  if (!trimmed) return { firstName: "Unknown", lastName: null };
-  const [firstName, ...rest] = trimmed.split(/\s+/);
-  return { firstName, lastName: rest.length > 0 ? rest.join(" ") : null };
-}
-
 export interface PromoteResult {
   companyId: string;
   contactId: string;
@@ -153,31 +132,13 @@ export async function promoteProspectToDeal(
       .limit(1);
     const snapshot = (activation?.snapshot ?? {}) as ProspectSnapshotPreview;
 
-    const [existingCompany] = await tx
-      .select({ id: companies.id })
-      .from(companies)
-      .where(
-        and(eq(companies.workspaceId, workspaceId), eq(companies.sourceProspectCompanyId, candidate.prospectId))
-      )
-      .limit(1);
-
-    let companyId: string;
-    if (existingCompany) {
-      companyId = existingCompany.id;
-    } else {
-      const [company] = await tx
-        .insert(companies)
-        .values({
-          workspaceId,
-          name: snapshot.companyName ?? snapshot.companyDomain ?? "Unknown Company",
-          domain: snapshot.companyDomain ?? null,
-          industry: snapshot.industry ?? null,
-          employeeCount: snapshot.employeeCount ?? null,
-          location: snapshot.location ?? null,
-          sourceProspectCompanyId: candidate.prospectId,
-        })
-        .returning();
-      companyId = company.id;
+    const { companyId, created: companyCreated, row: companyRow } = await upsertCompanyBySourceProspect(
+      tx,
+      workspaceId,
+      candidate.prospectId,
+      snapshot
+    );
+    if (companyCreated) {
       await tx.insert(auditLogs).values({
         workspaceId,
         actorId: actorId ?? null,
@@ -185,36 +146,18 @@ export async function promoteProspectToDeal(
         entityType: "company",
         entityId: companyId,
         beforeState: null,
-        afterState: company,
+        afterState: companyRow,
       });
     }
 
-    const [existingContact] = await tx
-      .select({ id: contacts.id })
-      .from(contacts)
-      .where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.sourceProspectId, candidate.prospectId)))
-      .limit(1);
-
-    let contactId: string;
-    if (existingContact) {
-      contactId = existingContact.id;
-    } else {
-      const { firstName, lastName } = splitName(snapshot.fullName);
-      const [contact] = await tx
-        .insert(contacts)
-        .values({
-          workspaceId,
-          companyId,
-          firstName,
-          lastName,
-          email: snapshot.email ?? null,
-          phone: snapshot.phone ?? null,
-          title: snapshot.title ?? null,
-          linkedinUrl: snapshot.linkedinUrl ?? null,
-          sourceProspectId: candidate.prospectId,
-        })
-        .returning();
-      contactId = contact.id;
+    const { contactId, created: contactCreated, row: contactRow } = await upsertContactBySourceProspect(
+      tx,
+      workspaceId,
+      candidate.prospectId,
+      companyId,
+      snapshot
+    );
+    if (contactCreated) {
       await tx.insert(auditLogs).values({
         workspaceId,
         actorId: actorId ?? null,
@@ -222,7 +165,7 @@ export async function promoteProspectToDeal(
         entityType: "contact",
         entityId: contactId,
         beforeState: null,
-        afterState: contact,
+        afterState: contactRow,
       });
     }
 
