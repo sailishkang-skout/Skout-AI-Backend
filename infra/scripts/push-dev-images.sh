@@ -79,6 +79,19 @@ if [[ -f "$FRONTEND_DIR/package.json" ]]; then
     WEB_BUILD_ARGS+=(--build-arg "CLERK_SECRET_KEY=${CLERK_SECRET_KEY}")
   fi
 
+  # Pre-login access gate (src/middleware.ts). Empty/unset disables the gate.
+  if [[ -z "${GATE_TOKEN:-}" ]]; then
+    for candidate in "$FRONTEND_DIR/.env.local" "$FRONTEND_DIR/.env.dev"; do
+      if [[ -f "$candidate" ]] && grep -q '^GATE_TOKEN=' "$candidate"; then
+        GATE_TOKEN="$(grep '^GATE_TOKEN=' "$candidate" | tail -n1 | cut -d= -f2-)"
+        break
+      fi
+    done
+  fi
+  if [[ -n "${GATE_TOKEN:-}" ]]; then
+    WEB_BUILD_ARGS+=(--build-arg "GATE_TOKEN=${GATE_TOKEN}")
+  fi
+
   docker build "${WEB_BUILD_ARGS[@]}" -f "$FRONTEND_DIR/Dockerfile" \
     -t "${REGISTRY}/skout-dev-web:${TAG}" "$FRONTEND_DIR"
   docker push "${REGISTRY}/skout-dev-web:${TAG}"
