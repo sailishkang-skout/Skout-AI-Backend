@@ -11,6 +11,15 @@
       "port": 3000
     },
     {
+      "name": "skout-frontend-manual",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd '/Users/novostack/Desktop/Skout AI/Skout Ai Frontend' && pnpm dev"
+      ],
+      "port": 3000
+    },
+    {
       "name": "skout-api",
       "runtimeExecutable": "bash",
       "runtimeArgs": [
