@@ -169,7 +169,7 @@ export class PipelinesService {
 
     const [row] = await this.db
       .update(pipelines)
-      .set({ deletedAt: new Date(), updatedAt: new Date() })
+      .set({ deletedAt: new Date(), isDefault: false, updatedAt: new Date() })
       .where(and(eq(pipelines.id, id), eq(pipelines.workspaceId, workspaceId)))
       .returning();
 
