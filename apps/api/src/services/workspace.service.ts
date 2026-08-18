@@ -54,6 +54,16 @@ export function createWorkspaceService(db: Db) {
       return row ?? null;
     },
 
+    /** Score threshold (0-100) above which a scored prospect is flagged as a promotion candidate. */
+    async setDealPromotionThreshold(workspaceId: string, threshold: number) {
+      const [row] = await db
+        .update(schema.workspaces)
+        .set({ dealPromotionThreshold: threshold, updatedAt: new Date() })
+        .where(eq(schema.workspaces.id, workspaceId))
+        .returning({ id: schema.workspaces.id, dealPromotionThreshold: schema.workspaces.dealPromotionThreshold });
+      return row ?? null;
+    },
+
     async renameWorkspace(workspaceId: string, name: string) {
       const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
       const [row] = await db
