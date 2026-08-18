@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, gt, gte, isNull, lte } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, isNull, lte } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { MeetingCreateInput, MeetingInvitee, MeetingUpdateInput } from "@skout/shared";
@@ -11,6 +11,13 @@ import type { Env } from "../config/env.js";
 
 const log = serviceLog("meetings");
 const { meetings, meetingAttendees, workspaces } = schema;
+
+export interface MeetingAttendeeDto {
+  email: string;
+  name: string | null;
+  rsvpStatus: string;
+  respondedAt: string | null;
+}
 
 export interface MeetingDto {
   id: string;
@@ -34,6 +41,8 @@ export interface MeetingDto {
   transcriptUrl: string | null;
   transcript: string | null;
   invitees: MeetingInvitee[];
+  /** Per-invitee RSVP status tracked via the .ics reply webhook — isolated from `invitees` (the create-time input/Google-sync list). Empty when this meeting has no ICS attendees. */
+  attendees: MeetingAttendeeDto[];
   googleEventId: string | null;
   icsUid: string | null;
   icsSequence: number;
@@ -41,7 +50,7 @@ export interface MeetingDto {
   updatedAt: string;
 }
 
-function toDto(row: typeof meetings.$inferSelect): MeetingDto {
+function toDto(row: typeof meetings.$inferSelect, attendees: MeetingAttendeeDto[] = []): MeetingDto {
   return {
     id: row.id,
     workspaceId: row.workspaceId,
@@ -63,6 +72,7 @@ function toDto(row: typeof meetings.$inferSelect): MeetingDto {
     transcriptUrl: row.transcriptUrl,
     transcript: row.transcript,
     invitees: (row.invitees ?? []) as MeetingInvitee[],
+    attendees,
     googleEventId: row.googleEventId,
     icsUid: row.icsUid,
     icsSequence: row.icsSequence,
@@ -122,6 +132,38 @@ export class MeetingsService {
     }
   }
 
+  /** Batch-fetches meeting_attendees for a set of meetings and groups them by meetingId, merging
+   *  in the invitee's display name from that meeting's `invitees` JSON (the attendees table only
+   *  stores email + RSVP state). */
+  private async attendeesFor(rows: (typeof meetings.$inferSelect)[]): Promise<Map<string, MeetingAttendeeDto[]>> {
+    const ids = rows.map((r) => r.id);
+    const byMeeting = new Map<string, MeetingAttendeeDto[]>();
+    if (ids.length === 0) return byMeeting;
+
+    const attendeeRows = await this.db
+      .select()
+      .from(meetingAttendees)
+      .where(inArray(meetingAttendees.meetingId, ids));
+    if (attendeeRows.length === 0) return byMeeting;
+
+    const namesByMeeting = new Map<string, Map<string, string | undefined>>(
+      rows.map((r) => [r.id, new Map(((r.invitees ?? []) as MeetingInvitee[]).map((i) => [i.email.toLowerCase(), i.name]))])
+    );
+
+    for (const a of attendeeRows) {
+      const dto: MeetingAttendeeDto = {
+        email: a.email,
+        name: namesByMeeting.get(a.meetingId)?.get(a.email.toLowerCase()) ?? null,
+        rsvpStatus: a.rsvpStatus,
+        respondedAt: a.respondedAt ? a.respondedAt.toISOString() : null,
+      };
+      const list = byMeeting.get(a.meetingId);
+      if (list) list.push(dto);
+      else byMeeting.set(a.meetingId, [dto]);
+    }
+    return byMeeting;
+  }
+
   async list(
     workspaceId: string,
     options: {
@@ -154,7 +196,8 @@ export class MeetingsService {
       .from(meetings)
       .where(and(...conditions));
 
-    return { data: rows.map(toDto), total: all.length };
+    const attendeesByMeeting = await this.attendeesFor(rows);
+    return { data: rows.map((r) => toDto(r, attendeesByMeeting.get(r.id) ?? [])), total: all.length };
   }
 
   async getById(workspaceId: string, id: string): Promise<MeetingDto | null> {
@@ -163,7 +206,9 @@ export class MeetingsService {
       .from(meetings)
       .where(and(eq(meetings.id, id), eq(meetings.workspaceId, workspaceId), isNull(meetings.deletedAt)))
       .limit(1);
-    return row ? toDto(row) : null;
+    if (!row) return null;
+    const attendeesByMeeting = await this.attendeesFor([row]);
+    return toDto(row, attendeesByMeeting.get(row.id) ?? []);
   }
 
   /** R16.2 — resolves the effective auto-join flag: an explicit per-meeting value always wins;
@@ -220,7 +265,14 @@ export class MeetingsService {
           .onConflictDoNothing({ target: [meetingAttendees.meetingId, meetingAttendees.email] });
       }
 
-      return toDto(row);
+      const namesByEmail = new Map((input.invitees ?? []).map((i) => [i.email.toLowerCase(), i.name]));
+      const attendees: MeetingAttendeeDto[] = attendeeEmails.map((email) => ({
+        email,
+        name: namesByEmail.get(email.toLowerCase()) ?? null,
+        rsvpStatus: "needs-action",
+        respondedAt: null,
+      }));
+      return toDto(row, attendees);
     });
 
     if (attendeeEmails.length) {

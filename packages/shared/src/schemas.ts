@@ -722,6 +722,13 @@ export const meetingInviteeSchema = z.object({
   name: z.string().optional(),
 });
 
+export const meetingAttendeeSchema = z.object({
+  email: z.string().email(),
+  name: z.string().nullable(),
+  rsvpStatus: z.enum(["needs-action", "accepted", "declined", "tentative"]),
+  respondedAt: z.string().datetime().nullable(),
+});
+
 export const meetingListQuerySchema = paginationQuerySchema.extend({
   // Calendar month view requests everything in a date range at once (no real pagination
   // concept there), so this needs a higher ceiling than the generic 100-row list cap.
@@ -794,6 +801,8 @@ export const meetingResponseSchema = z.object({
   summary: z.string().nullable(),
   outcome: z.string().nullable(),
   invitees: z.array(meetingInviteeSchema),
+  /** RSVP tracking for the .ics invite channel — see meetingAttendeeSchema. */
+  attendees: z.array(meetingAttendeeSchema),
   googleEventId: z.string().nullable(),
   icsUid: z.string().nullable(),
   icsSequence: z.number(),
@@ -820,6 +829,7 @@ export type MeetingType = (typeof MEETING_TYPES)[number];
 export type MeetingListQuery = z.infer<typeof meetingListQuerySchema>;
 export type MeetingCreateInput = z.infer<typeof meetingCreateSchema>;
 export type MeetingInvitee = z.infer<typeof meetingInviteeSchema>;
+export type MeetingAttendee = z.infer<typeof meetingAttendeeSchema>;
 export type MeetingUpdateInput = z.infer<typeof meetingUpdateSchema>;
 export type CompanyListQuery = z.infer<typeof companyListQuerySchema>;
 export type ContactListQuery = z.infer<typeof contactListQuerySchema>;

@@ -26,6 +26,7 @@ export function createWorkspaceService(db: Db) {
           balance: schema.creditBalances.balance,
           slackWebhookUrl: schema.workspaces.slackWebhookUrl,
           meetingBotAutoJoinDefault: schema.workspaces.meetingBotAutoJoinDefault,
+          dealPromotionThreshold: schema.workspaces.dealPromotionThreshold,
         })
         .from(schema.workspaces)
         .leftJoin(schema.creditBalances, eq(schema.creditBalances.workspaceId, schema.workspaces.id))
