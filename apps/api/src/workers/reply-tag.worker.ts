@@ -63,6 +63,7 @@ export async function startReplyTagWorker(config: Env): Promise<() => Promise<vo
           openRouterApiKey: config.OPENROUTER_API_KEY,
           confidence,
           negativeSubtype,
+          reason,
         });
       } catch (err) {
         log.warn("reply-tag: tag actions failed", { threadId, tag, err });

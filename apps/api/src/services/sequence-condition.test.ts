@@ -49,4 +49,19 @@ describe("evaluateConditionExpression", () => {
   it("expressionFromSingle wraps a leaf", () => {
     expect(expressionFromSingle("email_replied")).toEqual({ type: "email_replied" });
   });
+
+  it("parses and threads value through the engagement-count leaf types", async () => {
+    const expr = parseConditionExpression({ type: "email_opened_count_gte", value: 5 });
+    expect(expr).toEqual({ type: "email_opened_count_gte", value: 5 });
+    const result = await evaluateConditionExpression(expr!, async (type, value) => {
+      expect(type).toBe("email_opened_count_gte");
+      expect(value).toBe(5);
+      return true;
+    });
+    expect(result.passed).toBe(true);
+  });
+
+  it("rejects an unknown leaf type", () => {
+    expect(parseConditionExpression({ type: "not_a_real_condition" })).toBeNull();
+  });
 });

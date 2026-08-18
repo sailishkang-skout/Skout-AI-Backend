@@ -155,6 +155,69 @@ export async function tagReply(
   return { tag, confidence, reason, negativeSubtype };
 }
 
+export interface OooReturnDateResult {
+  /** ISO 8601 date (YYYY-MM-DD), or null when no return date is stated in the auto-reply. */
+  returnDate: string | null;
+}
+
+/**
+ * Condition-engine spec §12's optional `ooo_until` — extract a stated return date from an
+ * out-of-office auto-reply body ("back on Monday the 14th", "returning August 3rd", etc).
+ * Returns null (not a low-confidence guess) whenever the model can't find an explicit date, so
+ * the caller can safely fall back to the fixed default wait window.
+ */
+export async function extractOooReturnDate(
+  bodyText: string,
+  apiKey: string | undefined,
+  referenceDate: Date
+): Promise<OooReturnDateResult | null> {
+  if (!apiKey) return null;
+
+  const client = new OpenAI({
+    apiKey,
+    baseURL: "https://openrouter.ai/api/v1",
+    defaultHeaders: { "HTTP-Referer": "https://skoutai.io", "X-Title": "Skout AI" },
+  });
+
+  let result: OpenAI.Chat.ChatCompletion;
+  try {
+    result = await client.chat.completions.create({
+      model: process.env.AI_MODEL ?? "openai/gpt-4o-mini",
+      max_tokens: 60,
+      messages: [
+        {
+          role: "system",
+          content:
+            `Today's date is ${referenceDate.toISOString().slice(0, 10)}. This is an out-of-office ` +
+            "auto-reply email. Does it state a specific date the person returns to the office? " +
+            'Respond with ONLY strict JSON: {"return_date": "YYYY-MM-DD" | null} — ' +
+            "return_date is the resolved absolute date (resolve relative phrases like \"back Monday\" " +
+            "or \"returning next week\" against today's date above), or null if no date is stated at all.",
+        },
+        { role: "user", content: bodyText.slice(0, 2000) },
+      ],
+    });
+  } catch (err) {
+    log.warn("reply-tagger: OOO return-date extraction call failed", { err });
+    return null;
+  }
+
+  const raw = result.choices[0]?.message?.content;
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as { return_date?: unknown };
+    const returnDate =
+      typeof parsed.return_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(parsed.return_date)
+        ? parsed.return_date
+        : null;
+    return { returnDate };
+  } catch {
+    log.warn("reply-tagger: unexpected non-JSON OOO return-date response", { raw });
+    return null;
+  }
+}
+
 export interface BudgetFreezeDetection {
   detected: boolean;
   /** Short quote from the reply that triggered the detection — used as the plain-language reason. */

@@ -8,6 +8,11 @@ export const CONDITION_LEAF_TYPES = [
   "linkedin_invite_declined",
   "email_opened",
   "email_clicked",
+  /** Engagement-intent thresholds ("N opens without a reply") — evaluated against `value`
+   * (defaults to 3 when omitted). Distinct from the plain email_opened/email_clicked leaves
+   * above, which only check "at least once ever". */
+  "email_opened_count_gte",
+  "email_clicked_count_gte",
   "email_replied",
   "call_connected",
   "icp_score_gte",

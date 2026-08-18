@@ -1,5 +1,5 @@
 import { Worker } from "bullmq";
-import { and, asc, desc, eq, gte, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { createDb } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
@@ -380,6 +380,29 @@ async function evaluateCondition(
     return hasPositiveReplyAtAccount(db, workspaceId, companyDomain, prospectId);
   }
   return false;
+}
+
+const DEFAULT_ENGAGEMENT_COUNT_THRESHOLD = 3;
+
+/** Engagement-intent threshold leaves ("N opens without a reply") — counts every tracking
+ * event of this type for the enrollment, not just "at least once". */
+export async function countTrackingEvents(
+  db: DbClient,
+  workspaceId: string,
+  enrollmentId: string,
+  eventType: "open" | "click"
+): Promise<number> {
+  const [row] = await db
+    .select({ n: count() })
+    .from(sequenceTrackingEvents)
+    .where(
+      and(
+        eq(sequenceTrackingEvents.workspaceId, workspaceId),
+        eq(sequenceTrackingEvents.enrollmentId, enrollmentId),
+        eq(sequenceTrackingEvents.eventType, eventType)
+      )
+    );
+  return row?.n ?? 0;
 }
 
 /**
@@ -1279,6 +1302,11 @@ async function advanceEnrollment(
       if (type === "has_linkedin") {
         const prospect = await resolveProspectFields(config, db, workspaceId, prospectId);
         return Boolean((prospect as { linkedinUrl?: string | null } | null)?.linkedinUrl);
+      }
+      if (type === "email_opened_count_gte" || type === "email_clicked_count_gte") {
+        const eventType = type === "email_opened_count_gte" ? "open" : "click";
+        const n = await countTrackingEvents(db, workspaceId, enrollmentId, eventType);
+        return n >= (value ?? DEFAULT_ENGAGEMENT_COUNT_THRESHOLD);
       }
       return evaluateCondition(db, config, workspaceId, prospectId, enrollmentId, type);
     };

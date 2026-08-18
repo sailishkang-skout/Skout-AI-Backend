@@ -1,9 +1,17 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { describe, expect, it, vi, beforeEach } from "vitest";
+
+vi.mock("./reply-tagger.service.js", () => ({
+  extractOooReturnDate: vi.fn(),
+}));
+
+import { extractOooReturnDate } from "./reply-tagger.service.js";
 import {
+  classifyBounceType,
   classifyInboundMessage,
   extractParentMessageIds,
   ingestInboundMessage,
+  refineOooResumeDate,
   type InboundMessagePayload,
 } from "./inbound-reply.service.js";
 
@@ -428,6 +436,109 @@ describe("ingestInboundMessage — bounce", () => {
     await ingestInboundMessage(db as any, "ws-1", "inbox-1", BOUNCE_PAYLOAD);
     // 3 inserts: inboxThreads (new) + inboxMessages + suppression
     expect(db.insert).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("classifyBounceType", () => {
+  it("classifies an enhanced status code 5.x.x as hard", () => {
+    expect(classifyBounceType({ subject: "Undeliverable", bodyText: "550 5.1.1 user unknown" })).toBe("hard");
+  });
+
+  it("classifies 'user unknown' keyword as hard even without a status code", () => {
+    expect(classifyBounceType({ subject: "Delivery failure", bodyText: "The recipient no such user exists" })).toBe("hard");
+  });
+
+  it("classifies an enhanced status code 4.x.x as soft", () => {
+    expect(classifyBounceType({ subject: "Delivery delayed", bodyText: "450 4.2.2 mailbox full" })).toBe("soft");
+  });
+
+  it("classifies 'try again later' keyword as soft", () => {
+    expect(classifyBounceType({ subject: "Temporary failure", bodyText: "please try again later" })).toBe("soft");
+  });
+
+  it("defaults to unknown when neither pattern matches", () => {
+    expect(classifyBounceType({ subject: "Delivery failure notice", bodyText: undefined })).toBe("unknown");
+  });
+});
+
+describe("ingestInboundMessage — soft bounce retry chain", () => {
+  const SOFT_BOUNCE_PAYLOAD: InboundMessagePayload = {
+    ...BASE_PAYLOAD,
+    fromAddress: "MAILER-DAEMON@mx.example.com",
+    subject: "Mail delivery failed",
+    bodyText: "450 4.2.2 mailbox full, try again later",
+  };
+
+  it("defers the step for retry instead of suppressing, under the retry cap", async () => {
+    const parentMsg = { threadId: "t-1", enrollmentId: "enroll-1", prospectId: "p-1" };
+    const scheduledStep = { enrollmentStepId: "estep-1", attemptCount: 0, retryMaxAttempts: 3 };
+    const { db, updateFn } = makeDb({ selectPages: [[], [parentMsg], [scheduledStep]] });
+    await ingestInboundMessage(db as any, "ws-1", "inbox-1", SOFT_BOUNCE_PAYLOAD);
+    // thread update + step-defer update + bounceCount update = 3; no enrollment/steps-skip update
+    expect(updateFn).toHaveBeenCalledTimes(3);
+    // only inboxMessages insert — no suppression while still retrying
+    expect(db.insert).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to suppression once the retry cap is exhausted", async () => {
+    const parentMsg = { threadId: "t-1", enrollmentId: "enroll-1", prospectId: "p-1" };
+    const scheduledStep = { enrollmentStepId: "estep-1", attemptCount: 3, retryMaxAttempts: 3 };
+    const { db, updateFn } = makeDb({ selectPages: [[], [parentMsg], [scheduledStep]] });
+    await ingestInboundMessage(db as any, "ws-1", "inbox-1", SOFT_BOUNCE_PAYLOAD);
+    // thread + enrollment + steps + bounceCount = 4, same as a hard bounce
+    expect(updateFn).toHaveBeenCalledTimes(4);
+    expect(db.insert).toHaveBeenCalledTimes(2); // inboxMessages + suppression
+  });
+
+  it("falls back to suppression when no scheduled step is found to defer", async () => {
+    const parentMsg = { threadId: "t-1", enrollmentId: "enroll-1", prospectId: "p-1" };
+    const { db, updateFn } = makeDb({ selectPages: [[], [parentMsg], []] });
+    await ingestInboundMessage(db as any, "ws-1", "inbox-1", SOFT_BOUNCE_PAYLOAD);
+    expect(updateFn).toHaveBeenCalledTimes(4);
+    expect(db.insert).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("refineOooResumeDate", () => {
+  const NOW = new Date("2026-08-18T10:00:00Z");
+
+  beforeEach(() => {
+    vi.mocked(extractOooReturnDate).mockReset();
+  });
+
+  it("does nothing when no return date is parsed", async () => {
+    vi.mocked(extractOooReturnDate).mockResolvedValue({ returnDate: null });
+    const { db, updateFn } = makeDb();
+    await refineOooResumeDate(db as any, "enroll-1", "Back soon!", NOW, "key-1");
+    expect(updateFn).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the AI call itself returns null", async () => {
+    vi.mocked(extractOooReturnDate).mockResolvedValue(null);
+    const { db, updateFn } = makeDb();
+    await refineOooResumeDate(db as any, "enroll-1", "Back soon!", NOW, "key-1");
+    expect(updateFn).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the parsed date is in the past", async () => {
+    vi.mocked(extractOooReturnDate).mockResolvedValue({ returnDate: "2026-08-01" });
+    const { db, updateFn } = makeDb();
+    await refineOooResumeDate(db as any, "enroll-1", "Back Aug 1st", NOW, "key-1");
+    expect(updateFn).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the parsed date is further out than the sanity cap", async () => {
+    vi.mocked(extractOooReturnDate).mockResolvedValue({ returnDate: "2027-06-01" });
+    const { db, updateFn } = makeDb();
+    await refineOooResumeDate(db as any, "enroll-1", "Back next year", NOW, "key-1");
+    expect(updateFn).not.toHaveBeenCalled();
+  });
+
+  it("updates scheduledAt when a valid near-future date is parsed", async () => {
+    vi.mocked(extractOooReturnDate).mockResolvedValue({ returnDate: "2026-08-25" });
+    const { db, updateFn } = makeDb();
+    await refineOooResumeDate(db as any, "enroll-1", "Back Monday the 25th", NOW, "key-1");
+    expect(updateFn).toHaveBeenCalledTimes(1);
   });
 });
 

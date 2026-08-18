@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne, or, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
@@ -10,11 +10,110 @@ import {
   type ReplyTag,
 } from "./reply-tagger.service.js";
 import { recordSignal } from "./signal.service.js";
-import { addSuppression } from "./suppression.service.js";
+import { addSuppression, isSuppressed } from "./suppression.service.js";
 import { createNotification } from "./notifications.service.js";
 
 const log = createLogger("reply-tag-actions");
-const { inboxThreads, prospectActivations } = schema;
+const { inboxThreads, prospectActivations, tasks, workspaceMembers } = schema;
+
+/**
+ * Condition-engine spec's WRONG_PERSON handling: the base "stop the sequence for this contact"
+ * already happens unconditionally for any human reply (see inbound-reply.service.ts) — this adds
+ * the richer escalation the spec also wants: find another contact at the same account and hand
+ * a human a task to try them instead, rather than just going quiet on the whole account.
+ */
+async function escalateWrongPerson(
+  db: Db,
+  config: Env,
+  workspaceId: string,
+  threadId: string,
+  prospectId: string
+): Promise<void> {
+  const [current] = await db
+    .select({
+      companyDomain: sql<string | null>`${prospectActivations.snapshot} ->> 'companyDomain'`,
+    })
+    .from(prospectActivations)
+    .where(and(eq(prospectActivations.workspaceId, workspaceId), eq(prospectActivations.prospectId, prospectId)))
+    .limit(1);
+  const companyDomain = current?.companyDomain;
+  if (!companyDomain) return;
+
+  const candidates = await db
+    .select({
+      prospectId: prospectActivations.prospectId,
+      email: sql<string | null>`${prospectActivations.snapshot} ->> 'email'`,
+      fullName: sql<string | null>`${prospectActivations.snapshot} ->> 'fullName'`,
+    })
+    .from(prospectActivations)
+    .where(
+      and(
+        eq(prospectActivations.workspaceId, workspaceId),
+        ne(prospectActivations.prospectId, prospectId),
+        sql`${prospectActivations.snapshot} ->> 'companyDomain' = ${companyDomain}`
+      )
+    )
+    .limit(10);
+
+  let alternate: { prospectId: string; email: string | null; fullName: string | null } | undefined;
+  for (const candidate of candidates) {
+    if (!candidate.email) continue;
+    if (await isSuppressed(db, workspaceId, candidate.email)) continue;
+    alternate = candidate;
+    break;
+  }
+
+  if (!alternate) {
+    log.info("reply-tag-actions: wrong_person reply but no alternate contact found at account", {
+      workspaceId,
+      threadId,
+      companyDomain,
+    });
+    return;
+  }
+
+  const label = alternate.fullName || alternate.email || alternate.prospectId;
+  await db.insert(tasks).values({
+    workspaceId,
+    title: `Wrong person reached — try ${label} at this account instead`,
+    priority: "medium",
+    status: "open",
+    type: "follow-up",
+    relatedEntityType: "wrong_person_escalation",
+    relatedEntityId: null,
+    prospectId: alternate.prospectId,
+    dueDate: new Date(),
+  });
+
+  const owners = await db
+    .select({ userId: workspaceMembers.userId })
+    .from(workspaceMembers)
+    .where(
+      and(eq(workspaceMembers.workspaceId, workspaceId), or(eq(workspaceMembers.role, "owner"), eq(workspaceMembers.role, "admin")))
+    );
+
+  for (const { userId } of owners) {
+    try {
+      await createNotification(db, config, {
+        workspaceId,
+        userId,
+        type: "reminder",
+        title: "Wrong person reply — alternate contact found",
+        body: `A reply said we reached the wrong person at this account. Found another contact — ${label} — and created a follow-up task to try them instead.`,
+        entityType: "inbox_thread",
+        entityId: threadId,
+      });
+    } catch (err) {
+      log.warn("reply-tag-actions: failed to notify owner of wrong_person escalation", { err, workspaceId, userId, threadId });
+    }
+  }
+
+  log.info("reply-tag-actions: wrong_person escalated to alternate contact", {
+    workspaceId,
+    threadId,
+    alternateProspectId: alternate.prospectId,
+  });
+}
 
 async function suppressThreadSender(db: Db, workspaceId: string, prospectId: string | null, reason: string): Promise<void> {
   if (!prospectId) return;
@@ -38,6 +137,9 @@ export interface ApplyReplyTagActionsOptions {
    * condition-engine spec §14/§41. Omit (or 1) to always auto-apply, e.g. for a human-set tag. */
   confidence?: number;
   negativeSubtype?: NegativeSubtype;
+  /** The AI's short justification for the tag — persisted onto the thread when routed to
+   * manual review, so the resolution UI can show a human why the model decided what it did. */
+  reason?: string;
 }
 
 /**
@@ -55,7 +157,7 @@ export async function applyReplyTagActions(
   tag: ReplyTag,
   options: ApplyReplyTagActionsOptions = {}
 ): Promise<void> {
-  const { bodyText, openRouterApiKey, negativeSubtype } = options;
+  const { bodyText, openRouterApiKey, negativeSubtype, reason } = options;
   const confidence = options.confidence ?? 1;
 
   const [thread] = await db
@@ -132,6 +234,24 @@ export async function applyReplyTagActions(
       tag,
       confidence,
     });
+    // Persist the suggestion so a manual-review resolution UI can list it and let a human
+    // approve (apply the branch) or dismiss it, instead of it only ever surfacing as a
+    // notification that's easy to lose track of.
+    try {
+      await db
+        .update(inboxThreads)
+        .set({
+          needsReview: true,
+          suggestedTag: tag,
+          suggestedNegativeSubtype: negativeSubtype ?? null,
+          suggestedConfidence: confidence,
+          suggestedReason: reason ?? null,
+          updatedAt: now,
+        })
+        .where(eq(inboxThreads.id, threadId));
+    } catch (err) {
+      log.warn("reply-tag-actions: failed to persist manual-review suggestion", { threadId, err });
+    }
     try {
       await createNotification(db, config, {
         workspaceId,
@@ -189,5 +309,16 @@ export async function applyReplyTagActions(
   // not just stop the current sequence — a plain "not interested" only stops this sequence.
   if (tag === "negative" && negativeSubtype === "do_not_contact") {
     await suppressThreadSender(db, workspaceId, thread.prospectId, "do_not_contact");
+  }
+
+  // WRONG_PERSON: the sequence is already stopped for this contact (any human reply pauses the
+  // enrollment unconditionally — see inbound-reply.service.ts). This adds the richer behavior:
+  // find another contact at the same account instead of just going quiet on the whole account.
+  if (tag === "negative" && negativeSubtype === "wrong_person" && thread.prospectId) {
+    try {
+      await escalateWrongPerson(db, config, workspaceId, threadId, thread.prospectId);
+    } catch (err) {
+      log.warn("reply-tag-actions: wrong_person escalation failed", { threadId, err });
+    }
   }
 }

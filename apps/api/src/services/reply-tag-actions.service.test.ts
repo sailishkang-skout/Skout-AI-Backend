@@ -4,12 +4,13 @@ import { applyReplyTagActions } from "./reply-tag-actions.service.js";
 
 vi.mock("./suppression.service.js", () => ({
   addSuppression: vi.fn(async () => {}),
+  isSuppressed: vi.fn(async () => false),
 }));
 vi.mock("./notifications.service.js", () => ({
   createNotification: vi.fn(async () => ({})),
 }));
 
-import { addSuppression } from "./suppression.service.js";
+import { addSuppression, isSuppressed } from "./suppression.service.js";
 import { createNotification } from "./notifications.service.js";
 
 const fakeConfig = {} as Env;
@@ -166,6 +167,134 @@ describe("applyReplyTagActions", () => {
       db,
       fakeConfig,
       expect.objectContaining({ type: "reply_needs_review" })
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// wrong_person escalation — sequential select mock since this path issues
+// several distinct db.select() calls in a fixed order (thread, current prospect's
+// companyDomain, alternate-contact candidates, workspace owners).
+// ---------------------------------------------------------------------------
+
+function makeWrongPersonDb(opts: {
+  thread?: Record<string, unknown> | null;
+  companyDomain?: string | null;
+  candidates?: Array<{ prospectId: string; email: string | null; fullName: string | null }>;
+  owners?: Array<{ userId: string }>;
+}) {
+  const {
+    thread = { id: "t1", prospectId: "p1", status: "replied" },
+    companyDomain = "acme.com",
+    candidates = [],
+    owners = [{ userId: "u1" }],
+  } = opts;
+
+  const pages = [
+    thread ? [thread] : [],
+    companyDomain ? [{ companyDomain }] : [],
+    candidates,
+    owners,
+  ];
+  let cursor = 0;
+
+  const insertValues = vi.fn().mockReturnValue({
+    returning: vi.fn().mockResolvedValue([]),
+  });
+  const select = vi.fn(() => {
+    const page = pages[cursor] ?? [];
+    cursor++;
+    return {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue(page),
+      // workspaceMembers select has no .limit() call in the real code
+      then: (resolve: (v: unknown) => void) => resolve(page),
+    };
+  });
+
+  return {
+    select,
+    insert: vi.fn().mockReturnValue({ values: insertValues }),
+    update: vi.fn(),
+    _insertValues: insertValues,
+  } as any;
+}
+
+describe("applyReplyTagActions — wrong_person escalation", () => {
+  beforeEach(() => {
+    vi.mocked(createNotification).mockClear();
+    vi.mocked(isSuppressed).mockClear();
+    vi.mocked(isSuppressed).mockResolvedValue(false);
+  });
+
+  it("creates a follow-up task and notifies owners when an alternate contact is found", async () => {
+    const db = makeWrongPersonDb({
+      candidates: [{ prospectId: "p2", email: "other@acme.com", fullName: "Bob Smith" }],
+    });
+    await applyReplyTagActions(db, fakeConfig, "ws1", "t1", "negative", {
+      negativeSubtype: "wrong_person",
+    });
+    expect(db._insertValues).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prospectId: "p2",
+        relatedEntityType: "wrong_person_escalation",
+        title: expect.stringContaining("Bob Smith"),
+      })
+    );
+    expect(createNotification).toHaveBeenCalledWith(
+      db,
+      fakeConfig,
+      expect.objectContaining({ userId: "u1", type: "reminder" })
+    );
+  });
+
+  it("skips a candidate that is already suppressed and falls through to the next one", async () => {
+    vi.mocked(isSuppressed).mockImplementation(async (_db, _ws, email) => email === "suppressed@acme.com");
+    const db = makeWrongPersonDb({
+      candidates: [
+        { prospectId: "p2", email: "suppressed@acme.com", fullName: "Suppressed Sam" },
+        { prospectId: "p3", email: "good@acme.com", fullName: "Good Gina" },
+      ],
+    });
+    await applyReplyTagActions(db, fakeConfig, "ws1", "t1", "negative", {
+      negativeSubtype: "wrong_person",
+    });
+    expect(db._insertValues).toHaveBeenCalledWith(
+      expect.objectContaining({ prospectId: "p3" })
+    );
+  });
+
+  it("does nothing when no alternate contact exists at the account", async () => {
+    const db = makeWrongPersonDb({ candidates: [] });
+    await applyReplyTagActions(db, fakeConfig, "ws1", "t1", "negative", {
+      negativeSubtype: "wrong_person",
+    });
+    expect(db._insertValues).not.toHaveBeenCalledWith(
+      expect.objectContaining({ relatedEntityType: "wrong_person_escalation" })
+    );
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the current prospect has no known company domain", async () => {
+    const db = makeWrongPersonDb({ companyDomain: null });
+    await applyReplyTagActions(db, fakeConfig, "ws1", "t1", "negative", {
+      negativeSubtype: "wrong_person",
+    });
+    expect(db._insertValues).not.toHaveBeenCalledWith(
+      expect.objectContaining({ relatedEntityType: "wrong_person_escalation" })
+    );
+  });
+
+  it("does not escalate a plain not_interested negative reply", async () => {
+    const db = makeWrongPersonDb({
+      candidates: [{ prospectId: "p2", email: "other@acme.com", fullName: "Bob Smith" }],
+    });
+    await applyReplyTagActions(db, fakeConfig, "ws1", "t1", "negative", {
+      negativeSubtype: "not_interested",
+    });
+    expect(db._insertValues).not.toHaveBeenCalledWith(
+      expect.objectContaining({ relatedEntityType: "wrong_person_escalation" })
     );
   });
 });

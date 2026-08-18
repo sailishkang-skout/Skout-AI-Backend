@@ -94,7 +94,7 @@ vi.mock("../services/sequence-events.js", () => ({
   recordSequenceEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { startSequenceEnrollmentWorker, retryTransientFailure } from "./sequence-enrollment.worker.js";
+import { startSequenceEnrollmentWorker, retryTransientFailure, countTrackingEvents } from "./sequence-enrollment.worker.js";
 import { recordSequenceEvent } from "../services/sequence-events.js";
 import { enqueueSequenceAdvanceJob } from "./sequence-enrollment.queue.js";
 import { Worker } from "bullmq";
@@ -805,5 +805,26 @@ describe("retryTransientFailure", () => {
 
     expect(outcome).toBe("retry");
     expect(enqueueSequenceAdvanceJob).toHaveBeenCalledWith({}, PAYLOAD, 60_000, false);
+  });
+});
+
+describe("countTrackingEvents", () => {
+  function makeCountDb(rows: Array<{ n: number }>) {
+    const where = vi.fn().mockResolvedValue(rows);
+    const from = vi.fn().mockReturnValue({ where });
+    const select = vi.fn().mockReturnValue({ from });
+    return { select } as any;
+  }
+
+  it("returns the row count when events exist", async () => {
+    const db = makeCountDb([{ n: 4 }]);
+    const n = await countTrackingEvents(db, "ws-1", "enr-1", "open");
+    expect(n).toBe(4);
+  });
+
+  it("returns 0 when no row is returned", async () => {
+    const db = makeCountDb([]);
+    const n = await countTrackingEvents(db, "ws-1", "enr-1", "click");
+    expect(n).toBe(0);
   });
 });
