@@ -26,6 +26,7 @@ vi.mock("@skout/db", () => ({
     sequenceSteps: "sequenceSteps",
     inboxThreads: "inboxThreads",
     inboxMessages: "inboxMessages",
+    prospectActivations: { workspaceId: "workspace_id", prospectId: "prospect_id", snapshot: "snapshot" },
     aiDrafts: "aiDrafts",
     contacts: "contacts",
     tasks: { id: "id", disposition: "disposition", sequenceEnrollmentStepId: "sequence_enrollment_step_id" },
@@ -407,6 +408,42 @@ describe("sequence-enrollment worker — email step execution", () => {
     expect(pickNextInbox).not.toHaveBeenCalled();
     expect(updateSet).toHaveBeenCalledWith(
       expect.objectContaining({ status: "skipped", failureReason: "suppressed" })
+    );
+  });
+
+  it("marks the step skipped (no retry) when another contact at the account already replied positively", async () => {
+    // Golden rule regression test (condition-engine spec §48.1): this must trip even though no
+    // "account_has_positive_reply" condition step was authored into this sequence — it's a
+    // universal gate now, not opt-in.
+    vi.mocked(resolveProspectFields).mockResolvedValue({
+      prospectId: "p-1",
+      email: "prospect@example.com",
+      firstName: "Ada",
+      lastName: "Lovelace",
+      fullName: "Ada Lovelace",
+      companyDomain: "acme.com",
+    });
+    vi.mocked(isSuppressed).mockResolvedValue(false);
+
+    const select = vi.fn();
+    select.mockReturnValueOnce(selectChain([ENROLLMENT_ROW])); // load enrollment
+    select.mockReturnValueOnce(selectChain([])); // bounced check
+    select.mockReturnValueOnce(selectChain([])); // reply check
+    select.mockReturnValueOnce(selectChain([])); // awaiting call disposition (none)
+    select.mockReturnValueOnce(selectChain([EMAIL_STEP_ROW])); // pending step
+    select.mockReturnValueOnce(selectChain([])); // A/B/C variants (none)
+    select.mockReturnValueOnce(selectChain([{ id: "thread-other-contact" }])); // hasPositiveReplyAtAccount: found
+    select.mockReturnValueOnce(selectChain([])); // next pending step (none → completed)
+    const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+    const update = vi.fn().mockReturnValue({ set: updateSet });
+    const db = { select, update, transaction: vi.fn() };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(pickNextInbox).not.toHaveBeenCalled();
+    expect(updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "skipped", failureReason: "account_already_engaged" })
     );
   });
 

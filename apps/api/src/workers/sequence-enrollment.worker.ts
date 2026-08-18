@@ -521,6 +521,20 @@ async function executeEmailStep(
     return { status: "skipped", reason: "not_send_eligible" };
   }
 
+  // Golden rule (condition-engine spec §48.1): never continue automated outreach after a
+  // confirmed positive reply anywhere in the account. Previously this was only checked when a
+  // sequence author explicitly added an "account_has_positive_reply" condition step — most
+  // sequences don't, so a second contact at an already-won account kept getting emailed. This
+  // makes it a universal gate on every send, the same way suppression already is.
+  if (prospect.companyDomain && (await hasPositiveReplyAtAccount(db, workspaceId, prospect.companyDomain, prospectId))) {
+    await markStepTerminal(db, pending.enrollmentStepId, "skipped", "account_already_engaged", now);
+    log.info("Email step skipped — another contact at this account already replied positively", {
+      enrollmentId,
+      companyDomain: prospect.companyDomain,
+    });
+    return { status: "skipped", reason: "account_already_engaged" };
+  }
+
   const inbox = await pickNextInbox(db, workspaceId);
   if (!inbox) {
     await markStepTerminal(db, pending.enrollmentStepId, "failed", "no_active_inbox", now);
@@ -702,6 +716,21 @@ async function executeLinkedinStep(
   if (prospect?.email && (await isSuppressed(db, workspaceId, prospect.email))) {
     await markStepTerminal(db, pending.enrollmentStepId, "skipped", "suppressed", now);
     log.info("LinkedIn step skipped — suppressed", { enrollmentId, email: prospect.email });
+    return "done";
+  }
+
+  // Golden rule (condition-engine spec §48.1): same universal account-level gate as the email
+  // step — never keep touching other contacts at an account once someone there has replied
+  // positively, regardless of channel.
+  if (
+    prospect?.companyDomain &&
+    (await hasPositiveReplyAtAccount(db, workspaceId, prospect.companyDomain, prospectId))
+  ) {
+    await markStepTerminal(db, pending.enrollmentStepId, "skipped", "account_already_engaged", now);
+    log.info("LinkedIn step skipped — another contact at this account already replied positively", {
+      enrollmentId,
+      companyDomain: prospect.companyDomain,
+    });
     return "done";
   }
 
