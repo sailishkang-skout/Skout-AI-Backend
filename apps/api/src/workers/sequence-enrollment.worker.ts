@@ -487,6 +487,11 @@ async function markStepTerminal(
  * the step is marked failed/skipped and the cadence moves on. An actual send failure
  * (SMTP/network) is re-thrown so the BullMQ job retries — the step stays "scheduled".
  * Returns "deferred" when HITL is waiting on a pending AI draft approval.
+ *
+ * The outcome is reported explicitly (not just "done") so the caller can tell a genuine
+ * send apart from a step that reached a terminal state without ever sending anything —
+ * these used to be conflated, which logged a misleading "action_sent" activity event for
+ * skipped/failed steps too (see TAM_Sequence_Testing_Report.docx, "Key Inconsistency").
  */
 async function executeEmailStep(
   db: DbClient,
@@ -494,33 +499,33 @@ async function executeEmailStep(
   payload: SeqAdvanceJobPayload,
   pending: PendingStep,
   now: Date
-): Promise<"done" | "deferred"> {
+): Promise<{ status: "sent" | "failed" | "skipped" | "deferred"; reason?: string }> {
   const { enrollmentId, workspaceId, prospectId } = payload;
 
   const prospect = await resolveProspectFields(config, db, workspaceId, prospectId);
   if (!prospect?.email) {
     await markStepTerminal(db, pending.enrollmentStepId, "failed", "prospect_email_not_found", now);
     log.warn("Email step skipped — no prospect email", { enrollmentId, prospectId });
-    return "done";
+    return { status: "failed", reason: "prospect_email_not_found" };
   }
 
   if (await isSuppressed(db, workspaceId, prospect.email)) {
     await markStepTerminal(db, pending.enrollmentStepId, "skipped", "suppressed", now);
     log.info("Email step skipped — suppressed", { enrollmentId, email: prospect.email });
-    return "done";
+    return { status: "skipped", reason: "suppressed" };
   }
 
   if ((await isSendBlockedByEligibility(config, prospect.email)).blocked) {
     await markStepTerminal(db, pending.enrollmentStepId, "skipped", "not_send_eligible", now);
     log.info("Email step skipped — send-eligibility policy blocked it", { enrollmentId, email: prospect.email });
-    return "done";
+    return { status: "skipped", reason: "not_send_eligible" };
   }
 
   const inbox = await pickNextInbox(db, workspaceId);
   if (!inbox) {
     await markStepTerminal(db, pending.enrollmentStepId, "failed", "no_active_inbox", now);
     log.warn("Email step failed — no active inbox", { enrollmentId, workspaceId });
-    return "done";
+    return { status: "failed", reason: "no_active_inbox" };
   }
 
   const mergeData: MergeData = {
@@ -564,7 +569,7 @@ async function executeEmailStep(
         draftId: pendingDraft.id,
         deferUntil,
       });
-      return "deferred";
+      return { status: "deferred" };
     }
   }
 
@@ -582,7 +587,7 @@ async function executeEmailStep(
     const reason = err instanceof Error ? err.message : "smtp_build_failed";
     await markStepTerminal(db, pending.enrollmentStepId, "failed", reason, now);
     log.warn("Email step failed — could not build SMTP transport", { enrollmentId, reason });
-    return "done";
+    return { status: "failed", reason };
   }
 
   // Send the email. SMTP failures propagate so BullMQ retries (step stays "scheduled").
@@ -650,7 +655,7 @@ async function executeEmailStep(
     stepType: pending.stepType,
   }).catch((err: unknown) => log.warn("webhook dispatch failed", { err, event: "sequence.step.completed" }));
 
-  return "done";
+  return { status: "sent" };
 }
 
 const LINKEDIN_RETRY_MS = 60_000;
@@ -1314,15 +1319,26 @@ async function advanceEnrollment(
   } else if (step.stepType === "email") {
     const withVariant = await applyStepVariant(db, step);
     const result = await executeEmailStep(db, config, payload, withVariant, now);
-    if (result === "done") {
+    // Only a genuine send reports "action_sent" — a failed or skipped step used to be
+    // conflated with success here (both resolved to the same generic "done"), which logged
+    // a false "Step sent" activity event even when nothing was ever sent. See
+    // TAM_Sequence_Testing_Report.docx, "Key Inconsistency".
+    if (result.status === "sent") {
       await recordSequenceEvent(db, {
         workspaceId, sequenceId, enrollmentId,
         sequenceVersionId: enrollment.sequenceVersionId, prospectId, stepId: pending.stepId,
         eventType: "action_sent", variantKey: withVariant === step ? null : "A",
         reason: "email",
       });
+    } else if (result.status === "failed") {
+      await recordSequenceEvent(db, {
+        workspaceId, sequenceId, enrollmentId,
+        sequenceVersionId: enrollment.sequenceVersionId, prospectId, stepId: pending.stepId,
+        eventType: "action_failed", variantKey: withVariant === step ? null : "A",
+        reason: result.reason ?? "email",
+      });
     }
-    if (result === "deferred") {
+    if (result.status === "deferred") {
       await enqueueSequenceAdvanceJob(config, payload, 60 * 60 * 1000, false);
       return;
     }

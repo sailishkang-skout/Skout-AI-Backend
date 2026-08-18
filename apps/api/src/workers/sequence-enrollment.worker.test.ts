@@ -316,6 +316,11 @@ describe("sequence-enrollment worker — email step execution", () => {
     );
     expect(markInboxUsed).toHaveBeenCalledWith(db, "inbox-1");
     expect(tx.update).toHaveBeenCalledWith("sequenceEnrollmentSteps");
+    // A genuine send reports "action_sent" — this is the only step-execution path allowed to.
+    expect(recordSequenceEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ eventType: "action_sent" })
+    );
   });
 
   it("sends an APPROVED ai draft's content instead of the step template and consumes it", async () => {
@@ -370,6 +375,17 @@ describe("sequence-enrollment worker — email step execution", () => {
     expect(updateSet).toHaveBeenCalledWith(
       expect.objectContaining({ status: "failed", failureReason: "prospect_email_not_found" })
     );
+    // Regression guard for the bug in TAM_Sequence_Testing_Report.docx: a step that never sent
+    // anything must never log "action_sent" — Activity showed "Step sent" for this exact case
+    // while Analytics correctly showed it as failed and Gmail showed nothing sent.
+    expect(recordSequenceEvent).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ eventType: "action_sent" })
+    );
+    expect(recordSequenceEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ eventType: "action_failed", reason: "prospect_email_not_found" })
+    );
   });
 
   it("marks the step skipped (no retry) when the prospect email is suppressed", async () => {
@@ -414,6 +430,14 @@ describe("sequence-enrollment worker — email step execution", () => {
     expect(buildEmailSenderFromInbox).not.toHaveBeenCalled();
     expect(updateSet).toHaveBeenCalledWith(
       expect.objectContaining({ status: "failed", failureReason: "no_active_inbox" })
+    );
+    expect(recordSequenceEvent).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ eventType: "action_sent" })
+    );
+    expect(recordSequenceEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ eventType: "action_failed", reason: "no_active_inbox" })
     );
   });
 
