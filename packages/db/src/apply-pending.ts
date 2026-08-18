@@ -241,6 +241,7 @@ try {
   await runSqlMigration("0041_google_calendar", "0041_google_calendar.sql");
   await runSqlMigration("0042_promotion_candidates", "0042_promotion_candidates.sql");
   await runSqlMigration("0043_pipelines_default_unique", "0043_pipelines_default_unique.sql");
+  await runSqlMigration("0044_meeting_ics", "0044_meeting_ics.sql");
 
 } finally {
   await sql.end();

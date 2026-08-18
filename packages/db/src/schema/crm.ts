@@ -262,6 +262,10 @@ export const meetings = pgTable(
     /** Google Calendar — this meeting's event id, for future updates/cancellation. */
     googleEventId: text("google_event_id"),
     googleCalendarId: text("google_calendar_id"),
+    /** RFC 5545 UID — stable per meeting across all .ics invite revisions. */
+    icsUid: text("ics_uid"),
+    /** RFC 5545 SEQUENCE — increments each re-sent invite so calendar clients know a later revision supersedes an earlier one. */
+    icsSequence: integer("ics_sequence").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -273,6 +277,33 @@ export const meetings = pgTable(
     index("meetings_bot_external_id_idx").on(table.botExternalId),
     index("meetings_auto_join_due_idx").on(table.autoJoinBot, table.botStatus, table.scheduledAt),
     index("meetings_google_event_id_idx").on(table.googleEventId),
+  ]
+);
+
+export const RSVP_STATUSES = ["needs-action", "accepted", "declined", "tentative"] as const;
+
+/**
+ * Tracks RSVP status per invitee for a meeting's .ics invite — a separate, isolated channel
+ * from the Google Calendar integration above (calendarConnections/googleEventId), for meetings
+ * that don't have an organizer with a connected Google Calendar.
+ */
+export const meetingAttendees = pgTable(
+  "meeting_attendees",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    meetingId: uuid("meeting_id")
+      .notNull()
+      .references(() => meetings.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+    rsvpStatus: text("rsvp_status").notNull().default("needs-action"),
+    respondedAt: timestamp("responded_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("meeting_attendees_meeting_id_idx").on(table.meetingId),
+    unique().on(table.meetingId, table.email),
   ]
 );
 
