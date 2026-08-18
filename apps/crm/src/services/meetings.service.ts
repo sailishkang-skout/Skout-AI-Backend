@@ -1,12 +1,16 @@
+import { randomUUID } from "node:crypto";
 import { and, eq, gt, gte, isNull, lte } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { MeetingCreateInput, MeetingInvitee, MeetingUpdateInput } from "@skout/shared";
 import type { ActivitiesService } from "./activities.service.js";
 import { serviceLog } from "../lib/obs.js";
+import { generateMeetingIcs } from "./ics-generator.service.js";
+import { sendMeetingInviteEmail } from "./meeting-invite-mail.service.js";
+import type { Env } from "../config/env.js";
 
 const log = serviceLog("meetings");
-const { meetings, workspaces } = schema;
+const { meetings, meetingAttendees, workspaces } = schema;
 
 export interface MeetingDto {
   id: string;
@@ -31,6 +35,8 @@ export interface MeetingDto {
   transcript: string | null;
   invitees: MeetingInvitee[];
   googleEventId: string | null;
+  icsUid: string | null;
+  icsSequence: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -58,6 +64,8 @@ function toDto(row: typeof meetings.$inferSelect): MeetingDto {
     transcript: row.transcript,
     invitees: (row.invitees ?? []) as MeetingInvitee[],
     googleEventId: row.googleEventId,
+    icsUid: row.icsUid,
+    icsSequence: row.icsSequence,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -66,8 +74,50 @@ function toDto(row: typeof meetings.$inferSelect): MeetingDto {
 export class MeetingsService {
   constructor(
     private readonly db: Db,
-    private readonly activitiesService: ActivitiesService
+    private readonly activitiesService: ActivitiesService,
+    private readonly config?: Env
   ) {}
+
+  /**
+   * Sends a .ics invite to each attendee, best-effort — a failed send is logged but never
+   * throws, since a bounced invite email shouldn't fail meeting creation/cancellation.
+   */
+  private async sendInvites(
+    dto: MeetingDto,
+    attendeeEmails: string[],
+    method: "REQUEST" | "CANCEL"
+  ): Promise<void> {
+    if (!this.config || attendeeEmails.length === 0 || !dto.icsUid) return;
+
+    const { icsContent } = generateMeetingIcs(
+      {
+        icsUid: dto.icsUid,
+        icsSequence: dto.icsSequence,
+        title: dto.title,
+        scheduledAt: dto.scheduledAt,
+        durationMinutes: dto.durationMinutes,
+        method,
+      },
+      attendeeEmails.map((email) => ({ email }))
+    );
+
+    for (const email of attendeeEmails) {
+      try {
+        await sendMeetingInviteEmail(this.config, {
+          to: email,
+          subject: method === "CANCEL" ? `Cancelled: ${dto.title}` : `Invite: ${dto.title}`,
+          text:
+            method === "CANCEL"
+              ? "This meeting has been cancelled. See the attached calendar update."
+              : "See the attached calendar invite.",
+          icsContent,
+          method,
+        });
+      } catch (err) {
+        log.warn("meeting invite email failed", { meetingId: dto.id, email, err: (err as Error).message });
+      }
+    }
+  }
 
   async list(
     workspaceId: string,
@@ -127,6 +177,7 @@ export class MeetingsService {
 
   async create(workspaceId: string, organizerId: string | undefined, input: MeetingCreateInput): Promise<MeetingDto> {
     const autoJoinBot = await this.resolveAutoJoinBot(workspaceId, input.autoJoinBot);
+    const icsUid = input.invitees?.length ? `${randomUUID()}@meetings.skout.ai` : null;
     const [row] = await this.db
       .insert(meetings)
       .values({
@@ -144,10 +195,19 @@ export class MeetingsService {
         meetingUrl: input.meetingUrl,
         autoJoinBot,
         ...(input.invitees ? { invitees: input.invitees } : {}),
+        ...(icsUid ? { icsUid } : {}),
       })
       .returning();
 
     const dto = toDto(row);
+
+    if (input.invitees?.length) {
+      await this.db
+        .insert(meetingAttendees)
+        .values(input.invitees.map((invitee) => ({ meetingId: dto.id, email: invitee.email })));
+      await this.sendInvites(dto, input.invitees.map((i) => i.email), "REQUEST");
+    }
+
     // Log on the timeline of whichever entity is linked — deal takes priority as the
     // most specific record, matching how deals.service.ts logs stage-change activity.
     if (dto.dealId) {
@@ -160,6 +220,33 @@ export class MeetingsService {
 
     log.info("meeting created", { workspaceId, meetingId: dto.id, dealId: dto.dealId });
     return dto;
+  }
+
+  /** Soft-deletes the meeting and, if it has ICS attendees, sends METHOD:CANCEL with an incremented sequence. */
+  async cancel(workspaceId: string, id: string): Promise<boolean> {
+    const existing = await this.getById(workspaceId, id);
+    if (!existing) return false;
+
+    const attendeeRows = await this.db
+      .select({ email: meetingAttendees.email })
+      .from(meetingAttendees)
+      .where(eq(meetingAttendees.meetingId, id));
+
+    const nextSequence = existing.icsSequence + 1;
+    const [row] = await this.db
+      .update(meetings)
+      .set({ deletedAt: new Date(), icsSequence: nextSequence, updatedAt: new Date() })
+      .where(and(eq(meetings.id, id), eq(meetings.workspaceId, workspaceId)))
+      .returning();
+    if (!row) return false;
+
+    if (attendeeRows.length > 0) {
+      const dto = toDto(row);
+      await this.sendInvites(dto, attendeeRows.map((a) => a.email), "CANCEL");
+    }
+
+    log.info("meeting cancelled", { workspaceId, meetingId: id });
+    return true;
   }
 
   async update(workspaceId: string, id: string, input: MeetingUpdateInput): Promise<MeetingDto | null> {
@@ -320,6 +407,10 @@ export class MeetingsService {
   }
 }
 
-export function buildMeetingsService(db: Db | null, activitiesService: ActivitiesService | null): MeetingsService | null {
-  return db && activitiesService ? new MeetingsService(db, activitiesService) : null;
+export function buildMeetingsService(
+  db: Db | null,
+  activitiesService: ActivitiesService | null,
+  config?: Env
+): MeetingsService | null {
+  return db && activitiesService ? new MeetingsService(db, activitiesService, config) : null;
 }

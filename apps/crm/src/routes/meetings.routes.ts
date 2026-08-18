@@ -29,7 +29,7 @@ export async function meetingsRoutes(app: FastifyInstance) {
   const service = () => {
     const db = app.db ?? null;
     const activitiesService = buildActivitiesService(db);
-    return buildMeetingsService(db, activitiesService);
+    return buildMeetingsService(db, activitiesService, app.config);
   };
 
   const contactsSvc = () => {

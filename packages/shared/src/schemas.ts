@@ -785,6 +785,8 @@ export const meetingResponseSchema = z.object({
   outcome: z.string().nullable(),
   invitees: z.array(meetingInviteeSchema),
   googleEventId: z.string().nullable(),
+  icsUid: z.string().nullable(),
+  icsSequence: z.number(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
