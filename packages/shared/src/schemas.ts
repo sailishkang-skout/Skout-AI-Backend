@@ -746,8 +746,15 @@ export const meetingCreateSchema = z.object({
   meetingUrl: z.string().url().optional(),
   /** R16.2 — opt-in auto-join override. Omit to inherit the workspace default. */
   autoJoinBot: z.boolean().optional(),
-  /** Google Calendar — attendees to invite when scheduling via /schedule-google. */
+  /**
+   * Attendees for this meeting. By default, setting this sends a .ics calendar invite email
+   * immediately (see `sendIcsInvites`). If you plan to call /schedule-google right after
+   * creating the meeting, pass `sendIcsInvites: false` here so the same people aren't invited
+   * twice through two different channels.
+   */
   invitees: z.array(meetingInviteeSchema).optional(),
+  /** Set false to skip the immediate .ics invite email — e.g. when /schedule-google will invite these attendees instead. Defaults to true. */
+  sendIcsInvites: z.boolean().optional(),
 });
 
 export const meetingUpdateSchema = z

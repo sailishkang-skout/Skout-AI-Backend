@@ -57,7 +57,13 @@ export async function flagIfQualified(
     return;
   }
 
-  await db.insert(promotionCandidates).values({ workspaceId, prospectId, score, status: "pending" });
+  // onConflictDoNothing guards a concurrent scoring pass of the same prospect racing between
+  // the select above and this insert — the unique(workspaceId, prospectId) constraint would
+  // otherwise raise instead of silently no-opping (the next re-score reconciles the row anyway).
+  await db
+    .insert(promotionCandidates)
+    .values({ workspaceId, prospectId, score, status: "pending" })
+    .onConflictDoNothing({ target: [promotionCandidates.workspaceId, promotionCandidates.prospectId] });
 }
 
 /** Pending candidates for the "Hot Prospects" panel, highest score first. */
@@ -111,15 +117,32 @@ export async function promoteProspectToDeal(
   candidateId: string,
   actorId: string | undefined
 ): Promise<PromoteResult> {
-  const [candidate] = await db
-    .select()
-    .from(promotionCandidates)
-    .where(and(eq(promotionCandidates.id, candidateId), eq(promotionCandidates.workspaceId, workspaceId)))
-    .limit(1);
-  if (!candidate) throw new Error("promotion_candidate_not_found");
-  if (candidate.status === "promoted") throw new Error("promotion_candidate_already_promoted");
-
   return db.transaction(async (tx) => {
+    // Atomically claim the candidate — the WHERE clause only matches (and flips to "promoted")
+    // a row still "pending", so two concurrent promote calls for the same candidate can't both
+    // proceed to create a Company/Contact/Deal. The loser's UPDATE affects 0 rows.
+    const [candidate] = await tx
+      .update(promotionCandidates)
+      .set({ status: "promoted", updatedAt: new Date() })
+      .where(
+        and(
+          eq(promotionCandidates.id, candidateId),
+          eq(promotionCandidates.workspaceId, workspaceId),
+          eq(promotionCandidates.status, "pending")
+        )
+      )
+      .returning();
+
+    if (!candidate) {
+      const [existing] = await tx
+        .select({ id: promotionCandidates.id })
+        .from(promotionCandidates)
+        .where(and(eq(promotionCandidates.id, candidateId), eq(promotionCandidates.workspaceId, workspaceId)))
+        .limit(1);
+      if (!existing) throw new Error("promotion_candidate_not_found");
+      throw new Error("promotion_candidate_already_promoted");
+    }
+
     const [activation] = await tx
       .select({ snapshot: prospectActivations.snapshot })
       .from(prospectActivations)
@@ -206,11 +229,6 @@ export async function promoteProspectToDeal(
       beforeState: null,
       afterState: deal,
     });
-
-    await tx
-      .update(promotionCandidates)
-      .set({ status: "promoted", updatedAt: new Date() })
-      .where(eq(promotionCandidates.id, candidateId));
 
     return { companyId, contactId, dealId: deal.id };
   });

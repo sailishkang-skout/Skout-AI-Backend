@@ -16,7 +16,9 @@ function makeDb(selects: { result: unknown[]; terminal?: "limit" | "where" | "or
   for (const { result, terminal } of selects) {
     db.select.mockReturnValueOnce(selectChain(result, terminal));
   }
-  db.insert.mockReturnValue({ values: vi.fn().mockResolvedValue(undefined) });
+  db.insert.mockReturnValue({
+    values: vi.fn().mockReturnValue({ onConflictDoNothing: vi.fn().mockResolvedValue(undefined) }),
+  });
   db.update.mockReturnValue({ set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) }) });
   return db;
 }
@@ -92,6 +94,10 @@ function insertReturning(result: unknown[]) {
   return { values: vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue(result) }) };
 }
 
+function updateReturning(result: unknown[]) {
+  return { set: vi.fn().mockReturnValue({ where: vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue(result) }) }) };
+}
+
 function makeTx(selects: { result: unknown[]; terminal?: "limit" | "where" | "orderBy" }[], inserts: (() => unknown)[]) {
   const tx = { select: vi.fn(), insert: vi.fn(), update: vi.fn() };
   for (const { result, terminal } of selects) {
@@ -100,27 +106,36 @@ function makeTx(selects: { result: unknown[]; terminal?: "limit" | "where" | "or
   for (const factory of inserts) {
     tx.insert.mockReturnValueOnce(factory());
   }
-  tx.update.mockReturnValue({ set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) }) });
   return tx;
 }
 
 describe("promoteProspectToDeal", () => {
   it("throws when the candidate does not exist", async () => {
-    const db = makeDb([{ result: [] }]);
+    const tx = {
+      update: vi.fn().mockReturnValueOnce(updateReturning([])), // atomic claim: no row matched
+      select: vi.fn().mockReturnValueOnce(selectChain([])), // existence check: doesn't exist at all
+      insert: vi.fn(),
+    };
+    const db = { transaction: vi.fn(async (cb: (tx: unknown) => unknown) => cb(tx)) };
     await expect(promoteProspectToDeal(db as any, "ws-1", "cand-1", "user-1")).rejects.toThrow(
       "promotion_candidate_not_found"
     );
   });
 
   it("throws when the candidate is already promoted", async () => {
-    const db = makeDb([{ result: [{ id: "cand-1", status: "promoted", prospectId: "prospect-1" }] }]);
+    const tx = {
+      update: vi.fn().mockReturnValueOnce(updateReturning([])), // atomic claim: no row matched (not pending)
+      select: vi.fn().mockReturnValueOnce(selectChain([{ id: "cand-1" }])), // existence check: it does exist
+      insert: vi.fn(),
+    };
+    const db = { transaction: vi.fn(async (cb: (tx: unknown) => unknown) => cb(tx)) };
     await expect(promoteProspectToDeal(db as any, "ws-1", "cand-1", "user-1")).rejects.toThrow(
       "promotion_candidate_already_promoted"
     );
   });
 
-  it("creates company, contact, and deal, and marks the candidate promoted", async () => {
-    const candidate = { id: "cand-1", status: "pending", prospectId: "prospect-1" };
+  it("creates company, contact, and deal, and marks the candidate promoted atomically", async () => {
+    const claimedCandidate = { id: "cand-1", status: "promoted", prospectId: "prospect-1" };
     const tx = makeTx(
       [
         { result: [{ snapshot: { fullName: "Alice Chen", companyName: "Acme Inc", companyDomain: "acme.com" } }] }, // prospectActivations
@@ -138,14 +153,61 @@ describe("promoteProspectToDeal", () => {
         () => insertReturning([]), // audit log for deal
       ]
     );
+    tx.update = vi.fn().mockReturnValueOnce(updateReturning([claimedCandidate]));
     const db = {
-      select: vi.fn().mockReturnValueOnce(selectChain([candidate])),
       transaction: vi.fn(async (cb: (tx: unknown) => unknown) => cb(tx)),
     };
 
     const result = await promoteProspectToDeal(db as any, "ws-1", "cand-1", "user-1");
 
     expect(result).toEqual({ companyId: "company-1", contactId: "contact-1", dealId: "deal-1" });
-    expect(tx.update).toHaveBeenCalled(); // candidate marked promoted
+    // Exactly one update — the atomic claim itself doubles as the "mark promoted" write.
+    expect(tx.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("never lets two concurrent promotes both succeed for the same candidate", async () => {
+    const claimedCandidate = { id: "cand-1", status: "promoted", prospectId: "prospect-1" };
+    const winnerTx = makeTx(
+      [
+        { result: [{ snapshot: { fullName: "Alice Chen", companyName: "Acme Inc" } }] },
+        { result: [] },
+        { result: [] },
+        { result: [{ id: "pipeline-1", workspaceId: "ws-1", isDefault: true }] },
+        { result: [{ id: "stage-1" }], terminal: "orderBy" },
+      ],
+      [
+        () => insertReturning([{ id: "company-1" }]),
+        () => insertReturning([]),
+        () => insertReturning([{ id: "contact-1" }]),
+        () => insertReturning([]),
+        () => insertReturning([{ id: "deal-1" }]),
+        () => insertReturning([]),
+      ]
+    );
+    winnerTx.update = vi.fn().mockReturnValueOnce(updateReturning([claimedCandidate]));
+
+    const loserTx = {
+      update: vi.fn().mockReturnValueOnce(updateReturning([])), // lost the atomic claim
+      select: vi.fn().mockReturnValueOnce(selectChain([{ id: "cand-1" }])), // it exists, just not pending anymore
+      insert: vi.fn(),
+    };
+
+    const db = {
+      transaction: vi
+        .fn()
+        .mockImplementationOnce(async (cb: (tx: unknown) => unknown) => cb(winnerTx))
+        .mockImplementationOnce(async (cb: (tx: unknown) => unknown) => cb(loserTx)),
+    };
+
+    const [winnerResult, loserResult] = await Promise.allSettled([
+      promoteProspectToDeal(db as any, "ws-1", "cand-1", "user-1"),
+      promoteProspectToDeal(db as any, "ws-1", "cand-1", "user-2"),
+    ]);
+
+    expect(winnerResult.status).toBe("fulfilled");
+    expect(loserResult.status).toBe("rejected");
+    if (loserResult.status === "rejected") {
+      expect((loserResult.reason as Error).message).toBe("promotion_candidate_already_promoted");
+    }
   });
 });

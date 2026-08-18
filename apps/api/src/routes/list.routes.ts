@@ -56,6 +56,7 @@ export async function listRoutes(app: FastifyInstance) {
     } catch (err) {
       const message = err instanceof Error ? err.message : "import_failed";
       if (message === "list_not_found") return reply.status(404).send({ error: message });
+      if (message === "list_too_large_to_import") return reply.status(413).send({ error: message });
       throw err;
     }
   });

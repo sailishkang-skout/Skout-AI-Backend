@@ -99,6 +99,107 @@ describe.skipIf(!hasDatabase)("POST /webhooks/meeting-rsvp", () => {
     expect(attendee.respondedAt).not.toBeNull();
   });
 
+  it("matches PARTSTAT by attendee email, not by first occurrence in the payload", async () => {
+    const [workspace] = await db
+      .insert(schema.workspaces)
+      .values({ name: "RSVP Multi WS", slug: `rsvp-multi-${randomUUID()}` })
+      .returning();
+    const [meeting] = await db
+      .insert(schema.meetings)
+      .values({
+        workspaceId: workspace.id,
+        title: "Multi-attendee meeting",
+        scheduledAt: new Date(),
+        icsUid: `${randomUUID()}@meetings.skout.ai`,
+      })
+      .returning();
+    await db.insert(schema.meetingAttendees).values({
+      meetingId: meeting.id,
+      email: "prospect@acme.com",
+      rsvpStatus: "needs-action",
+    });
+
+    // A different attendee is listed FIRST with NEEDS-ACTION (as a naive first-match regex
+    // would grab), but the attendee we're recording a reply for is listed second with ACCEPTED.
+    const icsReply = [
+      "BEGIN:VCALENDAR",
+      "METHOD:REPLY",
+      "BEGIN:VEVENT",
+      `UID:${meeting.icsUid}`,
+      "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:someone-else@acme.com",
+      "ATTENDEE;PARTSTAT=ACCEPTED:mailto:prospect@acme.com",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+
+    const payload = { meetingId: meeting.id, attendeeEmail: "prospect@acme.com", icsReplyContent: icsReply };
+    const rawBody = JSON.stringify(payload);
+    const signature = createHmac("sha256", SECRET).update(rawBody).digest("hex");
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/webhooks/meeting-rsvp",
+      headers: { "x-rsvp-signature": signature, "content-type": "application/json" },
+      payload: rawBody,
+    });
+    expect(response.statusCode).toBe(200);
+
+    const [attendee] = await db
+      .select()
+      .from(schema.meetingAttendees)
+      .where(eq(schema.meetingAttendees.meetingId, meeting.id));
+    expect(attendee.rsvpStatus).toBe("accepted");
+  });
+
+  it("rejects a reply whose UID doesn't match the meeting's icsUid", async () => {
+    const [workspace] = await db
+      .insert(schema.workspaces)
+      .values({ name: "RSVP UID Mismatch WS", slug: `rsvp-uid-${randomUUID()}` })
+      .returning();
+    const [meeting] = await db
+      .insert(schema.meetings)
+      .values({
+        workspaceId: workspace.id,
+        title: "UID mismatch meeting",
+        scheduledAt: new Date(),
+        icsUid: `${randomUUID()}@meetings.skout.ai`,
+      })
+      .returning();
+    await db.insert(schema.meetingAttendees).values({
+      meetingId: meeting.id,
+      email: "prospect@acme.com",
+      rsvpStatus: "needs-action",
+    });
+
+    const icsReply = [
+      "BEGIN:VCALENDAR",
+      "METHOD:REPLY",
+      "BEGIN:VEVENT",
+      "UID:some-other-meeting-uid@meetings.skout.ai",
+      "ATTENDEE;PARTSTAT=ACCEPTED:mailto:prospect@acme.com",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+
+    const payload = { meetingId: meeting.id, attendeeEmail: "prospect@acme.com", icsReplyContent: icsReply };
+    const rawBody = JSON.stringify(payload);
+    const signature = createHmac("sha256", SECRET).update(rawBody).digest("hex");
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/webhooks/meeting-rsvp",
+      headers: { "x-rsvp-signature": signature, "content-type": "application/json" },
+      payload: rawBody,
+    });
+    expect(response.statusCode).toBe(422);
+
+    const [attendee] = await db
+      .select()
+      .from(schema.meetingAttendees)
+      .where(eq(schema.meetingAttendees.meetingId, meeting.id));
+    expect(attendee.rsvpStatus).toBe("needs-action");
+  });
+
   it("returns 404 when no matching attendee exists", async () => {
     const [workspace] = await db
       .insert(schema.workspaces)

@@ -11,6 +11,11 @@ export interface ImportListResult {
   updated: number;
 }
 
+/** Above this member count, a single all-in-one-transaction import risks outliving the HTTP
+ * request and holding row locks for too long — reject and let the caller import in smaller
+ * batches (e.g. by splitting the list) instead of silently degrading. */
+export const MAX_IMPORT_LIST_SIZE = 500;
+
 /**
  * Imports every member of an apps/api List into the CRM as Company+Contact records, matched by
  * the same sourceProspectId/sourceProspectCompanyId correlation key promoteProspectToDeal() uses.
@@ -41,6 +46,10 @@ export async function importListToCrm(
       )
     )
     .where(eq(listMembers.listId, listId));
+
+  if (members.length > MAX_IMPORT_LIST_SIZE) {
+    throw new Error("list_too_large_to_import");
+  }
 
   let created = 0;
   let updated = 0;

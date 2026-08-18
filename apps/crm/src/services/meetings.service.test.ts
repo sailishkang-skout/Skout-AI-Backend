@@ -14,8 +14,15 @@ beforeEach(() => {
 function insertReturning(result: unknown[]) {
   return { values: vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue(result) }) };
 }
-function insertNoReturning() {
-  return { values: vi.fn().mockResolvedValue(undefined) };
+function insertConflictNothing() {
+  return { values: vi.fn().mockReturnValue({ onConflictDoNothing: vi.fn().mockResolvedValue(undefined) }) };
+}
+function selectAutoJoin(enabled: boolean) {
+  return {
+    from: vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue([{ meetingBotAutoJoinDefault: enabled }]) }),
+    }),
+  };
 }
 
 describe("MeetingsService.create — ICS invites", () => {
@@ -48,16 +55,15 @@ describe("MeetingsService.create — ICS invites", () => {
       updatedAt: new Date(),
       deletedAt: null,
     };
-    const db = {
+    const tx = {
       insert: vi
         .fn()
         .mockReturnValueOnce(insertReturning([meetingRow]))
-        .mockReturnValueOnce(insertNoReturning()),
-      select: vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue([{ meetingBotAutoJoinDefault: false }]) }),
-        }),
-      }),
+        .mockReturnValueOnce(insertConflictNothing()),
+    };
+    const db = {
+      transaction: vi.fn(async (cb: (tx: unknown) => unknown) => cb(tx)),
+      select: vi.fn().mockReturnValue(selectAutoJoin(false)),
     };
     const activitiesService = { record: vi.fn() };
     const config = { MEETING_INVITE_SMTP_HOST: "smtp.test.com" } as any;
@@ -107,13 +113,12 @@ describe("MeetingsService.create — ICS invites", () => {
       updatedAt: new Date(),
       deletedAt: null,
     };
-    const db = {
+    const tx = {
       insert: vi.fn().mockReturnValueOnce(insertReturning([meetingRow])),
-      select: vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue([{ meetingBotAutoJoinDefault: false }]) }),
-        }),
-      }),
+    };
+    const db = {
+      transaction: vi.fn(async (cb: (tx: unknown) => unknown) => cb(tx)),
+      select: vi.fn().mockReturnValue(selectAutoJoin(false)),
     };
     const activitiesService = { record: vi.fn() };
     const config = { MEETING_INVITE_SMTP_HOST: "smtp.test.com" } as any;
@@ -127,6 +132,111 @@ describe("MeetingsService.create — ICS invites", () => {
     } as any);
 
     expect(sendMeetingInviteEmail).not.toHaveBeenCalled();
-    expect(db.insert).toHaveBeenCalledTimes(1);
+    expect(tx.insert).toHaveBeenCalledTimes(1); // only the meeting row, no attendees insert
+  });
+
+  it("dedupes case-insensitively duplicate invitee emails before inserting attendees", async () => {
+    const meetingRow = {
+      id: "meeting-3",
+      workspaceId: "ws-1",
+      contactId: null,
+      companyId: null,
+      dealId: null,
+      organizerId: "user-1",
+      title: "Dup invitees",
+      scheduledAt: new Date("2026-09-01T15:00:00.000Z"),
+      durationMinutes: 30,
+      meetingType: "video",
+      summary: null,
+      outcome: null,
+      meetingUrl: null,
+      botExternalId: null,
+      botStatus: "not_scheduled",
+      autoJoinBot: false,
+      recordingUrl: null,
+      transcriptUrl: null,
+      transcript: null,
+      invitees: [],
+      googleEventId: null,
+      icsUid: "generated-uid-2@meetings.skout.ai",
+      icsSequence: 0,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      deletedAt: null,
+    };
+    const attendeesInsert = insertConflictNothing();
+    const tx = {
+      insert: vi.fn().mockReturnValueOnce(insertReturning([meetingRow])).mockReturnValueOnce(attendeesInsert),
+    };
+    const db = {
+      transaction: vi.fn(async (cb: (tx: unknown) => unknown) => cb(tx)),
+      select: vi.fn().mockReturnValue(selectAutoJoin(false)),
+    };
+    const activitiesService = { record: vi.fn() };
+    const config = { MEETING_INVITE_SMTP_HOST: "smtp.test.com" } as any;
+
+    const svc = new MeetingsService(db as any, activitiesService as any, config);
+    await svc.create("ws-1", "user-1", {
+      title: "Dup invitees",
+      scheduledAt: "2026-09-01T15:00:00.000Z",
+      durationMinutes: 30,
+      meetingType: "video",
+      invitees: [{ email: "Prospect@acme.com" }, { email: "prospect@acme.com" }],
+    } as any);
+
+    expect(attendeesInsert.values).toHaveBeenCalledWith([{ meetingId: "meeting-3", email: "prospect@acme.com" }]);
+    expect(sendMeetingInviteEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips the ICS invite entirely when sendIcsInvites is false (e.g. destined for /schedule-google)", async () => {
+    const meetingRow = {
+      id: "meeting-4",
+      workspaceId: "ws-1",
+      contactId: null,
+      companyId: null,
+      dealId: null,
+      organizerId: "user-1",
+      title: "Google-scheduled meeting",
+      scheduledAt: new Date("2026-09-01T15:00:00.000Z"),
+      durationMinutes: 30,
+      meetingType: "video",
+      summary: null,
+      outcome: null,
+      meetingUrl: null,
+      botExternalId: null,
+      botStatus: "not_scheduled",
+      autoJoinBot: false,
+      recordingUrl: null,
+      transcriptUrl: null,
+      transcript: null,
+      invitees: [{ email: "prospect@acme.com" }],
+      googleEventId: null,
+      icsUid: null,
+      icsSequence: 0,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      deletedAt: null,
+    };
+    const tx = { insert: vi.fn().mockReturnValueOnce(insertReturning([meetingRow])) };
+    const db = {
+      transaction: vi.fn(async (cb: (tx: unknown) => unknown) => cb(tx)),
+      select: vi.fn().mockReturnValue(selectAutoJoin(false)),
+    };
+    const activitiesService = { record: vi.fn() };
+    const config = { MEETING_INVITE_SMTP_HOST: "smtp.test.com" } as any;
+
+    const svc = new MeetingsService(db as any, activitiesService as any, config);
+    const dto = await svc.create("ws-1", "user-1", {
+      title: "Google-scheduled meeting",
+      scheduledAt: "2026-09-01T15:00:00.000Z",
+      durationMinutes: 30,
+      meetingType: "video",
+      invitees: [{ email: "prospect@acme.com" }],
+      sendIcsInvites: false,
+    } as any);
+
+    expect(dto.icsUid).toBeNull();
+    expect(sendMeetingInviteEmail).not.toHaveBeenCalled();
+    expect(tx.insert).toHaveBeenCalledTimes(1); // only the meeting row, no attendees insert
   });
 });

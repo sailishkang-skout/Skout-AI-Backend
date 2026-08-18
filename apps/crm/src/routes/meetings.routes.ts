@@ -109,7 +109,7 @@ export async function meetingsRoutes(app: FastifyInstance) {
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
 
-    const deleted = await svc.softDelete(workspaceId, id);
+    const deleted = await svc.cancel(workspaceId, id);
     if (!deleted) throw new HttpError("meeting_not_found", 404);
     return reply.code(204).send();
   });

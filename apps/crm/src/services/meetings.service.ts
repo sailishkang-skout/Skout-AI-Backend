@@ -97,6 +97,9 @@ export class MeetingsService {
         scheduledAt: dto.scheduledAt,
         durationMinutes: dto.durationMinutes,
         method,
+        // RFC 5545 §3.6.1 requires ORGANIZER on a METHOD:REQUEST — without it, calendar clients
+        // have no address to send the METHOD:REPLY RSVP to.
+        organizerEmail: this.config.MEETING_INVITE_FROM_ADDRESS,
       },
       attendeeEmails.map((email) => ({ email }))
     );
@@ -177,35 +180,51 @@ export class MeetingsService {
 
   async create(workspaceId: string, organizerId: string | undefined, input: MeetingCreateInput): Promise<MeetingDto> {
     const autoJoinBot = await this.resolveAutoJoinBot(workspaceId, input.autoJoinBot);
-    const icsUid = input.invitees?.length ? `${randomUUID()}@meetings.skout.ai` : null;
-    const [row] = await this.db
-      .insert(meetings)
-      .values({
-        workspaceId,
-        contactId: input.contactId,
-        companyId: input.companyId,
-        dealId: input.dealId,
-        organizerId: input.organizerId ?? organizerId,
-        title: input.title,
-        scheduledAt: new Date(input.scheduledAt),
-        durationMinutes: input.durationMinutes,
-        meetingType: input.meetingType,
-        summary: input.summary,
-        outcome: input.outcome,
-        meetingUrl: input.meetingUrl,
-        autoJoinBot,
-        ...(input.invitees ? { invitees: input.invitees } : {}),
-        ...(icsUid ? { icsUid } : {}),
-      })
-      .returning();
+    // Dedupe case-insensitively — meetingAttendees has a unique(meetingId, email) constraint,
+    // and the create schema doesn't guarantee callers send distinct addresses. sendIcsInvites
+    // defaults true but is skippable when the caller plans to invite via /schedule-google
+    // instead — sending both would double-invite the same people through two channels.
+    const shouldSendIcsInvites = input.sendIcsInvites ?? true;
+    const attendeeEmails =
+      input.invitees?.length && shouldSendIcsInvites
+        ? [...new Map(input.invitees.map((i) => [i.email.toLowerCase(), i.email])).values()]
+        : [];
+    const icsUid = attendeeEmails.length ? `${randomUUID()}@meetings.skout.ai` : null;
 
-    const dto = toDto(row);
+    const dto = await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(meetings)
+        .values({
+          workspaceId,
+          contactId: input.contactId,
+          companyId: input.companyId,
+          dealId: input.dealId,
+          organizerId: input.organizerId ?? organizerId,
+          title: input.title,
+          scheduledAt: new Date(input.scheduledAt),
+          durationMinutes: input.durationMinutes,
+          meetingType: input.meetingType,
+          summary: input.summary,
+          outcome: input.outcome,
+          meetingUrl: input.meetingUrl,
+          autoJoinBot,
+          ...(input.invitees ? { invitees: input.invitees } : {}),
+          ...(icsUid ? { icsUid } : {}),
+        })
+        .returning();
 
-    if (input.invitees?.length) {
-      await this.db
-        .insert(meetingAttendees)
-        .values(input.invitees.map((invitee) => ({ meetingId: dto.id, email: invitee.email })));
-      await this.sendInvites(dto, input.invitees.map((i) => i.email), "REQUEST");
+      if (attendeeEmails.length) {
+        await tx
+          .insert(meetingAttendees)
+          .values(attendeeEmails.map((email) => ({ meetingId: row.id, email })))
+          .onConflictDoNothing({ target: [meetingAttendees.meetingId, meetingAttendees.email] });
+      }
+
+      return toDto(row);
+    });
+
+    if (attendeeEmails.length) {
+      await this.sendInvites(dto, attendeeEmails, "REQUEST");
     }
 
     // Log on the timeline of whichever entity is linked — deal takes priority as the

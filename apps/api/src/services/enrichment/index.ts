@@ -6,6 +6,7 @@ import {
   type EmailVerifier,
   type PalConfig,
 } from "@skout/pal";
+import { createLogger } from "@skout/observability";
 import type { Env } from "../../config/env.js";
 import { HttpError } from "../../utils/http.js";
 import { getWorkspaceIcp } from "../icp.service.js";
@@ -59,6 +60,8 @@ function palConfigFromEnv(config: Env): PalConfig {
     requestTimeoutMs: config.ENRICHMENT_REQUEST_TIMEOUT_MS,
   };
 }
+
+const log = createLogger("enrichment.index");
 
 const engineCache = new Map<string, EnrichmentEngine>();
 
@@ -136,7 +139,15 @@ export function buildEnrichmentService(db: Db | null, config: Env): EnrichmentSe
     db ? (ws) => ensureDemoWorkspace(db, ws) : undefined,
     async (result, workspaceId) => {
       await writeScoreToOpenSearch(config, result);
-      if (db) await flagIfQualified(db, workspaceId, result.prospectId, result.icpScore);
+      // Best-effort — a promotion-flag failure must never fail a scoring request that already
+      // deducted credits, matching the afterActivate hook's documented convention below.
+      if (db) {
+        try {
+          await flagIfQualified(db, workspaceId, result.prospectId, result.icpScore);
+        } catch (err) {
+          log.warn("flagIfQualified failed", { workspaceId, prospectId: result.prospectId, err: (err as Error).message });
+        }
+      }
     },
     config.OPENROUTER_API_KEY,
     // R13.3 — `activate` always sets prospectId/companyId on the snapshot before calling this.

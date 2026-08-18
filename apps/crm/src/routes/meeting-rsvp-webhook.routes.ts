@@ -10,7 +10,7 @@ declare module "fastify" {
   }
 }
 
-const { meetingAttendees } = schema;
+const { meetingAttendees, meetings } = schema;
 
 const PARTSTAT_TO_RSVP: Record<string, string> = {
   ACCEPTED: "accepted",
@@ -19,12 +19,42 @@ const PARTSTAT_TO_RSVP: Record<string, string> = {
   "NEEDS-ACTION": "needs-action",
 };
 
-function extractPartstat(icsContent: string): string | null {
-  // node-ical's parsed attendee shape varies (single object vs array) across real-world
-  // replies, so a direct regex scan of the raw content is the robust extraction here.
-  ical.sync.parseICS(icsContent);
-  const match = icsContent.match(/PARTSTAT=([A-Z-]+)/);
-  return match ? match[1] : null;
+interface IcalAttendee {
+  val?: string;
+  params?: { PARTSTAT?: string };
+}
+
+/**
+ * Parses a METHOD:REPLY .ics payload and returns the PARTSTAT for the specific attendee
+ * matching `attendeeEmail`, but only if the event's own UID matches `expectedIcsUid` — a reply
+ * claiming a different meeting's UID is rejected rather than trusted. A quoted original
+ * METHOD:REQUEST (which every attendee shows as NEEDS-ACTION) is a different UID/SEQUENCE
+ * component and is naturally skipped by this per-attendee, per-UID match.
+ */
+function extractPartstatForAttendee(
+  icsContent: string,
+  expectedIcsUid: string,
+  attendeeEmail: string
+): string | null {
+  const parsed = ical.sync.parseICS(icsContent);
+  const normalizedEmail = `mailto:${attendeeEmail}`.toLowerCase();
+
+  for (const component of Object.values(parsed)) {
+    if (component.type !== "VEVENT" || component.uid !== expectedIcsUid) continue;
+
+    const attendees = component.attendee
+      ? Array.isArray(component.attendee)
+        ? component.attendee
+        : [component.attendee]
+      : [];
+
+    for (const attendee of attendees as IcalAttendee[]) {
+      if (attendee.val?.toLowerCase() === normalizedEmail) {
+        return attendee.params?.PARTSTAT ?? null;
+      }
+    }
+  }
+  return null;
 }
 
 export async function meetingRsvpWebhookRoutes(app: FastifyInstance) {
@@ -50,13 +80,21 @@ export async function meetingRsvpWebhookRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: "missing_fields" });
     }
 
-    const partstat = extractPartstat(body.icsReplyContent);
+    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
+
+    const [meeting] = await app.db
+      .select({ icsUid: meetings.icsUid })
+      .from(meetings)
+      .where(eq(meetings.id, body.meetingId))
+      .limit(1);
+    if (!meeting?.icsUid) return reply.status(404).send({ error: "meeting_not_found" });
+
+    const partstat = extractPartstatForAttendee(body.icsReplyContent, meeting.icsUid, body.attendeeEmail);
     const rsvpStatus = partstat ? PARTSTAT_TO_RSVP[partstat] : undefined;
     if (!rsvpStatus) {
       return reply.status(422).send({ error: "unrecognized_partstat" });
     }
 
-    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const [updated] = await app.db
       .update(meetingAttendees)
       .set({ rsvpStatus, respondedAt: new Date(), updatedAt: new Date() })
