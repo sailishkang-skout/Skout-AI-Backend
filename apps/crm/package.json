@@ -29,11 +29,15 @@
     "drizzle-orm": "^0.44.2",
     "fastify": "^5.1.0",
     "fastify-plugin": "^5.0.1",
+    "ics": "^3.7.6",
+    "node-ical": "^0.20.1",
+    "nodemailer": "^9.0.3",
     "openai": "^6.45.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",
+    "@types/nodemailer": "^8.0.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
