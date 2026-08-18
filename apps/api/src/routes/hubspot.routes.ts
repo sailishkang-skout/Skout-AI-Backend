@@ -29,7 +29,8 @@ export async function hubspotRoutes(app: FastifyInstance) {
       error?: string;
     };
     const frontend = app.config.FRONTEND_URL ?? app.config.CORS_ORIGIN[0] ?? "http://localhost:3000";
-    const failUrl = `${frontend.replace(/\/$/, "")}/settings/crm?hubspot=error`;
+    // Next.js basePath is "/app" — omitting it 404'd this redirect even on success.
+    const failUrl = `${frontend.replace(/\/$/, "")}/app/settings/crm?hubspot=error`;
 
     if (error || !code || !state) {
       return reply.redirect(failUrl);

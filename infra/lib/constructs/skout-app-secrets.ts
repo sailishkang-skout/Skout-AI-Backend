@@ -34,6 +34,8 @@ export class SkoutAppSecrets extends Construct {
   readonly smtp: secretsmanager.ISecret;
   /** Recall.ai meeting-bot creds (R16.2). Created directly in Secrets Manager, imported by name so CDK doesn't fight the real value. */
   readonly meetingBot: secretsmanager.ISecret;
+  /** Twilio click-to-call creds (R20.2). Created directly in Secrets Manager, imported by name. */
+  readonly twilio: secretsmanager.ISecret;
   /** Google OAuth client (Gmail inbox connection + Calendar). Placeholder until a real Google Cloud OAuth client is created. */
   readonly google: secretsmanager.ISecret;
 
@@ -121,6 +123,7 @@ export class SkoutAppSecrets extends Construct {
     // Created/rotated by infra/scripts/setup-ses-smtp.sh — import by name so CDK does not fight Secrets Manager.
     this.smtp = secretsmanager.Secret.fromSecretNameV2(this, "Smtp", `${prefix}/smtp`);
     this.meetingBot = secretsmanager.Secret.fromSecretNameV2(this, "MeetingBot", `${prefix}/meeting-bot`);
+    this.twilio = secretsmanager.Secret.fromSecretNameV2(this, "Twilio", `${prefix}/twilio`);
     this.google = createPlaceholder("Google", "google", {
       GOOGLE_CLIENT_ID: "replace-me",
       GOOGLE_CLIENT_SECRET: "replace-me",

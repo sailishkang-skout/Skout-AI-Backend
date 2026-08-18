@@ -1,6 +1,12 @@
 import { eq, and } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
-import { encryptSecret, decryptSecret } from "@skout/shared";
+import {
+  encryptSecret,
+  findCalendarConnectionForUser,
+  listGoogleCalendarEvents,
+  resolveGoogleCalendarAccessToken,
+  type CalendarEventSummary,
+} from "@skout/shared";
 import type { Env } from "../config/env.js";
 import { signOAuthState, verifyOAuthState } from "../utils/oauth-state.js";
 import { HttpError } from "../utils/http.js";
@@ -30,7 +36,12 @@ const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 // calendar.events — create/update events on the user's calendar. Deliberately narrower than
 // full calendar management (no calendar-list/settings access needed for this feature).
-const GOOGLE_CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar.events", "email", "profile"].join(" ");
+const GOOGLE_CALENDAR_SCOPES = [
+  "https://www.googleapis.com/auth/calendar.events",
+  "https://www.googleapis.com/auth/calendar.readonly",
+  "email",
+  "profile",
+].join(" ");
 
 function callbackUrl(config: Env): string {
   const base = (config.API_PUBLIC_URL ?? "http://localhost:3001").replace(/\/$/, "");
@@ -142,7 +153,8 @@ export async function handleGoogleCalendarCallback(
   const frontend = (config.FRONTEND_URL ?? config.CORS_ORIGIN[0] ?? "http://localhost:3000").replace(/\/$/, "");
   return {
     workspaceId,
-    redirectUrl: `${frontend}/settings/calendar?connected=google`,
+    // Next.js basePath is "/app" — omitting it 404'd this redirect.
+    redirectUrl: `${frontend}/app/settings/calendar?connected=google`,
   };
 }
 
@@ -156,12 +168,23 @@ export async function getCalendarConnectionStatus(
   workspaceId: string,
   userId: string
 ): Promise<CalendarConnectionStatus> {
-  const [row] = await db
-    .select({ connectedEmail: calendarConnections.connectedEmail })
-    .from(calendarConnections)
-    .where(and(eq(calendarConnections.workspaceId, workspaceId), eq(calendarConnections.userId, userId)))
-    .limit(1);
+  const row = await findCalendarConnectionForUser(db, userId, workspaceId);
   return { connected: Boolean(row), connectedEmail: row?.connectedEmail ?? null };
+}
+
+export async function listConnectedGoogleCalendarEvents(
+  db: Db,
+  workspaceId: string,
+  userId: string,
+  config: Env,
+  range: { timeMin: Date; timeMax: Date }
+): Promise<{ data: CalendarEventSummary[]; connected: boolean }> {
+  const connection = await findCalendarConnectionForUser(db, userId, workspaceId);
+  if (!connection) return { data: [], connected: false };
+
+  const accessToken = await resolveGoogleCalendarAccessToken(connection, db, config);
+  const data = await listGoogleCalendarEvents(accessToken, range);
+  return { data, connected: true };
 }
 
 export async function disconnectCalendar(db: Db, workspaceId: string, userId: string): Promise<boolean> {

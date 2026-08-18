@@ -77,6 +77,53 @@ export async function dialBridgeCall(config: Env, params: BridgeCallParams): Pro
   return { callSid: json.sid ?? "", status: json.status ?? "queued" };
 }
 
+export interface SendSmsParams {
+  /** Destination number, E.164 format (e.g. +14155551234). */
+  to: string;
+  body: string;
+}
+
+export interface SendSmsResult {
+  messageSid: string;
+  status: string;
+}
+
+/**
+ * SMS delivery (meeting/task reminders + notification-preferences "sms" channel). Uses Twilio's
+ * plain REST API over fetch, same pattern as `dialBridgeCall` above (no SDK dependency).
+ */
+export async function sendSms(config: Env, params: SendSmsParams): Promise<SendSmsResult> {
+  if (!isTwilioConfigured(config)) {
+    throw new Error("Twilio is not configured (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_PHONE_NUMBER)");
+  }
+
+  const body = new URLSearchParams({
+    To: params.to,
+    From: config.TWILIO_PHONE_NUMBER!,
+    Body: params.body,
+  });
+
+  const auth = Buffer.from(`${config.TWILIO_ACCOUNT_SID}:${config.TWILIO_AUTH_TOKEN}`).toString("base64");
+  const res = await fetch(
+    `https://api.twilio.com/2010-04-01/Accounts/${config.TWILIO_ACCOUNT_SID}/Messages.json`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: body.toString(),
+    }
+  );
+
+  const json = (await res.json().catch(() => ({}))) as { sid?: string; status?: string; message?: string };
+  if (!res.ok) {
+    log.warn("Twilio SMS creation failed", { status: res.status, body: json });
+    throw new Error(json.message ?? `Twilio API returned ${res.status}`);
+  }
+  return { messageSid: json.sid ?? "", status: json.status ?? "queued" };
+}
+
 function escapeXmlAttr(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

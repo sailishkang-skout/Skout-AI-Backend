@@ -71,6 +71,39 @@ export interface EmailIntelPatternResult {
   [key: string]: unknown;
 }
 
+/**
+ * Shape of the upstream email-intel service's warmup responses.
+ *
+ * NOTE: as of writing, `src/services/warmup/` in the email-intel repo is a
+ * deliberate scaffold (its own docs/EXTERNAL.md: "Warmup ... scaffold only,
+ * not sending mail yet") — every warmup function there except the status
+ * read unconditionally throws "not implemented", which its POST /warmup/start
+ * route surfaces as upstream 501. This proxy's `post()`/`get()` helpers treat
+ * any non-2xx upstream response as EmailIntelUnavailableError (mapped to 502
+ * below), matching how the existing verify/discover/patterns proxies already
+ * treat upstream non-2xx — so today `startWarmup` will reliably reject with
+ * EmailIntelUnavailableError until the upstream engine is implemented.
+ * `getWarmupStatus` does succeed today, but only reports the scaffold-wide
+ * `{ enabled: false, phase: "scaffold" }` state, not real per-domain progress.
+ */
+export interface EmailIntelWarmupStartResult {
+  success: boolean;
+  domain: string;
+  mailbox: string | null;
+  status?: string;
+  [key: string]: unknown;
+}
+
+export interface EmailIntelWarmupStatusResult {
+  success: boolean;
+  domain: string;
+  enabled: boolean;
+  phase: string;
+  score: number | null;
+  dayInProgram: number | null;
+  [key: string]: unknown;
+}
+
 function baseUrl(config: Pick<Env, "EMAIL_INTEL_SERVICE_URL">): string | null {
   const url = config.EMAIL_INTEL_SERVICE_URL?.trim();
   if (!url) return null;
@@ -97,6 +130,36 @@ async function post<T>(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(config.EMAIL_INTEL_TIMEOUT_MS),
+    });
+  } catch (err: unknown) {
+    throw new EmailIntelUnavailableError(err instanceof Error ? err.message : String(err));
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new EmailIntelUnavailableError(`upstream ${res.status}: ${text.slice(0, 300)}`);
+  }
+
+  return (await res.json()) as T;
+}
+
+async function get<T>(
+  config: Pick<Env, "EMAIL_INTEL_SERVICE_URL" | "EMAIL_INTEL_TIMEOUT_MS">,
+  path: string,
+  query: Record<string, string>
+): Promise<T> {
+  const url = baseUrl(config);
+  if (!url) {
+    throw new EmailIntelUnavailableError("EMAIL_INTEL_SERVICE_URL is not configured");
+  }
+
+  const qs = new URLSearchParams(query).toString();
+
+  let res: Response;
+  try {
+    res = await fetch(`${url}${path}?${qs}`, {
+      method: "GET",
       signal: AbortSignal.timeout(config.EMAIL_INTEL_TIMEOUT_MS),
     });
   } catch (err: unknown) {
@@ -187,6 +250,50 @@ export async function verifyEmailAsVerdict(
   };
 }
 
+export interface SendEligibilityCheck {
+  /** True = OK to send. False = the policy engine says don't (or defer/review) — caller should block the send. */
+  allowed: boolean;
+  decision: string;
+  reason?: string;
+  decisionConfidence?: number;
+}
+
+/**
+ * POST /verify, then extract just the send-eligibility gate — the policy decision (SAFE vs.
+ * catch-all/pattern-risk/etc.), not the raw mailbox-existence verdict `verifyEmailAsVerdict`
+ * returns. This is deliberately more conservative than `EmailVerdict.status === "valid"`: e.g.
+ * catch-all domains are `sendable` in Skout's own SENDABLE_STATUSES today, but the email-intel
+ * policy engine never marks catch-all `allowed` — it always requires manual review.
+ *
+ * Fails OPEN (returns `allowed: true`) when the service is unconfigured or unreachable, same
+ * as `verifyEmailAsVerdict` — this is a safety *enhancement* layered on top of the existing
+ * suppression-list gate, not a replacement for it, so its own unavailability must never block
+ * sending outright.
+ */
+export async function checkSendEligibility(
+  config: Pick<Env, "EMAIL_INTEL_SERVICE_URL" | "EMAIL_INTEL_TIMEOUT_MS">,
+  email: string
+): Promise<SendEligibilityCheck> {
+  if (!isEmailIntelConfigured(config)) return { allowed: true, decision: "NOT_CONFIGURED" };
+
+  let result: EmailIntelVerifyResult;
+  try {
+    result = await verifyEmail(config, email);
+  } catch {
+    return { allowed: true, decision: "UNAVAILABLE" };
+  }
+
+  const eligibility = result.sendEligibility;
+  if (!result.success || !eligibility) return { allowed: true, decision: "NO_DECISION" };
+
+  return {
+    allowed: eligibility.allowed,
+    decision: eligibility.decision,
+    reason: typeof eligibility.reason === "string" ? eligibility.reason : undefined,
+    decisionConfidence: eligibility.decisionConfidence,
+  };
+}
+
 /** POST /verify/batch — synchronous bounded batch (caller waits for all results). */
 export function verifyEmailBatch(
   config: Pick<Env, "EMAIL_INTEL_SERVICE_URL" | "EMAIL_INTEL_TIMEOUT_MS">,
@@ -213,4 +320,20 @@ export function generatePatterns(
     last_name: params.lastName,
     domain: params.domain,
   });
+}
+
+/** POST /warmup/start — kicks off warm-up scheduling for a domain/mailbox. */
+export function startWarmup(
+  config: Pick<Env, "EMAIL_INTEL_SERVICE_URL" | "EMAIL_INTEL_TIMEOUT_MS">,
+  params: { domain: string; mailbox?: string }
+): Promise<EmailIntelWarmupStartResult> {
+  return post(config, "/warmup/start", params);
+}
+
+/** GET /warmup/status?domain=... — current warm-up state/score for a domain. */
+export function getWarmupStatus(
+  config: Pick<Env, "EMAIL_INTEL_SERVICE_URL" | "EMAIL_INTEL_TIMEOUT_MS">,
+  domain: string
+): Promise<EmailIntelWarmupStatusResult> {
+  return get(config, "/warmup/status", { domain });
 }

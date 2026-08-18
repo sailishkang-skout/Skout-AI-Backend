@@ -104,6 +104,8 @@ const envSchema = z
     AI_SERVICE_URL: z.string().optional(),
     EMAIL_INTEL_SERVICE_URL: z.string().optional(),
     EMAIL_INTEL_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
+    /** n8n / external callers of /api/v1/email-intel/* (header x-api-key). */
+    EMAIL_INTEL_EXTERNAL_API_KEY: z.string().optional(),
     /** OpenRouter API key (preferred). Also accepts OPEN_ROUTER_API_KEY via transform. */
     OPENROUTER_API_KEY: z.string().optional(),
     OPEN_ROUTER_API_KEY: z.string().optional(),
@@ -220,6 +222,16 @@ const envSchema = z
     /** How many hours before (task/sequence step due) or after (draft created) something is
      * considered "needs a reminder". */
     REMINDER_LEAD_HOURS: z.coerce.number().int().positive().default(24),
+    // --- R17.3 signal-triggered SDR alerts. ---
+    /** How often the alert-sweep worker matches newly-recorded signals against alert_rules. */
+    ALERT_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(5),
+    /** How often the digest worker batches pending digest-preference notifications into one email. */
+    ALERT_DIGEST_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(1440),
+    // --- R18.1 engagement-decay risk flag. ---
+    /** How often the risk-decay sweep re-evaluates activated prospects. */
+    RISK_DECAY_SWEEP_INTERVAL_HOURS: z.coerce.number().int().positive().default(24),
+    /** No opens/replies/activity for this many days -> engagement_decay signal. */
+    RISK_DECAY_INACTIVITY_DAYS: z.coerce.number().int().positive().default(21),
   })
   .transform((data) => {
     let next = data;

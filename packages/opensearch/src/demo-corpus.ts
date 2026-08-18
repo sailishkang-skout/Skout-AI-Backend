@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ProspectDocument, SearchFilters } from "./index.js";
+import type { AggregateResult, ProspectDocument, SearchFilters, SegmentBucket } from "./index.js";
 
 const INDUSTRIES = [
   "Software & SaaS",
@@ -265,6 +265,18 @@ export function filterDemoCorpus(
     const v = filters.country.toLowerCase();
     result = result.filter((d) => d.country?.toLowerCase() === v);
   }
+  if (filters.industries?.length) {
+    const set = new Set(filters.industries.map((v) => v.toLowerCase()));
+    result = result.filter((d) => d.industry && set.has(d.industry.toLowerCase()));
+  }
+  if (filters.countries?.length) {
+    const set = new Set(filters.countries.map((v) => v.toLowerCase()));
+    result = result.filter((d) => d.country && set.has(d.country.toLowerCase()));
+  }
+  if (filters.seniorities?.length) {
+    const set = new Set(filters.seniorities.map((v) => v.toLowerCase()));
+    result = result.filter((d) => d.seniority && set.has(d.seniority.toLowerCase()));
+  }
   if (filters.state) {
     const v = filters.state.toLowerCase();
     result = result.filter((d) => d.state?.toLowerCase() === v);
@@ -342,4 +354,30 @@ export function filterDemoCorpus(
 
   result = postProcessSearchHits(result, filters);
   return result.slice(0, limit);
+}
+
+/** Demo-mode counterpart to `aggregateProspects` — same industry/size/geo breakdown shape, computed client-side over the (unlimited) filtered demo corpus. */
+export function aggregateDemoCorpus(docs: ProspectDocument[], filters: SearchFilters): AggregateResult {
+  const matched = filterDemoCorpus(docs, filters, docs.length);
+  const counts: Record<"industry" | "size" | "geo", Map<string, number>> = {
+    industry: new Map(),
+    size: new Map(),
+    geo: new Map(),
+  };
+  for (const doc of matched) {
+    const values: Record<"industry" | "size" | "geo", string> = {
+      industry: doc.industry ?? "unknown",
+      size: doc.employeeBucket ?? "unknown",
+      geo: doc.country ?? "unknown",
+    };
+    for (const dimension of ["industry", "size", "geo"] as const) {
+      const key = values[dimension];
+      counts[dimension].set(key, (counts[dimension].get(key) ?? 0) + 1);
+    }
+  }
+  const segments: SegmentBucket[] = [];
+  for (const dimension of ["industry", "size", "geo"] as const) {
+    for (const [value, count] of counts[dimension]) segments.push({ dimension, value, count });
+  }
+  return { total: matched.length, segments };
 }

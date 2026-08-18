@@ -3,3 +3,4 @@ export * from "./schemas.js";
 export * from "./field-sources.js";
 export * from "./integration-crypto.js";
 export * from "./google-calendar-tokens.js";
+export * from "./google-calendar-events.js";

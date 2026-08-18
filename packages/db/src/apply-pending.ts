@@ -239,9 +239,14 @@ try {
   await runSqlMigration("0039_notification_broadcast_and_indexes", "0039_notification_broadcast_and_indexes.sql");
   await runSqlMigration("0040_task_type_completed_at", "0040_task_type_completed_at.sql");
   await runSqlMigration("0041_google_calendar", "0041_google_calendar.sql");
-  await runSqlMigration("0042_promotion_candidates", "0042_promotion_candidates.sql");
-  await runSqlMigration("0043_pipelines_default_unique", "0043_pipelines_default_unique.sql");
-  await runSqlMigration("0044_meeting_ics", "0044_meeting_ics.sql");
+  await runSqlMigration("0042_r13_r17_r18_r12_r11_foundation", "0042_r13_r17_r18_r12_r11_foundation.sql");
+  await runSqlMigration("0043_sequence_abc_conditions", "0043_sequence_abc_conditions.sql");
+  await runSqlMigration("0044_sequence_versions_events_experiments", "0044_sequence_versions_events_experiments.sql");
+  await runSqlMigration("0045_sequence_retry_and_linkedin_connections", "0045_sequence_retry_and_linkedin_connections.sql");
+  await runSqlMigration("0046_manual_review_fields", "0046_manual_review_fields.sql");
+  await runSqlMigration("0047_promotion_candidates", "0047_promotion_candidates.sql");
+  await runSqlMigration("0048_pipelines_default_unique", "0048_pipelines_default_unique.sql");
+  await runSqlMigration("0049_meeting_ics", "0049_meeting_ics.sql");
 
 } finally {
   await sql.end();

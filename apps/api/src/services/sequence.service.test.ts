@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { SequenceService, buildSequenceService, SEQUENCE_STATUSES, STEP_TYPES } from "./sequence.service.js";
+import { SequenceService, buildSequenceService, SEQUENCE_STATUSES, STEP_TYPES, SEQUENCE_MODES, CONDITION_TYPES } from "./sequence.service.js";
 import { HttpError } from "../utils/http.js";
 
 // ---------------------------------------------------------------------------
@@ -10,9 +10,19 @@ type Terminal = "orderBy" | "where";
 
 function selectChain(result: unknown[], terminal: Terminal = "where") {
   const c = {} as Record<string, ReturnType<typeof vi.fn>>;
-  c.from    = vi.fn().mockReturnValue(c);
-  c.where   = terminal === "where"   ? vi.fn().mockResolvedValue(result) : vi.fn().mockReturnValue(c);
-  c.orderBy = terminal === "orderBy" ? vi.fn().mockResolvedValue(result) : vi.fn().mockReturnValue(c);
+  c.from = vi.fn().mockReturnValue(c);
+  if (terminal === "where") {
+    c.where = vi.fn().mockResolvedValue(result);
+    c.orderBy = vi.fn().mockReturnValue(c);
+  } else {
+    c.where = vi.fn().mockReturnValue(c);
+    const afterOrder = {
+      limit: vi.fn().mockResolvedValue(result),
+      then: (onFulfilled: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) =>
+        Promise.resolve(result).then(onFulfilled, onRejected),
+    };
+    c.orderBy = vi.fn().mockReturnValue(afterOrder);
+  }
   return c;
 }
 
@@ -30,7 +40,12 @@ function joinChain(result: unknown[]) {
 }
 
 function insertReturning(result: unknown[]) {
-  return { values: vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue(result) }) };
+  return {
+    values: vi.fn().mockReturnValue({
+      returning: vi.fn().mockResolvedValue(result),
+      onConflictDoNothing: vi.fn().mockResolvedValue(result),
+    }),
+  };
 }
 
 function updateReturning(result: unknown[]) {
@@ -175,6 +190,7 @@ describe("SequenceService.getSequenceById", () => {
       selects: [
         { result: [SEQ_ROW], terminal: "where" },
         { result: [STEP_ROW, step2], terminal: "orderBy" },
+        { result: [], terminal: "where" },
       ],
     });
     const svc = new SequenceService(db as any);
@@ -224,8 +240,14 @@ describe("SequenceService.updateSequence", () => {
   it("allows draft → active transition", async () => {
     const updated = { ...SEQ_ROW, status: "active" };
     const db = makeDb({
-      selects: [{ result: [{ ...SEQ_ROW, status: "draft" }], terminal: "where" }],
-      updates: [() => updateReturning([updated])],
+      selects: [
+        { result: [{ ...SEQ_ROW, status: "draft" }], terminal: "where" },
+        { result: [], terminal: "orderBy" },
+        { result: [{ ...SEQ_ROW, status: "active", currentVersion: 0 }], terminal: "where" },
+        { result: [], terminal: "orderBy" },
+      ],
+      inserts: [() => insertReturning([{ id: "ver-1", version: 1, status: "published" }])],
+      updates: [() => updateReturning([updated]), () => updateWhere()],
     });
     const svc = new SequenceService(db as any);
     const result = await svc.updateSequence("ws-1", "seq-1", { status: "active" });
@@ -246,7 +268,10 @@ describe("SequenceService.updateSequence", () => {
   it("allows paused → active transition (resume)", async () => {
     const updated = { ...SEQ_ROW, status: "active" };
     const db = makeDb({
-      selects: [{ result: [{ ...SEQ_ROW, status: "paused" }], terminal: "where" }],
+      selects: [
+        { result: [{ ...SEQ_ROW, status: "paused" }], terminal: "where" },
+        { result: [], terminal: "orderBy" },
+      ],
       updates: [() => updateReturning([updated])],
     });
     const svc = new SequenceService(db as any);
@@ -342,7 +367,7 @@ describe("SequenceService.addStep", () => {
         { result: [SEQ_ROW], terminal: "where" },
         { result: [], terminal: "orderBy" },
       ],
-      inserts: [() => insertReturning([STEP_ROW])],
+      inserts: [() => insertReturning([STEP_ROW]), () => insertReturning([])],
     });
     const svc = new SequenceService(db as any);
     const result = await svc.addStep("ws-1", "seq-1", { stepType: "email", delayDays: 0 });
@@ -364,7 +389,7 @@ describe("SequenceService.addStep", () => {
         { result: [SEQ_ROW], terminal: "where" },
         { result: [], terminal: "orderBy" },
       ],
-      inserts: [() => insertReturning([{ ...STEP_ROW, bodyTemplate: template }])],
+      inserts: [() => insertReturning([{ ...STEP_ROW, bodyTemplate: template }]), () => insertReturning([])],
     });
     const svc = new SequenceService(db as any);
     const result = await svc.addStep("ws-1", "seq-1", { stepType: "email", delayDays: 0, bodyTemplate: template });
@@ -378,7 +403,7 @@ describe("SequenceService.addStep", () => {
         { result: [SEQ_ROW], terminal: "where" },
         { result: [], terminal: "orderBy" },
       ],
-      inserts: [() => insertReturning([{ ...STEP_ROW, bodyTemplate: template }])],
+      inserts: [() => insertReturning([{ ...STEP_ROW, bodyTemplate: template }]), () => insertReturning([])],
     });
     const svc = new SequenceService(db as any);
     await expect(
@@ -619,6 +644,7 @@ describe("SequenceService.enroll", () => {
       selects: [
         { result: [ACTIVE_SEQ], terminal: "where" },
         { result: [STEP_ROW], terminal: "orderBy" },
+        { result: [], terminal: "orderBy" },
       ],
       deletes: [() => deleteWhere()],
       inserts: [
@@ -643,6 +669,7 @@ describe("SequenceService.enroll", () => {
       selects: [
         { result: [ACTIVE_SEQ], terminal: "where" },
         { result: [STEP_ROW], terminal: "orderBy" },
+        { result: [], terminal: "orderBy" },
       ],
       deletes: [() => deleteWhere()],
       inserts: [
@@ -798,6 +825,61 @@ describe("SequenceService.listSequencesForList", () => {
 });
 
 // ---------------------------------------------------------------------------
+// getAnalytics
+// ---------------------------------------------------------------------------
+
+describe("SequenceService.getAnalytics", () => {
+  it("counts a call step's awaiting_disposition status as pending, not scheduled/sent/failed/skipped", async () => {
+    // Regression test for the "Call step due but Analytics stays 0/0/0/0" report: a due call
+    // step creates a task and parks the enrollment step in "awaiting_disposition" while it
+    // waits for a human to dial and set a disposition — a real, working state that the funnel
+    // bucketer previously had no bucket for at all, so it silently counted toward nothing.
+    const db = {
+      select: vi.fn()
+        .mockReturnValueOnce(selectChain([{ ...SEQ_ROW, id: "seq-1", status: "active" }]))
+        .mockReturnValueOnce(
+          selectChain(
+            [{ id: "step-call-1", sequenceId: "seq-1", stepOrder: 1, stepType: "call", subject: null, delayDays: 0 }],
+            "orderBy"
+          )
+        )
+        .mockReturnValueOnce(selectChain([{ id: "enr-1", status: "active" }]))
+        .mockReturnValueOnce(
+          selectChain([{ id: "es-1", stepId: "step-call-1", status: "awaiting_disposition" }])
+        )
+        .mockReturnValueOnce(selectChain([])),
+    };
+    const svc = new SequenceService(db as any);
+    const result = await svc.getAnalytics("ws-1", "seq-1");
+
+    expect(result?.steps).toHaveLength(1);
+    expect(result?.steps[0]).toMatchObject({
+      stepType: "call",
+      scheduled: 0,
+      sent: 0,
+      failed: 0,
+      skipped: 0,
+      pending: 1,
+    });
+  });
+
+  it("still buckets email steps into scheduled/sent/failed/skipped as before", async () => {
+    const db = {
+      select: vi.fn()
+        .mockReturnValueOnce(selectChain([{ ...SEQ_ROW, id: "seq-1", status: "active" }]))
+        .mockReturnValueOnce(selectChain([STEP_ROW], "orderBy"))
+        .mockReturnValueOnce(selectChain([{ id: "enr-1", status: "active" }]))
+        .mockReturnValueOnce(selectChain([{ id: "es-1", stepId: STEP_ROW.id, status: "executed" }]))
+        .mockReturnValueOnce(selectChain([])),
+    };
+    const svc = new SequenceService(db as any);
+    const result = await svc.getAnalytics("ws-1", "seq-1");
+
+    expect(result?.steps[0]).toMatchObject({ scheduled: 0, sent: 1, failed: 0, skipped: 0, pending: 0 });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // buildSequenceService factory
 // ---------------------------------------------------------------------------
 
@@ -817,11 +899,22 @@ describe("buildSequenceService", () => {
 // ---------------------------------------------------------------------------
 
 describe("exported enums", () => {
-  it("STEP_TYPES contains the four expected types", () => {
+  it("STEP_TYPES contains core and branching types", () => {
     expect(STEP_TYPES).toContain("email");
     expect(STEP_TYPES).toContain("linkedin");
     expect(STEP_TYPES).toContain("wait");
     expect(STEP_TYPES).toContain("task");
+    expect(STEP_TYPES).toContain("condition");
+    expect(STEP_TYPES).toContain("goal");
+  });
+
+  it("SEQUENCE_MODES is A/B/C", () => {
+    expect(SEQUENCE_MODES).toEqual(["A", "B", "C"]);
+  });
+
+  it("CONDITION_TYPES include LinkedIn invite states", () => {
+    expect(CONDITION_TYPES).toContain("linkedin_invite_accepted");
+    expect(CONDITION_TYPES).toContain("linkedin_invite_declined");
   });
 
   it("SEQUENCE_STATUSES contains the four lifecycle states", () => {

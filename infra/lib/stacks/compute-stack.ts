@@ -271,6 +271,9 @@ export class ComputeStack extends Stack {
     const corsOrigin = config.domainName
       ? publicUrl
       : `${publicUrl},http://${albDns}`;
+    const marketingOrigin = "https://www.skoutai.io";
+    const frontendPublicUrl = `${marketingOrigin}/app`;
+    const corsOriginWithMarketing = `${corsOrigin},${marketingOrigin},https://skoutai.io`;
 
     const aiServiceUrl = `http://ai.${namespace.namespaceName}:8000`;
     const emailIntelServiceUrl = `http://email-intel.${namespace.namespaceName}:3001`;
@@ -296,9 +299,9 @@ export class ComputeStack extends Stack {
         NODE_ENV: "production",
         PORT: "3001",
         HOST: "0.0.0.0",
-        CORS_ORIGIN: corsOrigin,
+        CORS_ORIGIN: corsOriginWithMarketing,
         API_PUBLIC_URL: publicUrl,
-        FRONTEND_URL: publicUrl,
+        FRONTEND_URL: frontendPublicUrl,
         REDIS_URL: `redis://${redis.endpoint}:6379`,
         EXPORTS_BUCKET: exportsBucket.bucketName,
         SCRAPE_BUCKET: scrapeBucket.bucketName,
@@ -384,6 +387,9 @@ export class ComputeStack extends Stack {
         MEETING_BOT_WEBHOOK_SECRET: ecs.Secret.fromSecretsManager(secrets.meetingBot, "MEETING_BOT_WEBHOOK_SECRET"),
         GOOGLE_CLIENT_ID: ecs.Secret.fromSecretsManager(secrets.google, "GOOGLE_CLIENT_ID"),
         GOOGLE_CLIENT_SECRET: ecs.Secret.fromSecretsManager(secrets.google, "GOOGLE_CLIENT_SECRET"),
+        TWILIO_ACCOUNT_SID: ecs.Secret.fromSecretsManager(secrets.twilio, "TWILIO_ACCOUNT_SID"),
+        TWILIO_AUTH_TOKEN: ecs.Secret.fromSecretsManager(secrets.twilio, "TWILIO_AUTH_TOKEN"),
+        TWILIO_PHONE_NUMBER: ecs.Secret.fromSecretsManager(secrets.twilio, "TWILIO_PHONE_NUMBER"),
       },
       datadog: {
         apiKeySecret: ecs.Secret.fromSecretsManager(secrets.datadog, "DD_API_KEY"),
@@ -438,8 +444,8 @@ export class ComputeStack extends Stack {
         NODE_ENV: "production",
         PORT: "3002",
         HOST: "0.0.0.0",
-        CORS_ORIGIN: corsOrigin,
-        FRONTEND_URL: publicUrl,
+        CORS_ORIGIN: corsOriginWithMarketing,
+        FRONTEND_URL: frontendPublicUrl,
         DATABASE_HOST: database.instance.dbInstanceEndpointAddress,
         DATABASE_PORT: database.instance.dbInstanceEndpointPort,
         DATABASE_NAME: "skout",
@@ -491,7 +497,22 @@ export class ComputeStack extends Stack {
         targetGroups: [crmEcs.targetGroup],
         priority: 7,
         conditions: [
-          elbv2.ListenerCondition.pathPatterns(["/api/v1/dashboard/overview*"]),
+          elbv2.ListenerCondition.pathPatterns([
+            "/api/v1/dashboard/overview*",
+            "/api/v1/dashboard/switching-cost*",
+            "/api/v1/dashboard/cro-summary*",
+          ]),
+          ...albExtraConditions,
+        ],
+      });
+      // apps/crm registers GET /api/v1/audit-logs (see routes/audit.routes.ts). Without this
+      // rule the request falls through to the priority-10 "/api/*" catch-all and 404s on the
+      // api service, which has no such route.
+      listener.addTargetGroups("crm-audit", {
+        targetGroups: [crmEcs.targetGroup],
+        priority: 8,
+        conditions: [
+          elbv2.ListenerCondition.pathPatterns(["/api/v1/audit-logs*"]),
           ...albExtraConditions,
         ],
       });
@@ -546,7 +567,10 @@ export class ComputeStack extends Stack {
       secrets.appConfig,
       secrets.datadog,
       secrets.razorpay,
-      secrets.smtp
+      secrets.smtp,
+      secrets.meetingBot,
+      secrets.google,
+      secrets.twilio
     );
 
     grantSecretRead(crmEcs.taskDefinition, database.secret, secrets.clerk, secrets.sentry, secrets.datadog);
@@ -604,7 +628,7 @@ export class ComputeStack extends Stack {
       cpu: config.ecs.webCpu,
       memoryMiB: config.ecs.webMemoryMiB,
       desiredCount: config.ecs.webDesiredCount,
-      healthCheckPath: "/",
+      healthCheckPath: "/app",
       healthyHttpCodes: "200-399",
       listener,
       pathPatterns: ["/*"],
@@ -614,11 +638,11 @@ export class ComputeStack extends Stack {
       environment: {
         NODE_ENV: "production",
         NEXT_PUBLIC_API_URL: apiUrl,
-        NEXT_PUBLIC_APP_URL: publicUrl,
-        NEXT_PUBLIC_CLERK_SIGN_IN_URL: `${publicUrl}/sign-in`,
-        NEXT_PUBLIC_CLERK_SIGN_UP_URL: `${publicUrl}/sign-up`,
-        CLERK_SIGN_IN_URL: `${publicUrl}/sign-in`,
-        CLERK_SIGN_UP_URL: `${publicUrl}/sign-up`,
+        NEXT_PUBLIC_APP_URL: frontendPublicUrl,
+        NEXT_PUBLIC_CLERK_SIGN_IN_URL: `${frontendPublicUrl}/signin`,
+        NEXT_PUBLIC_CLERK_SIGN_UP_URL: `${frontendPublicUrl}/sign-up`,
+        CLERK_SIGN_IN_URL: `${frontendPublicUrl}/signin`,
+        CLERK_SIGN_UP_URL: `${frontendPublicUrl}/sign-up`,
         NEXT_PUBLIC_POSTHOG_HOST: "https://us.i.posthog.com",
       },
       secrets: {

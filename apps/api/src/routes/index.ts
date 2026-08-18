@@ -34,6 +34,9 @@ import { callRoutes } from "./call.routes.js";
 import { croRoutes } from "./cro.routes.js";
 import { emailIntelRoutes } from "./email-intel.routes.js";
 import { calendarRoutes } from "./calendar.routes.js";
+import { alertRuleRoutes } from "./alert-rule.routes.js";
+import { tamRoutes } from "./tam.routes.js";
+import { importAdapterRoutes } from "./import-adapter.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoutes, { prefix: "/api/v1" });
@@ -73,5 +76,8 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(croRoutes);
     await v1.register(emailIntelRoutes);
     await v1.register(calendarRoutes);
+    await v1.register(alertRuleRoutes);
+    await v1.register(tamRoutes);
+    await v1.register(importAdapterRoutes);
   }, { prefix: "/api/v1" });
 }

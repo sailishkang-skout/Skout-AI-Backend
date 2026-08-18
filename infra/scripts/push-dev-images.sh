@@ -48,6 +48,7 @@ if [[ -f "$FRONTEND_DIR/package.json" ]]; then
   if [[ -n "${NEXT_PUBLIC_API_URL:-}" ]]; then
     WEB_BUILD_ARGS+=(--build-arg "NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}")
     WEB_BUILD_ARGS+=(--build-arg "NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-${NEXT_PUBLIC_API_URL}}")
+    WEB_BUILD_ARGS+=(--build-arg "NEXT_PUBLIC_CRM_API_URL=${NEXT_PUBLIC_CRM_API_URL:-${NEXT_PUBLIC_API_URL}}")
   fi
 
   # Clerk keys: env → frontend .env.local → Secrets Manager.
@@ -76,6 +77,19 @@ if [[ -f "$FRONTEND_DIR/package.json" ]]; then
   fi
   if [[ -n "${CLERK_SECRET_KEY:-}" && "$CLERK_SECRET_KEY" != "replace-me" ]]; then
     WEB_BUILD_ARGS+=(--build-arg "CLERK_SECRET_KEY=${CLERK_SECRET_KEY}")
+  fi
+
+  # Pre-login access gate (src/middleware.ts). Empty/unset disables the gate.
+  if [[ -z "${GATE_TOKEN:-}" ]]; then
+    for candidate in "$FRONTEND_DIR/.env.local" "$FRONTEND_DIR/.env.dev"; do
+      if [[ -f "$candidate" ]] && grep -q '^GATE_TOKEN=' "$candidate"; then
+        GATE_TOKEN="$(grep '^GATE_TOKEN=' "$candidate" | tail -n1 | cut -d= -f2-)"
+        break
+      fi
+    done
+  fi
+  if [[ -n "${GATE_TOKEN:-}" ]]; then
+    WEB_BUILD_ARGS+=(--build-arg "GATE_TOKEN=${GATE_TOKEN}")
   fi
 
   docker build "${WEB_BUILD_ARGS[@]}" -f "$FRONTEND_DIR/Dockerfile" \

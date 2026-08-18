@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import type { CompanyCandidate } from "@skout/scraper-contracts";
 import type { ProspectDocument } from "@skout/opensearch";
 import { generateCompanyId } from "@skout/shared";
-import { enrichDocsWithGrowth, growthPct } from "./growth.js";
+import { computeTechStackDelta, enrichDocsWithGrowth, growthPct } from "./growth.js";
 
 /** insert() always succeeds and records what was written; select() resolves `pastSnapshot`. */
-function mockDb(pastSnapshot: { employeeCount: number | null }[] = []) {
+function mockDb(
+  pastSnapshot: { employeeCount?: number | null; techStack?: { category: string; technology: string }[] }[] = []
+) {
   const inserts: { table: unknown; values: unknown }[] = [];
   const db = {
     insert: vi.fn((table: unknown) => ({
@@ -45,7 +47,48 @@ describe("growthPct", () => {
   });
 });
 
+describe("computeTechStackDelta", () => {
+  it("returns nothing added/dropped when there's no prior snapshot", () => {
+    expect(computeTechStackDelta(undefined, [{ technology: "Salesforce" }])).toEqual({
+      added: [],
+      dropped: [],
+    });
+  });
+
+  it("detects added and dropped tools between two snapshots", () => {
+    const previous = [{ technology: "Salesforce" }, { technology: "Marketo" }];
+    const current = [{ technology: "Salesforce" }, { technology: "HubSpot" }];
+    expect(computeTechStackDelta(previous, current)).toEqual({
+      added: ["HubSpot"],
+      dropped: ["Marketo"],
+    });
+  });
+});
+
 describe("enrichDocsWithGrowth", () => {
+  it("emits tech_adopted/tech_dropped signals when a re-crawl's tech stack differs from the last snapshot", async () => {
+    const { db, inserts } = mockDb([
+      { employeeCount: null, techStack: [{ category: "crm", technology: "Salesforce" }, { category: "marketing", technology: "Marketo" }] },
+    ]);
+    const company: CompanyCandidate = {
+      domain: "acme.com",
+      scrapedAt: "2026-01-01T00:00:00.000Z",
+      source: "company-web",
+      techStack: [{ category: "crm", technology: "Salesforce" }, { category: "crm", technology: "HubSpot" }],
+    } as CompanyCandidate;
+
+    await enrichDocsWithGrowth(db as never, [company], []);
+
+    const values = inserts.flatMap((i) => i.values as { entityId: string; signalType: string; value: { detail: string } }[]);
+    expect(values).toContainEqual(
+      expect.objectContaining({ entityId: generateCompanyId("acme.com"), signalType: "tech_adopted", value: { detail: "HubSpot" } })
+    );
+    expect(values).toContainEqual(
+      expect.objectContaining({ entityId: generateCompanyId("acme.com"), signalType: "tech_dropped", value: { detail: "Marketo" } })
+    );
+  });
+
+
   it("persists each company's collectSignals() output via recordSignals", async () => {
     const { db, inserts } = mockDb();
     const company: CompanyCandidate = {

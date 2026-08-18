@@ -1,8 +1,18 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { enrollSequenceSchema } from "@skout/shared";
-import { buildSequenceService, STEP_TYPES, SEQUENCE_STATUSES } from "../services/sequence.service.js";
+import {
+  buildSequenceService,
+  STEP_TYPES,
+  SEQUENCE_STATUSES,
+  SEQUENCE_SOURCES,
+  SEQUENCE_MODES,
+  CONDITION_TYPES,
+  LINKEDIN_ACTIONS,
+} from "../services/sequence.service.js";
 import { generateSequenceForWorkspace } from "../services/sequence-generate.service.js";
+import { SEQUENCE_TEMPLATES, getSequenceTemplate } from "../services/sequence-templates.js";
+import { conditionExpressionSchema } from "../services/sequence-condition.js";
 import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.js";
 import { dispatchWebhookEvent } from "../services/webhook.service.js";
 import { HttpError } from "../utils/http.js";
@@ -15,36 +25,53 @@ const generateSequenceSchema = z.object({
 
 const fromStepsSchema = z.object({
   name: z.string().min(1).max(120),
+  source: z.enum(SEQUENCE_SOURCES).optional(),
+  templateKey: z.string().max(80).optional(),
   steps: z
     .array(
       z.object({
         stepType: z.enum(STEP_TYPES),
         delayDays: z.number().int().min(0).default(0),
         delayUnit: z.enum(["minutes", "hours", "days", "weeks"]).default("days"),
-        linkedinAction: z.enum(["connect", "message"]).optional(),
+        linkedinAction: z.enum(LINKEDIN_ACTIONS).optional(),
         subject: z.string().max(500).nullable().optional(),
         bodyTemplate: z.string().nullable().optional(),
+        conditionType: z.enum(CONDITION_TYPES).nullable().optional(),
+        conditionExpression: conditionExpressionSchema.nullable().optional(),
+        conditionWaitDays: z.number().int().min(0).max(30).optional(),
+        branch: z.enum(["yes", "no"]).nullable().optional(),
+        goalLabel: z.string().max(200).nullable().optional(),
       })
     )
     .min(1)
-    .max(12),
+    .max(24),
 });
 
 const createSequenceSchema = z.object({
   name: z.string().min(1).max(255),
+  source: z.enum(SEQUENCE_SOURCES).optional(),
+  mode: z.enum(SEQUENCE_MODES).optional(),
 });
 
 const updateSequenceSchema = z
   .object({
     name: z.string().min(1).max(255).optional(),
     status: z.enum(SEQUENCE_STATUSES).optional(),
+    mode: z.enum(SEQUENCE_MODES).optional(),
   })
-  .refine((d) => d.name !== undefined || d.status !== undefined, {
-    message: "At least one of name or status is required",
+  .refine((d) => d.name !== undefined || d.status !== undefined || d.mode !== undefined, {
+    message: "At least one of name, status, or mode is required",
   });
 
 const DELAY_UNITS = ["minutes", "hours", "days", "weeks"] as const;
-const LINKEDIN_ACTIONS = ["connect", "message"] as const;
+
+const variantSchema = z.object({
+  variantKey: z.enum(["A", "B", "C"]),
+  subject: z.string().max(500).nullable().optional(),
+  bodyTemplate: z.string().nullable().optional(),
+  weight: z.number().int().min(0).max(100).optional(),
+  enabled: z.boolean().optional(),
+});
 
 const createStepSchema = z.object({
   stepType: z.enum(STEP_TYPES),
@@ -53,6 +80,15 @@ const createStepSchema = z.object({
   linkedinAction: z.enum(LINKEDIN_ACTIONS).optional(),
   subject: z.string().max(500).optional(),
   bodyTemplate: z.string().optional(),
+  conditionType: z.enum(CONDITION_TYPES).nullable().optional(),
+  conditionExpression: conditionExpressionSchema.nullable().optional(),
+  conditionWaitDays: z.number().int().min(0).max(30).optional(),
+  yesNextStepId: z.string().uuid().nullable().optional(),
+  noNextStepId: z.string().uuid().nullable().optional(),
+  parentStepId: z.string().uuid().nullable().optional(),
+  branch: z.enum(["yes", "no"]).nullable().optional(),
+  goalLabel: z.string().max(200).nullable().optional(),
+  variants: z.array(variantSchema).max(3).optional(),
 });
 
 const updateStepSchema = z
@@ -63,6 +99,15 @@ const updateStepSchema = z
     linkedinAction: z.enum(LINKEDIN_ACTIONS).nullable().optional(),
     subject: z.string().max(500).nullable().optional(),
     bodyTemplate: z.string().nullable().optional(),
+    conditionType: z.enum(CONDITION_TYPES).nullable().optional(),
+    conditionExpression: conditionExpressionSchema.nullable().optional(),
+    conditionWaitDays: z.number().int().min(0).max(30).optional(),
+    yesNextStepId: z.string().uuid().nullable().optional(),
+    noNextStepId: z.string().uuid().nullable().optional(),
+    parentStepId: z.string().uuid().nullable().optional(),
+    branch: z.enum(["yes", "no"]).nullable().optional(),
+    goalLabel: z.string().max(200).nullable().optional(),
+    variants: z.array(variantSchema).max(3).optional(),
   })
   .refine((d) => Object.values(d).some((v) => v !== undefined), {
     message: "At least one field is required",
@@ -88,8 +133,202 @@ export async function sequenceRoutes(app: FastifyInstance) {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
-    const { name } = createSequenceSchema.parse(request.body ?? {});
-    const sequence = await svc.createSequence(workspaceId, name);
+    const { name, source, mode } = createSequenceSchema.parse(request.body ?? {});
+    const sequence = await svc.createSequence(workspaceId, name, { source, mode });
+    return reply.status(201).send(sequence);
+  });
+
+  app.get("/sequences/experiments", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = buildSequenceService(app.db);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    const data = await svc.listExperiments(workspaceId);
+    return reply.send({ data, total: data.length });
+  });
+
+  app.post("/sequences/experiments", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = buildSequenceService(app.db);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    const body = z
+      .object({
+        name: z.string().min(1).max(255),
+        sequenceAId: z.string().uuid().optional(),
+        sequenceBId: z.string().uuid().optional(),
+        fromTemplates: z.boolean().optional(),
+        weightA: z.number().int().min(0).max(100).optional(),
+        weightB: z.number().int().min(0).max(100).optional(),
+        primaryMetric: z.enum(["positive_reply", "meeting_booked", "completed"]).optional(),
+        durationDays: z.number().int().min(1).max(180).optional(),
+      })
+      .parse(request.body ?? {});
+
+    let sequenceAId = body.sequenceAId;
+    let sequenceBId = body.sequenceBId;
+    if (body.fromTemplates || !sequenceAId || !sequenceBId) {
+      const tplA = getSequenceTemplate("saas-vp-email");
+      const tplB = getSequenceTemplate("linkedin-first-connect");
+      if (!tplA || !tplB) return reply.status(500).send({ error: "templates_missing" });
+      const seqA = await svc.createGeneratedSequence(workspaceId, {
+        name: `${body.name} — A`,
+        source: "template",
+        templateKey: tplA.key,
+        mode: "A",
+        steps: tplA.steps,
+      });
+      const seqB = await svc.createGeneratedSequence(workspaceId, {
+        name: `${body.name} — B`,
+        source: "template",
+        templateKey: tplB.key,
+        mode: "B",
+        steps: tplB.steps,
+      });
+      sequenceAId = seqA.id;
+      sequenceBId = seqB.id;
+    }
+
+    const experiment = await svc.createExperiment(workspaceId, {
+      name: body.name,
+      sequenceAId: sequenceAId!,
+      sequenceBId: sequenceBId!,
+      weightA: body.weightA,
+      weightB: body.weightB,
+      primaryMetric: body.primaryMetric,
+      durationDays: body.durationDays,
+    });
+    return reply.status(201).send({
+      ...experiment,
+      sequenceAId,
+      sequenceBId,
+    });
+  });
+
+  app.get("/sequences/experiments/:id", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const { id } = request.params as { id: string };
+    const svc = buildSequenceService(app.db);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    const experiment = await svc.getExperiment(workspaceId, id);
+    if (!experiment) return reply.status(404).send({ error: "experiment_not_found" });
+    return reply.send(experiment);
+  });
+
+  app.patch("/sequences/experiments/:id", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const { id } = request.params as { id: string };
+    const svc = buildSequenceService(app.db);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    const body = z
+      .object({
+        name: z.string().min(1).max(255).optional(),
+        status: z.enum(["draft", "running", "paused", "completed"]).optional(),
+        weightA: z.number().int().min(0).max(100).optional(),
+        weightB: z.number().int().min(0).max(100).optional(),
+        primaryMetric: z.enum(["positive_reply", "meeting_booked", "completed"]).optional(),
+        durationDays: z.number().int().min(1).max(180).optional(),
+      })
+      .parse(request.body ?? {});
+    try {
+      const updated = await svc.updateExperiment(workspaceId, id, body);
+      if (!updated) return reply.status(404).send({ error: "experiment_not_found" });
+      return reply.send(updated);
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return reply.status(err.statusCode).send({ error: err.message, details: err.details ?? null });
+      }
+      throw err;
+    }
+  });
+
+  app.get("/sequences/experiments/:id/analytics", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const { id } = request.params as { id: string };
+    const svc = buildSequenceService(app.db);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    const analytics = await svc.getExperimentAnalytics(workspaceId, id);
+    if (!analytics) return reply.status(404).send({ error: "experiment_not_found" });
+    return reply.send(analytics);
+  });
+
+  app.post("/sequences/experiments/:id/enroll", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const { id } = request.params as { id: string };
+    const svc = buildSequenceService(app.db);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    const body = enrollSequenceSchema.parse(request.body ?? {});
+    try {
+      const experiment = await svc.getExperiment(workspaceId, id);
+      if (!experiment) return reply.status(404).send({ error: "experiment_not_found" });
+      const result = await svc.enrollExperiment(workspaceId, id, {
+        prospectIds: body.prospectIds,
+        listId: body.listId,
+      });
+      for (const e of result.newEnrollments) {
+        const delayMs =
+          app.config.BYPASS_BUSINESS_HOURS || !e.firstStepScheduledAt
+            ? 0
+            : Math.max(0, e.firstStepScheduledAt.getTime() - Date.now());
+        enqueueSequenceAdvanceJob(
+          app.config,
+          {
+            enrollmentId: e.enrollmentId,
+            workspaceId,
+            prospectId: e.prospectId,
+            sequenceId: e.variant === "A" ? experiment.sequenceAId : experiment.sequenceBId,
+          },
+          delayMs
+        ).catch((err: unknown) => {
+          app.log.error({ err, enrollmentId: e.enrollmentId }, "Failed to enqueue experiment advance job");
+        });
+      }
+      return reply.status(202).send({
+        enrolled: result.enrolled,
+        enrolledA: result.enrolledA,
+        enrolledB: result.enrolledB,
+        skipped: result.skipped,
+        total: result.total,
+      });
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return reply.status(err.statusCode).send({ error: err.message, details: err.details ?? null });
+      }
+      throw err;
+    }
+  });
+
+  app.get("/sequences/templates", async (_request, reply) => {
+    return reply.send({
+      data: SEQUENCE_TEMPLATES.map(({ key, name, description, channels, mode }) => ({
+        key,
+        name,
+        description,
+        channels,
+        mode,
+      })),
+      total: SEQUENCE_TEMPLATES.length,
+    });
+  });
+
+  app.post("/sequences/from-template", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = buildSequenceService(app.db);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    const body = z
+      .object({
+        key: z.string().min(1),
+        name: z.string().min(1).max(255).optional(),
+        mode: z.enum(SEQUENCE_MODES).optional(),
+      })
+      .parse(request.body ?? {});
+    const template = getSequenceTemplate(body.key);
+    if (!template) return reply.status(404).send({ error: "template_not_found" });
+    const sequence = await svc.createGeneratedSequence(workspaceId, {
+      name: body.name ?? template.name,
+      source: "template",
+      templateKey: template.key,
+      mode: body.mode ?? template.mode,
+      steps: template.steps,
+    });
     return reply.status(201).send(sequence);
   });
 
@@ -117,6 +356,46 @@ export async function sequenceRoutes(app: FastifyInstance) {
     const body = fromStepsSchema.parse(request.body ?? {});
     const sequence = await svc.createGeneratedSequence(workspaceId, body);
     return reply.status(201).send(sequence);
+  });
+
+  app.get("/sequences/:id/versions", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = buildSequenceService(app.db);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    const data = await svc.listVersions(workspaceId, id);
+    if (!data) return reply.status(404).send({ error: "sequence_not_found" });
+    return reply.send({ data, total: data.length });
+  });
+
+  app.post("/sequences/:id/versions", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = buildSequenceService(app.db);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    try {
+      const version = await svc.publishVersion(workspaceId, id);
+      return reply.status(201).send(version);
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return reply.status(err.statusCode).send({ error: err.message, details: err.details ?? null });
+      }
+      throw err;
+    }
+  });
+
+  app.get("/sequences/:id/events", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = buildSequenceService(app.db);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    const q = request.query as { enrollmentId?: string; limit?: string };
+    const data = await svc.listEvents(workspaceId, id, {
+      enrollmentId: q.enrollmentId,
+      limit: q.limit ? Number(q.limit) : undefined,
+    });
+    if (!data) return reply.status(404).send({ error: "sequence_not_found" });
+    return reply.send({ data, total: data.length });
   });
 
   // GET /sequences/:id — fetch sequence with its steps

@@ -194,7 +194,8 @@ export async function handleGoogleCallback(
   const frontend = (config.FRONTEND_URL ?? config.CORS_ORIGIN[0] ?? "http://localhost:3000").replace(/\/$/, "");
   return {
     workspaceId,
-    redirectUrl: `${frontend}/deliverability?connected=google`,
+    // Next.js basePath is "/app" — omitting it 404'd this redirect.
+    redirectUrl: `${frontend}/app/deliverability?connected=google`,
   };
 }
 
@@ -253,7 +254,8 @@ export async function handleMicrosoftCallback(
   const frontend = (config.FRONTEND_URL ?? config.CORS_ORIGIN[0] ?? "http://localhost:3000").replace(/\/$/, "");
   return {
     workspaceId,
-    redirectUrl: `${frontend}/deliverability?connected=microsoft`,
+    // Next.js basePath is "/app" — omitting it 404'd this redirect.
+    redirectUrl: `${frontend}/app/deliverability?connected=microsoft`,
   };
 }
 

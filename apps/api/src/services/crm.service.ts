@@ -102,7 +102,9 @@ function displayNameFromEmail(email: string): string | undefined {
     .join(" ");
 }
 
-function hubSpotContactToSnapshot(contact: {
+/** Exported for the R22.2 generic import adapter framework's HubSpot adapter — same mapping
+ * this service has always used for its own import path, now shared instead of duplicated. */
+export function hubSpotContactToSnapshot(contact: {
   id: string;
   properties: HubSpotContactProperties;
 }): ProspectSnapshot | null {
@@ -222,7 +224,8 @@ export class CrmService {
       .slice(0, 12);
 
     await saveHubSpotTokens(this.db, this.credentialsStore, parsed.workspaceId, tokens, portalId);
-    return `${this.frontendUrl.replace(/\/$/, "")}/settings/crm?hubspot=connected`;
+    // Next.js basePath is "/app" — omitting it 404'd this redirect.
+    return `${this.frontendUrl.replace(/\/$/, "")}/app/settings/crm?hubspot=connected`;
   }
 
   async disconnectHubSpot(workspaceId: string): Promise<void> {

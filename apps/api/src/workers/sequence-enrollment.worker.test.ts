@@ -26,9 +26,15 @@ vi.mock("@skout/db", () => ({
     sequenceSteps: "sequenceSteps",
     inboxThreads: "inboxThreads",
     inboxMessages: "inboxMessages",
+    prospectActivations: { workspaceId: "workspace_id", prospectId: "prospect_id", snapshot: "snapshot" },
     aiDrafts: "aiDrafts",
     contacts: "contacts",
     tasks: { id: "id", disposition: "disposition", sequenceEnrollmentStepId: "sequence_enrollment_step_id" },
+    sequenceStepVariants: "sequenceStepVariants",
+    sequenceTrackingEvents: "sequenceTrackingEvents",
+    linkedinOutreachJobs: "linkedinOutreachJobs",
+    sequenceVersions: "sequenceVersions",
+    sequenceEvents: "sequenceEvents",
   },
 }));
 
@@ -84,7 +90,13 @@ vi.mock("../lib/redis.js", () => ({
   }),
 }));
 
-import { startSequenceEnrollmentWorker } from "./sequence-enrollment.worker.js";
+vi.mock("../services/sequence-events.js", () => ({
+  recordSequenceEvent: vi.fn().mockResolvedValue(undefined),
+}));
+
+import { startSequenceEnrollmentWorker, retryTransientFailure, countTrackingEvents } from "./sequence-enrollment.worker.js";
+import { recordSequenceEvent } from "../services/sequence-events.js";
+import { enqueueSequenceAdvanceJob } from "./sequence-enrollment.queue.js";
 import { Worker } from "bullmq";
 import { createDb } from "@skout/db";
 import { isBusinessHour } from "../utils/scheduling.js";
@@ -228,6 +240,7 @@ function makeWorkerDb(opts: {
   select.mockReturnValueOnce(selectChain([])); // reply check
   select.mockReturnValueOnce(selectChain([])); // awaiting call disposition (none)
   select.mockReturnValueOnce(selectChain(opts.pendingStep ? [opts.pendingStep] : [])); // pending step
+  select.mockReturnValueOnce(selectChain([])); // A/B/C variants (none → use step template)
   // approved-draft lookup (executeEmailStep) — only reached once the step actually sends
   select.mockReturnValueOnce(selectChain(opts.approvedDraft ? [opts.approvedDraft] : []));
   // pending-draft HITL check (skipped when approved draft exists, but mock still reserved)
@@ -304,6 +317,11 @@ describe("sequence-enrollment worker — email step execution", () => {
     );
     expect(markInboxUsed).toHaveBeenCalledWith(db, "inbox-1");
     expect(tx.update).toHaveBeenCalledWith("sequenceEnrollmentSteps");
+    // A genuine send reports "action_sent" — this is the only step-execution path allowed to.
+    expect(recordSequenceEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ eventType: "action_sent" })
+    );
   });
 
   it("sends an APPROVED ai draft's content instead of the step template and consumes it", async () => {
@@ -358,6 +376,17 @@ describe("sequence-enrollment worker — email step execution", () => {
     expect(updateSet).toHaveBeenCalledWith(
       expect.objectContaining({ status: "failed", failureReason: "prospect_email_not_found" })
     );
+    // Regression guard for the bug in TAM_Sequence_Testing_Report.docx: a step that never sent
+    // anything must never log "action_sent" — Activity showed "Step sent" for this exact case
+    // while Analytics correctly showed it as failed and Gmail showed nothing sent.
+    expect(recordSequenceEvent).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ eventType: "action_sent" })
+    );
+    expect(recordSequenceEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ eventType: "action_failed", reason: "prospect_email_not_found" })
+    );
   });
 
   it("marks the step skipped (no retry) when the prospect email is suppressed", async () => {
@@ -382,6 +411,42 @@ describe("sequence-enrollment worker — email step execution", () => {
     );
   });
 
+  it("marks the step skipped (no retry) when another contact at the account already replied positively", async () => {
+    // Golden rule regression test (condition-engine spec §48.1): this must trip even though no
+    // "account_has_positive_reply" condition step was authored into this sequence — it's a
+    // universal gate now, not opt-in.
+    vi.mocked(resolveProspectFields).mockResolvedValue({
+      prospectId: "p-1",
+      email: "prospect@example.com",
+      firstName: "Ada",
+      lastName: "Lovelace",
+      fullName: "Ada Lovelace",
+      companyDomain: "acme.com",
+    });
+    vi.mocked(isSuppressed).mockResolvedValue(false);
+
+    const select = vi.fn();
+    select.mockReturnValueOnce(selectChain([ENROLLMENT_ROW])); // load enrollment
+    select.mockReturnValueOnce(selectChain([])); // bounced check
+    select.mockReturnValueOnce(selectChain([])); // reply check
+    select.mockReturnValueOnce(selectChain([])); // awaiting call disposition (none)
+    select.mockReturnValueOnce(selectChain([EMAIL_STEP_ROW])); // pending step
+    select.mockReturnValueOnce(selectChain([])); // A/B/C variants (none)
+    select.mockReturnValueOnce(selectChain([{ id: "thread-other-contact" }])); // hasPositiveReplyAtAccount: found
+    select.mockReturnValueOnce(selectChain([])); // next pending step (none → completed)
+    const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+    const update = vi.fn().mockReturnValue({ set: updateSet });
+    const db = { select, update, transaction: vi.fn() };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(pickNextInbox).not.toHaveBeenCalled();
+    expect(updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "skipped", failureReason: "account_already_engaged" })
+    );
+  });
+
   it("marks the step failed (no retry) when no active inbox is available", async () => {
     vi.mocked(resolveProspectFields).mockResolvedValue({
       prospectId: "p-1",
@@ -402,6 +467,14 @@ describe("sequence-enrollment worker — email step execution", () => {
     expect(buildEmailSenderFromInbox).not.toHaveBeenCalled();
     expect(updateSet).toHaveBeenCalledWith(
       expect.objectContaining({ status: "failed", failureReason: "no_active_inbox" })
+    );
+    expect(recordSequenceEvent).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ eventType: "action_sent" })
+    );
+    expect(recordSequenceEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ eventType: "action_failed", reason: "no_active_inbox" })
     );
   });
 
@@ -618,5 +691,140 @@ describe("sequence-enrollment worker — manual task step execution", () => {
     await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
 
     expect(insertValues).toHaveBeenCalledWith(expect.objectContaining({ title: "Follow up with prospect" }));
+  });
+});
+
+describe("retryTransientFailure", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const PAYLOAD = {
+    enrollmentId: "enr-1",
+    workspaceId: "ws-1",
+    prospectId: "prospect-1",
+    sequenceId: "seq-1",
+  };
+
+  function makeDb() {
+    const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+    const update = vi.fn().mockReturnValue({ set: updateSet });
+    return { update, _updateSet: updateSet };
+  }
+
+  it("re-enqueues with the fixed delay and increments attemptCount when under the max", async () => {
+    const db = makeDb();
+    const pending = {
+      enrollmentStepId: "estep-1",
+      stepId: "step-1",
+      stepType: "linkedin",
+      linkedinAction: "connect",
+      subject: null,
+      bodyTemplate: null,
+      attemptCount: 0,
+      retryMaxAttempts: 3,
+      retryDelayMs: 60_000,
+      retryBackoffStrategy: "fixed",
+    } as any;
+
+    const outcome = await retryTransientFailure(db as any, {} as any, PAYLOAD, pending, "rate_limited", new Date());
+
+    expect(outcome).toBe("retry");
+    expect(db._updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({ attemptCount: 1, failureReason: "rate_limited" })
+    );
+    expect(enqueueSequenceAdvanceJob).toHaveBeenCalledWith({}, PAYLOAD, 60_000, false);
+    expect(recordSequenceEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ eventType: "retry_scheduled" })
+    );
+  });
+
+  it("doubles the delay each attempt with exponential backoff", async () => {
+    const db = makeDb();
+    const pending = {
+      enrollmentStepId: "estep-1",
+      stepId: "step-1",
+      stepType: "linkedin",
+      linkedinAction: "connect",
+      subject: null,
+      bodyTemplate: null,
+      attemptCount: 2, // this will be the 3rd attempt
+      retryMaxAttempts: 5,
+      retryDelayMs: 1_000,
+      retryBackoffStrategy: "exponential",
+    } as any;
+
+    await retryTransientFailure(db as any, {} as any, PAYLOAD, pending, "rate_limited", new Date());
+
+    // attempt 3 → 1000 * 2^(3-1) = 4000
+    expect(enqueueSequenceAdvanceJob).toHaveBeenCalledWith({}, PAYLOAD, 4_000, false);
+  });
+
+  it("marks the step failed and emits fallback_triggered once max attempts is exceeded — never retries forever", async () => {
+    const db = makeDb();
+    const pending = {
+      enrollmentStepId: "estep-1",
+      stepId: "step-1",
+      stepType: "linkedin",
+      linkedinAction: "connect",
+      subject: null,
+      bodyTemplate: null,
+      attemptCount: 3,
+      retryMaxAttempts: 3,
+      retryDelayMs: 60_000,
+      retryBackoffStrategy: "fixed",
+    } as any;
+
+    const outcome = await retryTransientFailure(db as any, {} as any, PAYLOAD, pending, "rate_limited", new Date());
+
+    expect(outcome).toBe("exhausted");
+    expect(db._updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "failed", failureReason: "retry_exhausted: rate_limited" })
+    );
+    expect(enqueueSequenceAdvanceJob).not.toHaveBeenCalled();
+    expect(recordSequenceEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ eventType: "fallback_triggered", reason: "retry_exhausted: rate_limited" })
+    );
+  });
+
+  it("defaults to 3 max attempts and a fixed 60s delay when the step has no retry policy set", async () => {
+    const db = makeDb();
+    const pending = {
+      enrollmentStepId: "estep-1",
+      stepId: "step-1",
+      stepType: "linkedin",
+      linkedinAction: "connect",
+      subject: null,
+      bodyTemplate: null,
+      // no attemptCount/retry* fields — exercises the ?? defaults
+    } as any;
+
+    const outcome = await retryTransientFailure(db as any, {} as any, PAYLOAD, pending, "rate_limited", new Date());
+
+    expect(outcome).toBe("retry");
+    expect(enqueueSequenceAdvanceJob).toHaveBeenCalledWith({}, PAYLOAD, 60_000, false);
+  });
+});
+
+describe("countTrackingEvents", () => {
+  function makeCountDb(rows: Array<{ n: number }>) {
+    const where = vi.fn().mockResolvedValue(rows);
+    const from = vi.fn().mockReturnValue({ where });
+    const select = vi.fn().mockReturnValue({ from });
+    return { select } as any;
+  }
+
+  it("returns the row count when events exist", async () => {
+    const db = makeCountDb([{ n: 4 }]);
+    const n = await countTrackingEvents(db, "ws-1", "enr-1", "open");
+    expect(n).toBe(4);
+  });
+
+  it("returns 0 when no row is returned", async () => {
+    const db = makeCountDb([]);
+    const n = await countTrackingEvents(db, "ws-1", "enr-1", "click");
+    expect(n).toBe(0);
   });
 });

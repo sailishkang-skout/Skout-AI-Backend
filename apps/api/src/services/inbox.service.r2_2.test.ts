@@ -392,6 +392,90 @@ describe("InboxService.transitionThreadStatus", () => {
   });
 });
 
+describe("InboxService.listManualReviewThreads", () => {
+  it("returns threads flagged needsReview for the workspace", async () => {
+    const rows = [{ id: "t-1", needsReview: true, suggestedTag: "negative" }];
+    const c: Record<string, ReturnType<typeof vi.fn>> = {};
+    c.from = vi.fn().mockReturnValue(c);
+    c.where = vi.fn().mockReturnValue(c);
+    c.orderBy = vi.fn().mockResolvedValue(rows);
+    const db = { select: vi.fn().mockReturnValue(c) } as unknown as any;
+    const svc = new InboxService(db, STUB_CONFIG);
+    const result = await svc.listManualReviewThreads("ws-1");
+    expect(result).toEqual({ workspaceId: "ws-1", data: rows, total: 1 });
+  });
+});
+
+describe("InboxService.resolveManualReview", () => {
+  function makeResolveDb(thread: Record<string, unknown>) {
+    const selectChain: Record<string, ReturnType<typeof vi.fn>> = {};
+    selectChain.from = vi.fn().mockReturnValue(selectChain);
+    selectChain.where = vi.fn().mockReturnValue(selectChain);
+    selectChain.limit = vi.fn().mockResolvedValue([thread]);
+
+    const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+    const update = vi.fn().mockReturnValue({ set: updateSet });
+
+    const db = { select: vi.fn().mockReturnValue(selectChain), update } as unknown as any;
+    return { db, updateSet, update };
+  }
+
+  it("throws 422 when the thread isn't pending review", async () => {
+    const { db } = makeResolveDb({ id: "t-1", workspaceId: "ws-1", needsReview: false });
+    const svc = new InboxService(db, STUB_CONFIG);
+    await expect(svc.resolveManualReview("ws-1", "t-1", "dismiss")).rejects.toThrow("not_pending_review");
+  });
+
+  it("clears the review flag on dismiss without applying the suggested tag", async () => {
+    const { db, updateSet } = makeResolveDb({
+      id: "t-1",
+      workspaceId: "ws-1",
+      needsReview: true,
+      suggestedTag: "negative",
+      suggestedNegativeSubtype: "do_not_contact",
+    });
+    const svc = new InboxService(db, STUB_CONFIG);
+    const result = await svc.resolveManualReview("ws-1", "t-1", "dismiss");
+    expect(result).toEqual({ ok: true, action: "dismiss" });
+    expect(updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({ needsReview: false, suggestedTag: null, suggestedNegativeSubtype: null })
+    );
+    // dismiss must not touch thread.status — that's the whole point of dismissing rather than applying
+    expect(updateSet).not.toHaveBeenCalledWith(expect.objectContaining({ status: expect.anything() }));
+  });
+
+  it("applies the suggested tag action when action is apply", async () => {
+    const { db, updateSet } = makeResolveDb({
+      id: "t-1",
+      workspaceId: "ws-1",
+      status: "replied",
+      needsReview: true,
+      suggestedTag: "unsubscribe",
+      suggestedNegativeSubtype: null,
+    });
+    const svc = new InboxService(db, STUB_CONFIG);
+    const result = await svc.resolveManualReview("ws-1", "t-1", "apply");
+    expect(result).toEqual({ ok: true, action: "apply" });
+    // applyReplyTagActions' unsubscribe branch closes the thread
+    expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({ status: "closed" }));
+    // resolveManualReview's own cleanup clears the review flag
+    expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({ needsReview: false }));
+  });
+
+  it("does not apply anything when there is no suggested tag, but still clears the flag", async () => {
+    const { db, updateSet } = makeResolveDb({
+      id: "t-1",
+      workspaceId: "ws-1",
+      needsReview: true,
+      suggestedTag: null,
+    });
+    const svc = new InboxService(db, STUB_CONFIG);
+    await svc.resolveManualReview("ws-1", "t-1", "apply");
+    expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({ needsReview: false }));
+    expect(updateSet).not.toHaveBeenCalledWith(expect.objectContaining({ status: "closed" }));
+  });
+});
+
 describe("InboxService.getUnreadCounts", () => {
   it("returns zero totals when no threads have unread messages", async () => {
     const c: Record<string, ReturnType<typeof vi.fn>> = {};

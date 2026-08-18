@@ -5,6 +5,7 @@ import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { resolveProspectFields } from "./prospect-resolver.service.js";
 import { isSuppressed, buildUnsubscribeUrl } from "./suppression.service.js";
+import { isSendBlockedByEligibility } from "./send-eligibility-guard.service.js";
 import { pickNextInbox, markInboxUsed } from "./inbox-rotation.service.js";
 import { renderTemplate, type MergeData } from "./template-render.service.js";
 import { buildEmailSenderFromInbox } from "./email-sender.service.js";
@@ -16,6 +17,7 @@ const { inboxThreads, inboxMessages, aiDrafts } = schema;
 export type DraftSendFailureReason =
   | "prospect_email_not_found"
   | "suppressed"
+  | "not_send_eligible"
   | "no_active_inbox"
   | "smtp_build_failed"
   | "send_failed";
@@ -55,6 +57,10 @@ export async function sendApprovedDraftEmail(
 
   if (await isSuppressed(db, workspaceId, prospect.email)) {
     return { sent: false, reason: "suppressed", to: prospect.email };
+  }
+
+  if ((await isSendBlockedByEligibility(config, prospect.email)).blocked) {
+    return { sent: false, reason: "not_send_eligible", to: prospect.email };
   }
 
   const inbox = await pickNextInbox(db, workspaceId);

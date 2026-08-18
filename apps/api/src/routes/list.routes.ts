@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import type { Db } from "@skout/db";
 import type { OpenSearchConfig } from "@skout/opensearch";
 import { buildEnrichmentService, InsufficientCreditsError } from "../services/enrichment/index.js";
 import { createCrmService } from "../services/crm.service.js";
@@ -10,8 +11,25 @@ import { buildEmailVerificationService } from "../services/email-verification.se
 import { exportListCsv, CSV_EXPORT_CREDIT_COST } from "../services/list-export.service.js";
 import { readListCsvExport } from "../services/export-storage.service.js";
 import { buildSequenceService } from "../services/sequence.service.js";
+import { listSignalsForEntities, overlaySignalsForMember, type OverlaySignal } from "../services/signal.service.js";
 import type { Env } from "../config/env.js";
 import { importListToCrm } from "@skout/crm-bridge";
+import type { ProspectListMember } from "../services/enrichment/types.js";
+
+async function withOverlaySignals(
+  db: Db | null | undefined,
+  members: ProspectListMember[]
+): Promise<Array<ProspectListMember & { signals: OverlaySignal[] }>> {
+  if (!db || members.length === 0) {
+    return members.map((m) => ({ ...m, signals: [] }));
+  }
+  const ids = members.flatMap((m) => [m.prospectId, m.companyId]);
+  const byEntity = await listSignalsForEntities(db, ids);
+  return members.map((m) => ({
+    ...m,
+    signals: overlaySignalsForMember(byEntity, m.prospectId, m.companyId),
+  }));
+}
 
 function osConfig(config: Env): OpenSearchConfig | null {
   if (!config.OPENSEARCH_URL) return null;
@@ -81,9 +99,11 @@ export async function listRoutes(app: FastifyInstance) {
         ? await verifySvc.getForProspects(workspaceId, members.map((m) => m.prospectId))
         : {};
 
+    const withSignals = await withOverlaySignals(app.db, members ?? []);
+
     return reply.send({
       ...list,
-      members: (members ?? []).map((m) => ({
+      members: withSignals.map((m) => ({
         ...m,
         score: scores[m.prospectId] ?? null,
         verification: verifications[m.prospectId] ?? null,
@@ -98,7 +118,7 @@ export async function listRoutes(app: FastifyInstance) {
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const members = await svc.getMembers(workspaceId, id);
     if (members === null) return reply.status(404).send({ error: "list_not_found" });
-    return reply.send(members);
+    return reply.send(await withOverlaySignals(app.db, members));
   });
 
   app.post("/lists/:id/members", async (request, reply) => {

@@ -117,6 +117,10 @@ const threadStatusTransitionSchema = z.object({
   status: z.enum(THREAD_STATUSES),
 });
 
+const manualReviewResolveSchema = z.object({
+  action: z.enum(["apply", "dismiss"]),
+});
+
 const replySchema = z.object({
   text: z.string().min(1),
   html: z.string().optional(),
@@ -260,7 +264,8 @@ export async function inboxRoutes(app: FastifyInstance) {
   app.get("/inboxes/connect/google/callback", async (request, reply) => {
     const { code, state, error } = request.query as { code?: string; state?: string; error?: string };
     const frontend = (app.config.FRONTEND_URL ?? app.config.CORS_ORIGIN[0] ?? "http://localhost:3000").replace(/\/$/, "");
-    const failUrl = `${frontend}/deliverability?connected=google_error`;
+    // Next.js basePath is "/app" — omitting it 404'd this redirect even on success.
+    const failUrl = `${frontend}/app/deliverability?connected=google_error`;
     if (error || !code || !state || !db) return reply.redirect(failUrl);
     try {
       const { redirectUrl } = await handleGoogleCallback(code, state, db, app.config);
@@ -287,7 +292,8 @@ export async function inboxRoutes(app: FastifyInstance) {
   app.get("/inboxes/connect/microsoft/callback", async (request, reply) => {
     const { code, state, error } = request.query as { code?: string; state?: string; error?: string };
     const frontend = (app.config.FRONTEND_URL ?? app.config.CORS_ORIGIN[0] ?? "http://localhost:3000").replace(/\/$/, "");
-    const failUrl = `${frontend}/deliverability?connected=microsoft_error`;
+    // Next.js basePath is "/app" — omitting it 404'd this redirect even on success.
+    const failUrl = `${frontend}/app/deliverability?connected=microsoft_error`;
     if (error || !code || !state || !db) return reply.redirect(failUrl);
     try {
       const { redirectUrl } = await handleMicrosoftCallback(code, state, db, app.config);
@@ -522,6 +528,29 @@ export async function inboxRoutes(app: FastifyInstance) {
     try {
       const { status } = threadStatusTransitionSchema.parse(request.body ?? {});
       return reply.send(await svc.transitionThreadStatus(workspaceId, threadId, status as ThreadStatus));
+    } catch (err) {
+      if (err instanceof HttpError) return reply.status(err.statusCode).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  // GET /inbox/manual-review — threads awaiting human resolution of a low-confidence AI tag
+  app.get("/inbox/manual-review", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = buildInboxService(db, app.config);
+    if (!svc) return reply.send({ workspaceId, data: [], total: 0 });
+    return reply.send(await svc.listManualReviewThreads(workspaceId));
+  });
+
+  // POST /inbox/threads/:threadId/manual-review/resolve — apply the AI's suggested action, or dismiss it
+  app.post("/inbox/threads/:threadId/manual-review/resolve", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const { threadId } = request.params as { threadId: string };
+    const svc = buildInboxService(db, app.config);
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+    try {
+      const { action } = manualReviewResolveSchema.parse(request.body ?? {});
+      return reply.send(await svc.resolveManualReview(workspaceId, threadId, action));
     } catch (err) {
       if (err instanceof HttpError) return reply.status(err.statusCode).send({ error: err.message });
       throw err;

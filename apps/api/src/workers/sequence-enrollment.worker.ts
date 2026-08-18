@@ -1,5 +1,5 @@
 import { Worker } from "bullmq";
-import { and, asc, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { createDb } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
@@ -10,6 +10,7 @@ import { isBusinessHour, nextBusinessHour } from "../utils/scheduling.js";
 import { resolveProspectFields } from "../services/prospect-resolver.service.js";
 import { isSuppressed } from "../services/suppression.service.js";
 import { buildUnsubscribeUrl } from "../services/suppression.service.js";
+import { isSendBlockedByEligibility } from "../services/send-eligibility-guard.service.js";
 import { pickNextInbox, markInboxUsed } from "../services/inbox-rotation.service.js";
 import { renderTemplate, type MergeData } from "../services/template-render.service.js";
 import { injectTracking } from "../services/tracking.service.js";
@@ -23,7 +24,16 @@ import { dispatchWebhookEvent } from "../services/webhook.service.js";
 import { LinkedinAccountService, sendLinkedinOutreach, sendWhatsappOutreach } from "../services/linkedin-account.service.js";
 import { UnipileError } from "../services/unipile.client.js";
 import { LinkedinOutreachService } from "../services/linkedin-outreach.service.js";
+import { checkLinkedinConnectionStatus } from "../services/linkedin-connection.service.js";
 import { createNotification } from "../services/notifications.service.js";
+import { getIcpScore } from "../services/draft-auto-approve.service.js";
+import {
+  evaluateConditionExpression,
+  expressionFromSingle,
+  parseConditionExpression,
+  type ConditionLeafType,
+} from "../services/sequence-condition.js";
+import { recordSequenceEvent } from "../services/sequence-events.js";
 
 const log = createLogger("sequence-enrollment.worker");
 
@@ -31,11 +41,16 @@ const {
   sequenceEnrollments,
   sequenceEnrollmentSteps,
   sequenceSteps,
+  sequenceStepVariants,
+  sequenceTrackingEvents,
+  linkedinOutreachJobs,
+  sequenceVersions,
   inboxThreads,
   inboxMessages,
   aiDrafts,
   contacts,
   tasks,
+  prospectActivations,
 } = schema;
 
 type DbClient = ReturnType<typeof createDb>["db"];
@@ -100,6 +115,75 @@ interface PendingStep {
   linkedinAction: string | null;
   subject: string | null;
   bodyTemplate: string | null;
+  conditionType?: string | null;
+  conditionWaitDays?: number | null;
+  conditionExpression?: unknown;
+  yesNextStepId?: string | null;
+  noNextStepId?: string | null;
+  /** Per-step retry policy (condition-engine spec §40) — see retryTransientFailure(). */
+  retryMaxAttempts?: number;
+  retryDelayMs?: number;
+  retryBackoffStrategy?: string | null;
+  attemptCount?: number;
+}
+
+/**
+ * Shared transient-failure handler for LinkedIn/WhatsApp sends — bounded by the step's own
+ * retryMaxAttempts instead of the old hardcoded "always retry every 60s forever" behavior
+ * (that loop bypassed BullMQ's own attempts cap entirely, since each retry created a brand new
+ * non-deduplicated job rather than throwing to let the current job's attempt count run out).
+ * Returns "retry" (caller should re-enqueue and return "waiting") or "exhausted" (caller should
+ * mark the step failed and let the cadence fall through to whatever comes next).
+ */
+export async function retryTransientFailure(
+  db: DbClient,
+  config: Env,
+  payload: SeqAdvanceJobPayload,
+  pending: PendingStep,
+  reason: string,
+  now: Date
+): Promise<"retry" | "exhausted"> {
+  const maxAttempts = pending.retryMaxAttempts ?? 3;
+  const nextAttempt = (pending.attemptCount ?? 0) + 1;
+
+  if (nextAttempt > maxAttempts) {
+    await markStepTerminal(db, pending.enrollmentStepId, "failed", `retry_exhausted: ${reason}`, now);
+    log.warn("Step retries exhausted — falling back", {
+      enrollmentId: payload.enrollmentId,
+      enrollmentStepId: pending.enrollmentStepId,
+      attempts: pending.attemptCount ?? 0,
+      maxAttempts,
+      reason,
+    });
+    await recordSequenceEvent(db, {
+      workspaceId: payload.workspaceId,
+      sequenceId: payload.sequenceId,
+      enrollmentId: payload.enrollmentId,
+      prospectId: payload.prospectId,
+      eventType: "fallback_triggered",
+      reason: `retry_exhausted: ${reason}`,
+    });
+    return "exhausted";
+  }
+
+  const baseDelay = pending.retryDelayMs ?? LINKEDIN_RETRY_MS;
+  const delayMs =
+    pending.retryBackoffStrategy === "exponential" ? baseDelay * 2 ** (nextAttempt - 1) : baseDelay;
+
+  await db
+    .update(sequenceEnrollmentSteps)
+    .set({ attemptCount: nextAttempt, failureReason: reason })
+    .where(eq(sequenceEnrollmentSteps.id, pending.enrollmentStepId));
+  await recordSequenceEvent(db, {
+    workspaceId: payload.workspaceId,
+    sequenceId: payload.sequenceId,
+    enrollmentId: payload.enrollmentId,
+    prospectId: payload.prospectId,
+    eventType: "retry_scheduled",
+    reason: `${reason} (attempt ${nextAttempt}/${maxAttempts}, ${pending.retryBackoffStrategy ?? "fixed"} backoff)`,
+  });
+  await enqueueSequenceAdvanceJob(config, payload, delayMs, false);
+  return "retry";
 }
 
 /**
@@ -159,6 +243,254 @@ async function findPendingAiDraft(
   return draft ?? null;
 }
 
+function pickWeightedVariant<T extends { variantKey: string; weight: number }>(variants: T[]): T | null {
+  const enabled = variants.filter((v) => v.weight > 0);
+  if (enabled.length === 0) return variants[0] ?? null;
+  const total = enabled.reduce((sum, v) => sum + v.weight, 0);
+  let roll = Math.random() * total;
+  for (const v of enabled) {
+    roll -= v.weight;
+    if (roll <= 0) return v;
+  }
+  return enabled[enabled.length - 1] ?? null;
+}
+
+async function applyStepVariant(db: DbClient, pending: PendingStep): Promise<PendingStep> {
+  let variants: { variantKey: string; weight: number; subject: string | null; bodyTemplate: string | null }[] = [];
+  try {
+    const rows = await db
+      .select()
+      .from(sequenceStepVariants)
+      .where(and(eq(sequenceStepVariants.stepId, pending.stepId), eq(sequenceStepVariants.enabled, true)));
+    variants = Array.isArray(rows) ? rows : [];
+  } catch {
+    return pending;
+  }
+  if (variants.length === 0) return pending;
+  const chosen = pickWeightedVariant(variants);
+  if (!chosen) return pending;
+  await db
+    .update(sequenceEnrollmentSteps)
+    .set({ variantKey: chosen.variantKey })
+    .where(eq(sequenceEnrollmentSteps.id, pending.enrollmentStepId));
+  return {
+    ...pending,
+    subject: chosen.subject ?? pending.subject,
+    bodyTemplate: chosen.bodyTemplate ?? pending.bodyTemplate,
+  };
+}
+
+type LinkedinInviteState = "not_sent" | "pending" | "accepted" | "declined" | "failed";
+
+async function linkedinInviteState(
+  db: DbClient,
+  config: Env,
+  workspaceId: string,
+  enrollmentId: string
+): Promise<LinkedinInviteState> {
+  const [job] = await db
+    .select({
+      status: linkedinOutreachJobs.status,
+      failureReason: linkedinOutreachJobs.failureReason,
+      prospectId: linkedinOutreachJobs.prospectId,
+      linkedinUrl: linkedinOutreachJobs.linkedinUrl,
+    })
+    .from(linkedinOutreachJobs)
+    .where(
+      and(
+        eq(linkedinOutreachJobs.workspaceId, workspaceId),
+        eq(linkedinOutreachJobs.enrollmentId, enrollmentId),
+        eq(linkedinOutreachJobs.action, "connect")
+      )
+    )
+    .orderBy(desc(linkedinOutreachJobs.createdAt))
+    .limit(1);
+  if (!job) return "not_sent";
+  if (job.status === "completed") {
+    // "completed" on this job only ever meant "the connection REQUEST was sent successfully" —
+    // it says nothing about whether the prospect actually accepted it. Check the real,
+    // dedicated connection-state tracking instead of treating "sent" as "accepted".
+    const status = await checkLinkedinConnectionStatus(config, db, {
+      workspaceId,
+      prospectId: job.prospectId,
+      linkedinUrl: job.linkedinUrl,
+    });
+    return status === "accepted" ? "accepted" : "pending";
+  }
+  if (job.status === "failed") {
+    const reason = (job.failureReason ?? "").toLowerCase();
+    if (reason.includes("declin") || reason.includes("reject")) return "declined";
+    return "failed";
+  }
+  return "pending";
+}
+
+async function evaluateCondition(
+  db: DbClient,
+  config: Env,
+  workspaceId: string,
+  prospectId: string,
+  enrollmentId: string,
+  conditionType: string | null | undefined
+): Promise<boolean> {
+  if (!conditionType) return false;
+  if (conditionType === "linkedin_connected" || conditionType === "linkedin_invite_accepted") {
+    return (await linkedinInviteState(db, config, workspaceId, enrollmentId)) === "accepted";
+  }
+  if (conditionType === "linkedin_invite_declined") {
+    return (await linkedinInviteState(db, config, workspaceId, enrollmentId)) === "declined";
+  }
+  if (conditionType === "email_opened" || conditionType === "email_clicked") {
+    const eventType = conditionType === "email_opened" ? "open" : "click";
+    const [evt] = await db
+      .select({ id: sequenceTrackingEvents.id })
+      .from(sequenceTrackingEvents)
+      .where(
+        and(
+          eq(sequenceTrackingEvents.workspaceId, workspaceId),
+          eq(sequenceTrackingEvents.enrollmentId, enrollmentId),
+          eq(sequenceTrackingEvents.eventType, eventType)
+        )
+      )
+      .limit(1);
+    return Boolean(evt);
+  }
+  if (conditionType === "email_replied") {
+    const signal = await detectCadenceSignal(db, workspaceId, prospectId, new Date(0));
+    return signal === "replied";
+  }
+  if (conditionType === "call_connected") {
+    const [row] = await db
+      .select({ disposition: tasks.disposition })
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.workspaceId, workspaceId),
+          eq(tasks.sequenceEnrollmentId, enrollmentId),
+          eq(tasks.disposition, "connected")
+        )
+      )
+      .limit(1);
+    return Boolean(row);
+  }
+  if (conditionType === "account_has_positive_reply") {
+    const prospect = await resolveProspectFields(config, db, workspaceId, prospectId);
+    const companyDomain = (prospect as { companyDomain?: string | null } | null)?.companyDomain;
+    if (!companyDomain) return false; // can't determine "same account" without one
+    return hasPositiveReplyAtAccount(db, workspaceId, companyDomain, prospectId);
+  }
+  return false;
+}
+
+const DEFAULT_ENGAGEMENT_COUNT_THRESHOLD = 3;
+
+/** Engagement-intent threshold leaves ("N opens without a reply") — counts every tracking
+ * event of this type for the enrollment, not just "at least once". */
+export async function countTrackingEvents(
+  db: DbClient,
+  workspaceId: string,
+  enrollmentId: string,
+  eventType: "open" | "click"
+): Promise<number> {
+  const [row] = await db
+    .select({ n: count() })
+    .from(sequenceTrackingEvents)
+    .where(
+      and(
+        eq(sequenceTrackingEvents.workspaceId, workspaceId),
+        eq(sequenceTrackingEvents.enrollmentId, enrollmentId),
+        eq(sequenceTrackingEvents.eventType, eventType)
+      )
+    );
+  return row?.n ?? 0;
+}
+
+/**
+ * Account-level condition (spec §26/§28): has any OTHER prospect at the same company already
+ * replied positively? Scoped to companyDomain since that's the only cross-prospect account key
+ * resolveProspectFields exposes today — a real CRM company_id join would be more precise once
+ * the CRM↔GTM prospect identity reconciliation (R14.1) lands.
+ */
+async function hasPositiveReplyAtAccount(
+  db: DbClient,
+  workspaceId: string,
+  companyDomain: string,
+  excludeProspectId: string
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: inboxThreads.id })
+    .from(inboxThreads)
+    .innerJoin(
+      prospectActivations,
+      and(
+        eq(prospectActivations.workspaceId, inboxThreads.workspaceId),
+        eq(prospectActivations.prospectId, inboxThreads.prospectId)
+      )
+    )
+    .where(
+      and(
+        eq(inboxThreads.workspaceId, workspaceId),
+        eq(inboxThreads.replyTag, "positive"),
+        ne(inboxThreads.prospectId, excludeProspectId),
+        sql`${prospectActivations.snapshot} ->> 'companyDomain' = ${companyDomain}`
+      )
+    )
+    .limit(1);
+  return Boolean(row);
+}
+
+async function activateConditionBranch(
+  db: DbClient,
+  enrollmentId: string,
+  conditionStepId: string,
+  branch: "yes" | "no",
+  now: Date
+): Promise<void> {
+  const branchSteps = await db
+    .select({
+      enrollmentStepId: sequenceEnrollmentSteps.id,
+      delayDays: sequenceSteps.delayDays,
+      delayUnit: sequenceSteps.delayUnit,
+      branch: sequenceSteps.branch,
+    })
+    .from(sequenceEnrollmentSteps)
+    .innerJoin(sequenceSteps, eq(sequenceEnrollmentSteps.stepId, sequenceSteps.id))
+    .where(
+      and(
+        eq(sequenceEnrollmentSteps.enrollmentId, enrollmentId),
+        eq(sequenceSteps.parentStepId, conditionStepId)
+      )
+    )
+    .orderBy(asc(sequenceSteps.stepOrder));
+
+  let cursor = now;
+  for (const step of branchSteps) {
+    if (step.branch && step.branch !== branch) {
+      await db
+        .update(sequenceEnrollmentSteps)
+        .set({
+          status: "skipped",
+          executedAt: now,
+          failureReason: `condition_${branch === "yes" ? "no" : "yes"}_branch`,
+        })
+        .where(eq(sequenceEnrollmentSteps.id, step.enrollmentStepId));
+      continue;
+    }
+    const unit = (step.delayUnit ?? "days") as "minutes" | "hours" | "days" | "weeks";
+    const scheduled = new Date(cursor.getTime());
+    const amount = step.delayDays ?? 0;
+    if (unit === "minutes") scheduled.setMinutes(scheduled.getMinutes() + amount);
+    else if (unit === "hours") scheduled.setHours(scheduled.getHours() + amount);
+    else if (unit === "weeks") scheduled.setDate(scheduled.getDate() + amount * 7);
+    else scheduled.setDate(scheduled.getDate() + amount);
+    cursor = scheduled;
+    await db
+      .update(sequenceEnrollmentSteps)
+      .set({ status: "scheduled", scheduledAt: scheduled })
+      .where(eq(sequenceEnrollmentSteps.id, step.enrollmentStepId));
+  }
+}
+
 async function markStepTerminal(
   db: DbClient,
   enrollmentStepId: string,
@@ -178,6 +510,11 @@ async function markStepTerminal(
  * the step is marked failed/skipped and the cadence moves on. An actual send failure
  * (SMTP/network) is re-thrown so the BullMQ job retries — the step stays "scheduled".
  * Returns "deferred" when HITL is waiting on a pending AI draft approval.
+ *
+ * The outcome is reported explicitly (not just "done") so the caller can tell a genuine
+ * send apart from a step that reached a terminal state without ever sending anything —
+ * these used to be conflated, which logged a misleading "action_sent" activity event for
+ * skipped/failed steps too (see TAM_Sequence_Testing_Report.docx, "Key Inconsistency").
  */
 async function executeEmailStep(
   db: DbClient,
@@ -185,27 +522,47 @@ async function executeEmailStep(
   payload: SeqAdvanceJobPayload,
   pending: PendingStep,
   now: Date
-): Promise<"done" | "deferred"> {
+): Promise<{ status: "sent" | "failed" | "skipped" | "deferred"; reason?: string }> {
   const { enrollmentId, workspaceId, prospectId } = payload;
 
   const prospect = await resolveProspectFields(config, db, workspaceId, prospectId);
   if (!prospect?.email) {
     await markStepTerminal(db, pending.enrollmentStepId, "failed", "prospect_email_not_found", now);
     log.warn("Email step skipped — no prospect email", { enrollmentId, prospectId });
-    return "done";
+    return { status: "failed", reason: "prospect_email_not_found" };
   }
 
   if (await isSuppressed(db, workspaceId, prospect.email)) {
     await markStepTerminal(db, pending.enrollmentStepId, "skipped", "suppressed", now);
     log.info("Email step skipped — suppressed", { enrollmentId, email: prospect.email });
-    return "done";
+    return { status: "skipped", reason: "suppressed" };
+  }
+
+  if ((await isSendBlockedByEligibility(config, prospect.email)).blocked) {
+    await markStepTerminal(db, pending.enrollmentStepId, "skipped", "not_send_eligible", now);
+    log.info("Email step skipped — send-eligibility policy blocked it", { enrollmentId, email: prospect.email });
+    return { status: "skipped", reason: "not_send_eligible" };
+  }
+
+  // Golden rule (condition-engine spec §48.1): never continue automated outreach after a
+  // confirmed positive reply anywhere in the account. Previously this was only checked when a
+  // sequence author explicitly added an "account_has_positive_reply" condition step — most
+  // sequences don't, so a second contact at an already-won account kept getting emailed. This
+  // makes it a universal gate on every send, the same way suppression already is.
+  if (prospect.companyDomain && (await hasPositiveReplyAtAccount(db, workspaceId, prospect.companyDomain, prospectId))) {
+    await markStepTerminal(db, pending.enrollmentStepId, "skipped", "account_already_engaged", now);
+    log.info("Email step skipped — another contact at this account already replied positively", {
+      enrollmentId,
+      companyDomain: prospect.companyDomain,
+    });
+    return { status: "skipped", reason: "account_already_engaged" };
   }
 
   const inbox = await pickNextInbox(db, workspaceId);
   if (!inbox) {
     await markStepTerminal(db, pending.enrollmentStepId, "failed", "no_active_inbox", now);
     log.warn("Email step failed — no active inbox", { enrollmentId, workspaceId });
-    return "done";
+    return { status: "failed", reason: "no_active_inbox" };
   }
 
   const mergeData: MergeData = {
@@ -249,7 +606,7 @@ async function executeEmailStep(
         draftId: pendingDraft.id,
         deferUntil,
       });
-      return "deferred";
+      return { status: "deferred" };
     }
   }
 
@@ -267,7 +624,7 @@ async function executeEmailStep(
     const reason = err instanceof Error ? err.message : "smtp_build_failed";
     await markStepTerminal(db, pending.enrollmentStepId, "failed", reason, now);
     log.warn("Email step failed — could not build SMTP transport", { enrollmentId, reason });
-    return "done";
+    return { status: "failed", reason };
   }
 
   // Send the email. SMTP failures propagate so BullMQ retries (step stays "scheduled").
@@ -335,7 +692,7 @@ async function executeEmailStep(
     stepType: pending.stepType,
   }).catch((err: unknown) => log.warn("webhook dispatch failed", { err, event: "sequence.step.completed" }));
 
-  return "done";
+  return { status: "sent" };
 }
 
 const LINKEDIN_RETRY_MS = 60_000;
@@ -372,6 +729,31 @@ async function executeLinkedinStep(
   if (!linkedinUrl) {
     await markStepTerminal(db, pending.enrollmentStepId, "failed", "prospect_linkedin_url_not_found", now);
     log.warn("LinkedIn step failed — no profile URL", { enrollmentId, prospectId });
+    return "done";
+  }
+
+  // Suppression is keyed by email (unsubscribe/opt-out/bounce all arrive over email today),
+  // but must still gate every channel — a "do not contact" prospect must not keep getting
+  // LinkedIn touches just because the block only ever checked email sends. Skipped only when
+  // the prospect has no known email to check against.
+  if (prospect?.email && (await isSuppressed(db, workspaceId, prospect.email))) {
+    await markStepTerminal(db, pending.enrollmentStepId, "skipped", "suppressed", now);
+    log.info("LinkedIn step skipped — suppressed", { enrollmentId, email: prospect.email });
+    return "done";
+  }
+
+  // Golden rule (condition-engine spec §48.1): same universal account-level gate as the email
+  // step — never keep touching other contacts at an account once someone there has replied
+  // positively, regardless of channel.
+  if (
+    prospect?.companyDomain &&
+    (await hasPositiveReplyAtAccount(db, workspaceId, prospect.companyDomain, prospectId))
+  ) {
+    await markStepTerminal(db, pending.enrollmentStepId, "skipped", "account_already_engaged", now);
+    log.info("LinkedIn step skipped — another contact at this account already replied positively", {
+      enrollmentId,
+      companyDomain: prospect.companyDomain,
+    });
     return "done";
   }
 
@@ -440,12 +822,16 @@ async function executeLinkedinStep(
           ? err.message
           : "linkedin_send_failed";
 
-    // Rate limits / transient — retry later without failing the step
+    // Rate limits / transient — retry later without failing the step, up to the step's own
+    // retryMaxAttempts (see retryTransientFailure — this used to retry every 60s forever).
     const status = err instanceof UnipileError ? err.status : 0;
     if (status === 429 || status >= 500) {
       await accounts.markError(account.id, reason);
-      log.warn("LinkedIn send transient failure — will retry", { enrollmentId, reason, status });
-      await enqueueSequenceAdvanceJob(config, payload, LINKEDIN_RETRY_MS, false);
+      log.warn("LinkedIn send transient failure", { enrollmentId, reason, status });
+      const outcome = await retryTransientFailure(db, config, payload, pending, reason, now);
+      if (outcome === "exhausted") {
+        await outreach.failJob(workspaceId, job.id, `retry_exhausted: ${reason}`);
+      }
       return "waiting";
     }
 
@@ -631,6 +1017,14 @@ async function executeWhatsappStep(
     return "done";
   }
 
+  // See the matching check in executeLinkedinStep — suppression must gate every channel, not
+  // just email, even though it's keyed by email.
+  if (prospect?.email && (await isSuppressed(db, workspaceId, prospect.email))) {
+    await markStepTerminal(db, pending.enrollmentStepId, "skipped", "suppressed", now);
+    log.info("WhatsApp step skipped — suppressed", { enrollmentId, email: prospect.email });
+    return "done";
+  }
+
   const mergeData: MergeData = {
     firstName: prospect?.firstName ?? "",
     lastName: prospect?.lastName ?? "",
@@ -669,9 +1063,12 @@ async function executeWhatsappStep(
     const status = err instanceof UnipileError ? err.status : 0;
     if (status === 429 || status >= 500) {
       await accounts.markError(account.id, reason);
-      log.warn("WhatsApp send transient failure — will retry", { enrollmentId, reason, status });
-      await enqueueSequenceAdvanceJob(config, payload, LINKEDIN_RETRY_MS, false);
-      return "waiting";
+      log.warn("WhatsApp send transient failure", { enrollmentId, reason, status });
+      const outcome = await retryTransientFailure(db, config, payload, pending, reason, now);
+      // "exhausted" already marked the step terminal (via retryTransientFailure) — falling
+      // through to "done" lets the normal cadence pick up the next step, same as any other
+      // terminal failure below. "retry" re-enqueued its own job, so wait for that instead.
+      return outcome === "exhausted" ? "done" : "waiting";
     }
     await accounts.markError(account.id, reason);
     await markStepTerminal(db, pending.enrollmentStepId, "failed", reason, now);
@@ -758,10 +1155,11 @@ async function advanceEnrollment(
   const signal = await detectCadenceSignal(db, workspaceId, prospectId, enrollment.enrolledAt);
   if (signal !== "none") {
     const newStatus = signal === "bounced" ? "bounced" : "replied";
+    const stopReason = signal === "bounced" ? "BOUNCED" : "POSITIVE_REPLY";
     await db.transaction(async (tx) => {
       await tx
         .update(sequenceEnrollments)
-        .set({ status: newStatus, completedAt: new Date() })
+        .set({ status: newStatus, completedAt: new Date(), stopReason })
         .where(eq(sequenceEnrollments.id, enrollmentId));
       await tx
         .update(sequenceEnrollmentSteps)
@@ -772,6 +1170,16 @@ async function advanceEnrollment(
             eq(sequenceEnrollmentSteps.status, "scheduled")
           )
         );
+    });
+    await recordSequenceEvent(db, {
+      workspaceId,
+      sequenceId,
+      enrollmentId,
+      sequenceVersionId: enrollment.sequenceVersionId,
+      prospectId,
+      eventType: "sequence_stopped",
+      reason: stopReason,
+      result: newStatus,
     });
     log.info("Cadence stopped", { enrollmentId, reason: newStatus });
     return;
@@ -802,6 +1210,15 @@ async function advanceEnrollment(
       linkedinAction: sequenceSteps.linkedinAction,
       subject: sequenceSteps.subject,
       bodyTemplate: sequenceSteps.bodyTemplate,
+      conditionType: sequenceSteps.conditionType,
+      conditionWaitDays: sequenceSteps.conditionWaitDays,
+      conditionExpression: sequenceSteps.conditionExpression,
+      yesNextStepId: sequenceSteps.yesNextStepId,
+      noNextStepId: sequenceSteps.noNextStepId,
+      retryMaxAttempts: sequenceSteps.retryMaxAttempts,
+      retryDelayMs: sequenceSteps.retryDelayMs,
+      retryBackoffStrategy: sequenceSteps.retryBackoffStrategy,
+      attemptCount: sequenceEnrollmentSteps.attemptCount,
     })
     .from(sequenceEnrollmentSteps)
     .innerJoin(sequenceSteps, eq(sequenceEnrollmentSteps.stepId, sequenceSteps.id))
@@ -843,36 +1260,182 @@ async function advanceEnrollment(
     return;
   }
 
+  let step = pending as PendingStep & typeof pending;
+  if (enrollment.sequenceVersionId) {
+    const [version] = await db
+      .select({ snapshot: sequenceVersions.snapshot })
+      .from(sequenceVersions)
+      .where(eq(sequenceVersions.id, enrollment.sequenceVersionId))
+      .limit(1);
+    const snapSteps = (version?.snapshot as { steps?: Array<Record<string, unknown>> } | null)?.steps;
+    const snap = Array.isArray(snapSteps) ? snapSteps.find((s) => s.id === pending.stepId) : undefined;
+    if (snap) {
+      step = {
+        ...pending,
+        subject: (snap.subject as string | null) ?? pending.subject,
+        bodyTemplate: (snap.bodyTemplate as string | null) ?? pending.bodyTemplate,
+        linkedinAction: (snap.linkedinAction as string | null) ?? pending.linkedinAction,
+        conditionType: (snap.conditionType as string | null) ?? pending.conditionType,
+        conditionWaitDays: (snap.conditionWaitDays as number | null) ?? pending.conditionWaitDays,
+        conditionExpression: snap.conditionExpression ?? pending.conditionExpression,
+      };
+    }
+  }
+
   // Execute the step
-  if (pending.stepType === "email") {
-    const result = await executeEmailStep(db, config, payload, pending, now);
-    if (result === "deferred") {
+  if (step.stepType === "condition") {
+    const waitDays = step.conditionWaitDays ?? 2;
+    const due = pending.scheduledAt
+      ? new Date(pending.scheduledAt.getTime() + waitDays * 24 * 60 * 60 * 1000)
+      : new Date(now.getTime() + waitDays * 24 * 60 * 60 * 1000);
+    const expr =
+      parseConditionExpression(step.conditionExpression) ?? expressionFromSingle(step.conditionType);
+    const evalLeaf = async (type: ConditionLeafType, value?: number) => {
+      if (type === "icp_score_gte") {
+        const score = await getIcpScore(db, workspaceId, prospectId);
+        return (score ?? 0) >= (value ?? 80);
+      }
+      if (type === "has_email") {
+        const prospect = await resolveProspectFields(config, db, workspaceId, prospectId);
+        return Boolean(prospect?.email);
+      }
+      if (type === "has_linkedin") {
+        const prospect = await resolveProspectFields(config, db, workspaceId, prospectId);
+        return Boolean((prospect as { linkedinUrl?: string | null } | null)?.linkedinUrl);
+      }
+      if (type === "email_opened_count_gte" || type === "email_clicked_count_gte") {
+        const eventType = type === "email_opened_count_gte" ? "open" : "click";
+        const n = await countTrackingEvents(db, workspaceId, enrollmentId, eventType);
+        return n >= (value ?? DEFAULT_ENGAGEMENT_COUNT_THRESHOLD);
+      }
+      return evaluateCondition(db, config, workspaceId, prospectId, enrollmentId, type);
+    };
+    const invite = await linkedinInviteState(db, config, workspaceId, enrollmentId);
+    const singleInvite =
+      expr && "type" in expr &&
+      (expr.type === "linkedin_invite_accepted" || expr.type === "linkedin_connected" || expr.type === "linkedin_invite_declined");
+
+    if (singleInvite && (invite === "declined" || invite === "failed" || invite === "accepted")) {
+      const evaluated = await evaluateConditionExpression(expr!, evalLeaf);
+      const branch: "yes" | "no" = evaluated.passed ? "yes" : "no";
+      await markStepTerminal(db, pending.enrollmentStepId, "executed", `condition_${branch}_${invite}`, now);
+      await activateConditionBranch(db, enrollmentId, pending.stepId, branch, now);
+      await recordSequenceEvent(db, {
+        workspaceId, sequenceId, enrollmentId,
+        sequenceVersionId: enrollment.sequenceVersionId, prospectId, stepId: pending.stepId,
+        eventType: "condition_evaluated", branch, result: String(evaluated.passed), reason: invite,
+        evidence: evaluated.evidence,
+      });
+      await recordSequenceEvent(db, {
+        workspaceId, sequenceId, enrollmentId,
+        sequenceVersionId: enrollment.sequenceVersionId, prospectId, stepId: pending.stepId,
+        eventType: branch === "no" ? "fallback_triggered" : "branch_selected", branch, reason: invite,
+      });
+    } else if (due > now && !config.BYPASS_BUSINESS_HOURS) {
+      if (expr) {
+        const early = await evaluateConditionExpression(expr, evalLeaf);
+        if (early.passed) {
+          await markStepTerminal(db, pending.enrollmentStepId, "executed", "condition_yes_early", now);
+          await activateConditionBranch(db, enrollmentId, pending.stepId, "yes", now);
+          await recordSequenceEvent(db, {
+            workspaceId, sequenceId, enrollmentId,
+            sequenceVersionId: enrollment.sequenceVersionId, prospectId, stepId: pending.stepId,
+            eventType: "condition_evaluated", branch: "yes", result: "true", reason: "early",
+            evidence: early.evidence,
+          });
+        } else {
+          await enqueueSequenceAdvanceJob(config, payload, Math.max(60_000, due.getTime() - now.getTime()), false);
+          return;
+        }
+      } else {
+        await enqueueSequenceAdvanceJob(config, payload, Math.max(60_000, due.getTime() - now.getTime()), false);
+        return;
+      }
+    } else {
+      const evaluated = expr
+        ? await evaluateConditionExpression(expr, evalLeaf)
+        : { passed: false, evidence: { reason: "no_condition" } };
+      const branch: "yes" | "no" = evaluated.passed ? "yes" : "no";
+      await markStepTerminal(db, pending.enrollmentStepId, "executed", `condition_${branch}`, now);
+      await activateConditionBranch(db, enrollmentId, pending.stepId, branch, now);
+      await recordSequenceEvent(db, {
+        workspaceId, sequenceId, enrollmentId,
+        sequenceVersionId: enrollment.sequenceVersionId, prospectId, stepId: pending.stepId,
+        eventType: "condition_evaluated", branch, result: String(evaluated.passed),
+        reason: due <= now ? "timeout" : "evaluated",
+        evidence: evaluated.evidence,
+      });
+      if (branch === "no") {
+        await recordSequenceEvent(db, {
+          workspaceId, sequenceId, enrollmentId,
+          sequenceVersionId: enrollment.sequenceVersionId, prospectId, stepId: pending.stepId,
+          eventType: "fallback_triggered", branch: "no", reason: "timeout_or_failed",
+        });
+      }
+    }
+  } else if (step.stepType === "email") {
+    const withVariant = await applyStepVariant(db, step);
+    const result = await executeEmailStep(db, config, payload, withVariant, now);
+    // Only a genuine send reports "action_sent" — a failed or skipped step used to be
+    // conflated with success here (both resolved to the same generic "done"), which logged
+    // a false "Step sent" activity event even when nothing was ever sent. See
+    // TAM_Sequence_Testing_Report.docx, "Key Inconsistency".
+    if (result.status === "sent") {
+      await recordSequenceEvent(db, {
+        workspaceId, sequenceId, enrollmentId,
+        sequenceVersionId: enrollment.sequenceVersionId, prospectId, stepId: pending.stepId,
+        eventType: "action_sent", variantKey: withVariant === step ? null : "A",
+        reason: "email",
+      });
+    } else if (result.status === "failed") {
+      await recordSequenceEvent(db, {
+        workspaceId, sequenceId, enrollmentId,
+        sequenceVersionId: enrollment.sequenceVersionId, prospectId, stepId: pending.stepId,
+        eventType: "action_failed", variantKey: withVariant === step ? null : "A",
+        reason: result.reason ?? "email",
+      });
+    }
+    if (result.status === "deferred") {
       await enqueueSequenceAdvanceJob(config, payload, 60 * 60 * 1000, false);
       return;
     }
-  } else if (pending.stepType === "linkedin") {
-    const result = await executeLinkedinStep(db, config, payload, pending, now);
+  } else if (step.stepType === "linkedin") {
+    const withVariant = await applyStepVariant(db, step);
+    const result = await executeLinkedinStep(db, config, payload, withVariant, now);
     if (result === "waiting") {
       // Extension has not finished yet — poll job already re-enqueued.
       return;
     }
-  } else if (pending.stepType === "whatsapp") {
+  } else if (step.stepType === "whatsapp") {
     const result = await executeWhatsappStep(db, config, payload, pending, now);
     if (result === "waiting") return;
-  } else if (pending.stepType === "task") {
+  } else if (step.stepType === "task") {
     await createTaskFromSequenceStep(db, config, workspaceId, prospectId, pending);
     await db
       .update(sequenceEnrollmentSteps)
       .set({ status: "executed", executedAt: now })
       .where(eq(sequenceEnrollmentSteps.id, pending.enrollmentStepId));
     log.info("Manual task step executed", { enrollmentId, enrollmentStepId: pending.enrollmentStepId });
-  } else if (pending.stepType === "call") {
+  } else if (step.stepType === "call") {
     const result = await executeCallStep(db, config, payload, pending, now);
     if (result === "waiting") {
       // Awaiting SDR disposition — poll for it on the next tick rather than advancing now.
       await enqueueSequenceAdvanceJob(config, payload, CALL_DISPOSITION_POLL_MS, false);
       return;
     }
+  } else if (step.stepType === "goal") {
+    await markStepTerminal(db, pending.enrollmentStepId, "executed", null, now);
+    await db
+      .update(sequenceEnrollments)
+      .set({ status: "completed", completedAt: now, stopReason: "SEQUENCE_COMPLETED" })
+      .where(eq(sequenceEnrollments.id, enrollmentId));
+    await recordSequenceEvent(db, {
+      workspaceId, sequenceId, enrollmentId,
+      sequenceVersionId: enrollment.sequenceVersionId, prospectId, stepId: pending.stepId,
+      eventType: "sequence_completed", reason: "SEQUENCE_COMPLETED",
+    });
+    log.info("Goal reached — enrollment completed", { enrollmentId, goal: step.subject });
+    return;
   } else {
     await db
       .update(sequenceEnrollmentSteps)
@@ -907,8 +1470,13 @@ async function advanceEnrollment(
   if (!nextPending) {
     await db
       .update(sequenceEnrollments)
-      .set({ status: "completed", completedAt: new Date() })
+      .set({ status: "completed", completedAt: new Date(), stopReason: "SEQUENCE_COMPLETED" })
       .where(eq(sequenceEnrollments.id, enrollmentId));
+    await recordSequenceEvent(db, {
+      workspaceId, sequenceId, enrollmentId,
+      sequenceVersionId: enrollment.sequenceVersionId, prospectId,
+      eventType: "sequence_completed", reason: "SEQUENCE_COMPLETED",
+    });
     log.info("Enrollment completed after last step", { enrollmentId });
     return;
   }

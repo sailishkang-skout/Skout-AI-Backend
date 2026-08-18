@@ -4,13 +4,14 @@ import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { sendMail } from "./mail.service.js";
+import { isTwilioConfigured, sendSms } from "./twilio.service.js";
 
 const { notifications, notificationPreferences, users, workspaces } = schema;
 
 const log = createLogger("notifications.service");
 
-/** "in_app" | "email" | "both" — R17.4 per-type channel preference. */
-export type NotificationChannel = "in_app" | "email" | "both";
+/** "in_app" | "email" | "both" | "sms" — R17.4 per-type channel preference. */
+export type NotificationChannel = "in_app" | "email" | "both" | "sms";
 
 export interface NotificationDto {
   id: string;
@@ -32,6 +33,7 @@ export interface NotificationPreferenceDto {
   userId: string;
   type: string;
   channel: NotificationChannel;
+  digest: boolean;
 }
 
 function toDto(row: typeof notifications.$inferSelect): NotificationDto {
@@ -57,6 +59,7 @@ function prefToDto(row: typeof notificationPreferences.$inferSelect): Notificati
     userId: row.userId,
     type: row.type,
     channel: row.channel as NotificationChannel,
+    digest: row.digest,
   };
 }
 
@@ -152,7 +155,8 @@ export async function setPreference(
   workspaceId: string,
   userId: string,
   type: string,
-  channel: NotificationChannel
+  channel: NotificationChannel,
+  digest = false
 ): Promise<NotificationPreferenceDto> {
   const [existing] = await db
     .select()
@@ -169,7 +173,7 @@ export async function setPreference(
   if (existing) {
     const [row] = await db
       .update(notificationPreferences)
-      .set({ channel, updatedAt: new Date() })
+      .set({ channel, digest, updatedAt: new Date() })
       .where(eq(notificationPreferences.id, existing.id))
       .returning();
     return prefToDto(row);
@@ -177,12 +181,17 @@ export async function setPreference(
 
   const [row] = await db
     .insert(notificationPreferences)
-    .values({ workspaceId, userId, type, channel })
+    .values({ workspaceId, userId, type, channel, digest })
     .returning();
   return prefToDto(row);
 }
 
-async function resolveChannel(db: Db, workspaceId: string, userId: string, type: string): Promise<NotificationChannel> {
+async function resolvePreference(
+  db: Db,
+  workspaceId: string,
+  userId: string,
+  type: string
+): Promise<{ channel: NotificationChannel; digest: boolean }> {
   const [specific] = await db
     .select()
     .from(notificationPreferences)
@@ -194,7 +203,7 @@ async function resolveChannel(db: Db, workspaceId: string, userId: string, type:
       )
     )
     .limit(1);
-  if (specific) return specific.channel as NotificationChannel;
+  if (specific) return { channel: specific.channel as NotificationChannel, digest: specific.digest };
 
   const [fallback] = await db
     .select()
@@ -207,10 +216,10 @@ async function resolveChannel(db: Db, workspaceId: string, userId: string, type:
       )
     )
     .limit(1);
-  if (fallback) return fallback.channel as NotificationChannel;
+  if (fallback) return { channel: fallback.channel as NotificationChannel, digest: fallback.digest };
 
   // Safe default: in-app only. Never opt someone into email/Slack without an explicit preference row.
-  return "in_app";
+  return { channel: "in_app", digest: false };
 }
 
 async function deliverSlack(config: Env, db: Db, workspaceId: string, title: string, body: string | null): Promise<boolean> {
@@ -259,9 +268,13 @@ export async function createNotification(db: Db, config: Env, input: CreateNotif
     .returning();
 
   const delivered = new Set<string>(["in_app"]);
-  const channel = input.userId ? await resolveChannel(db, input.workspaceId, input.userId, input.type) : "in_app";
+  const { channel, digest } = input.userId
+    ? await resolvePreference(db, input.workspaceId, input.userId, input.type)
+    : { channel: "in_app" as NotificationChannel, digest: false };
 
-  if (input.userId && (channel === "email" || channel === "both")) {
+  // R17.3 — digest-preferring users get their email folded into the daily digest sweep instead
+  // of a real-time send; the in-app row above is still created immediately either way.
+  if (input.userId && !digest && (channel === "email" || channel === "both")) {
     try {
       const [user] = await db.select({ email: users.email }).from(users).where(eq(users.id, input.userId)).limit(1);
       if (user?.email) {
@@ -275,6 +288,23 @@ export async function createNotification(db: Db, config: Env, input: CreateNotif
       }
     } catch (err) {
       log.warn("Email notification delivery failed", { err, userId: input.userId });
+    }
+  }
+
+  // SMS — separate opt-in channel (not folded into "both", which is in-app + email only).
+  // Delivery failures never block notification creation, same as email above.
+  if (input.userId && !digest && channel === "sms" && isTwilioConfigured(config)) {
+    try {
+      const [user] = await db.select({ phone: users.phone }).from(users).where(eq(users.id, input.userId)).limit(1);
+      if (user?.phone) {
+        const sms = await sendSms(config, {
+          to: user.phone,
+          body: input.body ? `${input.title}\n${input.body}` : input.title,
+        });
+        if (sms.messageSid) delivered.add("sms");
+      }
+    } catch (err) {
+      log.warn("SMS notification delivery failed", { err, userId: input.userId });
     }
   }
 
