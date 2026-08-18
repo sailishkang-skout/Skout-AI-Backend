@@ -862,16 +862,29 @@ export class SequenceService {
 
     const stepMetrics = new Map<
       string,
-      { scheduled: number; executed: number; failed: number; skipped: number; opens: number; clicks: number }
+      {
+        scheduled: number;
+        executed: number;
+        failed: number;
+        skipped: number;
+        // Call steps land here (status "awaiting_disposition") after the due-step trigger
+        // creates a task and waits on a human to actually dial and set a disposition — a real,
+        // intentional state that isn't scheduled/sent/failed/skipped. Previously unbucketed
+        // entirely, so a working call step showed as 0 everywhere in Analytics.
+        pending: number;
+        opens: number;
+        clicks: number;
+      }
     >();
     for (const es of enrollmentSteps) {
       const bucket =
         stepMetrics.get(es.stepId) ??
-        { scheduled: 0, executed: 0, failed: 0, skipped: 0, opens: 0, clicks: 0 };
+        { scheduled: 0, executed: 0, failed: 0, skipped: 0, pending: 0, opens: 0, clicks: 0 };
       if (es.status === "scheduled") bucket.scheduled++;
       else if (es.status === "executed") bucket.executed++;
       else if (es.status === "failed") bucket.failed++;
       else if (es.status === "skipped") bucket.skipped++;
+      else if (es.status === "awaiting_disposition") bucket.pending++;
       if (openedEnrollmentSteps.has(es.id)) bucket.opens++;
       if (clickedEnrollmentSteps.has(es.id)) bucket.clicks++;
       stepMetrics.set(es.stepId, bucket);
@@ -879,7 +892,7 @@ export class SequenceService {
 
     const stepsOut = steps.map((step) => {
       const m = stepMetrics.get(step.id) ?? {
-        scheduled: 0, executed: 0, failed: 0, skipped: 0, opens: 0, clicks: 0,
+        scheduled: 0, executed: 0, failed: 0, skipped: 0, pending: 0, opens: 0, clicks: 0,
       };
       const opens = m.opens;
       const clicks = m.clicks;
@@ -894,6 +907,7 @@ export class SequenceService {
         sent,
         failed: m.failed,
         skipped: m.skipped,
+        pending: m.pending,
         opens,
         clicks,
         openRate: sent > 0 ? Math.round((opens / sent) * 100) : 0,

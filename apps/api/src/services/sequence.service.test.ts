@@ -825,6 +825,61 @@ describe("SequenceService.listSequencesForList", () => {
 });
 
 // ---------------------------------------------------------------------------
+// getAnalytics
+// ---------------------------------------------------------------------------
+
+describe("SequenceService.getAnalytics", () => {
+  it("counts a call step's awaiting_disposition status as pending, not scheduled/sent/failed/skipped", async () => {
+    // Regression test for the "Call step due but Analytics stays 0/0/0/0" report: a due call
+    // step creates a task and parks the enrollment step in "awaiting_disposition" while it
+    // waits for a human to dial and set a disposition — a real, working state that the funnel
+    // bucketer previously had no bucket for at all, so it silently counted toward nothing.
+    const db = {
+      select: vi.fn()
+        .mockReturnValueOnce(selectChain([{ ...SEQ_ROW, id: "seq-1", status: "active" }]))
+        .mockReturnValueOnce(
+          selectChain(
+            [{ id: "step-call-1", sequenceId: "seq-1", stepOrder: 1, stepType: "call", subject: null, delayDays: 0 }],
+            "orderBy"
+          )
+        )
+        .mockReturnValueOnce(selectChain([{ id: "enr-1", status: "active" }]))
+        .mockReturnValueOnce(
+          selectChain([{ id: "es-1", stepId: "step-call-1", status: "awaiting_disposition" }])
+        )
+        .mockReturnValueOnce(selectChain([])),
+    };
+    const svc = new SequenceService(db as any);
+    const result = await svc.getAnalytics("ws-1", "seq-1");
+
+    expect(result?.steps).toHaveLength(1);
+    expect(result?.steps[0]).toMatchObject({
+      stepType: "call",
+      scheduled: 0,
+      sent: 0,
+      failed: 0,
+      skipped: 0,
+      pending: 1,
+    });
+  });
+
+  it("still buckets email steps into scheduled/sent/failed/skipped as before", async () => {
+    const db = {
+      select: vi.fn()
+        .mockReturnValueOnce(selectChain([{ ...SEQ_ROW, id: "seq-1", status: "active" }]))
+        .mockReturnValueOnce(selectChain([STEP_ROW], "orderBy"))
+        .mockReturnValueOnce(selectChain([{ id: "enr-1", status: "active" }]))
+        .mockReturnValueOnce(selectChain([{ id: "es-1", stepId: STEP_ROW.id, status: "executed" }]))
+        .mockReturnValueOnce(selectChain([])),
+    };
+    const svc = new SequenceService(db as any);
+    const result = await svc.getAnalytics("ws-1", "seq-1");
+
+    expect(result?.steps[0]).toMatchObject({ scheduled: 0, sent: 1, failed: 0, skipped: 0, pending: 0 });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // buildSequenceService factory
 // ---------------------------------------------------------------------------
 
