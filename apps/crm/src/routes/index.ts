@@ -8,6 +8,7 @@ import { dealsRoutes } from "./deals.routes.js";
 import { healthRoutes } from "./health.routes.js";
 import { meetingsRoutes } from "./meetings.routes.js";
 import { pipelinesRoutes } from "./pipelines.routes.js";
+import { promotionRoutes } from "./promotion.routes.js";
 import { tasksRoutes } from "./tasks.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
@@ -22,6 +23,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(activitiesRoutes);
     await v1.register(auditRoutes);
     await v1.register(meetingsRoutes);
+    await v1.register(promotionRoutes);
     await v1.register(dashboardRoutes);
   }, { prefix: "/api/v1" });
 }
