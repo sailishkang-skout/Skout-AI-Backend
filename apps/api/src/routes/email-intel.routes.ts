@@ -6,7 +6,6 @@ import {
   generatePatterns,
   getWarmupStatus,
   isEmailIntelConfigured,
-  verifyEmailBatch,
   verifyEmailResolved,
 } from "../services/email-intel.service.js";
 import {
@@ -102,17 +101,15 @@ export async function emailIntelRoutes(app: FastifyInstance) {
     if (!body.success) {
       return reply.code(400).send({ error: "invalid_request", details: body.error.flatten() });
     }
-    try {
-      if (isEmailIntelConfigured(app.config)) {
-        return reply.send(await verifyEmailBatch(app.config, body.data.emails));
-      }
-      const results = await Promise.all(body.data.emails.map((email) => verifyEmailResolved(app.config, email)));
-      return reply.send({ success: true, count: results.length, results });
-    } catch (err) {
-      if (err instanceof HttpError) return routeHttpError(reply, err);
-      if (err instanceof EmailIntelUnavailableError) return routeUnavailable(reply, err);
-      throw err;
-    }
+    const results = await Promise.allSettled(
+      body.data.emails.map((email) => verifyEmailResolved(app.config, email))
+    );
+    const mapped = results.map((r, i) =>
+      r.status === "fulfilled"
+        ? r.value
+        : { success: false, email: body.data.emails[i], error: r.reason instanceof Error ? r.reason.message : String(r.reason) }
+    );
+    return reply.send({ success: true, count: mapped.length, results: mapped });
   });
 
   app.post("/email-intel/discover", async (request, reply) => {
