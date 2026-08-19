@@ -1,4 +1,5 @@
 import type { Env } from "../config/env.js";
+import { HunterEmailVerifier, isLiveApiKey } from "@skout/pal";
 
 /*
 ==================================================
@@ -20,9 +21,14 @@ turn into a 502/503 rather than crashing the request.
 */
 
 export class EmailIntelUnavailableError extends Error {
-  constructor(reason: string) {
+  readonly upstreamStatus?: number;
+  readonly upstreamBody?: unknown;
+
+  constructor(reason: string, upstreamStatus?: number, upstreamBody?: unknown) {
     super(`Email Intelligence service unavailable: ${reason}`);
     this.name = "EmailIntelUnavailableError";
+    this.upstreamStatus = upstreamStatus;
+    this.upstreamBody = upstreamBody;
   }
 }
 
@@ -61,8 +67,26 @@ export interface EmailIntelBatchResult {
   results: EmailIntelVerifyResult[];
 }
 
+export interface EmailIntelDiscoveryCandidate {
+  email: string;
+  pattern: string;
+  finalScore: number;
+  decision: string;
+  confidence: number;
+  reasons: string[];
+}
+
 export interface EmailIntelDiscoveryResult {
   success: boolean;
+  firstName?: string;
+  lastName?: string | null;
+  domain?: string;
+  recommendedEmail?: string | null;
+  recommendedPattern?: string | null;
+  recommendedConfidence?: number | null;
+  candidates?: EmailIntelDiscoveryCandidate[];
+  provider?: string;
+  error?: string;
   [key: string]: unknown;
 }
 
@@ -114,8 +138,26 @@ export function isEmailIntelConfigured(config: Pick<Env, "EMAIL_INTEL_SERVICE_UR
   return baseUrl(config) !== null;
 }
 
+function parseUpstreamBody(text: string): unknown {
+  if (!text) return undefined;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text.slice(0, 300);
+  }
+}
+
+type EmailIntelConfig = Pick<Env, "EMAIL_INTEL_SERVICE_URL" | "EMAIL_INTEL_TIMEOUT_MS"> & { EMAIL_INTEL_DISCOVER_TIMEOUT_MS?: number };
+
+function requestTimeoutMs(config: EmailIntelConfig, path: string): number {
+  if (path === "/email-discovery") {
+    return config.EMAIL_INTEL_DISCOVER_TIMEOUT_MS ?? config.EMAIL_INTEL_TIMEOUT_MS;
+  }
+  return config.EMAIL_INTEL_TIMEOUT_MS;
+}
+
 async function post<T>(
-  config: Pick<Env, "EMAIL_INTEL_SERVICE_URL" | "EMAIL_INTEL_TIMEOUT_MS">,
+  config: EmailIntelConfig,
   path: string,
   body: unknown
 ): Promise<T> {
@@ -130,7 +172,7 @@ async function post<T>(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(config.EMAIL_INTEL_TIMEOUT_MS),
+      signal: AbortSignal.timeout(requestTimeoutMs(config, path)),
     });
   } catch (err: unknown) {
     throw new EmailIntelUnavailableError(err instanceof Error ? err.message : String(err));
@@ -138,14 +180,14 @@ async function post<T>(
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new EmailIntelUnavailableError(`upstream ${res.status}: ${text.slice(0, 300)}`);
+    throw new EmailIntelUnavailableError(`upstream ${res.status}: ${text.slice(0, 300)}`, res.status, parseUpstreamBody(text));
   }
 
   return (await res.json()) as T;
 }
 
 async function get<T>(
-  config: Pick<Env, "EMAIL_INTEL_SERVICE_URL" | "EMAIL_INTEL_TIMEOUT_MS">,
+  config: EmailIntelConfig,
   path: string,
   query: Record<string, string>
 ): Promise<T> {
@@ -168,7 +210,7 @@ async function get<T>(
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new EmailIntelUnavailableError(`upstream ${res.status}: ${text.slice(0, 300)}`);
+    throw new EmailIntelUnavailableError(`upstream ${res.status}: ${text.slice(0, 300)}`, res.status, parseUpstreamBody(text));
   }
 
   return (await res.json()) as T;
@@ -336,4 +378,93 @@ export function getWarmupStatus(
   domain: string
 ): Promise<EmailIntelWarmupStatusResult> {
   return get(config, "/warmup/status", { domain });
+}
+
+const VERDICT_TO_INTEL: Record<string, EmailIntelStatus> = {
+  valid: "VERIFIED",
+  invalid: "INVALID",
+  catch_all: "CATCH_ALL",
+  risky: "UNKNOWN",
+  unknown: "UNKNOWN",
+};
+
+function hunterVerifier(config: Pick<Env, "HUNTER_API_KEY" | "HUNTER_BASE_URL" | "ENRICHMENT_REQUEST_TIMEOUT_MS">) {
+  if (!isLiveApiKey(config.HUNTER_API_KEY)) return null;
+  return new HunterEmailVerifier(config.HUNTER_API_KEY!, config.HUNTER_BASE_URL, config.ENRICHMENT_REQUEST_TIMEOUT_MS);
+}
+
+function hunterVerifyResult(email: string, verdictStatus: string, score: number, catchAll: boolean): EmailIntelVerifyResult {
+  const status = VERDICT_TO_INTEL[verdictStatus] ?? "UNKNOWN";
+  const allowed = status === "VERIFIED";
+  return {
+    success: true,
+    email,
+    domain: email.includes("@") ? email.split("@")[1]!.toLowerCase() : null,
+    disposable: verdictStatus === "disposable",
+    verificationStatus: { status },
+    catchAll,
+    sendEligibility: {
+      allowed,
+      decision: allowed ? "SAFE" : catchAll ? "MANUAL_REVIEW" : "REVIEW",
+      decisionConfidence: score,
+      reason:
+        status === "UNKNOWN" && verdictStatus === "webmail"
+          ? "Webmail provider — SMTP verification unavailable; Hunter verdict used."
+          : undefined,
+    },
+    provider: "hunter-fallback",
+  };
+}
+
+/**
+ * Verify via email-intel when configured. On SMTP_ERROR/UNAVAILABLE or upstream failure,
+ * fall back to Hunter (handles Gmail/webmail where port-25 SMTP checks fail).
+ */
+export async function verifyEmailResolved(
+  config: Pick<
+    Env,
+    | "EMAIL_INTEL_SERVICE_URL"
+    | "EMAIL_INTEL_TIMEOUT_MS"
+    | "HUNTER_API_KEY"
+    | "HUNTER_BASE_URL"
+    | "ENRICHMENT_REQUEST_TIMEOUT_MS"
+  >,
+  email: string
+): Promise<EmailIntelVerifyResult> {
+  const normalized = email.trim().toLowerCase();
+  const hunter = hunterVerifier(config);
+
+  if (isEmailIntelConfigured(config)) {
+    try {
+      const result = await verifyEmail(config, normalized);
+      const status = result.verificationStatus?.status;
+      if (
+        status &&
+        status !== "SMTP_ERROR" &&
+        status !== "DNS_ERROR" &&
+        status !== "NO_MX" &&
+        result.success
+      ) {
+        return result;
+      }
+      if (hunter) {
+        const verdict = await hunter.verify(normalized);
+        return hunterVerifyResult(normalized, verdict.status, verdict.deliverabilityScore, verdict.catchAll);
+      }
+      return result;
+    } catch (err) {
+      if (hunter) {
+        const verdict = await hunter.verify(normalized);
+        return hunterVerifyResult(normalized, verdict.status, verdict.deliverabilityScore, verdict.catchAll);
+      }
+      throw err;
+    }
+  }
+
+  if (hunter) {
+    const verdict = await hunter.verify(normalized);
+    return hunterVerifyResult(normalized, verdict.status, verdict.deliverabilityScore, verdict.catchAll);
+  }
+
+  throw new EmailIntelUnavailableError("EMAIL_INTEL_SERVICE_URL is not configured");
 }

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { checkSendEligibility, getWarmupStatus, startWarmup } from "./email-intel.service.js";
 
-const CONFIGURED = { EMAIL_INTEL_SERVICE_URL: "http://email-intel.internal", EMAIL_INTEL_TIMEOUT_MS: 5000 };
-const UNCONFIGURED = { EMAIL_INTEL_SERVICE_URL: undefined, EMAIL_INTEL_TIMEOUT_MS: 5000 };
+const CONFIGURED = { EMAIL_INTEL_SERVICE_URL: "http://email-intel.internal", EMAIL_INTEL_TIMEOUT_MS: 5000, EMAIL_INTEL_DISCOVER_TIMEOUT_MS: 60000 };
+const UNCONFIGURED = { EMAIL_INTEL_SERVICE_URL: undefined, EMAIL_INTEL_TIMEOUT_MS: 5000, EMAIL_INTEL_DISCOVER_TIMEOUT_MS: 60000 };
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -83,7 +83,40 @@ describe("startWarmup", () => {
     vi.spyOn(global, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ success: false, error: "warmup_not_implemented" }), { status: 501 })
     );
-    await expect(startWarmup(CONFIGURED, { domain: "acme.com" })).rejects.toThrow("upstream 501");
+    await expect(startWarmup(CONFIGURED, { domain: "acme.com" })).rejects.toMatchObject({ upstreamStatus: 501 });
+  });
+});
+
+describe("verifyEmailResolved", () => {
+  it("falls back to Hunter when upstream returns SMTP_ERROR", async () => {
+    const { verifyEmailResolved } = await import("./email-intel.service.js");
+    const { HunterEmailVerifier } = await import("@skout/pal");
+
+    vi.spyOn(global, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          success: true,
+          email: "test@gmail.com",
+          domain: "gmail.com",
+          verificationStatus: { status: "SMTP_ERROR" },
+        }),
+        { status: 200 }
+      )
+    );
+    vi.spyOn(HunterEmailVerifier.prototype, "verify").mockResolvedValue({
+      status: "risky",
+      deliverabilityScore: 70,
+      catchAll: false,
+      risky: true,
+    });
+
+    const result = await verifyEmailResolved(
+      { ...CONFIGURED, HUNTER_API_KEY: "test-key", HUNTER_BASE_URL: "https://api.hunter.io/v2", ENRICHMENT_REQUEST_TIMEOUT_MS: 5000 } as never,
+      "test@gmail.com"
+    );
+
+    expect(result.provider).toBe("hunter-fallback");
+    expect(result.verificationStatus?.status).toBe("UNKNOWN");
   });
 });
 
