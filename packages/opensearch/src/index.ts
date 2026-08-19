@@ -98,6 +98,7 @@ export interface SearchFilters {
   industries?: string[];
   countries?: string[];
   seniorities?: string[];
+  employeeBuckets?: string[];
   // Company — stage & funding
   companyStage?: string;
   lastFundingRound?: string;
@@ -362,6 +363,7 @@ export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25
   if (filters.industries?.length)  filter.push({ terms: { industry: filters.industries } });
   if (filters.countries?.length)   filter.push({ terms: { country: filters.countries } });
   if (filters.seniorities?.length) filter.push({ terms: { seniority: filters.seniorities } });
+  if (filters.employeeBuckets?.length) filter.push({ terms: { "employeeBucket.keyword": filters.employeeBuckets } });
   if (filters.state?.trim()) filter.push({ term: { state: filters.state.trim() } });
   if (filters.city?.trim())  filter.push({ match: { city: filters.city.trim() } });
   if (filters.minEmployees != null || filters.maxEmployees != null) {

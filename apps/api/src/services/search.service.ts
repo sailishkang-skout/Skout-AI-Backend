@@ -74,6 +74,10 @@ function toFilters(body: SearchProspectsRequest): SearchFilters {
     currentlyHiring: f.currentlyHiring,
     hiringDepartments: f.hiringDepartments,
     companySignals: f.companySignals,
+    industries: f.industries,
+    countries: f.countries,
+    seniorities: f.seniorities,
+    employeeBuckets: f.employeeBuckets,
     tech: f.tech,
     signal: f.signal,
   };

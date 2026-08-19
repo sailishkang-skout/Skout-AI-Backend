@@ -277,6 +277,10 @@ export function filterDemoCorpus(
     const set = new Set(filters.seniorities.map((v) => v.toLowerCase()));
     result = result.filter((d) => d.seniority && set.has(d.seniority.toLowerCase()));
   }
+  if (filters.employeeBuckets?.length) {
+    const set = new Set(filters.employeeBuckets.map((v) => v.toLowerCase()));
+    result = result.filter((d) => d.employeeBucket && set.has(d.employeeBucket.toLowerCase()));
+  }
   if (filters.state) {
     const v = filters.state.toLowerCase();
     result = result.filter((d) => d.state?.toLowerCase() === v);

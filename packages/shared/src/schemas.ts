@@ -180,6 +180,12 @@ export const searchFiltersSchema = z.object({
   city: z.string().optional(),
   minEmployees: z.number().int().min(0).optional(),
   maxEmployees: z.number().int().min(0).optional(),
+  employeeBuckets: z.array(z.string()).optional(),
+
+  // Multi-select OR variants (search filter panel supports picking several values)
+  industries: z.array(z.string()).optional(),
+  countries: z.array(z.string()).optional(),
+  seniorities: z.array(z.string()).optional(),
 
   // Company — stage & funding
   companyStage: z.string().optional(),
