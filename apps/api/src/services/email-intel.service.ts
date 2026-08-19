@@ -150,7 +150,7 @@ function parseUpstreamBody(text: string): unknown {
 type EmailIntelConfig = Pick<Env, "EMAIL_INTEL_SERVICE_URL" | "EMAIL_INTEL_TIMEOUT_MS"> & { EMAIL_INTEL_DISCOVER_TIMEOUT_MS?: number };
 
 function requestTimeoutMs(config: EmailIntelConfig, path: string): number {
-  if (path === "/email-discovery") {
+  if (path === "/email-discovery" || path === "/verify/batch") {
     return config.EMAIL_INTEL_DISCOVER_TIMEOUT_MS ?? config.EMAIL_INTEL_TIMEOUT_MS;
   }
   return config.EMAIL_INTEL_TIMEOUT_MS;
@@ -338,7 +338,7 @@ export async function checkSendEligibility(
 
 /** POST /verify/batch — synchronous bounded batch (caller waits for all results). */
 export function verifyEmailBatch(
-  config: Pick<Env, "EMAIL_INTEL_SERVICE_URL" | "EMAIL_INTEL_TIMEOUT_MS">,
+  config: EmailIntelConfig,
   emails: string[]
 ): Promise<EmailIntelBatchResult> {
   return post(config, "/verify/batch", { emails });
