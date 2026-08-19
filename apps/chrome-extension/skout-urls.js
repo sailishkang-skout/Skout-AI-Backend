@@ -3,7 +3,25 @@
 export const DEFAULT_WEB_URL = "http://localhost:3000";
 export const DEFAULT_API_URL = "http://localhost:3001";
 
+/** Production defaults — injected into store-build by package-chrome-extension.mjs. */
+export const PRODUCTION_WEB_URL = "https://www.skoutai.io";
+export const PRODUCTION_API_URL = "https://ckoy6iywm0.execute-api.us-east-1.amazonaws.com";
+
 const LOCAL_WEB_ORIGINS = new Set(["http://localhost:3000", "http://127.0.0.1:3000"]);
+
+const BUILTIN_WEB_ORIGINS = new Set([
+  ...LOCAL_WEB_ORIGINS,
+  PRODUCTION_WEB_URL,
+  "https://skoutai.io",
+]);
+
+const BUILTIN_SKOUT_TAB_PATTERNS = [
+  "http://localhost:3000/*",
+  "http://127.0.0.1:3000/*",
+  `${PRODUCTION_WEB_URL}/*`,
+  "https://skoutai.io/*",
+  "https://*.execute-api.us-east-1.amazonaws.com/*",
+];
 
 export function parseSkoutOrigin(url) {
   try {
@@ -41,7 +59,7 @@ export function isLocalWebUrl(webUrl) {
 /** Chrome tabs.query patterns for the configured Skout web app. */
 export function skoutTabPatterns(webUrl = DEFAULT_WEB_URL) {
   const origin = parseSkoutOrigin(webUrl);
-  const patterns = new Set(["http://localhost:3000/*", "http://127.0.0.1:3000/*"]);
+  const patterns = new Set(BUILTIN_SKOUT_TAB_PATTERNS);
   if (origin) patterns.add(`${origin}/*`);
   return [...patterns];
 }
@@ -50,7 +68,7 @@ export function urlMatchesSkoutWeb(url, webUrl = DEFAULT_WEB_URL) {
   if (!url) return false;
   try {
     const tabOrigin = new URL(url).origin;
-    if (LOCAL_WEB_ORIGINS.has(tabOrigin)) return true;
+    if (BUILTIN_WEB_ORIGINS.has(tabOrigin)) return true;
     const configured = parseSkoutOrigin(webUrl);
     return Boolean(configured && tabOrigin === configured);
   } catch {

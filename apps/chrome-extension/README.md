@@ -20,6 +20,24 @@ Manifest V3 extension for LinkedIn prospect capture.
 
 No extra setup — works out of the box when both servers are running.
 
+## Production (Chrome Web Store)
+
+Store builds default to:
+
+| Setting | Default |
+|--------|---------|
+| Web URL | `https://www.skoutai.io` |
+| API URL | `https://ckoy6iywm0.execute-api.us-east-1.amazonaws.com` |
+
+Package for upload:
+
+```bash
+pnpm build
+pnpm package:store
+```
+
+Creates `skout-extension-v<version>.zip` with production-only host permissions (no localhost).
+
 ## Test on dev server (AWS)
 
 Use the **API Gateway WebUrl** from CDK deploy output — not the ALB URL (ALB returns 403 when HTTPS front door is enabled).

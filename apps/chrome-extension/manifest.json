@@ -1,13 +1,21 @@
 {
   "manifest_version": 3,
   "name": "Skout AI Prospector",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Capture LinkedIn profiles into Skout lists, enrich contacts, and send sequence connection requests/messages.",
   "permissions": ["storage", "activeTab", "scripting", "webNavigation", "sidePanel", "tabs", "alarms"],
-  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "optional_host_permissions": [
+    "http://localhost:3000/*",
+    "http://127.0.0.1:3000/*",
+    "http://localhost:3001/*",
+    "http://127.0.0.1:3001/*"
+  ],
   "host_permissions": [
     "https://www.linkedin.com/*",
     "https://linkedin.com/*",
+    "https://www.skoutai.io/*",
+    "https://skoutai.io/*",
+    "https://*.execute-api.us-east-1.amazonaws.com/*",
     "http://localhost:3000/*",
     "http://127.0.0.1:3000/*",
     "http://localhost:3001/*",
@@ -27,6 +35,8 @@
     "matches": [
       "http://localhost:3000/*",
       "http://127.0.0.1:3000/*",
+      "https://www.skoutai.io/*",
+      "https://skoutai.io/*",
       "https://*.execute-api.us-east-1.amazonaws.com/*"
     ]
   },
@@ -40,6 +50,8 @@
       "matches": [
         "http://localhost:3000/*",
         "http://127.0.0.1:3000/*",
+        "https://www.skoutai.io/*",
+        "https://skoutai.io/*",
         "https://*.execute-api.us-east-1.amazonaws.com/*"
       ],
       "js": ["skout-web-bridge.js"],
