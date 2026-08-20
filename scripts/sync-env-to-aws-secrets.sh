@@ -78,6 +78,32 @@ PY
 )"
 fi
 
+# Telnyx (click-to-call + SMS when TWILIO_ENABLED=false)
+if require TELNYX_API_KEY && require TELNYX_PHONE_NUMBER && require TELNYX_CONNECTION_ID; then
+  put_json telnyx "$(python3 - <<'PY'
+import json, os
+print(json.dumps({
+  "TELNYX_API_KEY": os.environ["TELNYX_API_KEY"],
+  "TELNYX_PHONE_NUMBER": os.environ["TELNYX_PHONE_NUMBER"],
+  "TELNYX_CONNECTION_ID": os.environ["TELNYX_CONNECTION_ID"],
+}))
+PY
+)"
+fi
+
+# Twilio (legacy click-to-call + SMS when TWILIO_ENABLED=true)
+if require TWILIO_ACCOUNT_SID && require TWILIO_AUTH_TOKEN && require TWILIO_PHONE_NUMBER; then
+  put_json twilio "$(python3 - <<'PY'
+import json, os
+print(json.dumps({
+  "TWILIO_ACCOUNT_SID": os.environ["TWILIO_ACCOUNT_SID"],
+  "TWILIO_AUTH_TOKEN": os.environ["TWILIO_AUTH_TOKEN"],
+  "TWILIO_PHONE_NUMBER": os.environ["TWILIO_PHONE_NUMBER"],
+}))
+PY
+)"
+fi
+
 # All PAL providers in one secret
 ENRICH_KEYS=(
   MILLIONVERIFIER_API_KEY

@@ -36,6 +36,8 @@ export class SkoutAppSecrets extends Construct {
   readonly meetingBot: secretsmanager.ISecret;
   /** Twilio click-to-call creds (R20.2). Created directly in Secrets Manager, imported by name. */
   readonly twilio: secretsmanager.ISecret;
+  /** Telnyx click-to-call + SMS creds. Created directly in Secrets Manager, imported by name. */
+  readonly telnyx: secretsmanager.ISecret;
   /** Google OAuth client (Gmail inbox connection + Calendar). Placeholder until a real Google Cloud OAuth client is created. */
   readonly google: secretsmanager.ISecret;
 
@@ -124,6 +126,7 @@ export class SkoutAppSecrets extends Construct {
     this.smtp = secretsmanager.Secret.fromSecretNameV2(this, "Smtp", `${prefix}/smtp`);
     this.meetingBot = secretsmanager.Secret.fromSecretNameV2(this, "MeetingBot", `${prefix}/meeting-bot`);
     this.twilio = secretsmanager.Secret.fromSecretNameV2(this, "Twilio", `${prefix}/twilio`);
+    this.telnyx = secretsmanager.Secret.fromSecretNameV2(this, "Telnyx", `${prefix}/telnyx`);
     this.google = createPlaceholder("Google", "google", {
       GOOGLE_CLIENT_ID: "replace-me",
       GOOGLE_CLIENT_SECRET: "replace-me",

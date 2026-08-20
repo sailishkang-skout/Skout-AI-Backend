@@ -5,13 +5,13 @@ vi.mock("./mail.service.js", () => ({
   sendMail: vi.fn(async () => ({ sent: false })),
 }));
 
-vi.mock("./twilio.service.js", () => ({
-  isTwilioConfigured: vi.fn(() => true),
+vi.mock("./telecom.service.js", () => ({
+  isSmsConfigured: vi.fn(() => true),
   sendSms: vi.fn(async () => ({ messageSid: "SM123", status: "queued" })),
 }));
 
 import { sendMail } from "./mail.service.js";
-import { isTwilioConfigured, sendSms } from "./twilio.service.js";
+import { isSmsConfigured, sendSms } from "./telecom.service.js";
 import { createNotification } from "./notifications.service.js";
 
 const fakeConfig = {} as Env;
@@ -71,7 +71,7 @@ describe("createNotification — sms delivery", () => {
   beforeEach(() => {
     vi.mocked(sendMail).mockClear();
     vi.mocked(sendSms).mockClear();
-    vi.mocked(isTwilioConfigured).mockClear().mockReturnValue(true);
+    vi.mocked(isSmsConfigured).mockClear().mockReturnValue(true);
   });
 
   it("sends an SMS and records the sms channel when the user's preference is sms", async () => {
@@ -112,8 +112,8 @@ describe("createNotification — sms delivery", () => {
     expect(result.deliveredChannels).not.toContain("sms");
   });
 
-  it("does not send an SMS when Twilio isn't configured", async () => {
-    vi.mocked(isTwilioConfigured).mockReturnValue(false);
+  it("does not send an SMS when telecom isn't configured", async () => {
+    vi.mocked(isSmsConfigured).mockReturnValue(false);
     const db = makeDb({ preference: { channel: "sms", digest: false }, userPhone: "+14155551234" });
 
     const result = await createNotification(db, fakeConfig, {

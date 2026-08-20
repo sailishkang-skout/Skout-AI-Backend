@@ -1,5 +1,6 @@
 import type { Env } from "../config/env.js";
 import { createLogger } from "@skout/observability";
+import type { BridgeCallParams, BridgeCallResult, SendSmsParams, SendSmsResult } from "./telecom.types.js";
 
 const log = createLogger("twilio.service");
 
@@ -7,22 +8,7 @@ export function isTwilioConfigured(config: Env): boolean {
   return Boolean(config.TWILIO_ACCOUNT_SID && config.TWILIO_AUTH_TOKEN && config.TWILIO_PHONE_NUMBER);
 }
 
-export interface BridgeCallParams {
-  /** The SDR's own phone number — dialed first (E.164, e.g. +14155551234). */
-  agentPhone: string;
-  /** The prospect's number — dialed once the agent answers. */
-  prospectPhone: string;
-  /**
-   * Query params appended to the status-callback AND the TwiML/recording-callback webhooks so
-   * each can attribute the call (and its eventual recording) back to the right workspace/contact.
-   */
-  callbackParams: Record<string, string>;
-}
-
-export interface BridgeCallResult {
-  callSid: string;
-  status: string;
-}
+export type { BridgeCallParams, BridgeCallResult, SendSmsParams, SendSmsResult };
 
 /**
  * R20.2 — click-to-call bridge. Calls the SDR's own phone first; once they pick up, Twilio
@@ -75,17 +61,6 @@ export async function dialBridgeCall(config: Env, params: BridgeCallParams): Pro
     throw new Error(json.message ?? `Twilio API returned ${res.status}`);
   }
   return { callSid: json.sid ?? "", status: json.status ?? "queued" };
-}
-
-export interface SendSmsParams {
-  /** Destination number, E.164 format (e.g. +14155551234). */
-  to: string;
-  body: string;
-}
-
-export interface SendSmsResult {
-  messageSid: string;
-  status: string;
 }
 
 /**

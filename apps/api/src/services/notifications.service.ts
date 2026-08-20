@@ -4,7 +4,7 @@ import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { sendMail } from "./mail.service.js";
-import { isTwilioConfigured, sendSms } from "./twilio.service.js";
+import { isSmsConfigured, sendSms } from "./telecom.service.js";
 
 const { notifications, notificationPreferences, users, workspaces } = schema;
 
@@ -293,7 +293,7 @@ export async function createNotification(db: Db, config: Env, input: CreateNotif
 
   // SMS — separate opt-in channel (not folded into "both", which is in-app + email only).
   // Delivery failures never block notification creation, same as email above.
-  if (input.userId && !digest && channel === "sms" && isTwilioConfigured(config)) {
+  if (input.userId && !digest && channel === "sms" && isSmsConfigured(config)) {
     try {
       const [user] = await db.select({ phone: users.phone }).from(users).where(eq(users.id, input.userId)).limit(1);
       if (user?.phone) {

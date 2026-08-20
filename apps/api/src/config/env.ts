@@ -202,13 +202,26 @@ const envSchema = z
     // --- DNSBL blacklist monitoring. ---
     DNSBL_CHECK_INTERVAL_HOURS: z.coerce.number().int().positive().default(6),
     DNS_RESOLVER_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
-    // --- R20.2 — Twilio click-to-call. All optional; calling is disabled until set. ---
+    // --- R20.2 — click-to-call + SMS (Twilio or Telnyx). All optional until configured. ---
+    /** When true and Twilio creds exist, use Twilio; otherwise fall back to Telnyx when configured. */
+    TWILIO_ENABLED: z
+      .string()
+      .optional()
+      .transform((v) => v === "true" || v === "1"),
     TWILIO_ACCOUNT_SID: z.string().optional(),
     TWILIO_AUTH_TOKEN: z.string().optional(),
     /** The Twilio number used as callerId for both legs of a bridged call. */
     TWILIO_PHONE_NUMBER: z.string().optional(),
     /** Publicly reachable base URL Twilio calls back for TwiML + status (defaults to API_PUBLIC_URL). */
     TWILIO_WEBHOOK_BASE_URL: z.string().optional(),
+    /** Telnyx API key (v2 Bearer auth). Used when TWILIO_ENABLED is false. */
+    TELNYX_API_KEY: z.string().optional(),
+    /** Telnyx number used as callerId for bridged calls and outbound SMS. */
+    TELNYX_PHONE_NUMBER: z.string().optional(),
+    /** Telnyx TeXML application / connection ID for outbound calls. */
+    TELNYX_CONNECTION_ID: z.string().optional(),
+    /** Optional alias for TWILIO_WEBHOOK_BASE_URL (Telnyx TeXML + status callbacks). */
+    TELECOM_WEBHOOK_BASE_URL: z.string().optional(),
     // --- R16.2 — meeting-bot vendor (Recall.ai / Fireflies.ai — vendor TBD). All optional. ---
     MEETING_BOT_PROVIDER: z.enum(["recall", "fireflies"]).optional(),
     MEETING_BOT_API_KEY: z.string().optional(),
@@ -249,6 +262,9 @@ const envSchema = z
     }
     if (!next.TWILIO_WEBHOOK_BASE_URL && next.API_PUBLIC_URL) {
       next = { ...next, TWILIO_WEBHOOK_BASE_URL: next.API_PUBLIC_URL };
+    }
+    if (!next.TELECOM_WEBHOOK_BASE_URL && next.TWILIO_WEBHOOK_BASE_URL) {
+      next = { ...next, TELECOM_WEBHOOK_BASE_URL: next.TWILIO_WEBHOOK_BASE_URL };
     }
     // Alias OPEN_ROUTER_API_KEY → OPENROUTER_API_KEY (common env naming)
     if (!next.OPENROUTER_API_KEY && next.OPEN_ROUTER_API_KEY) {

@@ -3,12 +3,18 @@ import { and, eq } from "drizzle-orm";
 import { schema } from "@skout/db";
 import { filterAutoFillablePatch, mergeAutoFillSources, asFieldSourcesMap } from "@skout/shared";
 import { errorResponse, HttpError } from "../utils/http.js";
-import { buildBridgeTwiml, dialBridgeCall, isTwilioConfigured } from "../services/twilio.service.js";
+import {
+  activeTelecomProvider,
+  buildBridgeXml,
+  dialBridgeCall,
+  isCallingConfigured,
+  telecomWebhookBaseUrl,
+} from "../services/telecom.service.js";
 import { resolveProspectFields } from "../services/prospect-resolver.service.js";
 import { createNotification } from "../services/notifications.service.js";
 import { extractFieldsFromCallNotes } from "../services/call-notes-extraction.service.js";
 
-/** R20.2 — Twilio click-to-call dialer. */
+/** R20.2 — click-to-call dialer (Twilio or Telnyx). */
 export async function callRoutes(app: FastifyInstance) {
   function db() {
     if (!app.db) throw new HttpError("Database not available", 500);
@@ -19,7 +25,7 @@ export async function callRoutes(app: FastifyInstance) {
   // a "Call" button, and whether the current user still needs to set their phone number.
   app.get("/calls/config", async (request, reply) => {
     if (!request.userId) return reply.code(401).send(errorResponse("Unauthorized", 401));
-    const configured = isTwilioConfigured(app.config);
+    const configured = isCallingConfigured(app.config);
     let agentPhoneSet = false;
     if (configured) {
       const [row] = await db().select({ phone: schema.users.phone }).from(schema.users).where(eq(schema.users.id, request.userId)).limit(1);
@@ -37,10 +43,15 @@ export async function callRoutes(app: FastifyInstance) {
       if (!request.workspaceId || !request.userId) {
         return reply.code(401).send(errorResponse("Unauthorized", 401));
       }
-      if (!isTwilioConfigured(app.config)) {
+      if (!isCallingConfigured(app.config)) {
         return reply
           .code(422)
-          .send(errorResponse("Calling isn't configured yet — set TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_PHONE_NUMBER.", 422));
+          .send(
+            errorResponse(
+              "Calling isn't configured yet — set Telnyx creds (TELNYX_API_KEY/TELNYX_PHONE_NUMBER/TELNYX_CONNECTION_ID) or enable TWILIO_ENABLED with Twilio creds.",
+              422
+            )
+          );
       }
 
       const [agent] = await db().select({ phone: schema.users.phone }).from(schema.users).where(eq(schema.users.id, request.userId)).limit(1);
@@ -171,9 +182,9 @@ export async function callRoutes(app: FastifyInstance) {
     return reply.send({ data: callRow });
   });
 
-  // --- Public Twilio webhooks (no bearer auth — see isPublicRoute in plugins/auth.ts) ---
+  // --- Public telecom webhooks (no bearer auth — see isPublicRoute in plugins/auth.ts) ---
 
-  // GET/POST /calls/twiml/bridge?to=<prospectPhone>&... — Twilio fetches this once the agent leg
+  // GET/POST /calls/twiml/bridge?to=<prospectPhone>&... — provider fetches this once the agent leg
   // answers. Forwards workspaceId/contactId/taskId/prospectLabel into the recording-status
   // callback URL so that webhook (fired later, async, once Twilio finishes processing the
   // recording) can still attribute it to the right contact.
@@ -186,7 +197,7 @@ export async function callRoutes(app: FastifyInstance) {
       if (!to) return reply.code(400).send("Missing to");
 
       let recordingStatusCallbackUrl: string | undefined;
-      const base = app.config.TWILIO_WEBHOOK_BASE_URL;
+      const base = telecomWebhookBaseUrl(app.config);
       if (base) {
         const url = new URL("/api/v1/calls/recording-status", base);
         for (const [key, value] of Object.entries(query)) {
@@ -195,7 +206,7 @@ export async function callRoutes(app: FastifyInstance) {
         recordingStatusCallbackUrl = url.toString();
       }
 
-      const twiml = buildBridgeTwiml(to, app.config.TWILIO_PHONE_NUMBER ?? "", recordingStatusCallbackUrl);
+      const twiml = buildBridgeXml(app.config, to, recordingStatusCallbackUrl);
       return reply.type("text/xml").send(twiml);
     },
   });

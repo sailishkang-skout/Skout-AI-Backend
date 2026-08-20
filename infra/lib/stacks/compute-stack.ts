@@ -335,6 +335,7 @@ export class ComputeStack extends Stack {
               // already have one.
               ADMIN_IMPORT_SECRET: "65332d15429ed7c121af30e803127eedf7f2f5bfbc775b44",
               ADMIN_IMPORT_WORKSPACE_ID: "00000000-0000-4000-8000-000000000001",
+              TWILIO_ENABLED: "false",
             }
           : {}),
       },
@@ -390,6 +391,9 @@ export class ComputeStack extends Stack {
         TWILIO_ACCOUNT_SID: ecs.Secret.fromSecretsManager(secrets.twilio, "TWILIO_ACCOUNT_SID"),
         TWILIO_AUTH_TOKEN: ecs.Secret.fromSecretsManager(secrets.twilio, "TWILIO_AUTH_TOKEN"),
         TWILIO_PHONE_NUMBER: ecs.Secret.fromSecretsManager(secrets.twilio, "TWILIO_PHONE_NUMBER"),
+        TELNYX_API_KEY: ecs.Secret.fromSecretsManager(secrets.telnyx, "TELNYX_API_KEY"),
+        TELNYX_PHONE_NUMBER: ecs.Secret.fromSecretsManager(secrets.telnyx, "TELNYX_PHONE_NUMBER"),
+        TELNYX_CONNECTION_ID: ecs.Secret.fromSecretsManager(secrets.telnyx, "TELNYX_CONNECTION_ID"),
       },
       datadog: {
         apiKeySecret: ecs.Secret.fromSecretsManager(secrets.datadog, "DD_API_KEY"),
@@ -570,7 +574,8 @@ export class ComputeStack extends Stack {
       secrets.smtp,
       secrets.meetingBot,
       secrets.google,
-      secrets.twilio
+      secrets.twilio,
+      secrets.telnyx
     );
 
     grantSecretRead(crmEcs.taskDefinition, database.secret, secrets.clerk, secrets.sentry, secrets.datadog);
