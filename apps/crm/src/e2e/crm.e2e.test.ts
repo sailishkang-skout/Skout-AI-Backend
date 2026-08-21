@@ -846,6 +846,42 @@ describe.skipIf(!hasDatabase)("CRM service E2E", () => {
     expect(Array.isArray(body.recentActivities)).toBe(true);
   });
 
+  it("dashboard/stale-deals surfaces untouched deals and is open to a 'member' (unlike cro-summary)", async () => {
+    const ownerHeaders = asUser(`crm-stale-deals-owner-${randomUUID()}@test.com`);
+    const memberEmail = `crm-stale-deals-member-${randomUUID()}@test.com`;
+    const memberHeaders = asUser(memberEmail);
+
+    const workspaceId = await getWorkspaceIdFor(ownerHeaders);
+    await addMemberToWorkspace(workspaceId, memberEmail);
+
+    const company = await createCompany(ownerHeaders, "Stale Deal Co");
+    const dealRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/deals",
+      headers: ownerHeaders,
+      payload: { name: "Untouched Deal", companyId: company.id, amount: 2500 },
+    });
+    const deal = dealRes.json() as { id: string };
+
+    // Backdate past the 14-day staleness window — the API has no path to do this itself.
+    await db
+      .update(schema.deals)
+      .set({ updatedAt: new Date(Date.now() - 20 * 24 * 60 * 60 * 1000) })
+      .where(eq(schema.deals.id, deal.id));
+
+    // cro-summary stays owner/admin-only — a member gets 403.
+    const croAsMember = await app.inject({ method: "GET", url: "/api/v1/dashboard/cro-summary", headers: memberHeaders });
+    expect(croAsMember.statusCode).toBe(403);
+
+    // stale-deals is the new, role-agnostic endpoint — same member gets 200 with real data.
+    const staleAsMember = await app.inject({ method: "GET", url: "/api/v1/dashboard/stale-deals", headers: memberHeaders });
+    expect(staleAsMember.statusCode).toBe(200);
+    const body = staleAsMember.json() as { staleDeals: { id: string; name: string; daysSinceUpdate: number }[] };
+    const found = body.staleDeals.find((d) => d.id === deal.id);
+    expect(found).toBeTruthy();
+    expect(found!.daysSinceUpdate).toBeGreaterThanOrEqual(19);
+  });
+
   it("malformed :id path params return a clean 400, not a raw DB 500", async () => {
     const headers = asUser(`crm-malformed-id-${randomUUID()}@test.com`);
 

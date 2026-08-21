@@ -42,6 +42,16 @@ export async function dashboardRoutes(app: FastifyInstance) {
     return svc.overview(workspaceId);
   });
 
+  /** CRM Intelligence page — open to every workspace member (unlike switching-cost/cro-summary
+   *  below, this isn't an org-internal exec metric, just "which deals need attention"). */
+  app.get("/dashboard/stale-deals", async (request) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) return { workspaceId, staleDeals: [], generatedAt: new Date().toISOString() };
+    const staleDeals = await svc.staleDeals(workspaceId);
+    return { workspaceId, staleDeals, generatedAt: new Date().toISOString() };
+  });
+
   /** R14.3 — internal-only "switching cost" metric. Owner/admin only; not for reps or customers. */
   app.get("/dashboard/switching-cost", async (request) => {
     requireRole(request, ["owner", "admin"]);

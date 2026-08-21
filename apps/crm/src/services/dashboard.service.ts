@@ -199,31 +199,47 @@ export class DashboardService {
       note: "Weekly (trailing 7 days) for the two export-volume fields; native-link rate is a live snapshot, not windowed.",
     };
   }
+  /** Open deals untouched for STALE_DEAL_DAYS+ — not role-gated. Unlike switchingCost/croSummary
+   *  (org-internal exec metrics), knowing which of the workspace's own deals need attention is
+   *  useful to every rep, not just owners/admins. */
+  async staleDeals(workspaceId: string): Promise<StaleDealSummary[]> {
+    const rows = await this.db
+      .select({
+        id: deals.id,
+        name: deals.name,
+        amount: deals.amount,
+        currency: deals.currency,
+        updatedAt: deals.updatedAt,
+      })
+      .from(deals)
+      .where(
+        and(
+          eq(deals.workspaceId, workspaceId),
+          eq(deals.status, "open"),
+          isNull(deals.deletedAt),
+          lt(deals.updatedAt, sql`now() - interval '${sql.raw(String(STALE_DEAL_DAYS))} days'`)
+        )
+      )
+      .orderBy(deals.updatedAt)
+      .limit(STALE_DEALS_LIMIT);
+
+    const now = Date.now();
+    return rows.map((d) => ({
+      id: d.id,
+      name: d.name,
+      amount: d.amount === null ? null : Number(d.amount),
+      currency: d.currency,
+      daysSinceUpdate: Math.floor((now - d.updatedAt.getTime()) / (1000 * 60 * 60 * 24)),
+    }));
+  }
+
   /** R19.1 — admin-gated exec rollup combining overview + switching-cost + real risk-adjacent
    * signals (stale deals, rep activity) that don't require R18 to exist. */
   async croSummary(workspaceId: string): Promise<CroSummaryDto> {
-    const [overview, switching, staleDealRows, repActivityRows] = await Promise.all([
+    const [overview, switching, staleDeals, repActivityRows] = await Promise.all([
       this.overview(workspaceId),
       this.switchingCost(workspaceId),
-      this.db
-        .select({
-          id: deals.id,
-          name: deals.name,
-          amount: deals.amount,
-          currency: deals.currency,
-          updatedAt: deals.updatedAt,
-        })
-        .from(deals)
-        .where(
-          and(
-            eq(deals.workspaceId, workspaceId),
-            eq(deals.status, "open"),
-            isNull(deals.deletedAt),
-            lt(deals.updatedAt, sql`now() - interval '${sql.raw(String(STALE_DEAL_DAYS))} days'`)
-          )
-        )
-        .orderBy(deals.updatedAt)
-        .limit(STALE_DEALS_LIMIT),
+      this.staleDeals(workspaceId),
       this.db
         .select({
           userId: activities.ownerId,
@@ -242,15 +258,6 @@ export class DashboardService {
         .orderBy(desc(sql`count(*)`))
         .limit(10),
     ]);
-
-    const now = Date.now();
-    const staleDeals: StaleDealSummary[] = staleDealRows.map((d) => ({
-      id: d.id,
-      name: d.name,
-      amount: d.amount === null ? null : Number(d.amount),
-      currency: d.currency,
-      daysSinceUpdate: Math.floor((now - d.updatedAt.getTime()) / (1000 * 60 * 60 * 24)),
-    }));
 
     const repActivity: RepActivitySummary[] = repActivityRows.map((r) => ({
       userId: r.userId,
