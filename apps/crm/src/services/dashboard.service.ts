@@ -2,7 +2,7 @@ import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { ActivitiesService, ActivityDto } from "./activities.service.js";
-import type { DealsService } from "./deals.service.js";
+import type { CurrencyValue, DealsService } from "./deals.service.js";
 import type { TasksService } from "./tasks.service.js";
 import type { MeetingsService } from "./meetings.service.js";
 import { serviceLog } from "../lib/obs.js";
@@ -15,8 +15,7 @@ export interface DashboardOverviewDto {
   companies: number;
   contacts: number;
   openDeals: number;
-  pipelineValue: number;
-  currency: string;
+  valueByCurrency: CurrencyValue[];
   openTasks: number;
   overdueTasks: number;
   dueTodayTasks: number;
@@ -103,8 +102,7 @@ export class DashboardService {
       companies: companyRows.length,
       contacts: contactRows.length,
       openDeals: dealsSummary.openDeals,
-      pipelineValue: dealsSummary.pipelineValue,
-      currency: dealsSummary.currency,
+      valueByCurrency: dealsSummary.valueByCurrency,
       openTasks: taskCounts.open,
       overdueTasks: taskCounts.overdue,
       dueTodayTasks: taskCounts.dueToday,

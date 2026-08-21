@@ -92,11 +92,47 @@ export class PipelinesService {
     return row ? this.withStages(row) : null;
   }
 
+  /** Inserts a pipeline pre-seeded with the standard stage set, same shape as
+   *  ensureDefaultPipeline's own insert — so a brand-new pipeline is immediately usable on a
+   *  Kanban board instead of showing up with zero columns. */
+  private async insertPipelineWithDefaultStages(
+    workspaceId: string,
+    name: string,
+    isDefault: boolean
+  ): Promise<PipelineDto> {
+    return this.db.transaction(async (tx) => {
+      const [pipeline] = await tx.insert(pipelines).values({ workspaceId, name, isDefault }).returning();
+
+      const stageRows = await tx
+        .insert(pipelineStages)
+        .values(
+          DEFAULT_STAGES.map((stage, index) => ({
+            pipelineId: pipeline.id,
+            name: stage.name,
+            orderIndex: index,
+            probability: stage.probability,
+            isClosedWon: stage.isClosedWon,
+            isClosedLost: stage.isClosedLost,
+          }))
+        )
+        .returning();
+
+      return {
+        id: pipeline.id,
+        workspaceId: pipeline.workspaceId,
+        name: pipeline.name,
+        isDefault: pipeline.isDefault,
+        createdAt: pipeline.createdAt.toISOString(),
+        updatedAt: pipeline.updatedAt.toISOString(),
+        stages: stageRows.sort((a, b) => a.orderIndex - b.orderIndex).map(stageToDto),
+      };
+    });
+  }
+
   async create(workspaceId: string, actorId: string | undefined, input: PipelineCreateInput): Promise<PipelineDto> {
-    const [row] = await this.db.insert(pipelines).values({ workspaceId, name: input.name }).returning();
-    const dto = await this.withStages(row);
+    const dto = await this.insertPipelineWithDefaultStages(workspaceId, input.name, false);
     await this.auditService.record(workspaceId, actorId, "create", "pipeline", dto.id, null, dto);
-    log.info("pipeline created", { workspaceId, pipelineId: row.id, name: row.name });
+    log.info("pipeline created", { workspaceId, pipelineId: dto.id, name: dto.name });
     return dto;
   }
 
@@ -190,38 +226,7 @@ export class PipelinesService {
     if (existing) return this.withStages(existing);
 
     try {
-      const created = await this.db.transaction(async (tx) => {
-        const [pipeline] = await tx
-          .insert(pipelines)
-          .values({ workspaceId, name: "Sales Pipeline", isDefault: true })
-          .returning();
-
-        const stageRows = await tx
-          .insert(pipelineStages)
-          .values(
-            DEFAULT_STAGES.map((stage, index) => ({
-              pipelineId: pipeline.id,
-              name: stage.name,
-              orderIndex: index,
-              probability: stage.probability,
-              isClosedWon: stage.isClosedWon,
-              isClosedLost: stage.isClosedLost,
-            }))
-          )
-          .returning();
-
-        return {
-          id: pipeline.id,
-          workspaceId: pipeline.workspaceId,
-          name: pipeline.name,
-          isDefault: pipeline.isDefault,
-          createdAt: pipeline.createdAt.toISOString(),
-          updatedAt: pipeline.updatedAt.toISOString(),
-          stages: stageRows
-            .sort((a, b) => a.orderIndex - b.orderIndex)
-            .map(stageToDto),
-        };
-      });
+      const created = await this.insertPipelineWithDefaultStages(workspaceId, "Sales Pipeline", true);
       log.info("default pipeline ensured", { workspaceId, pipelineId: created.id });
       return created;
     } catch (err) {

@@ -634,17 +634,21 @@ export const dealResponseSchema = z.object({
   updatedAt: z.string().datetime(),
 });
 
+export const currencyValueSchema = z.object({
+  currency: z.string(),
+  value: z.number(),
+});
+
 export const dealsSummaryResponseSchema = z.object({
   workspaceId: z.string().uuid(),
   openDeals: z.number(),
-  pipelineValue: z.number(),
-  currency: z.string(),
+  valueByCurrency: z.array(currencyValueSchema),
   stages: z.array(
     z.object({
       stageId: z.string().uuid(),
       name: z.string(),
       count: z.number(),
-      value: z.number(),
+      valueByCurrency: z.array(currencyValueSchema),
     })
   ),
 });
@@ -815,8 +819,7 @@ export const dashboardOverviewResponseSchema = z.object({
   companies: z.number(),
   contacts: z.number(),
   openDeals: z.number(),
-  pipelineValue: z.number(),
-  currency: z.string(),
+  valueByCurrency: z.array(currencyValueSchema),
   openTasks: z.number(),
   overdueTasks: z.number(),
   dueTodayTasks: z.number(),
