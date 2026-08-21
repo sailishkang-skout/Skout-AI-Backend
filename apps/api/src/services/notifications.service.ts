@@ -4,13 +4,14 @@ import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { sendMail } from "./mail.service.js";
+import { isSmsConfigured, sendSms } from "./telecom.service.js";
 
 const { notifications, notificationPreferences, users, workspaces } = schema;
 
 const log = createLogger("notifications.service");
 
-/** "in_app" | "email" | "both" — R17.4 per-type channel preference. */
-export type NotificationChannel = "in_app" | "email" | "both";
+/** "in_app" | "email" | "both" | "sms" — R17.4 per-type channel preference. */
+export type NotificationChannel = "in_app" | "email" | "both" | "sms";
 
 export interface NotificationDto {
   id: string;
@@ -287,6 +288,23 @@ export async function createNotification(db: Db, config: Env, input: CreateNotif
       }
     } catch (err) {
       log.warn("Email notification delivery failed", { err, userId: input.userId });
+    }
+  }
+
+  // SMS — separate opt-in channel (not folded into "both", which is in-app + email only).
+  // Delivery failures never block notification creation, same as email above.
+  if (input.userId && !digest && channel === "sms" && isSmsConfigured(config)) {
+    try {
+      const [user] = await db.select({ phone: users.phone }).from(users).where(eq(users.id, input.userId)).limit(1);
+      if (user?.phone) {
+        const sms = await sendSms(config, {
+          to: user.phone,
+          body: input.body ? `${input.title}\n${input.body}` : input.title,
+        });
+        if (sms.messageSid) delivered.add("sms");
+      }
+    } catch (err) {
+      log.warn("SMS notification delivery failed", { err, userId: input.userId });
     }
   }
 

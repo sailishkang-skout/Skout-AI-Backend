@@ -7,9 +7,9 @@ vi.mock("../services/notifications.service.js", () => ({
   createNotification: (...args: unknown[]) => createNotification(...args),
 }));
 
-const { sweepTasks, sweepSequenceSteps, sweepAiDrafts } = await import("./reminder-sweep.worker.js");
+const { sweepTasks, sweepSequenceSteps, sweepAiDrafts, sweepMeetings } = await import("./reminder-sweep.worker.js");
 
-const { tasks, sequenceEnrollmentSteps, sequenceSteps, sequenceEnrollments, aiDrafts, notifications } = schema;
+const { tasks, sequenceEnrollmentSteps, sequenceSteps, sequenceEnrollments, aiDrafts, meetings, notifications } = schema;
 
 const CONFIG = {} as never;
 
@@ -211,6 +211,75 @@ describe("sweepAiDrafts", () => {
     createNotification.mockRejectedValueOnce(new Error("db down")).mockResolvedValueOnce({ id: "notif-2" });
 
     await sweepAiDrafts(db as never, CONFIG, aiDrafts, notifications, STALE_CUTOFF);
+
+    expect(createNotification).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("sweepMeetings", () => {
+  it("creates a meeting_reminder notification for each upcoming meeting", async () => {
+    const due = [
+      {
+        id: "meeting-1",
+        workspaceId: "ws-1",
+        organizerId: "user-1",
+        title: "Acme demo",
+        scheduledAt: new Date("2026-01-01T12:00:00.000Z"),
+      },
+    ];
+    const db = { select: vi.fn().mockReturnValue(selectChain(due)) };
+
+    await sweepMeetings(db as never, CONFIG, meetings, notifications, LEAD_CUTOFF, NOW);
+
+    expect(createNotification).toHaveBeenCalledTimes(1);
+    expect(createNotification).toHaveBeenCalledWith(
+      db,
+      CONFIG,
+      expect.objectContaining({
+        workspaceId: "ws-1",
+        userId: "user-1",
+        type: "meeting_reminder",
+        entityType: "meeting",
+        entityId: "meeting-1",
+        title: 'Meeting "Acme demo" is starting soon',
+      })
+    );
+  });
+
+  it("broadcasts (userId null) when the meeting has no organizer", async () => {
+    const due = [
+      {
+        id: "meeting-2",
+        workspaceId: "ws-1",
+        organizerId: null,
+        title: "Unowned meeting",
+        scheduledAt: new Date("2026-01-01T12:00:00.000Z"),
+      },
+    ];
+    const db = { select: vi.fn().mockReturnValue(selectChain(due)) };
+
+    await sweepMeetings(db as never, CONFIG, meetings, notifications, LEAD_CUTOFF, NOW);
+
+    expect(createNotification).toHaveBeenCalledWith(db, CONFIG, expect.objectContaining({ userId: null }));
+  });
+
+  it("does nothing when no meetings are due", async () => {
+    const db = { select: vi.fn().mockReturnValue(selectChain([])) };
+
+    await sweepMeetings(db as never, CONFIG, meetings, notifications, LEAD_CUTOFF, NOW);
+
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it("continues processing remaining meetings if one createNotification call fails", async () => {
+    const due = [
+      { id: "meeting-1", workspaceId: "ws-1", organizerId: "user-1", title: "First", scheduledAt: new Date("2026-01-01T12:00:00.000Z") },
+      { id: "meeting-2", workspaceId: "ws-1", organizerId: "user-1", title: "Second", scheduledAt: new Date("2026-01-01T13:00:00.000Z") },
+    ];
+    const db = { select: vi.fn().mockReturnValue(selectChain(due)) };
+    createNotification.mockRejectedValueOnce(new Error("db down")).mockResolvedValueOnce({ id: "notif-2" });
+
+    await sweepMeetings(db as never, CONFIG, meetings, notifications, LEAD_CUTOFF, NOW);
 
     expect(createNotification).toHaveBeenCalledTimes(2);
   });

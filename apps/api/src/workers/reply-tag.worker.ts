@@ -43,21 +43,28 @@ export async function startReplyTagWorker(config: Env): Promise<() => Promise<vo
     async (job) => {
       const { threadId, bodyText, workspaceId } = job.data;
 
-      const tag = await tagReply(bodyText, config.OPENROUTER_API_KEY);
-      if (!tag) {
+      const classification = await tagReply(bodyText, config.OPENROUTER_API_KEY);
+      if (!classification) {
         log.debug("reply-tag: no tag returned, skipping update", { threadId });
         return;
       }
+      const { tag, confidence, reason, negativeSubtype } = classification;
 
       await db
         .update(inboxThreads)
         .set({ replyTag: tag, updatedAt: new Date() })
         .where(eq(inboxThreads.id, threadId));
 
-      log.info("reply-tag: thread tagged", { threadId, tag });
+      log.info("reply-tag: thread tagged", { threadId, tag, confidence, reason, negativeSubtype });
 
       try {
-        await applyReplyTagActions(db, workspaceId, threadId, tag, bodyText, config.OPENROUTER_API_KEY);
+        await applyReplyTagActions(db, config, workspaceId, threadId, tag, {
+          bodyText,
+          openRouterApiKey: config.OPENROUTER_API_KEY,
+          confidence,
+          negativeSubtype,
+          reason,
+        });
       } catch (err) {
         log.warn("reply-tag: tag actions failed", { threadId, tag, err });
       }

@@ -155,3 +155,52 @@ describe("inbox OAuth connect routes", () => {
     }
   });
 });
+
+describe("inbox manual-review routes", () => {
+  it("GET /inbox/manual-review returns a shaped list", async () => {
+    const app = await buildTestApp();
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/inbox/manual-review",
+      headers: asUser("manual-review-list@test.com"),
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { data: unknown[]; total: number };
+    expect(Array.isArray(body.data)).toBe(true);
+    expect(body.total).toBe(body.data.length);
+
+    await app.close();
+  });
+
+  it("POST /inbox/threads/:threadId/manual-review/resolve 404s for a thread that doesn't exist", async () => {
+    const app = await buildTestApp();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/inbox/threads/00000000-0000-0000-0000-000000000000/manual-review/resolve",
+      headers: json("manual-review-resolve@test.com"),
+      payload: { action: "dismiss" },
+    });
+
+    expect([404, 503]).toContain(res.statusCode);
+
+    await app.close();
+  });
+
+  it("POST /inbox/threads/:threadId/manual-review/resolve rejects an invalid action", async () => {
+    const app = await buildTestApp();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/inbox/threads/00000000-0000-0000-0000-000000000000/manual-review/resolve",
+      headers: json("manual-review-resolve-invalid@test.com"),
+      payload: { action: "not_a_real_action" },
+    });
+
+    expect([400, 503]).toContain(res.statusCode);
+
+    await app.close();
+  });
+});

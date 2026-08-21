@@ -98,6 +98,7 @@ export interface SearchFilters {
   industries?: string[];
   countries?: string[];
   seniorities?: string[];
+  employeeBuckets?: string[];
   // Company — stage & funding
   companyStage?: string;
   lastFundingRound?: string;
@@ -180,7 +181,9 @@ export async function ensureProspectsIndex(cfg: OpenSearchConfig): Promise<void>
           state: { type: "keyword" },
           city: { type: "text" },
           employeeCount: { type: "integer" },
-          employeeBucket: { type: "keyword" },
+          // `.keyword` subfield so TAM terms aggs work on both this mapping and
+          // dynamically mapped text fields (Bonsai default for unmapped strings).
+          employeeBucket: { type: "keyword", fields: { keyword: { type: "keyword", ignore_above: 256 } } },
           companyStage: { type: "keyword" },
           annualRevenue: { type: "long" },
           lastFundingRound: { type: "keyword" },
@@ -360,6 +363,7 @@ export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25
   if (filters.industries?.length)  filter.push({ terms: { industry: filters.industries } });
   if (filters.countries?.length)   filter.push({ terms: { country: filters.countries } });
   if (filters.seniorities?.length) filter.push({ terms: { seniority: filters.seniorities } });
+  if (filters.employeeBuckets?.length) filter.push({ terms: { "employeeBucket.keyword": filters.employeeBuckets } });
   if (filters.state?.trim()) filter.push({ term: { state: filters.state.trim() } });
   if (filters.city?.trim())  filter.push({ match: { city: filters.city.trim() } });
   if (filters.minEmployees != null || filters.maxEmployees != null) {
@@ -483,7 +487,9 @@ export async function aggregateProspects(cfg: OpenSearchConfig, filters: SearchF
     query,
     aggs: {
       industry: { terms: { field: "industry", size: MAX_BUCKETS, missing: "unknown" } },
-      size: { terms: { field: "employeeBucket", size: MAX_BUCKETS, missing: "unknown" } },
+      // Bonsai dynamic mapping stored employeeBucket as text + `.keyword`; aggregating
+      // on the text field 400s. `.keyword` works there and on indexes we create.
+      size: { terms: { field: "employeeBucket.keyword", size: MAX_BUCKETS, missing: "unknown" } },
       geo: { terms: { field: "country", size: MAX_BUCKETS, missing: "unknown" } },
     },
   };

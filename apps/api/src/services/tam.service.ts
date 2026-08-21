@@ -102,8 +102,19 @@ function demoCorpus(env: Env): ProspectDocument[] {
 
 async function runAggregate(env: Env, filters: SearchFilters) {
   const cfg = osConfig(env);
-  if (cfg) return aggregateProspects(cfg, filters);
-  return aggregateDemoCorpus(demoCorpus(env), filters);
+  if (!cfg) return aggregateDemoCorpus(demoCorpus(env), filters);
+  try {
+    return await aggregateProspects(cfg, filters);
+  } catch (err) {
+    // aggregateProspects/osFetch throws a plain Error on any non-2xx OpenSearch response
+    // (missing index, bad field mapping, auth) — left as-is it becomes an opaque 500 with no
+    // hint to the caller. Wrapping in HttpError still gets full detail logged server-side
+    // (app.ts's error handler logs HttpErrors at warn with the original message) while giving
+    // the client something actionable instead of "An internal server error occurred."
+    throw new HttpError("Could not reach the search backend to compute this TAM — try again in a moment.", 502, {
+      cause: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 /** Does an activation's captured snapshot fall inside the TAM's industry/country/employee filter? */

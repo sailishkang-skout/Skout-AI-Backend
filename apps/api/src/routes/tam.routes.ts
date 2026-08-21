@@ -39,7 +39,7 @@ export async function tamRoutes(app: FastifyInstance) {
       const tam = await createTam(app.db, app.config, request.workspaceId, input, request.userId);
       return reply.code(201).send({ data: tam });
     } catch (err) {
-      if (err instanceof HttpError) return reply.code(err.statusCode).send(errorResponse(err.message, err.statusCode));
+      if (err instanceof HttpError) return reply.code(err.statusCode).send(errorResponse(err.message, err.statusCode, err.details));
       throw err;
     }
   });
@@ -61,7 +61,7 @@ export async function tamRoutes(app: FastifyInstance) {
       const tam = await recomputeTam(app.db, app.config, request.workspaceId, id);
       return reply.send({ data: tam });
     } catch (err) {
-      if (err instanceof HttpError) return reply.code(err.statusCode).send(errorResponse(err.message, err.statusCode));
+      if (err instanceof HttpError) return reply.code(err.statusCode).send(errorResponse(err.message, err.statusCode, err.details));
       throw err;
     }
   });
@@ -77,7 +77,7 @@ export async function tamRoutes(app: FastifyInstance) {
       const smartList = await drillIntoTamSegment(app.db, request.workspaceId, id, input);
       return reply.code(201).send({ data: smartList });
     } catch (err) {
-      if (err instanceof HttpError) return reply.code(err.statusCode).send(errorResponse(err.message, err.statusCode));
+      if (err instanceof HttpError) return reply.code(err.statusCode).send(errorResponse(err.message, err.statusCode, err.details));
       throw err;
     }
   });

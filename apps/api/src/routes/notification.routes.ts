@@ -11,7 +11,7 @@ import {
   type NotificationChannel,
 } from "../services/notifications.service.js";
 
-const VALID_CHANNELS: NotificationChannel[] = ["in_app", "email", "both"];
+const VALID_CHANNELS: NotificationChannel[] = ["in_app", "email", "both", "sms"];
 
 /** R17.1 — notification center + R17.4 — email/Slack delivery channel preferences. */
 export async function notificationRoutes(app: FastifyInstance) {

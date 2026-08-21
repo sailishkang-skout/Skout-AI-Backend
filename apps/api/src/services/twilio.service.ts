@@ -1,5 +1,6 @@
 import type { Env } from "../config/env.js";
 import { createLogger } from "@skout/observability";
+import type { BridgeCallParams, BridgeCallResult, SendSmsParams, SendSmsResult } from "./telecom.types.js";
 
 const log = createLogger("twilio.service");
 
@@ -7,22 +8,7 @@ export function isTwilioConfigured(config: Env): boolean {
   return Boolean(config.TWILIO_ACCOUNT_SID && config.TWILIO_AUTH_TOKEN && config.TWILIO_PHONE_NUMBER);
 }
 
-export interface BridgeCallParams {
-  /** The SDR's own phone number — dialed first (E.164, e.g. +14155551234). */
-  agentPhone: string;
-  /** The prospect's number — dialed once the agent answers. */
-  prospectPhone: string;
-  /**
-   * Query params appended to the status-callback AND the TwiML/recording-callback webhooks so
-   * each can attribute the call (and its eventual recording) back to the right workspace/contact.
-   */
-  callbackParams: Record<string, string>;
-}
-
-export interface BridgeCallResult {
-  callSid: string;
-  status: string;
-}
+export type { BridgeCallParams, BridgeCallResult, SendSmsParams, SendSmsResult };
 
 /**
  * R20.2 — click-to-call bridge. Calls the SDR's own phone first; once they pick up, Twilio
@@ -75,6 +61,42 @@ export async function dialBridgeCall(config: Env, params: BridgeCallParams): Pro
     throw new Error(json.message ?? `Twilio API returned ${res.status}`);
   }
   return { callSid: json.sid ?? "", status: json.status ?? "queued" };
+}
+
+/**
+ * SMS delivery (meeting/task reminders + notification-preferences "sms" channel). Uses Twilio's
+ * plain REST API over fetch, same pattern as `dialBridgeCall` above (no SDK dependency).
+ */
+export async function sendSms(config: Env, params: SendSmsParams): Promise<SendSmsResult> {
+  if (!isTwilioConfigured(config)) {
+    throw new Error("Twilio is not configured (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_PHONE_NUMBER)");
+  }
+
+  const body = new URLSearchParams({
+    To: params.to,
+    From: config.TWILIO_PHONE_NUMBER!,
+    Body: params.body,
+  });
+
+  const auth = Buffer.from(`${config.TWILIO_ACCOUNT_SID}:${config.TWILIO_AUTH_TOKEN}`).toString("base64");
+  const res = await fetch(
+    `https://api.twilio.com/2010-04-01/Accounts/${config.TWILIO_ACCOUNT_SID}/Messages.json`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: body.toString(),
+    }
+  );
+
+  const json = (await res.json().catch(() => ({}))) as { sid?: string; status?: string; message?: string };
+  if (!res.ok) {
+    log.warn("Twilio SMS creation failed", { status: res.status, body: json });
+    throw new Error(json.message ?? `Twilio API returned ${res.status}`);
+  }
+  return { messageSid: json.sid ?? "", status: json.status ?? "queued" };
 }
 
 function escapeXmlAttr(value: string): string {

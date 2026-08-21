@@ -1,4 +1,4 @@
-import { boolean, integer, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { boolean, integer, jsonb, pgTable, real, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { workspaces } from "./workspaces.js";
 import { sequenceEnrollments } from "./sequences.js";
 
@@ -91,6 +91,16 @@ export const inboxThreads = pgTable("inbox_threads", {
   lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  /**
+   * Manual review resolution UI (condition-engine spec §14/§41 three-tier confidence policy) —
+   * a low-confidence AI classification is routed here instead of auto-applying the branch. Set
+   * when the tier is "manual_review", cleared once a human approves or dismisses it.
+   */
+  needsReview: boolean("needs_review").notNull().default(false),
+  suggestedTag: text("suggested_tag"),
+  suggestedNegativeSubtype: text("suggested_negative_subtype"),
+  suggestedConfidence: real("suggested_confidence"),
+  suggestedReason: text("suggested_reason"),
 });
 
 export const inboxMessages = pgTable("inbox_messages", {

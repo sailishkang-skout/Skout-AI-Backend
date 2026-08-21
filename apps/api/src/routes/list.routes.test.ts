@@ -86,6 +86,40 @@ describe("list routes — CRUD lifecycle", () => {
     const body = res.json() as { id: string; name: string };
     expect(body.id).toBe(id);
     expect(body.name).toBe("Show Me List");
+    expect(Array.isArray((body as { members?: unknown[] }).members)).toBe(true);
+  });
+
+  it("GET /lists/:id members include a signals overlay array (R11.3)", async () => {
+    const email = "list-signals-overlay@test.com";
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/lists",
+      headers: { ...asUser(email), "content-type": "application/json" },
+      payload: { name: "Signal Overlay List" },
+    });
+    const { id } = created.json() as { id: string };
+
+    await app.inject({
+      method: "POST",
+      url: `/api/v1/lists/${id}/members`,
+      headers: { ...asUser(email), "content-type": "application/json" },
+      payload: { prospectIds: ["overlay-p1"] },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/lists/${id}`,
+      headers: asUser(email),
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as {
+      members: { prospectId: string; signals: { type: string; observedAt: string; detail?: string }[] }[];
+    };
+    expect(body.members).toHaveLength(1);
+    expect(body.members[0].prospectId).toBe("overlay-p1");
+    expect(Array.isArray(body.members[0].signals)).toBe(true);
   });
 
   it("POST /lists/:id/members adds prospects and returns list with members array", async () => {

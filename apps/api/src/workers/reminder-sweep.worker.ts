@@ -1,5 +1,5 @@
 import { Worker, Queue } from "bullmq";
-import { and, eq, inArray, isNull, lte, notExists, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lte, notExists, sql } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
@@ -33,7 +33,7 @@ export async function startReminderSweepWorker(config: Env) {
   );
 
   const { db } = createDb(config.DATABASE_URL);
-  const { tasks, sequenceEnrollmentSteps, sequenceSteps, sequenceEnrollments, aiDrafts, notifications } = schema;
+  const { tasks, sequenceEnrollmentSteps, sequenceSteps, sequenceEnrollments, aiDrafts, meetings, notifications } = schema;
 
   const worker = new Worker(
     QUEUE_NAME,
@@ -53,6 +53,7 @@ export async function startReminderSweepWorker(config: Env) {
         leadCutoff
       );
       await sweepAiDrafts(db, config, aiDrafts, notifications, staleCutoff);
+      await sweepMeetings(db, config, meetings, notifications, leadCutoff, now);
     },
     { connection, concurrency: 1 }
   );
@@ -118,6 +119,55 @@ export async function sweepTasks(
   }
 
   if (due.length > 0) log.info(`Created ${due.length} task reminder(s)`);
+}
+
+export async function sweepMeetings(
+  db: Db,
+  config: Env,
+  meetings: (typeof schema)["meetings"],
+  notifications: (typeof schema)["notifications"],
+  leadCutoff: Date,
+  now: Date
+) {
+  const due = await db
+    .select()
+    .from(meetings)
+    .where(
+      and(
+        isNull(meetings.deletedAt),
+        gte(meetings.scheduledAt, now),
+        lte(meetings.scheduledAt, leadCutoff),
+        notExists(
+          db
+            .select({ id: notifications.id })
+            .from(notifications)
+            .where(
+              and(
+                eq(notifications.entityType, "meeting"),
+                eq(notifications.entityId, sql`${meetings.id}::text`)
+              )
+            )
+        )
+      )
+    );
+
+  for (const meeting of due) {
+    try {
+      await createNotification(db, config, {
+        workspaceId: meeting.workspaceId,
+        userId: meeting.organizerId,
+        type: "meeting_reminder",
+        entityType: "meeting",
+        entityId: meeting.id,
+        title: `Meeting "${meeting.title}" is starting soon`,
+        body: meeting.scheduledAt ? `Scheduled for ${meeting.scheduledAt.toISOString()}` : undefined,
+      });
+    } catch (err) {
+      log.error(`Failed to create reminder for meeting ${meeting.id}`, { meetingId: meeting.id, err });
+    }
+  }
+
+  if (due.length > 0) log.info(`Created ${due.length} meeting reminder(s)`);
 }
 
 export async function sweepSequenceSteps(

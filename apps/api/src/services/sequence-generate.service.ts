@@ -126,5 +126,9 @@ export async function generateSequenceForWorkspace(
     config.OPENROUTER_API_KEY
   );
 
-  return seqSvc.createGeneratedSequence(workspaceId, generated);
+  return seqSvc.createGeneratedSequence(workspaceId, {
+    ...generated,
+    source: "dexter",
+    mode: "C",
+  });
 }

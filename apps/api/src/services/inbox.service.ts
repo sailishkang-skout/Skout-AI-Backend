@@ -5,6 +5,8 @@ import type { Env } from "../config/env.js";
 import { encryptSecret, decryptSecret } from "@skout/shared";
 import { HttpError } from "../utils/http.js";
 import { markInboxUsed } from "./inbox-rotation.service.js";
+import { applyReplyTagActions } from "./reply-tag-actions.service.js";
+import type { NegativeSubtype, ReplyTag } from "./reply-tagger.service.js";
 import nodemailer from "nodemailer";
 import { randomBytes } from "node:crypto";
 
@@ -866,6 +868,53 @@ export class InboxService {
       to: targetStatus,
     });
     return updated!;
+  }
+
+  /** Manual review resolution (condition-engine spec §14/§41): threads where the AI's
+   * classification confidence was too low to auto-apply the branch, awaiting a human decision. */
+  async listManualReviewThreads(workspaceId: string) {
+    const rows = await this.db
+      .select()
+      .from(inboxThreads)
+      .where(and(eq(inboxThreads.workspaceId, workspaceId), eq(inboxThreads.needsReview, true)))
+      .orderBy(desc(inboxThreads.updatedAt));
+    return { workspaceId, data: rows, total: rows.length };
+  }
+
+  async resolveManualReview(
+    workspaceId: string,
+    threadId: string,
+    action: "apply" | "dismiss"
+  ) {
+    const thread = await this.getThread(workspaceId, threadId);
+    if (!thread.needsReview) {
+      throw new HttpError("not_pending_review", 422);
+    }
+
+    if (action === "apply" && thread.suggestedTag) {
+      await applyReplyTagActions(this.db, this.config, workspaceId, threadId, thread.suggestedTag as ReplyTag, {
+        negativeSubtype: (thread.suggestedNegativeSubtype ?? undefined) as NegativeSubtype | undefined,
+        // A human just approved this — force the auto tier so the branch actually applies now,
+        // rather than re-evaluating at the original (low) AI confidence and looping back here.
+        confidence: 1,
+      });
+    }
+
+    const now = new Date();
+    await this.db
+      .update(inboxThreads)
+      .set({
+        needsReview: false,
+        suggestedTag: null,
+        suggestedNegativeSubtype: null,
+        suggestedConfidence: null,
+        suggestedReason: null,
+        updatedAt: now,
+      })
+      .where(and(eq(inboxThreads.workspaceId, workspaceId), eq(inboxThreads.id, threadId)));
+
+    log.info("manual review resolved", { workspaceId, threadId, action });
+    return { ok: true, action };
   }
 
   async replyToThread(workspaceId: string, threadId: string, body: { text: string; html?: string }) {

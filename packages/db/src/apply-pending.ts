@@ -240,6 +240,10 @@ try {
   await runSqlMigration("0040_task_type_completed_at", "0040_task_type_completed_at.sql");
   await runSqlMigration("0041_google_calendar", "0041_google_calendar.sql");
   await runSqlMigration("0042_r13_r17_r18_r12_r11_foundation", "0042_r13_r17_r18_r12_r11_foundation.sql");
+  await runSqlMigration("0043_sequence_abc_conditions", "0043_sequence_abc_conditions.sql");
+  await runSqlMigration("0044_sequence_versions_events_experiments", "0044_sequence_versions_events_experiments.sql");
+  await runSqlMigration("0045_sequence_retry_and_linkedin_connections", "0045_sequence_retry_and_linkedin_connections.sql");
+  await runSqlMigration("0046_manual_review_fields", "0046_manual_review_fields.sql");
   await runSqlMigration("0043_list_source_filters", "0043_list_source_filters.sql");
 
 } finally {
