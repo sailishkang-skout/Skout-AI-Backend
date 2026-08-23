@@ -1,5 +1,6 @@
 import type { Env } from "../config/env.js";
 import { HunterEmailVerifier, isLiveApiKey } from "@skout/pal";
+import { suggestDomainCorrection } from "../utils/domain-typo.js";
 
 /*
 ==================================================
@@ -57,6 +58,8 @@ export interface EmailIntelVerifyResult {
     decisionConfidence: number; // 0-100
     [key: string]: unknown;
   };
+  /** Set when the domain looks like a typo of a common domain (see applyDomainTypoCheck). */
+  suggestedDomain?: string;
   error?: string;
   [key: string]: unknown;
 }
@@ -92,39 +95,6 @@ export interface EmailIntelDiscoveryResult {
 
 export interface EmailIntelPatternResult {
   success: boolean;
-  [key: string]: unknown;
-}
-
-/**
- * Shape of the upstream email-intel service's warmup responses.
- *
- * NOTE: as of writing, `src/services/warmup/` in the email-intel repo is a
- * deliberate scaffold (its own docs/EXTERNAL.md: "Warmup ... scaffold only,
- * not sending mail yet") — every warmup function there except the status
- * read unconditionally throws "not implemented", which its POST /warmup/start
- * route surfaces as upstream 501. This proxy's `post()`/`get()` helpers treat
- * any non-2xx upstream response as EmailIntelUnavailableError (mapped to 502
- * below), matching how the existing verify/discover/patterns proxies already
- * treat upstream non-2xx — so today `startWarmup` will reliably reject with
- * EmailIntelUnavailableError until the upstream engine is implemented.
- * `getWarmupStatus` does succeed today, but only reports the scaffold-wide
- * `{ enabled: false, phase: "scaffold" }` state, not real per-domain progress.
- */
-export interface EmailIntelWarmupStartResult {
-  success: boolean;
-  domain: string;
-  mailbox: string | null;
-  status?: string;
-  [key: string]: unknown;
-}
-
-export interface EmailIntelWarmupStatusResult {
-  success: boolean;
-  domain: string;
-  enabled: boolean;
-  phase: string;
-  score: number | null;
-  dayInProgram: number | null;
   [key: string]: unknown;
 }
 
@@ -186,42 +156,39 @@ async function post<T>(
   return (await res.json()) as T;
 }
 
-async function get<T>(
-  config: EmailIntelConfig,
-  path: string,
-  query: Record<string, string>
-): Promise<T> {
-  const url = baseUrl(config);
-  if (!url) {
-    throw new EmailIntelUnavailableError("EMAIL_INTEL_SERVICE_URL is not configured");
-  }
+/** Raw upstream statuses ambiguous enough that an obvious domain typo should win over them. */
+const TYPO_ELIGIBLE_STATUSES: ReadonlySet<EmailIntelStatus> = new Set(["UNKNOWN", "NO_MX", "DNS_ERROR"]);
 
-  const qs = new URLSearchParams(query).toString();
+/**
+ * When the upstream verdict is ambiguous (UNKNOWN/NO_MX/DNS_ERROR) and the domain is an obvious
+ * typo of a common domain (e.g. "gmial.com"), override the verdict to INVALID with a
+ * suggestedDomain instead of surfacing an unexplained ambiguous result.
+ */
+function applyDomainTypoCheck(result: EmailIntelVerifyResult): EmailIntelVerifyResult {
+  const status = result.verificationStatus?.status;
+  if (!status || !TYPO_ELIGIBLE_STATUSES.has(status)) return result;
+  if (!result.domain) return result;
 
-  let res: Response;
-  try {
-    res = await fetch(`${url}${path}?${qs}`, {
-      method: "GET",
-      signal: AbortSignal.timeout(config.EMAIL_INTEL_TIMEOUT_MS),
-    });
-  } catch (err: unknown) {
-    throw new EmailIntelUnavailableError(err instanceof Error ? err.message : String(err));
-  }
+  const suggestedDomain = suggestDomainCorrection(result.domain);
+  if (!suggestedDomain) return result;
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new EmailIntelUnavailableError(`upstream ${res.status}: ${text.slice(0, 300)}`, res.status, parseUpstreamBody(text));
-  }
-
-  return (await res.json()) as T;
+  return {
+    ...result,
+    verificationStatus: { ...result.verificationStatus, status: "INVALID" },
+    suggestedDomain,
+    sendEligibility: result.sendEligibility
+      ? { ...result.sendEligibility, allowed: false, decision: "INVALID_TYPO" }
+      : result.sendEligibility,
+  };
 }
 
 /** POST /verify — single-email SMTP-based verification. */
-export function verifyEmail(
+export async function verifyEmail(
   config: Pick<Env, "EMAIL_INTEL_SERVICE_URL" | "EMAIL_INTEL_TIMEOUT_MS">,
   email: string
 ): Promise<EmailIntelVerifyResult> {
-  return post(config, "/verify", { email });
+  const result = await post<EmailIntelVerifyResult>(config, "/verify", { email });
+  return applyDomainTypoCheck(result);
 }
 
 /*
@@ -362,22 +329,6 @@ export function generatePatterns(
     last_name: params.lastName,
     domain: params.domain,
   });
-}
-
-/** POST /warmup/start — kicks off warm-up scheduling for a domain/mailbox. */
-export function startWarmup(
-  config: Pick<Env, "EMAIL_INTEL_SERVICE_URL" | "EMAIL_INTEL_TIMEOUT_MS">,
-  params: { domain: string; mailbox?: string }
-): Promise<EmailIntelWarmupStartResult> {
-  return post(config, "/warmup/start", params);
-}
-
-/** GET /warmup/status?domain=... — current warm-up state/score for a domain. */
-export function getWarmupStatus(
-  config: Pick<Env, "EMAIL_INTEL_SERVICE_URL" | "EMAIL_INTEL_TIMEOUT_MS">,
-  domain: string
-): Promise<EmailIntelWarmupStatusResult> {
-  return get(config, "/warmup/status", { domain });
 }
 
 const VERDICT_TO_INTEL: Record<string, EmailIntelStatus> = {
