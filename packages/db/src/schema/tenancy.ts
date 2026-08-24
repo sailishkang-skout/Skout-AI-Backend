@@ -1,4 +1,4 @@
-import { boolean, index, jsonb, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { users } from "./users.js";
 import { workspaces } from "./workspaces.js";
 
@@ -102,9 +102,26 @@ export const workspaceMemberRoles = pgTable(
 );
 
 /**
- * §11.1 / §16 — usage/plan entitlements. Wave 1: table + read/write API exist. Migrating the
- * existing per-feature workspace flags this is meant to replace (credits, LinkedIn send
- * limits, calling) onto it is separate, tracked follow-up work — not done in this pass.
+ * §11.1 / §16 / §5.1 Task 35 (Enterprise Completion Plan) — usage/plan entitlements. The
+ * original Wave-1 doc comment here claimed "table + read/write API exist" — that was
+ * aspirational, not accurate as of Task 35's audit: no service or route anywhere in the
+ * codebase ever read or wrote this table before this pass (verified by grep across apps/ and
+ * packages/). apps/api/src/services/entitlements.service.ts + entitlements.routes.ts (new)
+ * are the real read/write API this comment always claimed to have.
+ *
+ * Migrating the existing per-feature workspace flags this table is meant to eventually replace
+ * (credits, LinkedIn/WhatsApp send limits, calling) is explicitly flagged in this engagement's
+ * own task list as the highest-risk item in this pass — it touches real money and live
+ * customer-facing throughput limits. Task 35's actual scope is deliberately narrow and
+ * additive-only: two call sites (LinkedIn/WhatsApp new-account dailySendLimit default in
+ * linkedin-account.service.ts; per-workspace search credit cost in search.routes.ts) now read
+ * an entitlement override when one exists and fall back to the exact pre-existing hardcoded/
+ * config-driven value otherwise. Nothing about deductCredits() or the credit ledger itself
+ * changed — only which number gets fed into those unchanged call sites when a workspace has
+ * explicitly been given an override via the new PUT /entitlements/:key route (owner/admin
+ * only). A workspace with zero entitlements rows behaves byte-for-byte as it did before this
+ * commit. Migrating "calling" has no existing flag to migrate from — nothing in this codebase
+ * enforces a calling limit today — so that one is left as a real, disclosed gap, not attempted.
  */
 export const entitlements = pgTable(
   "entitlements",
@@ -119,7 +136,13 @@ export const entitlements = pgTable(
     source: text("source").notNull().default("manual"),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("entitlements_workspace_key_idx").on(table.workspaceId, table.key)]
+  (table) => [
+    // Task 35: was a plain (non-unique) index — upgraded to unique so set()'s upsert
+    // (onConflictDoUpdate) has a real target and two concurrent writers can't create
+    // duplicate (workspaceId, key) rows. See 0055_entitlements_unique.sql for the migration,
+    // which defensively dedupes any pre-existing duplicates before creating the index.
+    uniqueIndex("entitlements_workspace_key_idx").on(table.workspaceId, table.key),
+  ]
 );
 
 /**
