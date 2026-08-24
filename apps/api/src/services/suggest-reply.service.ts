@@ -1,7 +1,7 @@
 import { and, asc, desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
-import { createLogger } from "@skout/observability";
+import { createLogger, injectTraceContext } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import { AiDraftService } from "./ai-draft.service.js";
@@ -197,7 +197,7 @@ export class SuggestReplyService {
       try {
         const res = await fetch(`${aiUrl.replace(/\/$/, "")}/v1/suggest-reply`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...injectTraceContext() },
           body: JSON.stringify(payload),
         });
         if (res.ok) {

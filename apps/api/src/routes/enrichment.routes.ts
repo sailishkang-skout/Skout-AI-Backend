@@ -6,6 +6,7 @@ import { buildEnrichmentService, InsufficientCreditsError } from "../services/en
 import { getWorkspaceIcp } from "../services/icp.service.js";
 import { getAsyncJob } from "../services/async-job.service.js";
 import { HttpError, errorResponse } from "../utils/http.js";
+import { injectTraceContext } from "@skout/observability";
 
 const scoreBodySchema = z.object({
   prospect: z.object({
@@ -173,7 +174,7 @@ export async function enrichmentRoutes(app: FastifyInstance) {
     } else {
       const res = await fetch(`${aiUrl}/v1/personalize`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...injectTraceContext() },
         body: JSON.stringify({
           prospect_id: body.prospectId,
           full_name: body.fullName,

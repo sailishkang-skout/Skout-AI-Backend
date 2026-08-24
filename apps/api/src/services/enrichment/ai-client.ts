@@ -1,3 +1,5 @@
+import { injectTraceContext } from "@skout/observability";
+
 export interface ScoreInput {
   prospectId: string;
   fullName?: string;
@@ -305,7 +307,7 @@ export async function classifyIntent(
   try {
     const res = await fetch(`${aiServiceUrl}/v1/classify`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...injectTraceContext() },
       body: JSON.stringify({
         prospect_id: input.prospectId,
         signals: (input.signals ?? []).map((s) => ({ type: s })),
@@ -367,7 +369,7 @@ export async function scoreProspect(
     const [scoreRes, intentResult] = await Promise.all([
       fetch(`${aiServiceUrl}/v1/score`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...injectTraceContext() },
         body: JSON.stringify({
           prospect: {
             prospect_id: input.prospectId,

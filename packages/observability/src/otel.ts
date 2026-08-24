@@ -3,6 +3,7 @@ import { BasicTracerProvider, SimpleSpanProcessor, ConsoleSpanExporter, type Spa
 import { AsyncHooksContextManager } from "@opentelemetry/context-async-hooks";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from "@opentelemetry/semantic-conventions";
+import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import { OtlpHttpSpanExporter, parseOtlpHeaders } from "./otlp-http-exporter.js";
 
 let initialized = false;
@@ -31,11 +32,21 @@ let tracerProvider: BasicTracerProvider | null = null;
  * doc comment for why this is hand-written against the OTLP/HTTP JSON wire protocol rather than
  * `@opentelemetry/exporter-trace-otlp-http` (unresolvable from this sandbox — no network).
  *
- * Remaining Wave 2 items, unchanged by this pass: propagating trace context through every
- * BullMQ queue (7 of ~15 are wired as of Task 18; see docs/adr/0004's Update section), the 8
- * periodic sweep workers still having no root span of their own (Task 33 — separate commit),
- * apps/ai (Python) instrumentation (Task 38), and the business-journey metrics / anomaly
- * detection the vision doc itself describes as later additions once the baseline exists.
+ * §5.3 / §11.3 Task 38 also closed two more gaps in the same pass as apps/ai instrumentation
+ * (apps/ai/src/observability.py — a hand-written, stdlib-only tracer speaking the same
+ * W3C-traceparent/OTLP-JSON wire formats as this file, since apps/ai can't pip install the real
+ * opentelemetry-sdk from this sandbox either): this file never actually registered a
+ * W3CTraceContextPropagator, so injectTraceContext()/extractTraceContext() below were silently
+ * no-ops since Task 18 shipped them — now fixed via propagation.setGlobalPropagator() in
+ * initOpenTelemetry(); and the three real apps/api → apps/ai HTTP call sites (ai-client.ts's
+ * classifyIntent/scoreWithAiService, suggest-reply.service.ts, enrichment.routes.ts's
+ * /v1/personalize call) now send injectTraceContext()'s headers, so a user action now produces
+ * one linked trace across both services instead of two disconnected ones.
+ *
+ * Remaining Wave 2 items, unchanged by this pass: propagating trace context through the
+ * remaining BullMQ queues not yet covered by Task 18, and the business-journey metrics /
+ * anomaly detection the vision doc itself describes as later additions once the baseline
+ * exists.
  *
  * Off by default — same on/off pattern as initDatadogTracer(): only activates when
  * OTEL_TRACING_ENABLED is truthy, so this is a no-op in every environment that hasn't opted in.
@@ -59,6 +70,15 @@ export function initOpenTelemetry(): boolean {
       spanProcessors: [new SimpleSpanProcessor(buildExporter())],
     });
     trace.setGlobalTracerProvider(tracerProvider);
+
+    // §5.3 / §11.3 Task 38 — without this, injectTraceContext()/extractTraceContext() below
+    // (and every caller of them: Task 18's BullMQ job-payload propagation, and Task 38's new
+    // apps/ai HTTP headers) silently no-op. The OpenTelemetry API's global propagator defaults
+    // to a no-op until one is explicitly registered - registering a TracerProvider does NOT
+    // also register a propagator, they're independent global registrations. W3C Trace Context
+    // (the `traceparent`/`tracestate` headers) is the standard this codebase's carrier-object
+    // shape (a plain `Record<string, string>`) already assumes.
+    propagation.setGlobalPropagator(new W3CTraceContextPropagator());
 
     initialized = true;
     return true;
