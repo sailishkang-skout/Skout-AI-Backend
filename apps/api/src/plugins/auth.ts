@@ -5,6 +5,7 @@ import { timingSafeEqual } from "node:crypto";
 import { schema } from "@skout/db";
 import { resolveOrProvisionUser } from "../services/auth.service.js";
 import { errorResponse, HttpError } from "../utils/http.js";
+import type { Env } from "../config/env.js";
 
 /** Constant-time string compare so secret checks don't leak timing info. */
 function timingSafeEqualStrings(a: string, b: string): boolean {
@@ -83,7 +84,7 @@ function isPublicRoute(url: string, method?: string): boolean {
   );
 }
 
-function normalizeOrigin(origin: string): string {
+export function normalizeOrigin(origin: string): string {
   try {
     const url = new URL(origin);
     url.hostname = url.hostname.toLowerCase();
@@ -91,6 +92,20 @@ function normalizeOrigin(origin: string): string {
   } catch {
     return origin.toLowerCase();
   }
+}
+
+/**
+ * Shared with step-up.routes.ts so its independent Clerk verifyToken call uses the exact same
+ * `authorizedParties` (azp claim allowlist) as this plugin's primary-session verification below
+ * — a second, looser copy of this logic would be a real gap for a security-sensitive check.
+ */
+export function computeAuthorizedParties(config: Pick<Env, "CORS_ORIGIN" | "FRONTEND_URL">): string[] {
+  return [
+    ...config.CORS_ORIGIN.map(normalizeOrigin),
+    ...(config.FRONTEND_URL ? [normalizeOrigin(config.FRONTEND_URL)] : []),
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+  ].filter((value, index, all) => all.indexOf(value) === index);
 }
 
 export const authPlugin = fp(async (app) => {
@@ -142,12 +157,7 @@ export const authPlugin = fp(async (app) => {
     return;
   }
 
-  const authorizedParties = [
-    ...config.CORS_ORIGIN.map(normalizeOrigin),
-    ...(config.FRONTEND_URL ? [normalizeOrigin(config.FRONTEND_URL)] : []),
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-  ].filter((value, index, all) => all.indexOf(value) === index);
+  const authorizedParties = computeAuthorizedParties(config);
 
   app.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {
     // CORS preflight (and any OPTIONS) must never require auth.

@@ -6,4 +6,9 @@ export {
   enforcePermission,
   type EnforcePermissionOptions,
 } from "./require-permission.js";
-export { recordPrivilegedAction, assertStepUp, type PrivilegedActionInput } from "./step-up.js";
+export {
+  recordPrivilegedAction,
+  assertStepUp,
+  issueStepUpToken,
+  type PrivilegedActionInput,
+} from "./step-up.js";

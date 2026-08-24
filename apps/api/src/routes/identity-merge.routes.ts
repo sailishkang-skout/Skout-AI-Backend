@@ -6,7 +6,7 @@ import {
   resolveMergeProposal,
   reverseMergeEvent,
 } from "../services/identity-merge.service.js";
-import { recordPrivilegedAction, enforcePermission } from "@skout/auth";
+import { recordPrivilegedAction, enforcePermission, assertStepUp } from "@skout/auth";
 import { errorResponse } from "../utils/http.js";
 
 const candidateSchema = z.object({
@@ -79,6 +79,17 @@ export async function identityMergeRoutes(app: FastifyInstance) {
         app.log.warn(info, "RBAC shadow-mode: identity:review_merges would have been denied (resolve)"),
     });
 
+    // §11.1 — step-up re-authentication for this privileged action. Gated behind
+    // STEP_UP_ENFORCEMENT_ENABLED (default off) so this only starts blocking requests once an
+    // operator has confirmed the frontend actually calls POST /auth/step-up before hitting this
+    // route; STEP_UP_SIGNING_SECRET must also be set (see step-up.routes.ts).
+    if (app.config.STEP_UP_ENFORCEMENT_ENABLED) {
+      if (!app.config.STEP_UP_SIGNING_SECRET) {
+        return reply.code(503).send(errorResponse("Step-up re-authentication is not configured", 503));
+      }
+      assertStepUp(request.headers, app.config.STEP_UP_SIGNING_SECRET, request.userId);
+    }
+
     const parsed = resolveSchema.safeParse(request.body ?? {});
     if (!parsed.success) {
       return reply.status(400).send(errorResponse("Invalid resolution payload", 400, parsed.error.flatten()));
@@ -126,6 +137,14 @@ export async function identityMergeRoutes(app: FastifyInstance) {
       onShadowDeny: (info) =>
         app.log.warn(info, "RBAC shadow-mode: identity:review_merges would have been denied (reverse)"),
     });
+
+    // §11.1 — same step-up gate as the resolve route above.
+    if (app.config.STEP_UP_ENFORCEMENT_ENABLED) {
+      if (!app.config.STEP_UP_SIGNING_SECRET) {
+        return reply.code(503).send(errorResponse("Step-up re-authentication is not configured", 503));
+      }
+      assertStepUp(request.headers, app.config.STEP_UP_SIGNING_SECRET, request.userId);
+    }
 
     const beforeSnapshot = await reverseMergeEvent(app.db, request.workspaceId, request.params.id, request.userId);
 

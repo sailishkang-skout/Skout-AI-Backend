@@ -78,6 +78,23 @@ const envSchema = z
       .optional()
       .transform((v) => v === "true" || v === "1"),
     /**
+     * §11.1 — HMAC signing secret for step-up re-authentication tokens (@skout/auth's
+     * step-up.ts). Required for POST /api/v1/auth/step-up to issue tokens and for
+     * assertStepUp() to verify them; unset disables step-up issuance (the endpoint returns 503)
+     * rather than falling back to an unsigned/insecure check.
+     */
+    STEP_UP_SIGNING_SECRET: z.string().min(16).optional(),
+    /**
+     * Feature flag, default OFF — same safe-rollout pattern as RBAC_ENFORCEMENT_ENABLED above.
+     * Gates whether step-up-eligible routes (identity-merge resolve/reverse) actually require a
+     * fresh x-reauth-token to proceed, vs. accepting one opportunistically without requiring it
+     * yet. Requires STEP_UP_SIGNING_SECRET to be set — flip both together.
+     */
+    STEP_UP_ENFORCEMENT_ENABLED: z
+      .string()
+      .optional()
+      .transform((v) => v === "true" || v === "1"),
+    /**
      * Shared secret for the static-auth admin data-import page (/admin/import in the
      * frontend). When set, requests to /api/v1/import/* may authenticate with
      * `Authorization: Bearer admin_<this value>` instead of a Clerk JWT. Scoped to
