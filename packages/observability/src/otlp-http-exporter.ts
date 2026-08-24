@@ -12,7 +12,7 @@ import { ExportResultCode, type ExportResult } from "@opentelemetry/core";
  * of this file's dependencies). Rather than add an unverifiable import, this is a small,
  * hand-written exporter against the documented OTLP/HTTP JSON wire protocol
  * (https://opentelemetry.io/docs/specs/otlp/#otlphttp), using Node's built-in `fetch` (Node
- * >=20 everywhere this runs — see root package.json engines / apps/*/Dockerfile) instead of a
+ * >=20 everywhere this runs — see root package.json's engines field and each app's Dockerfile) instead of a
  * new dependency. `@opentelemetry/core` (for ExportResult/ExportResultCode) is not new either —
  * it's already a hard dependency of `@opentelemetry/sdk-trace-base`, just not previously
  * declared directly; it is now (see this package's package.json).
