@@ -37,6 +37,19 @@ import { recordSequenceEvent } from "../services/sequence-events.js";
 
 const log = createLogger("sequence-enrollment.worker");
 
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md for the full audit and rationale; this is one of the 9
+ * confirmed instances listed there (formalized in Task 17, not modified in that original pass).
+ *   - Tables touched directly: tasks, contacts (both owned by apps/crm) - read AND write
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance;
+ *     no formal internal API call happens here)
+ *   - Reason: this is a BullMQ worker on a latency-sensitive send/advance path; an HTTP round
+ *     trip into apps/crm for every sequence step would add material latency and a new failure
+ *     mode to a job queue that already has its own retry semantics to reason about
+ *   - Review date: revisit once apps/crm's internal API surface exists (Wave 2)
+ */
+
 const {
   sequenceEnrollments,
   sequenceEnrollmentSteps,

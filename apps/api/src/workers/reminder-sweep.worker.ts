@@ -11,6 +11,17 @@ const log = createLogger("reminder-sweep.worker");
 
 const QUEUE_NAME = "reminder-sweep";
 
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md for the full audit and rationale; one of the 9
+ * confirmed instances listed there (formalized in Task 17).
+ *   - Tables touched directly: tasks (owned by apps/crm) - read only
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: a periodic BullMQ sweep job; an HTTP round trip into apps/crm per sweep tick for
+ *     what is a simple due-date scan would add latency and a new failure mode with no benefit
+ *   - Review date: revisit once apps/crm's internal API surface exists (Wave 2)
+ */
+
 export async function startReminderSweepWorker(config: Env) {
   if (!config.DATABASE_URL) {
     log.warn("DATABASE_URL not set — reminder sweep worker disabled");

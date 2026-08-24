@@ -21,6 +21,20 @@ const {
 } = schema;
 
 /**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md for the full audit and rationale; one of the 9
+ * confirmed instances listed there (formalized in Task 17).
+ *   - Tables touched directly: contacts, deals, companies, activities, tasks (all owned by
+ *     apps/crm) - read only
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: gatherContext() assembles a compact cross-entity history summary in one pass to
+ *     feed the LLM prompt synchronously; splitting this into per-table HTTP calls into apps/crm
+ *     would add latency directly felt by the user waiting on a suggestion and complicate a
+ *     read that's naturally one query set
+ *   - Review date: revisit once apps/crm's internal API surface exists (Wave 2)
+ */
+
+/**
  * §5.3 — the model doesn't emit its own calibrated confidence for a suggestion, so the
  * evidence-ledger dual-write below uses this fixed default. Deliberately mid-range: useful as
  * evidence, but should still be outranked by a manually-entered or corroborated fact.

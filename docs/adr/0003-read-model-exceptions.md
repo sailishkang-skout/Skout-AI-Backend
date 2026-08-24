@@ -59,7 +59,14 @@ than the read-only `cro-summary.service.ts` case.
   own proposed check — flagging any new direct query against an apps/crm-owned table from
   apps/api, so this list doesn't grow silently.
 
+## Update (Task 17 — Enterprise Completion Plan "close everything" pass)
+All 9 confirmed instances now carry the formal exception comment block at their top (matching
+the shape `cro-summary.service.ts` already had), stating tables touched, owning service, reason,
+and review trigger. No query logic changed in any of the 9 files — this closes the "adding the
+same formal exception comment block to each" item called out below as not yet done; it does NOT
+close the Wave 2 item (an actual internal API replacing direct access).
+
 ## Wave 2 (explicitly deferred, not implied done)
-Replacing any of the 9 audited call sites with a real internal API call through apps/crm, and
-adding the same formal exception comment block to each in the meantime if they're not migrated
-first.
+Replacing any of the 9 audited call sites with a real internal API call through apps/crm. This
+remains genuinely undone — formalizing the exception comment (done above) documents the
+shortcut, it does not remove it.

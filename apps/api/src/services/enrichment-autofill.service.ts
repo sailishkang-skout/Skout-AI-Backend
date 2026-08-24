@@ -10,6 +10,19 @@ const { contacts, companies } = schema;
 const log = createLogger("enrichment-autofill");
 
 /**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md for the full audit and rationale; one of the 9
+ * confirmed instances listed there (formalized in Task 17 - this file previously only had the
+ * informal note below, not the full block the other 8 files now carry).
+ *   - Tables touched directly: contacts, companies (both owned by apps/crm) - read AND write
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: called from EnrichmentService.activate's hot path (see below) - an HTTP round
+ *     trip into apps/crm here would add latency to prospect activation and a new failure mode
+ *     this best-effort write is specifically designed to avoid
+ *   - Review date: revisit once apps/crm's internal API surface exists (Wave 2)
+ */
+
+/**
  * R13.3 — when enrichment refreshes a prospect's snapshot, mirror any new title/email/phone into
  * a linked CRM contact (matched via `contacts.sourceProspectId`), and industry/employeeCount/
  * location into a linked company (matched via `companies.sourceProspectCompanyId`), tagged

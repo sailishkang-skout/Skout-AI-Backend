@@ -24,6 +24,18 @@ import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.
 import { dispatchWebhookEvent } from "../services/webhook.service.js";
 import { HttpError } from "../utils/http.js";
 
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md for the full audit and rationale; one of the 9
+ * confirmed instances listed there (formalized in Task 17).
+ *   - Tables touched directly: tasks, contacts (both owned by apps/crm) - read AND write
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: these routes back the AI chat tool-runner and draft/task-creation flows, both
+ *     synchronous request/response paths where an HTTP round trip into apps/crm would add
+ *     latency directly felt by the user waiting on a chat response
+ *   - Review date: revisit once apps/crm's internal API surface exists (Wave 2)
+ */
+
 const chatSchema = z.object({
   messages: z
     .array(

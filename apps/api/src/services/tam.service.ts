@@ -17,6 +17,19 @@ import { createSmartList, type SmartListRecord } from "./smart-list.service.js";
 
 const { tams, prospectActivations, enrichmentJobs, sequenceEnrollments, inboxThreads, companies, deals } = schema;
 
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md for the full audit and rationale; one of the 9
+ * confirmed instances listed there (formalized in Task 17).
+ *   - Tables touched directly: deals (owned by apps/crm) - read only
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: TAM coverage-funnel computation reads deals alongside prospect/enrichment/
+ *     sequence/OpenSearch data in one aggregation pass; splitting the deals read into a
+ *     separate HTTP call into apps/crm would fragment a single-transaction-shaped read into
+ *     two round trips for no correctness benefit
+ *   - Review date: revisit once apps/crm's internal API surface exists (Wave 2)
+ */
+
 export interface TamFilterConfig {
   industries?: string[];
   countries?: string[];
