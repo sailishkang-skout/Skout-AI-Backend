@@ -62,13 +62,36 @@ Not covered by this update, and NOT implied done:
   propagation, which doesn't apply here) is a smaller, separate follow-up, not done in this pass.
 - Everything else in the original Gap list below remains true as written.
 
+## Update (Task 32 — Enterprise Completion Plan "close everything" pass)
+`buildExporter()` in `packages/observability/src/otel.ts` now returns a real OTLP/HTTP JSON
+span exporter (`otlp-http-exporter.ts`, new) whenever `OTEL_EXPORTER_OTLP_ENDPOINT` (or the
+traces-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) is set, falling back to
+`ConsoleSpanExporter` when neither is — so `OTEL_TRACING_ENABLED=true` alone is still a
+zero-config local/dev verification aid exactly as before, and pointing the endpoint env var at
+a real collector is what now actually ships spans there, with no further code change.
+
+This is a hand-written exporter against the documented OTLP/HTTP JSON wire protocol, not
+`@opentelemetry/exporter-trace-otlp-http` — that package is still not resolvable from this
+sandbox (no network to run `pnpm install` and verify it), same constraint this ADR's own
+"Environment note" already discloses for `@opentelemetry/api` et al. `@opentelemetry/core`
+(for `ExportResultCode`/`ExportResult`) is now a declared direct dependency of
+`@skout/observability` — it was already a transitive one via `sdk-trace-base`.
+
+Like every other change in this pass, this could not be typechecked or run against a real OTLP
+collector from this sandbox — see otlp-http-exporter.ts's own doc comment for the two
+deliberately-scoped simplifications (no span Links; numeric attributes always sent as
+`doubleValue`) and run the same `pnpm install && pnpm --filter @skout/observability typecheck`
+verification this ADR's Environment note already calls for before relying on this in production.
+
 ## Gap — explicitly not done in this pass (Wave 2), as of the original Wave-1 commit
 - Trace-context propagation is wired into exactly one queue (list-score) as the worked example.
   The other ~15 BullMQ queues in `apps/api/src/workers/` and `apps/crm/src/workers/` do not yet
-  inject/extract trace context.
-- No OTLP exporter to a real backend — spans currently go to stdout via `ConsoleSpanExporter`
+  inject/extract trace context. (Partially superseded — see the Task 18 Update above: 7 of the
+  ~15 are now wired.)
+- ~~No OTLP exporter to a real backend — spans currently go to stdout via `ConsoleSpanExporter`
   when `OTEL_TRACING_ENABLED=true`, which is a development/verification aid, not production
-  tracing.
+  tracing.~~ Closed by the Task 32 Update above — an OTLP exporter now exists and activates
+  when an endpoint is configured; Console export remains the fallback default.
 - The Python `apps/ai` service and cross-service HTTP calls (apps/api ↔ apps/crm) are not
   instrumented — this pass only covers Node.js in-process spans and one BullMQ hop.
 - Business-journey metrics and anomaly detection (silent pipeline breaks, provider degradation,

@@ -40,3 +40,5 @@ export {
   injectTraceContext,
   extractTraceContext,
 } from "./otel.js";
+
+export { OtlpHttpSpanExporter, parseOtlpHeaders } from "./otlp-http-exporter.js";
