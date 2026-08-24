@@ -15,6 +15,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "dev": "tsc --watch",
+    "pretest": "pnpm --filter @skout/db build",
     "test": "vitest run"
   },
   "dependencies": {
