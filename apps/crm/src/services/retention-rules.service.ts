@@ -44,10 +44,13 @@ type CrmDb = Pick<Db, "select" | "insert" | "update" | "delete">;
  * engagement (opens/clicks — informative, not a retention signal on its own) from contractual
  * truth (signed renewals, cancellations — the actual disengagement/renewal-risk signal).
  *
- * Wave 1 ships the rule CRUD and a pure classifier function any caller can use against an
- * activity's `activityType`. Wiring `classify()` into every activity-ingestion path (sequence
- * replies, call dispositions, meeting outcomes) so it runs automatically end-to-end is tracked
- * as Wave 2 — see docs/adr/0002-canonical-operating-model-wave-1.md's Wave 2 list.
+ * Wave 1 shipped the rule CRUD and this pure classifier function. Task 19 (Enterprise Completion
+ * Plan "close everything" pass) wired classify() into apps/crm/src/services/activities.service.ts's
+ * record() — the single method every activity-ingestion path (create(), sequence-enrollment
+ * worker, call disposition, meeting outcomes, etc.) funnels through — so classification now runs
+ * automatically end-to-end for every new activity, persisted on activities.retention_classification
+ * (0053_activities_retention_classification.sql). Existing rows are NOT backfilled (no DB access
+ * from this sandbox to run one); they read as NULL/unclassified until a future backfill runs.
  */
 export class RetentionRulesService {
   constructor(private readonly db: CrmDb) {}

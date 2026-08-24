@@ -215,6 +215,13 @@ export const activities = pgTable(
     subject: text("subject"),
     body: text("body"),
     ownerId: uuid("owner_id").references(() => users.id, { onDelete: "set null" }),
+    /**
+     * §8.12 / Task 19 — RetentionRulesService.classify()'s output ("marketing" | "contractual"),
+     * stored at record() time. NULL means either "no active rule matched" (classify() returned
+     * "unclassified") or "recorded before this column existed" — both read the same today; a
+     * future pass could distinguish them if that turns out to matter.
+     */
+    retentionClassification: text("retention_classification"),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
