@@ -9,6 +9,7 @@ import {
   markSuggestionAccepted,
   getSuggestionStats,
 } from "../services/next-best-action.service.js";
+import { assertEvidenced } from "@skout/shared";
 import { AI_DRAFT_STATUSES, buildAiDraftService, type AiDraftRow } from "../services/ai-draft.service.js";
 import { sendApprovedDraftEmail, type DraftSendResult } from "../services/ai-draft-send.service.js";
 import {
@@ -569,7 +570,7 @@ export async function aiRoutes(app: FastifyInstance) {
     try {
       const result = await suggestNextBestAction(app.db, app.config, request.workspaceId, parse.data.entityType, parse.data.entityId);
       if (!result) return reply.status(404).send({ error: "not_found" });
-      const suggestionId = await recordSuggestion(
+      const { suggestionId, evidenceId } = await recordSuggestion(
         app.db,
         request.workspaceId,
         parse.data.entityType,
@@ -577,7 +578,13 @@ export async function aiRoutes(app: FastifyInstance) {
         request.userId,
         result.suggestion
       );
-      return reply.send({ data: { ...result, suggestionId } });
+      // §6.1 anti-hallucination contract — the AI-generated suggestion is only returned to the
+      // caller once it carries a real evidence_ledger reference; recordSuggestion() above already
+      // fails the request (502) if the evidence write itself failed, so this assertion documents
+      // and enforces the contract at the response boundary rather than trusting that upstream
+      // behavior silently. `unverified` is deliberately never used here — see evidence-contract.ts.
+      assertEvidenced({ value: result.suggestion, evidenceId }, "next-best-action suggestion");
+      return reply.send({ data: { ...result, suggestionId, evidenceId } });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
       return reply.status(e.statusCode ?? 500).send({ error: e.message ?? "Internal error" });

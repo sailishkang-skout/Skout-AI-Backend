@@ -237,6 +237,15 @@ export async function suggestNextBestAction(
 /**
  * R20.3 — persists every suggestion generated (accepted or not), so acceptance rate is a real,
  * queryable number instead of something only visible in a chat transcript.
+ *
+ * §6.1 anti-hallucination contract — unlike most Evidence Ledger dual-writes elsewhere in this
+ * codebase (which are best-effort provenance bookkeeping on data that's already trusted, e.g.
+ * a manual CRM edit), a next-best-action suggestion IS the AI-generated claim itself. The
+ * contract's own doc comment is explicit that `unverified` may never be used for an
+ * AI-generated claim, so a failed evidence-ledger write here can't be silently swallowed the
+ * way it is for autoFill/identity-merge dual-writes — it has to fail the request, which is
+ * exactly what "enforced at the API-response-schema level so a claim without one fails
+ * validation rather than shipping silently" (§6.1's own completion criteria) asks for.
  */
 export async function recordSuggestion(
   db: Db,
@@ -245,7 +254,7 @@ export async function recordSuggestion(
   entityId: string,
   createdBy: string | undefined,
   suggestion: NextBestActionSuggestion
-): Promise<string> {
+): Promise<{ suggestionId: string; evidenceId: string }> {
   const [row] = await db
     .insert(nextBestActionSuggestions)
     .values({
@@ -260,11 +269,12 @@ export async function recordSuggestion(
     })
     .returning({ id: nextBestActionSuggestions.id });
 
-  // §5.3 — dual-write into the canonical Evidence Ledger so "why did we suggest this" is
-  // queryable the same way any other fact's provenance is, not just visible in this table.
-  // Best-effort: a ledger-write failure must never fail suggestion generation itself.
+  // §5.3 / §6.1 — write into the canonical Evidence Ledger so "why did we suggest this" is
+  // queryable, AND so the claim returned to the API caller has a real evidence_id to cite
+  // (see the doc comment above for why this one call site does NOT swallow the failure).
+  let evidenceRow: { id: string } | undefined;
   try {
-    await recordEvidence(db, {
+    evidenceRow = await recordEvidence(db, {
       workspaceId,
       entityType,
       entityId,
@@ -282,10 +292,16 @@ export async function recordSuggestion(
       method: "llm_suggestion",
     });
   } catch (err) {
-    log.error("evidence ledger dual-write failed for next-best-action suggestion", { err, suggestionId: row!.id });
+    log.error("evidence ledger write failed for next-best-action suggestion — failing the request per §6.1 (no ungrounded AI claim ships)", {
+      err,
+      suggestionId: row!.id,
+    });
+    throw Object.assign(new Error("Could not record evidence for this suggestion — not returning an unverified AI claim"), {
+      statusCode: 502,
+    });
   }
 
-  return row!.id;
+  return { suggestionId: row!.id, evidenceId: evidenceRow.id };
 }
 
 export type SuggestionAcceptedAction = "create_task" | "enroll_sequence";
