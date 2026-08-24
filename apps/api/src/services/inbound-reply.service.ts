@@ -2,7 +2,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
-import { getReplyTagQueue } from "../workers/reply-tag.queue.js";
+import { enqueueReplyTagJob } from "../workers/reply-tag.queue.js";
 import { dispatchWebhookEvent } from "./webhook.service.js";
 import { extractOooReturnDate } from "./reply-tagger.service.js";
 
@@ -501,8 +501,7 @@ export async function ingestInboundMessage(
     config?.OPENROUTER_API_KEY
   ) {
     try {
-      const q = getReplyTagQueue(config as Parameters<typeof getReplyTagQueue>[0]);
-      await q.add("tag-reply", {
+      await enqueueReplyTagJob(config as Parameters<typeof enqueueReplyTagJob>[0], {
         threadId: threadId!,
         messageId: insertedMessageId ?? "",
         workspaceId,

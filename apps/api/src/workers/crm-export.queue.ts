@@ -1,4 +1,5 @@
 import { Queue } from "bullmq";
+import { injectTraceContext } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { redisBullMqConnection } from "../lib/redis.js";
 
@@ -8,6 +9,8 @@ export interface CrmExportJobPayload {
   jobId: string;
   workspaceId: string;
   listId: string;
+  /** §11.3 Observability — W3C trace-context propagation, same pattern as list-score.queue.ts. */
+  traceContext?: Record<string, string>;
 }
 
 let queue: Queue<CrmExportJobPayload> | null = null;
@@ -35,5 +38,9 @@ export async function enqueueCrmExportJob(
   payload: CrmExportJobPayload
 ): Promise<void> {
   const q = getCrmExportQueue(config);
-  await q.add("crm-sync", payload, { jobId: payload.jobId });
+  await q.add(
+    "crm-sync",
+    { ...payload, traceContext: payload.traceContext ?? injectTraceContext() },
+    { jobId: payload.jobId }
+  );
 }

@@ -43,7 +43,26 @@ store rather than the network — but this has not been verified end-to-end. Run
 `pnpm install && pnpm --filter @skout/observability typecheck && pnpm --filter @skout/api typecheck`
 before relying on this.
 
-## Gap — explicitly not done in this pass (Wave 2)
+## Update (Task 18 — Enterprise Completion Plan "close everything" pass)
+Trace-context propagation is now wired into all 7 apps/api BullMQ queue/worker pairs (every one
+that exists — apps/crm has no BullMQ/cron infra of its own, per
+`apps/crm/src/workers/meeting-auto-join.worker.ts`'s own header comment, so the "and
+apps/crm/src/workers/" phrasing below was inaccurate and is corrected here):
+`list-score` (the original worked example), `crm-export`, `sequence-enrollment`,
+`smart-list-refresh`, `webhook-delivery`, `workspace-rescore`, and `reply-tag` (which previously
+enqueued via a direct `queue.add()` call with no wrapper function — Task 18 added
+`enqueueReplyTagJob` for consistency with the other 6, and updated its one caller,
+`inbound-reply.service.ts`).
+
+Not covered by this update, and NOT implied done:
+- The periodic sweep workers (`alert-digest-sweep`, `blacklist-monitor`, `reminder-sweep`,
+  `risk-decay-sweep`, `signal-alert-sweep`, `smart-list-refresh-sweep`, `warmup-ramp`,
+  `imap-poll`'s scheduler) have no synchronous producer/request to propagate a trace *from* —
+  they're self-triggered on a timer. Giving each its own root span (rather than context
+  propagation, which doesn't apply here) is a smaller, separate follow-up, not done in this pass.
+- Everything else in the original Gap list below remains true as written.
+
+## Gap — explicitly not done in this pass (Wave 2), as of the original Wave-1 commit
 - Trace-context propagation is wired into exactly one queue (list-score) as the worked example.
   The other ~15 BullMQ queues in `apps/api/src/workers/` and `apps/crm/src/workers/` do not yet
   inject/extract trace context.

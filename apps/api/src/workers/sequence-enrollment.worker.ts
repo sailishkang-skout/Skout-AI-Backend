@@ -1,8 +1,9 @@
 import { Worker } from "bullmq";
+import { context as otelContext } from "@opentelemetry/api";
 import { and, asc, count, desc, eq, gte, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { createDb } from "@skout/db";
 import { schema } from "@skout/db";
-import { createLogger } from "@skout/observability";
+import { createLogger, extractTraceContext, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
@@ -1525,7 +1526,15 @@ export async function startSequenceEnrollmentWorker(config: Env): Promise<() => 
         enrollmentId: job.data.enrollmentId,
         attempt: job.attemptsMade,
       });
-      await advanceEnrollment(db, config, job.data);
+
+      // §11.3 — resume the enqueuing request's trace context, same pattern as list-score.worker.ts.
+      // Everything advanceEnrollment does, including its own internal re-enqueue calls for the
+      // next step, runs inside this scope, so injectTraceContext() there naturally continues the
+      // same trace without needing to thread traceContext through every internal call site.
+      const parentContext = extractTraceContext(job.data.traceContext);
+      await otelContext.with(parentContext, () =>
+        withSpan("sequence-enrollment.worker.process", () => advanceEnrollment(db, config, job.data))
+      );
     },
     {
       connection: redisBullMqConnection(config.REDIS_URL),

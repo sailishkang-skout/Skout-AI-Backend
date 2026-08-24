@@ -1,7 +1,8 @@
 import { Worker } from "bullmq";
+import { context as otelContext } from "@opentelemetry/api";
 import { eq } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
-import { createLogger } from "@skout/observability";
+import { createLogger, extractTraceContext, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { applyReplyTagActions } from "../services/reply-tag-actions.service.js";
@@ -41,8 +42,13 @@ export async function startReplyTagWorker(config: Env): Promise<() => Promise<vo
   const worker = new Worker<ReplyTagJobPayload>(
     REPLY_TAG_QUEUE,
     async (job) => {
-      const { threadId, bodyText, workspaceId } = job.data;
+      const { threadId, bodyText, workspaceId, traceContext } = job.data;
 
+      // §11.3 — resume the enqueuing request's trace context, same pattern as list-score.worker.ts.
+      const parentContext = extractTraceContext(traceContext);
+      await otelContext.with(parentContext, () => withSpan("reply-tag.worker.process", () => processReplyTagJob()));
+
+      async function processReplyTagJob(): Promise<void> {
       const classification = await tagReply(bodyText, config.OPENROUTER_API_KEY);
       if (!classification) {
         log.debug("reply-tag: no tag returned, skipping update", { threadId });
@@ -84,6 +90,7 @@ export async function startReplyTagWorker(config: Env): Promise<() => Promise<vo
         } catch (err) {
           log.warn("reply-tag: suggest-reply failed", { threadId, err });
         }
+      }
       }
     },
     {
