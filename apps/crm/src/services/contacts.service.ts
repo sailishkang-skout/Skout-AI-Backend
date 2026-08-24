@@ -1,6 +1,6 @@
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, recordEvidence } from "@skout/db";
 import type { ContactCreateInput, ContactUpdateInput } from "@skout/shared";
 import { HttpError } from "@skout/auth";
 import type { CompaniesService } from "./companies.service.js";
@@ -11,6 +11,7 @@ import {
   filterAutoFillablePatch,
   markManualSources,
   mergeAutoFillSources,
+  DEFAULT_AUTO_FILL_CONFIDENCE,
   type FieldSource,
   type FieldSourcesMap,
 } from "../utils/field-sources.js";
@@ -217,6 +218,27 @@ export class ContactsService {
     const dto = toDto(row);
     await this.auditService.record(workspaceId, undefined, "update", "contact", id, existing, dto);
     log.info("contact auto-filled", { workspaceId, contactId: id, source, applied: appliedFields, skipped });
+
+    // §5.3 / Task 14 — dual-write provenance into the canonical Evidence Ledger, same pattern
+    // as CompaniesService.autoFill. Best-effort: must never fail the auto-fill itself.
+    for (const field of appliedFields) {
+      try {
+        await recordEvidence(this.db, {
+          workspaceId,
+          entityType: "contact",
+          entityId: id,
+          attribute: field,
+          value: (applied as Record<string, unknown>)[field as keyof typeof applied],
+          source,
+          observedAt: new Date(),
+          confidence: confidence ?? DEFAULT_AUTO_FILL_CONFIDENCE[source],
+          method: "crm_autofill",
+        });
+      } catch (err) {
+        log.error("evidence ledger dual-write failed for contact auto-fill", { err, workspaceId, contactId: id, field });
+      }
+    }
+
     return { contact: dto, applied: appliedFields, skipped };
   }
 

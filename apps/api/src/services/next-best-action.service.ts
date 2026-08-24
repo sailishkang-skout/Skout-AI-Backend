@@ -5,6 +5,7 @@ import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { listSignalsForEntity } from "./signal.service.js";
+import { recordEvidence } from "./evidence.service.js";
 
 const log = createLogger("next-best-action.service");
 const {
@@ -18,6 +19,13 @@ const {
   prospectScores,
   nextBestActionSuggestions,
 } = schema;
+
+/**
+ * §5.3 — the model doesn't emit its own calibrated confidence for a suggestion, so the
+ * evidence-ledger dual-write below uses this fixed default. Deliberately mid-range: useful as
+ * evidence, but should still be outranked by a manually-entered or corroborated fact.
+ */
+const NEXT_BEST_ACTION_MODEL_CONFIDENCE = 0.65;
 
 export type SuggestedActionType = "call" | "email" | "meeting" | "wait" | "task";
 
@@ -237,6 +245,32 @@ export async function recordSuggestion(
       createdBy,
     })
     .returning({ id: nextBestActionSuggestions.id });
+
+  // §5.3 — dual-write into the canonical Evidence Ledger so "why did we suggest this" is
+  // queryable the same way any other fact's provenance is, not just visible in this table.
+  // Best-effort: a ledger-write failure must never fail suggestion generation itself.
+  try {
+    await recordEvidence(db, {
+      workspaceId,
+      entityType,
+      entityId,
+      attribute: "next_best_action",
+      value: {
+        suggestionId: row!.id,
+        actionType: suggestion.actionType,
+        headline: suggestion.headline,
+        rationale: suggestion.rationale,
+        draftMessage: suggestion.draftMessage,
+      },
+      source: "next_best_action_model",
+      observedAt: new Date(),
+      confidence: NEXT_BEST_ACTION_MODEL_CONFIDENCE,
+      method: "llm_suggestion",
+    });
+  } catch (err) {
+    log.error("evidence ledger dual-write failed for next-best-action suggestion", { err, suggestionId: row!.id });
+  }
+
   return row!.id;
 }
 
@@ -254,8 +288,32 @@ export async function markSuggestionAccepted(
     .update(nextBestActionSuggestions)
     .set({ acceptedAt: new Date(), acceptedAction, acceptedRefId })
     .where(and(eq(nextBestActionSuggestions.id, suggestionId), eq(nextBestActionSuggestions.workspaceId, workspaceId)))
-    .returning({ id: nextBestActionSuggestions.id });
-  return Boolean(row);
+    .returning({
+      id: nextBestActionSuggestions.id,
+      entityType: nextBestActionSuggestions.entityType,
+      entityId: nextBestActionSuggestions.entityId,
+    });
+  if (!row) return false;
+
+  // §5.3 — a human accepting a suggestion is itself a fact worth recording: confidence 1.0
+  // because it's a direct user action, not a model inference. Best-effort, same as above.
+  try {
+    await recordEvidence(db, {
+      workspaceId,
+      entityType: row.entityType,
+      entityId: row.entityId,
+      attribute: "next_best_action_accepted",
+      value: { suggestionId: row.id, acceptedAction, acceptedRefId },
+      source: "user_action",
+      observedAt: new Date(),
+      confidence: 1,
+      method: "suggestion_accept",
+    });
+  } catch (err) {
+    log.error("evidence ledger dual-write failed for next-best-action acceptance", { err, suggestionId: row.id });
+  }
+
+  return true;
 }
 
 /** R20.3 — the acceptance-rate readout the AC asks for. */

@@ -25,3 +25,5 @@ export * from "./tam.js";
 export * from "./tenancy.js";
 export * from "./evidence.js";
 export * from "./crm-intelligence.js";
+export * from "./incidents.js";
+export * from "./model-versions.js";

@@ -4,13 +4,25 @@ import { workspaces } from "./workspaces.js";
 
 /**
  * §5.3 (Enterprise Completion Plan) — the canonical Evidence Ledger. One shared table for
- * "why do we believe this fact," meant to eventually replace the three parallel mechanisms
- * already in the codebase: apps/crm's `fieldSources` jsonb column, Email-Intelligence-Tool's
- * own evidenceLedger, and `next_best_action_suggestions`' acceptance tracking. Wave 1 (this
- * migration): the table plus read/write API in evidence.service.ts exist and apps/crm's
- * company auto-fill path dual-writes into it. Migrating the other call sites, and apps/crm's
- * own manual-edit path, is tracked follow-up work — not implied as done by this table
- * existing.
+ * "why do we believe this fact," meant to eventually replace (not yet fully replacing) the
+ * three parallel mechanisms already in the codebase: apps/crm's `fieldSources` jsonb column,
+ * Email-Intelligence-Tool's own evidenceLedger, and `next_best_action_suggestions`' acceptance
+ * tracking.
+ *
+ * Status: the table plus read/write API (packages/db/src/evidence-writer.ts, re-exported from
+ * apps/api/src/services/evidence.service.ts) exist, and the following paths dual-write into it
+ * alongside their original write:
+ *   - apps/crm CompaniesService.autoFill / ContactsService.autoFill (per-field auto-fill rows)
+ *   - apps/api enrichment-autofill.service.ts's applyEnrichmentAutoFill (per-field, enrichment-sourced)
+ *   - apps/api next-best-action.service.ts's recordSuggestion / markSuggestionAccepted
+ *
+ * Still NOT covered (tracked follow-up, not implied as done by this table existing):
+ *   - apps/crm's manual-edit path (ContactsService.update / CompaniesService.update) — by
+ *     design these don't carry a confidence/observedAt the way auto-fill does, so this needs a
+ *     deliberate "manual, confidence 1.0" convention decided before wiring, not a mechanical copy
+ *     of the auto-fill dual-write.
+ *   - Email-Intelligence-Tool's own separate evidenceLedger implementation, which predates this
+ *     table and has not yet been reconciled with it (see that repo's own tracked follow-up).
  */
 export const evidenceLedger = pgTable(
   "evidence_ledger",
