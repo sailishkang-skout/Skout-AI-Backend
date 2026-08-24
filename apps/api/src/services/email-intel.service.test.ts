@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { checkSendEligibility } from "./email-intel.service.js";
+import { checkSendEligibility, getWarmupStatus, startWarmup } from "./email-intel.service.js";
 
 const CONFIGURED = { EMAIL_INTEL_SERVICE_URL: "http://email-intel.internal", EMAIL_INTEL_TIMEOUT_MS: 5000, EMAIL_INTEL_DISCOVER_TIMEOUT_MS: 60000 };
 const UNCONFIGURED = { EMAIL_INTEL_SERVICE_URL: undefined, EMAIL_INTEL_TIMEOUT_MS: 5000, EMAIL_INTEL_DISCOVER_TIMEOUT_MS: 60000 };
@@ -52,6 +52,68 @@ describe("checkSendEligibility", () => {
     );
     const result = await checkSendEligibility(CONFIGURED, "ada@acme.com");
     expect(result).toEqual({ allowed: true, decision: "NO_DECISION" });
+  });
+});
+
+/** @deprecated see startWarmup/getWarmupStatus in email-intel.service.ts */
+describe("startWarmup", () => {
+  it("POSTs domain/mailbox to /warmup/start and returns the upstream body", async () => {
+    const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ success: true, domain: "acme.com", mailbox: "sales@acme.com", status: "scheduled" }), {
+        status: 200,
+      })
+    );
+    const result = await startWarmup(CONFIGURED, { domain: "acme.com", mailbox: "sales@acme.com" });
+    expect(result).toEqual({ success: true, domain: "acme.com", mailbox: "sales@acme.com", status: "scheduled" });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://email-intel.internal/warmup/start",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ domain: "acme.com", mailbox: "sales@acme.com" }),
+      })
+    );
+  });
+
+  it("throws EmailIntelUnavailableError when EMAIL_INTEL_SERVICE_URL isn't set", async () => {
+    await expect(startWarmup(UNCONFIGURED, { domain: "acme.com" })).rejects.toThrow(
+      "Email Intelligence service unavailable"
+    );
+  });
+
+  it("throws EmailIntelUnavailableError when the upstream responds non-2xx (e.g. today's 501 scaffold response)", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ success: false, error: "warmup_not_implemented" }), { status: 501 })
+    );
+    await expect(startWarmup(CONFIGURED, { domain: "acme.com" })).rejects.toMatchObject({ upstreamStatus: 501 });
+  });
+});
+
+/** @deprecated see startWarmup/getWarmupStatus in email-intel.service.ts */
+describe("getWarmupStatus", () => {
+  it("GETs /warmup/status with the domain as a query param and returns the upstream body", async () => {
+    const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({ success: true, domain: "acme.com", enabled: false, phase: "scaffold", score: null, dayInProgram: null }),
+        { status: 200 }
+      )
+    );
+    const result = await getWarmupStatus(CONFIGURED, "acme.com");
+    expect(result).toEqual({
+      success: true,
+      domain: "acme.com",
+      enabled: false,
+      phase: "scaffold",
+      score: null,
+      dayInProgram: null,
+    });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://email-intel.internal/warmup/status?domain=acme.com",
+      expect.objectContaining({ method: "GET" })
+    );
+  });
+
+  it("throws EmailIntelUnavailableError when EMAIL_INTEL_SERVICE_URL isn't set", async () => {
+    await expect(getWarmupStatus(UNCONFIGURED, "acme.com")).rejects.toThrow("Email Intelligence service unavailable");
   });
 });
 

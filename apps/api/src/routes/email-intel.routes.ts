@@ -4,6 +4,7 @@ import { generateEmailCandidates } from "@skout/pal";
 import {
   EmailIntelUnavailableError,
   generatePatterns,
+  getWarmupStatus,
   isEmailIntelConfigured,
   verifyEmailResolved,
 } from "../services/email-intel.service.js";
@@ -33,6 +34,11 @@ const discoverBodySchema = z.object({
 const patternsBodySchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
+  domain: z.string().min(1),
+});
+
+/** @deprecated see startWarmup/getWarmupStatus in email-intel.service.ts */
+const warmupStatusQuerySchema = z.object({
   domain: z.string().min(1),
 });
 
@@ -147,6 +153,50 @@ export async function emailIntelRoutes(app: FastifyInstance) {
     } catch (err) {
       if (err instanceof HttpError) return routeHttpError(reply, err);
       if (err instanceof EmailIntelUnavailableError) return routeUnavailable(reply, err);
+      throw err;
+    }
+  });
+
+  /** @deprecated zero real callers (grep-confirmed) — see EmailIntelWarmupStartResult in email-intel.service.ts. */
+  app.post("/email-intel/warmup/start", async (_request, reply) => {
+    return reply.code(501).send({
+      error: "warmup_not_implemented",
+      message: "Domain warm-up is scaffolded in the email-intelligence service and not live yet.",
+      enabled: false,
+      phase: "scaffold",
+    });
+  });
+
+  /** @deprecated only the frontend's deprecated /intelligence/email/warmup page calls this. */
+  app.get("/email-intel/warmup/status", async (request, reply) => {
+    const query = warmupStatusQuerySchema.safeParse(request.query);
+    if (!query.success) {
+      return reply.code(400).send({ error: "invalid_request", details: query.error.flatten() });
+    }
+    const domain = normalizeDiscoverDomain(query.data.domain);
+    if (!isEmailIntelConfigured(app.config)) {
+      return reply.send({
+        success: true,
+        domain,
+        enabled: false,
+        phase: "scaffold",
+        score: null,
+        dayInProgram: null,
+      });
+    }
+    try {
+      return reply.send(await getWarmupStatus(app.config, domain));
+    } catch (err) {
+      if (err instanceof EmailIntelUnavailableError) {
+        return reply.send({
+          success: true,
+          domain,
+          enabled: false,
+          phase: "scaffold",
+          score: null,
+          dayInProgram: null,
+        });
+      }
       throw err;
     }
   });
