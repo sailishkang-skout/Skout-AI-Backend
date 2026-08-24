@@ -400,13 +400,17 @@ export async function verifyEmailResolved(
       }
       if (hunter) {
         const verdict = await hunter.verify(normalized);
-        return hunterVerifyResult(normalized, verdict.status, verdict.deliverabilityScore, verdict.catchAll);
+        return applyDomainTypoCheck(
+          hunterVerifyResult(normalized, verdict.status, verdict.deliverabilityScore, verdict.catchAll)
+        );
       }
       return result;
     } catch (err) {
       if (hunter) {
         const verdict = await hunter.verify(normalized);
-        return hunterVerifyResult(normalized, verdict.status, verdict.deliverabilityScore, verdict.catchAll);
+        return applyDomainTypoCheck(
+          hunterVerifyResult(normalized, verdict.status, verdict.deliverabilityScore, verdict.catchAll)
+        );
       }
       throw err;
     }
@@ -414,7 +418,9 @@ export async function verifyEmailResolved(
 
   if (hunter) {
     const verdict = await hunter.verify(normalized);
-    return hunterVerifyResult(normalized, verdict.status, verdict.deliverabilityScore, verdict.catchAll);
+    return applyDomainTypoCheck(
+      hunterVerifyResult(normalized, verdict.status, verdict.deliverabilityScore, verdict.catchAll)
+    );
   }
 
   throw new EmailIntelUnavailableError("EMAIL_INTEL_SERVICE_URL is not configured");

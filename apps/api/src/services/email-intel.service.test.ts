@@ -156,4 +156,24 @@ describe("verifyEmailResolved", () => {
     expect(result.provider).toBe("hunter-fallback");
     expect(result.verificationStatus?.status).toBe("UNKNOWN");
   });
+
+  it("applies the domain-typo check to a Hunter fallback result when email-intel isn't configured", async () => {
+    const { verifyEmailResolved } = await import("./email-intel.service.js");
+    const { HunterEmailVerifier } = await import("@skout/pal");
+
+    vi.spyOn(HunterEmailVerifier.prototype, "verify").mockResolvedValue({
+      status: "risky",
+      deliverabilityScore: 40,
+      catchAll: false,
+      risky: true,
+    });
+
+    const result = await verifyEmailResolved(
+      { ...UNCONFIGURED, HUNTER_API_KEY: "test-key", HUNTER_BASE_URL: "https://api.hunter.io/v2", ENRICHMENT_REQUEST_TIMEOUT_MS: 5000 } as never,
+      "aditya@gmial.com"
+    );
+
+    expect(result.verificationStatus?.status).toBe("INVALID");
+    expect(result.suggestedDomain).toBe("gmail.com");
+  });
 });
