@@ -17,10 +17,14 @@ function isHealthRoute(url: string): boolean {
   return pathname === "/api/v1/crm/health" || pathname.startsWith("/health");
 }
 
-/** R16.2 — meeting-bot vendor calls this directly; verified via `?secret=`, not a Clerk JWT. */
+/**
+ * R16.2 — meeting-bot vendor calls this directly; verified via `?secret=`, not a Clerk JWT.
+ * Phase 3 — inbound RSVP webhook; verified via HMAC signature (x-rsvp-signature), not a Clerk
+ * JWT — the caller is an unauthenticated external mail forwarder, not a logged-in user.
+ */
 function isPublicRoute(url: string): boolean {
   const pathname = url.split("?")[0];
-  return pathname === "/api/v1/meetings/webhook";
+  return pathname === "/api/v1/meetings/webhook" || pathname === "/api/v1/webhooks/meeting-rsvp";
 }
 
 function normalizeOrigin(origin: string): string {

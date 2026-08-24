@@ -640,17 +640,21 @@ export const dealResponseSchema = z.object({
   updatedAt: z.string().datetime(),
 });
 
+export const currencyValueSchema = z.object({
+  currency: z.string(),
+  value: z.number(),
+});
+
 export const dealsSummaryResponseSchema = z.object({
   workspaceId: z.string().uuid(),
   openDeals: z.number(),
-  pipelineValue: z.number(),
-  currency: z.string(),
+  valueByCurrency: z.array(currencyValueSchema),
   stages: z.array(
     z.object({
       stageId: z.string().uuid(),
       name: z.string(),
       count: z.number(),
-      value: z.number(),
+      valueByCurrency: z.array(currencyValueSchema),
     })
   ),
 });
@@ -728,6 +732,13 @@ export const meetingInviteeSchema = z.object({
   name: z.string().optional(),
 });
 
+export const meetingAttendeeSchema = z.object({
+  email: z.string().email(),
+  name: z.string().nullable(),
+  rsvpStatus: z.enum(["needs-action", "accepted", "declined", "tentative"]),
+  respondedAt: z.string().datetime().nullable(),
+});
+
 export const meetingListQuerySchema = paginationQuerySchema.extend({
   // Calendar month view requests everything in a date range at once (no real pagination
   // concept there), so this needs a higher ceiling than the generic 100-row list cap.
@@ -755,8 +766,15 @@ export const meetingCreateSchema = z.object({
   meetingUrl: z.string().url().optional(),
   /** R16.2 — opt-in auto-join override. Omit to inherit the workspace default. */
   autoJoinBot: z.boolean().optional(),
-  /** Google Calendar — attendees to invite when scheduling via /schedule-google. */
+  /**
+   * Attendees for this meeting. By default, setting this sends a .ics calendar invite email
+   * immediately (see `sendIcsInvites`). If you plan to call /schedule-google right after
+   * creating the meeting, pass `sendIcsInvites: false` here so the same people aren't invited
+   * twice through two different channels.
+   */
   invitees: z.array(meetingInviteeSchema).optional(),
+  /** Set false to skip the immediate .ics invite email — e.g. when /schedule-google will invite these attendees instead. Defaults to true. */
+  sendIcsInvites: z.boolean().optional(),
 });
 
 export const meetingUpdateSchema = z
@@ -793,7 +811,11 @@ export const meetingResponseSchema = z.object({
   summary: z.string().nullable(),
   outcome: z.string().nullable(),
   invitees: z.array(meetingInviteeSchema),
+  /** RSVP tracking for the .ics invite channel — see meetingAttendeeSchema. */
+  attendees: z.array(meetingAttendeeSchema),
   googleEventId: z.string().nullable(),
+  icsUid: z.string().nullable(),
+  icsSequence: z.number(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -803,8 +825,7 @@ export const dashboardOverviewResponseSchema = z.object({
   companies: z.number(),
   contacts: z.number(),
   openDeals: z.number(),
-  pipelineValue: z.number(),
-  currency: z.string(),
+  valueByCurrency: z.array(currencyValueSchema),
   openTasks: z.number(),
   overdueTasks: z.number(),
   dueTodayTasks: z.number(),
@@ -817,6 +838,7 @@ export type MeetingType = (typeof MEETING_TYPES)[number];
 export type MeetingListQuery = z.infer<typeof meetingListQuerySchema>;
 export type MeetingCreateInput = z.infer<typeof meetingCreateSchema>;
 export type MeetingInvitee = z.infer<typeof meetingInviteeSchema>;
+export type MeetingAttendee = z.infer<typeof meetingAttendeeSchema>;
 export type MeetingUpdateInput = z.infer<typeof meetingUpdateSchema>;
 export type CompanyListQuery = z.infer<typeof companyListQuerySchema>;
 export type ContactListQuery = z.infer<typeof contactListQuerySchema>;

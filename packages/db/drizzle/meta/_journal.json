@@ -337,6 +337,27 @@
       "when": 1788000000000,
       "tag": "0046_manual_review_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1788100000000,
+      "tag": "0047_promotion_candidates",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1788200000000,
+      "tag": "0048_pipelines_default_unique",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1788300000000,
+      "tag": "0049_meeting_ics",
+      "breakpoints": true
     }
   ]
 }

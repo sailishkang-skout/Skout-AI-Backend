@@ -85,6 +85,24 @@ export async function workspaceRoutes(app: FastifyInstance) {
     return reply.send({ data: updated });
   });
 
+  // PUT /api/v1/workspaces/current/deal-promotion-threshold — score threshold for the
+  // "Hot Prospects" promotion flag (owner/admin only).
+  app.put("/workspaces/current/deal-promotion-threshold", async (request, reply) => {
+    if (!request.workspaceId) {
+      return reply.code(401).send(errorResponse("Not authenticated", 401));
+    }
+    if (!request.role || !["owner", "admin"].includes(request.role)) {
+      return reply.code(403).send(errorResponse("Requires role: owner or admin", 403));
+    }
+    const { threshold } = (request.body ?? {}) as { threshold?: number };
+    if (typeof threshold !== "number" || !Number.isInteger(threshold) || threshold < 0 || threshold > 100) {
+      return reply.code(400).send(errorResponse("threshold must be an integer between 0 and 100", 400));
+    }
+    const updated = await svc.setDealPromotionThreshold(request.workspaceId, threshold);
+    if (!updated) return reply.code(404).send(errorResponse("Workspace not found", 404));
+    return reply.send({ data: updated });
+  });
+
   // GET /api/v1/credits/balance
   app.get("/credits/balance", async (request, reply) => {
     if (!request.workspaceId) {
