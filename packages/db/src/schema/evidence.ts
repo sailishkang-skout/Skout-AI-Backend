@@ -9,12 +9,24 @@ import { workspaces } from "./workspaces.js";
  * Email-Intelligence-Tool's own evidenceLedger, and `next_best_action_suggestions`' acceptance
  * tracking.
  *
- * Status: the table plus read/write API (packages/db/src/evidence-writer.ts, re-exported from
- * apps/api/src/services/evidence.service.ts) exist, and the following paths dual-write into it
- * alongside their original write:
- *   - apps/crm CompaniesService.autoFill / ContactsService.autoFill (per-field auto-fill rows)
+ * Status: the table plus read/write API exist -
+ * packages/db/src/evidence-writer.ts (write, re-exported from
+ * apps/api/src/services/evidence.service.ts) and packages/db/src/evidence-reader.ts
+ * (read-by-attribute, Task 37) - and the following paths dual-write into it alongside their
+ * original write:
+ *   - apps/crm CompaniesService.autoFill / ContactsService.autoFill / DealsService.autoFill
+ *     (per-field auto-fill rows; DealsService added in Task 37, closing a parity gap where
+ *     deal auto-fills - reachable from the meeting-bot pipeline - never dual-wrote)
  *   - apps/api enrichment-autofill.service.ts's applyEnrichmentAutoFill (per-field, enrichment-sourced)
  *   - apps/api next-best-action.service.ts's recordSuggestion / markSuggestionAccepted
+ *
+ * Task 37 also added an additive read-path adapter (packages/shared/src/field-provenance.ts's
+ * buildFieldProvenance, exposed via GET /contacts/:id/field-sources, GET /companies/:id/field-sources,
+ * GET /deals/:id/field-sources): for each field, evidence_ledger is preferred when a row exists,
+ * falling back to the entity's `fieldSources` jsonb entry otherwise. This is deliberately NOT a
+ * hard cutover - fieldSources remains the source of truth apps/crm's manual-vs-auto-fill
+ * precedence logic reads directly, and the existing GET /contacts/:id (etc.) response shape is
+ * unchanged; the new endpoints are additive.
  *
  * Still NOT covered (tracked follow-up, not implied as done by this table existing):
  *   - apps/crm's manual-edit path (ContactsService.update / CompaniesService.update) — by

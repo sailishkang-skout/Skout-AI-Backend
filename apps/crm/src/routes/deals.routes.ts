@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
-import { dealCreateSchema, dealListQuerySchema, dealUpdateSchema } from "@skout/shared";
+import { dealCreateSchema, dealListQuerySchema, dealUpdateSchema, buildFieldProvenance } from "@skout/shared";
+import { getLatestEvidenceByAttribute } from "@skout/db";
 import { HttpError, enforcePermission } from "@skout/auth";
 import { parseIdParam } from "../utils/http.js";
 import { requireRole } from "../utils/require-role.js";
@@ -70,6 +71,28 @@ export async function dealsRoutes(app: FastifyInstance) {
     const deal = await svc.update(workspaceId, id, input, request.userId);
     if (!deal) throw new HttpError("deal_not_found", 404);
     return reply.send(deal);
+  });
+
+  /**
+   * §5.3 Task 37 — additive read-path adapter: merges the canonical Evidence Ledger over the
+   * cheaper fieldSources jsonb map for any field that has a matching evidence_ledger row,
+   * falling back to fieldSources for fields that don't (older data, or DealsService.autoFill's
+   * dual-write failed best-effort). Does not change GET /deals/:id's own response shape.
+   */
+  app.get("/deals/:id/field-sources", async (request, reply) => {
+    const id = parseIdParam(request);
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) throw new HttpError("database_unavailable", 503);
+
+    const deal = await svc.getById(workspaceId, id);
+    if (!deal) throw new HttpError("deal_not_found", 404);
+
+    const evidenceByAttribute = app.db
+      ? await getLatestEvidenceByAttribute(app.db, workspaceId, "deal", id)
+      : {};
+    const provenance = buildFieldProvenance(deal.fieldSources, evidenceByAttribute);
+    return reply.send({ data: provenance });
   });
 
   app.delete("/deals/:id", async (request, reply) => {
