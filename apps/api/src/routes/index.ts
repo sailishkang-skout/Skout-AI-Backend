@@ -40,6 +40,7 @@ import { tamRoutes } from "./tam.routes.js";
 import { importAdapterRoutes } from "./import-adapter.routes.js";
 import { evidenceRoutes } from "./evidence.routes.js";
 import { identityMergeRoutes } from "./identity-merge.routes.js";
+import { consentRoutes } from "./consent.routes.js";
 import { stepUpRoutes } from "./step-up.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
@@ -86,6 +87,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(importAdapterRoutes);
     await v1.register(evidenceRoutes);
     await v1.register(identityMergeRoutes);
+    await v1.register(consentRoutes);
     await v1.register(stepUpRoutes);
   }, { prefix: "/api/v1" });
 }
