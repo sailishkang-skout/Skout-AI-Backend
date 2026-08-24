@@ -35,6 +35,10 @@ export const companies = pgTable(
     sourceProspectCompanyId: text("source_prospect_company_id"),
     /** R13.3 — per-field provenance: { [field]: { source, confidence?, setAt } }. "manual" wins forever. */
     fieldSources: jsonb("field_sources").notNull().default({}),
+    /** §8.12 Task 29 — RetentionRulesService.classify() result against `status`, recomputed on
+     * every status change in companies.service.ts's update(). Nullable/no default so existing
+     * rows read as unclassified until their status next changes (no backfill; see migration). */
+    retentionClassification: text("retention_classification"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -64,6 +68,10 @@ export const contacts = pgTable(
     sourceProspectId: text("source_prospect_id"),
     /** R13.3 — per-field provenance: { [field]: { source, confidence?, setAt } }. "manual" wins forever. */
     fieldSources: jsonb("field_sources").notNull().default({}),
+    /** §8.12 Task 29 — RetentionRulesService.classify() result against `lifecycleStage`,
+     * recomputed on every lifecycle-stage change in contacts.service.ts's update(). Nullable/no
+     * default so existing rows read as unclassified until their stage next changes. */
+    retentionClassification: text("retention_classification"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),

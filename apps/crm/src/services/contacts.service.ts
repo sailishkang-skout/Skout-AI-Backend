@@ -5,6 +5,7 @@ import type { ContactCreateInput, ContactUpdateInput } from "@skout/shared";
 import { HttpError } from "@skout/auth";
 import type { CompaniesService } from "./companies.service.js";
 import type { AuditService } from "./audit.service.js";
+import { RetentionRulesService } from "./retention-rules.service.js";
 import { serviceLog } from "../lib/obs.js";
 import {
   asFieldSourcesMap,
@@ -33,6 +34,9 @@ export interface ContactDto {
   lifecycleStage: string;
   sourceProspectId: string | null;
   fieldSources: FieldSourcesMap;
+  /** §8.12 Task 29 — RetentionRulesService.classify() result against lifecycleStage, or null if
+   * unclassified / no matching active rule. Recomputed by update() on every lifecycleStage change. */
+  retentionClassification: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -61,6 +65,7 @@ function toDto(row: typeof contacts.$inferSelect): ContactDto {
     lifecycleStage: row.lifecycleStage,
     sourceProspectId: row.sourceProspectId,
     fieldSources: asFieldSourcesMap(row.fieldSources),
+    retentionClassification: row.retentionClassification,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -156,6 +161,23 @@ export class ContactsService {
         ? markManualSources(asFieldSourcesMap(existing.fieldSources), editedAutoFillable)
         : undefined;
 
+    // §8.12 Task 29 — recompute retention classification whenever lifecycleStage actually
+    // changes, using this workspace's contact-scoped retention rules. Best-effort: a rules-
+    // lookup failure shouldn't block the underlying contact update (this mirrors how the rest
+    // of retention classification behaves in activities.service.ts — it's provenance metadata
+    // on already-trusted data, not an AI-generated claim, so §6.1's mandatory-evidence standard
+    // doesn't apply here).
+    let retentionClassification: string | null | undefined;
+    if (input.lifecycleStage !== undefined) {
+      try {
+        const rules = await new RetentionRulesService(this.db).list(workspaceId, "contact");
+        const classification = RetentionRulesService.classify(rules, input.lifecycleStage, "lifecycleStage");
+        retentionClassification = classification === "unclassified" ? null : classification;
+      } catch (err) {
+        log.error("retention classification lookup failed for contact", { workspaceId, contactId: id, err });
+      }
+    }
+
     const [row] = await this.db
       .update(contacts)
       .set({
@@ -170,6 +192,7 @@ export class ContactsService {
         ...(input.lifecycleStage !== undefined ? { lifecycleStage: input.lifecycleStage } : {}),
         ...(input.sourceProspectId !== undefined ? { sourceProspectId: input.sourceProspectId } : {}),
         ...(nextFieldSources !== undefined ? { fieldSources: nextFieldSources } : {}),
+        ...(retentionClassification !== undefined ? { retentionClassification } : {}),
         updatedAt: new Date(),
       })
       .where(and(eq(contacts.id, id), eq(contacts.workspaceId, workspaceId)))

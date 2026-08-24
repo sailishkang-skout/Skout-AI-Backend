@@ -3,6 +3,7 @@ import type { Db } from "@skout/db";
 import { schema, recordEvidence } from "@skout/db";
 import type { CompanyCreateInput, CompanyUpdateInput } from "@skout/shared";
 import { buildAuditService, type AuditService } from "./audit.service.js";
+import { RetentionRulesService } from "./retention-rules.service.js";
 import { serviceLog } from "../lib/obs.js";
 import {
   asFieldSourcesMap,
@@ -31,6 +32,9 @@ export interface CompanyDto {
   status: string;
   sourceProspectCompanyId: string | null;
   fieldSources: FieldSourcesMap;
+  /** §8.12 Task 29 — RetentionRulesService.classify() result against status, or null if
+   * unclassified / no matching active rule. Recomputed by update() on every status change. */
+  retentionClassification: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -54,6 +58,7 @@ type CompanyDbUpdatePatch = Partial<{
   ownerId: string | null;
   status: string;
   sourceProspectCompanyId: string | null;
+  retentionClassification: string | null;
 }>;
 
 function toDto(row: typeof companies.$inferSelect): CompanyDto {
@@ -70,6 +75,7 @@ function toDto(row: typeof companies.$inferSelect): CompanyDto {
     status: row.status,
     sourceProspectCompanyId: row.sourceProspectCompanyId,
     fieldSources: asFieldSourcesMap(row.fieldSources),
+    retentionClassification: row.retentionClassification,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -156,6 +162,22 @@ export class CompaniesService {
     const existing = await this.getById(workspaceId, id);
     if (!existing) return null;
 
+    // §8.12 Task 29 — recompute retention classification whenever status actually changes,
+    // using this workspace's company-scoped retention rules. Best-effort: a rules-lookup
+    // failure shouldn't block the underlying company update — this is provenance metadata on
+    // already-trusted data, not an AI-generated claim, so §6.1's mandatory-evidence standard
+    // doesn't apply here (see next-best-action.service.ts for where it does).
+    let retentionClassification: string | null | undefined;
+    if (input.status !== undefined) {
+      try {
+        const rules = await new RetentionRulesService(this.db).list(workspaceId, "company");
+        const classification = RetentionRulesService.classify(rules, input.status, "status");
+        retentionClassification = classification === "unclassified" ? null : classification;
+      } catch (err) {
+        log.error("retention classification lookup failed for company", { workspaceId, companyId: id, err });
+      }
+    }
+
     const patch: CompanyDbUpdatePatch = {
       ...(input.name !== undefined ? { name: input.name } : {}),
       ...(input.domain !== undefined ? { domain: input.domain } : {}),
@@ -168,6 +190,7 @@ export class CompaniesService {
       ...(input.sourceProspectCompanyId !== undefined
         ? { sourceProspectCompanyId: input.sourceProspectCompanyId }
         : {}),
+      ...(retentionClassification !== undefined ? { retentionClassification } : {}),
     };
 
     // R13.3: a human editing an auto-fillable field via this endpoint marks it "manual" —

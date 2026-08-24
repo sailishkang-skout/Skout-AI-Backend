@@ -44,13 +44,25 @@ type CrmDb = Pick<Db, "select" | "insert" | "update" | "delete">;
  * engagement (opens/clicks — informative, not a retention signal on its own) from contractual
  * truth (signed renewals, cancellations — the actual disengagement/renewal-risk signal).
  *
- * Wave 1 shipped the rule CRUD and this pure classifier function. Task 19 (Enterprise Completion
- * Plan "close everything" pass) wired classify() into apps/crm/src/services/activities.service.ts's
- * record() — the single method every activity-ingestion path (create(), sequence-enrollment
- * worker, call disposition, meeting outcomes, etc.) funnels through — so classification now runs
- * automatically end-to-end for every new activity, persisted on activities.retention_classification
- * (0053_activities_retention_classification.sql). Existing rows are NOT backfilled (no DB access
- * from this sandbox to run one); they read as NULL/unclassified until a future backfill runs.
+ * Wave 1 shipped the rule CRUD and this pure classifier function. Task 19 wired classify() into
+ * apps/crm/src/services/activities.service.ts's record() (entityType "activity", criteria field
+ * "activityType") — the single method every activity-ingestion path funnels through — persisted
+ * on activities.retention_classification (0053_activities_retention_classification.sql).
+ *
+ * Task 29 (Enterprise Completion Plan "close everything" pass) extends the same classifier to
+ * the two other places §8.12's vision doc names — contact and company records themselves, not
+ * just their activity timeline — by generalizing classify() to take any criteria field name
+ * instead of hardcoding "activityType". contacts.service.ts's update() now classifies on
+ * `lifecycleStage` (entityType "contact") and companies.service.ts's update() classifies on
+ * `status` (entityType "company") every time that field changes, persisted on
+ * contacts/companies.retention_classification (0054_contacts_companies_retention_classification.sql).
+ * A workspace configures which lifecycleStage/status values count as which classification via
+ * the same retention_rules CRUD, just with entityType "contact"/"company" and criteria keyed by
+ * the field name instead of "activityType".
+ *
+ * Existing rows are NOT backfilled in any of the three tables (no DB access from this sandbox
+ * to run one against real customer data); they read as NULL/unclassified until they're next
+ * written through one of these code paths.
  */
 export class RetentionRulesService {
   constructor(private readonly db: CrmDb) {}
@@ -94,16 +106,24 @@ export class RetentionRulesService {
   }
 
   /**
-   * Pure classification: given an entity's active rules and a candidate activityType value,
-   * returns the matching classification or "unclassified" if no active rule's criteria matches.
-   * A rule's `criteria.activityType` is treated as an allow-list of activityType strings — the
-   * only shape Wave 1 needs; richer criteria (date ranges, field matches) are Wave 2.
+   * Pure classification: given an entity's active rules and a candidate value, returns the
+   * matching classification or "unclassified" if no active rule's criteria matches. A rule's
+   * `criteria[criteriaField]` is treated as an allow-list of strings — the only shape Wave 1
+   * needs; richer criteria (date ranges, multi-field matches) are Wave 2.
+   *
+   * `criteriaField` defaults to "activityType" so every pre-existing call site (activities.
+   * service.ts) is unchanged; Task 29 passes "lifecycleStage" (contacts) or "status" (companies)
+   * explicitly.
    */
-  static classify(rules: RetentionRuleDto[], activityType: string): RetentionClassification | "unclassified" {
+  static classify(
+    rules: RetentionRuleDto[],
+    value: string,
+    criteriaField: string = "activityType"
+  ): RetentionClassification | "unclassified" {
     for (const rule of rules) {
       if (!rule.isActive) continue;
-      const allowed = rule.criteria?.activityType;
-      if (Array.isArray(allowed) && allowed.includes(activityType)) {
+      const allowed = rule.criteria?.[criteriaField];
+      if (Array.isArray(allowed) && allowed.includes(value)) {
         return rule.classification;
       }
     }
