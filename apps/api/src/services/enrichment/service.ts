@@ -53,6 +53,8 @@ export interface EnrichOptions {
   trigger?: string;
   batchId?: string;
   icp?: IcpConfig;
+  /** 8.3 workbook quality threshold — passed straight through to the engine. */
+  emailQualityThreshold?: number;
 }
 
 function inferSeniorityFromTitle(title?: string): string | undefined {
@@ -326,6 +328,7 @@ export class EnrichmentService {
         cachedCompany,
         leadScore,
         fields,
+        emailQualityThreshold: opts.emailQualityThreshold,
         resolveLeadScoreForPhone: fields.includes("phone")
           ? async (company) => {
               if (company) {
@@ -501,6 +504,10 @@ export class EnrichmentService {
 
   async getBatch(workspaceId: string, batchId: string) {
     return this.store.getBatch(workspaceId, batchId);
+  }
+
+  async getListMemberIds(workspaceId: string, listId: string): Promise<string[]> {
+    return this.store.getListMemberIds(workspaceId, listId);
   }
 
   async getListDetail(workspaceId: string, listId: string): Promise<ListDetail | null> {

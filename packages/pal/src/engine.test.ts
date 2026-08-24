@@ -2,7 +2,17 @@ import { describe, expect, it } from "vitest";
 import { EnrichmentEngine, finalizeBillableCredits } from "./engine.js";
 import { createStubRegistry } from "./adapters/stub.js";
 import { generateEmailCandidates } from "./email-patterns.js";
-import type { PhoneData, PhoneProvider } from "./types.js";
+import type { EmailFinder, FoundEmail, PhoneData, PhoneProvider } from "./types.js";
+
+class FixedEmailFinder implements EmailFinder {
+  constructor(
+    readonly name: string,
+    private readonly result: FoundEmail | null
+  ) {}
+  async findEmail(): Promise<FoundEmail | null> {
+    return this.result;
+  }
+}
 
 describe("email-patterns", () => {
   it("generates ranked candidates", () => {
@@ -116,5 +126,88 @@ describe("EnrichmentEngine", () => {
       true
     );
     expect(out.results.some((r) => r.field === "email" && r.provider === "internal_graph")).toBe(true);
+  });
+
+  describe("email quality threshold (8.3 workbook)", () => {
+    it("accepts the first provider's result when no threshold is set (default behavior unchanged)", async () => {
+      const engine = new EnrichmentEngine({
+        ...createStubRegistry(),
+        emailFinders: [
+          new FixedEmailFinder("low-conf", { email: "a@acme.com", confidence: 0.2 }),
+          new FixedEmailFinder("high-conf", { email: "b@acme.com", confidence: 0.9 }),
+        ],
+      });
+      const out = await engine.enrich({
+        prospectId: "p1",
+        fullName: "Jane Doe",
+        companyDomain: "acme.com",
+        fields: ["email"],
+      });
+      const email = out.results.find((r) => r.field === "email");
+      expect(email?.provider).toBe("low-conf");
+      expect(out.attempts.some((a) => a.operation === "quality-gate")).toBe(false);
+    });
+
+    it("tries the next provider when the result is below the quality threshold", async () => {
+      const engine = new EnrichmentEngine({
+        ...createStubRegistry(),
+        emailFinders: [
+          new FixedEmailFinder("low-conf", { email: "a@acme.com", confidence: 0.2 }),
+          new FixedEmailFinder("high-conf", { email: "b@acme.com", confidence: 0.9 }),
+        ],
+      });
+      const out = await engine.enrich({
+        prospectId: "p1",
+        fullName: "Jane Doe",
+        companyDomain: "acme.com",
+        fields: ["email"],
+        emailQualityThreshold: 0.5,
+      });
+      const email = out.results.find((r) => r.field === "email");
+      expect(email?.provider).toBe("high-conf");
+      expect(email?.confidence).toBe(0.9);
+      expect(
+        out.attempts.some((a) => a.provider === "low-conf" && a.operation === "quality-gate" && a.status === "skipped")
+      ).toBe(true);
+    });
+
+    it("falls back to the best candidate seen when no provider meets the threshold", async () => {
+      const engine = new EnrichmentEngine({
+        ...createStubRegistry(),
+        emailFinders: [
+          new FixedEmailFinder("weak", { email: "a@acme.com", confidence: 0.2 }),
+          new FixedEmailFinder("less-weak", { email: "b@acme.com", confidence: 0.4 }),
+        ],
+      });
+      const out = await engine.enrich({
+        prospectId: "p1",
+        fullName: "Jane Doe",
+        companyDomain: "acme.com",
+        fields: ["email"],
+        emailQualityThreshold: 0.9,
+      });
+      const email = out.results.find((r) => r.field === "email");
+      expect(email?.provider).toBe("less-weak");
+      expect(email?.confidence).toBe(0.4);
+    });
+
+    it("bills every provider it actually queried while chasing the threshold, not just the winner", async () => {
+      const engine = new EnrichmentEngine({
+        ...createStubRegistry(),
+        emailFinders: [
+          new FixedEmailFinder("first", { email: "a@acme.com", confidence: 0.2 }),
+          new FixedEmailFinder("second", { email: "b@acme.com", confidence: 0.9 }),
+        ],
+      });
+      const out = await engine.enrich({
+        prospectId: "p1",
+        fullName: "Jane Doe",
+        companyDomain: "acme.com",
+        fields: ["email"],
+        emailQualityThreshold: 0.5,
+      });
+      expect(out.attempts.filter((a) => a.operation === "findEmail" && a.status === "ok")).toHaveLength(2);
+      expect(out.creditsUsed).toBeGreaterThan(0);
+    });
   });
 });

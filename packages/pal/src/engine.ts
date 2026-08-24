@@ -61,6 +61,7 @@ export class EnrichmentEngine {
 
   async enrich(input: EnrichmentInput): Promise<EnrichmentOutcome> {
     const fields = input.fields ?? DEFAULT_FIELDS;
+    const emailQualityThreshold = input.emailQualityThreshold ?? 0;
     const results: FieldResult[] = [];
     const attempts: AttemptLog[] = [];
     let order = 0;
@@ -165,23 +166,38 @@ export class EnrichmentEngine {
         companyName: input.companyName,
         linkedinUrl: input.linkedinUrl,
       };
+      let bestFound: { email: string; confidence: number; provider: string; source: CredentialSource } | null =
+        null;
       for (const p of this.providers.emailFinders) {
         const found = await run(p.name, "findEmail", () =>
           p.findEmail(input.fullName!, input.companyDomain, emailContext)
         );
         if (found) {
-          email = found.email;
           const source = providerBillingSource(p);
-          results.push({
-            field: "email",
-            value: email,
-            provider: p.name,
-            confidence: found.confidence,
-            billingSource: source,
-          });
           billProvider(p);
-          break;
+          if (!bestFound || found.confidence > bestFound.confidence) {
+            bestFound = { email: found.email, confidence: found.confidence, provider: p.name, source };
+          }
+          if (found.confidence >= emailQualityThreshold) break;
+          attempts.push({
+            order: ++order,
+            provider: p.name,
+            operation: "quality-gate",
+            status: "skipped",
+            latencyMs: 0,
+            detail: `confidence ${found.confidence} < threshold ${emailQualityThreshold} — trying next provider`,
+          });
         }
+      }
+      if (bestFound) {
+        email = bestFound.email;
+        results.push({
+          field: "email",
+          value: email,
+          provider: bestFound.provider,
+          confidence: bestFound.confidence,
+          billingSource: bestFound.source,
+        });
       }
       if (!email && !isSyntheticCaptureDomain(input.companyDomain)) {
         const [candidate] = generateEmailCandidates(input.fullName, input.companyDomain);
