@@ -44,6 +44,8 @@ export class ComputeStack extends Stack {
   readonly apiLogGroupName: string;
   readonly namespace: servicediscovery.PrivateDnsNamespace;
   readonly clickhouse?: SkoutClickHouse;
+  /** Public HTTPS (or HTTP) base URL for the API / web edge. */
+  readonly apiPublicUrl: string;
 
   constructor(scope: Construct, id: string, props: ComputeStackProps) {
     super(scope, id, props);
@@ -277,6 +279,8 @@ export class ComputeStack extends Stack {
 
     const aiServiceUrl = `http://ai.${namespace.namespaceName}:8000`;
     const emailIntelServiceUrl = `http://email-intel.${namespace.namespaceName}:3001`;
+    const warmupToolServiceUrl = `http://warmup-tool.${namespace.namespaceName}:3010`;
+    this.apiPublicUrl = publicUrl;
 
     const apiEcs = new SkoutEcsService(this, "ApiService", {
       vpc,
@@ -307,6 +311,7 @@ export class ComputeStack extends Stack {
         SCRAPE_BUCKET: scrapeBucket.bucketName,
         AI_SERVICE_URL: aiServiceUrl,
         EMAIL_INTEL_SERVICE_URL: emailIntelServiceUrl,
+        WARMUP_TOOL_SERVICE_URL: warmupToolServiceUrl,
         DATABASE_HOST: database.instance.dbInstanceEndpointAddress,
         DATABASE_PORT: database.instance.dbInstanceEndpointPort,
         DATABASE_NAME: "skout",
@@ -371,6 +376,10 @@ export class ComputeStack extends Stack {
         INTEGRATION_ENCRYPTION_KEY: ecs.Secret.fromSecretsManager(
           secrets.appConfig,
           "INTEGRATION_ENCRYPTION_KEY"
+        ),
+        WARMUP_TOOL_PLATFORM_PROVISIONING_KEY: ecs.Secret.fromSecretsManager(
+          secrets.warmupTool,
+          "PLATFORM_PROVISIONING_KEY"
         ),
         DD_API_KEY: ecs.Secret.fromSecretsManager(secrets.datadog, "DD_API_KEY"),
         RAZORPAY_KEY_SECRET: ecs.Secret.fromSecretsManager(secrets.razorpay, "RAZORPAY_KEY_SECRET"),
@@ -575,7 +584,8 @@ export class ComputeStack extends Stack {
       secrets.meetingBot,
       secrets.google,
       secrets.twilio,
-      secrets.telnyx
+      secrets.telnyx,
+      secrets.warmupTool
     );
 
     grantSecretRead(crmEcs.taskDefinition, database.secret, secrets.clerk, secrets.sentry, secrets.datadog);

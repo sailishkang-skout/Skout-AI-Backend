@@ -7,6 +7,7 @@ import { RegistryStack } from "../lib/stacks/registry-stack.js";
 import { ComputeStack } from "../lib/stacks/compute-stack.js";
 import { WorkersStack } from "../lib/stacks/workers-stack.js";
 import { EmailIntelStack } from "../lib/stacks/email-intel-stack.js";
+import { WarmupToolStack } from "../lib/stacks/warmup-tool-stack.js";
 import { ObservabilityStack } from "../lib/stacks/observability-stack.js";
 import { LocalConfigStack } from "../lib/stacks/local-config-stack.js";
 
@@ -21,11 +22,14 @@ const scraperImageTag =
 const skipWeb = app.node.tryGetContext("skipWeb") === "true";
 /** First-deploy-per-environment escape hatch — see EmailIntelStackProps.bootstrapMode. */
 const emailIntelBootstrap = app.node.tryGetContext("emailIntelBootstrap") === "true";
-// CloudFront is the default HTTPS edge for all environments (AWS account verified — R8.1).
-// Fall back to -c httpsMode=apigateway if CloudFront is unavailable in a region or needs bypass.
+/** First-deploy-per-environment escape hatch — see WarmupToolStackProps.bootstrapMode. */
+const warmupToolBootstrap = app.node.tryGetContext("warmupToolBootstrap") === "true";
+// Dev CI uses API Gateway HTTPS (see .github/workflows/deploy-dev.yml). Creating a *new*
+// CloudFront distribution fails until the AWS account is verified for CloudFront —
+// so default to apigateway for env=dev. UAT/prod keep CloudFront unless overridden.
 const httpsMode =
   (app.node.tryGetContext("httpsMode") as "none" | "apigateway" | "cloudfront" | undefined) ??
-  "cloudfront";
+  (envName === "dev" ? "apigateway" : "cloudfront");
 
 const stackEnv: cdk.Environment = {
   account: config.account ?? process.env.CDK_DEFAULT_ACCOUNT,
@@ -111,6 +115,24 @@ if (!config.deployToAws) {
     description: `Skout AI ${config.name} Email Intelligence service (api + worker)`,
   });
   emailIntel.addDependency(compute);
+
+  const warmupTool = new WarmupToolStack(app, `${config.stackPrefix}-WarmupTool`, {
+    env: stackEnv,
+    config,
+    vpc: network.vpc,
+    cluster: compute.cluster,
+    namespace: compute.namespace,
+    database: data.database,
+    redis: data.redis,
+    repository: registry.warmupToolRepository,
+    apiService: compute.apiService,
+    apiPublicUrl: compute.apiPublicUrl,
+    warmupToolSecret: data.secrets.warmupTool,
+    imageTag,
+    bootstrapMode: warmupToolBootstrap,
+    description: `Skout AI ${config.name} Email Warm-Up Tool (api + workers)`,
+  });
+  warmupTool.addDependency(compute);
 
   new ObservabilityStack(app, `${config.stackPrefix}-Observability`, {
     env: stackEnv,

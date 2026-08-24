@@ -34,36 +34,25 @@ if [[ -f "$FRONTEND_DIR/package.json" ]]; then
   echo "Building Web image from ${FRONTEND_DIR}..."
   WEB_BUILD_ARGS=(--platform "$PLATFORM")
 
-  # Default API URL to dev HTTPS WebUrl (CloudFront) when not set.
-  if [[ -z "${NEXT_PUBLIC_API_URL:-}" ]]; then
-    WEB_URL="$(aws cloudformation describe-stacks --region "$REGION" \
-      --stack-name SkoutDev-Compute \
-      --query "Stacks[0].Outputs[?OutputKey=='WebUrl'].OutputValue" \
-      --output text 2>/dev/null || true)"
-    if [[ -n "$WEB_URL" && "$WEB_URL" != "None" ]]; then
-      NEXT_PUBLIC_API_URL="$WEB_URL"
-    else
-      ALB_DNS="$(aws cloudformation describe-stacks --region "$REGION" \
-        --stack-name SkoutDev-Compute \
-        --query "Stacks[0].Outputs[?OutputKey=='LoadBalancerDns'].OutputValue" \
-        --output text 2>/dev/null || true)"
-      if [[ -n "$ALB_DNS" && "$ALB_DNS" != "None" ]]; then
-        NEXT_PUBLIC_API_URL="http://${ALB_DNS}"
-      fi
-    fi
-  fi
-  if [[ -n "${NEXT_PUBLIC_API_URL:-}" ]]; then
-    WEB_BUILD_ARGS+=(--build-arg "NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}")
-    WEB_BUILD_ARGS+=(--build-arg "NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-${NEXT_PUBLIC_API_URL}}")
-    WEB_BUILD_ARGS+=(--build-arg "NEXT_PUBLIC_CRM_API_URL=${NEXT_PUBLIC_CRM_API_URL:-${NEXT_PUBLIC_API_URL}}")
-  fi
+  # Preserve deploy-time API URL — sourcing frontend .env.local for Clerk must not
+  # overwrite it with localhost (NEXT_PUBLIC_* is baked into the Next.js client bundle).
+  EXPLICIT_API_URL="${NEXT_PUBLIC_API_URL:-}"
+  EXPLICIT_APP_URL="${NEXT_PUBLIC_APP_URL:-}"
+  EXPLICIT_CRM_API_URL="${NEXT_PUBLIC_CRM_API_URL:-}"
 
-  # Clerk keys: env → frontend .env.local → Secrets Manager.
-  if [[ -z "${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}" && -z "${CLERK_PUBLISHABLE_KEY:-}" ]]; then
+  # Clerk keys: env → frontend .env.local (keys only) → Secrets Manager.
+  # Do not `source` the whole file — that clobbers NEXT_PUBLIC_API_URL with localhost.
+  env_get() {
+    local file="$1" key="$2"
+    [[ -f "$file" ]] || return 0
+    grep -E "^${key}=" "$file" | tail -n1 | cut -d= -f2-
+  }
+  if [[ -z "${CLERK_PUBLISHABLE_KEY:-}${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}" || -z "${CLERK_SECRET_KEY:-}" ]]; then
     for candidate in "$FRONTEND_DIR/.env.local" "$FRONTEND_DIR/.env.dev"; do
       if [[ -f "$candidate" ]]; then
-        # shellcheck disable=SC1090
-        set -a && source "$candidate" && set +a
+        CLERK_PUBLISHABLE_KEY="${CLERK_PUBLISHABLE_KEY:-${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-$(env_get "$candidate" NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY)}}"
+        CLERK_PUBLISHABLE_KEY="${CLERK_PUBLISHABLE_KEY:-$(env_get "$candidate" CLERK_PUBLISHABLE_KEY)}"
+        CLERK_SECRET_KEY="${CLERK_SECRET_KEY:-$(env_get "$candidate" CLERK_SECRET_KEY)}"
         break
       fi
     done
@@ -86,6 +75,37 @@ if [[ -f "$FRONTEND_DIR/package.json" ]]; then
     WEB_BUILD_ARGS+=(--build-arg "CLERK_SECRET_KEY=${CLERK_SECRET_KEY}")
   fi
 
+  # Resolve API URL last: explicit env → CloudFormation WebUrl → ALB. Never bake localhost.
+  NEXT_PUBLIC_API_URL="$EXPLICIT_API_URL"
+  NEXT_PUBLIC_APP_URL="$EXPLICIT_APP_URL"
+  NEXT_PUBLIC_CRM_API_URL="$EXPLICIT_CRM_API_URL"
+  if [[ -z "${NEXT_PUBLIC_API_URL:-}" || "$NEXT_PUBLIC_API_URL" == *"127.0.0.1"* || "$NEXT_PUBLIC_API_URL" == *"localhost"* ]]; then
+    WEB_URL="$(aws cloudformation describe-stacks --region "$REGION" \
+      --stack-name SkoutDev-Compute \
+      --query "Stacks[0].Outputs[?OutputKey=='WebUrl'].OutputValue" \
+      --output text 2>/dev/null || true)"
+    if [[ -n "$WEB_URL" && "$WEB_URL" != "None" ]]; then
+      NEXT_PUBLIC_API_URL="$WEB_URL"
+    else
+      ALB_DNS="$(aws cloudformation describe-stacks --region "$REGION" \
+        --stack-name SkoutDev-Compute \
+        --query "Stacks[0].Outputs[?OutputKey=='LoadBalancerDns'].OutputValue" \
+        --output text 2>/dev/null || true)"
+      if [[ -n "$ALB_DNS" && "$ALB_DNS" != "None" ]]; then
+        NEXT_PUBLIC_API_URL="http://${ALB_DNS}"
+      fi
+    fi
+  fi
+  if [[ -z "${NEXT_PUBLIC_API_URL:-}" || "$NEXT_PUBLIC_API_URL" == *"127.0.0.1"* || "$NEXT_PUBLIC_API_URL" == *"localhost"* ]]; then
+    echo "ERROR: Refusing to bake a localhost NEXT_PUBLIC_API_URL into the web image." >&2
+    echo "Set NEXT_PUBLIC_API_URL to the HTTPS API Gateway / CloudFront origin." >&2
+    exit 1
+  fi
+  echo "Web build NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}"
+  WEB_BUILD_ARGS+=(--build-arg "NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}")
+  WEB_BUILD_ARGS+=(--build-arg "NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-${NEXT_PUBLIC_API_URL}}")
+  WEB_BUILD_ARGS+=(--build-arg "NEXT_PUBLIC_CRM_API_URL=${NEXT_PUBLIC_CRM_API_URL:-${NEXT_PUBLIC_API_URL}}")
+
   # Pre-login access gate (src/middleware.ts). Empty/unset disables the gate.
   if [[ -z "${GATE_TOKEN:-}" ]]; then
     for candidate in "$FRONTEND_DIR/.env.local" "$FRONTEND_DIR/.env.dev"; do
@@ -106,7 +126,7 @@ if [[ -f "$FRONTEND_DIR/package.json" ]]; then
 
   if [[ "$DOCKER_NO_CACHE" == "1" ]]; then
     WEB_BUILD_ARGS+=(--no-cache)
-    echo "Docker: --no-cache (force rebuild so GATE_TOKEN is inlined)"
+    echo "Docker: --no-cache (force rebuild so GATE_TOKEN / API URL are inlined)"
   fi
 
   docker build "${WEB_BUILD_ARGS[@]}" -f "$FRONTEND_DIR/Dockerfile" \
@@ -129,6 +149,19 @@ if [[ -f "$FRONTEND_DIR/package.json" ]]; then
   docker push "${REGISTRY}/skout-dev-web:${TAG}"
 else
   echo "Frontend not found at ${FRONTEND_DIR} — skip web image (deploy with -c skipWeb=true)."
+fi
+
+WARMUP_DIR="${WARMUP_DIR:-$ROOT/../Skout-Warm-Up-Tool}"
+if [[ "${SKIP_WARMUP_TOOL:-0}" != "1" && -f "$WARMUP_DIR/Dockerfile" ]]; then
+  echo "Building Warm-Up Tool image from ${WARMUP_DIR}..."
+  docker build --platform "$PLATFORM" -f "$WARMUP_DIR/Dockerfile" \
+    -t "${REGISTRY}/skout-dev-warmup-tool:${TAG}" \
+    -t "${REGISTRY}/skout-dev-warmup-tool:latest" \
+    "$WARMUP_DIR"
+  docker push "${REGISTRY}/skout-dev-warmup-tool:${TAG}"
+  docker push "${REGISTRY}/skout-dev-warmup-tool:latest"
+else
+  echo "Warm-Up Tool not found (or SKIP_WARMUP_TOOL=1) — skip warmup-tool image."
 fi
 
 echo "Done. Images pushed with tag: ${TAG}"

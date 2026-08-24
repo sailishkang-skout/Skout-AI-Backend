@@ -1,0 +1,441 @@
+{
+  "/SkoutDev-EmailIntel": [
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:102:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    },
+    {
+      "type": "aws:cdk:stack-tags",
+      "data": [
+        {
+          "key": "skout:environment",
+          "value": "dev"
+        }
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelToDbApi": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EmailIntelToDbApi"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new EmailIntelStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/email-intel-stack.ts:146:7)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:102:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelToRedisApi": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EmailIntelToRedisApi"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new EmailIntelStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/email-intel-stack.ts:154:7)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:102:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelToDbWorker": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EmailIntelToDbWorker"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new EmailIntelStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/email-intel-stack.ts:146:7)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:102:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelToRedisWorker": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EmailIntelToRedisWorker"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new EmailIntelStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/email-intel-stack.ts:154:7)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:102:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelServiceDns": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EmailIntelServiceDns"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new EmailIntelStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/email-intel-stack.ts:163:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:102:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/BootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BootstrapVersion"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/CheckBootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CheckBootstrapVersion"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelApiService/Service": [
+    {
+      "type": "aws:cdk:warning",
+      "data": "minHealthyPercent has not been configured so the default value of 50% is used. The number of running tasks will decrease below the desired count during deployments etc. See https://github.com/aws/aws-cdk/issues/31705 [ack: @aws-cdk/aws-ecs:minHealthyPercent]",
+      "trace": [
+        "Annotations.addMessage (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/core/lib/annotations.js:1:3441)",
+        "Annotations.addWarningV2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/core/lib/annotations.js:1:2129)",
+        "new BaseService2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/aws-ecs/lib/base/base-service.js:1:15586)",
+        "new BaseService2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/core/lib/no-box-stack-traces.js:1:345)",
+        "new FargateService2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/aws-ecs/lib/fargate/fargate-service.js:1:7829)",
+        "new FargateService2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/core/lib/prop-injectable.js:1:855)",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:118:20)",
+        "new EmailIntelStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/email-intel-stack.ts:85:27)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:102:22)",
+        "Object.<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "Module._compile (node:internal/modules/cjs/loader:1760:14)",
+        "Object.transformer (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-BOkp8V6j.cjs:9:3176)",
+        "Module.load (node:internal/modules/cjs/loader:1480:32)",
+        "Module._load (node:internal/modules/cjs/loader:1299:12)",
+        "TracingChannel.traceSync (node:diagnostics_channel:328:14)",
+        "wrapModuleLoad (node:internal/modules/cjs/loader:244:24)",
+        "cjsLoader (node:internal/modules/esm/translators:342:5)",
+        "ModuleWrap.<anonymous> (node:internal/modules/esm/translators:234:7)",
+        "ModuleJob.run (node:internal/modules/esm/module_job:377:25)",
+        "async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:691:26)",
+        "async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)"
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/CDKMetadata/Default": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CDKMetadata"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelApiService/TaskDef/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EmailIntelApiServiceTaskDef61E0DF9F"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:55:27)",
+        "new EmailIntelStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/email-intel-stack.ts:85:27)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:102:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelApiService/LogGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EmailIntelApiServiceLogGroup18EC74F4"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new LogGroup2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:61:22)",
+        "new EmailIntelStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/email-intel-stack.ts:85:27)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:102:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelApiService/ServiceSg/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EmailIntelApiServiceServiceSgDFD253B0"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new SecurityGroup2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:109:16)",
+        "new EmailIntelStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/email-intel-stack.ts:85:27)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:102:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelApiService/ServiceSg/from SkoutDevComputeApiServiceServiceSg768FA6CC:3001": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EmailIntelApiServiceServiceSgfromSkoutDevComputeApiServiceServiceSg768FA6CC300190727A25"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...Connections.allowFrom in .pnpm...",
+        "new EmailIntelStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/email-intel-stack.ts:114:45)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:102:22)"
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelApiService/Service/Service": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EmailIntelApiService4520B771"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateService2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:118:20)",
+        "new EmailIntelStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/email-intel-stack.ts:85:27)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:102:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelWorkerService/TaskDef/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EmailIntelWorkerServiceTaskDef2F82A138"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:38:27)",
+        "new EmailIntelStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/email-intel-stack.ts:116:30)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:102:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelWorkerService/LogGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EmailIntelWorkerServiceLogGroup9D156289"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new LogGroup2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:43:22)",
+        "new EmailIntelStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/email-intel-stack.ts:116:30)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:102:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelWorkerService/ServiceSg/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EmailIntelWorkerServiceServiceSgADB7D03A"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new SecurityGroup2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:64:26)",
+        "new EmailIntelStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/email-intel-stack.ts:116:30)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:102:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelWorkerService/Service/Service": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EmailIntelWorkerServiceA63834FA"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateService2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:70:20)",
+        "new EmailIntelStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/email-intel-stack.ts:116:30)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:102:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelApiService/TaskDef/TaskRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EmailIntelApiServiceTaskDefTaskRole4038B1C2"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:55:27)",
+        "new EmailIntelStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/email-intel-stack.ts:85:27)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:102:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelApiService/TaskDef/ExecutionRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EmailIntelApiServiceTaskDefExecutionRoleAFDA24CC"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelApiService/Service/CloudmapService/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EmailIntelApiServiceCloudmapService1F5E5DB8"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...WrappedClass.enableCloudMap in .pnpm...",
+        "new EmailIntelStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/email-intel-stack.ts:109:27)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:102:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelWorkerService/TaskDef/TaskRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EmailIntelWorkerServiceTaskDefTaskRole744983DF"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:38:27)",
+        "new EmailIntelStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/email-intel-stack.ts:116:30)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:102:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelWorkerService/TaskDef/ExecutionRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EmailIntelWorkerServiceTaskDefExecutionRoleD5BAAE80"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelApiService/TaskDef/TaskRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EmailIntelApiServiceTaskDefTaskRoleDefaultPolicyD669145A"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelApiService/TaskDef/ExecutionRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EmailIntelApiServiceTaskDefExecutionRoleDefaultPolicy85722AF6"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelWorkerService/TaskDef/TaskRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EmailIntelWorkerServiceTaskDefTaskRoleDefaultPolicy637131D0"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-EmailIntel/EmailIntelWorkerService/TaskDef/ExecutionRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "EmailIntelWorkerServiceTaskDefExecutionRoleDefaultPolicy27C4510E"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ]
+}

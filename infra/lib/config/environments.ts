@@ -49,6 +49,12 @@ export interface EnvironmentConfig {
     readonly emailIntelWorkerCpu: number;
     readonly emailIntelWorkerMemoryMiB: number;
     readonly emailIntelWorkerDesiredCount: number;
+    readonly warmupToolApiCpu: number;
+    readonly warmupToolApiMemoryMiB: number;
+    readonly warmupToolApiDesiredCount: number;
+    readonly warmupToolWorkerCpu: number;
+    readonly warmupToolWorkerMemoryMiB: number;
+    readonly warmupToolWorkerDesiredCount: number;
   };
   readonly s3: {
     readonly exportsRetentionDays: number;
@@ -104,6 +110,12 @@ export const ENVIRONMENTS: Record<SkoutEnvironment, EnvironmentConfig> = {
       emailIntelWorkerCpu: 256,
       emailIntelWorkerMemoryMiB: 512,
       emailIntelWorkerDesiredCount: 1,
+      warmupToolApiCpu: 256,
+      warmupToolApiMemoryMiB: 512,
+      warmupToolApiDesiredCount: 1,
+      warmupToolWorkerCpu: 256,
+      warmupToolWorkerMemoryMiB: 512,
+      warmupToolWorkerDesiredCount: 1,
     },
     s3: { exportsRetentionDays: 7, versioning: false },
     github: baseGithub,
@@ -145,6 +157,12 @@ export const ENVIRONMENTS: Record<SkoutEnvironment, EnvironmentConfig> = {
       emailIntelWorkerCpu: 256,
       emailIntelWorkerMemoryMiB: 512,
       emailIntelWorkerDesiredCount: 1,
+      warmupToolApiCpu: 256,
+      warmupToolApiMemoryMiB: 512,
+      warmupToolApiDesiredCount: 1,
+      warmupToolWorkerCpu: 256,
+      warmupToolWorkerMemoryMiB: 512,
+      warmupToolWorkerDesiredCount: 1,
     },
     s3: { exportsRetentionDays: 30, versioning: true },
     github: baseGithub,
@@ -187,6 +205,12 @@ export const ENVIRONMENTS: Record<SkoutEnvironment, EnvironmentConfig> = {
       emailIntelWorkerCpu: 256,
       emailIntelWorkerMemoryMiB: 512,
       emailIntelWorkerDesiredCount: 1,
+      warmupToolApiCpu: 256,
+      warmupToolApiMemoryMiB: 512,
+      warmupToolApiDesiredCount: 1,
+      warmupToolWorkerCpu: 256,
+      warmupToolWorkerMemoryMiB: 512,
+      warmupToolWorkerDesiredCount: 1,
     },
     s3: { exportsRetentionDays: 60, versioning: true },
     github: baseGithub,
@@ -228,6 +252,12 @@ export const ENVIRONMENTS: Record<SkoutEnvironment, EnvironmentConfig> = {
       emailIntelWorkerCpu: 256,
       emailIntelWorkerMemoryMiB: 512,
       emailIntelWorkerDesiredCount: 1,
+      warmupToolApiCpu: 256,
+      warmupToolApiMemoryMiB: 512,
+      warmupToolApiDesiredCount: 1,
+      warmupToolWorkerCpu: 256,
+      warmupToolWorkerMemoryMiB: 512,
+      warmupToolWorkerDesiredCount: 1,
     },
     s3: { exportsRetentionDays: 90, versioning: true },
     github: baseGithub,

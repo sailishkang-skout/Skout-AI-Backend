@@ -145,7 +145,27 @@ export async function inboxRoutes(app: FastifyInstance) {
   app.get("/inboxes", async (request, reply) => {
     const workspaceId = request.workspaceId ?? "unknown";
     if (!db) return reply.send({ workspaceId, data: [], total: 0 });
-    return reply.send(await listInboxes(db, workspaceId));
+    const result = await listInboxes(db, workspaceId);
+    try {
+      const { isWarmupToolConfigured, listWarmupMailboxesByEmail } = await import(
+        "../services/warmup-tool.service.js"
+      );
+      if (isWarmupToolConfigured(app.config)) {
+        const byEmail = await listWarmupMailboxesByEmail(db, app.config, workspaceId);
+        result.data = result.data.map((inbox) => {
+          const email = (inbox as { emailAddress?: string }).emailAddress?.trim().toLowerCase();
+          const match = email ? byEmail.get(email) : undefined;
+          return {
+            ...inbox,
+            warmupToolMailboxId: match?.id ?? null,
+            warmupToolStatus: match?.status ?? null,
+          };
+        });
+      }
+    } catch {
+      /* fail-open */
+    }
+    return reply.send(result);
   });
 
   // POST /inboxes

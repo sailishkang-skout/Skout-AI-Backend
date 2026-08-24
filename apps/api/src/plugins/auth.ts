@@ -73,6 +73,8 @@ function isPublicRoute(url: string, method?: string): boolean {
     url.startsWith("/api/v1/calendar/connect/google/callback") ||
     url.startsWith("/api/v1/inboxes/connect/google/callback") ||
     url.startsWith("/api/v1/inboxes/connect/microsoft/callback") ||
+    url.startsWith("/api/v1/warmup-tool/oauth/google/callback") ||
+    url.startsWith("/api/v1/warmup-tool/oauth/microsoft/callback") ||
     // R20.2 — Twilio calls these directly; not signature-verified yet (see dependency doc).
     url.startsWith("/api/v1/calls/twiml/") ||
     url.startsWith("/api/v1/calls/status") ||
