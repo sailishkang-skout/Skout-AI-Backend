@@ -282,6 +282,12 @@ const envSchema = z
     RISK_DECAY_SWEEP_INTERVAL_HOURS: z.coerce.number().int().positive().default(24),
     /** No opens/replies/activity for this many days -> engagement_decay signal. */
     RISK_DECAY_INACTIVITY_DAYS: z.coerce.number().int().positive().default(21),
+    // --- §5.2 identity-merge candidate discovery. ---
+    /** How often the discovery worker scans for probable-duplicate company/contact pairs and
+     * writes identity_merge_proposals rows for a human to review — see identity-merge.service.ts.
+     * Never auto-merges anything; this only closes the "scoring function exists but nothing
+     * calls it" gap by generating the candidates a reviewer sees in the merge-review UI. */
+    IDENTITY_MERGE_DISCOVERY_INTERVAL_HOURS: z.coerce.number().int().positive().default(24),
   })
   .transform((data) => {
     let next = data;
