@@ -5,7 +5,7 @@ import {
   contactListQuerySchema,
   contactUpdateSchema,
 } from "@skout/shared";
-import { HttpError } from "@skout/auth";
+import { HttpError, enforcePermission } from "@skout/auth";
 import { parseIdParam } from "../utils/http.js";
 import { requireRole } from "../utils/require-role.js";
 import { buildAuditService } from "../services/audit.service.js";
@@ -80,6 +80,19 @@ export async function contactsRoutes(app: FastifyInstance) {
     const id = parseIdParam(request);
     const workspaceId = request.workspaceId ?? "unknown";
     requireRole(request, ["owner", "admin"]);
+
+    // §5.1 / §11.1 — fine-grained RBAC shadow check alongside the role gate above. requireRole()
+    // is what actually enforces access today (unchanged); this is shadow-mode by default
+    // (RBAC_ENFORCEMENT_ENABLED unset) — see enforcePermission's own doc comment for why
+    // enforcing before backfill-rbac.ts has run would deny every request outright.
+    if (app.db && request.userId) {
+      await enforcePermission(app.db, workspaceId, request.userId, "crm:manage", {
+        enforce: app.config.RBAC_ENFORCEMENT_ENABLED,
+        onShadowDeny: (info) =>
+          app.log.warn(info, "RBAC shadow-mode: crm:manage would have been denied (delete contact)"),
+      });
+    }
+
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
 
