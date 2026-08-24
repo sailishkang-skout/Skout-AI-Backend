@@ -197,6 +197,14 @@ const envSchema = z
     ENRICHMENT_REQUEST_TIMEOUT_MS: z.coerce.number().default(8000),
     ENRICHMENT_PHONE_SCORE_GATE: z.coerce.number().default(80),
     ENRICHMENT_AI_TIMEOUT_MS: z.coerce.number().default(15000),
+    // --- Signal stacking score (D5) — tunable until real conversion data can calibrate these. ---
+    SIGNAL_STACK_DEFAULT_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.6),
+    SIGNAL_STACK_RECENCY_HALF_LIFE_DAYS: z.coerce.number().positive().default(14),
+    SIGNAL_STACK_RECENCY_FLOOR: z.coerce.number().min(0).max(1).default(0.05),
+    SIGNAL_STACK_MULTIPLIER_2_TYPES: z.coerce.number().min(1).default(1.3),
+    SIGNAL_STACK_MULTIPLIER_3_TYPES: z.coerce.number().min(1).default(1.6),
+    SIGNAL_STACK_DECISION_MAKER_MULTIPLIER: z.coerce.number().min(1).default(1.25),
+    SIGNAL_STACK_SCORE_SCALE: z.coerce.number().positive().default(35),
     // --- Inbox rotation / health thresholds. ---
     INBOX_BOUNCE_RATE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.05),
     INBOX_SPAM_RATE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.01),

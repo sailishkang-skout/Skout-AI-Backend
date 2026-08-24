@@ -72,12 +72,23 @@ export const signals = pgTable(
     value: jsonb("value").notNull().default({}),
     /** 0–1 confidence, matches the existing fieldProvenanceSchema range. */
     confidence: real("confidence"),
+    /** When the underlying real-world event happened. Null when unknown — falls back to detectedAt. */
+    observedAt: timestamp("observed_at", { withTimezone: true }),
+    /** When Skout's system detected/ingested this signal — can lag observedAt (e.g. a scraped post that went live days earlier). */
     detectedAt: timestamp("detected_at", { withTimezone: true }).notNull(),
     source: text("source"),
     provenance: jsonb("provenance").notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     /** R17.3 — set once the alert-sweep worker has matched this row against alert_rules, so the sweep is resumable/idempotent instead of re-scanning the whole table. */
     alertedAt: timestamp("alerted_at", { withTimezone: true }),
+    /** Null = never expires. A stale signal (e.g. hiring-freeze-lifted) stops counting after this. */
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    /**
+     * Which activation-rule target actions this signal is permitted to drive, from the same
+     * vocabulary as activation_rules.target_action (TargetAction in activation-rules.service.ts).
+     * Empty = informational only, not eligible to trigger any automated action.
+     */
+    activationPaths: jsonb("activation_paths").notNull().default([]),
   },
   (table) => [
     index("signals_entity_idx").on(table.entityType, table.entityId, table.detectedAt),

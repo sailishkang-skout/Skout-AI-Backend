@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
@@ -9,6 +9,7 @@ import {
   type SearchFilters,
 } from "@skout/opensearch";
 import type { Env } from "../config/env.js";
+import { HttpError } from "../utils/http.js";
 import {
   computeNextRefreshAt,
   type SmartListRefreshCadence,
@@ -276,7 +277,7 @@ export async function listSmartListRefreshes(
   workspaceId: string,
   listId: string,
   limit = 20
-): Promise<SmartListRefreshSummary[]> {
+): Promise<SmartListRefreshDetail[]> {
   if (!db) return [];
   const [list] = await db.select().from(smartLists).where(eq(smartLists.id, listId));
   if (!list || list.workspaceId !== workspaceId) return [];
@@ -286,7 +287,11 @@ export async function listSmartListRefreshes(
     .where(eq(schema.smartListRefreshes.smartListId, listId))
     .orderBy(desc(schema.smartListRefreshes.createdAt))
     .limit(limit);
-  return rows.map(toRefreshSummary);
+  return rows.map((row) => ({
+    ...toRefreshSummary(row),
+    addedProspects: row.addedProspects as SmartListProspectDiffEntry[],
+    droppedProspects: row.droppedProspects as SmartListProspectDiffEntry[],
+  }));
 }
 
 export async function getSmartListRefresh(
@@ -305,5 +310,101 @@ export async function getSmartListRefresh(
     ...toRefreshSummary(row),
     addedProspects: row.addedProspects as SmartListProspectDiffEntry[],
     droppedProspects: row.droppedProspects as SmartListProspectDiffEntry[],
+  };
+}
+
+/**
+ * Undo one refresh's membership change: puts the prospects it dropped back, takes the
+ * prospects it added back out, and records the reverse as a new "reverted" history entry
+ * (so the timeline stays a complete, explainable log rather than rewriting history).
+ * Only the most recent refresh for a list is revertible — membership is a single current
+ * snapshot, not a ledger, so reverting an older refresh would be ambiguous.
+ */
+export async function revertSmartListRefresh(
+  db: Db | null,
+  workspaceId: string,
+  listId: string,
+  refreshId: string
+): Promise<SmartListRefreshDetail | null> {
+  if (!db) return null;
+  const [list] = await db.select().from(smartLists).where(eq(smartLists.id, listId));
+  if (!list || list.workspaceId !== workspaceId) return null;
+
+  const [refresh] = await db
+    .select()
+    .from(schema.smartListRefreshes)
+    .where(eq(schema.smartListRefreshes.id, refreshId));
+  if (!refresh || refresh.workspaceId !== workspaceId || refresh.smartListId !== listId) return null;
+  if (refresh.status !== "completed") {
+    throw new HttpError("refresh_not_revertible", 409);
+  }
+
+  const [latest] = await db
+    .select({ id: schema.smartListRefreshes.id })
+    .from(schema.smartListRefreshes)
+    .where(eq(schema.smartListRefreshes.smartListId, listId))
+    .orderBy(desc(schema.smartListRefreshes.createdAt))
+    .limit(1);
+  if (!latest || latest.id !== refreshId) {
+    throw new HttpError("only_latest_refresh_revertible", 409);
+  }
+
+  const addedProspects = refresh.addedProspects as SmartListProspectDiffEntry[];
+  const droppedProspects = refresh.droppedProspects as SmartListProspectDiffEntry[];
+
+  if (addedProspects.length > 0) {
+    await db
+      .delete(schema.smartListMembers)
+      .where(
+        and(
+          eq(schema.smartListMembers.smartListId, listId),
+          inArray(
+            schema.smartListMembers.prospectId,
+            addedProspects.map((p) => p.prospectId)
+          )
+        )
+      );
+  }
+  if (droppedProspects.length > 0) {
+    await db.insert(schema.smartListMembers).values(
+      droppedProspects.map((p) => ({
+        smartListId: listId,
+        prospectId: p.prospectId,
+        snapshot: p,
+      }))
+    );
+  }
+
+  const now = new Date();
+  const newCount = refresh.matchedCount - addedProspects.length + droppedProspects.length;
+
+  await db
+    .update(smartLists)
+    .set({ lastRunCount: newCount, updatedAt: now })
+    .where(eq(smartLists.id, listId));
+
+  const [revertRow] = await db
+    .insert(schema.smartListRefreshes)
+    .values({
+      workspaceId,
+      smartListId: listId,
+      status: "reverted",
+      matchedCount: newCount,
+      addedCount: droppedProspects.length,
+      droppedCount: addedProspects.length,
+      addedProspects: droppedProspects,
+      droppedProspects: addedProspects,
+      creditsCharged: 0,
+      startedAt: now,
+      completedAt: now,
+    })
+    .returning();
+
+  log.info("smart list refresh reverted", { workspaceId, listId, revertedRefreshId: refreshId });
+
+  return {
+    ...toRefreshSummary(revertRow!),
+    addedProspects: droppedProspects,
+    droppedProspects: addedProspects,
   };
 }

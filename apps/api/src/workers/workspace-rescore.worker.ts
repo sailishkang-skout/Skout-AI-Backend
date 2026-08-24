@@ -4,7 +4,7 @@ import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
-import { runWorkspaceRescoreJob } from "../services/workspace-rescore.runner.js";
+import { JobCancelledError, runWorkspaceRescoreJob } from "../services/workspace-rescore.runner.js";
 import {
   WORKSPACE_RESCORE_QUEUE,
   type WorkspaceRescoreJobPayload,
@@ -44,6 +44,13 @@ export async function startWorkspaceRescoreWorker(config: Env): Promise<() => Pr
   );
 
   worker.on("failed", (job, err) => {
+    if (err instanceof JobCancelledError) {
+      log.info("Workspace rescore job cancelled by user", {
+        jobId: job?.data?.jobId,
+        workspaceId: job?.data?.workspaceId,
+      });
+      return;
+    }
     log.error("Workspace rescore job failed in worker", err, {
       jobId: job?.data?.jobId,
       workspaceId: job?.data?.workspaceId,

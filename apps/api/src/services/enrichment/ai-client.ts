@@ -61,8 +61,25 @@ export interface OnboardingProfile {
     titles?: string[];
   };
   market?: string[];
+  /** @deprecated kept for backward compatibility — use `connections.crm` instead. */
   crm?: string;
   leadVolume?: string;
+  /** Job-function persona selected at signup, drives which first-run path the wizard shows. */
+  persona?:
+    | "admin"
+    | "bdr_sdr"
+    | "ae"
+    | "manager"
+    | "revops"
+    | "marketing_ops"
+    | "executive_viewer";
+  /** CRM/comms provider connection status collected during onboarding. */
+  connections?: {
+    crm?: { provider?: string; connected?: boolean };
+    comms?: { provider?: string; connected?: boolean };
+  };
+  /** How much the workspace wants Skout acting without a human in the loop. */
+  autonomyMode?: "manual" | "assisted" | "autonomous";
   completedAt?: string;
 }
 

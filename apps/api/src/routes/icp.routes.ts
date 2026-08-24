@@ -7,6 +7,8 @@ import {
   setWorkspaceIcp,
 } from "../services/icp.service.js";
 import { startWorkspaceRescoreIfEnabled } from "../services/workspace-rescore.service.js";
+import { cancelAsyncJob, getAsyncJob } from "../services/async-job.service.js";
+import { HttpError, errorResponse } from "../utils/http.js";
 
 const onboardingSchema = z.object({
   company: z
@@ -34,8 +36,29 @@ const onboardingSchema = z.object({
     })
     .optional(),
   market: z.array(z.string().max(50)).max(20).optional(),
+  /** @deprecated kept for backward compatibility — use `connections.crm` instead. */
   crm: z.string().max(100).optional(),
   leadVolume: z.string().max(50).optional(),
+  persona: z
+    .enum(["admin", "bdr_sdr", "ae", "manager", "revops", "marketing_ops", "executive_viewer"])
+    .optional(),
+  connections: z
+    .object({
+      crm: z
+        .object({
+          provider: z.string().max(100).optional(),
+          connected: z.boolean().optional(),
+        })
+        .optional(),
+      comms: z
+        .object({
+          provider: z.string().max(100).optional(),
+          connected: z.boolean().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+  autonomyMode: z.enum(["manual", "assisted", "autonomous"]).optional(),
   completedAt: z
     .string()
     .max(50)
@@ -95,6 +118,19 @@ function requireWorkspaceId(request: { workspaceId?: string }): string {
   return request.workspaceId;
 }
 
+const RESCORE_JOB_TYPE = "icp_rescore";
+
+/**
+ * getAsyncJob/cancelAsyncJob are generic across every job type — without this check, a
+ * workspace member could poll or cancel any of their workspace's async jobs (an enrichment
+ * run, a smart-list refresh, ...) through this ICP-rescore-specific URL.
+ */
+function assertRescoreJob(job: { jobType: string }): void {
+  if (job.jobType !== RESCORE_JOB_TYPE) {
+    throw new HttpError("job_not_found", 404);
+  }
+}
+
 export async function icpRoutes(app: FastifyInstance) {
   app.get("/workspace/icp", async (request, reply) => {
     const workspaceId = requireWorkspaceId(request);
@@ -134,5 +170,43 @@ export async function icpRoutes(app: FastifyInstance) {
       version,
       rescoreJob,
     });
+  });
+
+  /** Visible, pollable progress for a rescore job started above. */
+  app.get("/workspace/icp/rescore-jobs/:jobId", async (request, reply) => {
+    const { jobId } = request.params as { jobId: string };
+    const workspaceId = requireWorkspaceId(request);
+    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
+    try {
+      const job = await getAsyncJob(app.db, workspaceId, jobId);
+      assertRescoreJob(job);
+      return reply.send(job);
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return reply.status(err.statusCode).send(errorResponse(err.message, err.statusCode));
+      }
+      throw err;
+    }
+  });
+
+  /** Cooperative cancel — the job stops at its next progress tick, not instantly. */
+  app.post("/workspace/icp/rescore-jobs/:jobId/cancel", async (request, reply) => {
+    const { jobId } = request.params as { jobId: string };
+    const workspaceId = requireWorkspaceId(request);
+    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
+    try {
+      // Check the job's type before cancelling — cancelAsyncJob is generic across every job
+      // type, and this route must only ever touch icp_rescore jobs, not e.g. an enrichment
+      // or smart-list-refresh job that happens to share this workspace.
+      const existing = await getAsyncJob(app.db, workspaceId, jobId);
+      assertRescoreJob(existing);
+      const job = await cancelAsyncJob(app.db, workspaceId, jobId);
+      return reply.send(job);
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return reply.status(err.statusCode).send(errorResponse(err.message, err.statusCode));
+      }
+      throw err;
+    }
   });
 }
