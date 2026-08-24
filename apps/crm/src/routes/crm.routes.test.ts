@@ -30,8 +30,7 @@ describe("deals routes (unit)", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({
       openDeals: 0,
-      pipelineValue: 0,
-      currency: "USD",
+      valueByCurrency: [],
     });
 
     await app.close();

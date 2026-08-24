@@ -29,7 +29,7 @@ export async function meetingsRoutes(app: FastifyInstance) {
   const service = () => {
     const db = app.db ?? null;
     const activitiesService = buildActivitiesService(db);
-    return buildMeetingsService(db, activitiesService);
+    return buildMeetingsService(db, activitiesService, app.config);
   };
 
   const contactsSvc = () => {
@@ -144,7 +144,7 @@ export async function meetingsRoutes(app: FastifyInstance) {
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
 
-    const deleted = await svc.softDelete(workspaceId, id);
+    const deleted = await svc.cancel(workspaceId, id);
     if (!deleted) throw new HttpError("meeting_not_found", 404);
     return reply.code(204).send();
   });

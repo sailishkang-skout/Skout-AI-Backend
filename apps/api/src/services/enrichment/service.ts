@@ -85,7 +85,7 @@ export class EnrichmentService {
     private readonly aiTimeoutMs?: number,
     private readonly loadIcp?: (workspaceId: string) => Promise<IcpConfig>,
     private readonly beforeWrite?: (workspaceId: string) => Promise<void>,
-    private readonly afterScore?: (result: ScoreResult) => Promise<void>,
+    private readonly afterScore?: (result: ScoreResult, workspaceId: string) => Promise<void>,
     private readonly openrouterApiKey?: string,
     /** R13.3 — best-effort CRM auto-fill hook, called per-prospect after `activate` upserts its
      * snapshot. Failures here must never fail activation — see call site. */
@@ -249,7 +249,7 @@ export class EnrichmentService {
       painPointsRationale: result.painPointsRationale ?? null,
       scoredAt: new Date().toISOString(),
     });
-    if (this.afterScore) await this.afterScore(result);
+    if (this.afterScore) await this.afterScore(result, workspaceId);
     return { ...result, creditsUsed: SCORE_CREDIT_COST };
   }
 

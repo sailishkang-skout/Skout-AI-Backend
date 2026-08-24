@@ -4,15 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "predev": "pnpm --filter @skout/db build && pnpm --filter @skout/shared build && pnpm --filter @skout/auth build",
-    "dev": "PORT=3002 tsx watch src/index.ts",
+    "predev": "pnpm --filter @skout/db build && pnpm --filter @skout/shared build && pnpm --filter @skout/auth build && pnpm --filter @skout/crm-bridge build",
+    "dev": "cross-env PORT=3002 tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "lint": "echo \"lint: configure eslint\"",
-    "pretest": "pnpm --filter @skout/db build && pnpm --filter @skout/shared build && pnpm --filter @skout/auth build && node scripts/ensure-test-postgres.mjs",
+    "pretest": "pnpm --filter @skout/db build && pnpm --filter @skout/shared build && pnpm --filter @skout/auth build && node scripts/ensure-test-postgres.mjs && pnpm --filter @skout/crm-bridge build",
     "test": "vitest run",
-    "pretest:e2e": "pnpm --filter @skout/db build && pnpm --filter @skout/shared build && pnpm --filter @skout/auth build && node scripts/ensure-test-postgres.mjs",
+    "pretest:e2e": "pnpm --filter @skout/db build && pnpm --filter @skout/shared build && pnpm --filter @skout/auth build && node scripts/ensure-test-postgres.mjs && pnpm --filter @skout/crm-bridge build",
     "test:e2e": "vitest run --config vitest.e2e.config.ts"
   },
   "dependencies": {
@@ -21,6 +21,7 @@
     "@fastify/helmet": "^13.0.1",
     "@fastify/rate-limit": "^10.2.2",
     "@skout/auth": "workspace:*",
+    "@skout/crm-bridge": "workspace:*",
     "@skout/db": "workspace:*",
     "@skout/observability": "workspace:*",
     "@skout/shared": "workspace:*",
@@ -28,11 +29,16 @@
     "drizzle-orm": "^0.44.2",
     "fastify": "^5.1.0",
     "fastify-plugin": "^5.0.1",
+    "ics": "^3.7.6",
+    "node-ical": "^0.20.1",
+    "nodemailer": "^9.0.3",
     "openai": "^6.45.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",
+    "@types/nodemailer": "^8.0.1",
+    "cross-env": "^10.1.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"

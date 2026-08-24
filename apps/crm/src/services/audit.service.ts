@@ -6,7 +6,7 @@ const { auditLogs } = schema;
 
 type AuditDb = Pick<Db, "select" | "insert" | "update" | "delete">;
 
-export type AuditAction = "create" | "update" | "delete";
+export type AuditAction = "create" | "update" | "delete" | "promotion" | "import";
 
 export interface AuditLogDto {
   id: string;

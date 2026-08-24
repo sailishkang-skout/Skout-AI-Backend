@@ -43,12 +43,18 @@ export interface DealAutoFillPatch {
   closeDate?: string;
 }
 
+export interface CurrencyValue {
+  currency: string;
+  value: number;
+}
+
 export interface DealsSummaryDto {
   workspaceId: string;
   openDeals: number;
-  pipelineValue: number;
-  currency: string;
-  stages: { stageId: string; name: string; count: number; value: number }[];
+  /** Open pipeline value, broken out per currency — deal amounts are never summed across
+   *  currencies (a $50k deal and a ₹50k deal are not the same 50k). */
+  valueByCurrency: CurrencyValue[];
+  stages: { stageId: string; name: string; count: number; valueByCurrency: CurrencyValue[] }[];
 }
 
 function toDto(row: typeof deals.$inferSelect): DealDto {
@@ -286,25 +292,40 @@ export class DealsService {
       .select({
         stageId: deals.stageId,
         stageName: pipelineStages.name,
+        currency: deals.currency,
         count: sql<number>`count(${deals.id})`,
         value: sql<string>`coalesce(sum(${deals.amount}), 0)`,
       })
       .from(deals)
       .innerJoin(pipelineStages, eq(pipelineStages.id, deals.stageId))
       .where(and(eq(deals.workspaceId, workspaceId), eq(deals.status, "open"), isNull(deals.deletedAt)))
-      .groupBy(deals.stageId, pipelineStages.name);
+      .groupBy(deals.stageId, pipelineStages.name, deals.currency);
 
-    const stages = rows.map((r) => ({
-      stageId: r.stageId,
-      name: r.stageName,
-      count: Number(r.count),
-      value: Number(r.value),
-    }));
+    const stageOrder: string[] = [];
+    const stagesById = new Map<string, { stageId: string; name: string; count: number; valueByCurrency: CurrencyValue[] }>();
+    const totalByCurrency = new Map<string, number>();
+    let openDeals = 0;
 
-    const openDeals = stages.reduce((sum, s) => sum + s.count, 0);
-    const pipelineValue = stages.reduce((sum, s) => sum + s.value, 0);
+    for (const r of rows) {
+      const count = Number(r.count);
+      const value = Number(r.value);
+      openDeals += count;
+      totalByCurrency.set(r.currency, (totalByCurrency.get(r.currency) ?? 0) + value);
 
-    return { workspaceId, openDeals, pipelineValue, currency: "USD", stages };
+      let stage = stagesById.get(r.stageId);
+      if (!stage) {
+        stage = { stageId: r.stageId, name: r.stageName, count: 0, valueByCurrency: [] };
+        stagesById.set(r.stageId, stage);
+        stageOrder.push(r.stageId);
+      }
+      stage.count += count;
+      stage.valueByCurrency.push({ currency: r.currency, value });
+    }
+
+    const stages = stageOrder.map((id) => stagesById.get(id)!);
+    const valueByCurrency = Array.from(totalByCurrency, ([currency, value]) => ({ currency, value }));
+
+    return { workspaceId, openDeals, valueByCurrency, stages };
   }
 }
 
