@@ -43,6 +43,8 @@ import { identityMergeRoutes } from "./identity-merge.routes.js";
 import { consentRoutes } from "./consent.routes.js";
 import { entitlementsRoutes } from "./entitlements.routes.js";
 import { stepUpRoutes } from "./step-up.routes.js";
+import { incidentsRoutes } from "./incidents.routes.js";
+import { modelVersionsRoutes } from "./model-versions.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoutes, { prefix: "/api/v1" });
@@ -91,5 +93,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(consentRoutes);
     await v1.register(entitlementsRoutes);
     await v1.register(stepUpRoutes);
+    await v1.register(incidentsRoutes);
+    await v1.register(modelVersionsRoutes);
   }, { prefix: "/api/v1" });
 }
