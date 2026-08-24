@@ -1,7 +1,7 @@
 import { Worker, Queue } from "bullmq";
 import { createDb, schema } from "@skout/db";
 import { eq } from "drizzle-orm";
-import { createLogger } from "@skout/observability";
+import { createLogger, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
@@ -38,59 +38,62 @@ export async function startBlacklistMonitorWorker(config: Env) {
   const worker = new Worker(
     QUEUE_NAME,
     async () => {
-      log.info("Starting blacklist check for all active sending domains");
+      // §11.3 Task 33 — self-triggered on a cron schedule; root span (no upstream trace exists).
+      await withSpan("blacklist-monitor.tick", async () => {
+        log.info("Starting blacklist check for all active sending domains");
 
-      const domains = await db
-        .select({
-          id: schema.sendingDomains.id,
-          domain: schema.sendingDomains.domain,
-        })
-        .from(schema.sendingDomains)
-        .where(eq(schema.sendingDomains.status, "verified"));
+        const domains = await db
+          .select({
+            id: schema.sendingDomains.id,
+            domain: schema.sendingDomains.domain,
+          })
+          .from(schema.sendingDomains)
+          .where(eq(schema.sendingDomains.status, "verified"));
 
-      if (domains.length === 0) {
-        log.info("No verified domains to check");
-        return;
-      }
-
-      log.info(`Checking ${domains.length} domains against DNSBL lists`);
-
-      for (const row of domains) {
-        try {
-          const result = await checkDomainBlacklist(row.domain);
-          const now = new Date();
-
-          await db
-            .update(schema.sendingDomains)
-            .set({
-              blacklistStatus: result.status,
-              blacklistedOn: result.listedOn,
-              lastCheckedAt: now,
-              checkError: result.error ?? null,
-              updatedAt: now,
-            })
-            .where(eq(schema.sendingDomains.id, row.id));
-
-          if (result.status === "blacklisted") {
-            log.warn(
-              `Domain ${row.domain} is blacklisted on: ${result.listedOn.join(", ")}`,
-              { domainId: row.id }
-            );
-          } else if (result.status === "error") {
-            log.warn(
-              `Blacklist check error for ${row.domain}: ${result.error}`,
-              { domainId: row.id }
-            );
-          } else {
-            log.debug(`Domain ${row.domain} is clean`, { domainId: row.id });
-          }
-        } catch (err) {
-          log.error(`Unexpected error checking domain ${row.domain}`, {
-            domainId: row.id,
-            err,
-          });
+        if (domains.length === 0) {
+          log.info("No verified domains to check");
+          return;
         }
-      }
+
+        log.info(`Checking ${domains.length} domains against DNSBL lists`);
+
+        for (const row of domains) {
+          try {
+            const result = await checkDomainBlacklist(row.domain);
+            const now = new Date();
+
+            await db
+              .update(schema.sendingDomains)
+              .set({
+                blacklistStatus: result.status,
+                blacklistedOn: result.listedOn,
+                lastCheckedAt: now,
+                checkError: result.error ?? null,
+                updatedAt: now,
+              })
+              .where(eq(schema.sendingDomains.id, row.id));
+
+            if (result.status === "blacklisted") {
+              log.warn(
+                `Domain ${row.domain} is blacklisted on: ${result.listedOn.join(", ")}`,
+                { domainId: row.id }
+              );
+            } else if (result.status === "error") {
+              log.warn(
+                `Blacklist check error for ${row.domain}: ${result.error}`,
+                { domainId: row.id }
+              );
+            } else {
+              log.debug(`Domain ${row.domain} is clean`, { domainId: row.id });
+            }
+          } catch (err) {
+            log.error(`Unexpected error checking domain ${row.domain}`, {
+              domainId: row.id,
+              err,
+            });
+          }
+        }
+      });
     },
     { connection, concurrency: 1 }
   );

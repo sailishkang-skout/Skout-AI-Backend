@@ -54,13 +54,26 @@ enqueued via a direct `queue.add()` call with no wrapper function — Task 18 ad
 `enqueueReplyTagJob` for consistency with the other 6, and updated its one caller,
 `inbound-reply.service.ts`).
 
-Not covered by this update, and NOT implied done:
+Not covered by this update at the time it was written (now closed by the Task 33 Update
+below):
 - The periodic sweep workers (`alert-digest-sweep`, `blacklist-monitor`, `reminder-sweep`,
   `risk-decay-sweep`, `signal-alert-sweep`, `smart-list-refresh-sweep`, `warmup-ramp`,
   `imap-poll`'s scheduler) have no synchronous producer/request to propagate a trace *from* —
   they're self-triggered on a timer. Giving each its own root span (rather than context
   propagation, which doesn't apply here) is a smaller, separate follow-up, not done in this pass.
 - Everything else in the original Gap list below remains true as written.
+
+## Update (Task 33 — Enterprise Completion Plan "close everything" pass)
+Every one of the 8 periodic sweep workers named above now wraps its tick's work in
+`withSpan("<worker-name>.tick", ...)` from `packages/observability/src/otel.ts`, giving each
+tick its own root span instead of tracing simply not covering these workers at all. This is
+root-span creation, not context propagation (there's still no upstream request/trace to
+continue from — these are genuinely self-triggered), so it's a separate mechanism from the
+BullMQ queue/worker trace-context propagation Task 18 wired into the 7 request-triggered
+queues. `withSpan()` is always safe to call regardless of whether `OTEL_TRACING_ENABLED` is
+on — `@opentelemetry/api`'s `trace.getTracer()` returns a no-op tracer when no provider is
+registered, so this is a no-op in every environment that hasn't opted into tracing, same as
+everywhere else `withSpan`/`getTracer` are used in this codebase.
 
 ## Update (Task 32 — Enterprise Completion Plan "close everything" pass)
 `buildExporter()` in `packages/observability/src/otel.ts` now returns a real OTLP/HTTP JSON

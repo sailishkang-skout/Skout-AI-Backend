@@ -3,7 +3,7 @@ import { and, eq, isNotNull, or } from "drizzle-orm";
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 import { createDb, schema } from "@skout/db";
-import { createLogger } from "@skout/observability";
+import { createLogger, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { decryptSecret } from "@skout/shared";
@@ -206,8 +206,13 @@ export async function startImapPollWorker(config: Env): Promise<() => Promise<vo
   const worker = new Worker<ImapPollJobPayload>(
     IMAP_POLL_QUEUE,
     async (job) => {
-      log.info("imap:poll-all started", { attempt: job.attemptsMade });
-      await pollInboxes(db, config, job.data);
+      // §11.3 Task 33 — self-triggered on a cron schedule (scheduleImapPolling); root span (no
+      // upstream trace exists to continue — unlike the queues Task 18 wired trace-context
+      // propagation into, nothing synchronous enqueues this job).
+      await withSpan("imap-poll.tick", async () => {
+        log.info("imap:poll-all started", { attempt: job.attemptsMade });
+        await pollInboxes(db, config, job.data);
+      });
     },
     {
       connection: redisConnection(config.REDIS_URL),
