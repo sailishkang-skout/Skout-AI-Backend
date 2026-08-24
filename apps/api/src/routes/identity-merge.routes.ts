@@ -1,0 +1,98 @@
+import type { FastifyInstance } from "fastify";
+import { z } from "zod";
+import {
+  listPendingMergeProposals,
+  proposeMerge,
+  resolveMergeProposal,
+  reverseMergeEvent,
+} from "../services/identity-merge.service.js";
+import { errorResponse } from "../utils/http.js";
+
+const candidateSchema = z.object({
+  name: z.string().optional(),
+  domain: z.string().optional(),
+  title: z.string().optional(),
+  location: z.string().optional(),
+});
+
+const proposeSchema = z.object({
+  entityType: z.string().min(1),
+  leftEntityId: z.string().min(1),
+  rightEntityId: z.string().min(1),
+  left: candidateSchema,
+  right: candidateSchema,
+});
+
+const resolveSchema = z.object({
+  decision: z.enum(["approved", "rejected"]),
+  beforeSnapshot: z.unknown().optional(),
+});
+
+/**
+ * §5.2 — probabilistic identity-merge proposals. Scoring/proposal creation is open to any
+ * workspace member (it never merges anything by itself); approving or rejecting a proposal —
+ * the step that actually leads to a merge — is gated to owner/admin, matching the same
+ * role bar used for other high-consequence actions in this API (see team.routes.ts).
+ */
+export async function identityMergeRoutes(app: FastifyInstance) {
+  app.post("/identity-merge/proposals", async (request, reply) => {
+    if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    if (!app.db) return reply.code(503).send(errorResponse("Database unavailable", 503));
+
+    const parsed = proposeSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.status(400).send(errorResponse("Invalid proposal payload", 400, parsed.error.flatten()));
+    }
+
+    const proposal = await proposeMerge(app.db, { workspaceId: request.workspaceId, ...parsed.data });
+    if (!proposal) {
+      return reply.send({ data: null, message: "Candidates did not clear the merge-proposal confidence threshold." });
+    }
+    return reply.code(201).send({ data: proposal });
+  });
+
+  app.get("/identity-merge/proposals", async (request, reply) => {
+    if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    if (!app.db) return reply.send({ data: [], total: 0 });
+
+    const data = await listPendingMergeProposals(app.db, request.workspaceId);
+    return reply.send({ data, total: data.length });
+  });
+
+  app.post<{ Params: { id: string } }>("/identity-merge/proposals/:id/resolve", async (request, reply) => {
+    if (!request.workspaceId || !request.userId || !request.role) {
+      return reply.code(401).send(errorResponse("Unauthorized", 401));
+    }
+    if (!["owner", "admin"].includes(request.role)) {
+      return reply.code(403).send(errorResponse("Forbidden", 403, { requiredRoles: ["owner", "admin"] }));
+    }
+    if (!app.db) return reply.code(503).send(errorResponse("Database unavailable", 503));
+
+    const parsed = resolveSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.status(400).send(errorResponse("Invalid resolution payload", 400, parsed.error.flatten()));
+    }
+
+    const updated = await resolveMergeProposal(app.db, {
+      workspaceId: request.workspaceId,
+      proposalId: request.params.id,
+      reviewerId: request.userId,
+      decision: parsed.data.decision,
+      beforeSnapshot: parsed.data.beforeSnapshot,
+    });
+    return reply.send({ data: updated });
+  });
+
+  app.post<{ Params: { id: string } }>("/identity-merge/events/:id/reverse", async (request, reply) => {
+    if (!request.workspaceId || !request.userId || !request.role) {
+      return reply.code(401).send(errorResponse("Unauthorized", 401));
+    }
+    if (!["owner", "admin"].includes(request.role)) {
+      return reply.code(403).send(errorResponse("Forbidden", 403, { requiredRoles: ["owner", "admin"] }));
+    }
+    if (!app.db) return reply.code(503).send(errorResponse("Database unavailable", 503));
+
+    const beforeSnapshot = await reverseMergeEvent(app.db, request.workspaceId, request.params.id, request.userId);
+    return reply.send({ data: { beforeSnapshot }, message: "Merge event marked reversed — apply beforeSnapshot to the underlying records." });
+  });
+}

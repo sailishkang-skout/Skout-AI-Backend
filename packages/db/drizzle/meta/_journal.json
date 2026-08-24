@@ -358,6 +358,13 @@
       "when": 1788300000000,
       "tag": "0049_meeting_ics",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1788400000000,
+      "tag": "0050_canonical_operating_model_and_evidence_ledger",
+      "breakpoints": true
     }
   ]
 }

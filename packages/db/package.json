@@ -22,6 +22,7 @@
     "migrate": "tsx src/migrate.ts",
     "apply-pending": "tsx src/apply-pending.ts",
     "seed": "tsx src/seed.ts",
+    "backfill-rbac": "tsx src/backfill-rbac.ts",
     "push": "drizzle-kit push",
     "studio": "drizzle-kit studio",
     "truncate": "tsx src/truncate.ts"
