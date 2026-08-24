@@ -6,7 +6,7 @@ import {
   resolveMergeProposal,
   reverseMergeEvent,
 } from "../services/identity-merge.service.js";
-import { recordPrivilegedAction } from "@skout/auth";
+import { recordPrivilegedAction, enforcePermission } from "@skout/auth";
 import { errorResponse } from "../utils/http.js";
 
 const candidateSchema = z.object({
@@ -69,6 +69,16 @@ export async function identityMergeRoutes(app: FastifyInstance) {
     }
     if (!app.db) return reply.code(503).send(errorResponse("Database unavailable", 503));
 
+    // §5.1 / §11.1 — fine-grained RBAC check running alongside the role gate above. The role
+    // gate above is what actually enforces access today (unchanged); this call is shadow-mode
+    // by default (RBAC_ENFORCEMENT_ENABLED unset) — see enforcePermission's own doc comment for
+    // why enforcing here before backfill-rbac.ts has run would deny every request outright.
+    await enforcePermission(app.db, request.workspaceId, request.userId, "identity:review_merges", {
+      enforce: app.config.RBAC_ENFORCEMENT_ENABLED,
+      onShadowDeny: (info) =>
+        app.log.warn(info, "RBAC shadow-mode: identity:review_merges would have been denied (resolve)"),
+    });
+
     const parsed = resolveSchema.safeParse(request.body ?? {});
     if (!parsed.success) {
       return reply.status(400).send(errorResponse("Invalid resolution payload", 400, parsed.error.flatten()));
@@ -109,6 +119,13 @@ export async function identityMergeRoutes(app: FastifyInstance) {
       return reply.code(403).send(errorResponse("Forbidden", 403, { requiredRoles: ["owner", "admin"] }));
     }
     if (!app.db) return reply.code(503).send(errorResponse("Database unavailable", 503));
+
+    // §5.1 / §11.1 — same shadow-mode RBAC check as the resolve route above.
+    await enforcePermission(app.db, request.workspaceId, request.userId, "identity:review_merges", {
+      enforce: app.config.RBAC_ENFORCEMENT_ENABLED,
+      onShadowDeny: (info) =>
+        app.log.warn(info, "RBAC shadow-mode: identity:review_merges would have been denied (reverse)"),
+    });
 
     const beforeSnapshot = await reverseMergeEvent(app.db, request.workspaceId, request.params.id, request.userId);
 

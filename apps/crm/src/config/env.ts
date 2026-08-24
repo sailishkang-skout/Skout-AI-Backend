@@ -52,6 +52,16 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => v === "true" || v === "1"),
+  /**
+   * §5.1 / §11.1 (Enterprise Completion Plan) — same flag and same rollout caveat as
+   * apps/api's env.ts: defaults OFF because backfill-rbac.ts has never been run against a
+   * real Postgres from this sandbox, so enforcing now would deny every request outright.
+   * While off, denials still run in shadow mode (logged, not blocking) at every wired call site.
+   */
+  RBAC_ENFORCEMENT_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === "true" || v === "1"),
   FRONTEND_URL: z.string().optional(),
   /** How many hours before a task's due date it's considered "needs a reminder" (R21.3). Mirrors apps/api's REMINDER_LEAD_HOURS so both apps agree on the same window. */
   REMINDER_LEAD_HOURS: z.coerce.number().int().positive().default(24),

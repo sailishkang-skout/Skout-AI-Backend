@@ -51,3 +51,46 @@ export async function assertPermission(
     throw new HttpError("forbidden", 403, { requiredPermission: permissionKey });
   }
 }
+
+export interface EnforcePermissionOptions {
+  /**
+   * Wire this to `config.RBAC_ENFORCEMENT_ENABLED` (default false in every env schema this is
+   * used from). Real users currently have zero `workspace_member_roles` rows in every
+   * environment this session can reach, because `backfill-rbac.ts` has never been run against a
+   * real Postgres from here — turning this on before that backfill runs would deny every request
+   * outright (assertPermission fails closed). This flag exists so call sites can be wired in now
+   * without that risk: enforced only once an operator has run the backfill and flips the flag.
+   */
+  enforce: boolean;
+  /**
+   * Called when enforce=false and the permission would have been denied — wire this to your
+   * app's logger. Without it, shadow-mode denials are invisible, which defeats the point of
+   * running in shadow mode before flipping enforcement on.
+   */
+  onShadowDeny?: (info: { workspaceId: string; userId: string; permissionKey: string }) => void;
+}
+
+/**
+ * §5.1 / §11.1 (Enterprise Completion Plan) — the safe-rollout wrapper for assertPermission.
+ * Call sites use this instead of assertPermission() directly wherever the surrounding route
+ * already has a coarser guard (e.g. requireRole(["owner","admin"])) that keeps behavior
+ * unchanged today. With enforce=false (the default everywhere until an operator opts in per
+ * environment), a denial is reported via onShadowDeny instead of thrown, so the fine-grained
+ * permission model can be observed against real traffic before it's allowed to actually block
+ * anything. With enforce=true, behaves exactly like assertPermission (throws 403).
+ */
+export async function enforcePermission(
+  db: Db,
+  workspaceId: string,
+  userId: string,
+  permissionKey: string,
+  options: EnforcePermissionOptions
+): Promise<void> {
+  const granted = await getMemberPermissions(db, workspaceId, userId);
+  if (granted.includes(permissionKey)) return;
+
+  if (options.enforce) {
+    throw new HttpError("forbidden", 403, { requiredPermission: permissionKey });
+  }
+  options.onShadowDeny?.({ workspaceId, userId, permissionKey });
+}

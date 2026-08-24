@@ -65,6 +65,19 @@ const envSchema = z
     /** Default email for stub auth when no x-stub-user-email header is sent. */
     AUTH_STUB_EMAIL: z.string().email().optional(),
     /**
+     * §5.1 / §11.1 (Enterprise Completion Plan) — feature flag for @skout/auth's
+     * enforcePermission(). Defaults OFF: real users currently have zero
+     * workspace_member_roles rows in every environment this session can reach, because
+     * backfill-rbac.ts has never been run here — enforcing before that backfill runs would
+     * deny every request outright. Flip this only after running the backfill in that
+     * environment. While off, denials still run in shadow mode (logged, not blocking) at
+     * every wired call site.
+     */
+    RBAC_ENFORCEMENT_ENABLED: z
+      .string()
+      .optional()
+      .transform((v) => v === "true" || v === "1"),
+    /**
      * Shared secret for the static-auth admin data-import page (/admin/import in the
      * frontend). When set, requests to /api/v1/import/* may authenticate with
      * `Authorization: Bearer admin_<this value>` instead of a Clerk JWT. Scoped to

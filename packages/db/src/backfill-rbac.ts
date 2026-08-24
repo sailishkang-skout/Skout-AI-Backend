@@ -36,6 +36,7 @@ const PERMISSION_CATALOG: Array<{ key: string; description: string; category: st
   { key: "crm:manage", description: "Create and edit CRM records (companies, deals, contacts).", category: "crm" },
   { key: "automation:manage", description: "Create or modify activation rules and automations.", category: "automation" },
   { key: "identity:review_merges", description: "Approve or reject identity-merge proposals.", category: "data" },
+  { key: "data:manage_retention", description: "Create and manage data-retention classification rules.", category: "data" },
 ];
 
 const SYSTEM_ROLES: Array<{ key: string; name: string; description: string; permissionKeys: string[] }> = [
