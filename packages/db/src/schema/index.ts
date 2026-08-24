@@ -24,3 +24,4 @@ export * from "./next-best-action.js";
 export * from "./tam.js";
 export * from "./tenancy.js";
 export * from "./evidence.js";
+export * from "./crm-intelligence.js";

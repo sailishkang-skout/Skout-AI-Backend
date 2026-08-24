@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { activitiesRoutes } from "./activities.routes.js";
 import { auditRoutes } from "./audit.routes.js";
+import { buyingCommitteeRoutes } from "./buying-committee.routes.js";
 import { companiesRoutes } from "./companies.routes.js";
 import { contactsRoutes } from "./contacts.routes.js";
 import { dashboardRoutes } from "./dashboard.routes.js";
@@ -10,6 +11,7 @@ import { meetingsRoutes } from "./meetings.routes.js";
 import { meetingRsvpWebhookRoutes } from "./meeting-rsvp-webhook.routes.js";
 import { pipelinesRoutes } from "./pipelines.routes.js";
 import { promotionRoutes } from "./promotion.routes.js";
+import { retentionRulesRoutes } from "./retention-rules.routes.js";
 import { tasksRoutes } from "./tasks.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
@@ -27,5 +29,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(meetingRsvpWebhookRoutes);
     await v1.register(promotionRoutes);
     await v1.register(dashboardRoutes);
+    await v1.register(buyingCommitteeRoutes);
+    await v1.register(retentionRulesRoutes);
   }, { prefix: "/api/v1" });
 }

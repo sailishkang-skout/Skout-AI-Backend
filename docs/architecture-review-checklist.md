@@ -29,7 +29,7 @@ a checkbox in `.github/pull_request_template.md`, and name a standing architectu
 |---|---|
 | Evidence Ledger unification | **Wave 1 shipped** this pass (ADR 0002) — table + API + one dual-write call site. Wave 2 (remaining call sites) not started. |
 | Tenancy/RBAC/Entitlement build | **Wave 1 shipped** this pass (ADR 0002) — tables + backfill + opt-in `assertPermission()`. Wave 2 (migrating existing `requireRole()` call sites) not started. |
-| OpenTelemetry tracing baseline | **Not started** — separate pass (§11.3). |
+| OpenTelemetry tracing baseline | **Wave 1 shipped** in the next-10 pass (ADR 0004) — in-process tracer + W3C context propagation, one worked-example BullMQ queue. Wave 2 (remaining queues, real OTLP exporter, apps/ai/Python) not started. |
 
 ## §1.2 — Strategic outcome (From → To) tracker
 

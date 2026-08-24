@@ -32,3 +32,11 @@ export {
   Sentry,
   type SentryInitOptions,
 } from "./sentry.js";
+
+export {
+  initOpenTelemetry,
+  getTracer,
+  withSpan,
+  injectTraceContext,
+  extractTraceContext,
+} from "./otel.js";

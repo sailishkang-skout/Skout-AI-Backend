@@ -365,6 +365,13 @@
       "when": 1788400000000,
       "tag": "0050_canonical_operating_model_and_evidence_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1788500000000,
+      "tag": "0051_crm_intelligence",
+      "breakpoints": true
     }
   ]
 }

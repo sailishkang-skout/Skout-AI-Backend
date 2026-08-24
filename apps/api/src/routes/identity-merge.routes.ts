@@ -6,6 +6,7 @@ import {
   resolveMergeProposal,
   reverseMergeEvent,
 } from "../services/identity-merge.service.js";
+import { recordPrivilegedAction } from "@skout/auth";
 import { errorResponse } from "../utils/http.js";
 
 const candidateSchema = z.object({
@@ -80,6 +81,23 @@ export async function identityMergeRoutes(app: FastifyInstance) {
       decision: parsed.data.decision,
       beforeSnapshot: parsed.data.beforeSnapshot,
     });
+
+    // §11.1 — audit event for a privileged action. Never lets an audit-write failure block a
+    // resolution that already succeeded; logs instead of swallowing silently (§3's "no silent
+    // failure" principle).
+    try {
+      await recordPrivilegedAction(app.db, {
+        workspaceId: request.workspaceId,
+        actorId: request.userId,
+        action: "identity_merge.resolve",
+        entityType: "identity_merge_proposal",
+        entityId: request.params.id,
+        afterState: { decision: parsed.data.decision },
+      });
+    } catch (err) {
+      app.log.error({ err }, "Failed to record privileged-action audit event for identity_merge.resolve");
+    }
+
     return reply.send({ data: updated });
   });
 
@@ -93,6 +111,20 @@ export async function identityMergeRoutes(app: FastifyInstance) {
     if (!app.db) return reply.code(503).send(errorResponse("Database unavailable", 503));
 
     const beforeSnapshot = await reverseMergeEvent(app.db, request.workspaceId, request.params.id, request.userId);
+
+    try {
+      await recordPrivilegedAction(app.db, {
+        workspaceId: request.workspaceId,
+        actorId: request.userId,
+        action: "identity_merge.reverse",
+        entityType: "identity_merge_event",
+        entityId: request.params.id,
+        afterState: { beforeSnapshot },
+      });
+    } catch (err) {
+      app.log.error({ err }, "Failed to record privileged-action audit event for identity_merge.reverse");
+    }
+
     return reply.send({ data: { beforeSnapshot }, message: "Merge event marked reversed — apply beforeSnapshot to the underlying records." });
   });
 }
