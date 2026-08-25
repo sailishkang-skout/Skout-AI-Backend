@@ -4,7 +4,7 @@ import { schema } from "@skout/db";
 import type { Env } from "../config/env.js";
 import type { TargetAction } from "./activation-rules.service.js";
 
-const { signals } = schema;
+const { signals, prospectActivations } = schema;
 
 export interface SignalRecord {
   id: string;
@@ -304,6 +304,79 @@ export interface RecordSignalInput {
  * workers/scrapers/ingestor). Used by workspace-local signal producers — the risk-decay sweep
  * (R18.1), reply-derived risk detection (R18.2) — that don't have a corpus crawl to hang off of.
  */
+/** Seniority tiers (SENIORITY_OPTIONS in packages/shared) treated as a reachable decision-maker
+ * for the stacking score's decision-maker bonus — excludes "manager"/"individual_contributor". */
+const DECISION_MAKER_SENIORITIES = new Set([
+  "founder",
+  "co_founder",
+  "ceo",
+  "c_level",
+  "vp",
+  "director",
+  "head",
+]);
+
+export interface AccountSignalSummary {
+  companyId: string;
+  companyName: string | null;
+  stackScore: SignalStackScore;
+  signals: SignalRecord[];
+}
+
+/**
+ * 8.5 Ask — "Build a dedicated Signal Center surface listing every live signal per account with
+ * strength/expiry/evidence." The single-entity GET /signals lookup can't answer "show me every
+ * account with live signals, ranked" — this assembles that view from the workspace's own
+ * activated companies, reusing listSignalsForEntities' batch loader and computeSignalStackScore.
+ * "Reachable decision-maker" is derived from whether any of the workspace's own activated
+ * contacts at that company are in a decision-maker seniority tier — real data, not assumed.
+ */
+export async function listWorkspaceAccountSignals(
+  db: Db,
+  config: Env,
+  workspaceId: string,
+  opts: { limit?: number } = {}
+): Promise<AccountSignalSummary[]> {
+  const activations = await db
+    .select({ companyId: prospectActivations.companyId, snapshot: prospectActivations.snapshot })
+    .from(prospectActivations)
+    .where(eq(prospectActivations.workspaceId, workspaceId));
+
+  if (activations.length === 0) return [];
+
+  const companyNameById = new Map<string, string>();
+  const reachableDecisionMakerByCompany = new Set<string>();
+  for (const a of activations) {
+    const snapshot = (a.snapshot as Record<string, unknown>) ?? {};
+    const companyName = typeof snapshot.companyName === "string" ? snapshot.companyName : undefined;
+    if (companyName && !companyNameById.has(a.companyId)) companyNameById.set(a.companyId, companyName);
+    const seniority = typeof snapshot.seniority === "string" ? snapshot.seniority.toLowerCase() : "";
+    if (DECISION_MAKER_SENIORITIES.has(seniority)) reachableDecisionMakerByCompany.add(a.companyId);
+  }
+
+  const companyIds = [...new Set(activations.map((a) => a.companyId))];
+  const byEntity = await listSignalsForEntities(db, companyIds);
+  const weights = signalStackWeightsFromEnv(config);
+
+  const summaries: AccountSignalSummary[] = companyIds
+    .map((companyId) => {
+      const companySignals = byEntity.get(companyId) ?? [];
+      return {
+        companyId,
+        companyName: companyNameById.get(companyId) ?? null,
+        stackScore: computeSignalStackScore(companySignals, {
+          weights,
+          reachableDecisionMaker: reachableDecisionMakerByCompany.has(companyId),
+        }),
+        signals: companySignals,
+      };
+    })
+    .filter((s) => s.signals.length > 0)
+    .sort((a, b) => b.stackScore.score - a.stackScore.score);
+
+  return opts.limit ? summaries.slice(0, opts.limit) : summaries;
+}
+
 export async function recordSignal(db: Db, input: RecordSignalInput): Promise<SignalRecord> {
   const [row] = await db
     .insert(signals)

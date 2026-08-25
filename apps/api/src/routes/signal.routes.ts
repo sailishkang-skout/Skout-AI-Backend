@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   computeSignalStackScore,
   listSignalsForEntity,
+  listWorkspaceAccountSignals,
   recordSignal,
   signalStackWeightsFromEnv,
 } from "../services/signal.service.js";
@@ -28,8 +29,27 @@ const createSignalBodySchema = z.object({
   activationPaths: z.array(z.enum(["activate", "add_to_list", "enroll_sequence"])).optional(),
 });
 
+const listAccountSignalsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+
 /** Unified signal timeline (R11.2) — corpus-scoped, not workspace-scoped. */
 export async function signalRoutes(app: FastifyInstance) {
+  /** 8.5 — Signal Center: every one of the workspace's activated accounts that has a live
+   * signal, ranked by stacking score. Must be registered before /signals/:something-shaped
+   * routes if any are added later — Fastify matches "/signals/accounts" as its own literal path. */
+  app.get("/signals/accounts", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const parsed = listAccountSignalsQuerySchema.safeParse(request.query ?? {});
+    if (!parsed.success) {
+      return reply.status(400).send(errorResponse("invalid query", 400, parsed.error.flatten()));
+    }
+    if (!app.db) return reply.send({ data: [], total: 0 });
+
+    const data = await listWorkspaceAccountSignals(app.db, app.config, workspaceId, { limit: parsed.data.limit });
+    return reply.send({ data, total: data.length });
+  });
+
   app.get("/signals", async (request, reply) => {
     const parsed = listSignalsQuerySchema.safeParse(request.query ?? {});
     if (!parsed.success) {

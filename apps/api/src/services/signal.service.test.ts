@@ -4,6 +4,7 @@ import {
   isSignalExpired,
   listSignalsForEntities,
   listSignalsForEntity,
+  listWorkspaceAccountSignals,
   overlaySignalsForMember,
   recordSignal,
   signalStackWeightsFromEnv,
@@ -457,5 +458,77 @@ describe("recordSignal", () => {
     await recordSignal(db as never, { entityId: "p-1", signalType: "recent_hiring" });
 
     expect(inserted[0]).toMatchObject({ expiresAt: null, activationPaths: [] });
+  });
+});
+
+describe("listWorkspaceAccountSignals", () => {
+  const config = {
+    SIGNAL_STACK_DEFAULT_CONFIDENCE: 0.6,
+    SIGNAL_STACK_RECENCY_HALF_LIFE_DAYS: 14,
+    SIGNAL_STACK_RECENCY_FLOOR: 0.05,
+    SIGNAL_STACK_MULTIPLIER_2_TYPES: 1.3,
+    SIGNAL_STACK_MULTIPLIER_3_TYPES: 1.6,
+    SIGNAL_STACK_DECISION_MAKER_MULTIPLIER: 1.25,
+    SIGNAL_STACK_SCORE_SCALE: 35,
+  } as Env;
+
+  function activationsChain(rows: unknown[]) {
+    const c: Record<string, unknown> = {};
+    c.from = vi.fn().mockReturnValue(c);
+    c.where = vi.fn().mockResolvedValue(rows);
+    return c;
+  }
+
+  it("returns [] with no db call when the workspace has no activated companies", async () => {
+    const db = { select: vi.fn().mockReturnValue(activationsChain([])) };
+    const result = await listWorkspaceAccountSignals(db as never, config, "ws-1");
+    expect(result).toEqual([]);
+    expect(db.select).toHaveBeenCalledTimes(1); // only the activations query, no signals lookup
+  });
+
+  it("ranks accounts by stack score and excludes accounts with no live signals", async () => {
+    const hotSignal = { ...ROW, entityId: "company-hot", signalType: "recent_funding", confidence: 0.9 };
+    const coldSignal = { ...ROW, id: "sig-cold", entityId: "company-cold", confidence: 0.2 };
+    const db = {
+      select: vi
+        .fn()
+        .mockReturnValueOnce(
+          activationsChain([
+            { companyId: "company-hot", snapshot: { companyName: "Hot Co", seniority: "vp" } },
+            { companyId: "company-cold", snapshot: { companyName: "Cold Co", seniority: "manager" } },
+            { companyId: "company-quiet", snapshot: { companyName: "Quiet Co" } },
+          ])
+        )
+        .mockReturnValueOnce(selectOrderChain([hotSignal, coldSignal])),
+    };
+
+    const result = await listWorkspaceAccountSignals(db as never, config, "ws-1");
+
+    // company-quiet has no signals at all — excluded entirely.
+    expect(result.map((r) => r.companyId)).toEqual(["company-hot", "company-cold"]);
+    expect(result[0]!.companyName).toBe("Hot Co");
+    expect(result[0]!.stackScore.reachableDecisionMaker).toBe(true);
+    expect(result[1]!.stackScore.reachableDecisionMaker).toBe(false);
+    // Higher confidence + decision-maker bonus should score company-hot above company-cold.
+    expect(result[0]!.stackScore.score).toBeGreaterThan(result[1]!.stackScore.score);
+  });
+
+  it("respects the limit option after ranking", async () => {
+    const s1 = { ...ROW, id: "s1", entityId: "c1" };
+    const s2 = { ...ROW, id: "s2", entityId: "c2" };
+    const db = {
+      select: vi
+        .fn()
+        .mockReturnValueOnce(
+          activationsChain([
+            { companyId: "c1", snapshot: {} },
+            { companyId: "c2", snapshot: {} },
+          ])
+        )
+        .mockReturnValueOnce(selectOrderChain([s1, s2])),
+    };
+
+    const result = await listWorkspaceAccountSignals(db as never, config, "ws-1", { limit: 1 });
+    expect(result).toHaveLength(1);
   });
 });
