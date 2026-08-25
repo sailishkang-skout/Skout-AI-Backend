@@ -152,8 +152,20 @@ describe("resolveRegionalBrief", () => {
     const svc = createRegionalBriefService(db);
     const [reviewer] = await db.insert(schema.users).values({ email: `stale-rev-${Date.now()}@test.com`, fullName: "R" }).returning();
     const [author] = await db.insert(schema.users).values({ email: `stale-auth-${Date.now()}@test.com`, fullName: "A" }).returning();
+    // Tenant-scoped with a fresh workspace, not global/country - those categories are all claimed by
+    // either the seed script (packages/db/src/seed-regional-brief.ts) or other tests in this file, so a
+    // shared-DB collision on any of the 6 field categories at global/country scope is otherwise guaranteed.
+    const [workspace] = await db
+      .insert(schema.workspaces)
+      .values({ name: `stale-test-${Date.now()}`, slug: `stale-test-${Date.now()}` })
+      .returning();
 
-    const slot = await svc.findOrCreateSlot({ layerType: "global", fieldCategory: "data_compliance" });
+    const slot = await svc.findOrCreateSlot({
+      layerType: "tenant",
+      countryIso: "US",
+      workspaceId: workspace!.id,
+      fieldCategory: "channel_policy",
+    });
     const v = await svc.createDraftVersion(slot.id, {
       content: { summary: "stale content", details: [] },
       source: "test", effectiveDate: new Date("2020-01-01"), confidence: 60, evidence: "test",
@@ -161,8 +173,8 @@ describe("resolveRegionalBrief", () => {
     });
     await svc.approveVersion(v.id, reviewer!.id);
 
-    const resolved = await svc.resolveRegionalBrief({ countryIso: "US" });
-    const entry = resolved.entries.find((e) => e.fieldCategory === "data_compliance");
+    const resolved = await svc.resolveRegionalBrief({ countryIso: "US", workspaceId: workspace!.id });
+    const entry = resolved.entries.find((e) => e.fieldCategory === "channel_policy");
     expect(entry?.isStale).toBe(true);
   });
 });
