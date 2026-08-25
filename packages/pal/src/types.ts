@@ -19,6 +19,14 @@ export interface EnrichmentInput {
   resolveLeadScoreForPhone?: (company?: CompanyData) => Promise<number>;
   /** Which fields to enrich. Defaults to company + email + validation. */
   fields?: EnrichField[];
+  /**
+   * 0-1 minimum email-finder confidence to accept before trying the next provider
+   * (8.3 workbook quality thresholds). Default 0 keeps the original behavior: accept
+   * the first provider that returns any email, regardless of confidence. Per-call
+   * (not constructor-level) so a shared, cached engine instance can serve both plain
+   * enrichment and workbook runs with different thresholds.
+   */
+  emailQualityThreshold?: number;
 }
 
 export type CredentialSource = "workspace" | "platform";

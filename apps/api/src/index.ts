@@ -18,6 +18,8 @@ import { startReminderSweepWorker } from "./workers/reminder-sweep.worker.js";
 import { startSignalAlertSweepWorker } from "./workers/signal-alert-sweep.worker.js";
 import { startAlertDigestSweepWorker } from "./workers/alert-digest-sweep.worker.js";
 import { startRiskDecaySweepWorker } from "./workers/risk-decay-sweep.worker.js";
+import { startWorkbookRunWorker } from "./workers/workbook-run.worker.js";
+import { startReportDeliverySweepWorker } from "./workers/report-delivery-sweep.worker.js";
 import { startIdentityMergeDiscoveryWorker } from "./workers/identity-merge-discovery.worker.js";
 
 async function main() {
@@ -55,6 +57,8 @@ async function main() {
   const stopSignalAlertSweepWorker = await startSignalAlertSweepWorker(config);
   const stopAlertDigestSweepWorker = await startAlertDigestSweepWorker(config);
   const stopRiskDecaySweepWorker = await startRiskDecaySweepWorker(config);
+  const stopWorkbookRunWorker = await startWorkbookRunWorker(config);
+  const stopReportDeliverySweepWorker = await startReportDeliverySweepWorker(config);
   const stopIdentityMergeDiscoveryWorker = await startIdentityMergeDiscoveryWorker(config);
 
   const app = await buildApp(config);
@@ -72,6 +76,8 @@ async function main() {
   }
 
   const shutdown = async () => {
+    await stopReportDeliverySweepWorker();
+    await stopWorkbookRunWorker();
     await stopIdentityMergeDiscoveryWorker();
     await stopRiskDecaySweepWorker();
     await stopAlertDigestSweepWorker();

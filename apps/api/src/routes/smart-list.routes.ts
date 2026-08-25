@@ -12,11 +12,13 @@ import {
   listSmartListRefreshes,
   listSmartLists,
   osConfigFromEnv,
+  revertSmartListRefresh,
   runSmartList,
   updateSmartList,
   updateSmartListRefreshSchedule,
 } from "../services/smart-list.service.js";
 import { CADENCE_VALUES } from "../services/smart-list-cadence.js";
+import { HttpError, errorResponse } from "../utils/http.js";
 
 const createSchema = z.object({
   name: z.string().min(1).max(255),
@@ -89,7 +91,7 @@ export async function smartListRoutes(app: FastifyInstance) {
     return reply.send(updated);
   });
 
-  /** Paginated auto-refresh history (counts + status only — no diff payload). */
+  /** Paginated auto-refresh history, each entry including its full added/dropped diff. */
   app.get("/smart-lists/:id/refreshes", async (request, reply) => {
     const { id } = request.params as { id: string };
     const workspaceId = request.workspaceId ?? "unknown";
@@ -111,6 +113,23 @@ export async function smartListRoutes(app: FastifyInstance) {
     const detail = await getSmartListRefresh(app.db, workspaceId, id, refreshId);
     if (!detail) return reply.status(404).send({ error: "smart_list_refresh_not_found" });
     return reply.send(detail);
+  });
+
+  /** One-click revert of a refresh's membership change (only the most recent refresh qualifies). */
+  app.post("/smart-lists/:id/refreshes/:refreshId/revert", async (request, reply) => {
+    const { id, refreshId } = request.params as { id: string; refreshId: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    try {
+      const reverted = await revertSmartListRefresh(app.db, workspaceId, id, refreshId);
+      if (!reverted) return reply.status(404).send({ error: "smart_list_refresh_not_found" });
+      await createSearchCacheService(app.config).invalidateSmartList(workspaceId, id);
+      return reply.send(reverted);
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return reply.status(err.statusCode).send(errorResponse(err.message, err.statusCode));
+      }
+      throw err;
+    }
   });
 
   app.delete("/smart-lists/:id", async (request, reply) => {

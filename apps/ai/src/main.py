@@ -1103,6 +1103,7 @@ class PersonalizeRequest(BaseModel):
     company_domain: Optional[str] = None
     pain_points: list[str] = []
     icp_score: Optional[int] = None
+    regional_tone: Optional[str] = None
 
 
 class PersonalizeResponse(BaseModel):
@@ -1222,10 +1223,11 @@ def pain_points(request: PainPointRequest):
 def personalize(request: PersonalizeRequest):
     """Generate outreach opener + talking points for ai_drafts."""
     if _llm_available():
+        tone_line = f" Write in this regional tone: {request.regional_tone}." if request.regional_tone else ""
         prompt = (
             "Return JSON with opener (string) and talking_points (array of strings) for a cold email. "
             f"Prospect: {request.full_name}, {request.title} at {request.company_domain}. "
-            f"Pain points: {request.pain_points}. ICP score: {request.icp_score}"
+            f"Pain points: {request.pain_points}. ICP score: {request.icp_score}.{tone_line}"
         )
         data = _llm_json("", prompt)
         result = PersonalizeResponse(

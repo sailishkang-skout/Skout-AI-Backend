@@ -7,6 +7,7 @@ import { HttpError } from "../utils/http.js";
 import { markInboxUsed } from "./inbox-rotation.service.js";
 import { applyReplyTagActions } from "./reply-tag-actions.service.js";
 import type { NegativeSubtype, ReplyTag } from "./reply-tagger.service.js";
+import { recordDecisionEvent } from "./model-performance.service.js";
 import nodemailer from "nodemailer";
 import { randomBytes } from "node:crypto";
 
@@ -912,6 +913,18 @@ export class InboxService {
         updatedAt: now,
       })
       .where(and(eq(inboxThreads.workspaceId, workspaceId), eq(inboxThreads.id, threadId)));
+
+    // 8.15 task 34 — model/prompt performance tracking (override rate / action acceptance).
+    // Captured here, not read back from inboxThreads, because the update above clears
+    // suggestedTag/suggestedConfidence — this is the only point where the comparison exists.
+    await recordDecisionEvent(this.db, {
+      workspaceId,
+      surface: "reply_classification",
+      suggestedValue: thread.suggestedTag,
+      outcome: action === "apply" ? "accepted" : "overridden",
+      confidence: thread.suggestedConfidence,
+      metadata: { threadId },
+    });
 
     log.info("manual review resolved", { workspaceId, threadId, action });
     return { ok: true, action };

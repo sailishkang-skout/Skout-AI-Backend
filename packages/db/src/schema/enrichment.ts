@@ -86,3 +86,64 @@ export const enrichmentResults = pgTable("enrichment_results", {
   isPrimary: boolean("is_primary").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * A reusable, named enrichment configuration (8.3) — waterfall fields, an optional
+ * per-run credit budget, and an email quality threshold. Runs (below) execute a
+ * workbook against a target set of prospects; the workbook itself is just config,
+ * never touched by execution.
+ */
+export const enrichmentWorkbooks = pgTable("enrichment_workbooks", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  /** EnrichField[] — which waterfall steps a run of this workbook performs. */
+  fields: text("fields").array().notNull().default(["company", "email", "validation"]),
+  /** 0-1 minimum email-finder confidence to accept before trying the next provider. Null = accept first hit (current engine default). */
+  emailQualityThreshold: numeric("email_quality_threshold", { precision: 3, scale: 2 }),
+  /** Credits a single run of this workbook may spend. Null = no workbook-specific cap beyond the workspace balance. */
+  budgetCreditsPerRun: integer("budget_credits_per_run"),
+  /** "draft" | "active" — promoting to production use is an explicit step (activatedAt below), never implicit. */
+  status: text("status").notNull().default("draft"),
+  activatedAt: timestamp("activated_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * One execution of a workbook against a resolved set of prospects. Row-level work is
+ * tracked by the existing enrichmentJobs/enrichmentBatches tables (batchId below) —
+ * this table is the run-level envelope: mode, target set, budget, and pause/resume state.
+ */
+export const enrichmentWorkbookRuns = pgTable("enrichment_workbook_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  workbookId: uuid("workbook_id")
+    .notNull()
+    .references(() => enrichmentWorkbooks.id, { onDelete: "cascade" }),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  listId: uuid("list_id").notNull(),
+  /** "sample" | "selected" | "changed_rows" | "scheduled" (scheduled = the full list). */
+  mode: text("mode").notNull(),
+  /** Resolved prospect ids this run targets, fixed at start so pause/resume/rerun stay consistent. */
+  targetProspectIds: jsonb("target_prospect_ids").notNull().default([]),
+  batchId: uuid("batch_id").references(() => enrichmentBatches.id, { onDelete: "set null" }),
+  /** "pending" | "running" | "paused" | "completed" | "partial" | "failed" | "cancelled" */
+  status: text("status").notNull().default("pending"),
+  totalRows: integer("total_rows").notNull().default(0),
+  processedRows: integer("processed_rows").notNull().default(0),
+  succeededRows: integer("succeeded_rows").notNull().default(0),
+  failedRows: integer("failed_rows").notNull().default(0),
+  creditsBudget: integer("credits_budget"),
+  creditsUsed: integer("credits_used").notNull().default(0),
+  /** Set when this run is a "rerun failed cells" of an earlier run — never re-runs the whole workbook. */
+  rerunOfRunId: uuid("rerun_of_run_id"),
+  errorMessage: text("error_message"),
+  queuedAt: timestamp("queued_at", { withTimezone: true }).notNull().defaultNow(),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  pausedAt: timestamp("paused_at", { withTimezone: true }),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+});

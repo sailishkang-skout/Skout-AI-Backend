@@ -10,7 +10,7 @@ import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { buildEnrichmentService, InsufficientCreditsError } from "./enrichment/index.js";
 import { prospectToSnapshot } from "./smart-list.mapper.js";
-import { osConfigFromEnv, type SmartListProspectDiffEntry } from "./smart-list.service.js";
+import { osConfigFromEnv, summarizeSearchFilters, type SmartListProspectDiffEntry } from "./smart-list.service.js";
 import { computeNextRefreshAt, type SmartListRefreshCadence } from "./smart-list-cadence.js";
 import { createSearchCacheService } from "./search-cache.service.js";
 
@@ -24,6 +24,10 @@ function toDiffEntry(doc: ProspectDocument): SmartListProspectDiffEntry {
     title: doc.title ?? undefined,
     companyDomain: doc.companyDomain ?? undefined,
   };
+}
+
+function withMatchReason(entry: SmartListProspectDiffEntry, reason: string): SmartListProspectDiffEntry {
+  return { ...entry, matchReason: reason };
 }
 
 export async function runSmartListRefreshJob(
@@ -139,6 +143,8 @@ export async function runSmartListRefreshJob(
       })
       .where(eq(smartLists.id, listId));
 
+    const filterSummary = summarizeSearchFilters(list.filters as SearchFilters);
+
     await db.insert(smartListRefreshes).values({
       workspaceId,
       smartListId: listId,
@@ -146,8 +152,10 @@ export async function runSmartListRefreshJob(
       matchedCount: matched.length,
       addedCount: addedHits.length,
       droppedCount: droppedRows.length,
-      addedProspects: addedHits.map(toDiffEntry),
-      droppedProspects: droppedRows.map((r) => r.snapshot as SmartListProspectDiffEntry),
+      addedProspects: addedHits.map((doc) => withMatchReason(toDiffEntry(doc), `Now matches: ${filterSummary}`)),
+      droppedProspects: droppedRows.map((r) =>
+        withMatchReason(r.snapshot as SmartListProspectDiffEntry, `No longer matches: ${filterSummary}`)
+      ),
       creditsCharged: creditsUsed,
       startedAt: now,
       completedAt: now,

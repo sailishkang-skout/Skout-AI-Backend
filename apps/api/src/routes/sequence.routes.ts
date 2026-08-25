@@ -15,6 +15,7 @@ import { SEQUENCE_TEMPLATES, getSequenceTemplate } from "../services/sequence-te
 import { conditionExpressionSchema } from "../services/sequence-condition.js";
 import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.js";
 import { dispatchWebhookEvent } from "../services/webhook.service.js";
+import { isReadyForOutboundSend } from "../services/workspace-setup.service.js";
 import { HttpError } from "../utils/http.js";
 import { buildConsentService } from "../services/consent.service.js";
 
@@ -556,7 +557,21 @@ export async function sequenceRoutes(app: FastifyInstance) {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+
     const body = enrollSequenceSchema.parse(request.body ?? {});
+
+    // R8.1 — checklist completion gates the one genuinely "live" action here: sending real
+    // outbound email. Needs a configured ICP and a connected sending mailbox; list/prospect
+    // activity are tracked on the checklist but don't block enrollment itself. Checked after
+    // body validation so malformed requests fail with 400, not this precondition's 412.
+    if (!(await isReadyForOutboundSend(app.db, workspaceId))) {
+      return reply.status(412).send({
+        error: "setup_incomplete",
+        message:
+          "Finish workspace setup before sending — configure your ICP and connect a sending mailbox.",
+        checklistUrl: "/workspaces/current/setup-checklist",
+      });
+    }
 
     // §5.1 / §16 — fail-closed consent gate (CONSENT_ENFORCEMENT_ENABLED)
     if (app.config.CONSENT_ENFORCEMENT_ENABLED && app.db && body.prospectIds?.length) {

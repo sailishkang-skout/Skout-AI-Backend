@@ -43,6 +43,7 @@ export function initPanel() {
   const listSelectEl = document.getElementById("list-select");
   const sequenceSelectEl = document.getElementById("sequence-select");
   const hitlWarningEl = document.getElementById("hitl-warning");
+  const duplicateWarningEl = document.getElementById("duplicate-warning");
   const enrollBtn = document.getElementById("enroll-sequence");
   const enrollConfirmEl = document.getElementById("enroll-confirm");
   const enrollConfirmLinkEl = document.getElementById("enroll-confirm-link");
@@ -50,6 +51,11 @@ export function initPanel() {
   // Tracks the HITL state from the most recent ICP score so enroll can gate on it.
   let lastRequiresHitl = false;
   let hitlConfirmed = false;
+
+  // Tracks duplicate-risk state per list selection so "Add to list" can gate on it —
+  // reset whenever the target list changes, since a duplicate in one list says nothing
+  // about another.
+  let duplicateConfirmedForListId = null;
 
   function setStatus(message, isError = false) {
     if (!statusEl) return;
@@ -239,6 +245,11 @@ export function initPanel() {
 
   document.getElementById("refresh-lists")?.addEventListener("click", () => refreshLists());
 
+  listSelectEl?.addEventListener("change", () => {
+    duplicateConfirmedForListId = null;
+    duplicateWarningEl?.classList.add("hidden");
+  });
+
   document.getElementById("add-to-list")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     const listId = listSelectEl?.value;
@@ -247,6 +258,7 @@ export function initPanel() {
       return;
     }
 
+    const confirmDuplicate = duplicateConfirmedForListId === listId;
     setBusy(button, true, "Adding…");
     try {
       if (!(await ensurePanelSignedIn())) return;
@@ -254,7 +266,19 @@ export function initPanel() {
       const tabId = await findLinkedInTabId();
       // Profile read happens in the background — avoids hanging here if the tab bridge isn't ready.
       await runInBackground("ping").catch(() => undefined);
-      const result = await runInBackground("add-to-list", { listId, tabId });
+      const result = await runInBackground("add-to-list", { listId, tabId, confirmDuplicate });
+
+      if (result.duplicate && !confirmDuplicate) {
+        // First time seeing this — warn and require a second click before writing, same
+        // pattern as the HITL enroll gate above.
+        duplicateConfirmedForListId = listId;
+        duplicateWarningEl?.classList.remove("hidden");
+        setStatus(`${result.fullName} is already in this list — click Add again to add anyway.`, true);
+        return;
+      }
+
+      duplicateConfirmedForListId = null;
+      duplicateWarningEl?.classList.add("hidden");
       setStatus(`Added ${result.fullName} to the list.`);
     } catch (error) {
       setStatus(

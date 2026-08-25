@@ -9,6 +9,13 @@ import { createSearchCacheService } from "./search-cache.service.js";
 const { asyncJobs } = schema;
 const log = createLogger("workspace-rescore.runner");
 
+export class JobCancelledError extends Error {
+  constructor() {
+    super("cancelled");
+    this.name = "JobCancelledError";
+  }
+}
+
 export interface WorkspaceRescoreJobResult {
   workspaceId: string;
   icpVersion: number;
@@ -25,6 +32,15 @@ export async function runWorkspaceRescoreJob(
   workspaceId: string,
   icpVersion: number
 ): Promise<WorkspaceRescoreJobResult> {
+  const [existing] = await db
+    .select({ status: asyncJobs.status })
+    .from(asyncJobs)
+    .where(eq(asyncJobs.id, jobId));
+  if (existing?.status === "cancelled") {
+    // Cancelled while still queued — never picked up, nothing to run.
+    throw new JobCancelledError();
+  }
+
   await db
     .update(asyncJobs)
     .set({ status: "running", startedAt: new Date() })
@@ -35,9 +51,12 @@ export async function runWorkspaceRescoreJob(
   try {
     const result = await svc.runWorkspaceRescore(workspaceId, icpVersion, {
       onProgress: async (progress) => {
+        const percent =
+          progress.total > 0 ? Math.round((progress.scored / progress.total) * 100) : 100;
         await db
           .update(asyncJobs)
           .set({
+            progress: percent,
             result: {
               workspaceId,
               icpVersion,
@@ -48,6 +67,14 @@ export async function runWorkspaceRescoreJob(
             },
           })
           .where(eq(asyncJobs.id, jobId));
+
+        const [current] = await db
+          .select({ status: asyncJobs.status })
+          .from(asyncJobs)
+          .where(eq(asyncJobs.id, jobId));
+        if (current?.status === "cancelled") {
+          throw new JobCancelledError();
+        }
       },
     });
 
@@ -66,6 +93,15 @@ export async function runWorkspaceRescoreJob(
 
     return final;
   } catch (err) {
+    if (err instanceof JobCancelledError) {
+      log.info("Workspace rescore job cancelled", { jobId, workspaceId, icpVersion });
+      await db
+        .update(asyncJobs)
+        .set({ status: "cancelled", completedAt: new Date() })
+        .where(eq(asyncJobs.id, jobId));
+      throw err;
+    }
+
     const message = err instanceof Error ? err.message : String(err);
     log.error("Workspace rescore job failed", err, { jobId, workspaceId, icpVersion });
     await db

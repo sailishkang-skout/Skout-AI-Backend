@@ -1,17 +1,17 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { schema } from "@skout/db";
 import { searchFiltersSchema } from "@skout/shared";
 import { buildEnrichmentService, InsufficientCreditsError, SCORE_CREDIT_COST } from "../services/enrichment/index.js";
 import { getWorkspaceIcp } from "../services/icp.service.js";
 import { getAsyncJob } from "../services/async-job.service.js";
+import { personalizeProspect } from "../services/personalize.service.js";
 import { HttpError, errorResponse } from "../utils/http.js";
-import { injectTraceContext } from "@skout/observability";
 import { buildEntitlementsService } from "../services/entitlements.service.js";
 import { recordEvidence } from "../services/evidence.service.js";
 import { assertEvidenced } from "@skout/shared";
 import { buildModelVersionsService } from "../services/model-versions.service.js";
-import { pinAiClaim } from "../services/ai-evidence.service.js";
+
+const jobIdSchema = z.string().uuid();
 
 const scoreBodySchema = z.object({
   prospect: z.object({
@@ -54,6 +54,10 @@ export async function enrichmentRoutes(app: FastifyInstance) {
 
   app.get("/enrichment/jobs/:jobId", async (request, reply) => {
     const { jobId } = request.params as { jobId: string };
+    // A client-side-only placeholder id (e.g. the frontend's optimistic-update job entry)
+    // isn't a real job and was never going to be found — a clean 404 here, not a raw
+    // invalid-uuid DB error, since this route's own contract already documents "not found".
+    if (!jobIdSchema.safeParse(jobId).success) return reply.status(404).send({ error: "job_not_found" });
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = buildEnrichmentService(app.db, app.config);
     const job = await svc.getJob(workspaceId, jobId);
@@ -63,6 +67,7 @@ export async function enrichmentRoutes(app: FastifyInstance) {
 
   app.post("/enrichment/jobs/:jobId/retry", async (request, reply) => {
     const { jobId } = request.params as { jobId: string };
+    if (!jobIdSchema.safeParse(jobId).success) return reply.status(404).send({ error: "job_not_found" });
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = buildEnrichmentService(app.db, app.config);
     try {
@@ -193,91 +198,18 @@ export async function enrichmentRoutes(app: FastifyInstance) {
         companyDomain: z.string().optional(),
         painPoints: z.array(z.string()).optional(),
         icpScore: z.number().optional(),
+        companyCountry: z.string().optional(),
       })
       .parse(request.body ?? {});
 
-    type PersonalizeResult = {
-      prospectId: string;
-      opener: string;
-      talkingPoints: string[];
-      source: string;
-    };
-
-    let result: PersonalizeResult;
-    const aiUrl = app.config.AI_SERVICE_URL;
-    if (!aiUrl) {
-      result = {
-        prospectId: body.prospectId,
-        opener: `Hi ${body.fullName ?? "there"} — reaching out about ${body.companyDomain}.`,
-        talkingPoints: body.painPoints ?? [],
-        source: "heuristic",
-      };
-    } else {
-      const res = await fetch(`${aiUrl}/v1/personalize`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...injectTraceContext() },
-        body: JSON.stringify({
-          prospect_id: body.prospectId,
-          full_name: body.fullName,
-          title: body.title,
-          company_domain: body.companyDomain,
-          pain_points: body.painPoints ?? [],
-          icp_score: body.icpScore,
-        }),
-        signal: AbortSignal.timeout(app.config.ENRICHMENT_AI_TIMEOUT_MS),
-      });
-      if (!res.ok) return reply.status(502).send({ error: "ai_service_error" });
-      const ai = (await res.json()) as Partial<PersonalizeResult>;
-      result = {
-        prospectId: body.prospectId,
-        opener: ai.opener ?? `Hi ${body.fullName ?? "there"}`,
-        talkingPoints: ai.talkingPoints ?? body.painPoints ?? [],
-        source: ai.source ?? "ai",
-      };
+    try {
+      const result = await personalizeProspect(app.db, app.config, workspaceId, body);
+      return reply.send(result);
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return reply.status(err.statusCode).send(errorResponse(err.message, err.statusCode));
+      }
+      throw err;
     }
-
-    const draftBody = [result.opener, ...result.talkingPoints].filter(Boolean).join("\n\n");
-    const subject = `Outreach to ${body.fullName ?? body.companyDomain ?? "prospect"}`;
-
-    let draftId: string | undefined;
-    if (app.db && workspaceId !== "unknown") {
-      const [draft] = await app.db
-        .insert(schema.aiDrafts)
-        .values({
-          workspaceId,
-          prospectId: body.prospectId,
-          subject,
-          body: draftBody,
-          model: result.source,
-        })
-        .returning({ id: schema.aiDrafts.id });
-      draftId = draft?.id;
-
-      const pinned = await pinAiClaim(app.db, {
-        workspaceId,
-        entityType: "prospect",
-        entityId: body.prospectId,
-        attribute: "personalize",
-        value: {
-          opener: result.opener,
-          talkingPoints: result.talkingPoints,
-          draftId,
-        },
-        source: "ai_personalize",
-        method: "enrichment_personalize",
-        versionName: "personalize",
-      });
-      return reply.send({
-        ...result,
-        draftId,
-        subject,
-        body: draftBody,
-        evidenceId: pinned.evidenceId,
-        modelVersionId: pinned.modelVersionId,
-        promptVersionId: pinned.promptVersionId,
-      });
-    }
-
-    return reply.send({ ...result, draftId, subject, body: draftBody, evidenceId: null });
   });
 }

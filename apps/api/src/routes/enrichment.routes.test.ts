@@ -263,6 +263,28 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     expect(get.json()).toMatchObject({ id: jobId, status: "completed" });
   });
 
+  it("returns 404 (not a raw DB error) for a non-uuid job id, e.g. the frontend's optimistic-update placeholder", async () => {
+    const get = await app.inject({
+      method: "GET",
+      url: "/api/v1/enrichment/jobs/optimistic-1787639887967",
+      headers: { "x-workspace-id": WORKSPACE },
+    });
+    expect(get.statusCode).toBe(404);
+    // The app-wide onSend hook (app.ts) normalizes every {error} reply into {error, message,
+    // statusCode} — this asserts the real response shape, not just this route's own .send() call.
+    expect(get.json()).toEqual({ error: "job_not_found", message: "job_not_found", statusCode: 404 });
+  });
+
+  it("returns 404 for a retry against a non-uuid job id", async () => {
+    const retry = await app.inject({
+      method: "POST",
+      url: "/api/v1/enrichment/jobs/optimistic-1787639887967/retry",
+      headers: { "x-workspace-id": WORKSPACE },
+    });
+    expect(retry.statusCode).toBe(404);
+    expect(retry.json()).toEqual({ error: "job_not_found", message: "job_not_found", statusCode: 404 });
+  });
+
   it("does not persist unverified email on activation snapshot (E4.3)", async () => {
     const { createHash } = await import("node:crypto");
 

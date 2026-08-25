@@ -96,7 +96,7 @@ describe("list routes — CRUD lifecycle", () => {
       method: "POST",
       url: "/api/v1/lists",
       headers: { ...asUser(email), "content-type": "application/json" },
-      payload: { name: "Signal Overlay List" },
+      payload: { name: "Signal Overlay List", mode: "static" },
     });
     const { id } = created.json() as { id: string };
 
