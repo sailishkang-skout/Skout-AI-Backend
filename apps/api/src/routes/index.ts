@@ -39,6 +39,8 @@ import { alertRuleRoutes } from "./alert-rule.routes.js";
 import { tamRoutes } from "./tam.routes.js";
 import { importAdapterRoutes } from "./import-adapter.routes.js";
 import { workbookRoutes } from "./workbook.routes.js";
+import { reportRoutes } from "./report.routes.js";
+import { modelPerformanceRoutes } from "./model-performance.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoutes, { prefix: "/api/v1" });
@@ -83,5 +85,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(tamRoutes);
     await v1.register(importAdapterRoutes);
     await v1.register(workbookRoutes);
+    await v1.register(reportRoutes);
+    await v1.register(modelPerformanceRoutes);
   }, { prefix: "/api/v1" });
 }

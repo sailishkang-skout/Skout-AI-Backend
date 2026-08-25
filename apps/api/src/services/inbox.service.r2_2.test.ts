@@ -415,9 +415,12 @@ describe("InboxService.resolveManualReview", () => {
 
     const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
     const update = vi.fn().mockReturnValue({ set: updateSet });
+    // resolveManualReview also logs a model-performance decision event (recordDecisionEvent).
+    const insertValues = vi.fn().mockResolvedValue(undefined);
+    const insert = vi.fn().mockReturnValue({ values: insertValues });
 
-    const db = { select: vi.fn().mockReturnValue(selectChain), update } as unknown as any;
-    return { db, updateSet, update };
+    const db = { select: vi.fn().mockReturnValue(selectChain), update, insert } as unknown as any;
+    return { db, updateSet, update, insertValues };
   }
 
   it("throws 422 when the thread isn't pending review", async () => {
@@ -427,7 +430,7 @@ describe("InboxService.resolveManualReview", () => {
   });
 
   it("clears the review flag on dismiss without applying the suggested tag", async () => {
-    const { db, updateSet } = makeResolveDb({
+    const { db, updateSet, insertValues } = makeResolveDb({
       id: "t-1",
       workspaceId: "ws-1",
       needsReview: true,
@@ -442,10 +445,15 @@ describe("InboxService.resolveManualReview", () => {
     );
     // dismiss must not touch thread.status — that's the whole point of dismissing rather than applying
     expect(updateSet).not.toHaveBeenCalledWith(expect.objectContaining({ status: expect.anything() }));
+    // 8.15 task 34 — a dismiss is logged as an "overridden" model-performance event, capturing
+    // the AI's suggestion before the update above clears it from the thread row.
+    expect(insertValues).toHaveBeenCalledWith(
+      expect.objectContaining({ surface: "reply_classification", suggestedValue: "negative", outcome: "overridden" })
+    );
   });
 
   it("applies the suggested tag action when action is apply", async () => {
-    const { db, updateSet } = makeResolveDb({
+    const { db, updateSet, insertValues } = makeResolveDb({
       id: "t-1",
       workspaceId: "ws-1",
       status: "replied",
@@ -460,6 +468,10 @@ describe("InboxService.resolveManualReview", () => {
     expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({ status: "closed" }));
     // resolveManualReview's own cleanup clears the review flag
     expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({ needsReview: false }));
+    // 8.15 task 34 — an apply is logged as an "accepted" model-performance event.
+    expect(insertValues).toHaveBeenCalledWith(
+      expect.objectContaining({ surface: "reply_classification", suggestedValue: "unsubscribe", outcome: "accepted" })
+    );
   });
 
   it("does not apply anything when there is no suggested tag, but still clears the flag", async () => {

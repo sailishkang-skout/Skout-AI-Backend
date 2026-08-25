@@ -19,6 +19,7 @@ import { startSignalAlertSweepWorker } from "./workers/signal-alert-sweep.worker
 import { startAlertDigestSweepWorker } from "./workers/alert-digest-sweep.worker.js";
 import { startRiskDecaySweepWorker } from "./workers/risk-decay-sweep.worker.js";
 import { startWorkbookRunWorker } from "./workers/workbook-run.worker.js";
+import { startReportDeliverySweepWorker } from "./workers/report-delivery-sweep.worker.js";
 
 async function main() {
   const config = loadEnv();
@@ -56,10 +57,12 @@ async function main() {
   const stopAlertDigestSweepWorker = await startAlertDigestSweepWorker(config);
   const stopRiskDecaySweepWorker = await startRiskDecaySweepWorker(config);
   const stopWorkbookRunWorker = await startWorkbookRunWorker(config);
+  const stopReportDeliverySweepWorker = await startReportDeliverySweepWorker(config);
 
   const app = await buildApp(config);
 
   const shutdown = async () => {
+    await stopReportDeliverySweepWorker();
     await stopWorkbookRunWorker();
     await stopRiskDecaySweepWorker();
     await stopAlertDigestSweepWorker();

@@ -34,6 +34,22 @@ export interface CoverageFunnel {
   deal: number;
 }
 
+export type TamDataSource = "opensearch" | "demo_corpus";
+
+export interface CountryConfidence {
+  country: string;
+  count: number;
+  /** 0-1, derived purely from sample size in this TAM's own computed segments — a small country
+   * bucket is statistically noisier than a large one, independent of anything provider-specific. */
+  confidence: number;
+  confidenceLabel: "high" | "medium" | "low";
+}
+
+export interface DataCoverageDisclosure {
+  source: TamDataSource | null;
+  note: string;
+}
+
 export interface TamDto {
   id: string;
   workspaceId: string;
@@ -42,6 +58,10 @@ export interface TamDto {
   totalCount: number;
   segmentBreakdown: SegmentBucket[];
   coverage: CoverageFunnel;
+  /** 8.2 Ask — "market-sizing confidence figure to country drill-down alongside the count." */
+  countryConfidence: CountryConfidence[];
+  /** 8.2 Ask — "disclose provider/licensing data-coverage limits inline." */
+  dataCoverageDisclosure: DataCoverageDisclosure;
   lastComputedAt: string | null;
   createdBy: string | null;
   createdAt: string;
@@ -50,15 +70,60 @@ export interface TamDto {
 
 const EMPTY_COVERAGE: CoverageFunnel = { total: 0, activated: 0, enriched: 0, contacted: 0, replied: 0, deal: 0 };
 
+/** A country bucket at or above this count is treated as a statistically solid sample. Below
+ * it, confidence scales down linearly rather than dropping off a cliff. Not user-tunable yet —
+ * no real usage data exists to calibrate against, same situation SIGNAL_STACK_* started from. */
+const HIGH_CONFIDENCE_SAMPLE_SIZE = 100;
+const MEDIUM_CONFIDENCE_SAMPLE_SIZE = 20;
+
+function confidenceLabelFor(count: number): CountryConfidence["confidenceLabel"] {
+  if (count >= HIGH_CONFIDENCE_SAMPLE_SIZE) return "high";
+  if (count >= MEDIUM_CONFIDENCE_SAMPLE_SIZE) return "medium";
+  return "low";
+}
+
+export function computeCountryConfidence(segments: SegmentBucket[]): CountryConfidence[] {
+  return segments
+    .filter((s) => s.dimension === "geo")
+    .map((s) => ({
+      country: s.value,
+      count: s.count,
+      confidence: Math.round(Math.min(1, s.count / HIGH_CONFIDENCE_SAMPLE_SIZE) * 100) / 100,
+      confidenceLabel: confidenceLabelFor(s.count),
+    }));
+}
+
+export function buildDataCoverageDisclosure(source: TamDataSource | null): DataCoverageDisclosure {
+  if (source === "opensearch") {
+    return {
+      source,
+      note:
+        "Counts are from a live query against the OpenSearch prospect index. Coverage still varies by " +
+        "geography and industry depending on the underlying data providers' licensing and reach — a low " +
+        "count for a market can mean genuinely few accounts, or thinner provider coverage there.",
+    };
+  }
+  if (source === "demo_corpus") {
+    return {
+      source,
+      note: "Counts are from the local synthetic demo corpus (no OpenSearch index configured for this workspace) — not real market data.",
+    };
+  }
+  return { source: null, note: "Data source unknown — this TAM was last computed before source tracking was added." };
+}
+
 function toDto(row: typeof tams.$inferSelect): TamDto {
+  const segmentBreakdown = (row.segmentBreakdown as SegmentBucket[]) ?? [];
   return {
     id: row.id,
     workspaceId: row.workspaceId,
     name: row.name,
     filterConfig: (row.filterConfig as TamFilterConfig | null) ?? null,
     totalCount: row.totalCount,
-    segmentBreakdown: (row.segmentBreakdown as SegmentBucket[]) ?? [],
+    segmentBreakdown,
     coverage: (row.coverage as CoverageFunnel) ?? EMPTY_COVERAGE,
+    countryConfidence: computeCountryConfidence(segmentBreakdown),
+    dataCoverageDisclosure: buildDataCoverageDisclosure((row.dataSource as TamDataSource | null) ?? null),
     lastComputedAt: row.lastComputedAt ? row.lastComputedAt.toISOString() : null,
     createdBy: row.createdBy,
     createdAt: row.createdAt.toISOString(),
@@ -100,11 +165,12 @@ function demoCorpus(env: Env): ProspectDocument[] {
   return cachedDemoCorpus;
 }
 
-async function runAggregate(env: Env, filters: SearchFilters) {
+async function runAggregate(env: Env, filters: SearchFilters): Promise<{ total: number; segments: SegmentBucket[]; source: TamDataSource }> {
   const cfg = osConfig(env);
-  if (!cfg) return aggregateDemoCorpus(demoCorpus(env), filters);
+  if (!cfg) return { ...aggregateDemoCorpus(demoCorpus(env), filters), source: "demo_corpus" };
   try {
-    return await aggregateProspects(cfg, filters);
+    const result = await aggregateProspects(cfg, filters);
+    return { ...result, source: "opensearch" };
   } catch (err) {
     // aggregateProspects/osFetch throws a plain Error on any non-2xx OpenSearch response
     // (missing index, bad field mapping, auth) — left as-is it becomes an opaque 500 with no
@@ -205,7 +271,7 @@ export async function createTam(
   if (!input.name?.trim()) throw new HttpError("name is required", 422);
 
   const effectiveFilter = input.filterConfig ?? icpToFilterConfig(await getWorkspaceIcp(db, workspaceId));
-  const { total, segments } = await runAggregate(env, toSearchFilters(effectiveFilter));
+  const { total, segments, source } = await runAggregate(env, toSearchFilters(effectiveFilter));
   const coverage = await computeCoverage(db, workspaceId, effectiveFilter, total);
 
   const [row] = await db
@@ -217,6 +283,7 @@ export async function createTam(
       totalCount: total,
       segmentBreakdown: segments,
       coverage,
+      dataSource: source,
       lastComputedAt: new Date(),
       createdBy: createdBy ?? null,
     })
@@ -230,12 +297,19 @@ export async function recomputeTam(db: Db, env: Env, workspaceId: string, id: st
   if (!existing) throw new HttpError("tam_not_found", 404);
 
   const effectiveFilter = existing.filterConfig ?? icpToFilterConfig(await getWorkspaceIcp(db, workspaceId));
-  const { total, segments } = await runAggregate(env, toSearchFilters(effectiveFilter));
+  const { total, segments, source } = await runAggregate(env, toSearchFilters(effectiveFilter));
   const coverage = await computeCoverage(db, workspaceId, effectiveFilter, total);
 
   const [row] = await db
     .update(tams)
-    .set({ totalCount: total, segmentBreakdown: segments, coverage, lastComputedAt: new Date(), updatedAt: new Date() })
+    .set({
+      totalCount: total,
+      segmentBreakdown: segments,
+      coverage,
+      dataSource: source,
+      lastComputedAt: new Date(),
+      updatedAt: new Date(),
+    })
     .where(and(eq(tams.id, id), eq(tams.workspaceId, workspaceId)))
     .returning();
   return toDto(row!);

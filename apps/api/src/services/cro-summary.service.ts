@@ -109,6 +109,9 @@ export interface CroRollup {
   };
   activationRate: number;
   responseRate: number;
+  /** Where the TAM total came from — surfaced in the board-pack export's data-scope disclosure
+   * so a live-index number is never presented next to a demo-corpus number without saying so. */
+  tamSource: "opensearch" | "demo_corpus";
   topAtRiskAccounts: Array<{
     companyId: string;
     name: string;
@@ -149,11 +152,13 @@ export async function computeCroRollup(db: Db, config: Env, workspaceId: string)
   ]);
 
   let tamTotal = 0;
+  let tamSource: CroRollup["tamSource"] = "demo_corpus";
   const osCfg = openSearchConfigFromEnv(config);
   if (osCfg) {
     try {
       const res = await searchProspects(osCfg, {}, 1, 1);
       tamTotal = res.total;
+      tamSource = "opensearch";
     } catch {
       tamTotal = 0;
     }
@@ -231,6 +236,7 @@ export async function computeCroRollup(db: Db, config: Env, workspaceId: string)
     tamCoverage: { total: tamTotal, activated, enriched, contacted, replied, dealCreated },
     activationRate: tamTotal > 0 ? activated / tamTotal : 0,
     responseRate: contacted > 0 ? replied / contacted : 0,
+    tamSource,
     topAtRiskAccounts,
     pipelineValue,
     currency,

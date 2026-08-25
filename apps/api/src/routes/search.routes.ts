@@ -6,13 +6,27 @@ import {
   buildSearchCacheKey,
   createSearchCacheService,
 } from "../services/search-cache.service.js";
+import { mergeTranslatedFilters, translateNaturalLanguageQuery } from "../services/nl-search.service.js";
 import { apiError, HttpError } from "../utils/http.js";
 
 export async function searchRoutes(app: FastifyInstance) {
   app.post("/search/prospects", async (request, reply) => {
     const workspaceId = request.workspaceId ?? "unknown";
-    const body = searchProspectsRequestSchema.parse(request.body ?? {});
-    app.log.info({ parsedFilters: body.filters, query: body.query, workspaceId }, "search parsed");
+    let body = searchProspectsRequestSchema.parse(request.body ?? {});
+
+    // 8.2 — one query model: free text is translated into the same structured SearchFilters
+    // shape, merged under any filters the caller already set explicitly, rather than running
+    // as a second, separate search path.
+    let nlMethod: "llm" | "heuristic" | null = null;
+    if (body.query && body.query.trim()) {
+      const { filters: translated, method } = await translateNaturalLanguageQuery(body.query, {
+        openrouterApiKey: app.config.OPENROUTER_API_KEY,
+      });
+      nlMethod = method;
+      body = { ...body, filters: mergeTranslatedFilters(body.filters ?? {}, translated) };
+    }
+
+    app.log.info({ parsedFilters: body.filters, query: body.query, nlMethod, workspaceId }, "search parsed");
 
     const cache = createSearchCacheService(app.config);
     const cacheKey = buildSearchCacheKey(workspaceId, body);

@@ -18,6 +18,35 @@ import {
 const log = createLogger("smart-list.service");
 const { smartLists } = schema;
 
+function humanizeFilterKey(key: string): string {
+  return key.replace(/([A-Z])/g, " $1").toLowerCase().trim();
+}
+
+/**
+ * 8.2 Ask — "every dynamic-list membership change should show which signal or filter change
+ * moved a record in or out". A smart list's membership is a live re-run of its saved filters
+ * (signal-based criteria like `contactSignals`/`companySignals`/`signal` included), so the
+ * honest, non-fabricated explanation for *any* record's move is exactly this: the list's active
+ * filter criteria at refresh time. Reused for both added ("now matches") and dropped ("no longer
+ * matches") entries.
+ */
+export function summarizeSearchFilters(filters: SearchFilters): string {
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(filters)) {
+    if (value === undefined || value === null || value === "") continue;
+    const label = humanizeFilterKey(key);
+    if (Array.isArray(value)) {
+      if (value.length === 0) continue;
+      parts.push(`${label}: ${value.join(", ")}`);
+    } else if (typeof value === "boolean") {
+      if (value) parts.push(label);
+    } else {
+      parts.push(`${label}: ${value}`);
+    }
+  }
+  return parts.length > 0 ? parts.join(" · ") : "no filters set (matches everything)";
+}
+
 export function osConfigFromEnv(config: Env): OpenSearchConfig | null {
   if (!config.OPENSEARCH_URL) return null;
   return {
@@ -247,6 +276,8 @@ export interface SmartListProspectDiffEntry {
   fullName?: string;
   title?: string;
   companyDomain?: string;
+  /** Which filter criteria (including signal-based ones) moved this record in or out. */
+  matchReason?: string;
 }
 
 export interface SmartListRefreshDetail extends SmartListRefreshSummary {

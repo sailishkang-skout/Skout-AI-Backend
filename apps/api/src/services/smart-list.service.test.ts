@@ -4,6 +4,7 @@ import {
   getSmartListRefresh,
   listSmartListRefreshes,
   revertSmartListRefresh,
+  summarizeSearchFilters,
   updateSmartListRefreshSchedule,
 } from "./smart-list.service.js";
 import { HttpError } from "../utils/http.js";
@@ -50,6 +51,34 @@ const EXISTING_LIST_ROW = {
   createdAt: new Date("2026-01-01T00:00:00Z"),
   updatedAt: new Date("2026-01-01T00:00:00Z"),
 };
+
+describe("summarizeSearchFilters", () => {
+  it("renders active filters as a readable, labeled list", () => {
+    expect(summarizeSearchFilters({ industry: "SaaS", minEmployees: 50 })).toBe(
+      "industry: SaaS · min employees: 50"
+    );
+  });
+
+  it("renders array filters (including signal-based ones) joined by comma", () => {
+    expect(summarizeSearchFilters({ contactSignals: ["recent_funding", "tech_adoption"] })).toBe(
+      "contact signals: recent_funding, tech_adoption"
+    );
+  });
+
+  it("renders a true boolean filter as its label alone, and skips a false one", () => {
+    expect(summarizeSearchFilters({ currentlyHiring: true, excludeDuplicates: false })).toBe("currently hiring");
+  });
+
+  it("skips undefined, null, empty-string, and empty-array values", () => {
+    expect(summarizeSearchFilters({ industry: undefined, companyName: "", contactSignals: [] })).toBe(
+      "no filters set (matches everything)"
+    );
+  });
+
+  it("returns the empty-filters message for a list with no criteria at all", () => {
+    expect(summarizeSearchFilters({})).toBe("no filters set (matches everything)");
+  });
+});
 
 describe("updateSmartListRefreshSchedule", () => {
   it("returns null when the list doesn't belong to the workspace", async () => {

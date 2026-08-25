@@ -255,6 +255,9 @@ const envSchema = z
     ALERT_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(5),
     /** How often the digest worker batches pending digest-preference notifications into one email. */
     ALERT_DIGEST_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(1440),
+    // --- 8.15 scheduled report delivery. ---
+    /** How often the delivery-sweep worker checks for report_schedules due to send. */
+    REPORT_DELIVERY_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(60),
     // --- R18.1 engagement-decay risk flag. ---
     /** How often the risk-decay sweep re-evaluates activated prospects. */
     RISK_DECAY_SWEEP_INTERVAL_HOURS: z.coerce.number().int().positive().default(24),
