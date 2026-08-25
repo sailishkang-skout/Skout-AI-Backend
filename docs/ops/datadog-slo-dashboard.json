@@ -1,6 +1,7 @@
 {
   "title": "Skout API SLO — starter",
   "description": "Import into Datadog Dashboards. Pair with scrape of GET /api/v1/metrics or OTLP spans. Targets: docs/slo-targets.md",
+  "layout_type": "ordered",
   "widgets": [
     {
       "definition": {

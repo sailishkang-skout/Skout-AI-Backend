@@ -16,13 +16,14 @@ pnpm --filter @skout/db backfill-rbac
 # Confirm: SELECT count(*) FROM workspace_member_roles;  -- must be > 0
 ```
 
-Image path used by the ECS one-off: `node /app/db/dist/backfill-rbac.js`.
+ECS one-off command: `node /app/node_modules/@skout/db/dist/backfill-rbac.js`  
+(Requires an API image that includes `backfill-rbac.js` — rebuild/push if the file is missing.)
 
 ## Enable per env (approve each)
 | Env | Flag | Status |
 |-----|------|--------|
 | local | `RBAC_ENFORCEMENT_ENABLED=true` | ON (this machine) |
-| SkoutDev | same after backfill on that DB | **Complete 2026-08-25** — backfill OK (14 grants); flag live on API+CRM |
-| prod | same | **Approved 2026-08-25** — CDK sets flag; run backfill on first SkoutProd deploy |
+| SkoutDev | same after backfill on that DB | **ON 2026-08-25** — backfill 14 grants / 14 workspaces; live on API TD `:171` + CRM `:86` |
+| prod | same | Awaiting Leadership approve + prod backfill (#4) |
 
 Startup refuses enforce if grants are empty (`assertRbacBackfillReady`).

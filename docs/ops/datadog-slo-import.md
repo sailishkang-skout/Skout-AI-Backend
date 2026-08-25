@@ -18,15 +18,13 @@ DD_TRACE_AGENT_PORT=8126
 - **On-call owner (SkoutDev): Neeraj** (named 2026-08-25)
 
 ### Import
-Datadog dashboard create API requires **both** `DD-API-KEY` and `DD-APPLICATION-KEY`.  
-`SkoutDev/datadog` currently has `DD_API_KEY` + `DD_SITE` only (API-only → 401).
+Datadog dashboard create API requires **both** `DD-API-KEY` and `DD-APPLICATION-KEY` (`DD_APP_KEY`).
 
-**Option A (UI — preferred until APP key exists):**  
-Datadog → Dashboards → New Dashboard → Import JSON from `docs/ops/datadog-slo-dashboard.json`.
+**SkoutDev status (2026-08-25):** imported — [Skout API SLO — starter](https://app.us5.datadoghq.com/dashboard/tr2-pbk-y85) (`tr2-pbk-y85`). On-call: Neeraj.
 
-**Option B (API):** add `DD_APP_KEY` to `SkoutDev/datadog`, then:
+**Re-import / other envs:**
 ```bash
-# example — do not print keys
+# example — do not print keys; JSON must include layout_type
 curl -X POST "https://api.us5.datadoghq.com/api/v1/dashboard" \
   -H "DD-API-KEY: $DD_API_KEY" \
   -H "DD-APPLICATION-KEY: $DD_APP_KEY" \
