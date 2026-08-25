@@ -91,6 +91,24 @@ export interface CreateVersionInput {
   createdBy: string;
 }
 
+export interface ResolvedBriefEntry {
+  fieldCategory: RegionalBriefFieldCategory;
+  content: { summary: string; details: string[] };
+  resolvedFromLayer: RegionalBriefLayerType;
+  source: string;
+  confidence: number;
+  effectiveDate: string;
+  evidence: string;
+  isStale: boolean;
+}
+
+export interface ResolvedBrief {
+  country: string;
+  industry: string | null;
+  workspaceId: string | null;
+  entries: ResolvedBriefEntry[];
+}
+
 export function createRegionalBriefService(db: Db) {
   async function resolveRegionIdCountryId(input: CreateSlotInput) {
     let countryId: string | null = null;
@@ -219,6 +237,61 @@ export function createRegionalBriefService(db: Db) {
         .returning();
       log.info("regional brief version rejected", { versionId, reason });
       return updated!;
+    },
+
+    async resolveRegionalBrief(params: { countryIso: string; industry?: string; workspaceId?: string }): Promise<ResolvedBrief> {
+      const [country] = await db.select().from(countries).where(eq(countries.isoCode, params.countryIso));
+      if (!country) throw new HttpError(`Unknown country ISO code: ${params.countryIso}`, 422);
+
+      const layerOrder: RegionalBriefLayerType[] = ["global", "region", "country", "industry", "tenant", "outcome_learning"];
+      const entries: ResolvedBriefEntry[] = [];
+
+      for (const category of REGIONAL_BRIEF_FIELD_CATEGORIES) {
+        let resolvedEntry: ResolvedBriefEntry | null = null;
+
+        for (const layerType of layerOrder) {
+          if (layerType === "industry" && !params.industry) continue;
+          if ((layerType === "tenant" || layerType === "outcome_learning") && !params.workspaceId) continue;
+
+          const scopeKey = buildScopeKey({
+            layerType,
+            regionId: country.regionId,
+            countryId: country.id,
+            industry: params.industry ?? null,
+            workspaceId: params.workspaceId ?? null,
+            fieldCategory: category,
+          });
+
+          const [slot] = await db.select().from(regionalBriefSlots).where(eq(regionalBriefSlots.scopeKey, scopeKey));
+          if (!slot?.currentVersionId) continue;
+
+          const [version] = await db
+            .select()
+            .from(regionalBriefVersions)
+            .where(eq(regionalBriefVersions.id, slot.currentVersionId));
+          if (!version) continue;
+
+          resolvedEntry = {
+            fieldCategory: category,
+            content: version.content,
+            resolvedFromLayer: layerType,
+            source: version.source,
+            confidence: version.confidence,
+            effectiveDate: version.effectiveDate.toISOString(),
+            evidence: version.evidence,
+            isStale: version.expiryDate ? version.expiryDate.getTime() < Date.now() : false,
+          };
+        }
+
+        if (resolvedEntry) entries.push(resolvedEntry);
+      }
+
+      return {
+        country: params.countryIso,
+        industry: params.industry ?? null,
+        workspaceId: params.workspaceId ?? null,
+        entries,
+      };
     },
   };
 }

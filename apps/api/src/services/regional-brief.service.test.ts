@@ -112,3 +112,57 @@ describe("approveVersion / rejectVersion", () => {
     expect(reloadedSlot!.currentVersionId).toBeNull();
   });
 });
+
+describe("resolveRegionalBrief", () => {
+  it("prefers the most specific approved layer per field category, and falls back to a less specific layer when the more specific one is missing", async () => {
+    const config = loadEnv();
+    const { db } = createDb(config.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/skout");
+    const svc = createRegionalBriefService(db);
+    const [reviewer] = await db.insert(schema.users).values({ email: `res-rev-${Date.now()}@test.com`, fullName: "R" }).returning();
+    const [author] = await db.insert(schema.users).values({ email: `res-auth-${Date.now()}@test.com`, fullName: "A" }).returning();
+
+    // Seed a country row for this test if one doesn't already exist (US should exist from Task 1's seed).
+    const globalSlot = await svc.findOrCreateSlot({ layerType: "global", fieldCategory: "market_economics" });
+    const globalV = await svc.createDraftVersion(globalSlot.id, {
+      content: { summary: "global default", details: [] },
+      source: "test", effectiveDate: new Date(), confidence: 60, evidence: "test", createdBy: author!.id,
+    });
+    await svc.approveVersion(globalV.id, reviewer!.id);
+
+    const countrySlot = await svc.findOrCreateSlot({ layerType: "country", countryIso: "US", fieldCategory: "market_economics" });
+    const countryV = await svc.createDraftVersion(countrySlot.id, {
+      content: { summary: "US-specific", details: [] },
+      source: "test", effectiveDate: new Date(), confidence: 70, evidence: "test", createdBy: author!.id,
+    });
+    await svc.approveVersion(countryV.id, reviewer!.id);
+
+    const resolved = await svc.resolveRegionalBrief({ countryIso: "US" });
+    const marketEconomics = resolved.entries.find((e) => e.fieldCategory === "market_economics");
+    expect(marketEconomics?.content.summary).toBe("US-specific");
+    expect(marketEconomics?.resolvedFromLayer).toBe("country");
+
+    // channel_policy has no country-level entry in this test — should fall back to global if present, or be absent.
+    const channelPolicy = resolved.entries.find((e) => e.fieldCategory === "channel_policy");
+    expect(channelPolicy).toBeUndefined();
+  });
+
+  it("flags an expired version as stale but still returns it", async () => {
+    const config = loadEnv();
+    const { db } = createDb(config.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/skout");
+    const svc = createRegionalBriefService(db);
+    const [reviewer] = await db.insert(schema.users).values({ email: `stale-rev-${Date.now()}@test.com`, fullName: "R" }).returning();
+    const [author] = await db.insert(schema.users).values({ email: `stale-auth-${Date.now()}@test.com`, fullName: "A" }).returning();
+
+    const slot = await svc.findOrCreateSlot({ layerType: "global", fieldCategory: "data_compliance" });
+    const v = await svc.createDraftVersion(slot.id, {
+      content: { summary: "stale content", details: [] },
+      source: "test", effectiveDate: new Date("2020-01-01"), confidence: 60, evidence: "test",
+      expiryDate: new Date("2021-01-01"), createdBy: author!.id,
+    });
+    await svc.approveVersion(v.id, reviewer!.id);
+
+    const resolved = await svc.resolveRegionalBrief({ countryIso: "US" });
+    const entry = resolved.entries.find((e) => e.fieldCategory === "data_compliance");
+    expect(entry?.isStale).toBe(true);
+  });
+});
