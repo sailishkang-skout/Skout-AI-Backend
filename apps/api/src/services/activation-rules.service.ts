@@ -10,6 +10,8 @@ import { snapshotFromCorpusDoc } from "../utils/verified-email.js";
 import { buildEnrichmentService, type ProspectSnapshot } from "./enrichment/index.js";
 import { buildListService } from "./list.service.js";
 import { buildSequenceService } from "./sequence.service.js";
+import { personalizeProspect } from "./personalize.service.js";
+import { listSignalsForEntity } from "./signal.service.js";
 
 const { activationRules, activationRuleRuns, prospectActivations } = schema;
 const log = createLogger("activation-rules.service");
@@ -307,6 +309,38 @@ async function executeRuleAction(
       const seqSvc = buildSequenceService(db);
       if (!seqSvc) throw new HttpError("sequence_service_unavailable", 503);
       await seqSvc.enroll(rule.targetId, workspaceId, { prospectIds: [prospectId] });
+
+      // R10.3 — a signal-triggered enrollment gets an AI draft citing the signal's own recorded
+      // reason (evaluated evidence, not raw signal strength). Created pending_review, so the
+      // existing HITL gate in sequence-enrollment.worker.ts still holds the send until a human
+      // approves it — draft generation never bypasses that policy gate. Best-effort: a failure
+      // here doesn't undo the enrollment or fail the rule run, just falls back to the sequence's
+      // own template.
+      if (rule.signalType) {
+        try {
+          const signalRecords = await listSignalsForEntity(db, prospectId, {
+            entityType: "prospect",
+            signalType: rule.signalType,
+            limit: 1,
+          });
+          const reason = signalRecords[0]?.value?.reason;
+          const osCfg = openSearchConfigFromEnv(config);
+          const snapshot = await buildSnapshotForActivate(db, osCfg, workspaceId, prospectId);
+          await personalizeProspect(db, config, workspaceId, {
+            prospectId,
+            fullName: snapshot.fullName,
+            title: snapshot.title,
+            companyDomain: snapshot.companyDomain,
+            painPoints: typeof reason === "string" ? [reason] : [],
+          });
+        } catch (err) {
+          log.error("signal-triggered draft generation failed", err, {
+            workspaceId,
+            prospectId,
+            signalType: rule.signalType,
+          });
+        }
+      }
       return;
     }
   }

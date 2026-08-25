@@ -1,10 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { schema } from "@skout/db";
 import { searchFiltersSchema } from "@skout/shared";
 import { buildEnrichmentService, InsufficientCreditsError } from "../services/enrichment/index.js";
 import { getWorkspaceIcp } from "../services/icp.service.js";
 import { getAsyncJob } from "../services/async-job.service.js";
+import { personalizeProspect } from "../services/personalize.service.js";
 import { HttpError, errorResponse } from "../utils/http.js";
 
 const jobIdSchema = z.string().uuid();
@@ -161,64 +161,14 @@ export async function enrichmentRoutes(app: FastifyInstance) {
       })
       .parse(request.body ?? {});
 
-    type PersonalizeResult = {
-      prospectId: string;
-      opener: string;
-      talkingPoints: string[];
-      source: string;
-    };
-
-    let result: PersonalizeResult;
-    const aiUrl = app.config.AI_SERVICE_URL;
-    if (!aiUrl) {
-      result = {
-        prospectId: body.prospectId,
-        opener: `Hi ${body.fullName ?? "there"} — reaching out about ${body.companyDomain}.`,
-        talkingPoints: body.painPoints ?? [],
-        source: "heuristic",
-      };
-    } else {
-      const res = await fetch(`${aiUrl}/v1/personalize`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prospect_id: body.prospectId,
-          full_name: body.fullName,
-          title: body.title,
-          company_domain: body.companyDomain,
-          pain_points: body.painPoints ?? [],
-          icp_score: body.icpScore,
-        }),
-        signal: AbortSignal.timeout(app.config.ENRICHMENT_AI_TIMEOUT_MS),
-      });
-      if (!res.ok) return reply.status(502).send({ error: "ai_service_error" });
-      const ai = (await res.json()) as Partial<PersonalizeResult>;
-      result = {
-        prospectId: body.prospectId,
-        opener: ai.opener ?? `Hi ${body.fullName ?? "there"}`,
-        talkingPoints: ai.talkingPoints ?? body.painPoints ?? [],
-        source: ai.source ?? "ai",
-      };
+    try {
+      const result = await personalizeProspect(app.db, app.config, workspaceId, body);
+      return reply.send(result);
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return reply.status(err.statusCode).send(errorResponse(err.message, err.statusCode));
+      }
+      throw err;
     }
-
-    const draftBody = [result.opener, ...result.talkingPoints].filter(Boolean).join("\n\n");
-    const subject = `Outreach to ${body.fullName ?? body.companyDomain ?? "prospect"}`;
-
-    let draftId: string | undefined;
-    if (app.db && workspaceId !== "unknown") {
-      const [draft] = await app.db
-        .insert(schema.aiDrafts)
-        .values({
-          workspaceId,
-          prospectId: body.prospectId,
-          subject,
-          body: draftBody,
-          model: result.source,
-        })
-        .returning({ id: schema.aiDrafts.id });
-      draftId = draft?.id;
-    }
-
-    return reply.send({ ...result, draftId, subject, body: draftBody });
   });
 }
