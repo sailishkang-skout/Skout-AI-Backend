@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { schema } from "@skout/db";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
 
@@ -18,6 +19,30 @@ function asUser(email: string) {
 
 function json(email: string) {
   return { ...asUser(email), "content-type": "application/json" };
+}
+
+// R8.1's outbound-send gate (isReadyForOutboundSend) requires a configured ICP + a connected
+// mailbox before /enroll will accept anything — seed both for the stub workspace this email
+// resolves to so these pre-existing enroll tests keep exercising enroll's own logic rather
+// than tripping the gate.
+async function readyForOutboundSend(
+  app: Awaited<ReturnType<typeof buildTestApp>>,
+  email: string
+): Promise<void> {
+  await app.inject({
+    method: "PUT",
+    url: "/api/v1/workspace/icp",
+    headers: json(email),
+    payload: { industries: ["SaaS"], countries: ["US"], seniorities: ["vp"], minEmployees: 10, maxEmployees: 500 },
+  });
+  if (!app.db) return;
+  const current = await app.inject({ method: "GET", url: "/api/v1/workspaces/current", headers: json(email) });
+  if (current.statusCode !== 200) return;
+  const { data } = current.json() as { data: { id: string } };
+  await app.db
+    .insert(schema.inboxes)
+    .values({ workspaceId: data.id, emailAddress: `${email}-inbox@example.com`, provider: "smtp", status: "active" })
+    .onConflictDoNothing();
 }
 
 // ---------------------------------------------------------------------------
@@ -902,6 +927,7 @@ describe("sequence routes — enroll lifecycle", () => {
     app: Awaited<ReturnType<typeof buildTestApp>>,
     email: string
   ): Promise<{ sequenceId: string; stepId: string } | null> {
+    await readyForOutboundSend(app, email);
     const created = await app.inject({
       method: "POST",
       url: "/api/v1/sequences",
@@ -1019,6 +1045,7 @@ describe("sequence routes — enroll lifecycle", () => {
   it("returns 422 when enrolling into a draft (non-active) sequence", async () => {
     const app = await buildTestApp();
     const email = "enroll-draft@test.com";
+    await readyForOutboundSend(app, email);
 
     const created = await app.inject({
       method: "POST",
@@ -1044,6 +1071,7 @@ describe("sequence routes — enroll lifecycle", () => {
   it("returns 422 when enrolling into an active sequence with no steps", async () => {
     const app = await buildTestApp();
     const email = "enroll-nostep@test.com";
+    await readyForOutboundSend(app, email);
 
     const created = await app.inject({
       method: "POST",
@@ -1076,10 +1104,12 @@ describe("sequence routes — enroll lifecycle", () => {
 
   it("returns 404 when enrolling into a non-existent sequence", async () => {
     const app = await buildTestApp();
+    const email = "enroll-404@test.com";
+    await readyForOutboundSend(app, email);
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/sequences/00000000-0000-4000-8000-000000000099/enroll",
-      headers: json("enroll-404@test.com"),
+      headers: json(email),
       payload: { prospectIds: ["prospect-ghost"] },
     });
     if (res.statusCode === 503) { await app.close(); return; }
@@ -1094,6 +1124,7 @@ describe("sequence routes — enroll lifecycle", () => {
 
     const setup = await buildActiveSequenceWithStep(app, ownerEmail);
     if (!setup) { await app.close(); return; }
+    await readyForOutboundSend(app, otherEmail);
 
     const res = await app.inject({
       method: "POST",

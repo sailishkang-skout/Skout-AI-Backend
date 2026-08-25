@@ -558,9 +558,12 @@ export async function sequenceRoutes(app: FastifyInstance) {
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
 
+    const body = enrollSequenceSchema.parse(request.body ?? {});
+
     // R8.1 — checklist completion gates the one genuinely "live" action here: sending real
     // outbound email. Needs a configured ICP and a connected sending mailbox; list/prospect
-    // activity are tracked on the checklist but don't block enrollment itself.
+    // activity are tracked on the checklist but don't block enrollment itself. Checked after
+    // body validation so malformed requests fail with 400, not this precondition's 412.
     if (!(await isReadyForOutboundSend(app.db, workspaceId))) {
       return reply.status(412).send({
         error: "setup_incomplete",
@@ -569,8 +572,6 @@ export async function sequenceRoutes(app: FastifyInstance) {
         checklistUrl: "/workspaces/current/setup-checklist",
       });
     }
-
-    const body = enrollSequenceSchema.parse(request.body ?? {});
 
     // §5.1 / §16 — fail-closed consent gate (CONSENT_ENFORCEMENT_ENABLED)
     if (app.config.CONSENT_ENFORCEMENT_ENABLED && app.db && body.prospectIds?.length) {
