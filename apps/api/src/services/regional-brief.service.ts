@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
@@ -148,14 +148,9 @@ export function createRegionalBriefService(db: Db) {
         .select({ version: regionalBriefVersions.version })
         .from(regionalBriefVersions)
         .where(eq(regionalBriefVersions.slotId, slotId))
-        .orderBy(regionalBriefVersions.version)
+        .orderBy(desc(regionalBriefVersions.version))
         .limit(1);
-      const existingMax = await db
-        .select({ version: regionalBriefVersions.version })
-        .from(regionalBriefVersions)
-        .where(eq(regionalBriefVersions.slotId, slotId));
-      const nextVersion = existingMax.reduce((max, r) => Math.max(max, r.version), 0) + 1;
-      void latest;
+      const nextVersion = (latest?.version ?? 0) + 1;
 
       const [created] = await db
         .insert(regionalBriefVersions)
