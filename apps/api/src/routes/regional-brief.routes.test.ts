@@ -47,6 +47,74 @@ describe("regional-brief routes", () => {
     await app.close();
   });
 
+  it("POST /regional-brief/slots/:id/versions is rejected for a non-admin drafting a version on an existing global-layer slot", async () => {
+    const app = await buildTestApp(["admin3@test.com"]);
+
+    const createSlotRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/regional-brief/slots",
+      headers: json("admin3@test.com"),
+      payload: { layerType: "global", fieldCategory: "channel_policy" },
+    });
+    if (createSlotRes.statusCode === 503) { await app.close(); return; }
+    expect(createSlotRes.statusCode).toBe(201);
+    const slot = createSlotRes.json() as { id: string };
+
+    const createVersionRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/regional-brief/slots/${slot.id}/versions`,
+      headers: json("not-admin@test.com"),
+      payload: {
+        content: { summary: "test summary", details: ["detail 1"] },
+        source: "test source",
+        effectiveDate: new Date().toISOString(),
+        confidence: 75,
+        evidence: "test evidence",
+      },
+    });
+    expect(createVersionRes.statusCode).toBe(403);
+
+    await app.close();
+  });
+
+  it("POST /regional-brief/versions/:id/approve is rejected for a non-admin approving a version on a global-layer slot", async () => {
+    const app = await buildTestApp(["admin4@test.com"]);
+
+    const createSlotRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/regional-brief/slots",
+      headers: json("admin4@test.com"),
+      payload: { layerType: "global", fieldCategory: "telecom_requirements" },
+    });
+    if (createSlotRes.statusCode === 503) { await app.close(); return; }
+    expect(createSlotRes.statusCode).toBe(201);
+    const slot = createSlotRes.json() as { id: string };
+
+    const createVersionRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/regional-brief/slots/${slot.id}/versions`,
+      headers: json("admin4@test.com"),
+      payload: {
+        content: { summary: "test summary", details: ["detail 1"] },
+        source: "test source",
+        effectiveDate: new Date().toISOString(),
+        confidence: 75,
+        evidence: "test evidence",
+      },
+    });
+    expect(createVersionRes.statusCode).toBe(201);
+    const version = createVersionRes.json() as { id: string };
+
+    const approveRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/regional-brief/versions/${version.id}/approve`,
+      headers: json("not-admin@test.com"),
+    });
+    expect(approveRes.statusCode).toBe(403);
+
+    await app.close();
+  });
+
   it("full create -> approve -> resolve flow for an admin", async () => {
     const app = await buildTestApp(["admin2@test.com"]);
 
