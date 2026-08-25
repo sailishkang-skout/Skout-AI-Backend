@@ -110,6 +110,7 @@ if (!config.deployToAws) {
     bucket: data.storage.emailIntelBucket,
     repository: registry.emailIntelRepository,
     apiService: compute.apiService,
+    secrets: data.secrets,
     imageTag,
     bootstrapMode: emailIntelBootstrap,
     description: `Skout AI ${config.name} Email Intelligence service (api + worker)`,

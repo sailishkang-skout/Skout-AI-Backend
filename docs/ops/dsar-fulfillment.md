@@ -22,5 +22,6 @@ curl -X POST "$API/api/v1/dsar" -H "Authorization: Bearer $TOKEN" \
 ## SLA (current product decision)
 **30 calendar days** from intake (`slaDueAt`). Legal may shorten via contract later.
 
-## Interim owner
-Neeraj (Lead) until Legal names a DPO.
+## Process owner (Leadership go-ahead 2026-08-25)
+**Neeraj (Lead)** — privacy / DSAR fulfillment owner; SLA = **30 calendar days**.  
+Hand off to hired Legal / DPO when available; until then Eng Lead owns intake → fulfill / escalate.

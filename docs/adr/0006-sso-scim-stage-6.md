@@ -20,7 +20,7 @@ this monorepo.
    named customer requirement (escalate as a new ADR).
 
 ## Checklist (ops / platform)
-- [ ] Clerk production instance on plan that includes SSO + SCIM
+- [x] Clerk production instance on plan that includes SSO + SCIM — confirmed 2026-08-25
 - [ ] Customer IdP metadata exchanged
 - [ ] Map IdP groups → Skout system roles (`owner`/`admin`/`member`)
 - [ ] Run `backfill-rbac` after first SCIM sync

@@ -28,6 +28,8 @@ export class SkoutAppSecrets extends Construct {
   readonly sentry: secretsmanager.ISecret;
   readonly posthog: secretsmanager.ISecret;
   readonly appConfig: secretsmanager.ISecret;
+  /** Email-Intel → canonical evidence ledger forwarder (§5.3). */
+  readonly emailIntelForwarder: secretsmanager.ISecret;
   readonly datadog: secretsmanager.ISecret;
   readonly razorpay: secretsmanager.ISecret;
   /** SES SMTP for transactional mail (invites, OTP). Managed outside CDK after first create. */
@@ -116,6 +118,16 @@ export class SkoutAppSecrets extends Construct {
     this.appConfig = createPlaceholder("AppConfig", "app-config", {
       INTEGRATION_ENCRYPTION_KEY: "replace-me",
     });
+    /**
+     * Email-Intel → Skout canonical Evidence Ledger forwarder (§5.3).
+     * Created/rotated by infra/scripts/setup-email-intel-forwarder.sh — import by name
+     * so CDK does not overwrite live TOKEN/URL values.
+     */
+    this.emailIntelForwarder = secretsmanager.Secret.fromSecretNameV2(
+      this,
+      "EmailIntelForwarder",
+      `${prefix}/email-intel-forwarder`
+    );
     this.datadog = createPlaceholder("Datadog", "datadog", {
       DD_API_KEY: "replace-me",
       DD_SITE: "us5.datadoghq.com",

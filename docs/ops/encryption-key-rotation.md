@@ -24,3 +24,12 @@ Do **not** rotate production without an approved maintenance window.
 Rotate every **90 days** (and immediately on suspected exposure).  
 Program baseline 2026-08-25 → next target **2026-11-23** unless prod rotated earlier.  
 Track the window in the ops calendar; use the cutover steps above.
+
+## Approved prod window (Leadership go-ahead 2026-08-25)
+| Field | Value |
+|-------|--------|
+| Target date | **2026-11-23** |
+| Env | Production (Integration encryption) |
+| Approver | Leadership / Ops |
+| Executor | Ops / SRE (after new key generated in secrets store) |
+| Status | **Window approved**; execute cutover steps above on that date (do not rotate early without a new approval) |

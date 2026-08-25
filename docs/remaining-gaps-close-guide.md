@@ -3,16 +3,16 @@
 | # | Item | Decision applied | Status |
 |---|------|------------------|--------|
 | 1 | §2 Competitive | Why documented; due **2026-09-09**; owner = logged-in workspace via `POST /competitive/win-loss/assign` | **Process closed**; deals still need CRM paste |
-| 4 | SSO/SCIM | Stage-6 via Clerk; checklist waiting plan/IdP confirmation | **Blocked on Clerk Enterprise + IdP** |
-| 5 | Fail-closed RBAC | Local ON; backfill needs documented below | **Local done**; SkoutDev/prod await approve |
-| 6 | Consent | Capture UI + enroll `consentBasis`; flag ON locally | **Local done** |
-| 7 | Datadog SLO | Import JSON + `DD_*` agent vars | **Artifacts ready**; needs Datadog key/access |
-| 8 | OTel | Local collector + `OTEL_EXPORTER_OTLP_ENDPOINT` | **Local done**; prod endpoint TBD |
-| 9 | Email-Intel forwarder | Auth path for ingest + env recipe | **Enable when you set URL+token** |
+| 4 | SSO/SCIM | **(a) Clerk Enterprise includes SSO+SCIM** (2026-08-25). (b) IdP + (c) group→role map still TBD | **Unblocked on plan**; execute at first enterprise SSO deal |
+| 5 | Fail-closed RBAC | Local ON; SkoutDev backfill + flag **done 2026-08-25**; prod **approved** (CDK) | **SkoutDev live**; prod on first SkoutProd |
+| 6 | Consent | Capture UI + enroll `consentBasis`; flag ON locally; **prod approved** in CDK | **Local + SkoutDev parity**; prod on first SkoutProd |
+| 7 | Datadog SLO | Secret set; **on-call = Neeraj**; dashboard UI import (needs `DD_APP_KEY` for API) | **On-call named**; JSON import by owner |
+| 8 | OTel | **Defer** — Datadog APM is the deployed sink; no separate OTLP | **Closed by decision** (local OTel optional) |
+| 9 | Email-Intel forwarder | **SkoutDev done 2026-08-25** (secret + IAM + ECS) | **SkoutDev live**; prod script on first SkoutProd |
 | 10 | Warm-Up OAuth | Exact key names documented | **Blocked on secrets from Sailesh** |
 | 11–12 | i18n / territory | Onboarding HQ+locale; `POST /regional-intel` LLM | **Shipped** |
-| 13 | DSAR | `manual` \| `auto` + 30-day SLA | **Shipped** |
-| 14 | Encryption rotation | 90-day Tier-1 policy (already) + runbook | **Policy closed**; prod window TBD |
+| 13 | DSAR | `manual` \| `auto` + 30-day SLA | **Shipped**; process owner **Neeraj** (2026-08-25) until Legal/DPO |
+| 14 | Encryption rotation | 90-day Tier-1 policy (already) + runbook | **Policy closed**; prod window **approved** for **2026-11-23** |
 
 ## What RBAC backfill needs (item 5)
 
@@ -24,6 +24,8 @@
 | `workspace_members` (`workspaceId`, `userId`, `role`) | Maps role text → system `owner`/`admin`/`member` grants in `workspace_member_roles` |
 
 Also seeds `permissions`, `roles`, `role_permissions` catalogs. **Does not need** new CSV uploads — only a migrated DB with members already present.
+
+ECS: `./scripts/ecs-run-backfill-rbac.sh SkoutDev` → `node /app/db/dist/backfill-rbac.js`
 
 ## Warm-Up OAuth keys required (item 10)
 
@@ -49,4 +51,5 @@ SKOUT_CANONICAL_EVIDENCE_TOKEN=<same as EMAIL_INTEL_EXTERNAL_API_KEY>
 # Optional per-request: header x-skout-workspace-id
 ```
 
+SkoutDev: `./infra/scripts/setup-email-intel-forwarder.sh` + `patch-ecs-email-intel-forwarder.py` (**done**).  
 Drop of Email-Intel’s own ledger table = later (approved deferred).

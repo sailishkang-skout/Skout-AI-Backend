@@ -3,7 +3,7 @@
 ADR: `docs/adr/0006-sso-scim-stage-6.md`
 
 ## Confirm before execute (you / leadership)
-- [ ] (a) Clerk plan includes Organization SSO + SCIM
+- [x] (a) Clerk plan includes Organization SSO + SCIM — **confirmed 2026-08-25** (Clerk Enterprise includes both)
 - [ ] (b) First customer IdP named: _______________ (Okta / Azure AD / Google)
 - [ ] (c) Group → role map: IdP groups → Skout `owner` / `admin` / `member`
 
