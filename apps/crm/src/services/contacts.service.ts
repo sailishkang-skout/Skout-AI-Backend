@@ -212,7 +212,7 @@ export class ContactsService {
             entityType: "contact",
             entityId: id,
             attribute: field,
-            value: (dto as Record<string, unknown>)[field],
+            value: (dto as unknown as Record<string, unknown>)[field],
             source: "manual",
             observedAt: new Date(),
             confidence: 1.0,
