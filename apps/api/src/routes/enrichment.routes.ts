@@ -7,6 +7,8 @@ import { getWorkspaceIcp } from "../services/icp.service.js";
 import { getAsyncJob } from "../services/async-job.service.js";
 import { HttpError, errorResponse } from "../utils/http.js";
 
+const jobIdSchema = z.string().uuid();
+
 const scoreBodySchema = z.object({
   prospect: z.object({
     prospectId: z.string().optional(),
@@ -48,6 +50,10 @@ export async function enrichmentRoutes(app: FastifyInstance) {
 
   app.get("/enrichment/jobs/:jobId", async (request, reply) => {
     const { jobId } = request.params as { jobId: string };
+    // A client-side-only placeholder id (e.g. the frontend's optimistic-update job entry)
+    // isn't a real job and was never going to be found — a clean 404 here, not a raw
+    // invalid-uuid DB error, since this route's own contract already documents "not found".
+    if (!jobIdSchema.safeParse(jobId).success) return reply.status(404).send({ error: "job_not_found" });
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = buildEnrichmentService(app.db, app.config);
     const job = await svc.getJob(workspaceId, jobId);
@@ -57,6 +63,7 @@ export async function enrichmentRoutes(app: FastifyInstance) {
 
   app.post("/enrichment/jobs/:jobId/retry", async (request, reply) => {
     const { jobId } = request.params as { jobId: string };
+    if (!jobIdSchema.safeParse(jobId).success) return reply.status(404).send({ error: "job_not_found" });
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = buildEnrichmentService(app.db, app.config);
     try {
