@@ -170,5 +170,55 @@ export function createRegionalBriefService(db: Db) {
       log.info("regional brief draft version created", { slotId, version: nextVersion });
       return created!;
     },
+
+    async approveVersion(versionId: string, reviewerId: string) {
+      return db.transaction(async (tx) => {
+        const [version] = await tx.select().from(regionalBriefVersions).where(eq(regionalBriefVersions.id, versionId));
+        if (!version) throw new HttpError("regional_brief_version_not_found", 404);
+        if (version.status !== "draft" && version.status !== "pending_review") {
+          throw new HttpError(`Cannot approve a version with status "${version.status}"`, 422);
+        }
+
+        const [slot] = await tx.select().from(regionalBriefSlots).where(eq(regionalBriefSlots.id, version.slotId));
+        if (!slot) throw new HttpError("regional_brief_slot_not_found", 404);
+
+        if (slot.currentVersionId) {
+          await tx
+            .update(regionalBriefVersions)
+            .set({ status: "superseded", updatedAt: new Date() })
+            .where(eq(regionalBriefVersions.id, slot.currentVersionId));
+        }
+
+        const [updated] = await tx
+          .update(regionalBriefVersions)
+          .set({ status: "approved", reviewerId, reviewedAt: new Date(), updatedAt: new Date() })
+          .where(eq(regionalBriefVersions.id, versionId))
+          .returning();
+
+        await tx
+          .update(regionalBriefSlots)
+          .set({ currentVersionId: versionId })
+          .where(eq(regionalBriefSlots.id, slot.id));
+
+        log.info("regional brief version approved", { slotId: slot.id, versionId });
+        return updated!;
+      });
+    },
+
+    async rejectVersion(versionId: string, reviewerId: string, reason: string) {
+      const [version] = await db.select().from(regionalBriefVersions).where(eq(regionalBriefVersions.id, versionId));
+      if (!version) throw new HttpError("regional_brief_version_not_found", 404);
+      if (version.status !== "draft" && version.status !== "pending_review") {
+        throw new HttpError(`Cannot reject a version with status "${version.status}"`, 422);
+      }
+
+      const [updated] = await db
+        .update(regionalBriefVersions)
+        .set({ status: "rejected", reviewerId, reviewedAt: new Date(), evidence: `${version.evidence}\n\nRejected: ${reason}`, updatedAt: new Date() })
+        .where(eq(regionalBriefVersions.id, versionId))
+        .returning();
+      log.info("regional brief version rejected", { versionId, reason });
+      return updated!;
+    },
   };
 }
