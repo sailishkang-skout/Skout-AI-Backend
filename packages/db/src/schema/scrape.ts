@@ -1,5 +1,6 @@
 import { bigint, index, integer, jsonb, pgTable, real, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { workspaces } from "./workspaces.js";
+import { evidenceLedger } from "./evidence.js";
 
 /**
  * Corpus-build scrape jobs (Tier 1). Tracks orchestrator → bots → cleaner →
@@ -72,6 +73,14 @@ export const signals = pgTable(
     value: jsonb("value").notNull().default({}),
     /** 0–1 confidence, matches the existing fieldProvenanceSchema range. */
     confidence: real("confidence"),
+    /**
+     * 0–1 — how significant the underlying event is (e.g. 50 new hires vs. 3), distinct from
+     * `confidence` (how sure we are this signal is real). Null = unweighted (treated as 1 by
+     * the stacking score below). 8.5 Ask's literal "strength" field.
+     */
+    strength: real("strength"),
+    /** 8.5 Ask's literal "evidence" field — the evidence-ledger row this signal was pinned from, if any. */
+    evidenceId: uuid("evidence_id").references(() => evidenceLedger.id, { onDelete: "set null" }),
     /** When the underlying real-world event happened. Null when unknown — falls back to detectedAt. */
     observedAt: timestamp("observed_at", { withTimezone: true }),
     /** When Skout's system detected/ingested this signal — can lag observedAt (e.g. a scraped post that went live days earlier). */

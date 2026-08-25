@@ -470,6 +470,13 @@
       "when": 1789900000000,
       "tag": "0065_async_job_progress",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1790000000000,
+      "tag": "0066_signal_strength_evidence",
+      "breakpoints": true
     }
   ]
 }

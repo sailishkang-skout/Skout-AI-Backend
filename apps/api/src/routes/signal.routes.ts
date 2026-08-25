@@ -23,6 +23,7 @@ const createSignalBodySchema = z.object({
   reason: z.string().max(2000).optional(),
   score: z.number().optional(),
   confidence: z.number().min(0).max(1).optional(),
+  strength: z.number().min(0).max(1).optional(),
   source: z.string().max(100).optional(),
   observedAt: z.string().datetime().optional(),
   expiresAt: z.string().datetime().optional(),

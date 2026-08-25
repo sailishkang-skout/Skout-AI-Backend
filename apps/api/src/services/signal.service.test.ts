@@ -122,6 +122,8 @@ describe("overlaySignalsForMember", () => {
             signalType: "engagement_decay",
             value: { reason: "no opens" },
             confidence: 0.6,
+            strength: null,
+            evidenceId: null,
             observedAt: "2026-03-01T00:00:00.000Z",
             detectedAt: "2026-03-01T00:00:00.000Z",
             source: "risk",
@@ -142,6 +144,8 @@ describe("overlaySignalsForMember", () => {
             signalType: "recent_funding",
             value: { detail: "Series B" },
             confidence: 0.9,
+            strength: null,
+            evidenceId: null,
             observedAt: "2026-04-01T00:00:00.000Z",
             detectedAt: "2026-04-01T00:00:00.000Z",
             source: "crunchbase",
@@ -157,6 +161,8 @@ describe("overlaySignalsForMember", () => {
             signalType: "tech_adopted",
             value: { tool: "Snowflake" },
             confidence: 0.7,
+            strength: null,
+            evidenceId: null,
             observedAt: "2026-02-01T00:00:00.000Z",
             detectedAt: "2026-02-01T00:00:00.000Z",
             source: "builtwith",
@@ -172,6 +178,8 @@ describe("overlaySignalsForMember", () => {
             signalType: "recent_hiring",
             value: {},
             confidence: null,
+            strength: null,
+            evidenceId: null,
             observedAt: "2026-01-15T00:00:00.000Z",
             detectedAt: "2026-01-15T00:00:00.000Z",
             source: null,
@@ -208,6 +216,8 @@ describe("computeSignalStackScore", () => {
       signalType: "recent_hiring",
       value: {},
       confidence: 0.8,
+      strength: null,
+      evidenceId: null,
       observedAt: NOW.toISOString(),
       detectedAt: NOW.toISOString(),
       source: "test",
@@ -245,6 +255,18 @@ describe("computeSignalStackScore", () => {
     );
     expect(stacked.distinctSignalTypes).toBe(3);
     expect(stacked.score).toBeGreaterThan(one.score);
+  });
+
+  it("a stronger signal (higher `strength`) contributes more than a weaker one of the same confidence", () => {
+    const weak = computeSignalStackScore([signal({ strength: 0.2 })], { now: NOW });
+    const strong = computeSignalStackScore([signal({ strength: 1 })], { now: NOW });
+    expect(strong.score).toBeGreaterThan(weak.score);
+  });
+
+  it("treats a signal with no recorded strength as full-strength (1), not zero", () => {
+    const unset = computeSignalStackScore([signal({ strength: null })], { now: NOW });
+    const fullStrength = computeSignalStackScore([signal({ strength: 1 })], { now: NOW });
+    expect(unset.score).toBe(fullStrength.score);
   });
 
   it("a reachable decision-maker scores higher than the same signals without one", () => {
@@ -343,6 +365,8 @@ describe("signalStackWeightsFromEnv", () => {
       signalType: "recent_hiring",
       value: {},
       confidence: 0.8,
+      strength: null,
+      evidenceId: null,
       observedAt: "2026-04-01T00:00:00.000Z",
       detectedAt: "2026-04-01T00:00:00.000Z",
       source: "test",

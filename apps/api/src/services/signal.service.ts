@@ -13,6 +13,10 @@ export interface SignalRecord {
   signalType: string;
   value: Record<string, unknown>;
   confidence: number | null;
+  /** 0–1 significance of the underlying event, distinct from confidence. Null = unweighted. */
+  strength: number | null;
+  /** Evidence-ledger row this signal was pinned from, if any. */
+  evidenceId: string | null;
   /** When the real-world event happened. Falls back to detectedAt when the producer didn't know it separately. */
   observedAt: string;
   /** When Skout's system detected/ingested this signal — can lag observedAt. */
@@ -34,6 +38,8 @@ function serialize(row: typeof signals.$inferSelect): SignalRecord {
     signalType: row.signalType,
     value: row.value as Record<string, unknown>,
     confidence: row.confidence,
+    strength: row.strength,
+    evidenceId: row.evidenceId,
     observedAt: (row.observedAt ?? row.detectedAt).toISOString(),
     detectedAt: row.detectedAt.toISOString(),
     source: row.source,
@@ -252,7 +258,10 @@ export function computeSignalStackScore(
   const weighted = eligible.map((s) => {
     const confidence = s.confidence ?? weights.defaultConfidence;
     // Timing freshness should track when the event actually happened, not when we noticed it.
-    const weight = confidence * recencyWeight(new Date(s.observedAt), now, weights);
+    // Strength (how significant the underlying event is) scales the same weight — unset = 1,
+    // i.e. no penalty for producers that haven't started recording it yet.
+    const strength = s.strength ?? 1;
+    const weight = confidence * strength * recencyWeight(new Date(s.observedAt), now, weights);
     return { signal: s, weight };
   });
 
@@ -289,6 +298,10 @@ export interface RecordSignalInput {
   reason?: string;
   score?: number;
   confidence?: number;
+  /** 0–1 significance of the underlying event (e.g. 50 new hires vs. 3) — distinct from confidence. */
+  strength?: number;
+  /** Evidence-ledger row this signal was pinned from, if the producer already recorded one. */
+  evidenceId?: string;
   /** When the real-world event happened, if known separately from detectedAt. */
   observedAt?: Date;
   detectedAt?: Date;
@@ -389,6 +402,8 @@ export async function recordSignal(db: Db, input: RecordSignalInput): Promise<Si
         ...(input.score !== undefined ? { score: input.score } : {}),
       },
       confidence: input.confidence ?? null,
+      strength: input.strength ?? null,
+      evidenceId: input.evidenceId ?? null,
       observedAt: input.observedAt ?? null,
       detectedAt: input.detectedAt ?? new Date(),
       source: input.source ?? null,
