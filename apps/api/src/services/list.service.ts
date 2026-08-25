@@ -2,7 +2,7 @@ import { and, count, desc, eq, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
-import { getProspectById, type OpenSearchConfig, type ProspectDocument } from "@skout/opensearch";
+import { getProspectById, type OpenSearchConfig, type ProspectDocument, type SearchFilters } from "@skout/opensearch";
 import type { ProspectList, ProspectListMember } from "./enrichment/types.js";
 import { snapshotFromCorpusDoc } from "../utils/verified-email.js";
 
@@ -78,19 +78,21 @@ export class ListService {
         id: lists.id,
         workspaceId: lists.workspaceId,
         name: lists.name,
+        sourceFilters: lists.sourceFilters,
         createdAt: lists.createdAt,
         memberCount: count(listMembers.prospectId),
       })
       .from(lists)
       .leftJoin(listMembers, eq(listMembers.listId, lists.id))
       .where(eq(lists.workspaceId, workspaceId))
-      .groupBy(lists.id, lists.workspaceId, lists.name, lists.createdAt)
+      .groupBy(lists.id, lists.workspaceId, lists.name, lists.sourceFilters, lists.createdAt)
       .orderBy(desc(lists.createdAt));
 
     return rows.map((r) => ({
       id: r.id,
       workspaceId: r.workspaceId,
       name: r.name,
+      sourceFilters: (r.sourceFilters as SearchFilters | null) ?? null,
       prospectCount: Number(r.memberCount),
       createdAt: r.createdAt.toISOString(),
     }));
@@ -102,13 +104,14 @@ export class ListService {
         id: lists.id,
         workspaceId: lists.workspaceId,
         name: lists.name,
+        sourceFilters: lists.sourceFilters,
         createdAt: lists.createdAt,
         memberCount: count(listMembers.prospectId),
       })
       .from(lists)
       .leftJoin(listMembers, eq(listMembers.listId, lists.id))
       .where(and(eq(lists.id, listId), eq(lists.workspaceId, workspaceId)))
-      .groupBy(lists.id, lists.workspaceId, lists.name, lists.createdAt);
+      .groupBy(lists.id, lists.workspaceId, lists.name, lists.sourceFilters, lists.createdAt);
 
     const row = rows[0];
     if (!row) return null;
@@ -116,9 +119,19 @@ export class ListService {
       id: row.id,
       workspaceId: row.workspaceId,
       name: row.name,
+      sourceFilters: (row.sourceFilters as SearchFilters | null) ?? null,
       prospectCount: Number(row.memberCount),
       createdAt: row.createdAt.toISOString(),
     };
+  }
+
+  /** Records the SearchFilters a list was built from (R10.3) — set only when a smart list is
+   * activated into a brand-new static list, enabling the "convert back to smart list" action. */
+  async setSourceFilters(workspaceId: string, listId: string, filters: SearchFilters): Promise<void> {
+    await this.db
+      .update(lists)
+      .set({ sourceFilters: filters })
+      .where(and(eq(lists.id, listId), eq(lists.workspaceId, workspaceId)));
   }
 
   async addMembers(

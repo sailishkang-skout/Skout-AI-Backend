@@ -1,4 +1,5 @@
 import type { AttemptLog, FieldResult } from "@skout/pal";
+import type { SearchFilters } from "@skout/opensearch";
 
 export type JobStatus = "queued" | "running" | "completed" | "failed";
 
@@ -23,6 +24,8 @@ export interface ProspectList {
   id: string;
   workspaceId: string;
   name: string;
+  /** SearchFilters this list was built from, when reconstructable (R10.3) — null otherwise. */
+  sourceFilters?: SearchFilters | null;
   prospectCount: number;
   createdAt: string;
   members?: ProspectListMember[];
