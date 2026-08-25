@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
@@ -292,6 +292,37 @@ export function createRegionalBriefService(db: Db) {
         workspaceId: params.workspaceId ?? null,
         entries,
       };
+    },
+
+    async listSlots(filter: { layerType?: string; status?: string }) {
+      // status filters on the slot's current version's status if provided; omit the join if not.
+      if (filter.status) {
+        const rows = await db
+          .select({ slot: regionalBriefSlots })
+          .from(regionalBriefSlots)
+          .innerJoin(regionalBriefVersions, eq(regionalBriefSlots.currentVersionId, regionalBriefVersions.id))
+          .where(
+            filter.layerType
+              ? and(eq(regionalBriefSlots.layerType, filter.layerType), eq(regionalBriefVersions.status, filter.status))
+              : eq(regionalBriefVersions.status, filter.status)
+          );
+        return rows.map((row) => row.slot);
+      }
+      return db
+        .select()
+        .from(regionalBriefSlots)
+        .where(filter.layerType ? eq(regionalBriefSlots.layerType, filter.layerType) : undefined);
+    },
+
+    async listVersions(slotId?: string, versionId?: string) {
+      if (versionId) {
+        return db.select().from(regionalBriefVersions).where(eq(regionalBriefVersions.id, versionId));
+      }
+      return db
+        .select()
+        .from(regionalBriefVersions)
+        .where(eq(regionalBriefVersions.slotId, slotId!))
+        .orderBy(regionalBriefVersions.version);
     },
   };
 }
