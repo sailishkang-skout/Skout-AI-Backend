@@ -28,8 +28,6 @@ Track the window in the ops calendar; use the cutover steps above.
 ## Approved prod window (Leadership go-ahead 2026-08-25)
 | Field | Value |
 |-------|--------|
-| Target date | **2026-11-23** |
-| Env | Production (Integration encryption) |
-| Approver | Leadership / Ops |
-| Executor | Ops / SRE (after new key generated in secrets store) |
-| Status | **Window approved**; execute cutover steps above on that date (do not rotate early without a new approval) |
+| Target date | **2026-11-23** (next scheduled) |
+| Env | SkoutDev executed **2026-08-26**; SkoutProd on first deploy or next window |
+| Status | **SkoutDev complete** — 9 rows rotated; `INTEGRATION_ENCRYPTION_KEY_PREVIOUS` cleared |

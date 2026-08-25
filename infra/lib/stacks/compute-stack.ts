@@ -387,6 +387,12 @@ export class ComputeStack extends Stack {
           secrets.appConfig,
           "INTEGRATION_ENCRYPTION_KEY"
         ),
+        // Dual-read during key rotation (§11.1). Optional JSON field on Skout*/app-config;
+        // set PREVIOUS=old before flipping current, then clear after rotate script.
+        INTEGRATION_ENCRYPTION_KEY_PREVIOUS: ecs.Secret.fromSecretsManager(
+          secrets.appConfig,
+          "INTEGRATION_ENCRYPTION_KEY_PREVIOUS"
+        ),
         WARMUP_TOOL_PLATFORM_PROVISIONING_KEY: ecs.Secret.fromSecretsManager(
           secrets.warmupTool,
           "PLATFORM_PROVISIONING_KEY"

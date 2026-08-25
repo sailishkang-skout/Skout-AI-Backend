@@ -117,6 +117,8 @@ export class SkoutAppSecrets extends Construct {
     });
     this.appConfig = createPlaceholder("AppConfig", "app-config", {
       INTEGRATION_ENCRYPTION_KEY: "replace-me",
+      // Empty until a rotation window; ECS injects this field for dual-read decrypt.
+      INTEGRATION_ENCRYPTION_KEY_PREVIOUS: "",
     });
     /**
      * Email-Intel → Skout canonical Evidence Ledger forwarder (§5.3).
