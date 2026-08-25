@@ -247,6 +247,7 @@ try {
   await runSqlMigration("0047_promotion_candidates", "0047_promotion_candidates.sql");
   await runSqlMigration("0048_pipelines_default_unique", "0048_pipelines_default_unique.sql");
   await runSqlMigration("0049_meeting_ics", "0049_meeting_ics.sql");
+  await runSqlMigration("0058_list_source_filters", "0058_list_source_filters.sql");
 
 } finally {
   await sql.end();

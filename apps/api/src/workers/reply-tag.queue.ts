@@ -1,4 +1,5 @@
 import { Queue } from "bullmq";
+import { injectTraceContext } from "@skout/observability";
 import type { Env } from "../config/env.js";
 
 export const REPLY_TAG_QUEUE = "skout-reply-tag";
@@ -8,6 +9,8 @@ export interface ReplyTagJobPayload {
   messageId: string;
   workspaceId: string;
   bodyText: string;
+  /** §11.3 Observability — W3C trace-context propagation, same pattern as list-score.queue.ts. */
+  traceContext?: Record<string, string>;
 }
 
 let queue: Queue<ReplyTagJobPayload> | null = null;
@@ -38,4 +41,14 @@ export function getReplyTagQueue(config: Env): Queue<ReplyTagJobPayload> {
     });
   }
   return queue;
+}
+
+/**
+ * §11.3 — the sole producer call site (inbound-reply.service.ts) previously called
+ * getReplyTagQueue(config).add(...) directly; wrapped here so trace-context injection happens
+ * in one place, matching every other queue in this file's family.
+ */
+export async function enqueueReplyTagJob(config: Env, payload: ReplyTagJobPayload): Promise<void> {
+  const q = getReplyTagQueue(config);
+  await q.add("tag-reply", { ...payload, traceContext: payload.traceContext ?? injectTraceContext() });
 }

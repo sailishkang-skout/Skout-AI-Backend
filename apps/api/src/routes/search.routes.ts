@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { searchProspectsRequestSchema } from "@skout/shared";
 import { getStore, InsufficientCreditsError } from "../services/enrichment/index.js";
 import { buildDetailFromSnapshot, createSearchService } from "../services/search.service.js";
+import { buildEntitlementsService } from "../services/entitlements.service.js";
 import {
   buildSearchCacheKey,
   createSearchCacheService,
@@ -40,7 +41,15 @@ export async function searchRoutes(app: FastifyInstance) {
     }
 
     const store = getStore(app.db);
-    const creditCost = app.config.SEARCH_CREDIT_COST;
+    // §5.1 Task 35 — deductCredits() itself is completely unchanged; only which number gets
+    // passed to it can now vary per workspace. entitlements.service.ts's getValueOr() never
+    // throws, so a lookup failure resolves to the existing global config value, never blocking
+    // a search. A workspace with no "search.credit_cost" entitlement pays exactly what it did
+    // before this commit.
+    const entitlementsSvc = app.db ? buildEntitlementsService(app.db) : null;
+    const creditCost = entitlementsSvc
+      ? await entitlementsSvc.getValueOr<number>(workspaceId, "search.credit_cost", app.config.SEARCH_CREDIT_COST)
+      : app.config.SEARCH_CREDIT_COST;
     try {
       await store.deductCredits(workspaceId, creditCost, "search", cacheKey);
     } catch (err) {

@@ -1,4 +1,5 @@
 import { Queue } from "bullmq";
+import { injectTraceContext } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { redisBullMqConnection } from "../lib/redis.js";
 
@@ -14,6 +15,8 @@ export interface WebhookDeliveryJobPayload {
   eventId: string;
   attempt: number;
   payload: Record<string, unknown>;
+  /** §11.3 Observability — W3C trace-context propagation, same pattern as list-score.queue.ts. Preserved unchanged across retry re-enqueues (see webhook-delivery.worker.ts) so a retried delivery still correlates back to the original triggering request. */
+  traceContext?: Record<string, string>;
 }
 
 let queue: Queue<WebhookDeliveryJobPayload> | null = null;
@@ -43,5 +46,9 @@ export async function enqueueWebhookDelivery(
   delayMs = 0
 ): Promise<void> {
   const q = getWebhookDeliveryQueue(config);
-  await q.add("webhook:deliver", payload, { delay: Math.max(0, delayMs) });
+  await q.add(
+    "webhook:deliver",
+    { ...payload, traceContext: payload.traceContext ?? injectTraceContext() },
+    { delay: Math.max(0, delayMs) }
+  );
 }

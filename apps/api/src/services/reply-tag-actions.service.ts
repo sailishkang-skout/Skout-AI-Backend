@@ -17,6 +17,19 @@ const log = createLogger("reply-tag-actions");
 const { inboxThreads, prospectActivations, tasks, workspaceMembers } = schema;
 
 /**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md for the full audit and rationale; one of the 9
+ * confirmed instances listed there (formalized in Task 17).
+ *   - Tables touched directly: tasks (owned by apps/crm) - write only (creates the escalation
+ *     task described below)
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: reply-tag actions run synchronously inside the inbound-reply processing path;
+ *     creating the escalation task via an HTTP call into apps/crm here would add latency and a
+ *     new failure mode to reply handling for no benefit over a direct, transactional write
+ *   - Review date: revisit once apps/crm's internal API surface exists (Wave 2)
+ */
+
+/**
  * Condition-engine spec's WRONG_PERSON handling: the base "stop the sequence for this contact"
  * already happens unconditionally for any human reply (see inbound-reply.service.ts) — this adds
  * the richer escalation the spec also wants: find another contact at the same account and hand

@@ -1,7 +1,7 @@
 import { Worker, Queue } from "bullmq";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
-import { createLogger } from "@skout/observability";
+import { createLogger, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
@@ -133,10 +133,14 @@ export async function startAlertDigestSweepWorker(config: Env) {
   const worker = new Worker(
     QUEUE_NAME,
     async () => {
-      const { emailed, skipped } = await runAlertDigestSweep(db, config);
-      if (emailed || skipped) {
-        log.info(`Alert digest sweep: emailed ${emailed}, skipped ${skipped}`);
-      }
+      // §11.3 Task 33 — this worker is self-triggered on a cron schedule, not invoked from a
+      // synchronous request, so there's no upstream trace to continue; this is a root span.
+      await withSpan("alert-digest-sweep.tick", async () => {
+        const { emailed, skipped } = await runAlertDigestSweep(db, config);
+        if (emailed || skipped) {
+          log.info(`Alert digest sweep: emailed ${emailed}, skipped ${skipped}`);
+        }
+      });
     },
     { connection, concurrency: 1 }
   );

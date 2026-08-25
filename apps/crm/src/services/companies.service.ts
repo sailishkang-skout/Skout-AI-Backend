@@ -1,14 +1,16 @@
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, recordEvidence } from "@skout/db";
 import type { CompanyCreateInput, CompanyUpdateInput } from "@skout/shared";
 import { buildAuditService, type AuditService } from "./audit.service.js";
+import { RetentionRulesService } from "./retention-rules.service.js";
 import { serviceLog } from "../lib/obs.js";
 import {
   asFieldSourcesMap,
   filterAutoFillablePatch,
   markManualSources,
   mergeAutoFillSources,
+  DEFAULT_AUTO_FILL_CONFIDENCE,
   type FieldSource,
   type FieldSourcesMap,
 } from "../utils/field-sources.js";
@@ -30,6 +32,9 @@ export interface CompanyDto {
   status: string;
   sourceProspectCompanyId: string | null;
   fieldSources: FieldSourcesMap;
+  /** §8.12 Task 29 — RetentionRulesService.classify() result against status, or null if
+   * unclassified / no matching active rule. Recomputed by update() on every status change. */
+  retentionClassification: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -53,6 +58,7 @@ type CompanyDbUpdatePatch = Partial<{
   ownerId: string | null;
   status: string;
   sourceProspectCompanyId: string | null;
+  retentionClassification: string | null;
 }>;
 
 function toDto(row: typeof companies.$inferSelect): CompanyDto {
@@ -69,6 +75,7 @@ function toDto(row: typeof companies.$inferSelect): CompanyDto {
     status: row.status,
     sourceProspectCompanyId: row.sourceProspectCompanyId,
     fieldSources: asFieldSourcesMap(row.fieldSources),
+    retentionClassification: row.retentionClassification,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -155,6 +162,22 @@ export class CompaniesService {
     const existing = await this.getById(workspaceId, id);
     if (!existing) return null;
 
+    // §8.12 Task 29 — recompute retention classification whenever status actually changes,
+    // using this workspace's company-scoped retention rules. Best-effort: a rules-lookup
+    // failure shouldn't block the underlying company update — this is provenance metadata on
+    // already-trusted data, not an AI-generated claim, so §6.1's mandatory-evidence standard
+    // doesn't apply here (see next-best-action.service.ts for where it does).
+    let retentionClassification: string | null | undefined;
+    if (input.status !== undefined) {
+      try {
+        const rules = await new RetentionRulesService(this.db).list(workspaceId, "company");
+        const classification = RetentionRulesService.classify(rules, input.status, "status");
+        retentionClassification = classification === "unclassified" ? null : classification;
+      } catch (err) {
+        log.error("retention classification lookup failed for company", { workspaceId, companyId: id, err });
+      }
+    }
+
     const patch: CompanyDbUpdatePatch = {
       ...(input.name !== undefined ? { name: input.name } : {}),
       ...(input.domain !== undefined ? { domain: input.domain } : {}),
@@ -167,6 +190,7 @@ export class CompaniesService {
       ...(input.sourceProspectCompanyId !== undefined
         ? { sourceProspectCompanyId: input.sourceProspectCompanyId }
         : {}),
+      ...(retentionClassification !== undefined ? { retentionClassification } : {}),
     };
 
     // R13.3: a human editing an auto-fillable field via this endpoint marks it "manual" —
@@ -196,6 +220,33 @@ export class CompaniesService {
       if (dto) {
         const txAuditService = buildAuditService(tx as never);
         await txAuditService?.record(workspaceId, actorId, "update", "company", id, existing, dto);
+      }
+      // §5.3 — dual-write manual edits into evidence_ledger (confidence 1.0). Best-effort.
+      if (dto && editedAutoFillable.length > 0) {
+        for (const field of editedAutoFillable) {
+          try {
+            await recordEvidence(tx as never, {
+              workspaceId,
+              entityType: "company",
+              entityId: id,
+              attribute: field,
+              value: (dto as unknown as Record<string, unknown>)[field],
+              source: "manual",
+              observedAt: new Date(),
+              confidence: 1.0,
+              method: "crm_manual_edit",
+              reviewerId: actorId,
+              resolutionReason: "human_manual_edit",
+            });
+          } catch (err) {
+            log.error("evidence ledger dual-write failed for company manual edit", {
+              err,
+              workspaceId,
+              companyId: id,
+              field,
+            });
+          }
+        }
       }
       if (row) log.info("company updated", { workspaceId, companyId: id });
       return dto;
@@ -244,6 +295,29 @@ export class CompaniesService {
       const txAuditService = buildAuditService(tx as never);
       await txAuditService?.record(workspaceId, undefined, "update", "company", id, existing, dto);
       log.info("company auto-filled", { workspaceId, companyId: id, source, applied: appliedFields, skipped });
+
+      // §5.3 / Task 14 — dual-write provenance into the canonical Evidence Ledger, resolving
+      // evidence.ts's own header claim that this path does so. One row per applied field.
+      // Best-effort: must never fail the auto-fill itself, so this stays outside anything that
+      // would roll back the transaction on error.
+      for (const field of appliedFields) {
+        try {
+          await recordEvidence(tx as unknown as Db, {
+            workspaceId,
+            entityType: "company",
+            entityId: id,
+            attribute: field,
+            value: (applied as Record<string, unknown>)[field as keyof typeof applied],
+            source,
+            observedAt: new Date(),
+            confidence: confidence ?? DEFAULT_AUTO_FILL_CONFIDENCE[source],
+            method: "crm_autofill",
+          });
+        } catch (err) {
+          log.error("evidence ledger dual-write failed for company auto-fill", { err, workspaceId, companyId: id, field });
+        }
+      }
+
       return { company: dto, applied: appliedFields, skipped };
     });
   }

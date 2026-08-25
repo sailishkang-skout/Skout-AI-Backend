@@ -363,49 +363,112 @@
       "idx": 51,
       "version": "7",
       "when": 1788400000000,
-      "tag": "0050_async_job_progress",
+      "tag": "0050_canonical_operating_model_and_evidence_ledger",
       "breakpoints": true
     },
     {
       "idx": 52,
       "version": "7",
       "when": 1788500000000,
-      "tag": "0051_signal_expiry_activation_paths",
+      "tag": "0051_crm_intelligence",
       "breakpoints": true
     },
     {
       "idx": 53,
       "version": "7",
       "when": 1788600000000,
-      "tag": "0052_signal_observed_at",
+      "tag": "0052_incidents_and_model_versions",
       "breakpoints": true
     },
     {
       "idx": 54,
       "version": "7",
       "when": 1788700000000,
-      "tag": "0053_enrichment_workbooks",
+      "tag": "0053_activities_retention_classification",
       "breakpoints": true
     },
     {
       "idx": 55,
       "version": "7",
       "when": 1788800000000,
-      "tag": "0054_reporting",
+      "tag": "0054_contacts_companies_retention_classification",
       "breakpoints": true
     },
     {
       "idx": 56,
       "version": "7",
       "when": 1788900000000,
-      "tag": "0055_tam_data_source",
+      "tag": "0055_entitlements_unique",
       "breakpoints": true
     },
     {
       "idx": 57,
       "version": "7",
       "when": 1789000000000,
-      "tag": "0056_model_decision_events",
+      "tag": "0056_data_subject_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1789100000000,
+      "tag": "0057_dsar_fulfillment_mode",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1789200000000,
+      "tag": "0058_list_source_filters",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1789300000000,
+      "tag": "0059_signal_expiry_activation_paths",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1789400000000,
+      "tag": "0060_signal_observed_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1789500000000,
+      "tag": "0061_enrichment_workbooks",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1789600000000,
+      "tag": "0062_reporting",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1789700000000,
+      "tag": "0063_tam_data_source",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1789800000000,
+      "tag": "0064_model_decision_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1789900000000,
+      "tag": "0065_async_job_progress",
       "breakpoints": true
     }
   ]

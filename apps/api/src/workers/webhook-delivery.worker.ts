@@ -1,8 +1,9 @@
 import { createHmac, timingSafeEqual, randomUUID } from "node:crypto";
 import { Worker } from "bullmq";
+import { context as otelContext } from "@opentelemetry/api";
 import { eq } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
-import { createLogger } from "@skout/observability";
+import { createLogger, extractTraceContext, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
@@ -191,7 +192,12 @@ export async function startWebhookDeliveryWorker(config: Env): Promise<() => Pro
         eventType: job.data.eventType,
         attempt: job.data.attempt,
       });
-      await processDelivery(db, config, job.data);
+
+      // §11.3 — resume the enqueuing request's trace context, same pattern as list-score.worker.ts.
+      const parentContext = extractTraceContext(job.data.traceContext);
+      await otelContext.with(parentContext, () =>
+        withSpan("webhook-delivery.worker.process", () => processDelivery(db, config, job.data))
+      );
     },
     {
       connection: redisBullMqConnection(config.REDIS_URL),

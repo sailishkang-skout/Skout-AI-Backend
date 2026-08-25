@@ -1,6 +1,7 @@
 import { Worker } from "bullmq";
+import { context as otelContext } from "@opentelemetry/api";
 import { createDb } from "@skout/db";
-import { createLogger } from "@skout/observability";
+import { createLogger, extractTraceContext, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
@@ -25,9 +26,17 @@ export async function startListScoreWorker(config: Env): Promise<() => Promise<v
   const worker = new Worker<ListScoreJobPayload>(
     LIST_SCORE_QUEUE,
     async (job) => {
-      const { jobId, workspaceId, listId } = job.data;
+      const { jobId, workspaceId, listId, traceContext } = job.data;
       log.info("Processing list score job", { jobId, workspaceId, listId, attempt: job.attemptsMade });
-      await runListScoreJob(db, config, jobId, workspaceId, listId);
+
+      // §11.3 — resume the enqueuing request's trace context so this async hop shows up as a
+      // continuation of one correlated trace, not an orphaned span. otelContext.with() makes
+      // the extracted context "active" for the duration of the callback, which is what
+      // tracer.startActiveSpan() inside withSpan() reads to find its parent.
+      const parentContext = extractTraceContext(traceContext);
+      await otelContext.with(parentContext, () =>
+        withSpan("list-score.worker.process", () => runListScoreJob(db, config, jobId, workspaceId, listId))
+      );
     },
     {
       connection: redisBullMqConnection(config.REDIS_URL),

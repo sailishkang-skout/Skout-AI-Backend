@@ -21,6 +21,10 @@ for (const candidate of [path.join(root, ".env"), path.join(root, ".env.local")]
 delete process.env.CLICKHOUSE_URL;
 delete process.env.AI_SERVICE_URL;
 delete process.env.EMAIL_INTEL_SERVICE_URL;
+// Fail-closed flags may be true in a developer's .env for local smoke tests;
+// integration tests assume shadow/default-off behavior unless a suite opts in.
+delete process.env.RBAC_ENFORCEMENT_ENABLED;
+delete process.env.CONSENT_ENFORCEMENT_ENABLED;
 
 const DEFAULT_TEST_DATABASE_URL = "postgresql://skout:skout@localhost:5434/skout";
 

@@ -1,7 +1,9 @@
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
+import { injectTraceContext } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
+import { pinAiClaim } from "./ai-evidence.service.js";
 
 export interface PersonalizeInput {
   prospectId: string;
@@ -20,6 +22,9 @@ export interface PersonalizeResult {
   draftId?: string;
   subject: string;
   body: string;
+  evidenceId: string | null;
+  modelVersionId?: string | null;
+  promptVersionId?: string | null;
 }
 
 /**
@@ -35,7 +40,7 @@ export async function personalizeProspect(
   input: PersonalizeInput
 ): Promise<PersonalizeResult> {
   const aiUrl = config.AI_SERVICE_URL;
-  let result: Omit<PersonalizeResult, "draftId" | "subject" | "body">;
+  let result: Omit<PersonalizeResult, "draftId" | "subject" | "body" | "evidenceId" | "modelVersionId" | "promptVersionId">;
 
   if (!aiUrl) {
     result = {
@@ -47,7 +52,7 @@ export async function personalizeProspect(
   } else {
     const res = await fetch(`${aiUrl}/v1/personalize`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...injectTraceContext() },
       body: JSON.stringify({
         prospect_id: input.prospectId,
         full_name: input.fullName,
@@ -75,6 +80,9 @@ export async function personalizeProspect(
   const subject = `Outreach to ${input.fullName ?? input.companyDomain ?? "prospect"}`;
 
   let draftId: string | undefined;
+  let evidenceId: string | null = null;
+  let modelVersionId: string | null = null;
+  let promptVersionId: string | null = null;
   if (db && workspaceId !== "unknown") {
     const [draft] = await db
       .insert(schema.aiDrafts)
@@ -87,7 +95,24 @@ export async function personalizeProspect(
       })
       .returning({ id: schema.aiDrafts.id });
     draftId = draft?.id;
+
+    // §6.1 / §5.1 — pin this AI claim to the evidence ledger so the draft's provenance
+    // (which model/prompt version produced it) is queryable later, not just implied by
+    // the draft row's `model` string.
+    const pinned = await pinAiClaim(db, {
+      workspaceId,
+      entityType: "prospect",
+      entityId: input.prospectId,
+      attribute: "personalize",
+      value: { opener: result.opener, talkingPoints: result.talkingPoints, draftId },
+      source: "ai_personalize",
+      method: "enrichment_personalize",
+      versionName: "personalize",
+    });
+    evidenceId = pinned.evidenceId;
+    modelVersionId = pinned.modelVersionId;
+    promptVersionId = pinned.promptVersionId;
   }
 
-  return { ...result, draftId, subject, body: draftBody };
+  return { ...result, draftId, subject, body: draftBody, evidenceId, modelVersionId, promptVersionId };
 }

@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Db } from "@skout/db";
 import type { OpenSearchConfig } from "@skout/opensearch";
+import { searchFiltersSchema } from "@skout/shared";
 import { buildEnrichmentService, InsufficientCreditsError } from "../services/enrichment/index.js";
 import { createCrmService } from "../services/crm.service.js";
 import { ListScoreService } from "../services/list-score.service.js";
@@ -11,6 +12,7 @@ import { buildEmailVerificationService } from "../services/email-verification.se
 import { exportListCsv, CSV_EXPORT_CREDIT_COST } from "../services/list-export.service.js";
 import { readListCsvExport } from "../services/export-storage.service.js";
 import { buildSequenceService } from "../services/sequence.service.js";
+import { createSmartList } from "../services/smart-list.service.js";
 import { listSignalsForEntities, overlaySignalsForMember, type OverlaySignal } from "../services/signal.service.js";
 import type { Env } from "../config/env.js";
 import { importListToCrm } from "@skout/crm-bridge";
@@ -54,13 +56,48 @@ export async function listRoutes(app: FastifyInstance) {
     return reply.send({ workspaceId, data, total: data.length });
   });
 
+  // R10.1 — "New list" defaults to building a smart (filter-based) list; static-list creation
+  // (used by CSV import / one-off manual adds) requires the explicit `mode: "static"` opt-in.
+  const createListSchema = z.object({
+    name: z.string().min(1).max(255),
+    mode: z.enum(["smart", "static"]).default("smart"),
+    filters: searchFiltersSchema.optional(),
+  });
+
   app.post("/lists", async (request, reply) => {
     const workspaceId = request.workspaceId ?? "unknown";
-    const { name } = z.object({ name: z.string().min(1).max(255) }).parse(request.body ?? {});
+    const { name, mode, filters } = createListSchema.parse(request.body ?? {});
+
+    if (mode === "smart") {
+      const smartList = await createSmartList(app.db, workspaceId, name, filters ?? {});
+      return reply.status(201).send({ ...smartList, kind: "smart" as const });
+    }
+
     const svc = buildListService(app.db, osConfig(app.config));
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const list = await svc.createList(workspaceId, name);
-    return reply.status(201).send(list);
+    return reply.status(201).send({ ...list, kind: "static" as const });
+  });
+
+  // R10.3 AC1 — one-click "convert to smart list" for a static list whose original filters were
+  // recorded (currently: lists created by activating a smart list into a brand-new list).
+  app.post("/lists/:id/convert-to-smart-list", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = buildListService(app.db, osConfig(app.config));
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+
+    const list = await svc.getListById(workspaceId, id);
+    if (!list) return reply.status(404).send({ error: "list_not_found" });
+    if (!list.sourceFilters) {
+      return reply.status(422).send({
+        error: "not_convertible",
+        message: "This list's original filters aren't available, so it can't be converted to a smart list.",
+      });
+    }
+
+    const smartList = await createSmartList(app.db, workspaceId, list.name, list.sourceFilters);
+    return reply.status(201).send({ ...smartList, kind: "smart" as const });
   });
 
   app.post("/lists/:id/import-to-crm", async (request, reply) => {

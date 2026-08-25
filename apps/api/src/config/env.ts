@@ -65,6 +65,45 @@ const envSchema = z
     /** Default email for stub auth when no x-stub-user-email header is sent. */
     AUTH_STUB_EMAIL: z.string().email().optional(),
     /**
+     * §5.1 / §11.1 (Enterprise Completion Plan) — feature flag for @skout/auth's
+     * enforcePermission(). Defaults OFF: real users currently have zero
+     * workspace_member_roles rows in every environment this session can reach, because
+     * backfill-rbac.ts has never been run here — enforcing before that backfill runs would
+     * deny every request outright. Flip this only after running the backfill in that
+     * environment. While off, denials still run in shadow mode (logged, not blocking) at
+     * every wired call site.
+     */
+    RBAC_ENFORCEMENT_ENABLED: z
+      .string()
+      .optional()
+      .transform((v) => v === "true" || v === "1"),
+    /**
+     * §11.1 — HMAC signing secret for step-up re-authentication tokens (@skout/auth's
+     * step-up.ts). Required for POST /api/v1/auth/step-up to issue tokens and for
+     * assertStepUp() to verify them; unset disables step-up issuance (the endpoint returns 503)
+     * rather than falling back to an unsigned/insecure check.
+     */
+    STEP_UP_SIGNING_SECRET: z.string().min(16).optional(),
+    /**
+     * Feature flag, default OFF — same safe-rollout pattern as RBAC_ENFORCEMENT_ENABLED above.
+     * Gates whether step-up-eligible routes (identity-merge resolve/reverse) actually require a
+     * fresh x-reauth-token to proceed, vs. accepting one opportunistically without requiring it
+     * yet. Requires STEP_UP_SIGNING_SECRET to be set — flip both together.
+     */
+    STEP_UP_ENFORCEMENT_ENABLED: z
+      .string()
+      .optional()
+      .transform((v) => v === "true" || v === "1"),
+    /**
+     * §5.1 / §16 — when true, sequence enrollment requires an active email consent record
+     * for each prospect (ConsentService.hasActive). Default OFF so workspaces without
+     * consent capture yet are not locked out of outreach; flip after consent UI/API adoption.
+     */
+    CONSENT_ENFORCEMENT_ENABLED: z
+      .string()
+      .optional()
+      .transform((v) => v === "true" || v === "1"),
+    /**
      * Shared secret for the static-auth admin data-import page (/admin/import in the
      * frontend). When set, requests to /api/v1/import/* may authenticate with
      * `Authorization: Bearer admin_<this value>` instead of a Clerk JWT. Scoped to
@@ -108,6 +147,11 @@ const envSchema = z
     EMAIL_INTEL_DISCOVER_TIMEOUT_MS: z.coerce.number().int().positive().default(60000),
     /** n8n / external callers of /api/v1/email-intel/* (header x-api-key). */
     EMAIL_INTEL_EXTERNAL_API_KEY: z.string().optional(),
+    /**
+     * Default workspace UUID for Email-Intel → canonical evidence ingest when using
+     * EMAIL_INTEL_EXTERNAL_API_KEY. Override per-request with `x-skout-workspace-id`.
+     */
+    EVIDENCE_INGEST_DEFAULT_WORKSPACE_ID: z.string().uuid().optional(),
     /** Warm-Up Tool CloudMap URL (e.g. http://warmup-tool.<ns>:3010). */
     WARMUP_TOOL_SERVICE_URL: z.string().optional(),
     WARMUP_TOOL_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
@@ -129,6 +173,8 @@ const envSchema = z
     UNIPILE_DSN: z.string().url().optional(),
     UNIPILE_API_KEY: z.string().optional(),
     INTEGRATION_ENCRYPTION_KEY: z.string().optional(),
+    /** Previous key retained during rotate-integration-encryption-key cutover. */
+    INTEGRATION_ENCRYPTION_KEY_PREVIOUS: z.string().optional(),
     /** HMAC secret for signed tracking/unsubscribe tokens. Falls back to INTEGRATION_ENCRYPTION_KEY. */
     TRACKING_SIGNING_SECRET: z.string().optional(),
     // --- Enrichment provider API keys (PAL). Optional: stub adapters are used
@@ -263,6 +309,12 @@ const envSchema = z
     RISK_DECAY_SWEEP_INTERVAL_HOURS: z.coerce.number().int().positive().default(24),
     /** No opens/replies/activity for this many days -> engagement_decay signal. */
     RISK_DECAY_INACTIVITY_DAYS: z.coerce.number().int().positive().default(21),
+    // --- §5.2 identity-merge candidate discovery. ---
+    /** How often the discovery worker scans for probable-duplicate company/contact pairs and
+     * writes identity_merge_proposals rows for a human to review — see identity-merge.service.ts.
+     * Never auto-merges anything; this only closes the "scoring function exists but nothing
+     * calls it" gap by generating the candidates a reviewer sees in the merge-review UI. */
+    IDENTITY_MERGE_DISCOVERY_INTERVAL_HOURS: z.coerce.number().int().positive().default(24),
   })
   .transform((data) => {
     let next = data;

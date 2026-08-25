@@ -20,6 +20,7 @@ import { startAlertDigestSweepWorker } from "./workers/alert-digest-sweep.worker
 import { startRiskDecaySweepWorker } from "./workers/risk-decay-sweep.worker.js";
 import { startWorkbookRunWorker } from "./workers/workbook-run.worker.js";
 import { startReportDeliverySweepWorker } from "./workers/report-delivery-sweep.worker.js";
+import { startIdentityMergeDiscoveryWorker } from "./workers/identity-merge-discovery.worker.js";
 
 async function main() {
   const config = loadEnv();
@@ -58,12 +59,26 @@ async function main() {
   const stopRiskDecaySweepWorker = await startRiskDecaySweepWorker(config);
   const stopWorkbookRunWorker = await startWorkbookRunWorker(config);
   const stopReportDeliverySweepWorker = await startReportDeliverySweepWorker(config);
+  const stopIdentityMergeDiscoveryWorker = await startIdentityMergeDiscoveryWorker(config);
 
   const app = await buildApp(config);
+
+  if (config.RBAC_ENFORCEMENT_ENABLED && app.db) {
+    const { assertRbacBackfillReady } = await import("@skout/auth");
+    const gate = await assertRbacBackfillReady(app.db);
+    if (!gate.ready) {
+      app.log.fatal(
+        "RBAC_ENFORCEMENT_ENABLED=true but workspace_member_roles is empty — run pnpm --filter @skout/db backfill-rbac before enabling fail-closed RBAC"
+      );
+      process.exit(1);
+    }
+    app.log.info("RBAC fail-closed enforcement enabled (backfill verified)");
+  }
 
   const shutdown = async () => {
     await stopReportDeliverySweepWorker();
     await stopWorkbookRunWorker();
+    await stopIdentityMergeDiscoveryWorker();
     await stopRiskDecaySweepWorker();
     await stopAlertDigestSweepWorker();
     await stopSignalAlertSweepWorker();

@@ -9,6 +9,7 @@ import {
   markSuggestionAccepted,
   getSuggestionStats,
 } from "../services/next-best-action.service.js";
+import { assertEvidenced } from "@skout/shared";
 import { AI_DRAFT_STATUSES, buildAiDraftService, type AiDraftRow } from "../services/ai-draft.service.js";
 import { sendApprovedDraftEmail, type DraftSendResult } from "../services/ai-draft-send.service.js";
 import {
@@ -23,6 +24,19 @@ import { buildSequenceService } from "../services/sequence.service.js";
 import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.js";
 import { dispatchWebhookEvent } from "../services/webhook.service.js";
 import { HttpError } from "../utils/http.js";
+import { pinAiClaim } from "../services/ai-evidence.service.js";
+
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md for the full audit and rationale; one of the 9
+ * confirmed instances listed there (formalized in Task 17).
+ *   - Tables touched directly: tasks, contacts (both owned by apps/crm) - read AND write
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: these routes back the AI chat tool-runner and draft/task-creation flows, both
+ *     synchronous request/response paths where an HTTP round trip into apps/crm would add
+ *     latency directly felt by the user waiting on a chat response
+ *   - Review date: revisit once apps/crm's internal API surface exists (Wave 2)
+ */
 
 const chatSchema = z.object({
   messages: z
@@ -237,6 +251,24 @@ export async function aiRoutes(app: FastifyInstance) {
       subject = subject ?? (generated.subject || `Outreach to ${body.fullName ?? "prospect"}`);
       content = content ?? generated.html;
       model = process.env.AI_MODEL ?? "openai/gpt-4o-mini";
+
+      if (app.db && workspaceId !== "unknown") {
+        try {
+          await pinAiClaim(app.db, {
+            workspaceId,
+            entityType: body.prospectId ? "prospect" : "ai_generation",
+            entityId: body.prospectId ?? workspaceId,
+            attribute: "ai_draft",
+            value: { subject, bodyPreview: String(content).slice(0, 500), model },
+            source: "ai_draft_generate",
+            method: "ai_drafts",
+            versionName: "generate-email",
+          });
+        } catch (err) {
+          // Draft delivery must not fail closed on evidence pin — log and continue.
+          app.log.warn({ err, workspaceId }, "ai draft evidence pin failed");
+        }
+      }
     }
 
     const draft = await drafts.create(workspaceId, {
@@ -367,6 +399,30 @@ export async function aiRoutes(app: FastifyInstance) {
         }
       }
 
+      let evidenceId: string | null = null;
+      let modelVersionId: string | null = null;
+      let promptVersionId: string | null = null;
+      if (app.db && workspaceId !== "unknown") {
+        const pinned = await pinAiClaim(app.db, {
+          workspaceId,
+          entityType: "ai_chat",
+          entityId: workspaceId,
+          attribute: "chat_reply",
+          value: {
+            replyPreview: String(result.reply ?? "").slice(0, 500),
+            actionType: result.action?.type,
+            agent: body.agent,
+          },
+          source: "ai_chat",
+          method: "chat",
+          versionName: "chat",
+          confidence: 0.6,
+        });
+        evidenceId = pinned.evidenceId;
+        modelVersionId = pinned.modelVersionId;
+        promptVersionId = pinned.promptVersionId;
+      }
+
       return reply.send({
         reply: result.reply,
         action: result.action,
@@ -376,9 +432,15 @@ export async function aiRoutes(app: FastifyInstance) {
         exports: toolRunner.getCreatedExports(),
         mode: body.mode,
         segregated: Boolean(draftId),
+        evidenceId,
+        modelVersionId,
+        promptVersionId,
       });
     } catch (err: unknown) {
-      const e = err as { statusCode?: number; message?: string };
+      const e = err as { statusCode?: number; message?: string; name?: string };
+      if (e.name === "UnevidencedClaimError") {
+        return reply.status(500).send({ error: e.message ?? "Unevidenced AI claim rejected" });
+      }
       return reply.status(e.statusCode ?? 500).send({ error: e.message ?? "chat_failed" });
     }
   });
@@ -423,9 +485,41 @@ export async function aiRoutes(app: FastifyInstance) {
         app.config.OPENROUTER_API_KEY,
         insights
       );
-      return reply.send(result);
+
+      // §5.1 / §6.1 — pin generation to ModelVersion + evidence_ledger when DB is available
+      let evidenceId: string | undefined;
+      let modelVersionId: string | null = null;
+      let promptVersionId: string | null = null;
+      if (app.db && workspaceId !== "unknown") {
+        const pinned = await pinAiClaim(app.db, {
+          workspaceId,
+          entityType: "ai_generation",
+          entityId: workspaceId,
+          attribute: "generate_email",
+          value: {
+            subject: result.subject,
+            bodyPreview: String(result.html ?? "").slice(0, 500),
+          },
+          source: "ai_generate_email",
+          method: "generate_email",
+          versionName: "generate-email",
+        });
+        evidenceId = pinned.evidenceId;
+        modelVersionId = pinned.modelVersionId;
+        promptVersionId = pinned.promptVersionId;
+      }
+
+      return reply.send({
+        ...result,
+        evidenceId: evidenceId ?? null,
+        modelVersionId,
+        promptVersionId,
+      });
     } catch (err: unknown) {
-      const e = err as { statusCode?: number; message?: string };
+      const e = err as { statusCode?: number; message?: string; name?: string };
+      if (e.name === "UnevidencedClaimError") {
+        return reply.status(500).send({ error: e.message ?? "Unevidenced AI claim rejected" });
+      }
       return reply.status(e.statusCode ?? 500).send({ error: e.message ?? "Internal error" });
     }
   });
@@ -557,7 +651,7 @@ export async function aiRoutes(app: FastifyInstance) {
     try {
       const result = await suggestNextBestAction(app.db, app.config, request.workspaceId, parse.data.entityType, parse.data.entityId);
       if (!result) return reply.status(404).send({ error: "not_found" });
-      const suggestionId = await recordSuggestion(
+      const { suggestionId, evidenceId } = await recordSuggestion(
         app.db,
         request.workspaceId,
         parse.data.entityType,
@@ -565,7 +659,13 @@ export async function aiRoutes(app: FastifyInstance) {
         request.userId,
         result.suggestion
       );
-      return reply.send({ data: { ...result, suggestionId } });
+      // §6.1 anti-hallucination contract — the AI-generated suggestion is only returned to the
+      // caller once it carries a real evidence_ledger reference; recordSuggestion() above already
+      // fails the request (502) if the evidence write itself failed, so this assertion documents
+      // and enforces the contract at the response boundary rather than trusting that upstream
+      // behavior silently. `unverified` is deliberately never used here — see evidence-contract.ts.
+      assertEvidenced({ value: result.suggestion, evidenceId }, "next-best-action suggestion");
+      return reply.send({ data: { ...result, suggestionId, evidenceId } });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
       return reply.status(e.statusCode ?? 500).send({ error: e.message ?? "Internal error" });

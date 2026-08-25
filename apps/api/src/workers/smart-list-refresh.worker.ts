@@ -1,6 +1,7 @@
 import { Worker } from "bullmq";
+import { context as otelContext } from "@opentelemetry/api";
 import { createDb } from "@skout/db";
-import { createLogger } from "@skout/observability";
+import { createLogger, extractTraceContext, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
@@ -28,14 +29,21 @@ export async function startSmartListRefreshWorker(config: Env): Promise<() => Pr
   const worker = new Worker<SmartListRefreshJobPayload>(
     SMART_LIST_REFRESH_QUEUE,
     async (job) => {
-      const { jobId, workspaceId, listId } = job.data;
+      const { jobId, workspaceId, listId, traceContext } = job.data;
       log.info("Processing smart list refresh job", {
         jobId,
         workspaceId,
         listId,
         attempt: job.attemptsMade,
       });
-      await runSmartListRefreshJob(db, config, jobId, workspaceId, listId);
+
+      // §11.3 — resume the enqueuing request's trace context, same pattern as list-score.worker.ts.
+      const parentContext = extractTraceContext(traceContext);
+      await otelContext.with(parentContext, () =>
+        withSpan("smart-list-refresh.worker.process", () =>
+          runSmartListRefreshJob(db, config, jobId, workspaceId, listId)
+        )
+      );
     },
     {
       connection: redisBullMqConnection(config.REDIS_URL),

@@ -9,6 +9,7 @@ import { buildListService } from "./list.service.js";
 import { resolveEmailVerifier } from "./enrichment/index.js";
 import { resolveProspectFields } from "./prospect-resolver.service.js";
 import { isEmailIntelConfigured, verifyEmailAsVerdict } from "./email-intel.service.js";
+import { recordEvidence } from "./evidence.service.js";
 
 const log = createLogger("email-verification.service");
 const { emailVerifications } = schema;
@@ -129,6 +130,34 @@ export class EmailVerificationService {
       if (isEmailIntelConfigured(this.config)) {
         const v = await verifyEmailAsVerdict(this.config, email);
         if (v) {
+          // Task 21 (Enterprise Completion Plan Section 5.3) — Skout-Email-Intelligence-Tool is a
+          // separately deployed service with its own Postgres and its own internal evidence
+          // pipeline (evidenceLedger/evidenceCollector/evidenceWeighting), genuinely a different
+          // bounded context from this workspace-scoped canonical evidence_ledger (no workspaceId
+          // concept exists in its data model at all — it tracks raw email/domain verification
+          // facts, not CRM entities). Rather than having that tool make a new outbound HTTP call
+          // into apps/api (a new cross-service auth surface for a service that today only serves
+          // stateless verification requests), this dual-writes from HERE — the one place in
+          // apps/api that already has both the verdict AND workspace/prospect context — matching
+          // the same "avoid a new cross-service hop when an existing call site already has the
+          // needed context" reasoning used for the read-model exceptions (ADR 0003).
+          // Best-effort: a ledger-write failure must never fail list verification itself.
+          try {
+            await recordEvidence(this.db, {
+              workspaceId,
+              entityType: "prospect",
+              entityId: m.prospectId,
+              attribute: "email_deliverability",
+              value: { email, status: v.status, catchAll: v.catchAll, risky: v.risky },
+              source: "email_intelligence_tool",
+              observedAt: now,
+              confidence: v.deliverabilityScore / 100,
+              method: "smtp_verification",
+            });
+          } catch (err) {
+            log.warn("evidence ledger dual-write failed for email-intel verification", { workspaceId, prospectId: m.prospectId, err });
+          }
+
           return {
             prospectId: m.prospectId,
             email,

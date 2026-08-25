@@ -41,6 +41,16 @@ import { importAdapterRoutes } from "./import-adapter.routes.js";
 import { workbookRoutes } from "./workbook.routes.js";
 import { reportRoutes } from "./report.routes.js";
 import { modelPerformanceRoutes } from "./model-performance.routes.js";
+import { evidenceRoutes } from "./evidence.routes.js";
+import { identityMergeRoutes } from "./identity-merge.routes.js";
+import { consentRoutes } from "./consent.routes.js";
+import { entitlementsRoutes } from "./entitlements.routes.js";
+import { dsarRoutes } from "./dsar.routes.js";
+import { competitiveRoutes } from "./competitive.routes.js";
+import { regionalIntelRoutes } from "./regional-intel.routes.js";
+import { stepUpRoutes } from "./step-up.routes.js";
+import { incidentsRoutes } from "./incidents.routes.js";
+import { modelVersionsRoutes } from "./model-versions.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoutes, { prefix: "/api/v1" });
@@ -87,5 +97,15 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(workbookRoutes);
     await v1.register(reportRoutes);
     await v1.register(modelPerformanceRoutes);
+    await v1.register(evidenceRoutes);
+    await v1.register(identityMergeRoutes);
+    await v1.register(consentRoutes);
+    await v1.register(entitlementsRoutes);
+    await v1.register(dsarRoutes);
+    await v1.register(competitiveRoutes);
+    await v1.register(regionalIntelRoutes);
+    await v1.register(stepUpRoutes);
+    await v1.register(incidentsRoutes);
+    await v1.register(modelVersionsRoutes);
   }, { prefix: "/api/v1" });
 }

@@ -193,7 +193,7 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
       method: "POST",
       url: "/api/v1/lists",
       headers: { "x-workspace-id": WORKSPACE, "content-type": "application/json" },
-      payload: { name: "Test List" },
+      payload: { name: "Test List", mode: "static" },
     });
     expect(create.statusCode).toBe(201);
     const list = create.json() as { id: string; prospectCount: number };

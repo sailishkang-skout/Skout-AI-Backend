@@ -24,7 +24,11 @@ export const securityPlugin = fp(async (app: FastifyInstance, config: Env) => {
     global: true,
     max: config.RATE_LIMIT_MAX,
     timeWindow: config.RATE_LIMIT_WINDOW_MS,
-    allowList: (req) => req.url.startsWith("/api/v1/health") || req.url.startsWith("/health"),
+    allowList: (req) =>
+      req.url.startsWith("/api/v1/health") ||
+      req.url.startsWith("/api/v1/slo") ||
+      req.url.startsWith("/api/v1/metrics") ||
+      req.url.startsWith("/health"),
     keyGenerator: rateLimitKey,
     errorResponseBuilder: (_req, context) => ({
       error: "rate_limit_exceeded",

@@ -1,7 +1,7 @@
 import { Worker, Queue } from "bullmq";
 import { and, eq, isNull, lte, ne, or } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
-import { createLogger } from "@skout/observability";
+import { createLogger, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
@@ -39,54 +39,57 @@ export async function startSmartListRefreshSweepWorker(config: Env) {
   const worker = new Worker(
     QUEUE_NAME,
     async () => {
-      const now = new Date();
-      const due = await db
-        .select()
-        .from(smartLists)
-        .where(
-          and(
-            ne(smartLists.refreshCadence, "off"),
-            or(isNull(smartLists.nextRefreshAt), lte(smartLists.nextRefreshAt, now))
-          )
-        );
+      // §11.3 Task 33 — self-triggered on a cron schedule; root span (no upstream trace exists).
+      await withSpan("smart-list-refresh-sweep.tick", async () => {
+        const now = new Date();
+        const due = await db
+          .select()
+          .from(smartLists)
+          .where(
+            and(
+              ne(smartLists.refreshCadence, "off"),
+              or(isNull(smartLists.nextRefreshAt), lte(smartLists.nextRefreshAt, now))
+            )
+          );
 
-      if (due.length === 0) {
-        log.debug("No smart lists due for auto-refresh");
-        return;
-      }
-
-      log.info(`Enqueuing auto-refresh for ${due.length} smart list(s)`);
-
-      for (const list of due) {
-        try {
-          // Claim the slot immediately so a slow-running refresh can't be double-enqueued
-          // by the next sweep tick before it completes.
-          const cadence = list.refreshCadence as SmartListRefreshCadence;
-          await db
-            .update(smartLists)
-            .set({ nextRefreshAt: computeNextRefreshAt(cadence, now) })
-            .where(eq(smartLists.id, list.id));
-
-          const [job] = await db
-            .insert(asyncJobs)
-            .values({
-              workspaceId: list.workspaceId,
-              jobType: "smart_list_refresh",
-              entityType: "smart_list",
-              entityId: list.id,
-              payload: { cadence },
-            })
-            .returning();
-
-          await enqueueSmartListRefreshJob(config, {
-            jobId: job.id,
-            workspaceId: list.workspaceId,
-            listId: list.id,
-          });
-        } catch (err) {
-          log.error(`Failed to enqueue refresh for smart list ${list.id}`, { listId: list.id, err });
+        if (due.length === 0) {
+          log.debug("No smart lists due for auto-refresh");
+          return;
         }
-      }
+
+        log.info(`Enqueuing auto-refresh for ${due.length} smart list(s)`);
+
+        for (const list of due) {
+          try {
+            // Claim the slot immediately so a slow-running refresh can't be double-enqueued
+            // by the next sweep tick before it completes.
+            const cadence = list.refreshCadence as SmartListRefreshCadence;
+            await db
+              .update(smartLists)
+              .set({ nextRefreshAt: computeNextRefreshAt(cadence, now) })
+              .where(eq(smartLists.id, list.id));
+
+            const [job] = await db
+              .insert(asyncJobs)
+              .values({
+                workspaceId: list.workspaceId,
+                jobType: "smart_list_refresh",
+                entityType: "smart_list",
+                entityId: list.id,
+                payload: { cadence },
+              })
+              .returning();
+
+            await enqueueSmartListRefreshJob(config, {
+              jobId: job.id,
+              workspaceId: list.workspaceId,
+              listId: list.id,
+            });
+          } catch (err) {
+            log.error(`Failed to enqueue refresh for smart list ${list.id}`, { listId: list.id, err });
+          }
+        }
+      });
     },
     { connection, concurrency: 1 }
   );

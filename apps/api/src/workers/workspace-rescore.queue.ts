@@ -1,4 +1,5 @@
 import { Queue } from "bullmq";
+import { injectTraceContext } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { redisBullMqConnection } from "../lib/redis.js";
 
@@ -8,6 +9,8 @@ export interface WorkspaceRescoreJobPayload {
   jobId: string;
   workspaceId: string;
   icpVersion: number;
+  /** §11.3 Observability — W3C trace-context propagation, same pattern as list-score.queue.ts. */
+  traceContext?: Record<string, string>;
 }
 
 let queue: Queue<WorkspaceRescoreJobPayload> | null = null;
@@ -35,5 +38,9 @@ export async function enqueueWorkspaceRescoreJob(
   payload: WorkspaceRescoreJobPayload
 ): Promise<void> {
   const q = getWorkspaceRescoreQueue(config);
-  await q.add("rescore-workspace", payload, { jobId: payload.jobId });
+  await q.add(
+    "rescore-workspace",
+    { ...payload, traceContext: payload.traceContext ?? injectTraceContext() },
+    { jobId: payload.jobId }
+  );
 }

@@ -1,7 +1,7 @@
 import { Worker, Queue } from "bullmq";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
-import { createLogger } from "@skout/observability";
+import { createLogger, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
@@ -112,29 +112,32 @@ export async function startSignalAlertSweepWorker(config: Env) {
   const worker = new Worker(
     QUEUE_NAME,
     async () => {
-      const pending = await db
-        .select()
-        .from(signals)
-        .where(isNull(signals.alertedAt))
-        .orderBy(asc(signals.createdAt))
-        .limit(BATCH_SIZE);
+      // §11.3 Task 33 — self-triggered on a cron schedule; root span (no upstream trace exists).
+      await withSpan("signal-alert-sweep.tick", async () => {
+        const pending = await db
+          .select()
+          .from(signals)
+          .where(isNull(signals.alertedAt))
+          .orderBy(asc(signals.createdAt))
+          .limit(BATCH_SIZE);
 
-      if (pending.length === 0) return;
+        if (pending.length === 0) return;
 
-      let totalNotified = 0;
-      for (const signal of pending) {
-        try {
-          totalNotified += await matchAndNotifySignal(db, config, signal);
-        } catch (err) {
-          log.error(`Failed to match/notify for signal ${signal.id}`, { signalId: signal.id, err });
-        } finally {
-          // Always mark processed, matched or not, so a permanently-unmatched signal
-          // (no rule, no owner) doesn't get re-scanned by every sweep tick forever.
-          await db.update(signals).set({ alertedAt: new Date() }).where(eq(signals.id, signal.id));
+        let totalNotified = 0;
+        for (const signal of pending) {
+          try {
+            totalNotified += await matchAndNotifySignal(db, config, signal);
+          } catch (err) {
+            log.error(`Failed to match/notify for signal ${signal.id}`, { signalId: signal.id, err });
+          } finally {
+            // Always mark processed, matched or not, so a permanently-unmatched signal
+            // (no rule, no owner) doesn't get re-scanned by every sweep tick forever.
+            await db.update(signals).set({ alertedAt: new Date() }).where(eq(signals.id, signal.id));
+          }
         }
-      }
 
-      log.info(`Signal alert sweep processed ${pending.length} signal(s), sent ${totalNotified} notification(s)`);
+        log.info(`Signal alert sweep processed ${pending.length} signal(s), sent ${totalNotified} notification(s)`);
+      });
     },
     { connection, concurrency: 1 }
   );

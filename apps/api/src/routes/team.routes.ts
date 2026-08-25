@@ -4,12 +4,28 @@ import { schema } from "@skout/db";
 import { createTeamService } from "../services/team.service.js";
 import { sendMail, buildInviteEmail } from "../services/mail.service.js";
 import { errorResponse, HttpError } from "../utils/http.js";
+import { enforcePermission } from "@skout/auth";
 import type { WorkspaceRole } from "../services/team.service.js";
 
 export async function teamRoutes(app: FastifyInstance) {
   function teamSvc() {
     if (!app.db) throw new HttpError("Database not available", 500);
     return createTeamService(app.db);
+  }
+
+  // §5.1 / §11.1 — fine-grained RBAC shadow check for team-management actions. The role checks
+  // already inside team.service.ts (updateMemberRole/removeMember/inviteMember/revokeInvite,
+  // each passed the caller's request.role) are what actually enforce access today — unchanged.
+  // This is shadow-mode by default (RBAC_ENFORCEMENT_ENABLED unset): see enforcePermission's own
+  // doc comment for why enforcing before backfill-rbac.ts has run would deny every request.
+  // "team:manage" has been in the permission catalog since the RBAC tables were added but had
+  // no call site anywhere in the API until now.
+  async function shadowCheckTeamManage(workspaceId: string, userId: string | undefined, action: string) {
+    if (!app.db || !userId) return;
+    await enforcePermission(app.db, workspaceId, userId, "team:manage", {
+      enforce: app.config.RBAC_ENFORCEMENT_ENABLED,
+      onShadowDeny: (info) => app.log.warn(info, `RBAC shadow-mode: team:manage would have been denied (${action})`),
+    });
   }
 
   // ── Members ───────────────────────────────────────────────────────────────
@@ -28,6 +44,7 @@ export async function teamRoutes(app: FastifyInstance) {
       if (!request.workspaceId || !request.userId) {
         return reply.code(401).send(errorResponse("Unauthorized", 401));
       }
+      await shadowCheckTeamManage(request.workspaceId, request.userId, "update-member-role");
       const { role } = request.body;
       const updated = await teamSvc().updateMemberRole(
         request.workspaceId,
@@ -47,6 +64,7 @@ export async function teamRoutes(app: FastifyInstance) {
       if (!request.workspaceId || !request.userId) {
         return reply.code(401).send(errorResponse("Unauthorized", 401));
       }
+      await shadowCheckTeamManage(request.workspaceId, request.userId, "remove-member");
       await teamSvc().removeMember(
         request.workspaceId,
         request.params.userId,
@@ -78,6 +96,7 @@ export async function teamRoutes(app: FastifyInstance) {
       if (!request.workspaceId || !request.userId) {
         return reply.code(401).send(errorResponse("Unauthorized", 401));
       }
+      await shadowCheckTeamManage(request.workspaceId, request.userId, "create-invite");
       const { email, role } = request.body;
       if (!email || typeof email !== "string") {
         return reply.code(400).send(errorResponse("email is required", 400));
@@ -176,6 +195,7 @@ export async function teamRoutes(app: FastifyInstance) {
       if (!request.workspaceId) {
         return reply.code(401).send(errorResponse("Unauthorized", 401));
       }
+      await shadowCheckTeamManage(request.workspaceId, request.userId, "revoke-invite");
       await teamSvc().revokeInvite(request.workspaceId, request.params.inviteId, request.role);
       return reply.code(204).send();
     }

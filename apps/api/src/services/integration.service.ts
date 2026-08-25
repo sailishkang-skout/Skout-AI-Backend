@@ -5,7 +5,7 @@ import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
-import { decryptSecret, encryptSecret, maskApiKey } from "@skout/shared";
+import { decryptSecretWithFallback, encryptSecret, maskApiKey } from "@skout/shared";
 import {
   DEFAULT_UNIPILE_DSN,
   INTEGRATION_PROVIDERS,
@@ -46,6 +46,14 @@ export class IntegrationService {
     );
   }
 
+  private get previousEncryptionSecret(): string | undefined {
+    return this.config.INTEGRATION_ENCRYPTION_KEY_PREVIOUS;
+  }
+
+  private decryptStored(payload: string): string {
+    return decryptSecretWithFallback(payload, this.encryptionSecret, this.previousEncryptionSecret);
+  }
+
   async list(workspaceId: string): Promise<{ workspaceId: string; data: IntegrationDto[] }> {
     const rows = this.db
       ? await this.db
@@ -61,7 +69,7 @@ export class IntegrationService {
       let dsnHint: string | null = null;
       if (meta.id === "unipile" && row?.encryptedApiKey) {
         try {
-          const parsed = JSON.parse(decryptSecret(row.encryptedApiKey, this.encryptionSecret)) as {
+          const parsed = JSON.parse(this.decryptStored(row.encryptedApiKey)) as {
             dsn?: string;
           };
           if (parsed?.dsn) dsnHint = parsed.dsn.replace(/^https?:\/\//, "").split("/")[0] ?? null;
@@ -229,7 +237,7 @@ export class IntegrationService {
       if (!isIntegrationProviderId(row.provider)) continue;
       if (row.provider === "unipile") continue;
       try {
-        keys[row.provider] = decryptSecret(row.encryptedApiKey, this.encryptionSecret);
+        keys[row.provider] = this.decryptStored(row.encryptedApiKey);
       } catch {
         // Corrupt row — skip; user can re-save.
       }
@@ -254,7 +262,7 @@ export class IntegrationService {
       .limit(1);
     if (!row) return null;
     try {
-      const raw = decryptSecret(row.encryptedApiKey, this.encryptionSecret);
+      const raw = this.decryptStored(row.encryptedApiKey);
       try {
         const parsed = JSON.parse(raw) as { apiKey?: string; dsn?: string };
         if (parsed?.apiKey?.trim()) {
@@ -299,7 +307,7 @@ export class IntegrationService {
       )
       .limit(1);
     if (!row) return null;
-    return decryptSecret(row.encryptedApiKey, this.encryptionSecret);
+    return this.decryptStored(row.encryptedApiKey);
   }
 
   private async validateProviderKey(
