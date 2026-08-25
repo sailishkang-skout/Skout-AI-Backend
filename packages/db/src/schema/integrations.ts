@@ -103,6 +103,15 @@ export const workspaceIntegrations = pgTable(
   (table) => [unique().on(table.workspaceId, table.provider)]
 );
 
+/** Cursor for Warm-Up Tool integration-events pull consumer. */
+export const warmupToolSyncState = pgTable("warmup_tool_sync_state", {
+  workspaceId: uuid("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  lastEventId: text("last_event_id"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const webhookDeliveries = pgTable("webhook_deliveries", {
   id: uuid("id").primaryKey().defaultRandom(),
   endpointId: uuid("endpoint_id")

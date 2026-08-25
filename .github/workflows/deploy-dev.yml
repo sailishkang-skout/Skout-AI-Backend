@@ -125,6 +125,27 @@ jobs:
           docker push "$EMAIL_INTEL_REPO:$IMAGE_TAG"
           docker push "$EMAIL_INTEL_REPO:latest"
 
+      - name: Checkout Warm-Up Tool
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/Skout-Warm-Up-Tool
+          ref: main
+          path: warmup-tool
+        continue-on-error: true
+
+      - name: Build and push Warm-Up Tool image
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          if [ ! -f warmup-tool/Dockerfile ]; then
+            echo "::warning::Warm-Up Tool checkout missing Dockerfile — skipping image build"
+            exit 0
+          fi
+          WARMUP_REPO=$(aws ecr describe-repositories --repository-names skout-dev-warmup-tool --query 'repositories[0].repositoryUri' --output text)
+          docker build -f warmup-tool/Dockerfile -t "$WARMUP_REPO:$IMAGE_TAG" -t "$WARMUP_REPO:latest" warmup-tool
+          docker push "$WARMUP_REPO:$IMAGE_TAG"
+          docker push "$WARMUP_REPO:latest"
+
       - name: Checkout frontend
         id: checkout_frontend
         uses: actions/checkout@v4
@@ -191,9 +212,12 @@ jobs:
       - name: Run Email Intelligence database migrations (ECS one-off task)
         run: bash scripts/ecs-run-email-intel-migrations.sh SkoutDev
 
+      - name: Run Warm-Up Tool database migrations (ECS one-off task)
+        run: bash scripts/ecs-run-warmup-tool-migrations.sh SkoutDev
+
       - name: Force ECS redeploy
         run: |
           CLUSTER=$(aws ecs list-clusters --query "clusterArns[?contains(@, 'SkoutDev')]" --output text)
-          for svc in api crm ai web scraper-orchestrator scraper-cleaner scraper-ingestor email-intel-api email-intel-worker; do
+          for svc in api crm ai web scraper-orchestrator scraper-cleaner scraper-ingestor email-intel-api email-intel-worker warmup-tool-api warmup-tool-worker warmup-tool-inbound warmup-tool-classification warmup-tool-policy; do
             aws ecs update-service --cluster "$CLUSTER" --service "$svc" --force-new-deployment || true
           done

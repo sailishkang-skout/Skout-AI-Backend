@@ -1,0 +1,21 @@
+{
+  "version": "54.0.0",
+  "files": {
+    "6d6ee05babd8361f0d53994e4fc65e806ac033daf29171efeb7e5e13d2014efb": {
+      "displayName": "SkoutDev-EmailIntel Template",
+      "source": {
+        "path": "SkoutDev-EmailIntel.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "119408973331-us-east-1-c915c752": {
+          "bucketName": "cdk-hnb659fds-assets-119408973331-us-east-1",
+          "objectKey": "6d6ee05babd8361f0d53994e4fc65e806ac033daf29171efeb7e5e13d2014efb.json",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::119408973331:role/cdk-hnb659fds-file-publishing-role-119408973331-us-east-1"
+        }
+      }
+    }
+  },
+  "dockerImages": {}
+}

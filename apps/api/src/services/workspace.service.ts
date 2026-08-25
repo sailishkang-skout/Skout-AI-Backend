@@ -26,6 +26,7 @@ export function createWorkspaceService(db: Db) {
           balance: schema.creditBalances.balance,
           slackWebhookUrl: schema.workspaces.slackWebhookUrl,
           meetingBotAutoJoinDefault: schema.workspaces.meetingBotAutoJoinDefault,
+          dealPromotionThreshold: schema.workspaces.dealPromotionThreshold,
         })
         .from(schema.workspaces)
         .leftJoin(schema.creditBalances, eq(schema.creditBalances.workspaceId, schema.workspaces.id))
@@ -51,6 +52,16 @@ export function createWorkspaceService(db: Db) {
         .set({ meetingBotAutoJoinDefault: enabled, updatedAt: new Date() })
         .where(eq(schema.workspaces.id, workspaceId))
         .returning({ id: schema.workspaces.id, meetingBotAutoJoinDefault: schema.workspaces.meetingBotAutoJoinDefault });
+      return row ?? null;
+    },
+
+    /** Score threshold (0-100) above which a scored prospect is flagged as a promotion candidate. */
+    async setDealPromotionThreshold(workspaceId: string, threshold: number) {
+      const [row] = await db
+        .update(schema.workspaces)
+        .set({ dealPromotionThreshold: threshold, updatedAt: new Date() })
+        .where(eq(schema.workspaces.id, workspaceId))
+        .returning({ id: schema.workspaces.id, dealPromotionThreshold: schema.workspaces.dealPromotionThreshold });
       return row ?? null;
     },
 

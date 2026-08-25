@@ -31,8 +31,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         companies: 0,
         contacts: 0,
         openDeals: 0,
-        pipelineValue: 0,
-        currency: "USD",
+        valueByCurrency: [],
         openTasks: 0,
         overdueTasks: 0,
         dueTodayTasks: 0,
@@ -41,6 +40,16 @@ export async function dashboardRoutes(app: FastifyInstance) {
       };
     }
     return svc.overview(workspaceId);
+  });
+
+  /** CRM Intelligence page — open to every workspace member (unlike switching-cost/cro-summary
+   *  below, this isn't an org-internal exec metric, just "which deals need attention"). */
+  app.get("/dashboard/stale-deals", async (request) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) return { workspaceId, staleDeals: [], generatedAt: new Date().toISOString() };
+    const staleDeals = await svc.staleDeals(workspaceId);
+    return { workspaceId, staleDeals, generatedAt: new Date().toISOString() };
   });
 
   /** R14.3 — internal-only "switching cost" metric. Owner/admin only; not for reps or customers. */

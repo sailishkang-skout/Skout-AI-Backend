@@ -15,6 +15,7 @@ import { buildSequenceService } from "../services/sequence.service.js";
 import { createSmartList } from "../services/smart-list.service.js";
 import { listSignalsForEntities, overlaySignalsForMember, type OverlaySignal } from "../services/signal.service.js";
 import type { Env } from "../config/env.js";
+import { importListToCrm } from "@skout/crm-bridge";
 import type { ProspectListMember } from "../services/enrichment/types.js";
 
 async function withOverlaySignals(
@@ -97,6 +98,22 @@ export async function listRoutes(app: FastifyInstance) {
 
     const smartList = await createSmartList(app.db, workspaceId, list.name, list.sourceFilters);
     return reply.status(201).send({ ...smartList, kind: "smart" as const });
+  });
+
+  app.post("/lists/:id/import-to-crm", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = request.workspaceId ?? "unknown";
+    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
+
+    try {
+      const result = await importListToCrm(app.db, workspaceId, id, request.userId);
+      return reply.send(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "import_failed";
+      if (message === "list_not_found") return reply.status(404).send({ error: message });
+      if (message === "list_too_large_to_import") return reply.status(413).send({ error: message });
+      throw err;
+    }
   });
 
   app.get("/lists/:id", async (request, reply) => {

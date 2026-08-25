@@ -473,9 +473,78 @@ describe.skipIf(!hasDatabase)("CRM service E2E", () => {
 
     const summary = await app.inject({ method: "GET", url: "/api/v1/deals/summary", headers });
     expect(summary.statusCode).toBe(200);
-    const body = summary.json() as { openDeals: number; pipelineValue: number };
+    const body = summary.json() as { openDeals: number; valueByCurrency: { currency: string; value: number }[] };
     expect(body.openDeals).toBe(2);
-    expect(body.pipelineValue).toBe(3500);
+    expect(body.valueByCurrency).toEqual([{ currency: "USD", value: 3500 }]);
+  });
+
+  it("deals/summary keeps mixed-currency deals in separate buckets instead of summing them together", async () => {
+    const headers = asUser(`crm-deals-summary-currency-${randomUUID()}@test.com`);
+    const company = await createCompany(headers, "Multi-Currency Co");
+
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/deals",
+      headers,
+      payload: { name: "USD Deal", companyId: company.id, amount: 1000, currency: "USD" },
+    });
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/deals",
+      headers,
+      payload: { name: "INR Deal", companyId: company.id, amount: 200000, currency: "INR" },
+    });
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/deals",
+      headers,
+      payload: { name: "Second INR Deal", companyId: company.id, amount: 50000, currency: "INR" },
+    });
+
+    const summary = await app.inject({ method: "GET", url: "/api/v1/deals/summary", headers });
+    expect(summary.statusCode).toBe(200);
+    const body = summary.json() as {
+      openDeals: number;
+      valueByCurrency: { currency: string; value: number }[];
+      stages: { count: number; valueByCurrency: { currency: string; value: number }[] }[];
+    };
+    expect(body.openDeals).toBe(3);
+    const byCurrency = Object.fromEntries(body.valueByCurrency.map((v) => [v.currency, v.value]));
+    expect(byCurrency).toEqual({ USD: 1000, INR: 250000 });
+    // All three land in the same default stage — that stage's own breakdown must also stay split.
+    expect(body.stages).toHaveLength(1);
+    const stageByCurrency = Object.fromEntries(body.stages[0]!.valueByCurrency.map((v) => [v.currency, v.value]));
+    expect(stageByCurrency).toEqual({ USD: 1000, INR: 250000 });
+  });
+
+  it("POST /pipelines seeds the standard default stages, so a new pipeline is immediately usable", async () => {
+    const headers = asUser(`crm-new-pipeline-${randomUUID()}@test.com`);
+
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/v1/pipelines",
+      headers,
+      payload: { name: "EU Pipeline" },
+    });
+    expect(create.statusCode).toBe(201);
+    const pipeline = create.json() as { id: string; name: string; isDefault: boolean; stages: { name: string; orderIndex: number }[] };
+    expect(pipeline.name).toBe("EU Pipeline");
+    expect(pipeline.isDefault).toBe(false);
+    expect(pipeline.stages.map((s) => s.name)).toEqual([
+      "New",
+      "Qualified",
+      "Proposal",
+      "Negotiation",
+      "Closed Won",
+      "Closed Lost",
+    ]);
+
+    // A workspace can hold this pipeline alongside its own default one — creating a second
+    // pipeline must not disturb or replace the first.
+    const list = await app.inject({ method: "GET", url: "/api/v1/pipelines", headers });
+    const body = list.json() as { data: { id: string; isDefault: boolean }[] };
+    expect(body.data.some((p) => p.id === pipeline.id)).toBe(true);
+    expect(body.data.filter((p) => p.isDefault)).toHaveLength(1);
   });
 
   it("tasks: create and complete", async () => {
@@ -765,16 +834,52 @@ describe.skipIf(!hasDatabase)("CRM service E2E", () => {
       companies: number;
       contacts: number;
       openDeals: number;
-      pipelineValue: number;
+      valueByCurrency: { currency: string; value: number }[];
       openTasks: number;
       recentActivities: unknown[];
     };
     expect(body.companies).toBe(1);
     expect(body.contacts).toBe(1);
     expect(body.openDeals).toBe(1);
-    expect(body.pipelineValue).toBe(500);
+    expect(body.valueByCurrency).toEqual([{ currency: "USD", value: 500 }]);
     expect(body.openTasks).toBe(1);
     expect(Array.isArray(body.recentActivities)).toBe(true);
+  });
+
+  it("dashboard/stale-deals surfaces untouched deals and is open to a 'member' (unlike cro-summary)", async () => {
+    const ownerHeaders = asUser(`crm-stale-deals-owner-${randomUUID()}@test.com`);
+    const memberEmail = `crm-stale-deals-member-${randomUUID()}@test.com`;
+    const memberHeaders = asUser(memberEmail);
+
+    const workspaceId = await getWorkspaceIdFor(ownerHeaders);
+    await addMemberToWorkspace(workspaceId, memberEmail);
+
+    const company = await createCompany(ownerHeaders, "Stale Deal Co");
+    const dealRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/deals",
+      headers: ownerHeaders,
+      payload: { name: "Untouched Deal", companyId: company.id, amount: 2500 },
+    });
+    const deal = dealRes.json() as { id: string };
+
+    // Backdate past the 14-day staleness window — the API has no path to do this itself.
+    await db
+      .update(schema.deals)
+      .set({ updatedAt: new Date(Date.now() - 20 * 24 * 60 * 60 * 1000) })
+      .where(eq(schema.deals.id, deal.id));
+
+    // cro-summary stays owner/admin-only — a member gets 403.
+    const croAsMember = await app.inject({ method: "GET", url: "/api/v1/dashboard/cro-summary", headers: memberHeaders });
+    expect(croAsMember.statusCode).toBe(403);
+
+    // stale-deals is the new, role-agnostic endpoint — same member gets 200 with real data.
+    const staleAsMember = await app.inject({ method: "GET", url: "/api/v1/dashboard/stale-deals", headers: memberHeaders });
+    expect(staleAsMember.statusCode).toBe(200);
+    const body = staleAsMember.json() as { staleDeals: { id: string; name: string; daysSinceUpdate: number }[] };
+    const found = body.staleDeals.find((d) => d.id === deal.id);
+    expect(found).toBeTruthy();
+    expect(found!.daysSinceUpdate).toBeGreaterThanOrEqual(19);
   });
 
   it("malformed :id path params return a clean 400, not a raw DB 500", async () => {
@@ -893,11 +998,13 @@ describe.skipIf(!hasDatabase)("CRM service E2E", () => {
     expect(create.statusCode).toBe(201);
     const pipeline = create.json() as { id: string };
 
+    // New pipelines are seeded with the 6 standard DEFAULT_STAGES (orderIndex 0-5), same as
+    // ensureDefaultPipeline — so the next stage added by hand needs an unused index.
     const addStage = await app.inject({
       method: "POST",
       url: `/api/v1/pipelines/${pipeline.id}/stages`,
       headers,
-      payload: { name: "Stage A", orderIndex: 0 },
+      payload: { name: "Stage A", orderIndex: 6 },
     });
     expect(addStage.statusCode).toBe(201);
 
@@ -942,7 +1049,7 @@ describe.skipIf(!hasDatabase)("CRM service E2E", () => {
       method: "POST",
       url: `/api/v1/pipelines/${pipeline.id}/stages`,
       headers,
-      payload: { name: "Stage A", orderIndex: 0 },
+      payload: { name: "Stage A", orderIndex: 6 },
     });
     expect(first.statusCode).toBe(201);
 
@@ -950,7 +1057,7 @@ describe.skipIf(!hasDatabase)("CRM service E2E", () => {
       method: "POST",
       url: `/api/v1/pipelines/${pipeline.id}/stages`,
       headers,
-      payload: { name: "Stage B", orderIndex: 0 },
+      payload: { name: "Stage B", orderIndex: 6 },
     });
     expect(duplicate.statusCode).toBe(409);
     expect((duplicate.json() as { error: string }).error).toBe("stage_order_conflict");

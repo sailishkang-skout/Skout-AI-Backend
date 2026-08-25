@@ -73,6 +73,17 @@ const envSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   INTEGRATION_ENCRYPTION_KEY: z.string().optional(),
+  // --- Phase 3 — ICS meeting invites: a third, isolated mail channel (own SMTP creds, own
+  // domain), per docs/email-sending-architecture.md's system-mail/outreach-mail separation.
+  // Never shares credentials/domain with apps/api's transactional or outreach mail. All optional
+  // — invite sending is skipped with a warning log if unset. ---
+  MEETING_INVITE_SMTP_HOST: z.string().optional(),
+  MEETING_INVITE_SMTP_PORT: z.coerce.number().optional(),
+  MEETING_INVITE_SMTP_USER: z.string().optional(),
+  MEETING_INVITE_SMTP_PASSWORD: z.string().optional(),
+  MEETING_INVITE_FROM_ADDRESS: z.string().optional(),
+  /** Shared secret for HMAC-verifying inbound RSVP webhook payloads. */
+  MEETING_RSVP_WEBHOOK_SECRET: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

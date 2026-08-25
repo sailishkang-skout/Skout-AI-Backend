@@ -37,6 +37,7 @@ const patternsBodySchema = z.object({
   domain: z.string().min(1),
 });
 
+/** @deprecated see startWarmup/getWarmupStatus in email-intel.service.ts */
 const warmupStatusQuerySchema = z.object({
   domain: z.string().min(1),
 });
@@ -156,6 +157,7 @@ export async function emailIntelRoutes(app: FastifyInstance) {
     }
   });
 
+  /** @deprecated zero real callers (grep-confirmed) — see EmailIntelWarmupStartResult in email-intel.service.ts. */
   app.post("/email-intel/warmup/start", async (_request, reply) => {
     return reply.code(501).send({
       error: "warmup_not_implemented",
@@ -165,6 +167,7 @@ export async function emailIntelRoutes(app: FastifyInstance) {
     });
   });
 
+  /** @deprecated only the frontend's deprecated /intelligence/email/warmup page calls this. */
   app.get("/email-intel/warmup/status", async (request, reply) => {
     const query = warmupStatusQuerySchema.safeParse(request.query);
     if (!query.success) {

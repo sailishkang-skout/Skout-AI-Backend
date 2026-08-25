@@ -24,7 +24,7 @@ export async function dealsRoutes(app: FastifyInstance) {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
     if (!svc) {
-      return { workspaceId, openDeals: 0, pipelineValue: 0, currency: "USD", stages: [] };
+      return { workspaceId, openDeals: 0, valueByCurrency: [], stages: [] };
     }
     return svc.summary(workspaceId);
   });

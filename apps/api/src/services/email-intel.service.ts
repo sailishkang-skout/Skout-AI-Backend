@@ -1,5 +1,6 @@
 import type { Env } from "../config/env.js";
 import { HunterEmailVerifier, isLiveApiKey } from "@skout/pal";
+import { suggestDomainCorrection } from "../utils/domain-typo.js";
 
 /*
 ==================================================
@@ -57,6 +58,8 @@ export interface EmailIntelVerifyResult {
     decisionConfidence: number; // 0-100
     [key: string]: unknown;
   };
+  /** Set when the domain looks like a typo of a common domain (see applyDomainTypoCheck). */
+  suggestedDomain?: string;
   error?: string;
   [key: string]: unknown;
 }
@@ -96,7 +99,7 @@ export interface EmailIntelPatternResult {
 }
 
 /**
- * Shape of the upstream email-intel service's warmup responses.
+ * @deprecated Shape of the upstream email-intel service's warmup responses.
  *
  * NOTE: as of writing, `src/services/warmup/` in the email-intel repo is a
  * deliberate scaffold (its own docs/EXTERNAL.md: "Warmup ... scaffold only,
@@ -109,6 +112,10 @@ export interface EmailIntelPatternResult {
  * EmailIntelUnavailableError until the upstream engine is implemented.
  * `getWarmupStatus` does succeed today, but only reports the scaffold-wide
  * `{ enabled: false, phase: "scaffold" }` state, not real per-domain progress.
+ *
+ * A grep confirmed zero real callers of this proxy path (the real, active warmup
+ * lifecycle lives in Warm-Up-Tool — see warmup-ramp.worker.ts). Kept deprecated
+ * rather than deleted pending explicit maintainer sign-off on removal.
  */
 export interface EmailIntelWarmupStartResult {
   success: boolean;
@@ -118,6 +125,7 @@ export interface EmailIntelWarmupStartResult {
   [key: string]: unknown;
 }
 
+/** @deprecated see EmailIntelWarmupStartResult */
 export interface EmailIntelWarmupStatusResult {
   success: boolean;
   domain: string;
@@ -186,6 +194,7 @@ async function post<T>(
   return (await res.json()) as T;
 }
 
+/** @deprecated only used by the deprecated getWarmupStatus below. */
 async function get<T>(
   config: EmailIntelConfig,
   path: string,
@@ -216,12 +225,39 @@ async function get<T>(
   return (await res.json()) as T;
 }
 
+/** Raw upstream statuses ambiguous enough that an obvious domain typo should win over them. */
+const TYPO_ELIGIBLE_STATUSES: ReadonlySet<EmailIntelStatus> = new Set(["UNKNOWN", "NO_MX", "DNS_ERROR"]);
+
+/**
+ * When the upstream verdict is ambiguous (UNKNOWN/NO_MX/DNS_ERROR) and the domain is an obvious
+ * typo of a common domain (e.g. "gmial.com"), override the verdict to INVALID with a
+ * suggestedDomain instead of surfacing an unexplained ambiguous result.
+ */
+function applyDomainTypoCheck(result: EmailIntelVerifyResult): EmailIntelVerifyResult {
+  const status = result.verificationStatus?.status;
+  if (!status || !TYPO_ELIGIBLE_STATUSES.has(status)) return result;
+  if (!result.domain) return result;
+
+  const suggestedDomain = suggestDomainCorrection(result.domain);
+  if (!suggestedDomain) return result;
+
+  return {
+    ...result,
+    verificationStatus: { ...result.verificationStatus, status: "INVALID" },
+    suggestedDomain,
+    sendEligibility: result.sendEligibility
+      ? { ...result.sendEligibility, allowed: false, decision: "INVALID_TYPO" }
+      : result.sendEligibility,
+  };
+}
+
 /** POST /verify — single-email SMTP-based verification. */
-export function verifyEmail(
+export async function verifyEmail(
   config: Pick<Env, "EMAIL_INTEL_SERVICE_URL" | "EMAIL_INTEL_TIMEOUT_MS">,
   email: string
 ): Promise<EmailIntelVerifyResult> {
-  return post(config, "/verify", { email });
+  const result = await post<EmailIntelVerifyResult>(config, "/verify", { email });
+  return applyDomainTypoCheck(result);
 }
 
 /*
@@ -364,7 +400,11 @@ export function generatePatterns(
   });
 }
 
-/** POST /warmup/start — kicks off warm-up scheduling for a domain/mailbox. */
+/**
+ * @deprecated POST /warmup/start — zero real callers (grep-confirmed); the real, active
+ * warmup lifecycle lives in Warm-Up-Tool (warmup-ramp.worker.ts). Kept, not deleted,
+ * pending explicit maintainer sign-off — see EmailIntelWarmupStartResult above.
+ */
 export function startWarmup(
   config: Pick<Env, "EMAIL_INTEL_SERVICE_URL" | "EMAIL_INTEL_TIMEOUT_MS">,
   params: { domain: string; mailbox?: string }
@@ -372,7 +412,7 @@ export function startWarmup(
   return post(config, "/warmup/start", params);
 }
 
-/** GET /warmup/status?domain=... — current warm-up state/score for a domain. */
+/** @deprecated GET /warmup/status?domain=... — see startWarmup above. */
 export function getWarmupStatus(
   config: Pick<Env, "EMAIL_INTEL_SERVICE_URL" | "EMAIL_INTEL_TIMEOUT_MS">,
   domain: string
@@ -449,13 +489,17 @@ export async function verifyEmailResolved(
       }
       if (hunter) {
         const verdict = await hunter.verify(normalized);
-        return hunterVerifyResult(normalized, verdict.status, verdict.deliverabilityScore, verdict.catchAll);
+        return applyDomainTypoCheck(
+          hunterVerifyResult(normalized, verdict.status, verdict.deliverabilityScore, verdict.catchAll)
+        );
       }
       return result;
     } catch (err) {
       if (hunter) {
         const verdict = await hunter.verify(normalized);
-        return hunterVerifyResult(normalized, verdict.status, verdict.deliverabilityScore, verdict.catchAll);
+        return applyDomainTypoCheck(
+          hunterVerifyResult(normalized, verdict.status, verdict.deliverabilityScore, verdict.catchAll)
+        );
       }
       throw err;
     }
@@ -463,7 +507,9 @@ export async function verifyEmailResolved(
 
   if (hunter) {
     const verdict = await hunter.verify(normalized);
-    return hunterVerifyResult(normalized, verdict.status, verdict.deliverabilityScore, verdict.catchAll);
+    return applyDomainTypoCheck(
+      hunterVerifyResult(normalized, verdict.status, verdict.deliverabilityScore, verdict.catchAll)
+    );
   }
 
   throw new EmailIntelUnavailableError("EMAIL_INTEL_SERVICE_URL is not configured");

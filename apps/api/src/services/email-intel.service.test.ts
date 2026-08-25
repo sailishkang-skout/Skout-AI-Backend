@@ -55,6 +55,7 @@ describe("checkSendEligibility", () => {
   });
 });
 
+/** @deprecated see startWarmup/getWarmupStatus in email-intel.service.ts */
 describe("startWarmup", () => {
   it("POSTs domain/mailbox to /warmup/start and returns the upstream body", async () => {
     const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValue(
@@ -84,6 +85,105 @@ describe("startWarmup", () => {
       new Response(JSON.stringify({ success: false, error: "warmup_not_implemented" }), { status: 501 })
     );
     await expect(startWarmup(CONFIGURED, { domain: "acme.com" })).rejects.toMatchObject({ upstreamStatus: 501 });
+  });
+});
+
+/** @deprecated see startWarmup/getWarmupStatus in email-intel.service.ts */
+describe("getWarmupStatus", () => {
+  it("GETs /warmup/status with the domain as a query param and returns the upstream body", async () => {
+    const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({ success: true, domain: "acme.com", enabled: false, phase: "scaffold", score: null, dayInProgram: null }),
+        { status: 200 }
+      )
+    );
+    const result = await getWarmupStatus(CONFIGURED, "acme.com");
+    expect(result).toEqual({
+      success: true,
+      domain: "acme.com",
+      enabled: false,
+      phase: "scaffold",
+      score: null,
+      dayInProgram: null,
+    });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "http://email-intel.internal/warmup/status?domain=acme.com",
+      expect.objectContaining({ method: "GET" })
+    );
+  });
+
+  it("throws EmailIntelUnavailableError when EMAIL_INTEL_SERVICE_URL isn't set", async () => {
+    await expect(getWarmupStatus(UNCONFIGURED, "acme.com")).rejects.toThrow("Email Intelligence service unavailable");
+  });
+});
+
+describe("verifyEmail", () => {
+  it("overrides an UNKNOWN result to INVALID with a suggestedDomain when the domain is an obvious typo", async () => {
+    const { verifyEmail } = await import("./email-intel.service.js");
+    vi.spyOn(global, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          success: true,
+          email: "ada@gmial.com",
+          domain: "gmial.com",
+          disposable: false,
+          verificationStatus: { status: "NO_MX" },
+          sendEligibility: { allowed: true, decision: "SAFE", decisionConfidence: 40 },
+        }),
+        { status: 200 }
+      )
+    );
+
+    const result = await verifyEmail(CONFIGURED, "ada@gmial.com");
+
+    expect(result.verificationStatus?.status).toBe("INVALID");
+    expect(result.suggestedDomain).toBe("gmail.com");
+    expect(result.sendEligibility?.allowed).toBe(false);
+  });
+
+  it("leaves an UNKNOWN result untouched when the domain has no close common-domain match", async () => {
+    const { verifyEmail } = await import("./email-intel.service.js");
+    vi.spyOn(global, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          success: true,
+          email: "ada@acme.com",
+          domain: "acme.com",
+          disposable: false,
+          verificationStatus: { status: "NO_MX" },
+          sendEligibility: { allowed: true, decision: "SAFE", decisionConfidence: 40 },
+        }),
+        { status: 200 }
+      )
+    );
+
+    const result = await verifyEmail(CONFIGURED, "ada@acme.com");
+
+    expect(result.verificationStatus?.status).toBe("NO_MX");
+    expect(result.suggestedDomain).toBeUndefined();
+    expect(result.sendEligibility?.allowed).toBe(true);
+  });
+
+  it("does not override a VERIFIED result even for a domain resembling a typo", async () => {
+    const { verifyEmail } = await import("./email-intel.service.js");
+    vi.spyOn(global, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          success: true,
+          email: "ada@gmial.com",
+          domain: "gmial.com",
+          disposable: false,
+          verificationStatus: { status: "VERIFIED" },
+          sendEligibility: { allowed: true, decision: "SAFE", decisionConfidence: 95 },
+        }),
+        { status: 200 }
+      )
+    );
+
+    const result = await verifyEmail(CONFIGURED, "ada@gmial.com");
+
+    expect(result.verificationStatus?.status).toBe("VERIFIED");
+    expect(result.suggestedDomain).toBeUndefined();
   });
 });
 
@@ -118,32 +218,24 @@ describe("verifyEmailResolved", () => {
     expect(result.provider).toBe("hunter-fallback");
     expect(result.verificationStatus?.status).toBe("UNKNOWN");
   });
-});
 
-describe("getWarmupStatus", () => {
-  it("GETs /warmup/status with the domain as a query param and returns the upstream body", async () => {
-    const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify({ success: true, domain: "acme.com", enabled: false, phase: "scaffold", score: null, dayInProgram: null }),
-        { status: 200 }
-      )
-    );
-    const result = await getWarmupStatus(CONFIGURED, "acme.com");
-    expect(result).toEqual({
-      success: true,
-      domain: "acme.com",
-      enabled: false,
-      phase: "scaffold",
-      score: null,
-      dayInProgram: null,
+  it("applies the domain-typo check to a Hunter fallback result when email-intel isn't configured", async () => {
+    const { verifyEmailResolved } = await import("./email-intel.service.js");
+    const { HunterEmailVerifier } = await import("@skout/pal");
+
+    vi.spyOn(HunterEmailVerifier.prototype, "verify").mockResolvedValue({
+      status: "risky",
+      deliverabilityScore: 40,
+      catchAll: false,
+      risky: true,
     });
-    expect(fetchSpy).toHaveBeenCalledWith(
-      "http://email-intel.internal/warmup/status?domain=acme.com",
-      expect.objectContaining({ method: "GET" })
-    );
-  });
 
-  it("throws EmailIntelUnavailableError when EMAIL_INTEL_SERVICE_URL isn't set", async () => {
-    await expect(getWarmupStatus(UNCONFIGURED, "acme.com")).rejects.toThrow("Email Intelligence service unavailable");
+    const result = await verifyEmailResolved(
+      { ...UNCONFIGURED, HUNTER_API_KEY: "test-key", HUNTER_BASE_URL: "https://api.hunter.io/v2", ENRICHMENT_REQUEST_TIMEOUT_MS: 5000 } as never,
+      "aditya@gmial.com"
+    );
+
+    expect(result.verificationStatus?.status).toBe("INVALID");
+    expect(result.suggestedDomain).toBe("gmail.com");
   });
 });

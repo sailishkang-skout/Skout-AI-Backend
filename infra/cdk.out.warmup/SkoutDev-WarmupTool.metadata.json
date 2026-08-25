@@ -1,0 +1,835 @@
+{
+  "/SkoutDev-WarmupTool": [
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    },
+    {
+      "type": "aws:cdk:stack-tags",
+      "data": [
+        {
+          "key": "skout:environment",
+          "value": "dev"
+        }
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolToDbApi": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolToDbApi"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:175:7)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolToRedisApi": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolToRedisApi"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:183:7)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolToDbwarmuptoolworker": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolToDbwarmuptoolworker"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:175:7)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolToRediswarmuptoolworker": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolToRediswarmuptoolworker"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:183:7)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolToDbwarmuptoolinbound": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolToDbwarmuptoolinbound"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:175:7)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolToRediswarmuptoolinbound": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolToRediswarmuptoolinbound"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:183:7)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolToDbwarmuptoolclassification": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolToDbwarmuptoolclassification"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:175:7)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolToRediswarmuptoolclassification": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolToRediswarmuptoolclassification"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:183:7)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolToDbwarmuptoolpolicy": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolToDbwarmuptoolpolicy"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:175:7)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolToRediswarmuptoolpolicy": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolToRediswarmuptoolpolicy"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:183:7)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolServiceDns": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolServiceDns"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:192:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/BootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BootstrapVersion"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/CheckBootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CheckBootstrapVersion"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolApiService/Service": [
+    {
+      "type": "aws:cdk:warning",
+      "data": "minHealthyPercent has not been configured so the default value of 50% is used. The number of running tasks will decrease below the desired count during deployments etc. See https://github.com/aws/aws-cdk/issues/31705 [ack: @aws-cdk/aws-ecs:minHealthyPercent]",
+      "trace": [
+        "Annotations.addMessage (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/core/lib/annotations.js:1:3441)",
+        "Annotations.addWarningV2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/core/lib/annotations.js:1:2129)",
+        "new BaseService2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/aws-ecs/lib/base/base-service.js:1:15586)",
+        "new BaseService2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/core/lib/no-box-stack-traces.js:1:345)",
+        "new FargateService2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/aws-ecs/lib/fargate/fargate-service.js:1:7829)",
+        "new FargateService2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/core/lib/prop-injectable.js:1:855)",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:118:20)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:96:23)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "Object.<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "Module._compile (node:internal/modules/cjs/loader:1760:14)",
+        "Object.transformer (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-BOkp8V6j.cjs:9:3176)",
+        "Module.load (node:internal/modules/cjs/loader:1480:32)",
+        "Module._load (node:internal/modules/cjs/loader:1299:12)",
+        "TracingChannel.traceSync (node:diagnostics_channel:328:14)",
+        "wrapModuleLoad (node:internal/modules/cjs/loader:244:24)",
+        "cjsLoader (node:internal/modules/esm/translators:342:5)",
+        "ModuleWrap.<anonymous> (node:internal/modules/esm/translators:234:7)",
+        "ModuleJob.run (node:internal/modules/esm/module_job:377:25)",
+        "async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:691:26)",
+        "async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)"
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/CDKMetadata/Default": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CDKMetadata"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolApiService/TaskDef/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolApiServiceTaskDef7EAEFAFE"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:55:27)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:96:23)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolApiService/LogGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolApiServiceLogGroup171D93B1"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new LogGroup2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:61:22)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:96:23)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolApiService/ServiceSg/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolApiServiceServiceSg45CBE660"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new SecurityGroup2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:109:16)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:96:23)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolApiService/ServiceSg/from SkoutDevComputeApiServiceServiceSg768FA6CC:3010": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolApiServiceServiceSgfromSkoutDevComputeApiServiceServiceSg768FA6CC3010AE5DFEC7"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...Connections.allowFrom in .pnpm...",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:124:41)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)"
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolApiService/Service/Service": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolApiServiceDC1A9BCC"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateService2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:118:20)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:96:23)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolExecutionWorker/TaskDef/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolExecutionWorkerTaskDefC29661CE"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:38:27)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:154:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolExecutionWorker/LogGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolExecutionWorkerLogGroup82DCE432"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new LogGroup2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:43:22)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:154:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolExecutionWorker/ServiceSg/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolExecutionWorkerServiceSg7968D77D"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new SecurityGroup2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:64:26)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:154:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolExecutionWorker/Service/Service": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolExecutionWorkerServiceE1C42066"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateService2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:70:20)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:154:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolInboundWorker/TaskDef/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolInboundWorkerTaskDefE4AEE999"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:38:27)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:154:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolInboundWorker/LogGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolInboundWorkerLogGroup262DD0E0"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new LogGroup2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:43:22)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:154:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolInboundWorker/ServiceSg/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolInboundWorkerServiceSgB5015438"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new SecurityGroup2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:64:26)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:154:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolInboundWorker/Service/Service": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolInboundWorkerService341028D5"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateService2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:70:20)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:154:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolClassificationWorker/TaskDef/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolClassificationWorkerTaskDef01AFAA8C"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:38:27)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:154:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolClassificationWorker/LogGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolClassificationWorkerLogGroup48586ED6"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new LogGroup2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:43:22)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:154:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolClassificationWorker/ServiceSg/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolClassificationWorkerServiceSgDBF3E7AF"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new SecurityGroup2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:64:26)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:154:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolClassificationWorker/Service/Service": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolClassificationWorkerService28237941"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateService2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:70:20)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:154:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolPolicyWorker/TaskDef/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolPolicyWorkerTaskDef82CBCBEC"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:38:27)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:154:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolPolicyWorker/LogGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolPolicyWorkerLogGroup194800BA"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new LogGroup2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:43:22)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:154:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolPolicyWorker/ServiceSg/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolPolicyWorkerServiceSg0E3B2B77"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new SecurityGroup2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:64:26)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:154:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolPolicyWorker/Service/Service": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolPolicyWorkerServiceD517E024"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateService2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:70:20)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:154:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolApiService/TaskDef/TaskRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolApiServiceTaskDefTaskRoleE90167EC"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:55:27)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:96:23)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolApiService/TaskDef/ExecutionRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolApiServiceTaskDefExecutionRole63AA2562"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolApiService/Service/CloudmapService/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolApiServiceCloudmapServiceE26B78C1"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...WrappedClass.enableCloudMap in .pnpm...",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:119:23)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolExecutionWorker/TaskDef/TaskRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolExecutionWorkerTaskDefTaskRoleA407C62C"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:38:27)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:154:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolExecutionWorker/TaskDef/ExecutionRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolExecutionWorkerTaskDefExecutionRole1C421364"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolInboundWorker/TaskDef/TaskRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolInboundWorkerTaskDefTaskRoleBA5DB8E9"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:38:27)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:154:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolInboundWorker/TaskDef/ExecutionRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolInboundWorkerTaskDefExecutionRole5880E1F8"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolClassificationWorker/TaskDef/TaskRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolClassificationWorkerTaskDefTaskRole737C0125"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:38:27)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:154:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolClassificationWorker/TaskDef/ExecutionRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolClassificationWorkerTaskDefExecutionRole563A892C"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolPolicyWorker/TaskDef/TaskRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolPolicyWorkerTaskDefTaskRole07647E93"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:38:27)",
+        "new WarmupToolStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/warmup-tool-stack.ts:154:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:119:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolPolicyWorker/TaskDef/ExecutionRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolPolicyWorkerTaskDefExecutionRole75EF549F"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolApiService/TaskDef/ExecutionRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolApiServiceTaskDefExecutionRoleDefaultPolicy7F90D0DA"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolExecutionWorker/TaskDef/ExecutionRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolExecutionWorkerTaskDefExecutionRoleDefaultPolicy7B63CB9D"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolInboundWorker/TaskDef/ExecutionRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolInboundWorkerTaskDefExecutionRoleDefaultPolicy52AE594F"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolClassificationWorker/TaskDef/ExecutionRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolClassificationWorkerTaskDefExecutionRoleDefaultPolicy448E8F36"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-WarmupTool/WarmupToolPolicyWorker/TaskDef/ExecutionRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WarmupToolPolicyWorkerTaskDefExecutionRoleDefaultPolicy6D17D8B7"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ]
+}

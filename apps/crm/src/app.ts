@@ -33,6 +33,28 @@ export async function buildApp(config: Env) {
   await app.register(loggingPlugin);
   await app.register(securityPlugin, config);
 
+  // Preserve the raw request body alongside the parsed JSON. Webhook signature verification
+  // (the inbound meeting-RSVP webhook) must hash the exact bytes the caller sent — re-serializing
+  // the parsed object produces a different string and fails. Same pattern as apps/api's app.ts.
+  app.addContentTypeParser(
+    "application/json",
+    { parseAs: "string", bodyLimit: config.REQUEST_BODY_LIMIT_BYTES },
+    (request, body, done) => {
+      const raw = typeof body === "string" ? body : body.toString();
+      request.rawBody = raw;
+      if (!raw) {
+        done(null, {});
+        return;
+      }
+      try {
+        done(null, JSON.parse(raw));
+      } catch (err) {
+        (err as { statusCode?: number }).statusCode = 400;
+        done(err as Error, undefined);
+      }
+    }
+  );
+
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof ZodError) {
       return reply.code(400).send(

@@ -1,0 +1,1505 @@
+{
+ "Description": "Skout AI dev data layer (RDS, Redis, S3, secrets)",
+ "Resources": {
+  "DatabaseDbSecret1098DC6E": {
+   "Type": "AWS::SecretsManager::Secret",
+   "Properties": {
+    "GenerateSecretString": {
+     "ExcludePunctuation": true,
+     "GenerateStringKey": "password",
+     "SecretStringTemplate": "{\"username\":\"skout\"}"
+    },
+    "Name": "SkoutDev/database",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/Database/DbSecret/Resource"
+   }
+  },
+  "DatabaseDbSecretAttachment34026B56": {
+   "Type": "AWS::SecretsManager::SecretTargetAttachment",
+   "Properties": {
+    "SecretId": {
+     "Ref": "DatabaseDbSecret1098DC6E"
+    },
+    "TargetId": {
+     "Ref": "DatabasePostgres277EF4CB"
+    },
+    "TargetType": "AWS::RDS::DBInstance"
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/Database/DbSecret/Attachment/Resource"
+   }
+  },
+  "DatabaseDbSg4E409684": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Skout PostgreSQL",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/Database/DbSg/Resource"
+   }
+  },
+  "DatabasePostgresSubnetGroup92BDEA06": {
+   "Type": "AWS::RDS::DBSubnetGroup",
+   "Properties": {
+    "DBSubnetGroupDescription": "Subnet group for Postgres database",
+    "SubnetIds": [
+     {
+      "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet1Subnet536B997AFD4CC940"
+     },
+     {
+      "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet2Subnet3788AAA1380949A3"
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/Database/Postgres/SubnetGroup/Default"
+   }
+  },
+  "DatabasePostgres277EF4CB": {
+   "Type": "AWS::RDS::DBInstance",
+   "Properties": {
+    "AllocatedStorage": "20",
+    "BackupRetentionPeriod": 3,
+    "CopyTagsToSnapshot": true,
+    "DBInstanceClass": "db.t4g.micro",
+    "DBName": "skout",
+    "DBSubnetGroupName": {
+     "Ref": "DatabasePostgresSubnetGroup92BDEA06"
+    },
+    "DeletionProtection": false,
+    "Engine": "postgres",
+    "EngineVersion": "16",
+    "MasterUserPassword": {
+     "Fn::Join": [
+      "",
+      [
+       "{{resolve:secretsmanager:",
+       {
+        "Ref": "DatabaseDbSecret1098DC6E"
+       },
+       ":SecretString:password::}}"
+      ]
+     ]
+    },
+    "MasterUsername": {
+     "Fn::Join": [
+      "",
+      [
+       "{{resolve:secretsmanager:",
+       {
+        "Ref": "DatabaseDbSecret1098DC6E"
+       },
+       ":SecretString:username::}}"
+      ]
+     ]
+    },
+    "MaxAllocatedStorage": 40,
+    "MultiAZ": false,
+    "PubliclyAccessible": false,
+    "StorageType": "gp2",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "VPCSecurityGroups": [
+     {
+      "Fn::GetAtt": [
+       "DatabaseDbSg4E409684",
+       "GroupId"
+      ]
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/Database/Postgres/Resource"
+   }
+  },
+  "RedisSubnetGroup2387CBFF": {
+   "Type": "AWS::ElastiCache::SubnetGroup",
+   "Properties": {
+    "CacheSubnetGroupName": "skoutdev-redis",
+    "Description": "Skout Redis subnets",
+    "SubnetIds": [
+     {
+      "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet1Subnet536B997AFD4CC940"
+     },
+     {
+      "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet2Subnet3788AAA1380949A3"
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/Redis/SubnetGroup"
+   }
+  },
+  "RedisRedisSg2F12D8B8": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Skout Redis",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/Redis/RedisSg/Resource"
+   }
+  },
+  "RedisParams8A016D39": {
+   "Type": "AWS::ElastiCache::ParameterGroup",
+   "Properties": {
+    "CacheParameterGroupFamily": "redis7",
+    "Description": "BullMQ-safe noeviction policy",
+    "Properties": {
+     "maxmemory-policy": "noeviction"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/Redis/Params"
+   }
+  },
+  "Redis04B3B4F3": {
+   "Type": "AWS::ElastiCache::CacheCluster",
+   "Properties": {
+    "CacheNodeType": "cache.t4g.micro",
+    "CacheParameterGroupName": {
+     "Ref": "RedisParams8A016D39"
+    },
+    "CacheSubnetGroupName": "skoutdev-redis",
+    "ClusterName": "skoutdev-redis",
+    "Engine": "redis",
+    "NumCacheNodes": 1,
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "VpcSecurityGroupIds": [
+     {
+      "Fn::GetAtt": [
+       "RedisRedisSg2F12D8B8",
+       "GroupId"
+      ]
+     }
+    ]
+   },
+   "DependsOn": [
+    "RedisParams8A016D39",
+    "RedisSubnetGroup2387CBFF"
+   ],
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/Redis/Redis"
+   }
+  },
+  "StorageExportsBucket1F25C8FC": {
+   "Type": "AWS::S3::Bucket",
+   "Properties": {
+    "BucketEncryption": {
+     "ServerSideEncryptionConfiguration": [
+      {
+       "ServerSideEncryptionByDefault": {
+        "SSEAlgorithm": "AES256"
+       }
+      }
+     ]
+    },
+    "LifecycleConfiguration": {
+     "Rules": [
+      {
+       "ExpirationInDays": 30,
+       "Status": "Enabled"
+      }
+     ]
+    },
+    "PublicAccessBlockConfiguration": {
+     "BlockPublicAcls": true,
+     "BlockPublicPolicy": true,
+     "IgnorePublicAcls": true,
+     "RestrictPublicBuckets": true
+    },
+    "Tags": [
+     {
+      "Key": "aws-cdk:auto-delete-objects",
+      "Value": "true"
+     },
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "VersioningConfiguration": {
+     "Status": "Enabled"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/Storage/ExportsBucket/Resource"
+   }
+  },
+  "StorageExportsBucketPolicy938A32ED": {
+   "Type": "AWS::S3::BucketPolicy",
+   "Properties": {
+    "Bucket": {
+     "Ref": "StorageExportsBucket1F25C8FC"
+    },
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": "s3:*",
+       "Condition": {
+        "Bool": {
+         "aws:SecureTransport": "false"
+        }
+       },
+       "Effect": "Deny",
+       "Principal": {
+        "AWS": "*"
+       },
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "StorageExportsBucket1F25C8FC",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "StorageExportsBucket1F25C8FC",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "s3:DeleteObject*",
+        "s3:GetBucket*",
+        "s3:List*",
+        "s3:PutBucketPolicy"
+       ],
+       "Effect": "Allow",
+       "Principal": {
+        "AWS": {
+         "Fn::GetAtt": [
+          "CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092",
+          "Arn"
+         ]
+        }
+       },
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "StorageExportsBucket1F25C8FC",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "StorageExportsBucket1F25C8FC",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/Storage/ExportsBucket/Policy/Resource"
+   }
+  },
+  "StorageExportsBucketAutoDeleteObjectsCustomResource33980B5E": {
+   "Type": "Custom::S3AutoDeleteObjects",
+   "Properties": {
+    "ServiceToken": {
+     "Fn::GetAtt": [
+      "CustomS3AutoDeleteObjectsCustomResourceProviderHandler9D90184F",
+      "Arn"
+     ]
+    },
+    "BucketName": {
+     "Ref": "StorageExportsBucket1F25C8FC"
+    }
+   },
+   "DependsOn": [
+    "StorageExportsBucketPolicy938A32ED"
+   ],
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/Storage/ExportsBucket/AutoDeleteObjectsCustomResource/Default"
+   }
+  },
+  "StorageScrapeBucketE2932C76": {
+   "Type": "AWS::S3::Bucket",
+   "Properties": {
+    "BucketEncryption": {
+     "ServerSideEncryptionConfiguration": [
+      {
+       "ServerSideEncryptionByDefault": {
+        "SSEAlgorithm": "AES256"
+       }
+      }
+     ]
+    },
+    "LifecycleConfiguration": {
+     "Rules": [
+      {
+       "Prefix": "raw/",
+       "Status": "Enabled",
+       "Transitions": [
+        {
+         "StorageClass": "GLACIER",
+         "TransitionInDays": 90
+        }
+       ]
+      },
+      {
+       "ExpirationInDays": 30,
+       "Prefix": "quarantine/",
+       "Status": "Enabled"
+      }
+     ]
+    },
+    "PublicAccessBlockConfiguration": {
+     "BlockPublicAcls": true,
+     "BlockPublicPolicy": true,
+     "IgnorePublicAcls": true,
+     "RestrictPublicBuckets": true
+    },
+    "Tags": [
+     {
+      "Key": "aws-cdk:auto-delete-objects",
+      "Value": "true"
+     },
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "VersioningConfiguration": {
+     "Status": "Enabled"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/Storage/ScrapeBucket/Resource"
+   }
+  },
+  "StorageScrapeBucketPolicyE35F82B6": {
+   "Type": "AWS::S3::BucketPolicy",
+   "Properties": {
+    "Bucket": {
+     "Ref": "StorageScrapeBucketE2932C76"
+    },
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": "s3:*",
+       "Condition": {
+        "Bool": {
+         "aws:SecureTransport": "false"
+        }
+       },
+       "Effect": "Deny",
+       "Principal": {
+        "AWS": "*"
+       },
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "StorageScrapeBucketE2932C76",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "StorageScrapeBucketE2932C76",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "s3:DeleteObject*",
+        "s3:GetBucket*",
+        "s3:List*",
+        "s3:PutBucketPolicy"
+       ],
+       "Effect": "Allow",
+       "Principal": {
+        "AWS": {
+         "Fn::GetAtt": [
+          "CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092",
+          "Arn"
+         ]
+        }
+       },
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "StorageScrapeBucketE2932C76",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "StorageScrapeBucketE2932C76",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/Storage/ScrapeBucket/Policy/Resource"
+   }
+  },
+  "StorageScrapeBucketAutoDeleteObjectsCustomResourceACA2137D": {
+   "Type": "Custom::S3AutoDeleteObjects",
+   "Properties": {
+    "ServiceToken": {
+     "Fn::GetAtt": [
+      "CustomS3AutoDeleteObjectsCustomResourceProviderHandler9D90184F",
+      "Arn"
+     ]
+    },
+    "BucketName": {
+     "Ref": "StorageScrapeBucketE2932C76"
+    }
+   },
+   "DependsOn": [
+    "StorageScrapeBucketPolicyE35F82B6"
+   ],
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/Storage/ScrapeBucket/AutoDeleteObjectsCustomResource/Default"
+   }
+  },
+  "StorageEmailIntelBucket5203470B": {
+   "Type": "AWS::S3::Bucket",
+   "Properties": {
+    "BucketEncryption": {
+     "ServerSideEncryptionConfiguration": [
+      {
+       "ServerSideEncryptionByDefault": {
+        "SSEAlgorithm": "AES256"
+       }
+      }
+     ]
+    },
+    "LifecycleConfiguration": {
+     "Rules": [
+      {
+       "ExpirationInDays": 30,
+       "Status": "Enabled"
+      }
+     ]
+    },
+    "PublicAccessBlockConfiguration": {
+     "BlockPublicAcls": true,
+     "BlockPublicPolicy": true,
+     "IgnorePublicAcls": true,
+     "RestrictPublicBuckets": true
+    },
+    "Tags": [
+     {
+      "Key": "aws-cdk:auto-delete-objects",
+      "Value": "true"
+     },
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "VersioningConfiguration": {
+     "Status": "Enabled"
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/Storage/EmailIntelBucket/Resource"
+   }
+  },
+  "StorageEmailIntelBucketPolicy6C4EBC5C": {
+   "Type": "AWS::S3::BucketPolicy",
+   "Properties": {
+    "Bucket": {
+     "Ref": "StorageEmailIntelBucket5203470B"
+    },
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": "s3:*",
+       "Condition": {
+        "Bool": {
+         "aws:SecureTransport": "false"
+        }
+       },
+       "Effect": "Deny",
+       "Principal": {
+        "AWS": "*"
+       },
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "StorageEmailIntelBucket5203470B",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "StorageEmailIntelBucket5203470B",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "s3:DeleteObject*",
+        "s3:GetBucket*",
+        "s3:List*",
+        "s3:PutBucketPolicy"
+       ],
+       "Effect": "Allow",
+       "Principal": {
+        "AWS": {
+         "Fn::GetAtt": [
+          "CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092",
+          "Arn"
+         ]
+        }
+       },
+       "Resource": [
+        {
+         "Fn::GetAtt": [
+          "StorageEmailIntelBucket5203470B",
+          "Arn"
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::GetAtt": [
+             "StorageEmailIntelBucket5203470B",
+             "Arn"
+            ]
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/Storage/EmailIntelBucket/Policy/Resource"
+   }
+  },
+  "StorageEmailIntelBucketAutoDeleteObjectsCustomResourceD9299FE1": {
+   "Type": "Custom::S3AutoDeleteObjects",
+   "Properties": {
+    "ServiceToken": {
+     "Fn::GetAtt": [
+      "CustomS3AutoDeleteObjectsCustomResourceProviderHandler9D90184F",
+      "Arn"
+     ]
+    },
+    "BucketName": {
+     "Ref": "StorageEmailIntelBucket5203470B"
+    }
+   },
+   "DependsOn": [
+    "StorageEmailIntelBucketPolicy6C4EBC5C"
+   ],
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/Storage/EmailIntelBucket/AutoDeleteObjectsCustomResource/Default"
+   }
+  },
+  "CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Version": "2012-10-17",
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ]
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/Custom::S3AutoDeleteObjectsCustomResourceProvider/Role"
+   }
+  },
+  "CustomS3AutoDeleteObjectsCustomResourceProviderHandler9D90184F": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "S3Bucket": "cdk-hnb659fds-assets-119408973331-us-east-1",
+     "S3Key": "faa95a81ae7d7373f3e1f242268f904eb748d8d0fdd306e8a6fe515a1905a7d6.zip"
+    },
+    "Timeout": 900,
+    "MemorySize": 128,
+    "Handler": "index.handler",
+    "Role": {
+     "Fn::GetAtt": [
+      "CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092",
+      "Arn"
+     ]
+    },
+    "Runtime": "nodejs22.x",
+    "Description": {
+     "Fn::Join": [
+      "",
+      [
+       "Lambda function for auto-deleting objects in ",
+       {
+        "Ref": "StorageExportsBucket1F25C8FC"
+       },
+       " S3 bucket."
+      ]
+     ]
+    }
+   },
+   "DependsOn": [
+    "CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/Custom::S3AutoDeleteObjectsCustomResourceProvider/Handler",
+    "aws:asset:path": "asset.faa95a81ae7d7373f3e1f242268f904eb748d8d0fdd306e8a6fe515a1905a7d6",
+    "aws:asset:property": "Code"
+   }
+  },
+  "AppSecretsOpenAi9C721DDE": {
+   "Type": "AWS::SecretsManager::Secret",
+   "Properties": {
+    "Description": "Skout dev — openai (replace after deploy)",
+    "Name": "SkoutDev/openai",
+    "SecretString": "{\"OPENAI_API_KEY\":\"replace-me\"}",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/AppSecrets/OpenAi/Resource"
+   }
+  },
+  "AppSecretsClerk3C7EB3C5": {
+   "Type": "AWS::SecretsManager::Secret",
+   "Properties": {
+    "Description": "Skout dev — clerk (replace after deploy)",
+    "Name": "SkoutDev/clerk",
+    "SecretString": "{\"CLERK_SECRET_KEY\":\"replace-me\",\"CLERK_PUBLISHABLE_KEY\":\"replace-me\"}",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/AppSecrets/Clerk/Resource"
+   }
+  },
+  "AppSecretsApolloE41F3509": {
+   "Type": "AWS::SecretsManager::Secret",
+   "Properties": {
+    "Description": "Skout dev — apollo (replace after deploy)",
+    "Name": "SkoutDev/apollo",
+    "SecretString": "{\"APOLLO_API_KEY\":\"replace-me\"}",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/AppSecrets/Apollo/Resource"
+   }
+  },
+  "AppSecretsHunterC714CAE0": {
+   "Type": "AWS::SecretsManager::Secret",
+   "Properties": {
+    "Description": "Skout dev — hunter (replace after deploy)",
+    "Name": "SkoutDev/hunter",
+    "SecretString": "{\"HUNTER_API_KEY\":\"replace-me\"}",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/AppSecrets/Hunter/Resource"
+   }
+  },
+  "AppSecretsUnipile2CB91BBC": {
+   "Type": "AWS::SecretsManager::Secret",
+   "Properties": {
+    "Description": "Skout dev — unipile (replace after deploy)",
+    "Name": "SkoutDev/unipile",
+    "SecretString": "{\"UNIPILE_DSN\":\"https://api1.unipile.com:13111\",\"UNIPILE_API_KEY\":\"replace-me\"}",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/AppSecrets/Unipile/Resource"
+   }
+  },
+  "AppSecretsEnrichmentProviders3B50D358": {
+   "Type": "AWS::SecretsManager::Secret",
+   "Properties": {
+    "Description": "Skout dev — enrichment-providers (replace after deploy)",
+    "Name": "SkoutDev/enrichment-providers",
+    "SecretString": "{\"MILLIONVERIFIER_API_KEY\":\"replace-me\",\"ZEROBOUNCE_API_KEY\":\"replace-me\",\"NEVERBOUNCE_API_KEY\":\"replace-me\",\"PDL_API_KEY\":\"replace-me\",\"DATAGMA_API_KEY\":\"replace-me\",\"KASPR_API_KEY\":\"replace-me\",\"LUSHA_API_KEY\":\"replace-me\",\"CONTACTOUT_API_KEY\":\"replace-me\",\"REVENUEBASE_API_KEY\":\"replace-me\",\"EXPLORIUM_API_KEY\":\"replace-me\",\"CORESIGNAL_API_KEY\":\"replace-me\",\"COGNISM_API_KEY\":\"replace-me\",\"OPENCORPORATES_API_KEY\":\"replace-me\",\"OPENROUTER_API_KEY\":\"replace-me\"}",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/AppSecrets/EnrichmentProviders/Resource"
+   }
+  },
+  "AppSecretsHubspotE761A874": {
+   "Type": "AWS::SecretsManager::Secret",
+   "Properties": {
+    "Description": "Skout dev — hubspot (replace after deploy)",
+    "Name": "SkoutDev/hubspot",
+    "SecretString": "{\"HUBSPOT_CLIENT_ID\":\"replace-me\",\"HUBSPOT_CLIENT_SECRET\":\"replace-me\"}",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/AppSecrets/Hubspot/Resource"
+   }
+  },
+  "AppSecretsOpenSearchDD0A1CE0": {
+   "Type": "AWS::SecretsManager::Secret",
+   "Properties": {
+    "Description": "Skout dev — opensearch (replace after deploy)",
+    "Name": "SkoutDev/opensearch",
+    "SecretString": "{\"OPENSEARCH_URL\":\"replace-me\",\"OPENSEARCH_USERNAME\":\"replace-me\",\"OPENSEARCH_PASSWORD\":\"replace-me\"}",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/AppSecrets/OpenSearch/Resource"
+   }
+  },
+  "AppSecretsClickHouseB10ADD14": {
+   "Type": "AWS::SecretsManager::Secret",
+   "Properties": {
+    "Description": "Skout dev — clickhouse (replace after deploy)",
+    "Name": "SkoutDev/clickhouse",
+    "SecretString": "{\"CLICKHOUSE_URL\":\"replace-me\"}",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/AppSecrets/ClickHouse/Resource"
+   }
+  },
+  "AppSecretsScraperLinkedin8B484B29": {
+   "Type": "AWS::SecretsManager::Secret",
+   "Properties": {
+    "Description": "Skout dev — scraper/linkedin (replace after deploy)",
+    "Name": "SkoutDev/scraper/linkedin",
+    "SecretString": "{\"accounts\":\"[]\"}",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/AppSecrets/ScraperLinkedin/Resource"
+   }
+  },
+  "AppSecretsScraperProxy2EE20DE8": {
+   "Type": "AWS::SecretsManager::Secret",
+   "Properties": {
+    "Description": "Skout dev — scraper/proxy (replace after deploy)",
+    "Name": "SkoutDev/scraper/proxy",
+    "SecretString": "{\"PROXY_URL\":\"replace-me\",\"PROXY_USERNAME\":\"replace-me\",\"PROXY_PASSWORD\":\"replace-me\"}",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/AppSecrets/ScraperProxy/Resource"
+   }
+  },
+  "AppSecretsSentryCB7AAD9C": {
+   "Type": "AWS::SecretsManager::Secret",
+   "Properties": {
+    "Description": "Skout dev — sentry (replace after deploy)",
+    "Name": "SkoutDev/sentry",
+    "SecretString": "{\"SENTRY_DSN\":\"replace-me-node\",\"SENTRY_DSN_AI\":\"replace-me-python\",\"SENTRY_DSN_WEB\":\"replace-me-frontend\"}",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/AppSecrets/Sentry/Resource"
+   }
+  },
+  "AppSecretsPostHog2FD42F1B": {
+   "Type": "AWS::SecretsManager::Secret",
+   "Properties": {
+    "Description": "Skout dev — posthog (replace after deploy)",
+    "Name": "SkoutDev/posthog",
+    "SecretString": "{\"POSTHOG_API_KEY\":\"replace-me\",\"POSTHOG_HOST\":\"https://us.i.posthog.com\",\"POSTHOG_PROJECT_ID\":\"replace-me\"}",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/AppSecrets/PostHog/Resource"
+   }
+  },
+  "AppSecretsAppConfig118B9322": {
+   "Type": "AWS::SecretsManager::Secret",
+   "Properties": {
+    "Description": "Skout dev — app-config (replace after deploy)",
+    "Name": "SkoutDev/app-config",
+    "SecretString": "{\"INTEGRATION_ENCRYPTION_KEY\":\"replace-me\"}",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/AppSecrets/AppConfig/Resource"
+   }
+  },
+  "AppSecretsDatadog6A868826": {
+   "Type": "AWS::SecretsManager::Secret",
+   "Properties": {
+    "Description": "Skout dev — datadog (replace after deploy)",
+    "Name": "SkoutDev/datadog",
+    "SecretString": "{\"DD_API_KEY\":\"replace-me\",\"DD_SITE\":\"us5.datadoghq.com\"}",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/AppSecrets/Datadog/Resource"
+   }
+  },
+  "AppSecretsRazorpayB60F4FC5": {
+   "Type": "AWS::SecretsManager::Secret",
+   "Properties": {
+    "Description": "Skout dev — razorpay (replace after deploy)",
+    "Name": "SkoutDev/razorpay",
+    "SecretString": "{\"RAZORPAY_KEY_SECRET\":\"replace-me\",\"RAZORPAY_WEBHOOK_SECRET\":\"replace-me\"}",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/AppSecrets/Razorpay/Resource"
+   }
+  },
+  "AppSecretsGoogle3B8B35E2": {
+   "Type": "AWS::SecretsManager::Secret",
+   "Properties": {
+    "Description": "Skout dev — google (replace after deploy)",
+    "Name": "SkoutDev/google",
+    "SecretString": "{\"GOOGLE_CLIENT_ID\":\"replace-me\",\"GOOGLE_CLIENT_SECRET\":\"replace-me\"}",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/AppSecrets/Google/Resource"
+   }
+  },
+  "AppSecretsWarmupTool18E50856": {
+   "Type": "AWS::SecretsManager::Secret",
+   "Properties": {
+    "Description": "Skout dev — warmup-tool (replace after deploy)",
+    "Name": "SkoutDev/warmup-tool",
+    "SecretString": "{\"ENCRYPTION_KEY\":\"replace-me-warmup-encryption-key-32chars-min!!\",\"API_KEY_PEPPER\":\"replace-me-warmup-api-key-pepper-32chars-min!\",\"PLATFORM_PROVISIONING_KEY\":\"replace-me-warmup-platform-provision-32!\"}",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/AppSecrets/WarmupTool/Resource"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/8VRS2/CMAz+LfQcMiibNO0GrTTtBKK7TWhyU68E2hTFDgxV+e9TCeOxnZAm7WT7eyT5nFjGD49y0IMd9VWx7lc6l23GoNYCdvTeEiqLTDUYKNHKNjvMIvkwxy6UV7Al8pgZ1LJGcyH4yXiBKj6c46zm/bNt3OaoPgNe2IJkmwJDDoQvhhiMQpG53CCfPOnkF/At9QIrINYK1BJl211wLZ2BhRoZ7QlJOmlSOWK0XtBIthOn1iFs6N7aqNaf2kRP0eW+ukXRSB4okkE6dtykWCHjNF+hYoq8+Ef3QgRq1lRa7c+JwnxDrmDIGBi737ztYX9sXngvEkfc1HOkxlmFXbBzf0XNbLPVBdoJEIoxEXLGUGpTikvz1PHGsRemKVCu6G4b38vhUA56K9K6b51hXaOch/oFw1AGJjwDAAA="
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Data/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "DatabaseSecretArn": {
+   "Value": {
+    "Ref": "DatabaseDbSecret1098DC6E"
+   },
+   "Export": {
+    "Name": "SkoutDev-DbSecretArn"
+   }
+  },
+  "RedisEndpoint": {
+   "Value": {
+    "Fn::GetAtt": [
+     "Redis04B3B4F3",
+     "RedisEndpoint.Address"
+    ]
+   },
+   "Export": {
+    "Name": "SkoutDev-RedisEndpoint"
+   }
+  },
+  "ExportsBucketName": {
+   "Value": {
+    "Ref": "StorageExportsBucket1F25C8FC"
+   },
+   "Export": {
+    "Name": "SkoutDev-ExportsBucket"
+   }
+  },
+  "ScrapeBucketName": {
+   "Value": {
+    "Ref": "StorageScrapeBucketE2932C76"
+   },
+   "Export": {
+    "Name": "SkoutDev-ScrapeBucketData"
+   }
+  },
+  "EmailIntelBucketName": {
+   "Value": {
+    "Ref": "StorageEmailIntelBucket5203470B"
+   },
+   "Export": {
+    "Name": "SkoutDev-EmailIntelBucket"
+   }
+  },
+  "ExportsOutputFnGetAttStorageExportsBucket1F25C8FCArn8054303F": {
+   "Value": {
+    "Fn::GetAtt": [
+     "StorageExportsBucket1F25C8FC",
+     "Arn"
+    ]
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputFnGetAttStorageExportsBucket1F25C8FCArn8054303F"
+   }
+  },
+  "ExportsOutputFnGetAttStorageScrapeBucketE2932C76ArnD85224CB": {
+   "Value": {
+    "Fn::GetAtt": [
+     "StorageScrapeBucketE2932C76",
+     "Arn"
+    ]
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputFnGetAttStorageScrapeBucketE2932C76ArnD85224CB"
+   }
+  },
+  "ExportsOutputFnGetAttRedis04B3B4F3RedisEndpointAddress8458D51B": {
+   "Value": {
+    "Fn::GetAtt": [
+     "Redis04B3B4F3",
+     "RedisEndpoint.Address"
+    ]
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputFnGetAttRedis04B3B4F3RedisEndpointAddress8458D51B"
+   }
+  },
+  "ExportsOutputRefStorageExportsBucket1F25C8FC33F30C42": {
+   "Value": {
+    "Ref": "StorageExportsBucket1F25C8FC"
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputRefStorageExportsBucket1F25C8FC33F30C42"
+   }
+  },
+  "ExportsOutputRefStorageScrapeBucketE2932C763773BB9C": {
+   "Value": {
+    "Ref": "StorageScrapeBucketE2932C76"
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputRefStorageScrapeBucketE2932C763773BB9C"
+   }
+  },
+  "ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointAddress8AB85320": {
+   "Value": {
+    "Fn::GetAtt": [
+     "DatabasePostgres277EF4CB",
+     "Endpoint.Address"
+    ]
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointAddress8AB85320"
+   }
+  },
+  "ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointPortEA4FF89A": {
+   "Value": {
+    "Fn::GetAtt": [
+     "DatabasePostgres277EF4CB",
+     "Endpoint.Port"
+    ]
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointPortEA4FF89A"
+   }
+  },
+  "ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6": {
+   "Value": {
+    "Ref": "DatabaseDbSecret1098DC6E"
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+   }
+  },
+  "ExportsOutputRefAppSecretsClerk3C7EB3C545E9142A": {
+   "Value": {
+    "Ref": "AppSecretsClerk3C7EB3C5"
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputRefAppSecretsClerk3C7EB3C545E9142A"
+   }
+  },
+  "ExportsOutputRefAppSecretsApolloE41F3509642E2E3E": {
+   "Value": {
+    "Ref": "AppSecretsApolloE41F3509"
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputRefAppSecretsApolloE41F3509642E2E3E"
+   }
+  },
+  "ExportsOutputRefAppSecretsHunterC714CAE0B0117957": {
+   "Value": {
+    "Ref": "AppSecretsHunterC714CAE0"
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputRefAppSecretsHunterC714CAE0B0117957"
+   }
+  },
+  "ExportsOutputRefAppSecretsUnipile2CB91BBC0D607A4C": {
+   "Value": {
+    "Ref": "AppSecretsUnipile2CB91BBC"
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputRefAppSecretsUnipile2CB91BBC0D607A4C"
+   }
+  },
+  "ExportsOutputRefAppSecretsEnrichmentProviders3B50D3583F71B8A2": {
+   "Value": {
+    "Ref": "AppSecretsEnrichmentProviders3B50D358"
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputRefAppSecretsEnrichmentProviders3B50D3583F71B8A2"
+   }
+  },
+  "ExportsOutputRefAppSecretsOpenAi9C721DDEFB4634E2": {
+   "Value": {
+    "Ref": "AppSecretsOpenAi9C721DDE"
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputRefAppSecretsOpenAi9C721DDEFB4634E2"
+   }
+  },
+  "ExportsOutputRefAppSecretsHubspotE761A87435D0539B": {
+   "Value": {
+    "Ref": "AppSecretsHubspotE761A874"
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputRefAppSecretsHubspotE761A87435D0539B"
+   }
+  },
+  "ExportsOutputRefAppSecretsOpenSearchDD0A1CE054DE5BE5": {
+   "Value": {
+    "Ref": "AppSecretsOpenSearchDD0A1CE0"
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputRefAppSecretsOpenSearchDD0A1CE054DE5BE5"
+   }
+  },
+  "ExportsOutputRefAppSecretsClickHouseB10ADD14C051B586": {
+   "Value": {
+    "Ref": "AppSecretsClickHouseB10ADD14"
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputRefAppSecretsClickHouseB10ADD14C051B586"
+   }
+  },
+  "ExportsOutputRefAppSecretsSentryCB7AAD9CC86ED58F": {
+   "Value": {
+    "Ref": "AppSecretsSentryCB7AAD9C"
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputRefAppSecretsSentryCB7AAD9CC86ED58F"
+   }
+  },
+  "ExportsOutputRefAppSecretsPostHog2FD42F1B81AA1FB8": {
+   "Value": {
+    "Ref": "AppSecretsPostHog2FD42F1B"
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputRefAppSecretsPostHog2FD42F1B81AA1FB8"
+   }
+  },
+  "ExportsOutputRefAppSecretsAppConfig118B932242AF5AD8": {
+   "Value": {
+    "Ref": "AppSecretsAppConfig118B9322"
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputRefAppSecretsAppConfig118B932242AF5AD8"
+   }
+  },
+  "ExportsOutputRefAppSecretsWarmupTool18E50856C853C469": {
+   "Value": {
+    "Ref": "AppSecretsWarmupTool18E50856"
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputRefAppSecretsWarmupTool18E50856C853C469"
+   }
+  },
+  "ExportsOutputRefAppSecretsDatadog6A868826AA567BCE": {
+   "Value": {
+    "Ref": "AppSecretsDatadog6A868826"
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputRefAppSecretsDatadog6A868826AA567BCE"
+   }
+  },
+  "ExportsOutputRefAppSecretsRazorpayB60F4FC53562227F": {
+   "Value": {
+    "Ref": "AppSecretsRazorpayB60F4FC5"
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputRefAppSecretsRazorpayB60F4FC53562227F"
+   }
+  },
+  "ExportsOutputRefAppSecretsGoogle3B8B35E2139365E7": {
+   "Value": {
+    "Ref": "AppSecretsGoogle3B8B35E2"
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputRefAppSecretsGoogle3B8B35E2139365E7"
+   }
+  },
+  "ExportsOutputFnGetAttDatabaseDbSg4E409684GroupIdD2249FED": {
+   "Value": {
+    "Fn::GetAtt": [
+     "DatabaseDbSg4E409684",
+     "GroupId"
+    ]
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputFnGetAttDatabaseDbSg4E409684GroupIdD2249FED"
+   }
+  },
+  "ExportsOutputFnGetAttRedisRedisSg2F12D8B8GroupId19AE2A5D": {
+   "Value": {
+    "Fn::GetAtt": [
+     "RedisRedisSg2F12D8B8",
+     "GroupId"
+    ]
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputFnGetAttRedisRedisSg2F12D8B8GroupId19AE2A5D"
+   }
+  },
+  "ExportsOutputRefAppSecretsScraperProxy2EE20DE802BFA7C9": {
+   "Value": {
+    "Ref": "AppSecretsScraperProxy2EE20DE8"
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputRefAppSecretsScraperProxy2EE20DE802BFA7C9"
+   }
+  },
+  "ExportsOutputRefAppSecretsScraperLinkedin8B484B29E5AD6316": {
+   "Value": {
+    "Ref": "AppSecretsScraperLinkedin8B484B29"
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputRefAppSecretsScraperLinkedin8B484B29E5AD6316"
+   }
+  },
+  "ExportsOutputFnGetAttStorageEmailIntelBucket5203470BArn64DE9B75": {
+   "Value": {
+    "Fn::GetAtt": [
+     "StorageEmailIntelBucket5203470B",
+     "Arn"
+    ]
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputFnGetAttStorageEmailIntelBucket5203470BArn64DE9B75"
+   }
+  },
+  "ExportsOutputRefStorageEmailIntelBucket5203470BEF798283": {
+   "Value": {
+    "Ref": "StorageEmailIntelBucket5203470B"
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputRefStorageEmailIntelBucket5203470BEF798283"
+   }
+  },
+  "ExportsOutputRefDatabasePostgres277EF4CBCFC8AF89": {
+   "Value": {
+    "Ref": "DatabasePostgres277EF4CB"
+   },
+   "Export": {
+    "Name": "SkoutDev-Data:ExportsOutputRefDatabasePostgres277EF4CBCFC8AF89"
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}

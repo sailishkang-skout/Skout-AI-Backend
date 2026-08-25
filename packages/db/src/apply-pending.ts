@@ -244,7 +244,10 @@ try {
   await runSqlMigration("0044_sequence_versions_events_experiments", "0044_sequence_versions_events_experiments.sql");
   await runSqlMigration("0045_sequence_retry_and_linkedin_connections", "0045_sequence_retry_and_linkedin_connections.sql");
   await runSqlMigration("0046_manual_review_fields", "0046_manual_review_fields.sql");
-  await runSqlMigration("0043_list_source_filters", "0043_list_source_filters.sql");
+  await runSqlMigration("0047_promotion_candidates", "0047_promotion_candidates.sql");
+  await runSqlMigration("0048_pipelines_default_unique", "0048_pipelines_default_unique.sql");
+  await runSqlMigration("0049_meeting_ics", "0049_meeting_ics.sql");
+  await runSqlMigration("0050_list_source_filters", "0050_list_source_filters.sql");
 
 } finally {
   await sql.end();

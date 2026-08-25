@@ -40,6 +40,8 @@ export class SkoutAppSecrets extends Construct {
   readonly telnyx: secretsmanager.ISecret;
   /** Google OAuth client (Gmail inbox connection + Calendar). Placeholder until a real Google Cloud OAuth client is created. */
   readonly google: secretsmanager.ISecret;
+  /** Warm-Up Tool crypto + platform provisioning key (SkoutDev/warmup-tool). */
+  readonly warmupTool: secretsmanager.ISecret;
 
   constructor(scope: Construct, id: string, props: SkoutAppSecretsProps) {
     super(scope, id);
@@ -130,6 +132,12 @@ export class SkoutAppSecrets extends Construct {
     this.google = createPlaceholder("Google", "google", {
       GOOGLE_CLIENT_ID: "replace-me",
       GOOGLE_CLIENT_SECRET: "replace-me",
+    });
+    // Generate strong placeholders once; rotate in Secrets Manager after first deploy.
+    this.warmupTool = createPlaceholder("WarmupTool", "warmup-tool", {
+      ENCRYPTION_KEY: "replace-me-warmup-encryption-key-32chars-min!!",
+      API_KEY_PEPPER: "replace-me-warmup-api-key-pepper-32chars-min!",
+      PLATFORM_PROVISIONING_KEY: "replace-me-warmup-platform-provision-32!",
     });
   }
 }

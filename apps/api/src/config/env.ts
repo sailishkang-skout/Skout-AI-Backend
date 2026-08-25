@@ -108,6 +108,11 @@ const envSchema = z
     EMAIL_INTEL_DISCOVER_TIMEOUT_MS: z.coerce.number().int().positive().default(60000),
     /** n8n / external callers of /api/v1/email-intel/* (header x-api-key). */
     EMAIL_INTEL_EXTERNAL_API_KEY: z.string().optional(),
+    /** Warm-Up Tool CloudMap URL (e.g. http://warmup-tool.<ns>:3010). */
+    WARMUP_TOOL_SERVICE_URL: z.string().optional(),
+    WARMUP_TOOL_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
+    /** Platform provisioning Bearer for POST /api/v1/internal/provision-tenant. */
+    WARMUP_TOOL_PLATFORM_PROVISIONING_KEY: z.string().optional(),
     /** OpenRouter API key (preferred). Also accepts OPEN_ROUTER_API_KEY via transform. */
     OPENROUTER_API_KEY: z.string().optional(),
     OPEN_ROUTER_API_KEY: z.string().optional(),
