@@ -25,6 +25,50 @@ function requireMinRole(requestingRole: string | undefined, ...allowed: Workspac
   }
 }
 
+/**
+ * §11.1 — keep workspace_member_roles in sync with workspace_members.role so
+ * RBAC_ENFORCEMENT_ENABLED can be flipped on after backfill without drift on
+ * invite/role-change/remove. Best-effort: missing system role rows (pre-backfill)
+ * log and skip rather than failing the team mutation.
+ */
+async function syncFineGrainedMemberRole(
+  db: Db,
+  workspaceId: string,
+  userId: string,
+  coarseRole: WorkspaceRole,
+  grantedBy?: string
+): Promise<void> {
+  const [roleRow] = await db
+    .select({ id: schema.roles.id })
+    .from(schema.roles)
+    .where(eq(schema.roles.key, coarseRole))
+    .limit(1);
+  if (!roleRow) {
+    log.warn("RBAC sync skipped — system role not seeded; run pnpm --filter @skout/db backfill-rbac", {
+      workspaceId,
+      userId,
+      coarseRole,
+    });
+    return;
+  }
+
+  await db
+    .delete(schema.workspaceMemberRoles)
+    .where(
+      and(
+        eq(schema.workspaceMemberRoles.workspaceId, workspaceId),
+        eq(schema.workspaceMemberRoles.userId, userId)
+      )
+    );
+
+  await db.insert(schema.workspaceMemberRoles).values({
+    workspaceId,
+    userId,
+    roleId: roleRow.id,
+    grantedBy: grantedBy ?? null,
+  });
+}
+
 export function createTeamService(db: Db) {
   return {
     async listMembers(workspaceId: string) {
@@ -248,6 +292,16 @@ export function createTeamService(db: Db) {
         role: invite.role,
       });
 
+      try {
+        await syncFineGrainedMemberRole(db, invite.workspaceId, userId, invite.role as WorkspaceRole);
+      } catch (err) {
+        log.warn("RBAC workspace_member_roles sync failed on invite accept", {
+          err,
+          workspaceId: invite.workspaceId,
+          userId,
+        });
+      }
+
       await db
         .update(schema.workspaceInvites)
         .set({ acceptedAt: new Date() })
@@ -304,6 +358,17 @@ export function createTeamService(db: Db) {
           )
         );
 
+      try {
+        await syncFineGrainedMemberRole(db, workspaceId, targetUserId, newRole, requestingUserId);
+      } catch (err) {
+        log.warn("RBAC workspace_member_roles sync failed on role update", {
+          err,
+          workspaceId,
+          targetUserId,
+          newRole,
+        });
+      }
+
       log.info("team member role updated", {
         workspaceId,
         targetUserId,
@@ -349,6 +414,23 @@ export function createTeamService(db: Db) {
             ne(schema.workspaceMembers.role, "owner")
           )
         );
+
+      try {
+        await db
+          .delete(schema.workspaceMemberRoles)
+          .where(
+            and(
+              eq(schema.workspaceMemberRoles.workspaceId, workspaceId),
+              eq(schema.workspaceMemberRoles.userId, targetUserId)
+            )
+          );
+      } catch (err) {
+        log.warn("RBAC workspace_member_roles cleanup failed on member remove", {
+          err,
+          workspaceId,
+          targetUserId,
+        });
+      }
 
       log.info("team member removed", { workspaceId, targetUserId, requestingUserId });
     },

@@ -5,6 +5,7 @@ import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { listSignalsForEntity } from "./signal.service.js";
+import { recordEvidence } from "./evidence.service.js";
 
 const log = createLogger("next-best-action.service");
 const {
@@ -18,6 +19,27 @@ const {
   prospectScores,
   nextBestActionSuggestions,
 } = schema;
+
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md for the full audit and rationale; one of the 9
+ * confirmed instances listed there (formalized in Task 17).
+ *   - Tables touched directly: contacts, deals, companies, activities, tasks (all owned by
+ *     apps/crm) - read only
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: gatherContext() assembles a compact cross-entity history summary in one pass to
+ *     feed the LLM prompt synchronously; splitting this into per-table HTTP calls into apps/crm
+ *     would add latency directly felt by the user waiting on a suggestion and complicate a
+ *     read that's naturally one query set
+ *   - Review date: revisit once apps/crm's internal API surface exists (Wave 2)
+ */
+
+/**
+ * §5.3 — the model doesn't emit its own calibrated confidence for a suggestion, so the
+ * evidence-ledger dual-write below uses this fixed default. Deliberately mid-range: useful as
+ * evidence, but should still be outranked by a manually-entered or corroborated fact.
+ */
+const NEXT_BEST_ACTION_MODEL_CONFIDENCE = 0.65;
 
 export type SuggestedActionType = "call" | "email" | "meeting" | "wait" | "task";
 
@@ -215,6 +237,15 @@ export async function suggestNextBestAction(
 /**
  * R20.3 — persists every suggestion generated (accepted or not), so acceptance rate is a real,
  * queryable number instead of something only visible in a chat transcript.
+ *
+ * §6.1 anti-hallucination contract — unlike most Evidence Ledger dual-writes elsewhere in this
+ * codebase (which are best-effort provenance bookkeeping on data that's already trusted, e.g.
+ * a manual CRM edit), a next-best-action suggestion IS the AI-generated claim itself. The
+ * contract's own doc comment is explicit that `unverified` may never be used for an
+ * AI-generated claim, so a failed evidence-ledger write here can't be silently swallowed the
+ * way it is for autoFill/identity-merge dual-writes — it has to fail the request, which is
+ * exactly what "enforced at the API-response-schema level so a claim without one fails
+ * validation rather than shipping silently" (§6.1's own completion criteria) asks for.
  */
 export async function recordSuggestion(
   db: Db,
@@ -223,7 +254,7 @@ export async function recordSuggestion(
   entityId: string,
   createdBy: string | undefined,
   suggestion: NextBestActionSuggestion
-): Promise<string> {
+): Promise<{ suggestionId: string; evidenceId: string }> {
   const [row] = await db
     .insert(nextBestActionSuggestions)
     .values({
@@ -237,7 +268,40 @@ export async function recordSuggestion(
       createdBy,
     })
     .returning({ id: nextBestActionSuggestions.id });
-  return row!.id;
+
+  // §5.3 / §6.1 — write into the canonical Evidence Ledger so "why did we suggest this" is
+  // queryable, AND so the claim returned to the API caller has a real evidence_id to cite
+  // (see the doc comment above for why this one call site does NOT swallow the failure).
+  let evidenceRow: { id: string } | undefined;
+  try {
+    evidenceRow = await recordEvidence(db, {
+      workspaceId,
+      entityType,
+      entityId,
+      attribute: "next_best_action",
+      value: {
+        suggestionId: row!.id,
+        actionType: suggestion.actionType,
+        headline: suggestion.headline,
+        rationale: suggestion.rationale,
+        draftMessage: suggestion.draftMessage,
+      },
+      source: "next_best_action_model",
+      observedAt: new Date(),
+      confidence: NEXT_BEST_ACTION_MODEL_CONFIDENCE,
+      method: "llm_suggestion",
+    });
+  } catch (err) {
+    log.error("evidence ledger write failed for next-best-action suggestion — failing the request per §6.1 (no ungrounded AI claim ships)", {
+      err,
+      suggestionId: row!.id,
+    });
+    throw Object.assign(new Error("Could not record evidence for this suggestion — not returning an unverified AI claim"), {
+      statusCode: 502,
+    });
+  }
+
+  return { suggestionId: row!.id, evidenceId: evidenceRow.id };
 }
 
 export type SuggestionAcceptedAction = "create_task" | "enroll_sequence";
@@ -254,8 +318,32 @@ export async function markSuggestionAccepted(
     .update(nextBestActionSuggestions)
     .set({ acceptedAt: new Date(), acceptedAction, acceptedRefId })
     .where(and(eq(nextBestActionSuggestions.id, suggestionId), eq(nextBestActionSuggestions.workspaceId, workspaceId)))
-    .returning({ id: nextBestActionSuggestions.id });
-  return Boolean(row);
+    .returning({
+      id: nextBestActionSuggestions.id,
+      entityType: nextBestActionSuggestions.entityType,
+      entityId: nextBestActionSuggestions.entityId,
+    });
+  if (!row) return false;
+
+  // §5.3 — a human accepting a suggestion is itself a fact worth recording: confidence 1.0
+  // because it's a direct user action, not a model inference. Best-effort, same as above.
+  try {
+    await recordEvidence(db, {
+      workspaceId,
+      entityType: row.entityType,
+      entityId: row.entityId,
+      attribute: "next_best_action_accepted",
+      value: { suggestionId: row.id, acceptedAction, acceptedRefId },
+      source: "user_action",
+      observedAt: new Date(),
+      confidence: 1,
+      method: "suggestion_accept",
+    });
+  } catch (err) {
+    log.error("evidence ledger dual-write failed for next-best-action acceptance", { err, suggestionId: row.id });
+  }
+
+  return true;
 }
 
 /** R20.3 — the acceptance-rate readout the AC asks for. */

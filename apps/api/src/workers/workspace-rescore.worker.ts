@@ -1,6 +1,7 @@
 import { Worker } from "bullmq";
+import { context as otelContext } from "@opentelemetry/api";
 import { createDb } from "@skout/db";
-import { createLogger } from "@skout/observability";
+import { createLogger, extractTraceContext, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
@@ -28,14 +29,21 @@ export async function startWorkspaceRescoreWorker(config: Env): Promise<() => Pr
   const worker = new Worker<WorkspaceRescoreJobPayload>(
     WORKSPACE_RESCORE_QUEUE,
     async (job) => {
-      const { jobId, workspaceId, icpVersion } = job.data;
+      const { jobId, workspaceId, icpVersion, traceContext } = job.data;
       log.info("Processing workspace rescore job", {
         jobId,
         workspaceId,
         icpVersion,
         attempt: job.attemptsMade,
       });
-      await runWorkspaceRescoreJob(db, config, jobId, workspaceId, icpVersion);
+
+      // §11.3 — resume the enqueuing request's trace context, same pattern as list-score.worker.ts.
+      const parentContext = extractTraceContext(traceContext);
+      await otelContext.with(parentContext, () =>
+        withSpan("workspace-rescore.worker.process", () =>
+          runWorkspaceRescoreJob(db, config, jobId, workspaceId, icpVersion)
+        )
+      );
     },
     {
       connection: redisBullMqConnection(config.REDIS_URL),

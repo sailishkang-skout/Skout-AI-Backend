@@ -1,8 +1,9 @@
 import { Worker } from "bullmq";
+import { context as otelContext } from "@opentelemetry/api";
 import { and, asc, count, desc, eq, gte, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { createDb } from "@skout/db";
 import { schema } from "@skout/db";
-import { createLogger } from "@skout/observability";
+import { createLogger, extractTraceContext, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
@@ -36,6 +37,19 @@ import {
 import { recordSequenceEvent } from "../services/sequence-events.js";
 
 const log = createLogger("sequence-enrollment.worker");
+
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md for the full audit and rationale; this is one of the 9
+ * confirmed instances listed there (formalized in Task 17, not modified in that original pass).
+ *   - Tables touched directly: tasks, contacts (both owned by apps/crm) - read AND write
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance;
+ *     no formal internal API call happens here)
+ *   - Reason: this is a BullMQ worker on a latency-sensitive send/advance path; an HTTP round
+ *     trip into apps/crm for every sequence step would add material latency and a new failure
+ *     mode to a job queue that already has its own retry semantics to reason about
+ *   - Review date: revisit once apps/crm's internal API surface exists (Wave 2)
+ */
 
 const {
   sequenceEnrollments,
@@ -1512,7 +1526,15 @@ export async function startSequenceEnrollmentWorker(config: Env): Promise<() => 
         enrollmentId: job.data.enrollmentId,
         attempt: job.attemptsMade,
       });
-      await advanceEnrollment(db, config, job.data);
+
+      // §11.3 — resume the enqueuing request's trace context, same pattern as list-score.worker.ts.
+      // Everything advanceEnrollment does, including its own internal re-enqueue calls for the
+      // next step, runs inside this scope, so injectTraceContext() there naturally continues the
+      // same trace without needing to thread traceContext through every internal call site.
+      const parentContext = extractTraceContext(job.data.traceContext);
+      await otelContext.with(parentContext, () =>
+        withSpan("sequence-enrollment.worker.process", () => advanceEnrollment(db, config, job.data))
+      );
     },
     {
       connection: redisBullMqConnection(config.REDIS_URL),

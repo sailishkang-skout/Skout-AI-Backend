@@ -1,16 +1,18 @@
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, recordEvidence } from "@skout/db";
 import type { ContactCreateInput, ContactUpdateInput } from "@skout/shared";
 import { HttpError } from "@skout/auth";
 import type { CompaniesService } from "./companies.service.js";
 import type { AuditService } from "./audit.service.js";
+import { RetentionRulesService } from "./retention-rules.service.js";
 import { serviceLog } from "../lib/obs.js";
 import {
   asFieldSourcesMap,
   filterAutoFillablePatch,
   markManualSources,
   mergeAutoFillSources,
+  DEFAULT_AUTO_FILL_CONFIDENCE,
   type FieldSource,
   type FieldSourcesMap,
 } from "../utils/field-sources.js";
@@ -32,6 +34,9 @@ export interface ContactDto {
   lifecycleStage: string;
   sourceProspectId: string | null;
   fieldSources: FieldSourcesMap;
+  /** §8.12 Task 29 — RetentionRulesService.classify() result against lifecycleStage, or null if
+   * unclassified / no matching active rule. Recomputed by update() on every lifecycleStage change. */
+  retentionClassification: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -60,6 +65,7 @@ function toDto(row: typeof contacts.$inferSelect): ContactDto {
     lifecycleStage: row.lifecycleStage,
     sourceProspectId: row.sourceProspectId,
     fieldSources: asFieldSourcesMap(row.fieldSources),
+    retentionClassification: row.retentionClassification,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -155,6 +161,23 @@ export class ContactsService {
         ? markManualSources(asFieldSourcesMap(existing.fieldSources), editedAutoFillable)
         : undefined;
 
+    // §8.12 Task 29 — recompute retention classification whenever lifecycleStage actually
+    // changes, using this workspace's contact-scoped retention rules. Best-effort: a rules-
+    // lookup failure shouldn't block the underlying contact update (this mirrors how the rest
+    // of retention classification behaves in activities.service.ts — it's provenance metadata
+    // on already-trusted data, not an AI-generated claim, so §6.1's mandatory-evidence standard
+    // doesn't apply here).
+    let retentionClassification: string | null | undefined;
+    if (input.lifecycleStage !== undefined) {
+      try {
+        const rules = await new RetentionRulesService(this.db).list(workspaceId, "contact");
+        const classification = RetentionRulesService.classify(rules, input.lifecycleStage, "lifecycleStage");
+        retentionClassification = classification === "unclassified" ? null : classification;
+      } catch (err) {
+        log.error("retention classification lookup failed for contact", { workspaceId, contactId: id, err });
+      }
+    }
+
     const [row] = await this.db
       .update(contacts)
       .set({
@@ -169,6 +192,7 @@ export class ContactsService {
         ...(input.lifecycleStage !== undefined ? { lifecycleStage: input.lifecycleStage } : {}),
         ...(input.sourceProspectId !== undefined ? { sourceProspectId: input.sourceProspectId } : {}),
         ...(nextFieldSources !== undefined ? { fieldSources: nextFieldSources } : {}),
+        ...(retentionClassification !== undefined ? { retentionClassification } : {}),
         updatedAt: new Date(),
       })
       .where(and(eq(contacts.id, id), eq(contacts.workspaceId, workspaceId)))
@@ -177,6 +201,34 @@ export class ContactsService {
     const dto = row ? toDto(row) : null;
     if (dto) {
       await this.auditService.record(workspaceId, actorId, "update", "contact", id, existing, dto);
+    }
+    // §5.3 — dual-write manual edits into evidence_ledger (confidence 1.0). Best-effort:
+    // never fail the update if the ledger write fails. Completes the autoFill dual-write path.
+    if (dto && editedAutoFillable.length > 0) {
+      for (const field of editedAutoFillable) {
+        try {
+          await recordEvidence(this.db, {
+            workspaceId,
+            entityType: "contact",
+            entityId: id,
+            attribute: field,
+            value: (dto as Record<string, unknown>)[field],
+            source: "manual",
+            observedAt: new Date(),
+            confidence: 1.0,
+            method: "crm_manual_edit",
+            reviewerId: actorId,
+            resolutionReason: "human_manual_edit",
+          });
+        } catch (err) {
+          log.error("evidence ledger dual-write failed for contact manual edit", {
+            err,
+            workspaceId,
+            contactId: id,
+            field,
+          });
+        }
+      }
     }
     if (row) log.info("contact updated", { workspaceId, contactId: id });
     return dto;
@@ -217,6 +269,27 @@ export class ContactsService {
     const dto = toDto(row);
     await this.auditService.record(workspaceId, undefined, "update", "contact", id, existing, dto);
     log.info("contact auto-filled", { workspaceId, contactId: id, source, applied: appliedFields, skipped });
+
+    // §5.3 / Task 14 — dual-write provenance into the canonical Evidence Ledger, same pattern
+    // as CompaniesService.autoFill. Best-effort: must never fail the auto-fill itself.
+    for (const field of appliedFields) {
+      try {
+        await recordEvidence(this.db, {
+          workspaceId,
+          entityType: "contact",
+          entityId: id,
+          attribute: field,
+          value: (applied as Record<string, unknown>)[field as keyof typeof applied],
+          source,
+          observedAt: new Date(),
+          confidence: confidence ?? DEFAULT_AUTO_FILL_CONFIDENCE[source],
+          method: "crm_autofill",
+        });
+      } catch (err) {
+        log.error("evidence ledger dual-write failed for contact auto-fill", { err, workspaceId, contactId: id, field });
+      }
+    }
+
     return { contact: dto, applied: appliedFields, skipped };
   }
 

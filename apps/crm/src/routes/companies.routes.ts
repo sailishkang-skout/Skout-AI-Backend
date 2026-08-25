@@ -4,8 +4,10 @@ import {
   companyCreateSchema,
   companyListQuerySchema,
   companyUpdateSchema,
+  buildFieldProvenance,
 } from "@skout/shared";
-import { HttpError } from "@skout/auth";
+import { getLatestEvidenceByAttribute } from "@skout/db";
+import { HttpError, enforcePermission } from "@skout/auth";
 import { parseIdParam } from "../utils/http.js";
 import { requireRole } from "../utils/require-role.js";
 import { buildAuditService } from "../services/audit.service.js";
@@ -74,10 +76,45 @@ export async function companiesRoutes(app: FastifyInstance) {
     return reply.send(result);
   });
 
+  /**
+   * §5.3 Task 37 — additive read-path adapter: merges the canonical Evidence Ledger over the
+   * cheaper fieldSources jsonb map for any field that has a matching evidence_ledger row,
+   * falling back to fieldSources for fields that don't (older data, or a best-effort dual-write
+   * that failed). Does not change GET /companies/:id's own response shape.
+   */
+  app.get("/companies/:id/field-sources", async (request, reply) => {
+    const id = parseIdParam(request);
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) throw new HttpError("database_unavailable", 503);
+
+    const company = await svc.getById(workspaceId, id);
+    if (!company) throw new HttpError("company_not_found", 404);
+
+    const evidenceByAttribute = app.db
+      ? await getLatestEvidenceByAttribute(app.db, workspaceId, "company", id)
+      : {};
+    const provenance = buildFieldProvenance(company.fieldSources, evidenceByAttribute);
+    return reply.send({ data: provenance });
+  });
+
   app.delete("/companies/:id", async (request, reply) => {
     const id = parseIdParam(request);
     const workspaceId = request.workspaceId ?? "unknown";
     requireRole(request, ["owner", "admin"]);
+
+    // §5.1 / §11.1 — fine-grained RBAC shadow check alongside the role gate above. requireRole()
+    // is what actually enforces access today (unchanged); this is shadow-mode by default
+    // (RBAC_ENFORCEMENT_ENABLED unset) — see enforcePermission's own doc comment for why
+    // enforcing before backfill-rbac.ts has run would deny every request outright.
+    if (app.db && request.userId) {
+      await enforcePermission(app.db, workspaceId, request.userId, "crm:manage", {
+        enforce: app.config.RBAC_ENFORCEMENT_ENABLED,
+        onShadowDeny: (info) =>
+          app.log.warn(info, "RBAC shadow-mode: crm:manage would have been denied (delete company)"),
+      });
+    }
+
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
 

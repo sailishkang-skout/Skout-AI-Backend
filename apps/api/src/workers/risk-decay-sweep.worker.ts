@@ -1,7 +1,7 @@
 import { Worker, Queue } from "bullmq";
 import { and, desc, eq, gte, isNotNull } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
-import { createLogger } from "@skout/observability";
+import { createLogger, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
@@ -162,16 +162,19 @@ export async function startRiskDecaySweepWorker(config: Env) {
   const worker = new Worker(
     QUEUE_NAME,
     async () => {
-      const allWorkspaces = await db.select({ id: workspaces.id }).from(workspaces);
-      let totalFlagged = 0;
-      for (const ws of allWorkspaces) {
-        try {
-          totalFlagged += await sweepWorkspaceForDecay(db, ws.id, config.RISK_DECAY_INACTIVITY_DAYS);
-        } catch (err) {
-          log.error(`Risk decay sweep failed for workspace ${ws.id}`, { workspaceId: ws.id, err });
+      // §11.3 Task 33 — self-triggered on a cron schedule; root span (no upstream trace exists).
+      await withSpan("risk-decay-sweep.tick", async () => {
+        const allWorkspaces = await db.select({ id: workspaces.id }).from(workspaces);
+        let totalFlagged = 0;
+        for (const ws of allWorkspaces) {
+          try {
+            totalFlagged += await sweepWorkspaceForDecay(db, ws.id, config.RISK_DECAY_INACTIVITY_DAYS);
+          } catch (err) {
+            log.error(`Risk decay sweep failed for workspace ${ws.id}`, { workspaceId: ws.id, err });
+          }
         }
-      }
-      if (totalFlagged > 0) log.info(`Risk decay sweep flagged ${totalFlagged} prospect(s)`);
+        if (totalFlagged > 0) log.info(`Risk decay sweep flagged ${totalFlagged} prospect(s)`);
+      });
     },
     { connection, concurrency: 1 }
   );

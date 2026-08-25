@@ -19,6 +19,7 @@ import {
 } from "./unipile.client.js";
 import { createIntegrationService } from "./integration.service.js";
 import { DEFAULT_UNIPILE_DSN } from "./integration-providers.js";
+import { buildEntitlementsService } from "./entitlements.service.js";
 
 const { linkedinAccounts } = schema;
 
@@ -79,6 +80,22 @@ export class LinkedinAccountService {
     const channel: MessagingChannel = input.channel === "whatsapp" ? "whatsapp" : "linkedin";
 
     const existing = await this.list(workspaceId, channel);
+
+    // §5.1 Task 35 — the per-channel default below is unchanged for any workspace that hasn't
+    // been given an override. entitlements.service.ts's getValueOr() never throws (a
+    // missing/malformed entitlement resolves to the fallback), so a lookup failure here can
+    // never block connecting an account — only fail to apply a workspace-specific limit. This
+    // only affects the default a NEWLY connected account starts with; it does not retroactively
+    // change dailySendLimit on accounts already connected (see the onConflictDoUpdate below,
+    // which deliberately does not touch dailySendLimit on re-connect).
+    const entitlementKey = channel === "whatsapp" ? "whatsapp.daily_send_limit" : "linkedin.daily_send_limit";
+    const defaultDailySendLimit = channel === "whatsapp" ? 80 : 40;
+    const dailySendLimit = await buildEntitlementsService(this.db)!.getValueOr<number>(
+      workspaceId,
+      entitlementKey,
+      defaultDailySendLimit
+    );
+
     const [row] = await this.db
       .insert(linkedinAccounts)
       .values({
@@ -90,7 +107,7 @@ export class LinkedinAccountService {
         phone: input.phone?.trim() || null,
         status: "active",
         isDefault: existing.length === 0,
-        dailySendLimit: channel === "whatsapp" ? 80 : 40,
+        dailySendLimit,
       })
       .onConflictDoUpdate({
         target: [linkedinAccounts.workspaceId, linkedinAccounts.unipileAccountId],

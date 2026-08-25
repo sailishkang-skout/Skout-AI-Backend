@@ -337,6 +337,8 @@ export const enrollSequenceSchema = z
   .object({
     listId: z.string().uuid().optional(),
     prospectIds: z.array(z.string().min(1)).min(1).optional(),
+    /** When consent enforcement is on, record email consent for missing prospects before enroll. */
+    consentBasis: z.enum(["opt_in", "legitimate_interest", "contract", "legal_obligation"]).optional(),
   })
   .refine((d) => d.listId !== undefined || (d.prospectIds?.length ?? 0) > 0, {
     message: "listId or prospectIds (non-empty) is required",

@@ -14,6 +14,8 @@ import {
   normalizeDiscoverDomain,
 } from "../services/discover-email.service.js";
 import { HttpError } from "../utils/http.js";
+import { recordEvidence } from "../services/evidence.service.js";
+import { mapEmailIntelObservationToCanonical } from "../services/email-intel-evidence-map.js";
 
 const verifyBodySchema = z.object({
   email: z.string().min(1),
@@ -89,7 +91,35 @@ export async function emailIntelRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: "invalid_request", details: body.error.flatten() });
     }
     try {
-      return reply.send(await verifyEmailResolved(app.config, body.data.email));
+      const result = await verifyEmailResolved(app.config, body.data.email);
+      // §5.3 — dual-write verification outcome into canonical ledger when workspace is known
+      if (app.db && request.workspaceId) {
+        try {
+          const domain = body.data.email.includes("@") ? body.data.email.split("@")[1] : null;
+          const outcome =
+            result && typeof result === "object" && "status" in result
+              ? String((result as { status?: string }).status ?? "UNKNOWN")
+              : "UNKNOWN";
+          const mailboxExists =
+            result && typeof result === "object" && "mailboxExists" in result
+              ? Boolean((result as { mailboxExists?: boolean }).mailboxExists)
+              : null;
+          await recordEvidence(
+            app.db,
+            mapEmailIntelObservationToCanonical(request.workspaceId, {
+              email: body.data.email,
+              domain,
+              source: "API",
+              outcome: outcome.toUpperCase().includes("VALID") || outcome === "deliverable" ? "SUCCESS" : "UNKNOWN",
+              mailboxExists,
+              metadata: result,
+            })
+          );
+        } catch (err) {
+          app.log.warn({ err }, "canonical evidence dual-write failed for email-intel verify");
+        }
+      }
+      return reply.send(result);
     } catch (err) {
       if (err instanceof HttpError) return routeHttpError(reply, err);
       if (err instanceof EmailIntelUnavailableError) return routeUnavailable(reply, err);

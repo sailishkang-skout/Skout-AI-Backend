@@ -24,10 +24,22 @@ const STALE_DEAL_DAYS = 14;
 /**
  * R19.1/R19.2 — CRO Copilot's data source for the "get_cro_summary" chat tool. Deliberately a
  * self-contained query set (not a call into apps/crm's DashboardService) since apps/api and
- * apps/crm are separately deployed services that happen to share one Postgres — apps/api
- * already reads/writes CRM tables directly elsewhere in Phase 1 (see R20.3, R20.4) for the
- * same reason. Mirrors apps/crm/src/services/dashboard.service.ts#croSummary's shape closely
- * enough that the two won't drift in meaning, just not in code.
+ * apps/crm are separately deployed services that happen to share one Postgres.
+ *
+ * §7.1/§5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) — this is the exception
+ * the vision doc itself allows ("shared database access ... prohibited except for documented
+ * transitional read models"), formalized per its own completion criteria:
+ *   - Tables read directly: companies, contacts, deals, activities, tasks (all owned by apps/crm)
+ *   - Owning service: apps/crm (apps/api has read-only access via the shared Postgres instance;
+ *     no writes to these tables happen from this file)
+ *   - Reason: apps/api and apps/crm are separately deployed services sharing one Postgres with
+ *     no formal internal API between them yet; recomputing this summary via HTTP calls into
+ *     apps/crm would add material latency to a synchronous chat-tool response
+ *   - Review date: revisit at the next architecture review after apps/crm's internal API surface
+ *     exists (tracked as Wave 2 — see docs/adr/0003-read-model-exceptions.md, which also lists
+ *     the other 9 confirmed instances of this same pattern found elsewhere in apps/api)
+ *   - Mirrors apps/crm/src/services/dashboard.service.ts#croSummary's shape closely enough that
+ *     the two won't drift in meaning, just not in code.
  */
 export async function computeCroSummary(db: Db, workspaceId: string) {
   const [companyRows, contactRows, openDealRows, staleDealRows, repActivityRows, overdueTaskRows] = await Promise.all([

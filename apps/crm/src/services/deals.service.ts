@@ -1,6 +1,6 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, recordEvidence } from "@skout/db";
 import type { DealCreateInput, DealUpdateInput } from "@skout/shared";
 import { HttpError } from "@skout/auth";
 import type { CompaniesService } from "./companies.service.js";
@@ -12,6 +12,7 @@ import {
   asFieldSourcesMap,
   filterAutoFillablePatch,
   mergeAutoFillSources,
+  DEFAULT_AUTO_FILL_CONFIDENCE,
   type FieldSource,
   type FieldSourcesMap,
 } from "../utils/field-sources.js";
@@ -159,6 +160,28 @@ export class DealsService {
     const dto = toDto(row);
     await this.auditService.record(workspaceId, undefined, "update", "deal", id, existing, dto);
     log.info("deal auto-filled", { workspaceId, dealId: id, source, applied: appliedFields, skipped });
+
+    // §5.3 Task 37 — dual-write provenance into the canonical Evidence Ledger, closing the
+    // parity gap with ContactsService.autoFill / CompaniesService.autoFill (both of which
+    // already do this). Best-effort: must never fail the auto-fill itself.
+    for (const field of appliedFields) {
+      try {
+        await recordEvidence(this.db, {
+          workspaceId,
+          entityType: "deal",
+          entityId: id,
+          attribute: field,
+          value: (applied as Record<string, unknown>)[field as keyof typeof applied],
+          source,
+          observedAt: new Date(),
+          confidence: confidence ?? DEFAULT_AUTO_FILL_CONFIDENCE[source],
+          method: "crm_autofill",
+        });
+      } catch (err) {
+        log.error("evidence ledger dual-write failed for deal auto-fill", { err, workspaceId, dealId: id, field });
+      }
+    }
+
     return { deal: dto, applied: appliedFields, skipped };
   }
 
@@ -240,6 +263,33 @@ export class DealsService {
     const dto = row ? toDto(row) : null;
     if (dto) {
       await this.auditService.record(workspaceId, actorId, "update", "deal", id, existing, dto);
+    }
+    // §5.3 — dual-write manual amount/closeDate into evidence_ledger (confidence 1.0). Best-effort.
+    if (dto && editedAutoFillable.length > 0) {
+      for (const field of editedAutoFillable) {
+        try {
+          await recordEvidence(this.db, {
+            workspaceId,
+            entityType: "deal",
+            entityId: id,
+            attribute: field,
+            value: (dto as Record<string, unknown>)[field],
+            source: "manual",
+            observedAt: new Date(),
+            confidence: 1.0,
+            method: "crm_manual_edit",
+            reviewerId: actorId,
+            resolutionReason: "human_manual_edit",
+          });
+        } catch (err) {
+          log.error("evidence ledger dual-write failed for deal manual edit", {
+            err,
+            workspaceId,
+            dealId: id,
+            field,
+          });
+        }
+      }
     }
 
     if (row && input.stageId && input.stageId !== existing.stageId) {
