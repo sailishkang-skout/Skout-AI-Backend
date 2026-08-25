@@ -36,5 +36,7 @@ export function getWorkbookRunQueue(config: Env): Queue<WorkbookRunJobPayload> {
  */
 export async function enqueueWorkbookRunJob(config: Env, payload: WorkbookRunJobPayload): Promise<void> {
   const q = getWorkbookRunQueue(config);
-  await q.add("run-workbook", payload, { jobId: `${payload.runId}:${Date.now()}` });
+  // BullMQ rejects a custom jobId containing ":" ("Custom Id cannot contain :") — it's
+  // reserved for BullMQ's own internal id namespacing.
+  await q.add("run-workbook", payload, { jobId: `${payload.runId}-${Date.now()}` });
 }
