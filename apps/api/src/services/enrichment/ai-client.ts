@@ -70,6 +70,10 @@ export interface OnboardingProfile {
   /** @deprecated kept for backward compatibility — use `connections.crm` instead. */
   crm?: string;
   leadVolume?: string;
+  /** How the business makes money — shapes GTM defaults/copy tone Skout suggests. */
+  businessModel?: "b2b" | "b2c" | "b2b2c" | "marketplace" | "other";
+  /** How cautious to be with prospect/contact data — "strict" = minimal collection/retention. */
+  dataPolicy?: "strict" | "standard" | "flexible";
   /** Job-function persona selected at signup, drives which first-run path the wizard shows. */
   persona?:
     | "admin"

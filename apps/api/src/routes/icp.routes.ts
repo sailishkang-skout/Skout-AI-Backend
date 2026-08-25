@@ -10,16 +10,26 @@ import { startWorkspaceRescoreIfEnabled } from "../services/workspace-rescore.se
 import { cancelAsyncJob, getAsyncJob } from "../services/async-job.service.js";
 import { HttpError, errorResponse } from "../utils/http.js";
 
-const onboardingSchema = z.object({
+export const onboardingSchema = z.object({
   company: z
     .object({
       name: z.string().max(200).optional(),
       industry: z.string().max(100).optional(),
       size: z.string().max(50).optional(),
       website: z.string().max(300).optional(),
+      /** Seller HQ / operating country — used for regional TAM, territory planning, outreach tone. */
+      hqCountry: z.string().max(100).optional(),
+      locale: z.string().max(32).optional(),
     })
     .optional(),
   goals: z.array(z.string().max(100)).max(20).optional(),
+  /** 8.1 Ask — how the business makes money; shapes which GTM defaults and copy tone Skout suggests. */
+  businessModel: z.enum(["b2b", "b2c", "b2b2c", "marketplace", "other"]).optional(),
+  /**
+   * 8.1 Ask — how cautious to be with prospect/contact data: "strict" favors minimal collection
+   * and conservative retention, "flexible" favors growth (fuller enrichment, longer retention).
+   */
+  dataPolicy: z.enum(["strict", "standard", "flexible"]).optional(),
   icp: z
     .object({
       industries: z.array(z.string().max(100)).max(50).optional(),
