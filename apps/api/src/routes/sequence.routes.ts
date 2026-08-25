@@ -15,6 +15,7 @@ import { SEQUENCE_TEMPLATES, getSequenceTemplate } from "../services/sequence-te
 import { conditionExpressionSchema } from "../services/sequence-condition.js";
 import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.js";
 import { dispatchWebhookEvent } from "../services/webhook.service.js";
+import { isReadyForOutboundSend } from "../services/workspace-setup.service.js";
 import { HttpError } from "../utils/http.js";
 
 const generateSequenceSchema = z.object({
@@ -555,6 +556,19 @@ export async function sequenceRoutes(app: FastifyInstance) {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
+
+    // R8.1 — checklist completion gates the one genuinely "live" action here: sending real
+    // outbound email. Needs a configured ICP and a connected sending mailbox; list/prospect
+    // activity are tracked on the checklist but don't block enrollment itself.
+    if (!(await isReadyForOutboundSend(app.db, workspaceId))) {
+      return reply.status(412).send({
+        error: "setup_incomplete",
+        message:
+          "Finish workspace setup before sending — configure your ICP and connect a sending mailbox.",
+        checklistUrl: "/workspaces/current/setup-checklist",
+      });
+    }
+
     const body = enrollSequenceSchema.parse(request.body ?? {});
     try {
       const result = await svc.enroll(id, workspaceId, {

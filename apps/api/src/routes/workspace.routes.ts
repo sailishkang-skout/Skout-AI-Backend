@@ -4,6 +4,7 @@ import { getWorkspaceIcpVersion, isIcpConfigured } from "../services/icp.service
 import { startWorkspaceRescoreIfEnabled } from "../services/workspace-rescore.service.js";
 import { isRazorpayEnabled } from "../services/billing.service.js";
 import type { IcpConfig } from "../services/enrichment/ai-client.js";
+import { getSetupChecklist } from "../services/workspace-setup.service.js";
 import { errorResponse } from "../utils/http.js";
 
 export async function workspaceRoutes(app: FastifyInstance) {
@@ -144,6 +145,15 @@ export async function workspaceRoutes(app: FastifyInstance) {
     const amount = Math.min(Math.max(Number(body.amount) || 100, 1), maxAmount);
     const balance = await svc.addCredits(request.workspaceId, amount, "admin_topup");
     return reply.send({ data: { balance, amount } });
+  });
+
+  // GET /api/v1/workspaces/current/setup-checklist — R8.1
+  app.get("/workspaces/current/setup-checklist", async (request, reply) => {
+    if (!request.workspaceId) {
+      return reply.code(401).send(errorResponse("Not authenticated", 401));
+    }
+    const checklist = await getSetupChecklist(app.db, request.workspaceId);
+    return reply.send({ data: checklist });
   });
 
   // GET /api/v1/icp
