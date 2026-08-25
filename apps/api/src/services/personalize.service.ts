@@ -4,6 +4,7 @@ import { injectTraceContext } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import { pinAiClaim } from "./ai-evidence.service.js";
+import { generateRegionalBrief } from "./regional-intel.service.js";
 
 export interface PersonalizeInput {
   prospectId: string;
@@ -12,6 +13,8 @@ export interface PersonalizeInput {
   companyDomain?: string;
   painPoints?: string[];
   icpScore?: number;
+  /** Prospect's own country, if known — drives regional outreach tone (§10.3 / §16). */
+  companyCountry?: string;
 }
 
 export interface PersonalizeResult {
@@ -42,7 +45,24 @@ export async function personalizeProspect(
   const aiUrl = config.AI_SERVICE_URL;
   let result: Omit<PersonalizeResult, "draftId" | "subject" | "body" | "evidenceId" | "modelVersionId" | "promptVersionId">;
 
+  // §10.3 / §16 — regional tone: cheap heuristic fallback when no key is configured, LLM-refined
+  // when one is. Best-effort — a brief failure should never block draft generation.
+  let regionalTone: string | undefined;
+  if (input.companyCountry) {
+    try {
+      const brief = await generateRegionalBrief(
+        { location: input.companyCountry, purpose: "territory" },
+        config.OPENROUTER_API_KEY
+      );
+      regionalTone = brief.outreachTone;
+    } catch {
+      regionalTone = undefined;
+    }
+  }
+
   if (!aiUrl) {
+    // No LLM configured — heuristic mode has no prompt to steer with tone, so it's recorded on
+    // the result below for evidence/consistency but not literally injected into the copy.
     result = {
       prospectId: input.prospectId,
       opener: `Hi ${input.fullName ?? "there"} — reaching out about ${input.companyDomain}.`,
@@ -60,6 +80,7 @@ export async function personalizeProspect(
         company_domain: input.companyDomain,
         pain_points: input.painPoints ?? [],
         icp_score: input.icpScore,
+        regional_tone: regionalTone,
       }),
       signal: AbortSignal.timeout(config.ENRICHMENT_AI_TIMEOUT_MS),
     });
@@ -104,7 +125,7 @@ export async function personalizeProspect(
       entityType: "prospect",
       entityId: input.prospectId,
       attribute: "personalize",
-      value: { opener: result.opener, talkingPoints: result.talkingPoints, draftId },
+      value: { opener: result.opener, talkingPoints: result.talkingPoints, draftId, regionalTone },
       source: "ai_personalize",
       method: "enrichment_personalize",
       versionName: "personalize",

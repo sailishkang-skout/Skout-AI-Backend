@@ -198,6 +198,7 @@ export async function enrichmentRoutes(app: FastifyInstance) {
         companyDomain: z.string().optional(),
         painPoints: z.array(z.string()).optional(),
         icpScore: z.number().optional(),
+        companyCountry: z.string().optional(),
       })
       .parse(request.body ?? {});
 

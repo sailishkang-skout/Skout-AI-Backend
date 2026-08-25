@@ -87,6 +87,32 @@ describe("executeActivationRules — R10.3 signal-triggered draft", () => {
     );
   });
 
+  it("passes the prospect's stored country through as companyCountry (R10.3 regional tone)", async () => {
+    enrollMock.mockClear();
+    personalizeMock.mockClear();
+
+    let call = 0;
+    const db = {
+      select: vi.fn(() => {
+        call++;
+        if (call === 1) return selectChain([SIGNAL_RULE], "where");
+        if (call === 2) return selectChain([SIGNAL_ROW]);
+        // 3: buildSnapshotForActivate — a prior activation with a stored country.
+        return selectChain([{ snapshot: { companyDomain: "acme.com", country: "DE" }, companyId: "acme.com" }]);
+      }),
+      insert: vi.fn(() => ({ values: vi.fn(() => ({ returning: vi.fn().mockResolvedValue([{ id: "run-1" }]) })) })),
+    };
+
+    await executeActivationRules(db as never, config, "ws-1", "prospect-1", 90, ["recent_hiring"]);
+
+    expect(personalizeMock).toHaveBeenCalledWith(
+      db,
+      config,
+      "ws-1",
+      expect.objectContaining({ companyCountry: "DE" })
+    );
+  });
+
   it("still counts the rule as executed when draft generation fails — enrollment isn't undone", async () => {
     enrollMock.mockClear();
     personalizeMock.mockClear();

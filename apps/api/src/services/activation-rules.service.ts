@@ -261,6 +261,7 @@ async function buildSnapshotForActivate(
       title: typeof snap.title === "string" ? snap.title : undefined,
       companyName: typeof snap.companyName === "string" ? snap.companyName : undefined,
       linkedinUrl: typeof snap.linkedinUrl === "string" ? snap.linkedinUrl : undefined,
+      country: typeof snap.country === "string" ? snap.country : undefined,
     };
   }
   if (osCfg) {
@@ -274,6 +275,7 @@ async function buildSnapshotForActivate(
         email: typeof snap.email === "string" ? snap.email : undefined,
         title: typeof snap.title === "string" ? snap.title : undefined,
         companyName: typeof snap.companyName === "string" ? snap.companyName : undefined,
+        country: typeof snap.country === "string" ? snap.country : undefined,
       };
     }
   }
@@ -332,6 +334,7 @@ async function executeRuleAction(
             title: snapshot.title,
             companyDomain: snapshot.companyDomain,
             painPoints: typeof reason === "string" ? [reason] : [],
+            companyCountry: snapshot.country,
           });
         } catch (err) {
           log.error("signal-triggered draft generation failed", err, {
