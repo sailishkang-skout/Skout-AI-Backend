@@ -264,6 +264,33 @@ export class DealsService {
     if (dto) {
       await this.auditService.record(workspaceId, actorId, "update", "deal", id, existing, dto);
     }
+    // §5.3 — dual-write manual amount/closeDate into evidence_ledger (confidence 1.0). Best-effort.
+    if (dto && editedAutoFillable.length > 0) {
+      for (const field of editedAutoFillable) {
+        try {
+          await recordEvidence(this.db, {
+            workspaceId,
+            entityType: "deal",
+            entityId: id,
+            attribute: field,
+            value: (dto as Record<string, unknown>)[field],
+            source: "manual",
+            observedAt: new Date(),
+            confidence: 1.0,
+            method: "crm_manual_edit",
+            reviewerId: actorId,
+            resolutionReason: "human_manual_edit",
+          });
+        } catch (err) {
+          log.error("evidence ledger dual-write failed for deal manual edit", {
+            err,
+            workspaceId,
+            dealId: id,
+            field,
+          });
+        }
+      }
+    }
 
     if (row && input.stageId && input.stageId !== existing.stageId) {
       const [oldStage] = await this.db

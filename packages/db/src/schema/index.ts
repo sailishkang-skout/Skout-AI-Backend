@@ -27,3 +27,4 @@ export * from "./evidence.js";
 export * from "./crm-intelligence.js";
 export * from "./incidents.js";
 export * from "./model-versions.js";
+export * from "./dsar.js";

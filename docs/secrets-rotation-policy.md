@@ -82,13 +82,16 @@ security improvement, an outage and a data-loss incident.
 
 Rotating it safely requires a re-encryption migration: decrypt every affected row under the
 old key, re-encrypt under the new key, and only then remove the old key from the environment.
-No such migration script exists yet in this codebase, and building one wasn't in scope for
-this pass — it touches live encrypted customer credentials and needs its own reviewed,
-tested change, not something to bundle into a policy document. Until that migration exists,
-`INTEGRATION_ENCRYPTION_KEY` cannot actually be rotated on the Tier 1 90-day cadence this
-policy sets for it — that's a real, disclosed gap, not a claim that rotation is already
-possible. Treat "write the re-encryption migration" as its own tracked follow-up item, owned
-by whoever owns the CRM integration-credentials storage path.
+That migration is:
+
+```bash
+OLD_INTEGRATION_ENCRYPTION_KEY=<old> NEW_INTEGRATION_ENCRYPTION_KEY=<new> \
+  pnpm --filter @skout/db rotate-integration-encryption-key
+```
+
+During cutover, keep the previous key as `INTEGRATION_ENCRYPTION_KEY_PREVIOUS` and use
+`decryptSecretWithFallback` from `@skout/shared` so reads succeed for rows not yet rewritten.
+After the script reports `failed=0`, drop the previous key from the environment.
 
 `TRACKING_SIGNING_SECRET` falls back to `INTEGRATION_ENCRYPTION_KEY` when unset (see
 `apps/api/src/config/env.ts`'s doc comment on it). An environment relying on that fallback
@@ -138,6 +141,6 @@ It does not automate rotation — there is no scheduled job that rotates a secre
 mechanism enforcing the 90/180/365-day cadences above; they're policy for a human (or a future
 scheduled task) to follow, not code that runs them. It does not cover the Tier 4 scraping
 credentials' cadence, which already has separate operational guidance in
-`docs/secrets-setup.md`. And it does not resolve the `INTEGRATION_ENCRYPTION_KEY` gap — it
-names the gap precisely enough that building the re-encryption migration is a scoped,
-reviewable follow-up rather than an open question.
+`docs/secrets-setup.md`. The `INTEGRATION_ENCRYPTION_KEY` re-encryption path is implemented
+as `pnpm --filter @skout/db rotate-integration-encryption-key` (see § above); operators still
+run it manually on the Tier 1 cadence or for break-glass.

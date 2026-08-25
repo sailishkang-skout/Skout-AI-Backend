@@ -221,6 +221,33 @@ export class CompaniesService {
         const txAuditService = buildAuditService(tx as never);
         await txAuditService?.record(workspaceId, actorId, "update", "company", id, existing, dto);
       }
+      // §5.3 — dual-write manual edits into evidence_ledger (confidence 1.0). Best-effort.
+      if (dto && editedAutoFillable.length > 0) {
+        for (const field of editedAutoFillable) {
+          try {
+            await recordEvidence(tx as never, {
+              workspaceId,
+              entityType: "company",
+              entityId: id,
+              attribute: field,
+              value: (dto as Record<string, unknown>)[field],
+              source: "manual",
+              observedAt: new Date(),
+              confidence: 1.0,
+              method: "crm_manual_edit",
+              reviewerId: actorId,
+              resolutionReason: "human_manual_edit",
+            });
+          } catch (err) {
+            log.error("evidence ledger dual-write failed for company manual edit", {
+              err,
+              workspaceId,
+              companyId: id,
+              field,
+            });
+          }
+        }
+      }
       if (row) log.info("company updated", { workspaceId, companyId: id });
       return dto;
     });

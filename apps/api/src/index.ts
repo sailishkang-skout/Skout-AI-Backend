@@ -59,6 +59,18 @@ async function main() {
 
   const app = await buildApp(config);
 
+  if (config.RBAC_ENFORCEMENT_ENABLED && app.db) {
+    const { assertRbacBackfillReady } = await import("@skout/auth");
+    const gate = await assertRbacBackfillReady(app.db);
+    if (!gate.ready) {
+      app.log.fatal(
+        "RBAC_ENFORCEMENT_ENABLED=true but workspace_member_roles is empty — run pnpm --filter @skout/db backfill-rbac before enabling fail-closed RBAC"
+      );
+      process.exit(1);
+    }
+    app.log.info("RBAC fail-closed enforcement enabled (backfill verified)");
+  }
+
   const shutdown = async () => {
     await stopIdentityMergeDiscoveryWorker();
     await stopRiskDecaySweepWorker();

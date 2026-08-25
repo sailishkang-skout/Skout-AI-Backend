@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { taskCreateSchema, taskListQuerySchema, taskUpdateSchema } from "@skout/shared";
-import { HttpError } from "@skout/auth";
+import { HttpError, enforcePermission } from "@skout/auth";
 import { parseIdParam } from "../utils/http.js";
 import { requireRole } from "../utils/require-role.js";
 import { buildAuditService } from "../services/audit.service.js";
@@ -71,6 +71,13 @@ export async function tasksRoutes(app: FastifyInstance) {
     const id = parseIdParam(request);
     const workspaceId = request.workspaceId ?? "unknown";
     requireRole(request, ["owner", "admin"]);
+    if (app.db && request.userId) {
+      await enforcePermission(app.db, workspaceId, request.userId, "crm:manage", {
+        enforce: app.config.RBAC_ENFORCEMENT_ENABLED,
+        onShadowDeny: (info) =>
+          app.log.warn(info, "RBAC shadow-mode: crm:manage would have been denied (delete task)"),
+      });
+    }
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
 

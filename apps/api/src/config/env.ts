@@ -95,6 +95,15 @@ const envSchema = z
       .optional()
       .transform((v) => v === "true" || v === "1"),
     /**
+     * §5.1 / §16 — when true, sequence enrollment requires an active email consent record
+     * for each prospect (ConsentService.hasActive). Default OFF so workspaces without
+     * consent capture yet are not locked out of outreach; flip after consent UI/API adoption.
+     */
+    CONSENT_ENFORCEMENT_ENABLED: z
+      .string()
+      .optional()
+      .transform((v) => v === "true" || v === "1"),
+    /**
      * Shared secret for the static-auth admin data-import page (/admin/import in the
      * frontend). When set, requests to /api/v1/import/* may authenticate with
      * `Authorization: Bearer admin_<this value>` instead of a Clerk JWT. Scoped to
@@ -138,6 +147,11 @@ const envSchema = z
     EMAIL_INTEL_DISCOVER_TIMEOUT_MS: z.coerce.number().int().positive().default(60000),
     /** n8n / external callers of /api/v1/email-intel/* (header x-api-key). */
     EMAIL_INTEL_EXTERNAL_API_KEY: z.string().optional(),
+    /**
+     * Default workspace UUID for Email-Intel → canonical evidence ingest when using
+     * EMAIL_INTEL_EXTERNAL_API_KEY. Override per-request with `x-skout-workspace-id`.
+     */
+    EVIDENCE_INGEST_DEFAULT_WORKSPACE_ID: z.string().uuid().optional(),
     /** Warm-Up Tool CloudMap URL (e.g. http://warmup-tool.<ns>:3010). */
     WARMUP_TOOL_SERVICE_URL: z.string().optional(),
     WARMUP_TOOL_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
@@ -159,6 +173,8 @@ const envSchema = z
     UNIPILE_DSN: z.string().url().optional(),
     UNIPILE_API_KEY: z.string().optional(),
     INTEGRATION_ENCRYPTION_KEY: z.string().optional(),
+    /** Previous key retained during rotate-integration-encryption-key cutover. */
+    INTEGRATION_ENCRYPTION_KEY_PREVIOUS: z.string().optional(),
     /** HMAC secret for signed tracking/unsubscribe tokens. Falls back to INTEGRATION_ENCRYPTION_KEY. */
     TRACKING_SIGNING_SECRET: z.string().optional(),
     // --- Enrichment provider API keys (PAL). Optional: stub adapters are used

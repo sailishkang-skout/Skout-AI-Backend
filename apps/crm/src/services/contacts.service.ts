@@ -202,6 +202,34 @@ export class ContactsService {
     if (dto) {
       await this.auditService.record(workspaceId, actorId, "update", "contact", id, existing, dto);
     }
+    // §5.3 — dual-write manual edits into evidence_ledger (confidence 1.0). Best-effort:
+    // never fail the update if the ledger write fails. Completes the autoFill dual-write path.
+    if (dto && editedAutoFillable.length > 0) {
+      for (const field of editedAutoFillable) {
+        try {
+          await recordEvidence(this.db, {
+            workspaceId,
+            entityType: "contact",
+            entityId: id,
+            attribute: field,
+            value: (dto as Record<string, unknown>)[field],
+            source: "manual",
+            observedAt: new Date(),
+            confidence: 1.0,
+            method: "crm_manual_edit",
+            reviewerId: actorId,
+            resolutionReason: "human_manual_edit",
+          });
+        } catch (err) {
+          log.error("evidence ledger dual-write failed for contact manual edit", {
+            err,
+            workspaceId,
+            contactId: id,
+            field,
+          });
+        }
+      }
+    }
     if (row) log.info("contact updated", { workspaceId, contactId: id });
     return dto;
   }

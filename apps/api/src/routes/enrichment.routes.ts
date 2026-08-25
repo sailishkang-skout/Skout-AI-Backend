@@ -2,11 +2,16 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { schema } from "@skout/db";
 import { searchFiltersSchema } from "@skout/shared";
-import { buildEnrichmentService, InsufficientCreditsError } from "../services/enrichment/index.js";
+import { buildEnrichmentService, InsufficientCreditsError, SCORE_CREDIT_COST } from "../services/enrichment/index.js";
 import { getWorkspaceIcp } from "../services/icp.service.js";
 import { getAsyncJob } from "../services/async-job.service.js";
 import { HttpError, errorResponse } from "../utils/http.js";
 import { injectTraceContext } from "@skout/observability";
+import { buildEntitlementsService } from "../services/entitlements.service.js";
+import { recordEvidence } from "../services/evidence.service.js";
+import { assertEvidenced } from "@skout/shared";
+import { buildModelVersionsService } from "../services/model-versions.service.js";
+import { pinAiClaim } from "../services/ai-evidence.service.js";
 
 const scoreBodySchema = z.object({
   prospect: z.object({
@@ -101,9 +106,45 @@ export async function enrichmentRoutes(app: FastifyInstance) {
     const body = scoreBodySchema.parse(request.body ?? {});
     const svc = buildEnrichmentService(app.db, app.config);
     const icp = body.icp ?? (await getWorkspaceIcp(app.db, workspaceId));
+    // §5.1 / §16 — additive entitlements override (same pattern as search.credit_cost)
+    const entitlementsSvc = app.db ? buildEntitlementsService(app.db) : null;
+    const creditCost = entitlementsSvc
+      ? await entitlementsSvc.getValueOr<number>(workspaceId, "enrichment.score_credit_cost", SCORE_CREDIT_COST)
+      : SCORE_CREDIT_COST;
     try {
-      const result = await svc.score(workspaceId, { ...body.prospect }, icp);
-      return reply.send(result);
+      const result = await svc.score(workspaceId, { ...body.prospect }, icp, creditCost);
+
+      // §6.1 — pin score claim to evidence_ledger before returning (fail-closed when prospectId known)
+      let evidenceId: string | undefined;
+      if (app.db && body.prospect.prospectId) {
+        const versions = buildModelVersionsService(app.db);
+        const activeModel = versions ? await versions.getActiveModelVersion("score") : null;
+        const row = await recordEvidence(app.db, {
+          workspaceId,
+          entityType: "prospect",
+          entityId: body.prospect.prospectId,
+          attribute: "icpScore",
+          value: {
+            icpScore: result.icpScore,
+            outreachReadiness: result.outreachReadiness,
+            reasoning: result.reasoning,
+          },
+          source: "ai_score",
+          observedAt: new Date(),
+          confidence:
+            typeof result.icpScore === "number" ? Math.min(1, Math.max(0, result.icpScore / 100)) : 0.5,
+          method: "enrichment_score",
+          resolutionRuleOrModelVersion: activeModel?.id,
+          freshnessExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        });
+        evidenceId = row?.id;
+        assertEvidenced({ value: result, evidenceId }, "enrichment score");
+        return reply.send({ ...result, evidenceId });
+      }
+
+      // Ephemeral score without a persisted prospect — explicit unverified (not an AI claim stored as fact)
+      assertEvidenced({ value: result, unverified: true }, "enrichment score (ephemeral)");
+      return reply.send({ ...result, evidenceId: null });
     } catch (err) {
       if (err instanceof InsufficientCreditsError) {
         return reply.status(402).send({
@@ -211,8 +252,32 @@ export async function enrichmentRoutes(app: FastifyInstance) {
         })
         .returning({ id: schema.aiDrafts.id });
       draftId = draft?.id;
+
+      const pinned = await pinAiClaim(app.db, {
+        workspaceId,
+        entityType: "prospect",
+        entityId: body.prospectId,
+        attribute: "personalize",
+        value: {
+          opener: result.opener,
+          talkingPoints: result.talkingPoints,
+          draftId,
+        },
+        source: "ai_personalize",
+        method: "enrichment_personalize",
+        versionName: "personalize",
+      });
+      return reply.send({
+        ...result,
+        draftId,
+        subject,
+        body: draftBody,
+        evidenceId: pinned.evidenceId,
+        modelVersionId: pinned.modelVersionId,
+        promptVersionId: pinned.promptVersionId,
+      });
     }
 
-    return reply.send({ ...result, draftId, subject, body: draftBody });
+    return reply.send({ ...result, draftId, subject, body: draftBody, evidenceId: null });
   });
 }

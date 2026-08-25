@@ -4,6 +4,7 @@ export {
   assertPermission,
   getMemberPermissions,
   enforcePermission,
+  assertRbacBackfillReady,
   type EnforcePermissionOptions,
 } from "./require-permission.js";
 export {

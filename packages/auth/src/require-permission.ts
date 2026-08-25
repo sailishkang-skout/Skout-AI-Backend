@@ -94,3 +94,13 @@ export async function enforcePermission(
   }
   options.onShadowDeny?.({ workspaceId, userId, permissionKey });
 }
+
+/**
+ * §11.1 — refuse RBAC_ENFORCEMENT_ENABLED=true when workspace_member_roles is empty
+ * (backfill never run). Prevents locking every user out at boot.
+ */
+export async function assertRbacBackfillReady(db: Db): Promise<{ ready: boolean; sampleGrantExists: boolean }> {
+  const [row] = await db.select({ userId: workspaceMemberRoles.userId }).from(workspaceMemberRoles).limit(1);
+  const sampleGrantExists = Boolean(row);
+  return { ready: sampleGrantExists, sampleGrantExists };
+}

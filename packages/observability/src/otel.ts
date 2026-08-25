@@ -1,7 +1,7 @@
 import { trace, context, propagation, SpanStatusCode, type Span, type Tracer } from "@opentelemetry/api";
 import { BasicTracerProvider, SimpleSpanProcessor, ConsoleSpanExporter, type SpanExporter } from "@opentelemetry/sdk-trace-base";
 import { AsyncHooksContextManager } from "@opentelemetry/context-async-hooks";
-import { resourceFromAttributes } from "@opentelemetry/resources";
+import { Resource } from "@opentelemetry/resources";
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from "@opentelemetry/semantic-conventions";
 import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import { OtlpHttpSpanExporter, parseOtlpHeaders } from "./otlp-http-exporter.js";
@@ -60,7 +60,8 @@ export function initOpenTelemetry(): boolean {
     contextManager.enable();
     context.setGlobalContextManager(contextManager);
 
-    const resource = resourceFromAttributes({
+    // @opentelemetry/resources@1.x exports `Resource`; `resourceFromAttributes` is 2.x-only.
+    const resource = new Resource({
       [ATTR_SERVICE_NAME]: process.env.OTEL_SERVICE_NAME ?? process.env.SERVICE_NAME ?? "skout-api",
       [ATTR_SERVICE_VERSION]: process.env.SERVICE_VERSION ?? "unknown",
     });

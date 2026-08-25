@@ -33,6 +33,24 @@ export function decryptSecret(payload: string, secret: string): string {
   return decrypted.toString("utf8");
 }
 
+/**
+ * Dual-key decrypt for INTEGRATION_ENCRYPTION_KEY rotation: try the current (new) key
+ * first, then fall back to the previous key. Use during cutover while
+ * `rotate-integration-encryption-key` re-encrypts rows.
+ */
+export function decryptSecretWithFallback(
+  payload: string,
+  primarySecret: string,
+  previousSecret?: string | null
+): string {
+  try {
+    return decryptSecret(payload, primarySecret);
+  } catch (primaryErr) {
+    if (!previousSecret) throw primaryErr;
+    return decryptSecret(payload, previousSecret);
+  }
+}
+
 export function maskApiKey(apiKey: string): string {
   const trimmed = apiKey.trim();
   if (trimmed.length <= 4) return "••••";

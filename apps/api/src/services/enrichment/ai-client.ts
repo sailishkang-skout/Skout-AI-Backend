@@ -49,6 +49,10 @@ export interface OnboardingProfile {
     industry?: string;
     size?: string;
     website?: string;
+    /** Seller HQ / operating country (ISO or label) — §16 regional / i18n */
+    hqCountry?: string;
+    /** UI/locale preference e.g. en-US */
+    locale?: string;
   };
   goals?: string[];
   icp?: {

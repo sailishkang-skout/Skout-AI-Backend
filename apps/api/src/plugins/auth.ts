@@ -29,11 +29,20 @@ declare module "fastify" {
 }
 
 function isEmailIntelExternalRoute(url: string): boolean {
-  return url.split("?")[0]!.startsWith("/api/v1/email-intel/");
+  const path = url.split("?")[0]!;
+  return (
+    path.startsWith("/api/v1/email-intel/") ||
+    path === "/api/v1/evidence/ingest/email-intel"
+  );
 }
 
 function isHealthRoute(url: string): boolean {
-  return url === "/api/v1/health" || url.startsWith("/health");
+  return (
+    url === "/api/v1/health" ||
+    url === "/api/v1/slo" ||
+    url === "/api/v1/metrics" ||
+    url.startsWith("/health")
+  );
 }
 
 function emailIntelApiKeyFromRequest(request: FastifyRequest): string {
@@ -50,6 +59,31 @@ function acceptEmailIntelApiKey(request: FastifyRequest, secret: string | undefi
   if (!secret || !isEmailIntelExternalRoute(request.url)) return false;
   const provided = emailIntelApiKeyFromRequest(request);
   return Boolean(provided) && timingSafeEqualStrings(provided, secret);
+}
+
+function evidenceIngestWorkspaceId(request: FastifyRequest, fallback: string | undefined): string | undefined {
+  const header = request.headers["x-skout-workspace-id"];
+  if (typeof header === "string" && /^[0-9a-f-]{36}$/i.test(header.trim())) return header.trim();
+  return fallback;
+}
+
+function applyEmailIntelIdentity(
+  request: FastifyRequest,
+  config: Env
+): boolean {
+  if (!acceptEmailIntelApiKey(request, config.EMAIL_INTEL_EXTERNAL_API_KEY)) return false;
+  request.userId = "email-intel-external";
+  request.userEmail = "n8n@skoutai.internal";
+  request.role = "integration";
+  const path = request.url.split("?")[0]!;
+  if (path === "/api/v1/evidence/ingest/email-intel") {
+    const ws = evidenceIngestWorkspaceId(request, config.EVIDENCE_INGEST_DEFAULT_WORKSPACE_ID);
+    if (!ws) return false;
+    request.workspaceId = ws;
+  } else {
+    request.workspaceId = "external-email-intel";
+  }
+  return true;
 }
 
 function isPublicRoute(url: string, method?: string): boolean {
@@ -131,11 +165,7 @@ export const authPlugin = fp(async (app) => {
       // CORS preflight (and any OPTIONS) must never require auth.
       if (request.method === "OPTIONS") return;
       if (isHealthRoute(request.url) || isPublicRoute(request.url, request.method)) return;
-      if (acceptEmailIntelApiKey(request, config.EMAIL_INTEL_EXTERNAL_API_KEY)) {
-        request.userId = "email-intel-external";
-        request.userEmail = "n8n@skoutai.internal";
-        request.workspaceId = "external-email-intel";
-        request.role = "integration";
+      if (applyEmailIntelIdentity(request, config)) {
         return;
       }
       const stubEmail = (request.headers["x-stub-user-email"] as string | undefined) ?? config.AUTH_STUB_EMAIL ?? "stub@example.com";
@@ -167,11 +197,7 @@ export const authPlugin = fp(async (app) => {
     if (isHealthRoute(request.url) || isPublicRoute(request.url, request.method)) {
       return;
     }
-    if (acceptEmailIntelApiKey(request, config.EMAIL_INTEL_EXTERNAL_API_KEY)) {
-      request.userId = "email-intel-external";
-      request.userEmail = "n8n@skoutai.internal";
-      request.workspaceId = "external-email-intel";
-      request.role = "integration";
+    if (applyEmailIntelIdentity(request, config)) {
       return;
     }
 
