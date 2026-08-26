@@ -226,7 +226,8 @@ export function createCountryIndustryTamService(db: Db) {
           )
         );
 
-      if (!row) {
+      let currentRow = row;
+      if (!currentRow) {
         const standardTam = STANDARD_TAM_ROWS[`${country.isoCode}:${params.naicsCode}`];
         if (standardTam) {
           const [inserted] = await db
@@ -236,20 +237,19 @@ export function createCountryIndustryTamService(db: Db) {
               industryCode: params.naicsCode,
               industryName: standardTam.industryName,
               establishments: standardTam.establishments,
-              icpFitPct: standardTam.icpFitPct,
-              acvUsd: standardTam.acvUsd,
+              icpFitPct: standardTam.icpFitPct.toString(),
+              acvUsd: standardTam.acvUsd.toString(),
               dataSource: standardTam.dataSource,
               dataYear: standardTam.dataYear,
               canonicalInclude: true,
             })
             .onConflictDoNothing()
             .returning();
-          const targetRow = inserted || (await db.select().from(countryIndustryTam).where(and(eq(countryIndustryTam.countryId, country.id), eq(countryIndustryTam.industryCode, params.naicsCode))))[0];
-          if (targetRow) {
-            return buildTamResult(country, targetRow, params.icpPctOverride, params.acvUsdOverride);
-          }
+          currentRow = inserted || (await db.select().from(countryIndustryTam).where(and(eq(countryIndustryTam.countryId, country.id), eq(countryIndustryTam.industryCode, params.naicsCode))))[0];
         }
+      }
 
+      if (!currentRow) {
         return {
           countryIso2: country.isoCode,
           countryIso3: country.isoAlpha3,
@@ -274,17 +274,17 @@ export function createCountryIndustryTamService(db: Db) {
 
       const effectiveIcpFitPct =
         params.icpPctOverride ??
-        (row.icpFitOverride !== null ? parseFloat(row.icpFitOverride ?? "0") : null) ??
-        parseFloat(row.icpFitPct);
+        (currentRow.icpFitOverride !== null ? parseFloat(currentRow.icpFitOverride ?? "0") : null) ??
+        parseFloat(currentRow.icpFitPct);
       const effectiveAcvUsd =
         params.acvUsdOverride ??
-        (row.acvOverrideUsd !== null ? parseFloat(row.acvOverrideUsd ?? "0") : null) ??
-        parseFloat(row.acvUsd);
+        (currentRow.acvOverrideUsd !== null ? parseFloat(currentRow.acvOverrideUsd ?? "0") : null) ??
+        parseFloat(currentRow.acvUsd);
 
-      const isDataLoaded = row.establishments !== null;
+      const isDataLoaded = currentRow.establishments !== null;
       const targetAccountsTam = isDataLoaded
         ? Math.round(
-            (row.canonicalInclude ? 1 : 0) * row.establishments! * effectiveIcpFitPct
+            (currentRow.canonicalInclude ? 1 : 0) * currentRow.establishments! * effectiveIcpFitPct
           )
         : null;
       const annualRevenueTamUsd =
@@ -294,22 +294,22 @@ export function createCountryIndustryTamService(db: Db) {
         countryIso2: country.isoCode,
         countryIso3: country.isoAlpha3,
         countryName: country.name,
-        industryCode: row.industryCode,
-        industryName: row.industryName,
+        industryCode: currentRow.industryCode,
+        industryName: currentRow.industryName,
         isDataLoaded,
         targetAccountsTam,
         annualRevenueTamUsd,
         assumptions: {
-          establishments: row.establishments,
+          establishments: currentRow.establishments,
           icpFitPct: effectiveIcpFitPct,
           acvUsd: effectiveAcvUsd,
           icpFitSource:
-            params.icpPctOverride !== undefined || row.icpFitOverride !== null ? "override" : "default",
+            params.icpPctOverride !== undefined || currentRow.icpFitOverride !== null ? "override" : "default",
           acvSource:
-            params.acvUsdOverride !== undefined || row.acvOverrideUsd !== null ? "override" : "default",
-          canonicalInclude: row.canonicalInclude,
-          dataSource: row.dataSource,
-          dataYear: row.dataYear,
+            params.acvUsdOverride !== undefined || currentRow.acvOverrideUsd !== null ? "override" : "default",
+          canonicalInclude: currentRow.canonicalInclude,
+          dataSource: currentRow.dataSource,
+          dataYear: currentRow.dataYear,
         },
       };
     },
