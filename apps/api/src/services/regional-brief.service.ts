@@ -219,28 +219,93 @@ export interface ResolvedBrief {
   entries: ResolvedBriefEntry[];
 }
 
+const STANDARD_REGIONS: Record<string, string> = {
+  NAM: "North America",
+  EMEA: "Europe, Middle East, Africa",
+  APAC: "Asia-Pacific",
+  LATAM: "Latin America",
+  UKI: "United Kingdom & Ireland",
+  DACH: "Germany, Austria, Switzerland",
+  NORDICS: "Nordic Countries",
+  BENELUX: "Belgium, Netherlands, Luxembourg",
+  SEUR: "Southern Europe",
+  EEUR: "Eastern Europe",
+  ANZ: "Australia & New Zealand",
+  SEA: "Southeast Asia",
+  EASIA: "East Asia",
+  SASIA: "South Asia",
+  MEA: "Middle East & Africa",
+};
+
+const STANDARD_COUNTRIES: Record<string, { isoCode: string; isoAlpha3: string; name: string; regionCode: string; currencyCode: string; aliases: string[] }> = {
+  US: { isoCode: "US", isoAlpha3: "USA", name: "United States", regionCode: "NAM", currencyCode: "USD", aliases: ["US", "USA", "United States", "America", "United States of America"] },
+  USA: { isoCode: "US", isoAlpha3: "USA", name: "United States", regionCode: "NAM", currencyCode: "USD", aliases: ["US", "USA", "United States", "America", "United States of America"] },
+  "UNITED STATES": { isoCode: "US", isoAlpha3: "USA", name: "United States", regionCode: "NAM", currencyCode: "USD", aliases: ["US", "USA", "United States", "America", "United States of America"] },
+  GB: { isoCode: "GB", isoAlpha3: "GBR", name: "United Kingdom", regionCode: "UKI", currencyCode: "GBP", aliases: ["GB", "GBR", "UK", "United Kingdom", "Great Britain", "England"] },
+  GBR: { isoCode: "GB", isoAlpha3: "GBR", name: "United Kingdom", regionCode: "UKI", currencyCode: "GBP", aliases: ["GB", "GBR", "UK", "United Kingdom", "Great Britain", "England"] },
+  UK: { isoCode: "GB", isoAlpha3: "GBR", name: "United Kingdom", regionCode: "UKI", currencyCode: "GBP", aliases: ["GB", "GBR", "UK", "United Kingdom", "Great Britain", "England"] },
+  "UNITED KINGDOM": { isoCode: "GB", isoAlpha3: "GBR", name: "United Kingdom", regionCode: "UKI", currencyCode: "GBP", aliases: ["GB", "GBR", "UK", "United Kingdom", "Great Britain", "England"] },
+  "GREAT BRITAIN": { isoCode: "GB", isoAlpha3: "GBR", name: "United Kingdom", regionCode: "UKI", currencyCode: "GBP", aliases: ["GB", "GBR", "UK", "United Kingdom", "Great Britain", "England"] },
+  CA: { isoCode: "CA", isoAlpha3: "CAN", name: "Canada", regionCode: "NAM", currencyCode: "CAD", aliases: ["CA", "CAN", "Canada"] },
+  CAN: { isoCode: "CA", isoAlpha3: "CAN", name: "Canada", regionCode: "NAM", currencyCode: "CAD", aliases: ["CA", "CAN", "Canada"] },
+  CANADA: { isoCode: "CA", isoAlpha3: "CAN", name: "Canada", regionCode: "NAM", currencyCode: "CAD", aliases: ["CA", "CAN", "Canada"] },
+  IN: { isoCode: "IN", isoAlpha3: "IND", name: "India", regionCode: "SASIA", currencyCode: "INR", aliases: ["IN", "IND", "India"] },
+  IND: { isoCode: "IN", isoAlpha3: "IND", name: "India", regionCode: "SASIA", currencyCode: "INR", aliases: ["IN", "IND", "India"] },
+  INDIA: { isoCode: "IN", isoAlpha3: "IND", name: "India", regionCode: "SASIA", currencyCode: "INR", aliases: ["IN", "IND", "India"] },
+  DE: { isoCode: "DE", isoAlpha3: "DEU", name: "Germany", regionCode: "DACH", currencyCode: "EUR", aliases: ["DE", "DEU", "Germany", "Deutschland"] },
+  DEU: { isoCode: "DE", isoAlpha3: "DEU", name: "Germany", regionCode: "DACH", currencyCode: "EUR", aliases: ["DE", "DEU", "Germany", "Deutschland"] },
+  GERMANY: { isoCode: "DE", isoAlpha3: "DEU", name: "Germany", regionCode: "DACH", currencyCode: "EUR", aliases: ["DE", "DEU", "Germany", "Deutschland"] },
+  FR: { isoCode: "FR", isoAlpha3: "FRA", name: "France", regionCode: "SEUR", currencyCode: "EUR", aliases: ["FR", "FRA", "France"] },
+  FRA: { isoCode: "FR", isoAlpha3: "FRA", name: "France", regionCode: "SEUR", currencyCode: "EUR", aliases: ["FR", "FRA", "France"] },
+  FRANCE: { isoCode: "FR", isoAlpha3: "FRA", name: "France", regionCode: "SEUR", currencyCode: "EUR", aliases: ["FR", "FRA", "France"] },
+  AU: { isoCode: "AU", isoAlpha3: "AUS", name: "Australia", regionCode: "ANZ", currencyCode: "AUD", aliases: ["AU", "AUS", "Australia"] },
+  AUS: { isoCode: "AU", isoAlpha3: "AUS", name: "Australia", regionCode: "ANZ", currencyCode: "AUD", aliases: ["AU", "AUS", "Australia"] },
+  AUSTRALIA: { isoCode: "AU", isoAlpha3: "AUS", name: "Australia", regionCode: "ANZ", currencyCode: "AUD", aliases: ["AU", "AUS", "Australia"] },
+};
+
 export function createRegionalBriefService(db: Db) {
+  async function resolveRegionId(regionCode: string) {
+    const [region] = await db.select().from(regions).where(eq(regions.code, regionCode.toUpperCase()));
+    if (region) return region;
+
+    // Auto-provision standard region if not yet in DB
+    const standardName = STANDARD_REGIONS[regionCode.toUpperCase()];
+    if (standardName) {
+      const [created] = await db
+        .insert(regions)
+        .values({ code: regionCode.toUpperCase(), name: standardName })
+        .onConflictDoNothing()
+        .returning();
+      if (created) return created;
+      const [reloaded] = await db.select().from(regions).where(eq(regions.code, regionCode.toUpperCase()));
+      if (reloaded) return reloaded;
+    }
+
+    throw new HttpError(`Unknown region code: ${regionCode}`, 422);
+  }
+
   /**
    * Resolve any country identifier (alpha-2, alpha-3, or canonical name) to a DB row.
-   * Lookup order: alpha-2 exact → alpha-3 exact → alias table.
+   * Lookup order: alpha-2 exact → alpha-3 exact → alias table → auto-provision standard country.
    */
   async function resolveCountry(isoOrName: string) {
+    const key = isoOrName.trim();
     const [byAlpha2] = await db
       .select()
       .from(countries)
-      .where(eq(countries.isoCode, isoOrName.toUpperCase()));
+      .where(eq(countries.isoCode, key.toUpperCase()));
     if (byAlpha2) return byAlpha2;
 
     const [byAlpha3] = await db
       .select()
       .from(countries)
-      .where(eq(countries.isoAlpha3, isoOrName.toUpperCase()));
+      .where(eq(countries.isoAlpha3, key.toUpperCase()));
     if (byAlpha3) return byAlpha3;
 
     const [byName] = await db
       .select()
       .from(countries)
-      .where(ilike(countries.name, isoOrName));
+      .where(ilike(countries.name, key));
     if (byName) return byName;
 
     // Case-insensitive alias lookup
@@ -248,16 +313,38 @@ export function createRegionalBriefService(db: Db) {
       .select({ country: countries })
       .from(countryAliases)
       .innerJoin(countries, eq(countryAliases.countryId, countries.id))
-      .where(ilike(countryAliases.alias, isoOrName));
+      .where(ilike(countryAliases.alias, key));
     if (aliasRow) return aliasRow.country;
 
-    throw new HttpError(`Cannot resolve country: "${isoOrName}"`, 422);
-  }
+    // Auto-provision standard country if database was not pre-seeded
+    const standard = STANDARD_COUNTRIES[key.toUpperCase()];
+    if (standard) {
+      const region = await resolveRegionId(standard.regionCode);
+      const [created] = await db
+        .insert(countries)
+        .values({
+          isoCode: standard.isoCode,
+          isoAlpha3: standard.isoAlpha3,
+          name: standard.name,
+          regionId: region.id,
+          currencyCode: standard.currencyCode,
+        })
+        .onConflictDoNothing()
+        .returning();
 
-  async function resolveRegionId(regionCode: string) {
-    const [region] = await db.select().from(regions).where(eq(regions.code, regionCode));
-    if (!region) throw new HttpError(`Unknown region code: ${regionCode}`, 422);
-    return region;
+      const country = created || (await db.select().from(countries).where(eq(countries.isoCode, standard.isoCode)))[0];
+      if (country) {
+        for (const alias of standard.aliases) {
+          await db
+            .insert(countryAliases)
+            .values({ countryId: country.id, alias, canonicalInclude: true })
+            .onConflictDoNothing();
+        }
+        return country;
+      }
+    }
+
+    throw new HttpError(`Cannot resolve country: "${isoOrName}"`, 422);
   }
 
   async function resolveSlotIds(input: CreateSlotInput) {
