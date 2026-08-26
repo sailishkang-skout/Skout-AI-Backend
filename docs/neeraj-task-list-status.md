@@ -34,3 +34,7 @@ No separate `SkoutProd` cluster will be created in this account.
 2. Sailesh Warm-Up Google/Microsoft OAuth app credentials  
 3. Optional: Google Chrome Web Store publisher submit  
 4. Per enterprise deal: Clerk Org SSO IdP metadata exchange  
+
+## Test guide
+
+Step-by-step QA: [`docs/neeraj-feature-test-guide.md`](./neeraj-feature-test-guide.md)
