@@ -1,11 +1,11 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, ilike } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { HttpError } from "../utils/http.js";
 
 import { NAICS_CODE_NAMES } from "./regional-brief.service.js";
 
-const { countries, countryAliases, countryIndustryTam } = schema;
+const { regions, countries, countryAliases, countryIndustryTam } = schema;
 
 export interface TamResult {
   countryIso2: string;
