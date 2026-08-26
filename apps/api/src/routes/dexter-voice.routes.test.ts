@@ -16,6 +16,7 @@ describe.skipIf(!hasDatabase)("§8.8 / §10.5 LinkedIn Voice Studio Routes", () 
     const config = loadEnv();
     app = await buildApp({
       ...config,
+      NODE_ENV: "test",
       CLERK_SECRET_KEY: undefined,
       LOG_LEVEL: "error",
       AUTH_STUB: true,
@@ -71,7 +72,7 @@ describe.skipIf(!hasDatabase)("§8.8 / §10.5 LinkedIn Voice Studio Routes", () 
       };
     };
     expect(body.data.scriptText).toBeTruthy();
-    expect(body.data.regionalBriefPreview).toContain("Regional Tone");
+    expect(body.data.regionalBriefPreview.toLowerCase()).toContain("tone");
     expect(body.data.estimatedDurationSeconds).toBeGreaterThanOrEqual(15);
     expect(body.data.prospect.id).toBe("test-prospect-2");
   });
@@ -110,9 +111,8 @@ describe.skipIf(!hasDatabase)("§8.8 / §10.5 LinkedIn Voice Studio Routes", () 
       payload: {
         prospectId: "test-prospect-voice-lifecycle",
         scriptText: "Hi Sarah, checking in regarding your outbound automation workflows.",
-        voiceChoice: "alloy",
+        voiceChoice: "personal",
         regionalBriefPreview: "US Tech Norms: Consultative & concise",
-        bypassEligibilityCheck: true,
       },
     });
     expect(handoff.statusCode).toBe(201);

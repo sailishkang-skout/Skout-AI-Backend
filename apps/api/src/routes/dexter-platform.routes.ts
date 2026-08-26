@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { errorResponse } from "../utils/http.js";
+import { errorResponse, HttpError } from "../utils/http.js";
 import {
   AUTOMATION_MODES,
   classifyAndRecord,
@@ -24,7 +24,9 @@ import {
   confirmLinkedinVoiceSent,
   createLinkedinVoiceHandoff,
   draftLinkedinVoiceScript,
+  getLinkedinVoiceHandoff,
   invokeDexterPlan,
+  listLinkedinVoiceHandoffs,
   proposeDexterPlan,
   recordDexterLearning,
   synthesizeVoiceAudio,
@@ -221,12 +223,18 @@ export async function dexterPlatformRoutes(app: FastifyInstance) {
   // ── LinkedIn voice §10.5 ────────────────────────────────────────
   app.get("/linkedin/voice/eligibility", async (request, reply) => {
     if (!request.workspaceId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
-    const query = z.object({ prospectId: z.string().min(1) }).safeParse(request.query ?? {});
+    const query = z
+      .object({
+        prospectId: z.string().min(1),
+        linkedinUrl: z.string().url().optional(),
+      })
+      .safeParse(request.query ?? {});
     if (!query.success) return reply.code(400).send(errorResponse("prospectId query parameter required", 400));
 
     const result = await checkLinkedinVoiceEligibility(app.db, app.config, {
       workspaceId: request.workspaceId,
       prospectId: query.data.prospectId,
+      linkedinUrl: query.data.linkedinUrl,
     });
     return reply.send({ data: result });
   });
@@ -239,6 +247,7 @@ export async function dexterPlatformRoutes(app: FastifyInstance) {
         goal: z.string().max(500).optional(),
         tone: z.string().max(200).optional(),
         customNotes: z.string().max(1000).optional(),
+        language: z.string().max(32).optional(),
       })
       .safeParse(request.body ?? {});
     if (!body.success) return reply.code(400).send(errorResponse("Invalid draft payload", 400, body.error.flatten()));
@@ -249,6 +258,7 @@ export async function dexterPlatformRoutes(app: FastifyInstance) {
       goal: body.data.goal,
       tone: body.data.tone,
       customNotes: body.data.customNotes,
+      language: body.data.language,
       userId: request.userId,
     });
     return reply.send({ data: result });
@@ -271,6 +281,29 @@ export async function dexterPlatformRoutes(app: FastifyInstance) {
     return reply.send({ data: result });
   });
 
+  app.get("/linkedin/voice/handoffs", async (request, reply) => {
+    if (!request.workspaceId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    const rows = await listLinkedinVoiceHandoffs(app.db, request.workspaceId);
+    return reply.send({ data: rows });
+  });
+
+  app.get("/linkedin/voice/handoffs/:token", async (request, reply) => {
+    if (!request.workspaceId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    const { token } = z.object({ token: z.string().uuid() }).parse(request.params);
+    try {
+      const row = await getLinkedinVoiceHandoff(app.db, app.config, {
+        workspaceId: request.workspaceId,
+        handoffToken: token,
+      });
+      return reply.send({ data: row });
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return reply.code(err.statusCode).send(errorResponse(err.message, err.statusCode, err.details));
+      }
+      throw err;
+    }
+  });
+
   app.post("/linkedin/voice/handoff", async (request, reply) => {
     if (!request.workspaceId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const body = z
@@ -279,37 +312,50 @@ export async function dexterPlatformRoutes(app: FastifyInstance) {
         scriptText: z.string().min(1).max(8000),
         voiceChoice: z.string().max(50).optional(),
         regionalBriefPreview: z.string().max(4000).optional(),
-        bypassEligibilityCheck: z.boolean().optional(),
+        language: z.string().max(32).optional(),
+        linkedinUrl: z.string().url().optional(),
       })
       .safeParse(request.body ?? {});
     if (!body.success) return reply.code(400).send(errorResponse("Invalid handoff", 400, body.error.flatten()));
 
-    const row = await createLinkedinVoiceHandoff(app.db, app.config, {
-      workspaceId: request.workspaceId,
-      ...body.data,
-      userId: request.userId,
-    });
-    return reply.code(201).send({
-      data: {
-        id: row.id,
-        handoffToken: row.handoffToken,
-        status: row.status,
-        evidenceId: row.evidenceId,
-        note: "Manual send only — call POST /linkedin/voice/confirm-sent after the user sends.",
-      },
-    });
+    try {
+      const row = await createLinkedinVoiceHandoff(app.db, app.config, {
+        workspaceId: request.workspaceId,
+        ...body.data,
+        userId: request.userId,
+      });
+      return reply.code(201).send({ data: row });
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return reply.code(err.statusCode).send(errorResponse(err.message, err.statusCode, err.details));
+      }
+      throw err;
+    }
   });
 
   app.post("/linkedin/voice/confirm-sent", async (request, reply) => {
     if (!request.workspaceId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
-    const body = z.object({ handoffToken: z.string().uuid() }).safeParse(request.body ?? {});
+    const body = z
+      .object({
+        handoffToken: z.string().uuid(),
+        outcomeNote: z.string().max(500).optional(),
+      })
+      .safeParse(request.body ?? {});
     if (!body.success) return reply.code(400).send(errorResponse("Invalid confirm payload", 400));
-    const row = await confirmLinkedinVoiceSent(app.db, {
-      workspaceId: request.workspaceId,
-      handoffToken: body.data.handoffToken,
-      userId: request.userId,
-    });
-    return reply.send({ data: row });
+    try {
+      const row = await confirmLinkedinVoiceSent(app.db, {
+        workspaceId: request.workspaceId,
+        handoffToken: body.data.handoffToken,
+        outcomeNote: body.data.outcomeNote,
+        userId: request.userId,
+      });
+      return reply.send({ data: row });
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return reply.code(err.statusCode).send(errorResponse(err.message, err.statusCode, err.details));
+      }
+      throw err;
+    }
   });
 
   // ── §3 / §11.1 helpers ──────────────────────────────────────────
