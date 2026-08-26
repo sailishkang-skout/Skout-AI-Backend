@@ -3,6 +3,7 @@ import { boolean, integer, jsonb, pgTable, text, timestamp, unique, uniqueIndex,
 import { inboxes } from "./inbox.js";
 import { linkedinAccounts } from "./linkedin-accounts.js";
 import { lists } from "./prospects.js";
+import { users } from "./users.js";
 import { workspaces } from "./workspaces.js";
 
 export const sequences = pgTable("sequences", {
@@ -19,6 +20,9 @@ export const sequences = pgTable("sequences", {
   mode: text("mode").notNull().default("A"),
   /** Latest published version number (0 = never published). */
   currentVersion: integer("current_version").notNull().default(0),
+  /** Set once a human explicitly approves a Mode C sequence — required before draft->active (spec §4-6). */
+  modeCApprovedAt: timestamp("mode_c_approved_at", { withTimezone: true }),
+  modeCApprovedBy: uuid("mode_c_approved_by").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

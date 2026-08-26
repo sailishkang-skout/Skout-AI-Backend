@@ -477,6 +477,14 @@
       "when": 1790000000000,
       "tag": "0066_signal_strength_evidence",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1790100000000,
+      "tag": "0067_mode_c_approval",
+      "breakpoints": true
     }
   ]
 }
+

@@ -94,7 +94,12 @@ vi.mock("../services/sequence-events.js", () => ({
   recordSequenceEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { startSequenceEnrollmentWorker, retryTransientFailure, countTrackingEvents } from "./sequence-enrollment.worker.js";
+import {
+  startSequenceEnrollmentWorker,
+  retryTransientFailure,
+  countTrackingEvents,
+  hasMeetingBookedThread,
+} from "./sequence-enrollment.worker.js";
 import { recordSequenceEvent } from "../services/sequence-events.js";
 import { enqueueSequenceAdvanceJob } from "./sequence-enrollment.queue.js";
 import { Worker } from "bullmq";
@@ -826,5 +831,25 @@ describe("countTrackingEvents", () => {
     const db = makeCountDb([]);
     const n = await countTrackingEvents(db, "ws-1", "enr-1", "click");
     expect(n).toBe(0);
+  });
+});
+
+describe("hasMeetingBookedThread", () => {
+  function makeThreadDb(rows: Array<{ id: string }>) {
+    const limit = vi.fn().mockResolvedValue(rows);
+    const where = vi.fn().mockReturnValue({ limit });
+    const from = vi.fn().mockReturnValue({ where });
+    const select = vi.fn().mockReturnValue({ from });
+    return { select } as any;
+  }
+
+  it("returns true when the enrollment has a meeting_booked thread", async () => {
+    const db = makeThreadDb([{ id: "thread-1" }]);
+    expect(await hasMeetingBookedThread(db, "ws-1", "enr-1")).toBe(true);
+  });
+
+  it("returns false when no meeting_booked thread exists for the enrollment", async () => {
+    const db = makeThreadDb([]);
+    expect(await hasMeetingBookedThread(db, "ws-1", "enr-1")).toBe(false);
   });
 });

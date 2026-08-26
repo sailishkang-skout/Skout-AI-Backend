@@ -387,6 +387,9 @@ async function evaluateCondition(
       .limit(1);
     return Boolean(row);
   }
+  if (conditionType === "meeting_booked") {
+    return hasMeetingBookedThread(db, workspaceId, enrollmentId);
+  }
   if (conditionType === "account_has_positive_reply") {
     const prospect = await resolveProspectFields(config, db, workspaceId, prospectId);
     const companyDomain = (prospect as { companyDomain?: string | null } | null)?.companyDomain;
@@ -417,6 +420,26 @@ export async function countTrackingEvents(
       )
     );
   return row?.n ?? 0;
+}
+
+/** "meeting_booked" leaf: has this enrollment's inbox thread been marked meeting_booked? */
+export async function hasMeetingBookedThread(
+  db: DbClient,
+  workspaceId: string,
+  enrollmentId: string
+): Promise<boolean> {
+  const rows = await db
+    .select({ id: inboxThreads.id })
+    .from(inboxThreads)
+    .where(
+      and(
+        eq(inboxThreads.workspaceId, workspaceId),
+        eq(inboxThreads.enrollmentId, enrollmentId),
+        eq(inboxThreads.status, "meeting_booked")
+      )
+    )
+    .limit(1);
+  return rows.length > 0;
 }
 
 /**

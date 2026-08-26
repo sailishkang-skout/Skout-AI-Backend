@@ -61,6 +61,13 @@ describe("evaluateConditionExpression", () => {
     expect(result.passed).toBe(true);
   });
 
+  it("parses the meeting_booked leaf", async () => {
+    const expr = parseConditionExpression({ type: "meeting_booked" });
+    expect(expr).toEqual({ type: "meeting_booked" });
+    const result = await evaluateConditionExpression(expr!, async (type) => type === "meeting_booked");
+    expect(result.passed).toBe(true);
+  });
+
   it("rejects an unknown leaf type", () => {
     expect(parseConditionExpression({ type: "not_a_real_condition" })).toBeNull();
   });

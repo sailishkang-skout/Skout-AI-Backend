@@ -18,6 +18,9 @@ export const CONDITION_LEAF_TYPES = [
   "icp_score_gte",
   "has_email",
   "has_linkedin",
+  /** Has a meeting been booked for this enrollment? (spec §8.6 branch-coverage audit) — the
+   * system should stop advancing a cadence once the prospect has scheduled a meeting. */
+  "meeting_booked",
   /** Account-level: another contact at the same company already replied positively
    * (condition-engine spec §26/§28) — "the system should never continue automated outreach
    * after a confirmed positive sales conversation" applied at the account, not just contact,
