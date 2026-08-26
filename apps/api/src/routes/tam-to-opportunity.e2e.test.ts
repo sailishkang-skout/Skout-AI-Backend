@@ -126,6 +126,13 @@ describe("R10.1 — TAM to qualified opportunity (9-step e2e)", () => {
           industry: "SaaS",
           employeeCount: 120,
         },
+        icp: {
+          industries: ["SaaS"],
+          countries: ["US"],
+          seniorities: ["vp"],
+          minEmployees: 50,
+          maxEmployees: 500,
+        },
       },
     });
     expect(res.statusCode).toBe(200);

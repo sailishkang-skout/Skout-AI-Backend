@@ -82,6 +82,7 @@ export async function searchRoutes(app: FastifyInstance) {
       total: result.total,
       page: result.page,
       pageSize: result.pageSize,
+      filters: body.filters,
       ...("source" in result && result.source ? { source: result.source } : {}),
     };
 
