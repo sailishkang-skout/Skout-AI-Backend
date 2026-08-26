@@ -6,8 +6,13 @@ import { buildLinkedinAccountService, type MessagingChannel } from "../services/
 const log = createLogger("unipile-webhook");
 
 /**
- * Unipile hosted-auth notify callback.
+ * §12 — Unipile hosted-auth notify callback.
  * Body shape varies; we accept common account_id / name / provider fields.
+ *
+ * Signature verification: Unipile does not currently include a per-callback
+ * HMAC secret in their hosted-auth flow. Verification is therefore audit-only
+ * (logged, not enforced). When Unipile adds signing, add the secret here and
+ * set `hardReject: true` in the verifier options.
  */
 export async function unipileWebhookRoutes(app: FastifyInstance) {
   app.post("/webhooks/unipile/hosted-auth", async (request, reply) => {
