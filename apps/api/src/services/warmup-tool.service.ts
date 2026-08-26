@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
-import { decryptSecret, encryptSecret, maskApiKey } from "@skout/shared";
+import { decryptSecretWithFallback, encryptSecret, maskApiKey } from "@skout/shared";
 import type { Env } from "../config/env.js";
 
 const log = createLogger("warmup-tool.service");
@@ -36,6 +36,14 @@ function encryptionSecret(config: Env): string {
     config.INTEGRATION_ENCRYPTION_KEY ??
     config.CLERK_SECRET_KEY ??
     "dev-integration-encryption-key-change-me"
+  );
+}
+
+function decryptIntegrationSecret(payload: string, config: Env): string {
+  return decryptSecretWithFallback(
+    payload,
+    encryptionSecret(config),
+    config.INTEGRATION_ENCRYPTION_KEY_PREVIOUS
   );
 }
 
@@ -116,7 +124,7 @@ export async function resolveWorkspaceWarmupApiKey(
 
   const row = existing[0];
   if (row?.encryptedApiKey && row.status === "active") {
-    return decryptSecret(row.encryptedApiKey, encryptionSecret(config));
+    return decryptIntegrationSecret(row.encryptedApiKey, config);
   }
 
   const provisionKey = config.WARMUP_TOOL_PLATFORM_PROVISIONING_KEY?.trim();

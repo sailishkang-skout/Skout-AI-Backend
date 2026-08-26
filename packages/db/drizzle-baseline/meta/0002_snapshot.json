@@ -1,5 +1,5 @@
 {
-  "id": "328eddb1-3ef3-4591-9216-5609cedce6b1",
+  "id": "3ee6b2af-9ba4-497c-808c-6650459e25ef",
   "prevId": "ca65b11f-798b-495f-ab4c-da002ad485d1",
   "version": "7",
   "dialect": "postgresql",
@@ -39,13 +39,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": false
-        },
-        "deal_promotion_threshold": {
-          "name": "deal_promotion_threshold",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 80
         },
         "created_at": {
           "name": "created_at",
@@ -3423,6 +3416,18 @@
           "notNull": true,
           "default": 0
         },
+        "mode_c_approved_at": {
+          "name": "mode_c_approved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "mode_c_approved_by": {
+          "name": "mode_c_approved_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -3451,6 +3456,19 @@
             "id"
           ],
           "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "sequences_mode_c_approved_by_users_id_fk": {
+          "name": "sequences_mode_c_approved_by_users_id_fk",
+          "tableFrom": "sequences",
+          "tableTo": "users",
+          "columnsFrom": [
+            "mode_c_approved_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
@@ -4409,52 +4427,6 @@
           ]
         }
       },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.warmup_tool_sync_state": {
-      "name": "warmup_tool_sync_state",
-      "schema": "",
-      "columns": {
-        "workspace_id": {
-          "name": "workspace_id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "last_event_id": {
-          "name": "last_event_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "warmup_tool_sync_state_workspace_id_workspaces_id_fk": {
-          "name": "warmup_tool_sync_state_workspace_id_workspaces_id_fk",
-          "tableFrom": "warmup_tool_sync_state",
-          "tableTo": "workspaces",
-          "columnsFrom": [
-            "workspace_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -5786,123 +5758,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.meeting_attendees": {
-      "name": "meeting_attendees",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "meeting_id": {
-          "name": "meeting_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "email": {
-          "name": "email",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "contact_id": {
-          "name": "contact_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "rsvp_status": {
-          "name": "rsvp_status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'needs-action'"
-        },
-        "responded_at": {
-          "name": "responded_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "meeting_attendees_meeting_id_idx": {
-          "name": "meeting_attendees_meeting_id_idx",
-          "columns": [
-            {
-              "expression": "meeting_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "meeting_attendees_meeting_id_meetings_id_fk": {
-          "name": "meeting_attendees_meeting_id_meetings_id_fk",
-          "tableFrom": "meeting_attendees",
-          "tableTo": "meetings",
-          "columnsFrom": [
-            "meeting_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "meeting_attendees_contact_id_contacts_id_fk": {
-          "name": "meeting_attendees_contact_id_contacts_id_fk",
-          "tableFrom": "meeting_attendees",
-          "tableTo": "contacts",
-          "columnsFrom": [
-            "contact_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "meeting_attendees_meeting_id_email_unique": {
-          "name": "meeting_attendees_meeting_id_email_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "meeting_id",
-            "email"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.meetings": {
       "name": "meetings",
       "schema": "",
@@ -6043,19 +5898,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
-        },
-        "ics_uid": {
-          "name": "ics_uid",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "ics_sequence": {
-          "name": "ics_sequence",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
         },
         "created_at": {
           "name": "created_at",
@@ -6429,22 +6271,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "pipelines_workspace_default_unique_idx": {
-          "name": "pipelines_workspace_default_unique_idx",
-          "columns": [
-            {
-              "expression": "workspace_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"pipelines\".\"is_default\" = true",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -6714,110 +6540,6 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.promotion_candidates": {
-      "name": "promotion_candidates",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "workspace_id": {
-          "name": "workspace_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "prospect_id": {
-          "name": "prospect_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "score": {
-          "name": "score",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'pending'"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "promotion_candidates_workspace_status_idx": {
-          "name": "promotion_candidates_workspace_status_idx",
-          "columns": [
-            {
-              "expression": "workspace_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "promotion_candidates_workspace_id_workspaces_id_fk": {
-          "name": "promotion_candidates_workspace_id_workspaces_id_fk",
-          "tableFrom": "promotion_candidates",
-          "tableTo": "workspaces",
-          "columnsFrom": [
-            "workspace_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "promotion_candidates_workspace_id_prospect_id_unique": {
-          "name": "promotion_candidates_workspace_id_prospect_id_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "workspace_id",
-            "prospect_id"
-          ]
-        }
-      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -8498,411 +8220,6 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.countries": {
-      "name": "countries",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "region_id": {
-          "name": "region_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "iso_code": {
-          "name": "iso_code",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "currency_code": {
-          "name": "currency_code",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "countries_region_id_regions_id_fk": {
-          "name": "countries_region_id_regions_id_fk",
-          "tableFrom": "countries",
-          "tableTo": "regions",
-          "columnsFrom": [
-            "region_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "countries_iso_code_unique": {
-          "name": "countries_iso_code_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "iso_code"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.regional_brief_slots": {
-      "name": "regional_brief_slots",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "layer_type": {
-          "name": "layer_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "region_id": {
-          "name": "region_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "country_id": {
-          "name": "country_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "industry": {
-          "name": "industry",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "workspace_id": {
-          "name": "workspace_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "field_category": {
-          "name": "field_category",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "scope_key": {
-          "name": "scope_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "current_version_id": {
-          "name": "current_version_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "regional_brief_slots_region_id_regions_id_fk": {
-          "name": "regional_brief_slots_region_id_regions_id_fk",
-          "tableFrom": "regional_brief_slots",
-          "tableTo": "regions",
-          "columnsFrom": [
-            "region_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "regional_brief_slots_country_id_countries_id_fk": {
-          "name": "regional_brief_slots_country_id_countries_id_fk",
-          "tableFrom": "regional_brief_slots",
-          "tableTo": "countries",
-          "columnsFrom": [
-            "country_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "regional_brief_slots_workspace_id_workspaces_id_fk": {
-          "name": "regional_brief_slots_workspace_id_workspaces_id_fk",
-          "tableFrom": "regional_brief_slots",
-          "tableTo": "workspaces",
-          "columnsFrom": [
-            "workspace_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "regional_brief_slots_scope_key_unique": {
-          "name": "regional_brief_slots_scope_key_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "scope_key"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.regional_brief_versions": {
-      "name": "regional_brief_versions",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "slot_id": {
-          "name": "slot_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "version": {
-          "name": "version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "content": {
-          "name": "content",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "source": {
-          "name": "source",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "effective_date": {
-          "name": "effective_date",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "confidence": {
-          "name": "confidence",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "evidence": {
-          "name": "evidence",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "expiry_date": {
-          "name": "expiry_date",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'draft'"
-        },
-        "supersedes_id": {
-          "name": "supersedes_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "reviewer_id": {
-          "name": "reviewer_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "reviewed_at": {
-          "name": "reviewed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_by": {
-          "name": "created_by",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "regional_brief_versions_slot_id_regional_brief_slots_id_fk": {
-          "name": "regional_brief_versions_slot_id_regional_brief_slots_id_fk",
-          "tableFrom": "regional_brief_versions",
-          "tableTo": "regional_brief_slots",
-          "columnsFrom": [
-            "slot_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "regional_brief_versions_reviewer_id_users_id_fk": {
-          "name": "regional_brief_versions_reviewer_id_users_id_fk",
-          "tableFrom": "regional_brief_versions",
-          "tableTo": "users",
-          "columnsFrom": [
-            "reviewer_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "regional_brief_versions_created_by_users_id_fk": {
-          "name": "regional_brief_versions_created_by_users_id_fk",
-          "tableFrom": "regional_brief_versions",
-          "tableTo": "users",
-          "columnsFrom": [
-            "created_by"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "regional_brief_versions_slot_id_version_unique": {
-          "name": "regional_brief_versions_slot_id_version_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "slot_id",
-            "version"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.regions": {
-      "name": "regions",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "code": {
-          "name": "code",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "regions_code_unique": {
-          "name": "regions_code_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "code"
-          ]
-        }
-      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false

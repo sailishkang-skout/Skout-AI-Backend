@@ -23,7 +23,7 @@ import type { ProspectSnapshot as ActivateSnapshot } from "./service.js";
 import { applyEnrichmentAutoFill } from "../enrichment-autofill.service.js";
 
 export * from "./types.js";
-export { EnrichmentService } from "./service.js";
+export { EnrichmentService, SCORE_CREDIT_COST } from "./service.js";
 export type { ProspectSnapshot, EnrichOptions } from "./service.js";
 
 // Single in-memory store shared across requests when no DB is configured.

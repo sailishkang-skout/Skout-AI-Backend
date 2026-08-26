@@ -187,6 +187,34 @@ describe("runSmartListRefreshJob", () => {
     expect(invalidateSmartList).toHaveBeenCalledWith(WORKSPACE, LIST_ID);
   });
 
+  it("attaches a matchReason to added/dropped entries explaining which filters moved them", async () => {
+    vi.mocked(runSmartListQueryWithFallback).mockResolvedValue({
+      hits: [doc("A"), doc("C")],
+      demo: true,
+    });
+    runCorpusScore.mockResolvedValue({ scored: 1, skipped: 0, results: [], creditsUsed: 2 });
+
+    const previousMembers = [
+      { smartListId: LIST_ID, prospectId: "A", snapshot: { prospectId: "A", fullName: "Prospect A" }, addedAt: new Date() },
+      { smartListId: LIST_ID, prospectId: "B", snapshot: { prospectId: "B", fullName: "Prospect B" }, addedAt: new Date() },
+    ];
+    const list = baseList({ filters: { industry: "SaaS", contactSignals: ["recent_funding"] } });
+    const { db, inserts } = createMockDb({ list, previousMembers });
+
+    await runSmartListRefreshJob(db as never, config, JOB_ID, WORKSPACE, LIST_ID);
+
+    const refreshInsert = inserts.find((i) => i.table === smartListRefreshes);
+    const values = refreshInsert?.values as {
+      addedProspects: { prospectId: string; matchReason?: string }[];
+      droppedProspects: { prospectId: string; matchReason?: string }[];
+    };
+
+    expect(values.addedProspects[0]?.matchReason).toBe("Now matches: industry: SaaS · contact signals: recent_funding");
+    expect(values.droppedProspects[0]?.matchReason).toBe(
+      "No longer matches: industry: SaaS · contact signals: recent_funding"
+    );
+  });
+
   it("skips the refresh and leaves membership untouched when credits are insufficient", async () => {
     vi.mocked(runSmartListQueryWithFallback).mockResolvedValue({
       hits: [doc("A"), doc("C")],

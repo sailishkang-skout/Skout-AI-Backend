@@ -372,7 +372,8 @@ describe("createTeamService", () => {
       await expect(
         svc.removeMember("ws-1", "user-2", "owner-uid", "owner")
       ).resolves.toBeUndefined();
-      expect(db.delete).toHaveBeenCalledTimes(1);
+      // workspace_members + workspace_member_roles cleanup
+      expect(db.delete).toHaveBeenCalledTimes(2);
     });
 
     it("admin can remove a member", async () => {

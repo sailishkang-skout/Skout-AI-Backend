@@ -13,6 +13,18 @@ from fastapi import FastAPI
 from posthog import Posthog
 from pydantic import BaseModel
 from sentry_sdk.integrations.fastapi import FastApiIntegration
+from starlette.middleware.base import BaseHTTPMiddleware
+
+# Repo has two live import conventions for this package: production runs uvicorn as
+# `src.main:app` (Dockerfile) - main.py loaded as a submodule of the `src` package, where a
+# relative import resolves - while apps/ai/src/test_classify.py adds apps/ai/src directly to
+# sys.path and imports `main` as a bare top-level module, where only an absolute import
+# resolves. Try the package-relative form first, fall back to the bare form so this works
+# correctly under both without changing either existing invocation.
+try:
+    from .observability import start_span
+except ImportError:
+    from observability import start_span
 
 # Load apps/ai/.env first, then repo root .env for OPENAI_API_KEY etc.
 _ai_dir = Path(__file__).resolve().parent.parent
@@ -98,6 +110,41 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Skout AI Service", version="0.1.0", lifespan=lifespan)
+
+
+class _TracingMiddleware(BaseHTTPMiddleware):
+    """
+    §1.1 / §11.3 Task 38 (Enterprise Completion Plan) - one span per HTTP request. Continues the
+    trace apps/api already started (via its own injectTraceContext(),
+    packages/observability/src/otel.ts) when a `traceparent` header is present, so a /v1/score
+    or /v1/classify call from apps/api shows up as a child span of the request that triggered it
+    rather than a disconnected root span in a different trace. See observability.py's own doc
+    comment for why this is a small stdlib-only tracer rather than the real opentelemetry-sdk
+    (unresolvable from the sandbox this was built in - no network to pip install, and an
+    unverifiable new dependency isn't worth adding over a small hand-written one, same reasoning
+    already applied to the Node side's OTLP exporter).
+    """
+
+    async def dispatch(self, request, call_next):
+        span = start_span(
+            f"{request.method} {request.url.path}",
+            traceparent=request.headers.get("traceparent"),
+            attributes={"http.method": request.method, "http.route": request.url.path},
+        )
+        try:
+            response = await call_next(request)
+            span.set_attribute("http.status_code", response.status_code)
+            span.set_status("ERROR" if response.status_code >= 500 else "OK")
+            return response
+        except Exception as exc:
+            span.record_exception(exc)
+            span.set_status("ERROR", str(exc))
+            raise
+        finally:
+            span.end()
+
+
+app.add_middleware(_TracingMiddleware)
 
 
 # ---------------------------------------------------------------------------
@@ -1056,6 +1103,7 @@ class PersonalizeRequest(BaseModel):
     company_domain: Optional[str] = None
     pain_points: list[str] = []
     icp_score: Optional[int] = None
+    regional_tone: Optional[str] = None
 
 
 class PersonalizeResponse(BaseModel):
@@ -1175,10 +1223,11 @@ def pain_points(request: PainPointRequest):
 def personalize(request: PersonalizeRequest):
     """Generate outreach opener + talking points for ai_drafts."""
     if _llm_available():
+        tone_line = f" Write in this regional tone: {request.regional_tone}." if request.regional_tone else ""
         prompt = (
             "Return JSON with opener (string) and talking_points (array of strings) for a cold email. "
             f"Prospect: {request.full_name}, {request.title} at {request.company_domain}. "
-            f"Pain points: {request.pain_points}. ICP score: {request.icp_score}"
+            f"Pain points: {request.pain_points}. ICP score: {request.icp_score}.{tone_line}"
         )
         data = _llm_json("", prompt)
         result = PersonalizeResponse(

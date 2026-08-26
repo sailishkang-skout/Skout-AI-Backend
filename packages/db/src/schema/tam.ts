@@ -22,6 +22,11 @@ export const tams = pgTable("tams", {
   segmentBreakdown: jsonb("segment_breakdown").notNull().default([]),
   /** { total, activated, enriched, contacted, replied, deal } */
   coverage: jsonb("coverage").notNull().default({}),
+  /** 8.2 Ask — "disclose provider/licensing data-coverage limits inline". "opensearch" (live
+   * corpus index) | "demo_corpus" (local synthetic corpus, no index configured) — which source
+   * totalCount/segmentBreakdown actually came from at last compute. Null for rows computed
+   * before this column existed. */
+  dataSource: text("data_source"),
   lastComputedAt: timestamp("last_computed_at", { withTimezone: true }),
   createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

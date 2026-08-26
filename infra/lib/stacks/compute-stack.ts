@@ -341,8 +341,18 @@ export class ComputeStack extends Stack {
               ADMIN_IMPORT_SECRET: "65332d15429ed7c121af30e803127eedf7f2f5bfbc775b44",
               ADMIN_IMPORT_WORKSPACE_ID: "00000000-0000-4000-8000-000000000001",
               TWILIO_ENABLED: "false",
+              // §11.1 fail-closed RBAC — SkoutDev only after backfill-rbac (see docs/ops/rbac-fail-closed.md).
+              RBAC_ENFORCEMENT_ENABLED: "true",
+              // §5.1 / §16 — consent gate locally mirrored on SkoutDev for parity testing.
+              CONSENT_ENFORCEMENT_ENABLED: "true",
             }
-          : {}),
+          : config.name === "prod"
+            ? {
+                // §11.1 / §16 — approved 2026-08-25; enable only after prod backfill-rbac on first deploy.
+                RBAC_ENFORCEMENT_ENABLED: "true",
+                CONSENT_ENFORCEMENT_ENABLED: "true",
+              }
+            : {}),
       },
       secrets: {
         DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(database.secret, "password"),
@@ -377,9 +387,23 @@ export class ComputeStack extends Stack {
           secrets.appConfig,
           "INTEGRATION_ENCRYPTION_KEY"
         ),
+        // Dual-read during key rotation (§11.1). Optional JSON field on Skout*/app-config;
+        // set PREVIOUS=old before flipping current, then clear after rotate script.
+        INTEGRATION_ENCRYPTION_KEY_PREVIOUS: ecs.Secret.fromSecretsManager(
+          secrets.appConfig,
+          "INTEGRATION_ENCRYPTION_KEY_PREVIOUS"
+        ),
         WARMUP_TOOL_PLATFORM_PROVISIONING_KEY: ecs.Secret.fromSecretsManager(
           secrets.warmupTool,
           "PLATFORM_PROVISIONING_KEY"
+        ),
+        EMAIL_INTEL_EXTERNAL_API_KEY: ecs.Secret.fromSecretsManager(
+          secrets.emailIntelForwarder,
+          "EMAIL_INTEL_EXTERNAL_API_KEY"
+        ),
+        EVIDENCE_INGEST_DEFAULT_WORKSPACE_ID: ecs.Secret.fromSecretsManager(
+          secrets.emailIntelForwarder,
+          "EVIDENCE_INGEST_DEFAULT_WORKSPACE_ID"
         ),
         DD_API_KEY: ecs.Secret.fromSecretsManager(secrets.datadog, "DD_API_KEY"),
         RAZORPAY_KEY_SECRET: ecs.Secret.fromSecretsManager(secrets.razorpay, "RAZORPAY_KEY_SECRET"),
@@ -471,6 +495,10 @@ export class ComputeStack extends Stack {
         DD_SITE: "us5.datadoghq.com",
         RATE_LIMIT_MAX: "200",
         RATE_LIMIT_WINDOW_MS: "60000",
+        // §11.1 fail-closed RBAC — SkoutDev + prod (same gate as API).
+        ...(config.name === "dev" || config.name === "prod"
+          ? { RBAC_ENFORCEMENT_ENABLED: "true" }
+          : {}),
       },
       secrets: {
         DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(database.secret, "password"),
@@ -585,7 +613,8 @@ export class ComputeStack extends Stack {
       secrets.google,
       secrets.twilio,
       secrets.telnyx,
-      secrets.warmupTool
+      secrets.warmupTool,
+      secrets.emailIntelForwarder
     );
 
     grantSecretRead(crmEcs.taskDefinition, database.secret, secrets.clerk, secrets.sentry, secrets.datadog);

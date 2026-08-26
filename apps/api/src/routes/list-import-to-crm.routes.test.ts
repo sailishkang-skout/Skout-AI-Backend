@@ -44,7 +44,7 @@ describe("POST /lists/:id/import-to-crm", () => {
       method: "POST",
       url: "/api/v1/lists",
       headers,
-      payload: { name: "Import Test List" },
+      payload: { name: "Import Test List", mode: "static" },
     });
     if (createList.statusCode === 503) return;
     expect(createList.statusCode).toBe(201);

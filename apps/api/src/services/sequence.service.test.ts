@@ -320,6 +320,68 @@ describe("SequenceService.updateSequence", () => {
       statusCode: 422,
     });
   });
+
+  it("blocks draft → active for a Mode C sequence with no approval on record", async () => {
+    const db = makeDb({
+      selects: [{ result: [{ ...SEQ_ROW, mode: "C", modeCApprovedAt: null }], terminal: "where" }],
+    });
+    const svc = new SequenceService(db as any);
+    await expect(svc.updateSequence("ws-1", "seq-1", { status: "active" })).rejects.toMatchObject({
+      statusCode: 422,
+    });
+  });
+
+  it("allows draft → active for a Mode C sequence once approved", async () => {
+    const updated = { ...SEQ_ROW, mode: "C", status: "active" };
+    const db = makeDb({
+      selects: [
+        { result: [{ ...SEQ_ROW, mode: "C", modeCApprovedAt: new Date("2026-01-02T00:00:00Z") }], terminal: "where" },
+        { result: [], terminal: "orderBy" },
+        { result: [{ ...SEQ_ROW, mode: "C", status: "active", currentVersion: 0 }], terminal: "where" },
+        { result: [], terminal: "orderBy" },
+      ],
+      inserts: [() => insertReturning([{ id: "ver-1", version: 1, status: "published" }])],
+      updates: [() => updateReturning([updated]), () => updateWhere()],
+    });
+    const svc = new SequenceService(db as any);
+    const result = await svc.updateSequence("ws-1", "seq-1", { status: "active" });
+    expect(result!.status).toBe("active");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// approveModeC
+// ---------------------------------------------------------------------------
+
+describe("SequenceService.approveModeC", () => {
+  it("returns null when the sequence isn't found", async () => {
+    const db = makeDb({ selects: [{ result: [], terminal: "where" }] });
+    const svc = new SequenceService(db as any);
+    expect(await svc.approveModeC("ws-1", "missing", "user-1")).toBeNull();
+  });
+
+  it("throws HttpError 422 when the sequence isn't Mode C", async () => {
+    const db = makeDb({ selects: [{ result: [{ ...SEQ_ROW, mode: "A" }], terminal: "where" }] });
+    const svc = new SequenceService(db as any);
+    await expect(svc.approveModeC("ws-1", "seq-1", "user-1")).rejects.toMatchObject({ statusCode: 422 });
+  });
+
+  it("sets modeCApprovedAt/modeCApprovedBy and returns the updated row", async () => {
+    const approved = {
+      ...SEQ_ROW,
+      mode: "C",
+      modeCApprovedAt: new Date("2026-01-02T00:00:00Z"),
+      modeCApprovedBy: "user-1",
+    };
+    const db = makeDb({
+      selects: [{ result: [{ ...SEQ_ROW, mode: "C" }], terminal: "where" }],
+      updates: [() => updateReturning([approved])],
+    });
+    const svc = new SequenceService(db as any);
+    const result = await svc.approveModeC("ws-1", "seq-1", "user-1");
+    expect(result!.modeCApprovedBy).toBe("user-1");
+    expect(result!.modeCApprovedAt).toBeInstanceOf(Date);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -915,6 +977,7 @@ describe("exported enums", () => {
   it("CONDITION_TYPES include LinkedIn invite states", () => {
     expect(CONDITION_TYPES).toContain("linkedin_invite_accepted");
     expect(CONDITION_TYPES).toContain("linkedin_invite_declined");
+    expect(CONDITION_TYPES).toContain("meeting_booked");
   });
 
   it("SEQUENCE_STATUSES contains the four lifecycle states", () => {

@@ -135,6 +135,92 @@ describe("sequence routes — CRUD lifecycle", () => {
     await app.close();
   });
 
+  it("PATCH /sequences/:id blocks activating a Mode C sequence with no approval", async () => {
+    const app = await buildTestApp();
+    const email = "seq-modec-blocked@test.com";
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/sequences",
+      headers: json(email),
+      payload: { name: "God Mode Sequence", mode: "C" },
+    });
+
+    if (created.statusCode === 503) { await app.close(); return; }
+    const { id } = created.json() as { id: string };
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/sequences/${id}`,
+      headers: json(email),
+      payload: { status: "active" },
+    });
+
+    expect(res.statusCode).toBe(422);
+
+    await app.close();
+  });
+
+  it("POST /sequences/:id/approve-mode-c then PATCH to active succeeds", async () => {
+    const app = await buildTestApp();
+    const email = "seq-modec-approved@test.com";
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/sequences",
+      headers: json(email),
+      payload: { name: "God Mode Sequence Approved", mode: "C" },
+    });
+
+    if (created.statusCode === 503) { await app.close(); return; }
+    const { id } = created.json() as { id: string };
+
+    const approve = await app.inject({
+      method: "POST",
+      url: `/api/v1/sequences/${id}/approve-mode-c`,
+      headers: json(email),
+    });
+    expect(approve.statusCode).toBe(200);
+    const approveBody = approve.json() as { modeCApprovedAt: string | null; modeCApprovedBy: string | null };
+    expect(approveBody.modeCApprovedAt).toBeTruthy();
+    expect(approveBody.modeCApprovedBy).toBeTruthy();
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/sequences/${id}`,
+      headers: json(email),
+      payload: { status: "active" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { status: string }).status).toBe("active");
+
+    await app.close();
+  });
+
+  it("POST /sequences/:id/approve-mode-c returns 422 for a non-Mode-C sequence", async () => {
+    const app = await buildTestApp();
+    const email = "seq-modec-notc@test.com";
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/sequences",
+      headers: json(email),
+      payload: { name: "Default Mode Sequence" },
+    });
+
+    if (created.statusCode === 503) { await app.close(); return; }
+    const { id } = created.json() as { id: string };
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/v1/sequences/${id}/approve-mode-c`,
+      headers: json(email),
+    });
+    expect(res.statusCode).toBe(422);
+
+    await app.close();
+  });
+
   it("DELETE /sequences/:id removes the sequence and returns 204", async () => {
     const app = await buildTestApp();
     const email = "seq-delete@test.com";

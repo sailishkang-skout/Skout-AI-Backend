@@ -239,6 +239,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
       try {
         let fullName = message.profile?.fullName || "";
+        let duplicate = false;
         await withTimeout(
           (async () => {
             await ensureAuthForApi();
@@ -251,6 +252,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               linkedinUrl: profile.linkedinUrl,
             });
             await ensureAuthForApi();
+
+            // Duplicate-risk check: surface it to the panel before writing, unless the
+            // user already saw the warning and confirmed (message.confirmDuplicate). Fails
+            // open — a flaky list-members read must never block the actual add.
+            try {
+              const prospectId = await timeStep("resolveProspectId", () => resolveProspectId(profile));
+              const existingIds = await timeStep("getListMemberIds", () => getListMemberIds(message.listId));
+              duplicate = existingIds.has(prospectId);
+            } catch (checkError) {
+              logError("duplicate-risk check failed, proceeding without it:", checkError);
+              duplicate = false;
+            }
+            if (duplicate && !message.confirmDuplicate) return;
+
             await timeStep("activateProspect", () => activateProspect(profile));
             await timeStep("addProspectToList", () => addProspectToList(message.listId, profile));
             await saveLastListId(message.listId);
@@ -258,6 +273,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           HANDLER_TIMEOUT_MS,
           "Add to list timed out — open Skout (localhost:3000), sign in, click Connect Skout account, then reload this page."
         );
+        if (duplicate && !message.confirmDuplicate) {
+          log(`add-to-list DUPLICATE (${Date.now() - t0}ms)`, { fullName });
+          sendResponse({ ok: true, duplicate: true, fullName });
+          return;
+        }
         log(`add-to-list DONE (${Date.now() - t0}ms)`);
         sendResponse({ ok: true, fullName });
       } catch (error) {

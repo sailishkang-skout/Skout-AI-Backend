@@ -3,6 +3,9 @@
 After CDK deploy, every secret below is created with placeholder values (`replace-me`).  
 **You must update each secret** before the related feature works.
 
+For when and how often to rotate a secret after it's set — not just the first-time setup this
+document covers — see [`secrets-rotation-policy.md`](./secrets-rotation-policy.md) (§11.1).
+
 Secret names use the stack prefix:
 
 | Environment | Prefix | Example |

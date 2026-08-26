@@ -354,6 +354,46 @@ describe("POST /search/prospects", () => {
     });
   });
 
+  describe("natural-language query translation (8.2)", () => {
+    beforeEach(async () => {
+      app = await buildTestApp(osEnv);
+    });
+
+    it("translates free text into structured filters and merges them into the opensearch call", async () => {
+      mockedSearch.mockResolvedValueOnce({ hits: [], total: 0 });
+
+      await app.inject({
+        method: "POST",
+        url: "/search/prospects",
+        payload: { query: "VP of Engineering in Germany with 50+ employees" },
+      });
+
+      expect(mockedSearch).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ seniority: "vp", country: "Germany", minEmployees: 50 }),
+        1,
+        25
+      );
+    });
+
+    it("never overrides an explicit filter with a translated guess from the same query", async () => {
+      mockedSearch.mockResolvedValueOnce({ hits: [], total: 0 });
+
+      await app.inject({
+        method: "POST",
+        url: "/search/prospects",
+        payload: { query: "VP of Engineering in Germany", filters: { country: "France" } },
+      });
+
+      expect(mockedSearch).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ country: "France" }),
+        1,
+        25
+      );
+    });
+  });
+
   describe("credits and cache", () => {
     beforeEach(async () => {
       app = await buildTestApp(baseEnv);

@@ -8,6 +8,7 @@ import { Construct } from "constructs";
 import type { EnvironmentConfig } from "../config/environments.js";
 import type { SkoutDatabase } from "../constructs/skout-database.js";
 import type { SkoutRedis } from "../constructs/skout-redis.js";
+import type { SkoutAppSecrets } from "../constructs/skout-app-secrets.js";
 import { SkoutEcsService } from "../constructs/skout-ecs-service.js";
 import { SkoutWorkerService } from "../constructs/skout-worker-service.js";
 
@@ -21,6 +22,8 @@ export interface EmailIntelStackProps extends StackProps {
   readonly bucket: s3.IBucket;
   readonly repository: ecr.IRepository;
   readonly apiService: ecs.FargateService;
+  /** Shared secret for canonical evidence forwarder (§5.3). */
+  readonly secrets: SkoutAppSecrets;
   readonly imageTag?: string;
   /**
    * Deploys both services with desiredCount 0 regardless of config, so ECS
@@ -59,7 +62,7 @@ export class EmailIntelStack extends Stack {
   constructor(scope: Construct, id: string, props: EmailIntelStackProps) {
     super(scope, id, props);
 
-    const { config, vpc, cluster, namespace, database, redis, bucket, repository, apiService, imageTag } =
+    const { config, vpc, cluster, namespace, database, redis, bucket, repository, apiService, secrets, imageTag } =
       props;
     const bootstrapMode = props.bootstrapMode ?? false;
 
@@ -81,6 +84,16 @@ export class EmailIntelStack extends Stack {
     };
 
     const dbPasswordSecret = ecs.Secret.fromSecretsManager(database.secret, "password");
+    const forwarderSecrets = {
+      SKOUT_CANONICAL_EVIDENCE_URL: ecs.Secret.fromSecretsManager(
+        secrets.emailIntelForwarder,
+        "SKOUT_CANONICAL_EVIDENCE_URL"
+      ),
+      SKOUT_CANONICAL_EVIDENCE_TOKEN: ecs.Secret.fromSecretsManager(
+        secrets.emailIntelForwarder,
+        "SKOUT_CANONICAL_EVIDENCE_TOKEN"
+      ),
+    };
 
     const emailIntelApi = new SkoutEcsService(this, "EmailIntelApiService", {
       vpc,
@@ -103,6 +116,7 @@ export class EmailIntelStack extends Stack {
       },
       secrets: {
         DATABASE_PASSWORD: dbPasswordSecret,
+        ...forwarderSecrets,
       },
     });
 
@@ -127,6 +141,7 @@ export class EmailIntelStack extends Stack {
       environment: sharedEnvironment,
       secrets: {
         DATABASE_PASSWORD: dbPasswordSecret,
+        ...forwarderSecrets,
       },
       healthCheckCommand: WORKER_HEALTHCHECK,
     });
@@ -136,6 +151,12 @@ export class EmailIntelStack extends Stack {
 
     bucket.grantReadWrite(emailIntelApi.taskDefinition.taskRole);
     bucket.grantReadWrite(emailIntelWorker.taskDefinition.taskRole);
+
+    // Execution roles need GetSecretValue for forwarder secret (imported by name, not CDK-owned).
+    secrets.emailIntelForwarder.grantRead(emailIntelApi.taskDefinition.executionRole!);
+    secrets.emailIntelForwarder.grantRead(emailIntelWorker.taskDefinition.executionRole!);
+    secrets.emailIntelForwarder.grantRead(emailIntelApi.taskDefinition.taskRole);
+    secrets.emailIntelForwarder.grantRead(emailIntelWorker.taskDefinition.taskRole);
 
     const servicePairs: [string, ec2.SecurityGroup][] = [
       ["Api", emailIntelApi.securityGroup],

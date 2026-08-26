@@ -2,17 +2,32 @@ import type { FastifyInstance } from "fastify";
 import { searchProspectsRequestSchema } from "@skout/shared";
 import { getStore, InsufficientCreditsError } from "../services/enrichment/index.js";
 import { buildDetailFromSnapshot, createSearchService } from "../services/search.service.js";
+import { buildEntitlementsService } from "../services/entitlements.service.js";
 import {
   buildSearchCacheKey,
   createSearchCacheService,
 } from "../services/search-cache.service.js";
+import { mergeTranslatedFilters, translateNaturalLanguageQuery } from "../services/nl-search.service.js";
 import { apiError, HttpError } from "../utils/http.js";
 
 export async function searchRoutes(app: FastifyInstance) {
   app.post("/search/prospects", async (request, reply) => {
     const workspaceId = request.workspaceId ?? "unknown";
-    const body = searchProspectsRequestSchema.parse(request.body ?? {});
-    app.log.info({ parsedFilters: body.filters, query: body.query, workspaceId }, "search parsed");
+    let body = searchProspectsRequestSchema.parse(request.body ?? {});
+
+    // 8.2 — one query model: free text is translated into the same structured SearchFilters
+    // shape, merged under any filters the caller already set explicitly, rather than running
+    // as a second, separate search path.
+    let nlMethod: "llm" | "heuristic" | null = null;
+    if (body.query && body.query.trim()) {
+      const { filters: translated, method } = await translateNaturalLanguageQuery(body.query, {
+        openrouterApiKey: app.config.OPENROUTER_API_KEY,
+      });
+      nlMethod = method;
+      body = { ...body, filters: mergeTranslatedFilters(body.filters ?? {}, translated) };
+    }
+
+    app.log.info({ parsedFilters: body.filters, query: body.query, nlMethod, workspaceId }, "search parsed");
 
     const cache = createSearchCacheService(app.config);
     const cacheKey = buildSearchCacheKey(workspaceId, body);
@@ -26,7 +41,15 @@ export async function searchRoutes(app: FastifyInstance) {
     }
 
     const store = getStore(app.db);
-    const creditCost = app.config.SEARCH_CREDIT_COST;
+    // §5.1 Task 35 — deductCredits() itself is completely unchanged; only which number gets
+    // passed to it can now vary per workspace. entitlements.service.ts's getValueOr() never
+    // throws, so a lookup failure resolves to the existing global config value, never blocking
+    // a search. A workspace with no "search.credit_cost" entitlement pays exactly what it did
+    // before this commit.
+    const entitlementsSvc = app.db ? buildEntitlementsService(app.db) : null;
+    const creditCost = entitlementsSvc
+      ? await entitlementsSvc.getValueOr<number>(workspaceId, "search.credit_cost", app.config.SEARCH_CREDIT_COST)
+      : app.config.SEARCH_CREDIT_COST;
     try {
       await store.deductCredits(workspaceId, creditCost, "search", cacheKey);
     } catch (err) {

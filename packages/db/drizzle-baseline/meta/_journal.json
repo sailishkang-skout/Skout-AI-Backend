@@ -19,8 +19,15 @@
     {
       "idx": 2,
       "version": "7",
-      "when": 1787613072575,
-      "tag": "0002_regional_brief",
+      "when": 1787527294688,
+      "tag": "0002_mode_c_approval",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1787721022386,
+      "tag": "0003_motionless_green_goblin",
       "breakpoints": true
     }
   ]

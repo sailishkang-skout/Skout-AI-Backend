@@ -4,7 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { schema } from "@skout/db";
 import { meetingCreateSchema, meetingInviteeSchema, meetingListQuerySchema, meetingUpdateSchema, findCalendarConnectionForUser, listGoogleCalendarEvents, resolveGoogleCalendarAccessToken } from "@skout/shared";
 import { z } from "zod";
-import { HttpError } from "@skout/auth";
+import { HttpError, enforcePermission } from "@skout/auth";
 import { parseIdParam } from "../utils/http.js";
 import { requireRole } from "../utils/require-role.js";
 import { buildActivitiesService } from "../services/activities.service.js";
@@ -141,6 +141,13 @@ export async function meetingsRoutes(app: FastifyInstance) {
     const id = parseIdParam(request);
     const workspaceId = request.workspaceId ?? "unknown";
     requireRole(request, ["owner", "admin"]);
+    if (app.db && request.userId) {
+      await enforcePermission(app.db, workspaceId, request.userId, "crm:manage", {
+        enforce: app.config.RBAC_ENFORCEMENT_ENABLED,
+        onShadowDeny: (info) =>
+          app.log.warn(info, "RBAC shadow-mode: crm:manage would have been denied (delete meeting)"),
+      });
+    }
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
 

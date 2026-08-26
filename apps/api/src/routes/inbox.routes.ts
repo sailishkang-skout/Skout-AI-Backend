@@ -29,6 +29,7 @@ import {
   handleMicrosoftCallback,
 } from "../services/inbox-oauth.service.js";
 import { HttpError } from "../utils/http.js";
+import { pinAiClaim } from "../services/ai-evidence.service.js";
 
 const PROVIDER_ALIASES: Record<string, "smtp" | "google" | "microsoft"> = {
   google: "google",
@@ -518,9 +519,33 @@ export async function inboxRoutes(app: FastifyInstance) {
     try {
       const svc = new SuggestReplyService(db, app.config);
       const result = await svc.suggestForThread(workspaceId, threadId, { persistDraft: true });
-      return reply.send(result);
+      const pinned = await pinAiClaim(db, {
+        workspaceId,
+        entityType: "inbox_thread",
+        entityId: threadId,
+        attribute: "suggest_reply",
+        value: {
+          subject: result.subject,
+          bodyPreview: String(result.body ?? "").slice(0, 500),
+          draftId: result.draftId,
+        },
+        source: "ai_suggest_reply",
+        method: "suggest_reply",
+        versionName: "suggest-reply",
+        confidence: typeof result.confidence === "number" ? result.confidence : 0.7,
+      });
+      return reply.send({
+        ...result,
+        evidenceId: pinned.evidenceId,
+        modelVersionId: pinned.modelVersionId,
+        promptVersionId: pinned.promptVersionId,
+      });
     } catch (err) {
       if (err instanceof HttpError) return reply.status(err.statusCode).send({ error: err.message });
+      const e = err as { name?: string; message?: string };
+      if (e.name === "UnevidencedClaimError") {
+        return reply.status(500).send({ error: e.message ?? "Unevidenced AI claim rejected" });
+      }
       throw err;
     }
   });

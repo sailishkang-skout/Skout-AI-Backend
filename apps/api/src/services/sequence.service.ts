@@ -50,6 +50,7 @@ export const CONDITION_TYPES = [
   "icp_score_gte",
   "has_email",
   "has_linkedin",
+  "meeting_booked",
   "account_has_positive_reply",
 ] as const;
 export type ConditionType = (typeof CONDITION_TYPES)[number];
@@ -338,6 +339,13 @@ export class SequenceService {
         );
       }
       if (next === "active") {
+        if (existing.mode === "C" && !existing.modeCApprovedAt) {
+          throw new HttpError(
+            "Mode C sequences require explicit approval before activation",
+            422,
+            { sequenceId: id }
+          );
+        }
         const steps = await this.db
           .select()
           .from(sequenceSteps)
@@ -381,6 +389,26 @@ export class SequenceService {
       name: patch.name,
       status: patch.status,
     });
+    return updated!;
+  }
+
+  /** Records explicit human approval for a Mode C ("God Mode") sequence — required before it can go active. */
+  async approveModeC(workspaceId: string, id: string, approvedBy: string) {
+    const [existing] = await this.db
+      .select()
+      .from(sequences)
+      .where(and(eq(sequences.id, id), eq(sequences.workspaceId, workspaceId)));
+    if (!existing) return null;
+    if (existing.mode !== "C") {
+      throw new HttpError(`Only Mode C sequences require approval (this sequence is mode "${existing.mode}")`, 422);
+    }
+
+    const [updated] = await this.db
+      .update(sequences)
+      .set({ modeCApprovedAt: new Date(), modeCApprovedBy: approvedBy, updatedAt: new Date() })
+      .where(and(eq(sequences.id, id), eq(sequences.workspaceId, workspaceId)))
+      .returning();
+    log.info("sequence mode C approved", { workspaceId, sequenceId: id, approvedBy });
     return updated!;
   }
 

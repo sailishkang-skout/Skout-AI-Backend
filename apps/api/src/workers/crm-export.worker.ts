@@ -1,6 +1,7 @@
 import { Worker } from "bullmq";
+import { context as otelContext } from "@opentelemetry/api";
 import { createDb } from "@skout/db";
-import { createLogger } from "@skout/observability";
+import { createLogger, extractTraceContext, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
@@ -30,9 +31,16 @@ export async function startCrmExportWorker(config: Env): Promise<() => Promise<v
   const worker = new Worker<CrmExportJobPayload>(
     CRM_EXPORT_QUEUE,
     async (job) => {
-      const { jobId, workspaceId, listId } = job.data;
+      const { jobId, workspaceId, listId, traceContext } = job.data;
       log.info("Processing HubSpot export", { jobId, workspaceId, listId, attempt: job.attemptsMade });
-      await runHubSpotExportJob(db, config, credentialsStore, jobId, workspaceId, listId);
+
+      // §11.3 — resume the enqueuing request's trace context, same pattern as list-score.worker.ts.
+      const parentContext = extractTraceContext(traceContext);
+      await otelContext.with(parentContext, () =>
+        withSpan("crm-export.worker.process", () =>
+          runHubSpotExportJob(db, config, credentialsStore, jobId, workspaceId, listId)
+        )
+      );
     },
     {
       connection: redisBullMqConnection(config.REDIS_URL),

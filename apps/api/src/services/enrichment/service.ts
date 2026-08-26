@@ -53,6 +53,8 @@ export interface EnrichOptions {
   trigger?: string;
   batchId?: string;
   icp?: IcpConfig;
+  /** 8.3 workbook quality threshold — passed straight through to the engine. */
+  emailQualityThreshold?: number;
 }
 
 function inferSeniorityFromTitle(title?: string): string | undefined {
@@ -212,7 +214,7 @@ export class EnrichmentService {
     );
   }
 
-  async score(workspaceId: string, snapshot: ProspectSnapshot, icp?: IcpConfig) {
+  async score(workspaceId: string, snapshot: ProspectSnapshot, icp?: IcpConfig, creditCost = SCORE_CREDIT_COST) {
     await this.prepareWorkspace(workspaceId);
     const { prospectId } = this.resolveIds(snapshot);
     const resolvedIcp = icp ?? (this.loadIcp ? await this.loadIcp(workspaceId) : {});
@@ -221,8 +223,8 @@ export class EnrichmentService {
     }
 
     const balance = await this.store.getCreditBalance(workspaceId);
-    if (balance < SCORE_CREDIT_COST) {
-      throw new InsufficientCreditsError(SCORE_CREDIT_COST, balance);
+    if (balance < creditCost) {
+      throw new InsufficientCreditsError(creditCost, balance);
     }
 
     const scored = scoreSnapshot(snapshot);
@@ -238,7 +240,7 @@ export class EnrichmentService {
       signals: scored.signals,
     };
     const result = await scoreProspect(this.aiServiceUrl, input, resolvedIcp, this.aiTimeoutMs, this.openrouterApiKey);
-    await this.store.deductCredits(workspaceId, SCORE_CREDIT_COST, "ai_score", prospectId);
+    await this.store.deductCredits(workspaceId, creditCost, "ai_score", prospectId);
     await this.store.setScore({
       workspaceId,
       prospectId,
@@ -250,7 +252,7 @@ export class EnrichmentService {
       scoredAt: new Date().toISOString(),
     });
     if (this.afterScore) await this.afterScore(result, workspaceId);
-    return { ...result, creditsUsed: SCORE_CREDIT_COST };
+    return { ...result, creditsUsed: creditCost };
   }
 
   /**
@@ -326,6 +328,7 @@ export class EnrichmentService {
         cachedCompany,
         leadScore,
         fields,
+        emailQualityThreshold: opts.emailQualityThreshold,
         resolveLeadScoreForPhone: fields.includes("phone")
           ? async (company) => {
               if (company) {
@@ -501,6 +504,10 @@ export class EnrichmentService {
 
   async getBatch(workspaceId: string, batchId: string) {
     return this.store.getBatch(workspaceId, batchId);
+  }
+
+  async getListMemberIds(workspaceId: string, listId: string): Promise<string[]> {
+    return this.store.getListMemberIds(workspaceId, listId);
   }
 
   async getListDetail(workspaceId: string, listId: string): Promise<ListDetail | null> {

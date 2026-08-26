@@ -11,6 +11,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  architecture-gates:
+    # Enterprise Completion Plan §1/§5/§7.1 — automated enforcement for the "does this fork
+    # state" PR gate and the read-model-exception allowlist. Runs on every PR only (both
+    # scripts no-op on a push event, no GITHUB_BASE_REF). Pure Node + git, no pnpm install
+    # needed, so this stays fast and independent of the main build/test job.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: "§1 Architecture gate (new tables must answer the fork-state question)"
+        env:
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: node scripts/check-architecture-gate.mjs
+
+      - name: "§7.1 Read-model exceptions (no undocumented cross-service table reads)"
+        run: node scripts/check-read-model-exceptions.mjs
+
   test-and-build:
     runs-on: ubuntu-latest
     services:
@@ -47,6 +71,9 @@ jobs:
 
       - name: Run database migrations
         run: pnpm db:migrate
+
+      - name: Seed model versions (required by §10 journey E2E AI-pin assertions)
+        run: pnpm --filter @skout/db seed-model-versions
 
       - name: Test
         run: pnpm test

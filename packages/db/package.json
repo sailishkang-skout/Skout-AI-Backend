@@ -23,6 +23,9 @@
     "apply-pending": "tsx src/apply-pending.ts",
     "seed": "tsx src/seed.ts",
     "seed-regional-brief": "tsx src/seed-regional-brief.ts",
+    "seed-model-versions": "tsx src/seed-model-versions.ts",
+    "backfill-rbac": "tsx src/backfill-rbac.ts",
+    "rotate-integration-encryption-key": "tsx src/rotate-integration-encryption-key.ts",
     "push": "drizzle-kit push",
     "studio": "drizzle-kit studio",
     "truncate": "tsx src/truncate.ts"

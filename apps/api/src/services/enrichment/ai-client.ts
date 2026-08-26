@@ -1,3 +1,5 @@
+import { injectTraceContext } from "@skout/observability";
+
 export interface ScoreInput {
   prospectId: string;
   fullName?: string;
@@ -47,6 +49,10 @@ export interface OnboardingProfile {
     industry?: string;
     size?: string;
     website?: string;
+    /** Seller HQ / operating country (ISO or label) — §16 regional / i18n */
+    hqCountry?: string;
+    /** UI/locale preference e.g. en-US */
+    locale?: string;
   };
   goals?: string[];
   icp?: {
@@ -61,8 +67,29 @@ export interface OnboardingProfile {
     titles?: string[];
   };
   market?: string[];
+  /** @deprecated kept for backward compatibility — use `connections.crm` instead. */
   crm?: string;
   leadVolume?: string;
+  /** How the business makes money — shapes GTM defaults/copy tone Skout suggests. */
+  businessModel?: "b2b" | "b2c" | "b2b2c" | "marketplace" | "other";
+  /** How cautious to be with prospect/contact data — "strict" = minimal collection/retention. */
+  dataPolicy?: "strict" | "standard" | "flexible";
+  /** Job-function persona selected at signup, drives which first-run path the wizard shows. */
+  persona?:
+    | "admin"
+    | "bdr_sdr"
+    | "ae"
+    | "manager"
+    | "revops"
+    | "marketing_ops"
+    | "executive_viewer";
+  /** CRM/comms provider connection status collected during onboarding. */
+  connections?: {
+    crm?: { provider?: string; connected?: boolean };
+    comms?: { provider?: string; connected?: boolean };
+  };
+  /** How much the workspace wants Skout acting without a human in the loop. */
+  autonomyMode?: "manual" | "assisted" | "autonomous";
   completedAt?: string;
 }
 
@@ -305,7 +332,7 @@ export async function classifyIntent(
   try {
     const res = await fetch(`${aiServiceUrl}/v1/classify`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...injectTraceContext() },
       body: JSON.stringify({
         prospect_id: input.prospectId,
         signals: (input.signals ?? []).map((s) => ({ type: s })),
@@ -367,7 +394,7 @@ export async function scoreProspect(
     const [scoreRes, intentResult] = await Promise.all([
       fetch(`${aiServiceUrl}/v1/score`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...injectTraceContext() },
         body: JSON.stringify({
           prospect: {
             prospect_id: input.prospectId,

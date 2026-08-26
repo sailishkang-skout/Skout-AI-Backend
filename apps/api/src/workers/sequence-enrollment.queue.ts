@@ -1,4 +1,5 @@
 import { Queue } from "bullmq";
+import { injectTraceContext } from "@skout/observability";
 import type { Env } from "../config/env.js";
 
 export const SEQUENCE_ENROLLMENT_QUEUE = "skout-sequence-enrollment";
@@ -9,6 +10,13 @@ export interface SeqAdvanceJobPayload {
   workspaceId: string;
   prospectId: string;
   sequenceId: string;
+  /**
+   * §11.3 Observability — W3C trace-context propagation, same pattern as list-score.queue.ts.
+   * Left undefined on internal re-enqueue calls from inside the worker (sequence-enrollment.worker.ts)
+   * — injectTraceContext() there still resumes the right trace since those calls run inside the
+   * otelContext.with(...) scope the worker wraps its processing in, not because this field carries it.
+   */
+  traceContext?: Record<string, string>;
 }
 
 let queue: Queue<SeqAdvanceJobPayload> | null = null;
@@ -58,8 +66,12 @@ export async function enqueueSequenceAdvanceJob(
   const jobId = deduplicate
     ? `seq-advance-${payload.enrollmentId}`
     : `seq-advance-${payload.enrollmentId}-${Date.now()}`;
-  await q.add("step:advance", payload, {
-    jobId,
-    delay: Math.max(0, delayMs),
-  });
+  await q.add(
+    "step:advance",
+    { ...payload, traceContext: payload.traceContext ?? injectTraceContext() },
+    {
+      jobId,
+      delay: Math.max(0, delayMs),
+    }
+  );
 }

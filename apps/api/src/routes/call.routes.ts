@@ -14,6 +14,18 @@ import { resolveProspectFields } from "../services/prospect-resolver.service.js"
 import { createNotification } from "../services/notifications.service.js";
 import { extractFieldsFromCallNotes } from "../services/call-notes-extraction.service.js";
 
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md for the full audit and rationale; one of the 9
+ * confirmed instances listed there (formalized in Task 17).
+ *   - Tables touched directly: contacts, companies, activities, tasks (all owned by apps/crm)
+ *     - read AND write
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: these routes drive the live click-to-call flow (dial, bridge, disposition,
+ *     call-note field extraction) - a synchronous, latency-sensitive path where an HTTP round
+ *     trip into apps/crm mid-call would be directly felt by the rep on the line
+ *   - Review date: revisit once apps/crm's internal API surface exists (Wave 2)
+ */
 /** R20.2 — click-to-call dialer (Twilio or Telnyx). */
 export async function callRoutes(app: FastifyInstance) {
   function db() {

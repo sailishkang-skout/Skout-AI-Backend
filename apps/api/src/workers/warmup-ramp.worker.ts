@@ -1,7 +1,7 @@
 import { Worker, Queue } from "bullmq";
 import { createDb, schema } from "@skout/db";
 import { and, eq } from "drizzle-orm";
-import { createLogger } from "@skout/observability";
+import { createLogger, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
@@ -54,53 +54,56 @@ export async function startWarmupRampWorker(config: Env) {
   const worker = new Worker(
     QUEUE_NAME,
     async () => {
-      log.info("Starting daily warmup ramp");
+      // §11.3 Task 33 — self-triggered on a cron schedule; root span (no upstream trace exists).
+      await withSpan("warmup-ramp.tick", async () => {
+        log.info("Starting daily warmup ramp");
 
-      const warmingInboxes = await db
-        .select({
-          id: schema.inboxes.id,
-          warmupDay: schema.inboxes.warmupDay,
-          dailySendLimit: schema.inboxes.dailySendLimit,
-        })
-        .from(schema.inboxes)
-        .where(
-          and(
-            eq(schema.inboxes.warmupStatus, "warming"),
-            eq(schema.inboxes.status, "active")
-          )
-        );
-
-      if (warmingInboxes.length === 0) {
-        log.info("No inboxes in warmup");
-        return;
-      }
-
-      log.info(`Ramping ${warmingInboxes.length} warmup inboxes`);
-
-      const now = new Date();
-
-      for (const inbox of warmingInboxes) {
-        const nextDay = inbox.warmupDay + 1;
-        const nextLimit = computeDailyLimit(nextDay, config.WARMUP_MAX_DAILY_LIMIT);
-        const done = nextDay >= config.WARMUP_MAX_DAYS || nextLimit >= config.WARMUP_MAX_DAILY_LIMIT;
-
-        await db
-          .update(schema.inboxes)
-          .set({
-            warmupDay: nextDay,
-            dailySendLimit: nextLimit,
-            warmupStatus: done ? "warmed" : "warming",
-            updatedAt: now,
+        const warmingInboxes = await db
+          .select({
+            id: schema.inboxes.id,
+            warmupDay: schema.inboxes.warmupDay,
+            dailySendLimit: schema.inboxes.dailySendLimit,
           })
-          .where(eq(schema.inboxes.id, inbox.id));
+          .from(schema.inboxes)
+          .where(
+            and(
+              eq(schema.inboxes.warmupStatus, "warming"),
+              eq(schema.inboxes.status, "active")
+            )
+          );
 
-        log.info(
-          done
-            ? `Warmup complete for inbox ${inbox.id} after ${nextDay} days`
-            : `Inbox ${inbox.id} ramped to day ${nextDay}, limit ${nextLimit}`,
-          { inboxId: inbox.id, day: nextDay, newLimit: nextLimit }
-        );
-      }
+        if (warmingInboxes.length === 0) {
+          log.info("No inboxes in warmup");
+          return;
+        }
+
+        log.info(`Ramping ${warmingInboxes.length} warmup inboxes`);
+
+        const now = new Date();
+
+        for (const inbox of warmingInboxes) {
+          const nextDay = inbox.warmupDay + 1;
+          const nextLimit = computeDailyLimit(nextDay, config.WARMUP_MAX_DAILY_LIMIT);
+          const done = nextDay >= config.WARMUP_MAX_DAYS || nextLimit >= config.WARMUP_MAX_DAILY_LIMIT;
+
+          await db
+            .update(schema.inboxes)
+            .set({
+              warmupDay: nextDay,
+              dailySendLimit: nextLimit,
+              warmupStatus: done ? "warmed" : "warming",
+              updatedAt: now,
+            })
+            .where(eq(schema.inboxes.id, inbox.id));
+
+          log.info(
+            done
+              ? `Warmup complete for inbox ${inbox.id} after ${nextDay} days`
+              : `Inbox ${inbox.id} ramped to day ${nextDay}, limit ${nextLimit}`,
+            { inboxId: inbox.id, day: nextDay, newLimit: nextLimit }
+          );
+        }
+      });
     },
     { connection, concurrency: 1 }
   );
