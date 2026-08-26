@@ -754,6 +754,14 @@ export class SequenceService {
 
       const enrollment = inserted[0]!;
 
+      // §5.2 — ensure prospect↔CRM contact link on enroll (best-effort)
+      try {
+        const { ensureContactLinkedToProspect } = await import("./prospect-crm-link.service.js");
+        await ensureContactLinkedToProspect(this.db, workspaceId, prospectId);
+      } catch (err) {
+        log.warn("prospect↔CRM link on enroll failed", { err, prospectId });
+      }
+
       // Pre-calculate scheduledAt for each step
       let previousScheduledAt = now;
       let firstScheduledAt: Date | null = null;
@@ -804,6 +812,13 @@ export class SequenceService {
       total: prospectIds.length,
       listId: input.listId,
     });
+
+    try {
+      const { incrJourneyMetric } = await import("./journey-metrics.js");
+      incrJourneyMetric("sequenceEnroll", newEnrollments.length);
+    } catch {
+      /* ignore */
+    }
 
     return {
       enrolled: newEnrollments.length,

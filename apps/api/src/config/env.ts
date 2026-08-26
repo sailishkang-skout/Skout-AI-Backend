@@ -78,6 +78,12 @@ const envSchema = z
       .optional()
       .transform((v) => v === "true" || v === "1"),
     /**
+     * §5 / §7.1 — base URL for apps/crm internal API (e.g. http://crm:3002).
+     * When set with INTERNAL_SERVICE_TOKEN, selected api→crm reads use HTTP instead of SQL.
+     */
+    CRM_INTERNAL_BASE_URL: z.string().url().optional(),
+    INTERNAL_SERVICE_TOKEN: z.string().min(16).optional(),
+    /**
      * §11.1 — HMAC signing secret for step-up re-authentication tokens (@skout/auth's
      * step-up.ts). Required for POST /api/v1/auth/step-up to issue tokens and for
      * assertStepUp() to verify them; unset disables step-up issuance (the endpoint returns 503)

@@ -12,6 +12,7 @@ export {
   type FieldSourcesMap,
   DEFAULT_AUTO_FILL_CONFIDENCE,
   asFieldSourcesMap,
+  effectiveSourcesForAutofill,
   filterAutoFillablePatch,
   mergeAutoFillSources,
   markManualSources,

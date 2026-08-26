@@ -23,6 +23,7 @@ const LOGICAL_NAMES = [
   "chat",
   "suggest-reply",
   "personalize",
+  "sequence-generate",
 ] as const;
 
 const databaseUrl = resolveDatabaseUrl();

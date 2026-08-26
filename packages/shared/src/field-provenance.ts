@@ -30,10 +30,9 @@ export interface EvidenceRowForProvenance {
  * because that best-effort write failed - falls back to its fieldSources entry, translated into
  * the same shape.
  *
- * Deliberately NOT a hard cutover: fieldSources remains the source of truth for the
- * manual-vs-auto-fill precedence rule (filterAutoFillablePatch/mergeAutoFillSources still read
- * it directly, unchanged), and this function never writes anything - it only presents a merged
- * read view for the new field-sources read endpoints.
+ * Deliberately NOT a hard cutover for writes: fieldSources remains a transitional write cache,
+ * but autofill precedence (filterAutoFillablePatch) now consults evidence_ledger manual locks
+ * when provided (Wave 2). This function never writes anything — read view only.
  */
 export function buildFieldProvenance(
   fieldSources: FieldSourcesMap,

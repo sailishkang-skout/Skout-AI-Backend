@@ -346,16 +346,40 @@ export async function markSuggestionAccepted(
   return true;
 }
 
-/** R20.3 — the acceptance-rate readout the AC asks for. */
+/** R20.3 — acceptance-rate readout. Prefers evidence_ledger; falls back to NBA table for history. */
 export async function getSuggestionStats(
   db: Db,
   workspaceId: string
-): Promise<{ total: number; accepted: number; acceptanceRate: number }> {
+): Promise<{ total: number; accepted: number; acceptanceRate: number; source: "evidence_ledger" | "nba_table" }> {
+  const { evidenceLedger } = schema;
+
+  const totalLedger = await db
+    .select({ id: evidenceLedger.id })
+    .from(evidenceLedger)
+    .where(and(eq(evidenceLedger.workspaceId, workspaceId), eq(evidenceLedger.attribute, "next_best_action")));
+
+  const acceptedLedger = await db
+    .select({ id: evidenceLedger.id })
+    .from(evidenceLedger)
+    .where(and(eq(evidenceLedger.workspaceId, workspaceId), eq(evidenceLedger.attribute, "next_best_action_accepted")));
+
+  if (totalLedger.length > 0 || acceptedLedger.length > 0) {
+    const total = totalLedger.length;
+    const accepted = acceptedLedger.length;
+    return {
+      total,
+      accepted,
+      acceptanceRate: total > 0 ? accepted / total : 0,
+      source: "evidence_ledger",
+    };
+  }
+
+  // Historical fallback when ledger has no NBA rows yet
   const rows = await db
     .select({ acceptedAt: nextBestActionSuggestions.acceptedAt })
     .from(nextBestActionSuggestions)
     .where(eq(nextBestActionSuggestions.workspaceId, workspaceId));
   const total = rows.length;
   const accepted = rows.filter((r) => r.acceptedAt !== null).length;
-  return { total, accepted, acceptanceRate: total > 0 ? accepted / total : 0 };
+  return { total, accepted, acceptanceRate: total > 0 ? accepted / total : 0, source: "nba_table" };
 }

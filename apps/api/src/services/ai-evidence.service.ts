@@ -2,6 +2,7 @@ import type { Db } from "@skout/db";
 import { assertEvidenced } from "@skout/shared";
 import { recordEvidence } from "./evidence.service.js";
 import { buildModelVersionsService } from "./model-versions.service.js";
+import { incrJourneyMetric } from "./journey-metrics.js";
 
 const DEFAULT_AI_FRESHNESS_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -56,9 +57,16 @@ export async function pinAiClaim(
   });
 
   const evidenceId = row?.id;
-  assertEvidenced({ value: input.value, evidenceId }, input.attribute);
-  if (!evidenceId) {
-    throw new Error(`evidence write returned no id for ${input.attribute}`);
+  try {
+    assertEvidenced({ value: input.value, evidenceId }, input.attribute);
+    if (!evidenceId) {
+      throw new Error(`evidence write returned no id for ${input.attribute}`);
+    }
+    incrJourneyMetric("aiPinSuccess");
+    incrJourneyMetric("evidenceWrite");
+    return { evidenceId, modelVersionId, promptVersionId };
+  } catch (err) {
+    incrJourneyMetric("aiPinFail");
+    throw err;
   }
-  return { evidenceId, modelVersionId, promptVersionId };
 }

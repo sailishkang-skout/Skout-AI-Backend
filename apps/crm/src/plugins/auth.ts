@@ -21,10 +21,15 @@ function isHealthRoute(url: string): boolean {
  * R16.2 — meeting-bot vendor calls this directly; verified via `?secret=`, not a Clerk JWT.
  * Phase 3 — inbound RSVP webhook; verified via HMAC signature (x-rsvp-signature), not a Clerk
  * JWT — the caller is an unauthenticated external mail forwarder, not a logged-in user.
+ * §5/§7.1 — internal service routes use X-Internal-Service-Token instead of Clerk.
  */
 function isPublicRoute(url: string): boolean {
-  const pathname = url.split("?")[0];
-  return pathname === "/api/v1/meetings/webhook" || pathname === "/api/v1/webhooks/meeting-rsvp";
+  const pathname = url.split("?")[0] ?? "";
+  return (
+    pathname === "/api/v1/meetings/webhook" ||
+    pathname === "/api/v1/webhooks/meeting-rsvp" ||
+    pathname.startsWith("/internal/v1/")
+  );
 }
 
 function normalizeOrigin(origin: string): string {

@@ -20,3 +20,6 @@ ingest is the merge path.
 ## Consequences
 Both ledgers may coexist during cutover. Ops can backfill historical Email-Intel rows via
 batch ingest. Deleting Email-Intel's table is a later milestone after traffic is fully dual-written.
+
+**SkoutDev status (Aug 2026):** forwarder enabled; ingest API live. Wave 2 autofill precedence
+uses ledger manual locks across CRM + enrichment paths.

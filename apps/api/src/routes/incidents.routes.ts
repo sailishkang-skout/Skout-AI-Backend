@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { enforcePermission } from "@skout/auth";
 import { errorResponse } from "../utils/http.js";
 import { buildIncidentsService } from "../services/incidents.service.js";
 
@@ -81,6 +82,13 @@ export async function incidentsRoutes(app: FastifyInstance) {
     if (!request.workspaceId || !request.role) return reply.code(401).send(errorResponse("Unauthorized", 401));
     if (!["owner", "admin"].includes(request.role)) {
       return reply.code(403).send(errorResponse("Requires role: owner or admin", 403));
+    }
+    if (app.db && request.userId) {
+      await enforcePermission(app.db, request.workspaceId, request.userId, "workspace:manage", {
+        enforce: app.config.RBAC_ENFORCEMENT_ENABLED,
+        onShadowDeny: (info) =>
+          app.log.warn(info, "RBAC shadow-mode: workspace:manage would have been denied (resolve incident)"),
+      });
     }
     const svc = service();
     if (!svc) return reply.code(503).send(errorResponse("Database unavailable", 503));

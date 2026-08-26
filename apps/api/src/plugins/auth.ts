@@ -3,6 +3,7 @@ import fp from "fastify-plugin";
 import { and, eq, gt } from "drizzle-orm";
 import { timingSafeEqual } from "node:crypto";
 import { schema } from "@skout/db";
+import { loadPlatformContext, type PlatformContext } from "@skout/auth";
 import { resolveOrProvisionUser } from "../services/auth.service.js";
 import { errorResponse, HttpError } from "../utils/http.js";
 import type { Env } from "../config/env.js";
@@ -25,6 +26,8 @@ declare module "fastify" {
     userEmail?: string;
     workspaceId?: string;
     role?: string;
+    /** §7 Wave 2 — tenancy/permissions/entitlements/consent snapshot when authenticated. */
+    platformContext?: PlatformContext;
   }
 }
 
@@ -93,6 +96,7 @@ function isPublicRoute(url: string, method?: string): boolean {
     /^\/api\/v1\/team\/invites\/[^/]+$/.test(url.split("?")[0]!);
   return (
     url.startsWith("/api/v1/crm/hubspot/callback") ||
+    url.startsWith("/api/v1/crm/hubspot/webhook") ||
     url.startsWith("/api/v1/billing/webhooks/") ||
     url.startsWith("/api/v1/webhooks/unipile/") ||
     url.startsWith("/api/v1/track/") ||
@@ -182,6 +186,17 @@ export const authPlugin = fp(async (app) => {
       } catch (err) {
         app.log.error({ err }, "Stub user provisioning failed");
         return reply.code(500).send(errorResponse("Stub user provisioning failed", 500));
+      }
+    });
+    app.addHook("preHandler", async (request) => {
+      if (!app.db || !request.userId || !request.workspaceId || request.platformContext) return;
+      try {
+        request.platformContext = await loadPlatformContext(app.db, {
+          workspaceId: request.workspaceId,
+          userId: request.userId,
+        });
+      } catch (err) {
+        app.log.warn({ err }, "PlatformContext load failed — continuing without it");
       }
     });
     return;
@@ -308,6 +323,19 @@ export const authPlugin = fp(async (app) => {
       }
       const message = error instanceof Error ? error.message : "Invalid authorization token";
       return reply.code(401).send(errorResponse(message, 401));
+    }
+  });
+
+  // §7 — attach PlatformContext after identity is resolved (best-effort; never blocks the request).
+  app.addHook("preHandler", async (request) => {
+    if (!app.db || !request.userId || !request.workspaceId || request.platformContext) return;
+    try {
+      request.platformContext = await loadPlatformContext(app.db, {
+        workspaceId: request.workspaceId,
+        userId: request.userId,
+      });
+    } catch (err) {
+      app.log.warn({ err }, "PlatformContext load failed — continuing without it");
     }
   });
 });

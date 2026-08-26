@@ -90,6 +90,8 @@ describe("R10.1 — TAM to qualified opportunity (9-step e2e)", () => {
         seniorities: ["vp", "director"],
         minEmployees: 50,
         maxEmployees: 500,
+        // Avoid sync workspace rescore when Redis is down (can exceed test timeouts).
+        autoRescoreOnChange: false,
       },
     });
     expect(res.statusCode).toBe(200);

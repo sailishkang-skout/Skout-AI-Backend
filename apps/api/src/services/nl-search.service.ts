@@ -41,6 +41,8 @@ export interface NlTranslationResult {
   /** Which path produced these filters — surfaced to the caller/UI so an LLM guess and a
    * keyword-matched guess aren't presented with the same confidence. */
   method: "llm" | "heuristic";
+  /** §6.1 — LLM-inferred filters are suggestions, not verified facts. */
+  unverified: boolean;
 }
 
 const COUNTRY_ALIASES: Record<string, string> = {
@@ -211,18 +213,18 @@ export async function translateNaturalLanguageQuery(
   opts: { openrouterApiKey?: string; timeoutMs?: number } = {}
 ): Promise<NlTranslationResult> {
   const trimmed = query.trim();
-  if (!trimmed) return { filters: {}, method: "heuristic" };
+  if (!trimmed) return { filters: {}, method: "heuristic", unverified: false };
 
   if (opts.openrouterApiKey) {
     try {
       const filters = await llmTranslate(trimmed, opts.openrouterApiKey, opts.timeoutMs ?? 5000);
-      return { filters, method: "llm" };
+      return { filters, method: "llm", unverified: true };
     } catch (err) {
       log.error("NL query LLM translation failed, falling back to heuristic", err);
     }
   }
 
-  return { filters: heuristicTranslate(trimmed), method: "heuristic" };
+  return { filters: heuristicTranslate(trimmed), method: "heuristic", unverified: false };
 }
 
 /** Merges translated filters into a caller's existing structured filters — explicit,

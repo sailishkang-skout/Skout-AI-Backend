@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { enforcePermission } from "@skout/auth";
 import { computeCroRollup } from "../services/cro-summary.service.js";
 import { errorResponse } from "../utils/http.js";
 
@@ -17,6 +18,13 @@ export async function croRoutes(app: FastifyInstance) {
     }
     if (!app.db) {
       return reply.code(500).send(errorResponse("Database not available", 500));
+    }
+    if (request.userId) {
+      await enforcePermission(app.db, request.workspaceId, request.userId, "workspace:manage", {
+        enforce: app.config.RBAC_ENFORCEMENT_ENABLED,
+        onShadowDeny: (info) =>
+          app.log.warn(info, "RBAC shadow-mode: workspace:manage would have been denied (cro summary)"),
+      });
     }
 
     const rollup = await computeCroRollup(app.db, app.config, request.workspaceId);

@@ -1,6 +1,6 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema, recordEvidence } from "@skout/db";
+import { schema, recordEvidence, getLatestEvidenceByAttribute } from "@skout/db";
 import type { DealCreateInput, DealUpdateInput } from "@skout/shared";
 import { HttpError } from "@skout/auth";
 import type { CompaniesService } from "./companies.service.js";
@@ -138,7 +138,8 @@ export class DealsService {
     const existing = await this.getById(workspaceId, id);
     if (!existing) return null;
 
-    const { applied, skipped } = filterAutoFillablePatch(patch, existing.fieldSources);
+    const evidenceByAttribute = await getLatestEvidenceByAttribute(this.db, workspaceId, "deal", id);
+    const { applied, skipped } = filterAutoFillablePatch(patch, existing.fieldSources, evidenceByAttribute);
     const appliedFields = Object.keys(applied);
     if (appliedFields.length === 0) {
       return { deal: existing, applied: [], skipped };

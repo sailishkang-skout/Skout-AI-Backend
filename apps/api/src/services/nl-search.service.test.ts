@@ -4,7 +4,7 @@ import { mergeTranslatedFilters, translateNaturalLanguageQuery } from "./nl-sear
 describe("translateNaturalLanguageQuery (heuristic path, no API key)", () => {
   it("returns empty filters for an empty query", async () => {
     const result = await translateNaturalLanguageQuery("   ");
-    expect(result).toEqual({ filters: {}, method: "heuristic" });
+    expect(result).toEqual({ filters: {}, method: "heuristic", unverified: false });
   });
 
   it("extracts seniority, department, employee count, country, and industry", async () => {
@@ -94,6 +94,7 @@ describe("translateNaturalLanguageQuery (LLM path)", () => {
 
     const result = await translateWithMock("Directors of sales in France", { openrouterApiKey: "test-key" });
     expect(result.method).toBe("llm");
+    expect(result.unverified).toBe(true);
     expect(result.filters.seniority).toBe("director");
     expect(result.filters.department).toBe("Sales");
     expect(result.filters.country).toBe("France");

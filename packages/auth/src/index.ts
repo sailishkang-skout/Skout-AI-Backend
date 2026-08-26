@@ -13,3 +13,8 @@ export {
   issueStepUpToken,
   type PrivilegedActionInput,
 } from "./step-up.js";
+export {
+  loadPlatformContext,
+  type PlatformContext,
+  type PlatformConsentSnapshot,
+} from "./platform-context.js";

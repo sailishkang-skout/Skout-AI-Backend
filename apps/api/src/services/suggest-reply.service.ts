@@ -5,6 +5,7 @@ import { createLogger, injectTraceContext } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import { AiDraftService } from "./ai-draft.service.js";
+import { pinAiClaim } from "./ai-evidence.service.js";
 
 const log = createLogger("suggest-reply.service");
 const {
@@ -36,6 +37,9 @@ export interface SuggestReplyResult {
   sequencePaused: boolean;
   enrollmentStatus: string | null;
   sequenceName: string | null;
+  evidenceId: string;
+  modelVersionId: string | null;
+  promptVersionId: string | null;
 }
 
 function heuristicFallback(opts: {
@@ -44,7 +48,14 @@ function heuristicFallback(opts: {
   prospectName?: string | null;
   replyTag?: string | null;
   lastInbound?: string | null;
-}): Omit<SuggestReplyResult, "draftId" | "sequencePaused" | "enrollmentStatus" | "sequenceName"> {
+}): {
+  threadId: string;
+  subject: string;
+  body: string;
+  confidence: number;
+  source: "llm" | "heuristic";
+  rationale: string | null;
+} {
   const name = (opts.prospectName || "there").split(/\s+/)[0] ?? "there";
   const tag = (opts.replyTag || "").toLowerCase();
   let subject = opts.subject || "Re: following up";
@@ -266,12 +277,36 @@ export class SuggestReplyService {
       draftId = created.id;
     }
 
-    return {
+    const resultBase = {
       ...draft,
       draftId,
       sequencePaused,
       enrollmentStatus,
       sequenceName,
+    };
+
+    // §6.1 — pin fail-closed inside the service (not only the route) so every caller gets an evidenceId.
+    const pinned = await pinAiClaim(this.db, {
+      workspaceId,
+      entityType: "inbox_thread",
+      entityId: threadId,
+      attribute: "suggest_reply",
+      value: {
+        subject: resultBase.subject,
+        bodyPreview: String(resultBase.body ?? "").slice(0, 500),
+        draftId: resultBase.draftId,
+      },
+      source: "ai_suggest_reply",
+      method: "suggest_reply",
+      versionName: "suggest-reply",
+      confidence: typeof resultBase.confidence === "number" ? resultBase.confidence : 0.7,
+    });
+
+    return {
+      ...resultBase,
+      evidenceId: pinned.evidenceId,
+      modelVersionId: pinned.modelVersionId,
+      promptVersionId: pinned.promptVersionId,
     };
   }
 }

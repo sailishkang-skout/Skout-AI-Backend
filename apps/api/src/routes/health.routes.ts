@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { formatJourneyMetricsPrometheus } from "../services/journey-metrics.js";
 
 /** §11.2 — published SLO targets (see docs/slo-targets.md). */
 const SLO_TARGETS = {
@@ -9,6 +10,13 @@ const SLO_TARGETS = {
   sequenceEnroll: { availability: 0.995, p95Ms: 1000 },
   rpoMinutes: 5,
   rtoMinutes: 60,
+  freshness: {
+    evidenceLedgerMinutes: 5,
+    openSearchIndexHours: 24,
+    hubspotSyncMinutes: 15,
+    signalToTimelineMinutes: 10,
+  },
+  lockedAt: "2026-08-26",
 } as const;
 
 const startedAt = Date.now();
@@ -55,6 +63,7 @@ export async function healthRoutes(app: FastifyInstance) {
       "# HELP skout_slo_crud_p95_ms Target p95 for authenticated CRUD",
       "# TYPE skout_slo_crud_p95_ms gauge",
       `skout_slo_crud_p95_ms ${SLO_TARGETS.authenticatedCrud.p95Ms}`,
+      formatJourneyMetricsPrometheus(),
       "",
     ].join("\n");
     return reply.type("text/plain; version=0.0.4").send(body);

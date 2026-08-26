@@ -1,4 +1,6 @@
 import type { FastifyInstance } from "fastify";
+import { and, eq } from "drizzle-orm";
+import { schema } from "@skout/db";
 import { z } from "zod";
 import {
   listPendingMergeProposals,
@@ -6,6 +8,7 @@ import {
   resolveMergeProposal,
   reverseMergeEvent,
 } from "../services/identity-merge.service.js";
+import { applyIdentityMerge, restoreIdentityMerge } from "../services/identity-merge-apply.service.js";
 import { recordPrivilegedAction, enforcePermission, assertStepUp } from "@skout/auth";
 import { errorResponse } from "../utils/http.js";
 
@@ -95,12 +98,38 @@ export async function identityMergeRoutes(app: FastifyInstance) {
       return reply.status(400).send(errorResponse("Invalid resolution payload", 400, parsed.error.flatten()));
     }
 
+    let beforeSnapshot = parsed.data.beforeSnapshot;
+    if (parsed.data.decision === "approved") {
+      const [proposal] = await app.db
+        .select()
+        .from(schema.identityMergeProposals)
+        .where(
+          and(
+            eq(schema.identityMergeProposals.id, request.params.id),
+            eq(schema.identityMergeProposals.workspaceId, request.workspaceId)
+          )
+        )
+        .limit(1);
+      if (!proposal) return reply.status(404).send(errorResponse("Proposal not found", 404));
+      if (proposal.status !== "pending") {
+        return reply.status(409).send(errorResponse("Proposal already resolved", 409, { status: proposal.status }));
+      }
+
+      beforeSnapshot = await applyIdentityMerge(
+        app.db,
+        request.workspaceId,
+        proposal.entityType,
+        proposal.leftEntityId,
+        proposal.rightEntityId
+      );
+    }
+
     const updated = await resolveMergeProposal(app.db, {
       workspaceId: request.workspaceId,
       proposalId: request.params.id,
       reviewerId: request.userId,
       decision: parsed.data.decision,
-      beforeSnapshot: parsed.data.beforeSnapshot,
+      beforeSnapshot,
     });
 
     // §11.1 — audit event for a privileged action. Never lets an audit-write failure block a
@@ -147,6 +176,7 @@ export async function identityMergeRoutes(app: FastifyInstance) {
     }
 
     const beforeSnapshot = await reverseMergeEvent(app.db, request.workspaceId, request.params.id, request.userId);
+    await restoreIdentityMerge(app.db, request.workspaceId, beforeSnapshot);
 
     try {
       await recordPrivilegedAction(app.db, {
@@ -161,6 +191,6 @@ export async function identityMergeRoutes(app: FastifyInstance) {
       app.log.error({ err }, "Failed to record privileged-action audit event for identity_merge.reverse");
     }
 
-    return reply.send({ data: { beforeSnapshot }, message: "Merge event marked reversed — apply beforeSnapshot to the underlying records." });
+    return reply.send({ data: { beforeSnapshot }, message: "Merge reversed and underlying records restored." });
   });
 }

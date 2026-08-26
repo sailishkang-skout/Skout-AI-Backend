@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { createCrmService } from "../services/crm.service.js";
+import { syncHubSpotNativeOrThrow } from "../services/crm-hubspot-native-sync.service.js";
 import { HttpError, errorResponse } from "../utils/http.js";
 
 export async function hubspotRoutes(app: FastifyInstance) {
@@ -100,6 +101,66 @@ export async function hubspotRoutes(app: FastifyInstance) {
         return reply.status(err.statusCode).send(errorResponse(err.message, err.statusCode, err.details));
       }
       throw err;
+    }
+  });
+
+  /** §8.12 — inbound HubSpot → native CRM sync (manual-wins conflict rules). */
+  app.post("/crm/hubspot/sync-native", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    if (!app.db) return reply.status(503).send(errorResponse("Database unavailable", 503));
+    const body = (request.body ?? {}) as { maxContacts?: number; maxDeals?: number; includeDeals?: boolean };
+    try {
+      const result = await syncHubSpotNativeOrThrow(app.db, app.config, workspaceId, body);
+      return reply.send({ data: result });
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return reply.status(err.statusCode).send(errorResponse(err.message, err.statusCode, err.details));
+      }
+      throw err;
+    }
+  });
+
+  /**
+   * §8.12 — HubSpot webhook receiver. Verifies X-HubSpot-Signature, then triggers a bounded
+   * native sync for the workspace identified by query `workspaceId` (configured in HubSpot
+   * subscription URL). Public — signature is the auth.
+   */
+  app.post("/crm/hubspot/webhook", async (request, reply) => {
+    if (!app.db) return reply.status(503).send(errorResponse("Database unavailable", 503));
+    const secret = app.config.HUBSPOT_CLIENT_SECRET;
+    if (!secret) return reply.status(503).send(errorResponse("hubspot_not_configured", 503));
+
+    const { verifyHubSpotWebhookSignature } = await import("../services/hubspot.client.js");
+    const raw =
+      typeof request.body === "string"
+        ? request.body
+        : Buffer.isBuffer(request.body)
+          ? request.body.toString("utf8")
+          : JSON.stringify(request.body ?? {});
+    const sig = request.headers["x-hubspot-signature"] as string | undefined;
+    if (!verifyHubSpotWebhookSignature(secret, raw, sig)) {
+      return reply.status(401).send(errorResponse("invalid_signature", 401));
+    }
+
+    const workspaceId =
+      (request.query as { workspaceId?: string }).workspaceId ??
+      (Array.isArray(request.body)
+        ? undefined
+        : (request.body as { workspaceId?: string } | undefined)?.workspaceId);
+    if (!workspaceId) {
+      // HubSpot subscription validation / empty payloads
+      return reply.send({ ok: true, skipped: "no_workspace" });
+    }
+
+    try {
+      const result = await syncHubSpotNativeOrThrow(app.db, app.config, workspaceId, {
+        maxContacts: 50,
+        maxDeals: 50,
+      });
+      return reply.send({ ok: true, data: result });
+    } catch (err) {
+      app.log.warn({ err }, "HubSpot webhook sync failed");
+      return reply.send({ ok: true, deferred: true });
     }
   });
 
