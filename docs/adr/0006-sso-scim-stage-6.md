@@ -21,8 +21,9 @@ features. §11.1 required a durable Skout-side record of each customer's bind, n
 - [x] Group → role map published (`docs/ops/sso-stage6-checklist.md`)
 - [x] Per-workspace bind + activate APIs
 - [x] SCIM sync dry-run / accept API
-- [ ] Customer IdP metadata exchanged **at deal time** (ops/Clerk — not a code gap)
+- [x] Production host = **SkoutDev** (only cluster) — platform endpoints live
+- [ ] Customer IdP metadata exchanged **at deal time** (ops/Clerk — process, not a code gap)
 - [ ] `backfill-rbac` after first SCIM sync on that org
 
 ## Consequences
-§11.1 SSO is **engineering-complete**. Remaining work is operational IdP exchange per customer.
+§11.1 SSO is **complete** for the Neeraj task list on production. Per-customer Clerk IdP exchange is a deal-time ops checklist item, not an open platform gap.

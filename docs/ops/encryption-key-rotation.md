@@ -29,5 +29,5 @@ Track the window in the ops calendar; use the cutover steps above.
 | Field | Value |
 |-------|--------|
 | Target date | **2026-11-23** (next scheduled) |
-| Env | SkoutDev executed **2026-08-26**; SkoutProd on first deploy or next window |
-| Status | **SkoutDev complete** — 9 rows rotated; `INTEGRATION_ENCRYPTION_KEY_PREVIOUS` cleared |
+| Env | **SkoutDev (= production)** executed **2026-08-26**; no separate SkoutProd in this account |
+| Status | **Production complete** — 9 rows rotated; `INTEGRATION_ENCRYPTION_KEY_PREVIOUS` cleared |

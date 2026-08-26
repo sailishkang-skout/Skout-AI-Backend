@@ -1,55 +1,42 @@
 # SkoutProd — first deploy checklist
 
-Run when leadership is ready to create the **SkoutProd** ECS cluster (CDK `env=prod`).
+> **Superseded for this AWS account (2026-08-26).**  
+> There is **no** `SkoutProd` cluster. **SkoutDev is production** — see  
+> [`skoutdev-is-production.md`](./skoutdev-is-production.md).
 
-## 0. Prerequisites (cannot invent)
+Historical `env=prod` / `deploy-prod.yml` steps below are kept only if leadership later splits a second account/env.
 
-- [ ] GitHub `production` environment + `AWS_DEPLOY_ROLE_ARN_PROD` OIDC role
-- [ ] Secrets Manager / env: DB, Redis, Clerk, OpenRouter, Datadog, etc.
-- [ ] Optional: `PROD_DOMAIN_NAME` for custom domains
+---
 
-## 1. Deploy stack
+## Current production (SkoutDev) — done
+
+- [x] ECS cluster `SkoutDev-cluster` live  
+- [x] `RBAC_ENFORCEMENT_ENABLED=true` + backfill path (`./scripts/ecs-run-backfill-rbac.sh SkoutDev`)  
+- [x] Email-Intel → Evidence forwarder on SkoutDev  
+- [x] `CONSENT_ENFORCEMENT_ENABLED=true`  
+- [x] SSO/SCIM Stage‑6 APIs (`docs/ops/sso-stage6-checklist.md`)  
+- [x] Encryption Tier‑1 rotation executed 2026-08-26  
+
+## Legacy: create a *separate* SkoutProd (optional future)
+
+Only if leadership provisions a second env:
+
+### 0. Prerequisites
+
+- [ ] GitHub `production` environment + `AWS_DEPLOY_ROLE_ARN_PROD` OIDC role  
+- [ ] Full Secrets Manager set under `SkoutProd/*`  
+- [ ] Optional: `PROD_DOMAIN_NAME`
+
+### 1. Deploy stack
 
 ```bash
-# Preferred: GitHub Actions → Deploy Production (workflow_dispatch on main)
-# Or local (requires prod AWS role):
-cd infra && pnpm deploy:prod
+# GitHub Actions → Deploy Production (workflow_dispatch on main)
+# Or: cd infra && pnpm deploy:prod
 ```
 
-## 2. RBAC fail-closed backfill
+### 2–7
 
-```bash
-./scripts/ecs-run-backfill-rbac.sh SkoutProd
-```
-
-Verify: `RBAC_ENFORCEMENT_ENABLED=true` on API + CRM (CDK prod profile).
-
-## 3. Email-Intel → Evidence Ledger forwarder
-
-```bash
-./infra/scripts/setup-email-intel-forwarder.sh SkoutProd <CANONICAL_EVIDENCE_INGEST_URL>
-```
-
-## 4. Consent enforcement
-
-Confirm `CONSENT_ENFORCEMENT_ENABLED=true` on SkoutProd API.
-
-## 5. SSO / SCIM (Stage-6) — per customer
-
-Platform endpoints live: `GET /api/v1/sso/stage6/status`, `POST /api/v1/sso/scim/sync-members`.
-
-Per-customer IdP bind remains **Clerk Dashboard at deal time** — see `docs/ops/sso-stage6-checklist.md`.
-
-## 6. Encryption rotation
-
-Repeat Tier-1 rotation per `docs/secrets-rotation-policy.md`.
-
-## 7. Smoke
-
-- `GET /api/v1/health` + `GET /api/v1/slo`
-- `GET /api/v1/sso/stage6/status`
-- One authenticated CRM CRUD with fine-grained permission
-- Datadog dashboard receiving prod series
+Same as former RBAC / forwarder / consent / SSO / encryption / smoke steps, with prefix `SkoutProd`.
 
 **Owner:** Neeraj (Ops/SRE)  
-**Status:** Engineering ready — **blocked only on AWS prod role/secrets + first `deploy-prod` run**.
+**Status:** **Closed on SkoutDev-as-prod 2026-08-26** — separate SkoutProd not required.

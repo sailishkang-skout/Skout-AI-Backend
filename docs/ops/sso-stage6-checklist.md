@@ -23,3 +23,15 @@ Override per customer in Clerk when their IT provides different group names.
 5. E2E: IdP user → workspace role → access revoked on disable  
 
 **Platform gate removed 2026-08-26** — defaults published; customer IdP bind is Clerk Dashboard work at deal time, not a code/deploy blocker.
+
+### Engineering surface (shipped)
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/v1/sso/stage6/status` | Platform readiness + current workspace binding |
+| `GET/PUT /api/v1/sso/workspaces/current` | Persist Clerk org + IdP provider/metadata URL |
+| `POST /api/v1/sso/workspaces/current/activate` | Mark binding active after Clerk SSO enabled |
+| `POST /api/v1/sso/scim/sync-members` | Apply SCIM member/role sync into workspace membership |
+
+§11.1 SSO is **complete** on production (**SkoutDev** — `docs/ops/skoutdev-is-production.md`).
+
+Remaining steps 1–5 above are **per enterprise deal** in Clerk (no code/deploy). Platform APIs are live for bind/activate/SCIM sync when a deal starts.

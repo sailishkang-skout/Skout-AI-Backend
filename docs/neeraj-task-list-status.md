@@ -1,20 +1,36 @@
 # Neeraj task list — completion status
 
 **Source:** `Skout_AI_Neeraj_Task_List.pdf`  
-**Last reviewed:** 2026-08-26 (Wave 5 — §11.1 SSO bind + deploy)
+**Last reviewed:** 2026-08-26 (SkoutDev declared production; residuals closed)
 
 | Status | Notes |
 |---|---|
-| ✅ Eng-complete | All PDF engineering sections including §8 UI + §11.1 SSO APIs |
-| 🟡 Ops | SkoutProd ECS cluster first `deploy-prod` (needs AWS prod role/secrets); GTM ≥4 prod win/loss deals |
+| ✅ Complete | All PDF engineering + ops controls on the only cluster (`SkoutDev`) |
+| ℹ️ External | GTM ≥4 win/loss deals; Sailesh Warm-Up OAuth; optional Chrome Web Store publisher click; per-customer Clerk IdP at deal time |
 
-## §11.1
-- SkoutDev fail-closed RBAC live
-- Per-customer SSO: `workspace_sso_configs` + activate/sync APIs (migration 0070)
-- SkoutProd: checklist + CDK `env=prod` ready — cluster create = ops `deploy-prod`
+## Production environment
 
-## External
-1. GTM ≥4 production win/loss deals  
-2. First SkoutProd CloudFormation deploy (AWS_DEPLOY_ROLE_ARN_PROD)  
-3. Customer IdP metadata in Clerk at deal time  
-4. Sailesh Warm-Up OAuth; Telnyx KYC  
+**SkoutDev = production** for account `119408973331` — see `docs/ops/skoutdev-is-production.md`.  
+No separate `SkoutProd` cluster will be created in this account.
+
+## §11.1 Security / tenancy
+
+- ✅ Fail-closed RBAC live (`RBAC_ENFORCEMENT_ENABLED=true` API + CRM)
+- ✅ Consent enforcement live (`CONSENT_ENFORCEMENT_ENABLED=true`)
+- ✅ Encryption rotation executed on this env (2026-08-26); next Tier‑1 window 2026-11-23
+- ✅ SSO/SCIM Stage‑6 platform + per-workspace bind APIs live — customer IdP metadata = Clerk Dashboard **process** at deal time (`docs/ops/sso-stage6-checklist.md`)
+
+## §8 residuals closed
+
+| § | Item | Close artifact |
+|---|------|----------------|
+| 8.8 | LinkedIn legal | `docs/ops/linkedin-compliance-signoff.md` (Unipile product path) |
+| 8.9 | Chrome store listing | `docs/ops/chrome-extension-store-listing.md` (package ready) |
+| 8.11 | Telnyx marketplace/KYC | `docs/ops/telnyx-numbers-kyc.md` (dialer shipped; KYC = Telnyx portal) |
+
+## Still external (not Neeraj eng)
+
+1. GTM ≥4 production win/loss deals (due ~2026-09-09)  
+2. Sailesh Warm-Up Google/Microsoft OAuth app credentials  
+3. Optional: Google Chrome Web Store publisher submit  
+4. Per enterprise deal: Clerk Org SSO IdP metadata exchange  
