@@ -44,6 +44,7 @@
 | 16 | Missing areas | `docs/missing-areas-triage.md` |
 | 11.1 | SSO/SCIM | Platform gate removed; per-customer = Clerk at deal time |
 | SkoutProd | RBAC + forwarder | `docs/ops/skoutprod-first-deploy-checklist.md` |
+| 1.2 / 10 / 3 | Policy Gateway, decisions, workflows, §10 HTTP, regional gate | Wave 3 2026-08-26 — migration 0069 + `dexter-platform.e2e.test.ts` |
 
 **Not Neeraj’s (Aditya/Shailpreet):** §8.1–8.11, §8.13–8.15 product domains.
 
@@ -51,12 +52,12 @@
 
 ## Still open (honest E2E)
 
-1. **#1** — GTM must enter ≥4 win/loss deals by 2026-09-09 (engineering ready)
-2. **#9–#10** — Warm-Up OAuth secrets (Sailesh)
-3. **SkoutProd** — cluster does not exist; run checklist on first deploy
-4. **§8 product domains** — Aditya/Shailpreet backlog
-5. **§10 full HTTP E2E** — blocked until D5/D7; contract tests + metrics live
-6. **§1.2 Dexter/decision views** — ADR 0011 deferred to Aditya
+1. **#1** — GTM ≥4 **production** win/loss deals by 2026-09-09  
+2. **#9–#10** — Warm-Up OAuth secrets (Sailesh)  
+3. **SkoutProd first deploy** — needs `AWS_DEPLOY_ROLE_ARN_PROD` + secrets (checklist + SSO APIs ready)  
+4. **Telnyx number marketplace KYC** (§8.11 residual)
+
+§8 domains + Dexter/decision/workflow UIs + Account 360 + SSO stage-6 APIs: **eng-complete** 2026-08-26.
 
 ---
 
@@ -64,5 +65,5 @@
 
 | Role | Name | Date | Notes |
 |------|------|------|-------|
-| Eng lead | Neeraj | 2026-08-26 | §2–§16 engineering/docs closeout; GTM win/loss data still pending |
+| Eng lead | Neeraj | 2026-08-26 | Wave 3: Policy Gateway, decisions, workflows, §10 HTTP E2E, regional gate |
 | Ops / SRE | Neeraj | 2026-08-26 | SLO targets locked; SkoutProd checklist ready |

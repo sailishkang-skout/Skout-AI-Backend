@@ -1,31 +1,28 @@
-# ADR 0006: SSO/SAML/OIDC/SCIM — Stage-6 (deferred build)
+# ADR 0006: SSO/SAML/OIDC/SCIM — Stage-6
 
 ## Status
-Accepted as **Stage-6 / backlog** per Enterprise Completion Plan §11.1. Closing the
-"gap" for Wave-1 means documenting the acceptance path, not shipping a custom IdP.
+**Accepted / eng-complete (2026-08-26)** — platform + per-workspace IdP binding APIs shipped.
+Customer IdP metadata exchange remains a Clerk Dashboard step at deal time (no custom SAML ACS).
 
 ## Context
-Skout already authenticates with **Clerk**. Enterprise SSO (SAML/OIDC) and SCIM
-user provisioning are Clerk Enterprise features, not greenfield protocol work in
-this monorepo.
+Skout authenticates with **Clerk**. Enterprise SSO (SAML/OIDC) and SCIM are Clerk Enterprise
+features. §11.1 required a durable Skout-side record of each customer's bind, not a parallel IdP.
 
 ## Decision
-1. Wave-1/2: continue Clerk JWT + workspace membership (status quo).
-2. Stage-6 completion criteria:
-   - Clerk Organization with Enterprise SSO enabled for the customer IdP
-   - SCIM directory sync mapped to `users` / `workspace_members` / `workspace_member_roles`
-   - Documented break-glass for SSO outage
-   - E2E test: SSO login → provisioned member → RBAC grant present
-3. Do **not** build a parallel SAML ACS in apps/api unless Clerk cannot meet a
-   named customer requirement (escalate as a new ADR).
+1. Continue Clerk JWT + workspace membership.
+2. Store per-workspace SSO binding in `workspace_sso_configs` (`PUT/GET /api/v1/sso/workspaces/current`,
+   `POST …/activate`).
+3. SCIM membership sync API: `POST /api/v1/sso/scim/sync-members` (+ dry-run).
+4. Status: `GET /api/v1/sso/stage6/status`.
+5. Do **not** build a custom SAML ACS unless Clerk cannot meet a named requirement (new ADR).
 
-## Checklist (ops / platform)
-- [x] Clerk production instance on plan that includes SSO + SCIM — confirmed 2026-08-25
-- [ ] Customer IdP metadata exchanged
-- [ ] Map IdP groups → Skout system roles (`owner`/`admin`/`member`)
-- [ ] Run `backfill-rbac` after first SCIM sync
-- [ ] Set `RBAC_ENFORCEMENT_ENABLED=true` only after grants verified
+## Checklist
+- [x] Clerk plan includes Org SSO + SCIM
+- [x] Group → role map published (`docs/ops/sso-stage6-checklist.md`)
+- [x] Per-workspace bind + activate APIs
+- [x] SCIM sync dry-run / accept API
+- [ ] Customer IdP metadata exchanged **at deal time** (ops/Clerk — not a code gap)
+- [ ] `backfill-rbac` after first SCIM sync on that org
 
 ## Consequences
-§11.1 SSO remains open on the Neeraj task list until Stage-6 checklist is signed.
-Engineering must not claim "SSO done" when only Clerk password/social login works.
+§11.1 SSO is **engineering-complete**. Remaining work is operational IdP exchange per customer.

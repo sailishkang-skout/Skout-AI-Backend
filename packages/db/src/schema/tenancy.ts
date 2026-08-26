@@ -167,3 +167,28 @@ export const consents = pgTable(
   },
   (table) => [index("consents_workspace_subject_idx").on(table.workspaceId, table.subjectType, table.subjectId)]
 );
+
+/**
+ * §11.1 Stage-6 — per-customer SSO IdP binding for a workspace (Clerk org + connection).
+ * Metadata exchange still happens in Clerk Dashboard; this row is the durable Skout record
+ * that product/ops activate at deal time.
+ */
+export const workspaceSsoConfigs = pgTable("workspace_sso_configs", {
+  workspaceId: uuid("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  clerkOrgId: text("clerk_org_id").notNull(),
+  idpProvider: text("idp_provider").notNull().default("okta"),
+  idpConnectionId: text("idp_connection_id"),
+  idpMetadataUrl: text("idp_metadata_url"),
+  scimEnabled: boolean("scim_enabled").notNull().default(false),
+  groupRoleMap: jsonb("group_role_map")
+    .notNull()
+    .default({ Owners: "owner", Admins: "admin", Members: "member" }),
+  status: text("status").notNull().default("pending"), // pending | active | disabled
+  activatedAt: timestamp("activated_at", { withTimezone: true }),
+  activatedBy: uuid("activated_by").references(() => users.id, { onDelete: "set null" }),
+  notes: text("notes"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

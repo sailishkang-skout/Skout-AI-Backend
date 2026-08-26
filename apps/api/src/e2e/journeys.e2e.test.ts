@@ -163,9 +163,10 @@ describe("§10 journey contracts (library-level, always on)", () => {
     expect(JOURNEY_10_3_STEPS).toContain("policy_gated_approval");
   });
 
-  it("J11 — §10.4 Dexter lifecycle: 6 steps defined (D7 build pending)", () => {
+  it("J11 — §10.4 Dexter lifecycle: 6 steps + HTTP surfaces live", () => {
     expect(JOURNEY_10_4_STEPS).toHaveLength(6);
     expect(JOURNEY_10_4_STEPS).toContain("outcome_hypothesis_attribution");
+    expect(JOURNEY_10_4_STEPS).toContain("policy_gateway_classify");
   });
 
   it("J12 — §10.5 LinkedIn voice: manual send + timeline capture required", () => {

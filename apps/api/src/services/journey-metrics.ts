@@ -11,6 +11,11 @@ const counters = {
   aiPinSuccess: 0,
   aiPinFail: 0,
   prospectCrmLink: 0,
+  policyClassify: 0,
+  decisionViewCreate: 0,
+  workflowRunStart: 0,
+  dexterPlanInvoke: 0,
+  linkedinVoiceConfirm: 0,
 };
 
 export type JourneyMetric = keyof typeof counters;
@@ -49,6 +54,21 @@ export function formatJourneyMetricsPrometheus(): string {
     "# HELP skout_journey_prospect_crm_link_total Prospect↔CRM links created",
     "# TYPE skout_journey_prospect_crm_link_total counter",
     `skout_journey_prospect_crm_link_total ${counters.prospectCrmLink}`,
+    "# HELP skout_journey_policy_classify_total Policy Gateway classifications",
+    "# TYPE skout_journey_policy_classify_total counter",
+    `skout_journey_policy_classify_total ${counters.policyClassify}`,
+    "# HELP skout_journey_decision_view_create_total Decision views created",
+    "# TYPE skout_journey_decision_view_create_total counter",
+    `skout_journey_decision_view_create_total ${counters.decisionViewCreate}`,
+    "# HELP skout_journey_workflow_run_start_total Observable workflow runs started",
+    "# TYPE skout_journey_workflow_run_start_total counter",
+    `skout_journey_workflow_run_start_total ${counters.workflowRunStart}`,
+    "# HELP skout_journey_dexter_plan_invoke_total Dexter plans invoked",
+    "# TYPE skout_journey_dexter_plan_invoke_total counter",
+    `skout_journey_dexter_plan_invoke_total ${counters.dexterPlanInvoke}`,
+    "# HELP skout_journey_linkedin_voice_confirm_total LinkedIn voice manual confirms",
+    "# TYPE skout_journey_linkedin_voice_confirm_total counter",
+    `skout_journey_linkedin_voice_confirm_total ${counters.linkedinVoiceConfirm}`,
   ];
   return lines.join("\n");
 }

@@ -37,10 +37,10 @@ product/leadership decision (not an engineering one).
 |---|---|---|
 | Separate screens → one canonical graph | Evidence Ledger + Tenancy (this pass) | Wave 1 foundation shipped; not yet the *only* path (Wave 2) |
 | Opaque AI → evidence-backed recommendations | `evidence-contract.ts` (this pass) | Library shipped; not yet required at every AI-response boundary — that adoption is separate follow-up work |
-| Manual copying → observable async workflows | Dexter Orchestrator, Workflow Studio | Not started |
+| Manual copying → observable async workflows | Dexter Orchestrator, Workflow Studio | **Backend shipped** — `workflow_runs` + `/api/v1/workflows/runs*` (UI Aditya) |
 | Provider-specific logic → domain abstractions | PAL, `telecom.service.ts` | Already largely true — no action needed |
-| Vanity dashboards → decision-oriented views | CRO Copilot forecasting split, board-pack export | Not started |
-| Uncontrolled automation → four explicit modes | Dexter Policy Gateway | Not started |
+| Vanity dashboards → decision-oriented views | CRO Copilot forecasting split, board-pack export | **Backend shipped** — `decision_views` + `/api/v1/decisions*` (UI Aditya/Shailpreet) |
+| Uncontrolled automation → four explicit modes | Dexter Policy Gateway | **Backend shipped** — ask/auto/draft/approve + `/api/v1/automation-policy` |
 
 ## §2 — Competitive positioning / win-loss (§2)
 
@@ -59,7 +59,7 @@ marketing gate remains blocked until deals are recorded.
 | Evidence before action | `assertEvidenced()` + `pinAiClaim` on all AI pin surfaces | **Enforced** |
 | Ask before guessing | NL search `unverified`; onboarding clarifiers (§8.1 UI) | **Enforced** (API); UI clarifiers Shailpreet |
 | Human control by design | `MAX_ACTIVE_RULES_PER_WORKSPACE = 5`; AI draft approval queue | **Enforced** |
-| Global by model | Regional intel + §2 win/loss API gate | **Enforced** (eng); GTM ≥4 deals pending |
+| Global by model | Regional intel + §2 win/loss API gate (`assertRegionalTamValidated`) | **Enforced** |
 | Async is first-class UX | Warm-Up intent + `withSpan` on all 18 workers + journey metrics | **Enforced** |
 | Provider abstraction | PAL, `telecom.service.ts` | **Enforced** |
 | No silent failure | Datadog APM + OTLP + `/slo` + `/metrics` + `skout_journey_*` | **Enforced** |

@@ -3,12 +3,13 @@ import { z } from "zod";
 import { eq, desc } from "drizzle-orm";
 import { schema } from "@skout/db";
 import { errorResponse } from "../utils/http.js";
+import { REGIONAL_TAM_MIN_DEALS, getRegionalTamGate } from "../services/regional-tam-gate.service.js";
 
 const { competitiveWinLossDeals, competitiveWinLossOwners } = schema;
 
 const GENERATION_MS = Date.parse("2026-08-25T00:00:00.000Z");
 const DUE_MS = GENERATION_MS + 15 * 24 * 60 * 60 * 1000;
-const MIN_DEALS = 4;
+const MIN_DEALS = REGIONAL_TAM_MIN_DEALS;
 
 const dealSchema = z.object({
   accountName: z.string().min(1).max(500),
@@ -143,11 +144,13 @@ export async function competitiveRoutes(app: FastifyInstance) {
       .from(competitiveWinLossDeals)
       .where(eq(competitiveWinLossDeals.workspaceId, request.workspaceId));
 
+    const gate = await getRegionalTamGate(app.db, request.workspaceId);
+
     return reply.code(201).send({
       data: row,
       dealsReviewed: count.length,
       status: count.length >= MIN_DEALS ? "complete" : "in_progress",
-      regionalTamGate: count.length >= MIN_DEALS ? "validated" : "not_validated",
+      regionalTamGate: gate.gate,
     });
   });
 }
