@@ -491,6 +491,13 @@
       "when": 1790200000000,
       "tag": "0068_regional_brief",
       "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1790300000000,
+      "tag": "0069_regional_brief_aliases_and_tam",
+      "breakpoints": true
     }
   ]
 }

@@ -22,6 +22,7 @@ export * from "./notifications.js";
 export * from "./calls.js";
 export * from "./next-best-action.js";
 export * from "./regional-brief.js";
+export * from "./country-industry-tam.js";
 export * from "./tam.js";
 export * from "./reporting.js";
 export * from "./model-performance.js";

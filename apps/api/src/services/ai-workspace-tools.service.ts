@@ -24,6 +24,8 @@ import {
   type ExportDataset,
 } from "./ai-export.service.js";
 import { computeCroSummary } from "./cro-summary.service.js";
+import { createRegionalBriefService } from "./regional-brief.service.js";
+import { createCountryIndustryTamService } from "./country-industry-tam.service.js";
 
 const APP_ROUTES = [
   { path: "/dashboard", purpose: "Workspace overview and recent enrichment jobs" },
@@ -57,6 +59,8 @@ export interface WorkspaceToolRunner {
   run(name: string, args: Record<string, unknown>): Promise<string>;
   /** Exports generated during this chat turn (surfaced to the client by the route). */
   getCreatedExports(): ExportArtifact[];
+  /** Sequences created during this chat turn. */
+  getCreatedSequenceIds(): string[];
 }
 
 /** Caps to keep tool payloads (and therefore token cost) bounded. */
@@ -387,6 +391,109 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
       parameters: { type: "object", properties: {} },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "get_regional_selling_brief",
+      description:
+        "Retrieve fact-checked regional/country sales intelligence, buyer economics, local etiquette, channel policy (email vs LinkedIn), telecom regulations (calling hours), and privacy compliance (GDPR/CCPA) for a target country or region.",
+      parameters: {
+        type: "object",
+        properties: {
+          country: {
+            type: "string",
+            description: "Country name or ISO code (e.g. 'Germany', 'US', 'GBR', 'Japan').",
+          },
+          industry: {
+            type: "string",
+            description: "Optional industry or sector name (e.g. 'Information', 'saas', 'healthcare', 'finance').",
+          },
+        },
+        required: ["country"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_market_tam",
+      description:
+        "Retrieve the Total Addressable Market (TAM) — target accounts, annual revenue TAM in USD, and total business establishment count with official data sources — for a target country and industry sector.",
+      parameters: {
+        type: "object",
+        properties: {
+          country: {
+            type: "string",
+            description: "Country name or ISO code (e.g. 'US', 'United States', 'GB', 'UK').",
+          },
+          industry: {
+            type: "string",
+            description: "NAICS code or industry sector (e.g. '51', 'Information', 'saas', '54', 'healthcare').",
+          },
+          icpFitPct: {
+            type: "number",
+            description: "Optional custom ICP fit % (e.g. 0.10 for 10%). Defaults to 0.10.",
+          },
+          acvUsd: {
+            type: "number",
+            description: "Optional custom Average Contract Value in USD (e.g. 25000). Defaults to 25000.",
+          },
+        },
+        required: ["country", "industry"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_outbound_sequence",
+      description:
+        "Create, save, and draft a new multi-step outbound sales cadence/sequence directly in the workspace database. Use this whenever the user asks to create, build, draft, or set up an outreach sequence.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description: "Name for the sequence (e.g. 'Healthcare SaaS India — Direct Outreach').",
+          },
+          steps: {
+            type: "array",
+            description: "List of sequence steps in chronological order.",
+            items: {
+              type: "object",
+              properties: {
+                stepType: {
+                  type: "string",
+                  enum: ["email", "linkedin", "whatsapp", "call", "wait", "task"],
+                  description: "Step channel or action type.",
+                },
+                delayDays: {
+                  type: "number",
+                  description: "Days to wait after the previous step (0 for first step).",
+                },
+                subject: {
+                  type: "string",
+                  description: "Subject line for email steps (supports {{firstName}}, {{companyName}}).",
+                },
+                bodyTemplate: {
+                  type: "string",
+                  description:
+                    "HTML email body or message text (supports {{firstName}}, {{companyName}}, {{senderName}}, {{unsubscribeUrl}}).",
+                },
+                linkedinAction: {
+                  type: "string",
+                  enum: ["connect", "message", "inmail", "like", "follow"],
+                  description: "Specific action if stepType is linkedin.",
+                },
+              },
+              required: ["stepType", "delayDays"],
+            },
+          },
+        },
+        required: ["name", "steps"],
+      },
+    },
+  },
 ];
 
 /**
@@ -422,8 +529,11 @@ export function createWorkspaceToolRunner(
   const billing = db ? createBillingService(db, config) : null;
   const team = db ? createTeamService(db) : null;
   const search = createSearchService(config);
+  const regionalBrief = db ? createRegionalBriefService(db) : null;
+  const tamService = db ? createCountryIndustryTamService(db) : null;
 
   const createdExports: ExportArtifact[] = [];
+  const createdSequenceIds: string[] = [];
 
   const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
     get_workspace_overview: () => dashboard.getSummary(workspaceId),
@@ -655,6 +765,77 @@ export function createWorkspaceToolRunner(
     },
 
     list_app_routes: async () => APP_ROUTES,
+
+    get_regional_selling_brief: async (args) => {
+      if (!regionalBrief) throw new Error("database_unavailable");
+      const country = String(args.country ?? "").trim();
+      const industry = args.industry ? String(args.industry).trim() : undefined;
+      if (!country) return { error: "country is required" };
+      return regionalBrief.resolveRegionalBrief({ countryIso: country, industry, workspaceId });
+    },
+
+    get_market_tam: async (args) => {
+      if (!tamService) throw new Error("database_unavailable");
+      const country = String(args.country ?? "").trim();
+      const industry = String(args.industry ?? "").trim();
+      if (!country || !industry) return { error: "country and industry are required" };
+      const icpPct = typeof args.icpFitPct === "number" ? args.icpFitPct : undefined;
+      const acvUsd = typeof args.acvUsd === "number" ? args.acvUsd : undefined;
+      return tamService.getTam({
+        countryIso: country,
+        naicsCode: industry,
+        icpPctOverride: icpPct,
+        acvUsdOverride: acvUsd,
+      });
+    },
+
+    create_outbound_sequence: async (args) => {
+      if (!sequence) throw new Error("database_unavailable");
+      const name =
+        typeof args.name === "string" && args.name.trim() ? args.name.trim() : "Outbound Cadence";
+      const rawSteps = Array.isArray(args.steps) ? (args.steps as Record<string, unknown>[]) : [];
+      if (rawSteps.length === 0) {
+        return { error: "at_least_one_step_required" };
+      }
+      const formattedSteps = rawSteps.map((s, idx) => ({
+        stepType: (["email", "linkedin", "whatsapp", "call", "wait", "task"].includes(String(s.stepType))
+          ? String(s.stepType)
+          : "email") as any,
+        delayDays: typeof s.delayDays === "number" && s.delayDays >= 0 ? s.delayDays : idx === 0 ? 0 : 3,
+        delayUnit: "days" as const,
+        subject:
+          typeof s.subject === "string" ? s.subject : s.stepType === "email" ? "Quick question" : undefined,
+        bodyTemplate:
+          typeof s.bodyTemplate === "string" && s.bodyTemplate.trim()
+            ? s.bodyTemplate
+            : `<p>Hi {{firstName}},</p><p>Reaching out regarding {{companyName}}.</p><p style="font-size:11px;color:#888"><a href="{{unsubscribeUrl}}">Unsubscribe</a></p>`,
+        linkedinAction:
+          s.stepType === "linkedin"
+            ? (["connect", "message", "inmail", "like", "follow"].includes(String(s.linkedinAction))
+                ? (String(s.linkedinAction) as any)
+                : "connect")
+            : undefined,
+      }));
+
+      const seq = await sequence.createGeneratedSequence(workspaceId, {
+        name,
+        source: "dexter",
+        mode: "A",
+        steps: formattedSteps,
+      });
+
+      createdSequenceIds.push(seq.id);
+
+      return {
+        success: true,
+        sequenceId: seq.id,
+        name: seq.name,
+        stepsCount: seq.steps.length,
+        status: seq.status,
+        path: `/sequences/${seq.id}`,
+        message: `Sequence "${seq.name}" with ${seq.steps.length} steps created successfully in your workspace!`,
+      };
+    },
   };
 
   return {
@@ -663,6 +844,7 @@ export function createWorkspaceToolRunner(
         ? WORKSPACE_TOOL_DEFS.filter((t) => t.type === "function" && CRO_AGENT_TOOLS.has(t.function.name))
         : WORKSPACE_TOOL_DEFS,
     getCreatedExports: () => createdExports,
+    getCreatedSequenceIds: () => createdSequenceIds,
     async run(name, args) {
       if (agent === "cro" && !CRO_AGENT_TOOLS.has(name)) {
         log.warn("cro agent attempted a non-allowlisted tool call", { tool: name, workspaceId });
