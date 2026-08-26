@@ -89,6 +89,41 @@ const STANDARD_COUNTRIES: Record<string, { isoCode: string; isoAlpha3: string; n
   AUSTRALIA: { isoCode: "AU", isoAlpha3: "AUS", name: "Australia", regionCode: "ANZ", currencyCode: "AUD", aliases: ["AU", "AUS", "Australia"] },
 };
 
+const STANDARD_TAM_ROWS: Record<string, { industryName: string; establishments: number; icpFitPct: number; acvUsd: number; dataSource: string; dataYear: number }> = {
+  "US:51": {
+    industryName: "Information",
+    establishments: 162006,
+    icpFitPct: 0.10,
+    acvUsd: 25000,
+    dataSource: "US Census Bureau Statistics of U.S. Businesses (SUSB) 2021",
+    dataYear: 2021,
+  },
+  "US:52": {
+    industryName: "Finance and Insurance",
+    establishments: 478891,
+    icpFitPct: 0.10,
+    acvUsd: 25000,
+    dataSource: "US Census Bureau Statistics of U.S. Businesses (SUSB) 2021",
+    dataYear: 2021,
+  },
+  "US:54": {
+    industryName: "Professional, Scientific, and Technical Services",
+    establishments: 1045230,
+    icpFitPct: 0.10,
+    acvUsd: 25000,
+    dataSource: "US Census Bureau Statistics of U.S. Businesses (SUSB) 2021",
+    dataYear: 2021,
+  },
+  "GB:51": {
+    industryName: "Information and Communication",
+    establishments: 375000,
+    icpFitPct: 0.10,
+    acvUsd: 25000,
+    dataSource: "UK Department for Business and Trade Business Population Estimates (BPE) 2023",
+    dataYear: 2023,
+  },
+};
+
 export function createCountryIndustryTamService(db: Db) {
   async function resolveRegionId(regionCode: string) {
     const [region] = await db.select().from(regions).where(eq(regions.code, regionCode.toUpperCase()));
@@ -192,6 +227,29 @@ export function createCountryIndustryTamService(db: Db) {
         );
 
       if (!row) {
+        const standardTam = STANDARD_TAM_ROWS[`${country.isoCode}:${params.naicsCode}`];
+        if (standardTam) {
+          const [inserted] = await db
+            .insert(countryIndustryTam)
+            .values({
+              countryId: country.id,
+              industryCode: params.naicsCode,
+              industryName: standardTam.industryName,
+              establishments: standardTam.establishments,
+              icpFitPct: standardTam.icpFitPct,
+              acvUsd: standardTam.acvUsd,
+              dataSource: standardTam.dataSource,
+              dataYear: standardTam.dataYear,
+              canonicalInclude: true,
+            })
+            .onConflictDoNothing()
+            .returning();
+          const targetRow = inserted || (await db.select().from(countryIndustryTam).where(and(eq(countryIndustryTam.countryId, country.id), eq(countryIndustryTam.industryCode, params.naicsCode))))[0];
+          if (targetRow) {
+            return buildTamResult(country, targetRow, params.icpPctOverride, params.acvUsdOverride);
+          }
+        }
+
         return {
           countryIso2: country.isoCode,
           countryIso3: country.isoAlpha3,

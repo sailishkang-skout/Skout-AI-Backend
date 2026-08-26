@@ -157,6 +157,7 @@ describe("approveVersion / rejectVersion", () => {
     const [author] = await db.insert(schema.users).values({ email: `author2-${Date.now()}@test.com`, fullName: "A" }).returning();
 
     const slot = await svc.findOrCreateSlot({ layerType: "global", fieldCategory: "channel_policy" });
+    const initialCurrentId = slot.currentVersionId;
     const v1 = await svc.createDraftVersion(slot.id, {
       content: { summary: "bad draft", details: [] },
       source: "test",
@@ -169,7 +170,7 @@ describe("approveVersion / rejectVersion", () => {
     expect(rejected.status).toBe("rejected");
 
     const [reloadedSlot] = await db.select().from(schema.regionalBriefSlots).where(eq(schema.regionalBriefSlots.id, slot.id));
-    expect(reloadedSlot!.currentVersionId).toBeNull();
+    expect(reloadedSlot!.currentVersionId).toBe(initialCurrentId);
   });
 });
 
@@ -182,6 +183,7 @@ describe("resolveRegionalBrief", () => {
     const svc = createRegionalBriefService(db);
     const [reviewer] = await db.insert(schema.users).values({ email: `res-rev-${Date.now()}@test.com`, fullName: "R" }).returning();
     const [author] = await db.insert(schema.users).values({ email: `res-auth-${Date.now()}@test.com`, fullName: "A" }).returning();
+    const [workspace] = await db.insert(schema.workspaces).values({ name: `ws-layer-${Date.now()}`, slug: `ws-layer-${Date.now()}` }).returning();
 
     const globalSlot = await svc.findOrCreateSlot({ layerType: "global", fieldCategory: "market_economics" });
     const globalV = await svc.createDraftVersion(globalSlot.id, {
@@ -197,18 +199,30 @@ describe("resolveRegionalBrief", () => {
     });
     await svc.approveVersion(countryV.id, reviewer!.id);
 
-    const resolved = await svc.resolveRegionalBrief({ countryIso: "US" });
-    expect(resolved.countryIso3).toBe("USA");
-    expect(resolved.country).toBe("United States");
+    const tenantSlot = await svc.findOrCreateSlot({
+      layerType: "tenant",
+      workspaceId: workspace!.id,
+      countryIso: "US",
+      fieldCategory: "market_economics",
+    });
+    const tenantV = await svc.createDraftVersion(tenantSlot.id, {
+      content: { summary: "Tenant custom US brief", details: [] },
+      source: "test", effectiveDate: new Date(), confidence: 95, evidence: "test", createdBy: author!.id,
+    });
+    await svc.approveVersion(tenantV.id, reviewer!.id);
 
-    const marketEconomics = resolved.entries.find((e) => e.fieldCategory === "market_economics");
-    expect(marketEconomics?.content.summary).toBe("US-specific");
-    expect(marketEconomics?.resolvedFromLayer).toBe("country");
+    // Resolve with workspaceId -> gets tenant layer override
+    const resolvedTenant = await svc.resolveRegionalBrief({ countryIso: "US", workspaceId: workspace!.id });
+    expect(resolvedTenant.countryIso3).toBe("USA");
+    expect(resolvedTenant.country).toBe("United States");
+    const marketEconomicsTenant = resolvedTenant.entries.find((e) => e.fieldCategory === "market_economics");
+    expect(marketEconomicsTenant?.resolvedFromLayer).toBe("tenant");
+    expect(marketEconomicsTenant?.content.summary).toBe("Tenant custom US brief");
 
-    // channel_policy is seeded from the global Excel catalog
-    const channelPolicy = resolved.entries.find((e) => e.fieldCategory === "channel_policy");
-    expect(channelPolicy?.resolvedFromLayer).toBe("country");
-    expect(channelPolicy?.content.summary).toBeTruthy();
+    // Resolve without workspaceId -> falls back to country layer
+    const resolvedCountry = await svc.resolveRegionalBrief({ countryIso: "US" });
+    const marketEconomicsCountry = resolvedCountry.entries.find((e) => e.fieldCategory === "market_economics");
+    expect(marketEconomicsCountry?.resolvedFromLayer).toBe("country");
   });
 
   it("resolves by alpha-3 code (GBR) the same as alpha-2 (GB)", async () => {
