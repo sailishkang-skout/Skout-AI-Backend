@@ -1,8 +1,11 @@
 /**
- * Executes LinkedIn connection requests and DMs from the page context
- * (has access to LinkedIn session cookies / Voyager CSRF).
- *
- * Injected into a LinkedIn tab by the background worker.
+ * @deprecated [DEPRECATED - §8.8 / Enterprise Platform Vision]
+ * Executes LinkedIn connection requests and DMs from the page context via Voyager API.
+ * 
+ * AUDIT NOTE: This script is confirmed INACTIVE / DEAD CODE. The Chrome extension's
+ * background.js does not invoke SKOUT_LINKEDIN_OUTREACH. All LinkedIn outreach actions
+ * (invites, messages) are officially routed through the server-side Unipile backend.
+ * Do not inject or re-enable this script; it is retained pending final maintainer deletion sign-off.
  */
 (function skoutLinkedInOutreach() {
   if (window.__skoutLinkedInOutreach) return;

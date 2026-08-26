@@ -20,13 +20,17 @@ import {
 } from "../services/decision-workflow.service.js";
 import {
   approveDexterPlan,
+  checkLinkedinVoiceEligibility,
   confirmLinkedinVoiceSent,
   createLinkedinVoiceHandoff,
+  draftLinkedinVoiceScript,
   invokeDexterPlan,
   proposeDexterPlan,
   recordDexterLearning,
+  synthesizeVoiceAudio,
 } from "../services/dexter-journey.service.js";
 import { getRegionalTamGate, seedDemoWinLossDeals } from "../services/regional-tam-gate.service.js";
+
 
 /**
  * §1.2 D7/D14/D15 + §10.4/10.5 — Policy Gateway, decisions, workflows, Dexter + LinkedIn voice.
@@ -215,18 +219,72 @@ export async function dexterPlatformRoutes(app: FastifyInstance) {
   });
 
   // ── LinkedIn voice §10.5 ────────────────────────────────────────
+  app.get("/linkedin/voice/eligibility", async (request, reply) => {
+    if (!request.workspaceId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    const query = z.object({ prospectId: z.string().min(1) }).safeParse(request.query ?? {});
+    if (!query.success) return reply.code(400).send(errorResponse("prospectId query parameter required", 400));
+
+    const result = await checkLinkedinVoiceEligibility(app.db, app.config, {
+      workspaceId: request.workspaceId,
+      prospectId: query.data.prospectId,
+    });
+    return reply.send({ data: result });
+  });
+
+  app.post("/linkedin/voice/draft-script", async (request, reply) => {
+    if (!request.workspaceId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    const body = z
+      .object({
+        prospectId: z.string().min(1).max(200),
+        goal: z.string().max(500).optional(),
+        tone: z.string().max(200).optional(),
+        customNotes: z.string().max(1000).optional(),
+      })
+      .safeParse(request.body ?? {});
+    if (!body.success) return reply.code(400).send(errorResponse("Invalid draft payload", 400, body.error.flatten()));
+
+    const result = await draftLinkedinVoiceScript(app.db, app.config, {
+      workspaceId: request.workspaceId,
+      prospectId: body.data.prospectId,
+      goal: body.data.goal,
+      tone: body.data.tone,
+      customNotes: body.data.customNotes,
+      userId: request.userId,
+    });
+    return reply.send({ data: result });
+  });
+
+  app.post("/linkedin/voice/synthesize", async (request, reply) => {
+    if (!request.workspaceId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    const body = z
+      .object({
+        scriptText: z.string().min(1).max(8000),
+        voice: z.enum(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]).optional(),
+      })
+      .safeParse(request.body ?? {});
+    if (!body.success) return reply.code(400).send(errorResponse("Invalid synthesis payload", 400, body.error.flatten()));
+
+    const result = await synthesizeVoiceAudio(app.config, {
+      scriptText: body.data.scriptText,
+      voice: body.data.voice,
+    });
+    return reply.send({ data: result });
+  });
+
   app.post("/linkedin/voice/handoff", async (request, reply) => {
     if (!request.workspaceId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const body = z
       .object({
         prospectId: z.string().min(1).max(200),
         scriptText: z.string().min(1).max(8000),
-        voiceChoice: z.enum(["self", "cloned", "none"]).optional(),
+        voiceChoice: z.string().max(50).optional(),
         regionalBriefPreview: z.string().max(4000).optional(),
+        bypassEligibilityCheck: z.boolean().optional(),
       })
       .safeParse(request.body ?? {});
     if (!body.success) return reply.code(400).send(errorResponse("Invalid handoff", 400, body.error.flatten()));
-    const row = await createLinkedinVoiceHandoff(app.db, {
+
+    const row = await createLinkedinVoiceHandoff(app.db, app.config, {
       workspaceId: request.workspaceId,
       ...body.data,
       userId: request.userId,
