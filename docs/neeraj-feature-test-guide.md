@@ -1,335 +1,231 @@
-# Neeraj Task List — step-by-step feature test guide
+# Skout AI — User testing guide (Neeraj completed features)
 
-**Source:** `Skout_AI_Neeraj_Task_List.pdf`  
-**Environment:** SkoutDev (= production) — see `docs/ops/skoutdev-is-production.md`  
-**Updated:** 2026-08-26 · image `dev-71b92ef`+
+**How to use this document:** Sign in to Skout as a normal user (owner/admin preferred). Follow each section in order. For every step, mark **Pass** or **Fail** in the checkbox column (print this PDF and tick by hand, or copy into a sheet).
 
-| Base | URL |
-|------|-----|
-| API / Web origin | `https://ckoy6iywm0.execute-api.us-east-1.amazonaws.com` |
-| App (Clerk) | `https://www.skoutai.io/app` (or same API Gateway host if web is routed there) |
-| Auth | Sign in with Clerk (owner/admin recommended for admin settings) |
-
-Mark each step **Pass / Fail** as you go. Prefer UI when a page exists; use `curl` + Bearer token (or browser DevTools) for API-only checks.
-
-```bash
-export API="https://ckoy6iywm0.execute-api.us-east-1.amazonaws.com"
-export TOKEN="<Clerk session JWT>"
-# Example authenticated call:
-curl -sS -H "Authorization: Bearer $TOKEN" "$API/api/v1/me" | jq .
-```
+| | |
+|--|--|
+| **App** | https://www.skoutai.io/app |
+| **API / gateway** | https://ckoy6iywm0.execute-api.us-east-1.amazonaws.com |
+| **Who should test** | Product / QA / founder with a real workspace |
+| **Date** | ________________ |
+| **Tester name** | ________________ |
 
 ---
 
-## 0. Smoke (always first)
+## Before you start
 
-| # | Step | Expected |
-|---|------|----------|
-| 0.1 | `GET $API/api/v1/health` | `200` `{ "status": "ok" }` |
-| 0.2 | `GET $API/api/v1/slo` | Targets JSON + `doc: docs/slo-targets.md` |
-| 0.3 | `GET $API/api/v1/metrics` | Prometheus text incl. `skout_journey_*` (or process metrics) |
-| 0.4 | Open web app → sign in | Lands in dashboard without 5xx |
+1. Open the app in Chrome.
+2. Sign in with your Skout account (Clerk).
+3. Confirm you land on the dashboard (no blank error page).
+4. Keep this PDF open and tick each step as you go.
 
----
-
-## §2 — Competitive win/loss
-
-**UI:** CRM / competitive surfaces (or API).  
-**APIs:** `/api/v1/competitive/win-loss*`
-
-| # | Step | Expected |
-|---|------|----------|
-| 2.1 | `GET /api/v1/competitive/win-loss` (auth) | List / summary without 5xx |
-| 2.2 | `POST /api/v1/competitive/win-loss/deals` with a sample won/lost deal | `201/200` deal id returned |
-| 2.3 | `POST /api/v1/competitive/win-loss/assign` | Owner assigned from session |
-| 2.4 | Optional: `POST /api/v1/competitive/win-loss/seed-demo` | Demo deals if empty (dev helper) |
-| 2.5 | `GET /api/v1/regional-tam-gate` | Gate reflects deal count (≥4 unlocks regional TAM) |
-
-**Pass when:** At least one deal readable; regional gate returns structured status.
+**Pass criteria for the whole guide:** Every *user* step in sections 1–15 is Pass (or marked N/A with a reason). External leftovers at the end are optional.
 
 ---
 
-## §3 — Product principles / regional gate
+## 1. Sign-in & home (smoke)
 
-| # | Step | Expected |
-|---|------|----------|
-| 3.1 | `GET /api/v1/regional-intel/gate` | Gate status JSON |
-| 3.2 | `POST /api/v1/regional-intel` with a region/purpose | Brief **or** clear gate block if &lt;4 win/loss deals |
-| 3.3 | After ≥4 deals, retry regional intel | Brief succeeds |
-
----
-
-## §5 — Canonical model / Evidence Ledger
-
-**APIs:** `/api/v1/evidence*`, CRM autofill from ledger
-
-| # | Step | Expected |
-|---|------|----------|
-| 5.1 | `POST /api/v1/evidence` with attribute + value + source | Evidence row created |
-| 5.2 | `GET /api/v1/evidence?…` | Latest / filtered evidence returned |
-| 5.3 | Enrich a prospect (UI or `POST /prospects/:id/enrich`) | Job completes; evidence written |
-| 5.4 | Edit a CRM contact field that has ledger evidence | Autofill / precedence respects ledger (manual wins) |
+| # | What you do | What you should see | ☐ |
+|---|-------------|---------------------|---|
+| 1.1 | Go to the app URL and sign in | Dashboard / home loads | |
+| 1.2 | Click your profile / workspace name in the sidebar | Your workspace is shown | |
+| 1.3 | Refresh the page | You stay signed in | |
 
 ---
 
-## §5.3 / Email-Intel → Evidence
+## 2. Onboarding (§8.1)
 
-| # | Step | Expected |
-|---|------|----------|
-| 5.3.1 | `POST /api/v1/email-intel/verify` with an email | Verification payload |
-| 5.3.2 | Confirm Email-Intel forwarder path (ops) hits `POST /evidence/ingest/email-intel` | Ingest accepted when token valid |
-
----
-
-## §7 — Platform plane
-
-| # | Step | Expected |
-|---|------|----------|
-| 7.1 | Authenticated `GET /api/v1/me` | User + workspace context |
-| 7.2 | Call any workspace-scoped API | Uses workspace tenancy (no cross-tenant data) |
+| # | What you do | What you should see | ☐ |
+|---|-------------|---------------------|---|
+| 2.1 | Open **Onboarding** from the sidebar (or `/onboarding`) | Setup wizard / ICP questions appear | |
+| 2.2 | Fill company / ICP basics and continue | Progress saves; you can finish or skip to the app | |
+| 2.3 | After finishing, open Discover or TAM | App works with your workspace settings | |
 
 ---
 
-## §8.1 — Onboarding
+## 3. Discover / TAM / search (§8.2)
 
-**UI:** `/onboarding`
-
-| # | Step | Expected |
-|---|------|----------|
-| 8.1.1 | Open `/onboarding` as new or existing user | Wizard loads |
-| 8.1.2 | Complete ICP / workspace basics | Saved; can open Discover |
-
----
-
-## §8.2 — Discover / TAM / search
-
-**UI:** `/tam`, `/prospects/search`
-
-| # | Step | Expected |
-|---|------|----------|
-| 8.2.1 | Open TAM / search | Results or empty state (no 5xx) |
-| 8.2.2 | Run a search / add to list | Prospect or list updates |
+| # | What you do | What you should see | ☐ |
+|---|-------------|---------------------|---|
+| 3.1 | Open **TAM** or **Prospect search** | Search page loads (results or empty state OK) | |
+| 3.2 | Enter a company / title / filter and search | Results list appears, or a clear “no results” | |
+| 3.3 | Add one prospect to a list | Prospect shows in that list | |
 
 ---
 
-## §8.3 — Enrichment workbooks
+## 4. Enrichment workbooks (§8.3)
 
-**UI:** `/enrichment/workbooks`
-
-| # | Step | Expected |
-|---|------|----------|
-| 8.3.1 | Create workbook | Appears in list |
-| 8.3.2 | Activate + start a run | Run status progresses |
-| 8.3.3 | Open run detail | Rows / errors visible |
-
----
-
-## §8.4 — Account / Person 360
-
-**UI:** `/crm/360`  
-**APIs:** `/api/v1/account-360/:companyId`, `/api/v1/person-360/:contactId`
-
-| # | Step | Expected |
-|---|------|----------|
-| 8.4.1 | Copy a company UUID from CRM | |
-| 8.4.2 | Open `/crm/360` → load company | Deals, timeline, signals compose |
-| 8.4.3 | Switch to Person → contact UUID | Person 360 loads |
+| # | What you do | What you should see | ☐ |
+|---|-------------|---------------------|---|
+| 4.1 | Open **Enrichment → Workbooks** | Workbook list page | |
+| 4.2 | Create a new workbook and save | It appears in the list | |
+| 4.3 | Activate it and start a run | Run status moves (queued → running → done/failed) | |
+| 4.4 | Open the run | You can see rows / progress / errors | |
 
 ---
 
-## §8.5 — Signals
+## 5. Account & Person 360 (§8.4)
 
-**UI:** `/signals`
-
-| # | Step | Expected |
-|---|------|----------|
-| 8.5.1 | Open Signals | Feed or empty state |
-| 8.5.2 | Open one signal | Detail without 5xx |
-
----
-
-## §8.6 — Sequence Studio
-
-**UI:** `/sequences`
-
-| # | Step | Expected |
-|---|------|----------|
-| 8.6.1 | Create sequence | Saved |
-| 8.6.2 | Add step(s) + enroll a contact | Enrollment created |
-| 8.6.3 | Check enrollments / analytics | Counts update |
+| # | What you do | What you should see | ☐ |
+|---|-------------|---------------------|---|
+| 5.1 | Open **CRM** and pick any company (or copy its ID) | Company detail exists | |
+| 5.2 | Open **Account 360** (`/crm/360`) and load that company | One screen with deals, activity, signals (or empty sections) | |
+| 5.3 | Switch to **Person** mode and load a contact | Person 360 shows contact-centric view | |
 
 ---
 
-## §8.7 — Dexter + Policy Gateway
+## 6. Signals (§8.5)
 
-**UI:** `/dexter`, `/settings/automation-policy`  
-**APIs:** `/api/v1/dexter/plans*`, `/automation-policy`, `/policy/*`
-
-| # | Step | Expected |
-|---|------|----------|
-| 8.7.1 | Open Policy Gateway settings | Modes ask/auto/draft/approve listed |
-| 8.7.2 | `PUT /automation-policy` change one action | Persists on `GET` |
-| 8.7.3 | Open `/dexter` → propose plan | Plan created (pending approve) |
-| 8.7.4 | Approve plan → Invoke | Invoke blocked until approve; then succeeds via gateway |
-| 8.7.5 | Record learn outcome | Plan learning recorded |
-| 8.7.6 | `GET /policy/decisions` | Audit entries present |
+| # | What you do | What you should see | ☐ |
+|---|-------------|---------------------|---|
+| 6.1 | Open **Signals** | Feed or empty state (no crash) | |
+| 6.2 | Open one signal if any exist | Detail view opens | |
 
 ---
 
-## §8.8 — LinkedIn (Unipile)
+## 7. Sequences (§8.6)
 
-**UI:** Deliverability / LinkedIn connect · inbox LI surfaces
-
-| # | Step | Expected |
-|---|------|----------|
-| 8.8.1 | Open LinkedIn connect UI | Hosted auth or account list |
-| 8.8.2 | Connect account (if Unipile secrets set) | Account active |
-| 8.8.3 | Sequence with LinkedIn step → enroll | Job queued / sent or clear `unipile_not_configured` |
-
----
-
-## §8.9 — Chrome companion
-
-**Package:** `apps/chrome-extension` / `skout-extension-v0.8.1.zip`
-
-| # | Step | Expected |
-|---|------|----------|
-| 8.9.1 | Load unpacked `store-build` or zip | Extension installs |
-| 8.9.2 | Sign in on Skout web → Connect in side panel | Signed-in identity |
-| 8.9.3 | LinkedIn `/in/…` → Add to list | Contact appears in Skout list |
+| # | What you do | What you should see | ☐ |
+|---|-------------|---------------------|---|
+| 7.1 | Open **Sequences** | Sequence list | |
+| 7.2 | Create a sequence with at least one email/step | Sequence saves | |
+| 7.3 | Enroll a contact/prospect | Enrollment shows as active / pending | |
+| 7.4 | Check sequence analytics or enrollments | Counts update | |
 
 ---
 
-## §8.10 — Email intel / deliverability
+## 8. Dexter & Policy Gateway (§8.7)
 
-**UI:** `/intelligence/email`, `/warmup`
-
-| # | Step | Expected |
-|---|------|----------|
-| 8.10.1 | Verify an email in UI or API | Result + reason codes |
-| 8.10.2 | Open Warm-Up UI | Status page loads (OAuth connect may be Sailesh-blocked) |
-
----
-
-## §8.11 — Numbers / voice
-
-**UI:** `/settings/calling`
-
-| # | Step | Expected |
-|---|------|----------|
-| 8.11.1 | Open Calling settings | Page loads |
-| 8.11.2 | If Telnyx configured: click-to-call on a contact | Bridge dial initiated |
-| 8.11.3 | If not configured | Clear “not configured” message (not 5xx) |
+| # | What you do | What you should see | ☐ |
+|---|-------------|---------------------|---|
+| 8.1 | Open **Settings → Automation policy** (Policy Gateway) | Modes like ask / auto / draft / approve | |
+| 8.2 | Change one action’s mode and save | Setting sticks after refresh | |
+| 8.3 | Open **Dexter** (`/dexter`) | Orchestrator page loads | |
+| 8.4 | Propose / create a GTM plan | Plan appears as pending approval | |
+| 8.5 | Approve the plan, then invoke | Invoke works after approve (blocked before) | |
+| 8.6 | Record a learning / outcome if shown | Outcome saved on the plan | |
+| 8.7 | Open the floating **AI chat** button | Chat opens; ask “What should I do next?” and get a reply | |
 
 ---
 
-## §8.12 — CRM Intelligence / HubSpot
+## 9. Decisions (§10)
 
-**UI:** `/crm/intelligence`
-
-| # | Step | Expected |
-|---|------|----------|
-| 8.12.1 | Open CRM Intelligence | Views load |
-| 8.12.2 | HubSpot connect (if creds) | Connection listed under `/crm/connections` |
-| 8.12.3 | `POST /crm/hubspot/sync-native` | Sync summary (contacts/deals) |
+| # | What you do | What you should see | ☐ |
+|---|-------------|---------------------|---|
+| 9.1 | Open **Decisions** (`/decisions`) | Decision queue page | |
+| 9.2 | Create a decision from next-best-action (or UI create) | New item in the queue | |
+| 9.3 | Choose an option or dismiss | Status updates; item leaves open queue | |
 
 ---
 
-## §8.13 — AI command bar / copilots
+## 10. Workflows (§8.14)
 
-**UI:** Dexter chat FAB · `/admin/cro`
-
-| # | Step | Expected |
-|---|------|----------|
-| 8.13.1 | Open chat FAB → ask a workspace question | Reply streams / returns |
-| 8.13.2 | Open CRO admin | Forecast / board views load |
-
----
-
-## §8.14 — Automation / workflows / policy
-
-**UI:** `/workflows`, activation rules, `/settings/automation-policy`
-
-| # | Step | Expected |
-|---|------|----------|
-| 8.14.1 | `POST /workflows/runs` (e.g. enrich/score style) | Run `running` |
-| 8.14.2 | `POST /workflows/runs/:id/complete` | Run `completed` |
-| 8.14.3 | Open `/workflows` UI | Runs listed |
+| # | What you do | What you should see | ☐ |
+|---|-------------|---------------------|---|
+| 10.1 | Open **Workflows** (`/workflows`) | Workflow Studio / runs list | |
+| 10.2 | Start a run (enrich/score style if available) | Run appears as running | |
+| 10.3 | Wait until complete (or mark complete if UI allows) | Run shows completed | |
 
 ---
 
-## §8.15 — Reporting / GTM learning
+## 11. LinkedIn (§8.8)
 
-**UI:** `/admin/cro`, reporting surfaces
-
-| # | Step | Expected |
-|---|------|----------|
-| 8.15.1 | Open CRO / reporting | Charts or empty states |
-| 8.15.2 | Dexter learn step (8.7.5) visible in learning trail | Outcome stored |
-
----
-
-## §10 — Cross-domain journeys / decision views
-
-**UI:** `/decisions`  
-**APIs:** `/api/v1/decisions*`
-
-| # | Step | Expected |
-|---|------|----------|
-| 10.1 | `POST /decisions/from-nba` (or create from UI) | Decision created |
-| 10.2 | Open `/decisions` | Queue shows item |
-| 10.3 | Decide or dismiss | Status updates |
-| 10.4 | LinkedIn voice (if used): `POST /linkedin/voice/*` | Draft / approve path works |
+| # | What you do | What you should see | ☐ |
+|---|-------------|---------------------|---|
+| 11.1 | Open Deliverability / **LinkedIn** connect | Connect screen or account list | |
+| 11.2 | Connect a LinkedIn account (Unipile) if prompted | Account shows as connected / active | |
+| 11.3 | Add a LinkedIn step to a sequence and enroll someone | Job queued/sent, or a clear “not configured” message | |
 
 ---
 
-## §11.1 — Security / tenancy / SSO
+## 12. Chrome extension (§8.9)
 
-| # | Step | Expected |
-|---|------|----------|
-| 11.1.1 | Confirm RBAC: member without permission hits restricted CRM write | `403` (fail-closed) |
-| 11.1.2 | Owner can invite (`POST /team/invites`) | `201` |
-| 11.1.3 | Consent: `POST /consents` + enroll path | Consent enforced when flag on |
-| 11.1.4 | `GET /api/v1/sso/stage6/status` | `platformReady: true` |
-| 11.1.5 | `PUT /sso/workspaces/current` with clerkOrgId + idpProvider | Binding saved |
-| 11.1.6 | `POST /sso/workspaces/current/activate` | Status active |
-| 11.1.7 | `POST /sso/scim/sync-members` with `dryRun: true` | Preview roles; no crash |
+| # | What you do | What you should see | ☐ |
+|---|-------------|---------------------|---|
+| 12.1 | Install the Skout extension (unpacked `store-build` or zip from the team) | Extension appears in Chrome | |
+| 12.2 | Sign in to Skout in the same browser → open side panel → Connect | Shows you as signed in | |
+| 12.3 | Open a LinkedIn profile → **Add to list** | Contact appears in your Skout list | |
 
 ---
 
-## §11.2 / §11.3 — SLOs + journey metrics
+## 13. Email intelligence & Warm-Up (§8.10)
 
-| # | Step | Expected |
-|---|------|----------|
-| 11.2.1 | `GET /api/v1/slo` | Matches `docs/slo-targets.md` |
-| 11.3.1 | `GET /api/v1/metrics` | Journey counters present after journey traffic |
-
----
-
-## §13.2 / §16 — Reconciliation / missing areas (docs)
-
-| # | Step | Expected |
-|---|------|----------|
-| 13.2.1 | Open `docs/reconciliation-matrix.md` | Matrix current |
-| 16.1 | Open `docs/missing-areas-triage.md` | Triage recorded |
+| # | What you do | What you should see | ☐ |
+|---|-------------|---------------------|---|
+| 13.1 | Open **Intelligence → Email** | Verify / discover UI | |
+| 13.2 | Verify a real email address | Result with status (valid / risky / etc.) | |
+| 13.3 | Open **Warm-Up** | Page loads (Google/Microsoft connect may still be blocked until OAuth apps are ready) | |
 
 ---
 
-## External (not eng-complete — skip or note)
+## 14. Calling (§8.11)
 
-| Item | How to note |
-|------|-------------|
-| GTM ≥4 **real** win/loss deals | Enter via §2 until count ≥4 |
-| Warm-Up Google/Microsoft OAuth | Blocked on Sailesh app credentials |
-| Chrome Web Store publisher submit | Package ready; optional Product click |
-| Customer IdP metadata in Clerk | Deal-time ops; APIs already tested in §11.1 |
+| # | What you do | What you should see | ☐ |
+|---|-------------|---------------------|---|
+| 14.1 | Open **Settings → Calling** | Calling settings page | |
+| 14.2 | Open a contact with a phone number → click **Call** | Call starts **or** a clear “calling not configured” message | |
+
+---
+
+## 15. CRM Intelligence & HubSpot (§8.12)
+
+| # | What you do | What you should see | ☐ |
+|---|-------------|---------------------|---|
+| 15.1 | Open **CRM → Intelligence** | Intelligence views load | |
+| 15.2 | Connect HubSpot if your workspace uses it | Connection shows as linked | |
+| 15.3 | Run sync / import if the button exists | Progress or success summary | |
+
+---
+
+## 16. CRO / reporting (§8.15 / §8.13)
+
+| # | What you do | What you should see | ☐ |
+|---|-------------|---------------------|---|
+| 16.1 | Open **Admin → CRO** (or reporting) | Charts / forecasts or empty states | |
+| 16.2 | Ask Dexter chat something about pipeline | Sensible reply (not a blank error) | |
+
+---
+
+## 17. Competitive win/loss (§2) — for GTM
+
+| # | What you do | What you should see | ☐ |
+|---|-------------|---------------------|---|
+| 17.1 | Open competitive / win-loss entry (CRM or API-backed UI) | Form or list to add deals | |
+| 17.2 | Add a won or lost deal (competitor, reason, region) | Deal saves and appears in the list | |
+| 17.3 | Add until you have **4+ real deals** (GTM goal) | Regional TAM unlocks when gate is met | |
+
+---
+
+## 18. Team & security (as a user) (§11.1)
+
+| # | What you do | What you should see | ☐ |
+|---|-------------|---------------------|---|
+| 18.1 | As **owner**, open Team / invites and invite a teammate | Invite sends / shows as pending | |
+| 18.2 | As a **member** (or second account), try an admin-only action | Access denied / blocked — not a server crash | |
+| 18.3 | Confirm you only see **your workspace’s** data | No other company’s contacts | |
+
+---
+
+## Optional / external (do not block Pass)
+
+| Item | Notes | ☐ |
+|------|-------|---|
+| Warm-Up Google / Microsoft connect | Needs Sailesh OAuth apps | |
+| Chrome Web Store public listing | Package ready; publisher submit optional | |
+| Customer SSO (Okta etc.) | Done in Clerk at deal time | |
+| Telnyx number buy / KYC | Done in Telnyx Mission Control, not in Skout | |
 
 ---
 
 ## Sign-off
 
-| Tester | Date | Overall |
-|--------|------|---------|
-| | | Pass / Fail / Partial |
+| | |
+|--|--|
+| Overall result | ☐ Pass ☐ Fail ☐ Partial |
+| Tester | ________________ |
+| Date | ________________ |
+| Notes | ________________ |
 
-**Related:** `docs/neeraj-task-list-status.md` · `docs/section-8-domains-status.md` · `docs/ops/skoutdev-is-production.md`
+---
+
+*Skout AI · Neeraj completed features · User testing guide · 2026-08-26*
