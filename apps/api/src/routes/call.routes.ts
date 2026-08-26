@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { and, eq } from "drizzle-orm";
-import { schema } from "@skout/db";
+import { getLatestEvidenceByAttribute, recordEvidence, schema } from "@skout/db";
 import { filterAutoFillablePatch, mergeAutoFillSources, asFieldSourcesMap } from "@skout/shared";
 import { errorResponse, HttpError } from "../utils/http.js";
 import {
@@ -132,7 +132,8 @@ export async function callRoutes(app: FastifyInstance) {
         .limit(1);
       if (contact) {
         const existingSources = asFieldSourcesMap(contact.fieldSources);
-        const { applied } = filterAutoFillablePatch(extraction.contact, existingSources);
+        const evidenceByAttribute = await getLatestEvidenceByAttribute(db(), workspaceId, "contact", contact.id);
+        const { applied } = filterAutoFillablePatch(extraction.contact, existingSources, evidenceByAttribute);
         const appliedFields = Object.keys(applied);
         if (appliedFields.length > 0) {
           const nextFieldSources = mergeAutoFillSources(existingSources, appliedFields, "call_note", extraction.contactConfidence);
@@ -140,6 +141,23 @@ export async function callRoutes(app: FastifyInstance) {
             .update(schema.contacts)
             .set({ ...applied, fieldSources: nextFieldSources, updatedAt: new Date() })
             .where(eq(schema.contacts.id, contact.id));
+          for (const field of appliedFields) {
+            try {
+              await recordEvidence(db(), {
+                workspaceId,
+                entityType: "contact",
+                entityId: contact.id,
+                attribute: field,
+                value: (applied as Record<string, unknown>)[field],
+                source: "call_note",
+                observedAt: new Date(),
+                confidence: extraction.contactConfidence ?? 0.6,
+                method: "call_note_autofill",
+              });
+            } catch (err) {
+              app.log.warn({ err, field }, "call-note evidence dual-write failed");
+            }
+          }
         }
 
         if (extraction.company && contact.companyId) {
@@ -150,7 +168,12 @@ export async function callRoutes(app: FastifyInstance) {
             .limit(1);
           if (company) {
             const existingCompanySources = asFieldSourcesMap(company.fieldSources);
-            const { applied: companyApplied } = filterAutoFillablePatch(extraction.company, existingCompanySources);
+            const companyEvidence = await getLatestEvidenceByAttribute(db(), workspaceId, "company", company.id);
+            const { applied: companyApplied } = filterAutoFillablePatch(
+              extraction.company,
+              existingCompanySources,
+              companyEvidence
+            );
             const companyAppliedFields = Object.keys(companyApplied);
             if (companyAppliedFields.length > 0) {
               const nextCompanySources = mergeAutoFillSources(
@@ -163,6 +186,23 @@ export async function callRoutes(app: FastifyInstance) {
                 .update(schema.companies)
                 .set({ ...companyApplied, fieldSources: nextCompanySources, updatedAt: new Date() })
                 .where(eq(schema.companies.id, company.id));
+              for (const field of companyAppliedFields) {
+                try {
+                  await recordEvidence(db(), {
+                    workspaceId,
+                    entityType: "company",
+                    entityId: company.id,
+                    attribute: field,
+                    value: (companyApplied as Record<string, unknown>)[field],
+                    source: "call_note",
+                    observedAt: new Date(),
+                    confidence: extraction.companyConfidence ?? 0.6,
+                    method: "call_note_autofill",
+                  });
+                } catch (err) {
+                  app.log.warn({ err, field }, "call-note company evidence dual-write failed");
+                }
+              }
             }
           }
         }

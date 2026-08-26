@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { pipelineCreateSchema, pipelineStageCreateSchema, pipelineUpdateSchema } from "@skout/shared";
-import { HttpError } from "@skout/auth";
+import { HttpError, enforcePermission } from "@skout/auth";
 import { parseIdParam } from "../utils/http.js";
 import { requireRole } from "../utils/require-role.js";
 import { buildAuditService } from "../services/audit.service.js";
@@ -13,6 +13,17 @@ export async function pipelinesRoutes(app: FastifyInstance) {
     return buildPipelinesService(db, auditService);
   };
 
+  async function shadowCrmManage(request: { userId?: string; workspaceId?: string }, action: string) {
+    const workspaceId = request.workspaceId ?? "unknown";
+    if (app.db && request.userId) {
+      await enforcePermission(app.db, workspaceId, request.userId, "crm:manage", {
+        enforce: app.config.RBAC_ENFORCEMENT_ENABLED,
+        onShadowDeny: (info) =>
+          app.log.warn(info, `RBAC shadow-mode: crm:manage would have been denied (${action})`),
+      });
+    }
+  }
+
   app.get("/pipelines", async (request) => {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
@@ -23,6 +34,8 @@ export async function pipelinesRoutes(app: FastifyInstance) {
   });
 
   app.post("/pipelines", async (request, reply) => {
+    requireRole(request, ["owner", "admin", "member"]);
+    await shadowCrmManage(request, "create pipeline");
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
@@ -33,6 +46,8 @@ export async function pipelinesRoutes(app: FastifyInstance) {
   });
 
   app.post("/pipelines/:id/stages", async (request, reply) => {
+    requireRole(request, ["owner", "admin", "member"]);
+    await shadowCrmManage(request, "add pipeline stage");
     const id = parseIdParam(request);
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
@@ -44,6 +59,8 @@ export async function pipelinesRoutes(app: FastifyInstance) {
   });
 
   app.patch("/pipelines/:id", async (request, reply) => {
+    requireRole(request, ["owner", "admin", "member"]);
+    await shadowCrmManage(request, "update pipeline");
     const id = parseIdParam(request);
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
@@ -59,6 +76,7 @@ export async function pipelinesRoutes(app: FastifyInstance) {
     const id = parseIdParam(request);
     const workspaceId = request.workspaceId ?? "unknown";
     requireRole(request, ["owner", "admin"]);
+    await shadowCrmManage(request, "delete pipeline");
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
 

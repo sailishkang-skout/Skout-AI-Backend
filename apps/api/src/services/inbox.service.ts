@@ -518,6 +518,20 @@ export class InboxService {
     }
     // Require verification whenever credentials are provided
     const requiresVerification = !!(smtpPasswordEncrypted || input.smtpHost);
+    // §7 — default daily send limit from entitlements when caller omits it
+    let defaultLimit = 50;
+    if (input.dailySendLimit === undefined) {
+      try {
+        const { buildEntitlementsService } = await import("./entitlements.service.js");
+        const ents = buildEntitlementsService(this.db);
+        if (ents) {
+          const v = await ents.getValueOr(workspaceId, "inbox.daily_send_limit", 50);
+          defaultLimit = typeof v === "number" && Number.isFinite(v) ? Math.max(1, Math.floor(v)) : 50;
+        }
+      } catch {
+        defaultLimit = 50;
+      }
+    }
     const [row] = await this.db
       .insert(inboxes)
       .values({
@@ -525,7 +539,7 @@ export class InboxService {
         emailAddress: input.emailAddress,
         displayName: input.displayName ?? null,
         provider: input.provider ?? "smtp",
-        dailySendLimit: input.dailySendLimit ?? 50,
+        dailySendLimit: input.dailySendLimit ?? defaultLimit,
         sendingDomainId: input.sendingDomainId ?? null,
         status: requiresVerification ? "pending_verification" : "active",
         smtpHost: input.smtpHost ?? null,

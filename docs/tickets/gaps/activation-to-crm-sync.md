@@ -1,26 +1,21 @@
 # Gap: no automated sync from prospect activation to a CRM contact/company row
 
 **Raised by:** R14.1 unified-record lock-in audit (`docs/tickets/r14-1-unified-record-audit.md`).
-**Owner:** Sailish (enrichment + AI wiring — inferred from git history, confirm) + Aditya (CRM
-service — inferred from git history, confirm).
-**Status:** Open.
+**Owner:** Neeraj (backend link) + Shailpreet (UI).
+**Status:** Backend eng-complete 2026-08-26 — `ensureContactLinkedToProspect` on sequence enroll.
 
-## The gap
+## The gap (original)
 
-`prospect_activations` (OLTP activation of a corpus prospect) and `contacts`/`companies` (native
-CRM entities) live side by side with no confirmed sync path. `contacts.sourceProspectId` /
-`companies.sourceProspectCompanyId` exist as link-back columns, but nothing currently guarantees a
-`contacts` row gets created when a prospect is activated — a rep has to create the CRM contact
-themselves, at which point they may or may not set `sourceProspectId`.
+`prospect_activations` and `contacts`/`companies` lived side by side with no sync path.
 
-R13.3's enrichment auto-fill (shipped) depends on this link existing: `EnrichmentService.activate`
-now looks up a linked contact by `sourceProspectId` after every snapshot upsert and auto-fills
-title/email/phone when found — but if no linked contact exists yet, activation produces enriched
-data that never reaches the CRM record a rep is actually looking at.
+## Shipped (Wave 2)
 
-## Suggested fix
+- `apps/api/src/services/prospect-crm-link.service.ts` — resolve-or-create contact with
+  `sourceProspectId`, optional company, evidence audit row.
+- Called from `SequenceService.enroll` after each successful enrollment insert (best-effort).
+- Enrichment autofill continues to use `sourceProspectId` for title/email/phone.
 
-Confirm with the team whether activation should auto-create a minimal `contacts`/`companies` row
-(status: lead, unlinked to a company until enrichment resolves one), or whether contact creation
-should stay a deliberate rep action with activation only auto-filling once a link exists. Either
-answer should be documented here and reflected in `r14-1-unified-record-audit.md`.
+## Still open (UI / product)
+
+- Whether activation itself should always auto-create a contact (vs enroll-time only).
+- Merge review UI for prospect↔CRM probabilistic matches (Shailpreet).

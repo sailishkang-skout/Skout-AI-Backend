@@ -3,6 +3,7 @@ import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { aiService } from "./ai.service.js";
+import { pinAiClaim } from "./ai-evidence.service.js";
 import { SequenceService } from "./sequence.service.js";
 import { computeOutcomeInsights, insightsToPrompt } from "./outcome-insights.service.js";
 
@@ -126,9 +127,28 @@ export async function generateSequenceForWorkspace(
     config.OPENROUTER_API_KEY
   );
 
-  return seqSvc.createGeneratedSequence(workspaceId, {
+  const sequence = await seqSvc.createGeneratedSequence(workspaceId, {
     ...generated,
     source: "dexter",
     mode: "C",
   });
+
+  await pinAiClaim(db, {
+    workspaceId,
+    entityType: "sequence",
+    entityId: sequence.id,
+    attribute: "ai_generated_cadence",
+    value: {
+      goal: input.goal,
+      name: generated.name,
+      stepCount: generated.steps?.length ?? 0,
+      listId: input.listId ?? null,
+    },
+    source: "sequence_generate",
+    method: "sequence_generate",
+    versionName: "sequence-generate",
+    confidence: 0.75,
+  });
+
+  return sequence;
 }

@@ -13,9 +13,13 @@ import { pipelinesRoutes } from "./pipelines.routes.js";
 import { promotionRoutes } from "./promotion.routes.js";
 import { retentionRulesRoutes } from "./retention-rules.routes.js";
 import { tasksRoutes } from "./tasks.routes.js";
+import { internalCrmRoutes } from "./internal.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoutes, { prefix: "/api/v1/crm" });
+
+  // §5 / §7.1 — service-to-service API (token auth; no Clerk)
+  await app.register(internalCrmRoutes, { prefix: "/internal/v1" });
 
   await app.register(async (v1) => {
     await v1.register(companiesRoutes);

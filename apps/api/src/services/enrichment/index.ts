@@ -153,7 +153,12 @@ export function buildEnrichmentService(db: Db | null, config: Env): EnrichmentSe
     // R13.3 — `activate` always sets prospectId/companyId on the snapshot before calling this.
     db
       ? (ws, snapshot) =>
-          applyEnrichmentAutoFill(db, ws, snapshot as ActivateSnapshot & { prospectId: string; companyId: string })
+          applyEnrichmentAutoFill(
+            db,
+            ws,
+            snapshot as ActivateSnapshot & { prospectId: string; companyId: string },
+            config
+          )
       : undefined
   );
 }

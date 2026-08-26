@@ -1,6 +1,6 @@
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema, recordEvidence } from "@skout/db";
+import { schema, recordEvidence, getLatestEvidenceByAttribute } from "@skout/db";
 import type { ContactCreateInput, ContactUpdateInput } from "@skout/shared";
 import { HttpError } from "@skout/auth";
 import type { CompaniesService } from "./companies.service.js";
@@ -252,7 +252,8 @@ export class ContactsService {
     const existing = await this.getById(workspaceId, id);
     if (!existing) return null;
 
-    const { applied, skipped } = filterAutoFillablePatch(patch, existing.fieldSources);
+    const evidenceByAttribute = await getLatestEvidenceByAttribute(this.db, workspaceId, "contact", id);
+    const { applied, skipped } = filterAutoFillablePatch(patch, existing.fieldSources, evidenceByAttribute);
     const appliedFields = Object.keys(applied);
     if (appliedFields.length === 0) {
       return { contact: existing, applied: [], skipped };

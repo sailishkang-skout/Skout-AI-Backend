@@ -57,6 +57,22 @@ Ship the canonical model additively, in two waves:
 - Decide whether `tenant_workspaces` needs to support genuine many-workspaces-per-tenant in
   the product (multi-workspace enterprise customers), or whether 1:1 is permanent.
 
+## Wave 2 progress (Aug 2026)
+
+**Wave 2 evidence authority shipped 2026-08-26:**
+
+- **Evidence Ledger:** dual-write on CRM auto-fill, manual edit, enrichment autofill, deals,
+  call-note autofill, Email-Intel ingest/forwarder (SkoutDev), HubSpot inbound.
+  **Autofill precedence:** `effectiveSourcesForAutofill` overlays **all** ledger sources
+  (ledger is SoT; `fieldSources` is write-through cache only — column not dropped).
+  **NBA stats:** prefer ledger attributes `next_best_action` / `next_best_action_accepted`.
+- **RBAC:** fail-closed on SkoutDev; `enforcePermission` on CRM + privileged API routes;
+  prod backfill when SkoutProd exists.
+- **Identity merge:** discovery worker + apply/restore on approve/reverse.
+- **Anti-hallucination:** `pinAiClaim` on sequence-generate, drafts fail-closed, NL search
+  marks LLM filters `unverified`.
+- **HubSpot bi-di:** inbound native-CRM sync + webhooks (§8.12) — see ADR 0009.
+
 ## Consequences
 
 - Zero risk to existing behavior: no existing table, column, or route changes. The migration

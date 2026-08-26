@@ -1,7 +1,7 @@
 import { Worker, Queue } from "bullmq";
 import { and, eq, lte } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
-import { createLogger } from "@skout/observability";
+import { createLogger, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
@@ -74,10 +74,12 @@ export async function startReportDeliverySweepWorker(config: Env) {
   const worker = new Worker(
     QUEUE_NAME,
     async () => {
-      const { delivered, failed } = await runReportDeliverySweep(db, config);
-      if (delivered || failed) {
-        log.info(`Report delivery sweep: delivered ${delivered}, failed ${failed}`);
-      }
+      await withSpan("report-delivery-sweep.tick", async () => {
+        const { delivered, failed } = await runReportDeliverySweep(db, config);
+        if (delivered || failed) {
+          log.info(`Report delivery sweep: delivered ${delivered}, failed ${failed}`);
+        }
+      });
     },
     { connection, concurrency: 1 }
   );

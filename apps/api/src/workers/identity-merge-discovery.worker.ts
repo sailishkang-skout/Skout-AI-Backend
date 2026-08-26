@@ -2,7 +2,7 @@ import { Worker, Queue } from "bullmq";
 import { and, eq, isNull } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
 import type { Db } from "@skout/db";
-import { createLogger } from "@skout/observability";
+import { createLogger, withSpan } from "@skout/observability";
 import type { MatchCandidate } from "@skout/shared";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
@@ -238,17 +238,19 @@ export async function startIdentityMergeDiscoveryWorker(config: Env) {
   const worker = new Worker(
     QUEUE_NAME,
     async () => {
-      const allWorkspaces = await db.select({ id: workspaces.id }).from(workspaces);
-      let totalProposed = 0;
-      for (const ws of allWorkspaces) {
-        try {
-          totalProposed += await sweepWorkspaceForCompanyMergeCandidates(db, ws.id);
-          totalProposed += await sweepWorkspaceForContactMergeCandidates(db, ws.id);
-        } catch (err) {
-          log.error(`Identity-merge discovery failed for workspace ${ws.id}`, { workspaceId: ws.id, err });
+      await withSpan("identity-merge-discovery.tick", async () => {
+        const allWorkspaces = await db.select({ id: workspaces.id }).from(workspaces);
+        let totalProposed = 0;
+        for (const ws of allWorkspaces) {
+          try {
+            totalProposed += await sweepWorkspaceForCompanyMergeCandidates(db, ws.id);
+            totalProposed += await sweepWorkspaceForContactMergeCandidates(db, ws.id);
+          } catch (err) {
+            log.error(`Identity-merge discovery failed for workspace ${ws.id}`, { workspaceId: ws.id, err });
+          }
         }
-      }
-      if (totalProposed > 0) log.info(`Identity-merge discovery created ${totalProposed} new proposal(s)`);
+        if (totalProposed > 0) log.info(`Identity-merge discovery created ${totalProposed} new proposal(s)`);
+      });
     },
     { connection, concurrency: 1 }
   );

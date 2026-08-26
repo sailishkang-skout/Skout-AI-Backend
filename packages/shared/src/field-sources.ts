@@ -38,6 +38,46 @@ export const DEFAULT_AUTO_FILL_CONFIDENCE: Record<Exclude<FieldSource, "manual">
 
 export type FieldSourcesMap = Record<string, FieldSourceEntry>;
 
+/** Minimal evidence row shape for autofill precedence (Wave 2 — ledger is SoT). */
+export interface EvidenceSourceHint {
+  source: string;
+  confidence?: number | null;
+}
+
+/** Map ledger `source` strings onto FieldSource for precedence decisions. */
+export function fieldSourceFromLedgerSource(source: string): FieldSource {
+  if (source === "manual") return "manual";
+  if (source === "enrichment") return "enrichment";
+  if (source === "meeting_bot") return "meeting_bot";
+  if (source === "call_note") return "call_note";
+  // hubspot_inbound, email_intel, etc. behave as non-manual auto-fill for lock rules
+  return "enrichment";
+}
+
+/**
+ * §5.3 Wave 2 — evidence_ledger is authoritative for autofill precedence.
+ * fieldSources is a write-through cache only; every ledger attribute overlays the cache.
+ * A ledger row with source "manual" still locks the field against later auto-fill.
+ */
+export function effectiveSourcesForAutofill(
+  fieldSources: FieldSourcesMap,
+  evidenceByAttribute: Record<string, EvidenceSourceHint> = {}
+): FieldSourcesMap {
+  const effective: FieldSourcesMap = { ...fieldSources };
+  const setAt = new Date().toISOString();
+  for (const [field, evidence] of Object.entries(evidenceByAttribute)) {
+    const source = fieldSourceFromLedgerSource(evidence.source);
+    effective[field] = {
+      source,
+      setAt,
+      ...(source === "manual"
+        ? {}
+        : { confidence: evidence.confidence ?? DEFAULT_AUTO_FILL_CONFIDENCE[source] }),
+    };
+  }
+  return effective;
+}
+
 export function asFieldSourcesMap(value: unknown): FieldSourcesMap {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     return value as FieldSourcesMap;
@@ -45,16 +85,21 @@ export function asFieldSourcesMap(value: unknown): FieldSourcesMap {
   return {};
 }
 
-/** Fields in `patch` whose current provenance is "manual" are dropped — auto-fill can't touch them. */
+/** Fields in `patch` whose current provenance is "manual" are dropped — auto-fill can't touch them.
+ * When `evidenceByAttribute` is supplied, evidence_ledger is SoT (manual locks + all other sources). */
 export function filterAutoFillablePatch<T extends object>(
   patch: T,
-  existingSources: FieldSourcesMap
+  existingSources: FieldSourcesMap,
+  evidenceByAttribute?: Record<string, EvidenceSourceHint>
 ): { applied: Partial<T>; skipped: string[] } {
+  const sources = evidenceByAttribute
+    ? effectiveSourcesForAutofill(existingSources, evidenceByAttribute)
+    : existingSources;
   const applied: Record<string, unknown> = {};
   const skipped: string[] = [];
   for (const [key, value] of Object.entries(patch as Record<string, unknown>)) {
     if (value === undefined) continue;
-    const existing = existingSources[key];
+    const existing = sources[key];
     if (existing?.source === "manual") {
       skipped.push(key);
       continue;

@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { enforcePermission } from "@skout/auth";
 import { errorResponse } from "../utils/http.js";
 import { buildEntitlementsService } from "../services/entitlements.service.js";
 
@@ -25,11 +26,21 @@ export async function entitlementsRoutes(app: FastifyInstance) {
     return reply.send({ data });
   });
 
+  async function shadowBillingManage(workspaceId: string, userId: string | undefined, action: string) {
+    if (!app.db || !userId) return;
+    await enforcePermission(app.db, workspaceId, userId, "billing:manage", {
+      enforce: app.config.RBAC_ENFORCEMENT_ENABLED,
+      onShadowDeny: (info) =>
+        app.log.warn(info, `RBAC shadow-mode: billing:manage would have been denied (${action})`),
+    });
+  }
+
   app.put<{ Params: { key: string } }>("/entitlements/:key", async (request, reply) => {
     if (!request.workspaceId || !request.role) return reply.code(401).send(errorResponse("Unauthorized", 401));
     if (!["owner", "admin"].includes(request.role)) {
       return reply.code(403).send(errorResponse("Requires role: owner or admin", 403));
     }
+    await shadowBillingManage(request.workspaceId, request.userId, "set entitlement");
     const svc = service();
     if (!svc) return reply.code(503).send(errorResponse("Database unavailable", 503));
 
@@ -47,6 +58,7 @@ export async function entitlementsRoutes(app: FastifyInstance) {
     if (!["owner", "admin"].includes(request.role)) {
       return reply.code(403).send(errorResponse("Requires role: owner or admin", 403));
     }
+    await shadowBillingManage(request.workspaceId, request.userId, "remove entitlement");
     const svc = service();
     if (!svc) return reply.code(503).send(errorResponse("Database unavailable", 503));
 

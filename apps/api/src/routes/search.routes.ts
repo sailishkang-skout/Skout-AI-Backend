@@ -19,11 +19,13 @@ export async function searchRoutes(app: FastifyInstance) {
     // shape, merged under any filters the caller already set explicitly, rather than running
     // as a second, separate search path.
     let nlMethod: "llm" | "heuristic" | null = null;
+    let nlUnverified = false;
     if (body.query && body.query.trim()) {
-      const { filters: translated, method } = await translateNaturalLanguageQuery(body.query, {
+      const { filters: translated, method, unverified } = await translateNaturalLanguageQuery(body.query, {
         openrouterApiKey: app.config.OPENROUTER_API_KEY,
       });
       nlMethod = method;
+      nlUnverified = unverified;
       body = { ...body, filters: mergeTranslatedFilters(body.filters ?? {}, translated) };
     }
 
@@ -80,6 +82,7 @@ export async function searchRoutes(app: FastifyInstance) {
       total: result.total,
       page: result.page,
       pageSize: result.pageSize,
+      filters: body.filters,
       ...("source" in result && result.source ? { source: result.source } : {}),
     };
 
@@ -89,6 +92,7 @@ export async function searchRoutes(app: FastifyInstance) {
       ...payload,
       cached: false,
       creditsUsed: creditCost,
+      ...(nlMethod ? { nlMethod, nlUnverified } : {}),
     });
   });
 

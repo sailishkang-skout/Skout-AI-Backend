@@ -3,7 +3,7 @@ import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { HttpError } from "@skout/auth";
 
-const { buyingCommittees, buyingCommitteeMembers, deals, contacts } = schema;
+const { buyingCommittees, buyingCommitteeMembers, deals, contacts, companies } = schema;
 
 export interface CommitteeMemberInput {
   contactId: string;
@@ -64,11 +64,49 @@ export class BuyingCommitteeService {
     return created.id;
   }
 
+  private async getOrCreateForCompany(workspaceId: string, companyId: string): Promise<string> {
+    const [company] = await this.db
+      .select({ id: companies.id })
+      .from(companies)
+      .where(and(eq(companies.id, companyId), eq(companies.workspaceId, workspaceId)))
+      .limit(1);
+    if (!company) throw new HttpError("company_not_found", 404);
+
+    const [existing] = await this.db
+      .select({ id: buyingCommittees.id })
+      .from(buyingCommittees)
+      .where(eq(buyingCommittees.companyId, companyId))
+      .limit(1);
+    if (existing) return existing.id;
+
+    const [created] = await this.db
+      .insert(buyingCommittees)
+      .values({ workspaceId, companyId })
+      .returning({ id: buyingCommittees.id });
+    if (!created) throw new HttpError("Failed to create buying committee", 500);
+    return created.id;
+  }
+
   async listForDeal(workspaceId: string, dealId: string): Promise<CommitteeMemberDto[]> {
     const [committee] = await this.db
       .select({ id: buyingCommittees.id })
       .from(buyingCommittees)
       .where(and(eq(buyingCommittees.dealId, dealId), eq(buyingCommittees.workspaceId, workspaceId)))
+      .limit(1);
+    if (!committee) return [];
+
+    const rows = await this.db
+      .select()
+      .from(buyingCommitteeMembers)
+      .where(eq(buyingCommitteeMembers.committeeId, committee.id));
+    return rows.map(toMemberDto);
+  }
+
+  async listForCompany(workspaceId: string, companyId: string): Promise<CommitteeMemberDto[]> {
+    const [committee] = await this.db
+      .select({ id: buyingCommittees.id })
+      .from(buyingCommittees)
+      .where(and(eq(buyingCommittees.companyId, companyId), eq(buyingCommittees.workspaceId, workspaceId)))
       .limit(1);
     if (!committee) return [];
 
@@ -88,6 +126,43 @@ export class BuyingCommitteeService {
     if (!contact) throw new HttpError("contact_not_found", 404);
 
     const committeeId = await this.getOrCreateForDeal(workspaceId, dealId);
+
+    const [row] = await this.db
+      .insert(buyingCommitteeMembers)
+      .values({
+        committeeId,
+        contactId: input.contactId,
+        role: input.role ?? "unknown",
+        influence: input.influence ?? 3,
+        notes: input.notes,
+      })
+      .onConflictDoUpdate({
+        target: [buyingCommitteeMembers.committeeId, buyingCommitteeMembers.contactId],
+        set: {
+          role: input.role ?? "unknown",
+          influence: input.influence ?? 3,
+          notes: input.notes,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    if (!row) throw new HttpError("Failed to add committee member", 500);
+    return toMemberDto(row);
+  }
+
+  async addMemberToCompany(
+    workspaceId: string,
+    companyId: string,
+    input: CommitteeMemberInput
+  ): Promise<CommitteeMemberDto> {
+    const [contact] = await this.db
+      .select({ id: contacts.id })
+      .from(contacts)
+      .where(and(eq(contacts.id, input.contactId), eq(contacts.workspaceId, workspaceId)))
+      .limit(1);
+    if (!contact) throw new HttpError("contact_not_found", 404);
+
+    const committeeId = await this.getOrCreateForCompany(workspaceId, companyId);
 
     const [row] = await this.db
       .insert(buyingCommitteeMembers)

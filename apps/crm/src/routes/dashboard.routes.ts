@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { enforcePermission } from "@skout/auth";
 import { buildActivitiesService } from "../services/activities.service.js";
 import { buildAuditService } from "../services/audit.service.js";
 import { buildCompaniesService } from "../services/companies.service.js";
@@ -21,6 +22,16 @@ export async function dashboardRoutes(app: FastifyInstance) {
     const meetingsService = buildMeetingsService(db, activitiesService);
     return buildDashboardService(db, dealsService, tasksService, activitiesService, meetingsService);
   };
+
+  async function shadowWorkspaceManage(request: { userId?: string; workspaceId?: string }, action: string) {
+    const workspaceId = request.workspaceId;
+    if (!app.db || !request.userId || !workspaceId) return;
+    await enforcePermission(app.db, workspaceId, request.userId, "workspace:manage", {
+      enforce: app.config.RBAC_ENFORCEMENT_ENABLED,
+      onShadowDeny: (info) =>
+        app.log.warn(info, `RBAC shadow-mode: workspace:manage would have been denied (${action})`),
+    });
+  }
 
   app.get("/dashboard/overview", async (request) => {
     const workspaceId = request.workspaceId ?? "unknown";
@@ -55,6 +66,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
   /** R14.3 — internal-only "switching cost" metric. Owner/admin only; not for reps or customers. */
   app.get("/dashboard/switching-cost", async (request) => {
     requireRole(request, ["owner", "admin"]);
+    await shadowWorkspaceManage(request, "switching-cost");
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
     if (!svc) {
@@ -75,6 +87,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
    * mirrors this at the nav/route level in the frontend). */
   app.get("/dashboard/cro-summary", async (request, reply) => {
     requireRole(request, ["owner", "admin"]);
+    await shadowWorkspaceManage(request, "cro-summary");
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
     if (!svc) return reply.code(503).send({ error: "database_unavailable" });

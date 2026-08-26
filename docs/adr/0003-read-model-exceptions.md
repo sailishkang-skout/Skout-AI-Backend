@@ -46,27 +46,23 @@ than the read-only `cro-summary.service.ts` case.
 | `apps/api/src/services/tam.service.ts` | deals | read |
 | `apps/api/src/services/next-best-action.service.ts` | contacts, deals, companies, activities, tasks | read |
 | `apps/api/src/services/reply-tag-actions.service.ts` | tasks | write |
-| `apps/api/src/services/enrichment-autofill.service.ts` | contacts, companies | read + write |
+| `apps/api/src/services/enrichment-autofill.service.ts` | contacts, companies | read + write (contact read may use `/internal/v1`) |
 
-## Consequences
-- None of these 9 files were modified in this pass beyond this audit — no behavior change, no
-  risk to the working paths above.
-- This table is now the canonical list for the next architecture review: each row is a candidate
-  either for its own formal exception comment (cheap, safe) or for migration onto a real internal
-  API once one exists (Wave 2, larger effort, tracked in ADR 0002's Wave 2 list alongside the
-  apps/crm dual-write item).
-- Recommended next step (not done here): a lightweight PR-template checklist item — matching §1's
-  own proposed check — flagging any new direct query against an apps/crm-owned table from
-  apps/api, so this list doesn't grow silently.
+## Wave 2 additions (2026-08-26)
+
+| File | Tables touched | Read/write |
+|---|---|---|
+| `apps/api/src/services/identity-merge-apply.service.ts` | companies, contacts, deals | read + write |
+| `apps/api/src/services/crm-hubspot-native-sync.service.ts` | contacts, companies | read + write |
+| `apps/api/src/workers/identity-merge-discovery.worker.ts` | companies, contacts | read |
+
+Internal CRM HTTP surface shipped (`docs/api-crm-internal-contract.md`). Enrichment autofill is the proof read path; remaining rows stay documented exceptions until migrated.
 
 ## Update (Task 17 — Enterprise Completion Plan "close everything" pass)
 All 9 confirmed instances now carry the formal exception comment block at their top (matching
 the shape `cro-summary.service.ts` already had), stating tables touched, owning service, reason,
-and review trigger. No query logic changed in any of the 9 files — this closes the "adding the
-same formal exception comment block to each" item called out below as not yet done; it does NOT
-close the Wave 2 item (an actual internal API replacing direct access).
+and review trigger.
 
-## Wave 2 (explicitly deferred, not implied done)
-Replacing any of the 9 audited call sites with a real internal API call through apps/crm. This
-remains genuinely undone — formalizing the exception comment (done above) documents the
-shortcut, it does not remove it.
+## Wave 2 status (2026-08-26)
+Internal API + one proof read path shipped. Full migration of BullMQ/transactional writers to HTTP
+remains deferred (latency/tx risk). Remaining rows keep exception comments.

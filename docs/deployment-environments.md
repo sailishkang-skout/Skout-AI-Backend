@@ -5,9 +5,11 @@
 | Git branch | Environment | AWS CDK | Deploy workflow | Env files |
 |------------|-------------|---------|-----------------|-----------|
 | **local** | Local machine | None (Docker Compose) | — | `.env`, `.env.local` |
-| **develop** | Dev | `SkoutDev-*` | `deploy-dev.yml` | `.env.dev` |
+| **develop** | **Production** (this account) | `SkoutDev-*` | `deploy-dev.yml` | `.env.dev` |
 | **uat** | UAT / sandbox | `SkoutUat-*` (coming soon) | `deploy-uat.yml` (placeholder) | `.env.uat` |
-| **main** | Production | `SkoutProd-*` | `deploy-prod.yml` | `.env.prod` |
+| **main** | Optional future 2nd prod | `SkoutProd-*` | `deploy-prod.yml` | `.env.prod` |
+
+> **2026-08-26:** Account `119408973331` has **only** `SkoutDev-cluster`. Treat it as production — [`docs/ops/skoutdev-is-production.md`](./ops/skoutdev-is-production.md).
 
 ## Env file layout
 

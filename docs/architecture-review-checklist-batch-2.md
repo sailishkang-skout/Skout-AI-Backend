@@ -33,13 +33,10 @@ implementation summary).
 
 ## §10 — Cross-domain workflows (five journeys become acceptance tests)
 
-Per the vision doc's own completion plan, these five journeys "become the acceptance tests
-for Phases 1-5, not separate tickets — each should be written as an actual automated
-end-to-end test once its component domains are built." None of the five journeys have all
-their component domains built yet (each spans multiple in-progress or not-started items), so
-writing the end-to-end tests now would be testing against an incomplete system. **Status:
-correctly not started — blocked on component-domain completion, not on this pass.** Revisit
-after each journey's named component domains ship.
+Per the vision doc, these five journeys become acceptance tests for Phases 1–5. **Contract-level
+tests shipped 2026-08-26** in `apps/api/src/e2e/journeys.e2e.test.ts` (J8–J12 for §10.1–10.5).
+Full HTTP end-to-end tests remain blocked until component domains complete (D5 signals front-half,
+D7 Dexter lifecycle, §10.5 LinkedIn voice). Revisit after each journey's domains ship.
 
 ## §11 — Enterprise platform requirements (rollup — three pillars)
 
@@ -51,14 +48,9 @@ after each journey's named component domains ship.
 
 ## §11.2 — Reliability targets
 
-Per the vision doc's own completion plan, this "depends on D17 (Observability) landing first
-to have real latency/availability data to set targets against" and is explicitly framed as
-"an instrumentation-and-target-setting exercise, not a pure engineering build." §11.3's Wave 1
-tracing baseline shipped this pass, but Wave 2 (an OTLP exporter to a real backend, wired into
-every queue) has not — there is no real trace data to derive p95/RPO/RTO targets from yet.
-**Status: correctly not started.** Revisit once §11.3's Wave 2 lands and real latency data
-exists; availability targets additionally require confirming which customer commitments are
-already contractual, which is a product/sales question, not an engineering one.
+**Status: locked 2026-08-26.** Baseline p95/RPO/RTO/freshness targets published in
+`docs/slo-targets.md` and `GET /api/v1/slo`. Datadog dashboard `tr2-pbk-y85` + on-call
+Neeraj. Customer-specific contractual overrides require Product + Legal sign-off.
 
 ## §13 — Stage 0: mandatory repository reconciliation
 
@@ -71,12 +63,11 @@ copy-paste prompt now (see below) using this document and the companion document
 starting evidence base, and assign a named owner + due date as the first concrete action —
 both are leadership decisions, not code.
 
-### §13.2 Reconciliation matrix — status unchanged
+### §13.2 Reconciliation matrix — in-repo sync complete
 
-Coverage from this pass (ADR 0002, ADR 0003, ADR 0004, and this document) should be merged
-into `Skout_AI_Reconciliation_and_WBS.xlsx`'s Reconciliation Matrix tab as the next step, per
-the vision doc's own completion plan — not done in this pass, since it's a cross-document
-merge into a workbook this pass doesn't have write access to verify against.
+Coverage merged into `docs/reconciliation-matrix.md` (2026-08-26). External workbook
+`Skout_AI_Reconciliation_and_WBS.xlsx` should be updated manually when leadership edits the
+xlsx source of truth.
 
 ### §18 — Copy-paste master prompt for the engineering repository audit
 

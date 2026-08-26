@@ -12,7 +12,7 @@ const memberInputSchema = z.object({
   notes: z.string().optional(),
 });
 
-/** §8.12 CRM Intelligence — BuyingCommittee endpoints, deal-scoped for Wave 1. */
+/** §8.12 CRM Intelligence — BuyingCommittee endpoints (deal- and company-scoped). */
 export async function buyingCommitteeRoutes(app: FastifyInstance) {
   const service = () => {
     const db = app.db ?? null;
@@ -49,6 +49,28 @@ export async function buyingCommitteeRoutes(app: FastifyInstance) {
 
     const input = memberInputSchema.parse(request.body);
     const member = await svc.addMemberToDeal(workspaceId, dealId, input);
+    return reply.code(201).send(member);
+  });
+
+  app.get("/companies/:id/buying-committee", async (request) => {
+    const companyId = parseIdParam(request);
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) throw new HttpError("database_unavailable", 503);
+
+    return { members: await svc.listForCompany(workspaceId, companyId) };
+  });
+
+  app.post("/companies/:id/buying-committee/members", async (request, reply) => {
+    requireRole(request, ["owner", "admin", "member"]);
+    await shadowCrmManage(request, "add company buying-committee member");
+    const companyId = parseIdParam(request);
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) throw new HttpError("database_unavailable", 503);
+
+    const input = memberInputSchema.parse(request.body);
+    const member = await svc.addMemberToCompany(workspaceId, companyId, input);
     return reply.code(201).send(member);
   });
 

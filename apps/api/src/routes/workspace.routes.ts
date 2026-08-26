@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { enforcePermission } from "@skout/auth";
 import { createWorkspaceService } from "../services/workspace.service.js";
 import { getWorkspaceIcpVersion, isIcpConfigured } from "../services/icp.service.js";
 import { startWorkspaceRescoreIfEnabled } from "../services/workspace-rescore.service.js";
@@ -15,6 +16,15 @@ export async function workspaceRoutes(app: FastifyInstance) {
   }
 
   const svc = createWorkspaceService(app.db);
+
+  async function shadowWorkspaceManage(workspaceId: string, userId: string | undefined, action: string) {
+    if (!userId) return;
+    await enforcePermission(app.db!, workspaceId, userId, "workspace:manage", {
+      enforce: app.config.RBAC_ENFORCEMENT_ENABLED,
+      onShadowDeny: (info) =>
+        app.log.warn(info, `RBAC shadow-mode: workspace:manage would have been denied (${action})`),
+    });
+  }
 
   // GET /api/v1/workspaces/current
   app.get("/workspaces/current", async (request, reply) => {
@@ -52,6 +62,7 @@ export async function workspaceRoutes(app: FastifyInstance) {
     if (!request.role || !["owner", "admin"].includes(request.role)) {
       return reply.code(403).send(errorResponse("Requires role: owner or admin", 403));
     }
+    await shadowWorkspaceManage(request.workspaceId, request.userId, "slack-webhook");
     const { url } = (request.body ?? {}) as { url?: string | null };
     if (url) {
       let parsed: URL;
@@ -78,6 +89,7 @@ export async function workspaceRoutes(app: FastifyInstance) {
     if (!request.role || !["owner", "admin"].includes(request.role)) {
       return reply.code(403).send(errorResponse("Requires role: owner or admin", 403));
     }
+    await shadowWorkspaceManage(request.workspaceId, request.userId, "meeting-bot-auto-join");
     const { enabled } = (request.body ?? {}) as { enabled?: boolean };
     if (typeof enabled !== "boolean") {
       return reply.code(400).send(errorResponse("enabled (boolean) is required", 400));
@@ -96,6 +108,7 @@ export async function workspaceRoutes(app: FastifyInstance) {
     if (!request.role || !["owner", "admin"].includes(request.role)) {
       return reply.code(403).send(errorResponse("Requires role: owner or admin", 403));
     }
+    await shadowWorkspaceManage(request.workspaceId, request.userId, "deal-promotion-threshold");
     const { threshold } = (request.body ?? {}) as { threshold?: number };
     if (typeof threshold !== "number" || !Number.isInteger(threshold) || threshold < 0 || threshold > 100) {
       return reply.code(400).send(errorResponse("threshold must be an integer between 0 and 100", 400));
@@ -136,6 +149,7 @@ export async function workspaceRoutes(app: FastifyInstance) {
         .code(403)
         .send(errorResponse("Only workspace owners or admins can top up credits", 403));
     }
+    await shadowWorkspaceManage(request.workspaceId, request.userId, "credits-topup");
     if (app.config.NODE_ENV === "production" && isRazorpayEnabled(app.config)) {
       return reply
         .code(403)

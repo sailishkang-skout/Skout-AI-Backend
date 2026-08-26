@@ -37,6 +37,14 @@ export async function contactsRoutes(app: FastifyInstance) {
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
 
+    if (app.db && request.userId) {
+      await enforcePermission(app.db, workspaceId, request.userId, "crm:manage", {
+        enforce: app.config.RBAC_ENFORCEMENT_ENABLED,
+        onShadowDeny: (info) =>
+          app.log.warn(info, "RBAC shadow-mode: crm:manage would have been denied (create contact)"),
+      });
+    }
+
     const input = contactCreateSchema.parse(request.body);
     const contact = await svc.create(workspaceId, request.userId, input);
     return reply.code(201).send(contact);
@@ -58,6 +66,14 @@ export async function contactsRoutes(app: FastifyInstance) {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
     if (!svc) throw new HttpError("database_unavailable", 503);
+
+    if (app.db && request.userId) {
+      await enforcePermission(app.db, workspaceId, request.userId, "crm:manage", {
+        enforce: app.config.RBAC_ENFORCEMENT_ENABLED,
+        onShadowDeny: (info) =>
+          app.log.warn(info, "RBAC shadow-mode: crm:manage would have been denied (update contact)"),
+      });
+    }
 
     const input = contactUpdateSchema.parse(request.body);
     const contact = await svc.update(workspaceId, id, request.userId, input);

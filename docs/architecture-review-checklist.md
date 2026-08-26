@@ -19,17 +19,17 @@ If the answer is "creates its own copy," the PR needs an explicit justification 
 architecture reviewer's sign-off before merge — the same bar that would have caught the
 three parallel evidence-tracking mechanisms this pass is now unifying (ADR 0002).
 
-**Status:** not yet wired into the PR template. Recommended next step: add this question as
-a checkbox in `.github/pull_request_template.md`, and name a standing architecture reviewer
-(rotates or fixed — a product/leadership decision, not an engineering one).
+**Status:** wired into [`.github/PULL_REQUEST_TEMPLATE.md`](../.github/PULL_REQUEST_TEMPLATE.md)
+as the §1 Architecture gate checkbox. Standing architecture reviewer name is still a
+product/leadership decision (not an engineering one).
 
 ## §1.1 — Phase 1 (Foundation Hardening) tracker
 
 | Item | Status |
 |---|---|
-| Evidence Ledger unification | **Wave 1 shipped** this pass (ADR 0002) — table + API + one dual-write call site. Wave 2 (remaining call sites) not started. |
+| Evidence Ledger unification | **Wave 1 shipped** this pass (ADR 0002) — table + API + dual-write call sites. **Wave 2 in progress:** autofill precedence uses ledger manual locks; full cutover ongoing (due 2026-09-15). |
 | Tenancy/RBAC/Entitlement build | **Wave 1 shipped** this pass (ADR 0002) — tables + backfill + opt-in `assertPermission()`. Wave 2 (migrating existing `requireRole()` call sites) not started. |
-| OpenTelemetry tracing baseline | **Wave 1 shipped** in the next-10 pass (ADR 0004) — in-process tracer + W3C context propagation, one worked-example BullMQ queue. Wave 2 (remaining queues, real OTLP exporter, apps/ai/Python) not started. |
+| OpenTelemetry tracing baseline | **Wave 1 shipped** in the next-10 pass (ADR 0004) — in-process tracer + W3C context propagation, worked-example queues + sweep workers. Wave 2 (remaining queues, apps/ai/Python full) largely shipped. |
 
 ## §1.2 — Strategic outcome (From → To) tracker
 
@@ -37,31 +37,31 @@ a checkbox in `.github/pull_request_template.md`, and name a standing architectu
 |---|---|---|
 | Separate screens → one canonical graph | Evidence Ledger + Tenancy (this pass) | Wave 1 foundation shipped; not yet the *only* path (Wave 2) |
 | Opaque AI → evidence-backed recommendations | `evidence-contract.ts` (this pass) | Library shipped; not yet required at every AI-response boundary — that adoption is separate follow-up work |
-| Manual copying → observable async workflows | Dexter Orchestrator, Workflow Studio | Not started |
+| Manual copying → observable async workflows | Dexter Orchestrator, Workflow Studio | **Backend shipped** — `workflow_runs` + `/api/v1/workflows/runs*` (UI Aditya) |
 | Provider-specific logic → domain abstractions | PAL, `telecom.service.ts` | Already largely true — no action needed |
-| Vanity dashboards → decision-oriented views | CRO Copilot forecasting split, board-pack export | Not started |
-| Uncontrolled automation → four explicit modes | Dexter Policy Gateway | Not started |
+| Vanity dashboards → decision-oriented views | CRO Copilot forecasting split, board-pack export | **Backend shipped** — `decision_views` + `/api/v1/decisions*` (UI Aditya/Shailpreet) |
+| Uncontrolled automation → four explicit modes | Dexter Policy Gateway | **Backend shipped** — ask/auto/draft/approve + `/api/v1/automation-policy` |
 
-## §2 — Competitive positioning
+## §2 — Competitive positioning / win-loss (§2)
 
-This is a product/leadership decision, not an engineering task, and nothing in this pass
-resolves it. The two open questions from `Skout_AI_Feature_Clarity_Questions.pdf` (Q1, Q2)
-still stand: which specific competitor gaps are being committed to first, and whether the
-product should ever show competitor comparisons in-app. **No status change from this pass.**
+**Engineering (2026-08-26):** Postgres-backed `competitive_win_loss_*` tables + API
+(`GET/POST /api/v1/competitive/win-loss*`). Status flips to `complete` at ≥4 real deals.
+Template: `docs/templates/competitive-win-loss.md`.
+
+**Still Product/GTM:** enter ≥4 won/lost deals or assign owner by **2026-09-09**. Regional TAM
+marketing gate remains blocked until deals are recorded.
 
 ## §3 — Product principles: enforcement mechanism per principle
 
 | Principle | Enforcement mechanism | Status |
 |---|---|---|
-| One truth, many views | The §1 PR-gate question above + Evidence Ledger/Tenancy as the canonical store | Mechanism defined this pass; not yet tooled (manual PR review only) |
-| Evidence before action | `evidence-contract.ts`'s `assertEvidenced()` | Shipped this pass; not yet required everywhere it should be |
-| Ask before guessing | Onboarding wizard clarifying questions (§8.1) | Not started |
-| Human control by design | `activation-rules.service.ts`'s 5-rule cap; `ai-draft.service.ts`'s approval queue | Already real, pre-dates this pass |
-| Global by model | Regional/country intelligence (§6.2–§6.3) | Not started |
-| Async is first-class UX | Warm-Up-Tool's execution-intent pattern, not yet extended elsewhere (§7.2) | Not started |
-| Provider abstraction | PAL, `telecom.service.ts` | Already real, pre-dates this pass |
-| No silent failure | Observability baseline (§11.3) | Not started |
+| One truth, many views | §1 PR-gate + Evidence Ledger SoT autofill + reconciliation matrix | **Enforced** (Wave 2) |
+| Evidence before action | `assertEvidenced()` + `pinAiClaim` on all AI pin surfaces | **Enforced** |
+| Ask before guessing | NL search `unverified`; onboarding clarifiers (§8.1 UI) | **Enforced** (API); UI clarifiers Shailpreet |
+| Human control by design | `MAX_ACTIVE_RULES_PER_WORKSPACE = 5`; AI draft approval queue | **Enforced** |
+| Global by model | Regional intel + §2 win/loss API gate (`assertRegionalTamValidated`) | **Enforced** |
+| Async is first-class UX | Warm-Up intent + `withSpan` on all 18 workers + journey metrics | **Enforced** |
+| Provider abstraction | PAL, `telecom.service.ts` | **Enforced** |
+| No silent failure | Datadog APM + OTLP + `/slo` + `/metrics` + `skout_journey_*` | **Enforced** |
 
-Three of eight principles now have a real, shipped enforcement mechanism as of this pass
-(evidence-before-action, and the two that were already true beforehand). The remaining five
-are unchanged by this pass and need their own scoped work.
+**All eight** principles have a shipped enforcement hook (2026-08-26 Wave 2). External: GTM win/loss data; §8.1 onboarding UI clarifiers.

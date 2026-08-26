@@ -1,3 +1,5 @@
+import { createHash, timingSafeEqual } from "node:crypto";
+
 const HUBSPOT_AUTH_URL = "https://app.hubspot.com/oauth/authorize";
 const HUBSPOT_TOKEN_URL = "https://api.hubapi.com/oauth/v1/token";
 const HUBSPOT_API = "https://api.hubapi.com";
@@ -19,7 +21,7 @@ export function buildHubSpotAuthorizeUrl(params: {
   url.searchParams.set("redirect_uri", params.redirectUri);
   url.searchParams.set(
     "scope",
-    "oauth crm.objects.contacts.read crm.objects.contacts.write crm.lists.read"
+    "oauth crm.objects.contacts.read crm.objects.contacts.write crm.objects.deals.read crm.lists.read"
   );
   url.searchParams.set("state", params.state);
   return url.toString();
@@ -429,4 +431,78 @@ export async function fetchHubSpotListContacts(
   const ids = await fetchHubSpotListContactIds(accessToken, listId, maxContacts);
   if (!ids.length) return [];
   return batchReadHubSpotContacts(accessToken, ids);
+}
+
+export interface HubSpotDealRecord {
+  id: string;
+  properties?: {
+    dealname?: string;
+    amount?: string;
+    closedate?: string;
+    dealstage?: string;
+    pipeline?: string;
+  };
+}
+
+const DEAL_PROPERTIES = ["dealname", "amount", "closedate", "dealstage", "pipeline"] as const;
+
+export async function fetchAllHubSpotDeals(
+  accessToken: string,
+  maxDeals = 200
+): Promise<HubSpotDealRecord[]> {
+  const results: HubSpotDealRecord[] = [];
+  let after: string | undefined;
+
+  while (results.length < maxDeals) {
+    const qs = new URLSearchParams({
+      limit: "100",
+      properties: DEAL_PROPERTIES.join(","),
+    });
+    if (after) qs.set("after", after);
+
+    const data = await hubspotFetch<{
+      results?: HubSpotDealRecord[];
+      paging?: { next?: { after?: string } };
+    }>(accessToken, `/crm/v3/objects/deals?${qs}`);
+
+    results.push(...(data.results ?? []));
+    if (results.length >= maxDeals) break;
+    after = data.paging?.next?.after;
+    if (!after || !(data.results?.length)) break;
+  }
+
+  return results.slice(0, maxDeals);
+}
+
+export async function fetchHubSpotDeal(
+  accessToken: string,
+  dealId: string
+): Promise<HubSpotDealRecord | null> {
+  const qs = new URLSearchParams({ properties: DEAL_PROPERTIES.join(",") });
+  try {
+    return await hubspotFetch<HubSpotDealRecord>(
+      accessToken,
+      `/crm/v3/objects/deals/${encodeURIComponent(dealId)}?${qs}`
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** HubSpot webhook v1 signature: sha256(clientSecret + body). */
+export function verifyHubSpotWebhookSignature(
+  clientSecret: string,
+  rawBody: string,
+  signatureHeader: string | undefined
+): boolean {
+  if (!signatureHeader) return false;
+  const expected = createHash("sha256").update(clientSecret + rawBody, "utf8").digest("hex");
+  try {
+    const a = Buffer.from(expected);
+    const b = Buffer.from(signatureHeader);
+    if (a.length !== b.length) return false;
+    return timingSafeEqual(a, b);
+  } catch {
+    return expected === signatureHeader;
+  }
 }

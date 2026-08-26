@@ -1,6 +1,6 @@
 import { Worker } from "bullmq";
 import { createDb } from "@skout/db";
-import { createLogger } from "@skout/observability";
+import { createLogger, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
@@ -27,7 +27,9 @@ export async function startWorkbookRunWorker(config: Env): Promise<() => Promise
     async (job) => {
       const { runId, workspaceId } = job.data;
       log.info("Processing workbook run job", { runId, workspaceId, attempt: job.attemptsMade });
-      await runWorkbookRunJob(db, config, runId, workspaceId);
+      await withSpan("workbook-run.worker.process", () =>
+        runWorkbookRunJob(db, config, runId, workspaceId)
+      );
     },
     {
       connection: redisBullMqConnection(config.REDIS_URL),
