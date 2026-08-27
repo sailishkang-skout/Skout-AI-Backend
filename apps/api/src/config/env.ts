@@ -55,6 +55,17 @@ const envSchema = z
       .string()
       .default("http://localhost:3000")
       .transform((val) => val.split(",").map((s) => s.trim())),
+    /** Emails allowed to edit/approve the shared regional-brief layers (global/region/country/industry).
+     * Empty by default — no one has platform-admin access until explicitly configured. */
+    PLATFORM_ADMIN_EMAILS: z
+      .string()
+      .default("")
+      .transform((val) =>
+        val
+          .split(",")
+          .map((s) => s.trim().toLowerCase())
+          .filter(Boolean)
+      ),
     CLERK_SECRET_KEY: z.string().optional(),
     CLERK_PUBLISHABLE_KEY: z.string().optional(),
     /** When true, skip JWT and use stub user (local only; never set in prod). */

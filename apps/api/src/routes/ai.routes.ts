@@ -372,6 +372,12 @@ export async function aiRoutes(app: FastifyInstance) {
         }
       }
 
+      const runnerSeqIds = toolRunner.getCreatedSequenceIds();
+      if (runnerSeqIds.length > 0 && !sequenceId) {
+        sequenceId = runnerSeqIds[0];
+        applied = true;
+      }
+
       // Ask + stageForReview: segregate AI email into the review queue (never auto-send).
       if (
         body.mode === "ask" &&

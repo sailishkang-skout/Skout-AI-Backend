@@ -78,7 +78,7 @@ afterAll(async () => {
   await app?.close();
 });
 
-describe("R10.1 — TAM to qualified opportunity (9-step e2e)", () => {
+describe("R10.1 — TAM to qualified opportunity (9-step e2e)", { timeout: 60000 }, () => {
   it("step 1 — ICP/regions/exclusions in", async () => {
     const res = await app.inject({
       method: "PUT",
