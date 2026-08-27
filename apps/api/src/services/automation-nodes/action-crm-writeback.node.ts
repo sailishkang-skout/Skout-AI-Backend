@@ -1,4 +1,5 @@
 import { schema } from "@skout/db";
+import { HttpError } from "../../utils/http.js";
 import type { NodeHandler } from "./types.js";
 
 /**
@@ -15,15 +16,26 @@ import type { NodeHandler } from "./types.js";
  */
 const { activities } = schema;
 
-/** Config: { entityType: string; entityId: string; activityType: string; subject?: string; body?: string } */
+/**
+ * Config: { entityType?: string; entityId: string; activityType?: string; subject?: string; body?: string }.
+ * `entityType`/`activityType` default here rather than in the config panel — the panel only
+ * *displays* "contact"/"workflow_action" as placeholder values, which aren't written into the
+ * saved graph unless the user actually touches those fields, and both are NOT NULL columns with
+ * no database-level default. `entityId` has no sensible default (it names a specific CRM record),
+ * so a missing one fails fast with a clear error instead of a raw NOT NULL violation.
+ */
 export const crmWritebackActionNodeHandler: NodeHandler = async (ctx) => {
-  const { entityType, entityId, activityType, subject, body } = ctx.node.config as {
-    entityType: string;
+  const { entityType = "contact", entityId, activityType = "workflow_action", subject, body } = ctx.node.config as {
+    entityType?: string;
     entityId: string;
-    activityType: string;
+    activityType?: string;
     subject?: string;
     body?: string;
   };
+
+  if (!entityId) {
+    throw new HttpError("CRM writeback node is missing entityId — pick an existing contact/company/deal to log against", 422);
+  }
 
   if (ctx.isSimulation) {
     return { output: { simulated: true, entityType, entityId, activityType } };

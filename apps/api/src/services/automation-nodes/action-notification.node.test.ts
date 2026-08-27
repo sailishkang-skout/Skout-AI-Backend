@@ -22,6 +22,27 @@ describe("notificationActionNodeHandler", () => {
     expect(result.output.notificationId).toBe("notif-1");
   });
 
+  it("defaults type to 'workflow' when the config panel's field was never touched", async () => {
+    vi.spyOn(notificationsService, "createNotification").mockResolvedValue({ id: "notif-2" } as any);
+    // `type` is genuinely absent here — a node the user added but never opened the Type field
+    // for, matching what the frontend actually persists. `type` is a NOT NULL DB column with
+    // no default, so this crashed the insert before the handler applied its own fallback.
+    await notificationActionNodeHandler({
+      db: {} as any,
+      config: {} as any,
+      workspaceId: "ws-1",
+      runId: "run-1",
+      isSimulation: false,
+      node: { id: "n1", type: "action_notification", config: { title: "Hi" } },
+      priorOutputs: {},
+    });
+    expect(notificationsService.createNotification).toHaveBeenCalledWith(
+      {},
+      {},
+      expect.objectContaining({ type: "workflow" })
+    );
+  });
+
   it("skips the actual send in simulation mode", async () => {
     vi.spyOn(notificationsService, "createNotification").mockClear();
     const result = await notificationActionNodeHandler({
