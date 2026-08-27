@@ -40,4 +40,24 @@ describe("AutomationService", () => {
     expect(version.status).toBe("published");
     expect(version.version).toBe(1);
   });
+
+  it("getDraftVersion returns the draft row when one exists", async () => {
+    const limit = vi.fn().mockResolvedValue([{ id: "v-0", automationId: "auto-1", version: 0, status: "draft", graph: EMPTY_GRAPH }]);
+    const where = vi.fn().mockReturnValue({ limit });
+    const from = vi.fn().mockReturnValue({ where });
+    const db = makeDb({ select: vi.fn().mockReturnValue({ from }) });
+    const svc = new AutomationService(db);
+    const draft = await svc.getDraftVersion("auto-1");
+    expect(draft?.status).toBe("draft");
+    expect(draft?.version).toBe(0);
+  });
+
+  it("getDraftVersion returns null when no draft exists", async () => {
+    const limit = vi.fn().mockResolvedValue([]);
+    const where = vi.fn().mockReturnValue({ limit });
+    const from = vi.fn().mockReturnValue({ where });
+    const db = makeDb({ select: vi.fn().mockReturnValue({ from }) });
+    const svc = new AutomationService(db);
+    expect(await svc.getDraftVersion("auto-1")).toBeNull();
+  });
 });

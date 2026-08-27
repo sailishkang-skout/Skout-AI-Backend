@@ -73,10 +73,21 @@ export async function automationRoutes(app: FastifyInstance) {
     if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = z.object({ isSimulation: z.boolean().optional() }).parse(request.body ?? {});
+    const isSimulation = body.isSimulation ?? false;
 
     const svc = new AutomationService(db());
-    const version = await svc.getLatestPublishedVersion(id);
-    if (!version) return reply.code(422).send(errorResponse("Automation has no published version", 422));
+    // A simulation runs whatever the canvas currently looks like — the draft — so it works before
+    // the first publish, matching the vision doc's "test/simulation before publish" requirement.
+    // A real run only ever executes a published version.
+    const version = isSimulation
+      ? (await svc.getDraftVersion(id)) ?? (await svc.getLatestPublishedVersion(id))
+      : await svc.getLatestPublishedVersion(id);
+    if (!version) {
+      const message = isSimulation
+        ? "Automation has no draft or published version to simulate"
+        : "Automation has no published version";
+      return reply.code(422).send(errorResponse(message, 422));
+    }
 
     const run = await createAutomationRun(db(), {
       automationId: id,
@@ -87,7 +98,7 @@ export async function automationRoutes(app: FastifyInstance) {
       correlationId: randomUUID(),
       graph: version.graph as AutomationGraph,
       idempotencyKey: `manual:${randomUUID()}`,
-      isSimulation: body.isSimulation ?? false,
+      isSimulation,
     });
     // Fire-and-forget, same pattern as enqueueSequenceAdvanceJob's call sites — a Redis hiccup
     // shouldn't block this response; the run stays "pending" and a later retry/backfill picks it

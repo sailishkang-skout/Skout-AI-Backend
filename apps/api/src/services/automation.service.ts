@@ -101,6 +101,16 @@ export class AutomationService {
     return row;
   }
 
+  /** The single draft row (version 0) — used to simulate the in-progress graph before it's published. */
+  async getDraftVersion(automationId: string) {
+    const [row] = await this.db
+      .select()
+      .from(automationVersions)
+      .where(and(eq(automationVersions.automationId, automationId), eq(automationVersions.status, "draft")))
+      .limit(1);
+    return row ?? null;
+  }
+
   async getLatestPublishedVersion(automationId: string) {
     const [row] = await this.db
       .select()

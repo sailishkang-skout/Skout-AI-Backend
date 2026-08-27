@@ -54,6 +54,49 @@ describe("automation routes", () => {
     expect(run.statusCode).toBe(422);
   });
 
+  it("POST /automations/:id/run simulates off the saved draft without requiring a publish first", async () => {
+    const email = "automation-simulate-draft@test.com";
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/v1/automations",
+      headers: { ...asUser(email), "content-type": "application/json" },
+      payload: { name: "Draft-only automation" },
+    });
+    const { id } = create.json().data;
+
+    const graph = {
+      nodes: [{ id: "n1", type: "delay", config: { seconds: 1 } }],
+      edges: [],
+    };
+
+    const saveDraft = await app.inject({
+      method: "POST",
+      url: `/api/v1/automations/${id}/versions`,
+      headers: { ...asUser(email), "content-type": "application/json" },
+      payload: { graph },
+    });
+    expect(saveDraft.statusCode).toBe(201);
+    expect(saveDraft.json().data.status).toBe("draft");
+
+    const run = await app.inject({
+      method: "POST",
+      url: `/api/v1/automations/${id}/run`,
+      headers: { ...asUser(email), "content-type": "application/json" },
+      payload: { isSimulation: true },
+    });
+    expect(run.statusCode).toBe(202);
+    expect(run.json().data.isSimulation).toBe(true);
+
+    // A non-simulation run still requires an actual publish — the draft alone isn't enough.
+    const realRun = await app.inject({
+      method: "POST",
+      url: `/api/v1/automations/${id}/run`,
+      headers: { ...asUser(email), "content-type": "application/json" },
+      payload: { isSimulation: false },
+    });
+    expect(realRun.statusCode).toBe(422);
+  });
+
   it("publishes a version and runs it in simulation mode end to end", async () => {
     const email = "automation-e2e@test.com";
     const create = await app.inject({
