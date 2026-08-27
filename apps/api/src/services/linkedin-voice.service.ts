@@ -14,6 +14,19 @@ import { LinkedinAccountService } from "./linkedin-account.service.js";
 import { resolveProspectFields, type ResolvedProspect } from "./prospect-resolver.service.js";
 import { generateRegionalBrief } from "./regional-intel.service.js";
 
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md for the full audit and rationale; a new instance of
+ * the same pattern the 9 confirmed cases there already cover.
+ *   - Tables touched directly: contacts, activities (both owned by apps/crm)
+ *     - read AND write
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: confirmLinkedinVoiceSent() resolves the CRM contact for a prospect and writes the
+ *     "voice message sent" event straight to that contact's timeline in the same request the
+ *     rep clicks "I sent this voice message" - a synchronous, user-facing confirm action where
+ *     an HTTP round trip into apps/crm would add latency to a click the rep is watching resolve
+ *   - Review date: revisit once apps/crm's internal API surface covers activity writes (Wave 2)
+ */
 const log = createLogger("linkedin-voice");
 const { linkedinVoiceHandoffs, activities, contacts } = schema;
 
