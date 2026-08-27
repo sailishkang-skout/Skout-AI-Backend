@@ -510,7 +510,21 @@
       "idx": 72,
       "version": "7",
       "when": 1790500000000,
-      "tag": "0071_linkedin_voice_handoff",
+      "tag": "0071_regional_brief",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1790600000000,
+      "tag": "0072_regional_brief_aliases_and_tam",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1790700000000,
+      "tag": "0073_linkedin_voice_handoff",
       "breakpoints": true
     }
   ]
