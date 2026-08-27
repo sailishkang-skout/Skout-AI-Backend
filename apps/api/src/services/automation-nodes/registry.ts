@@ -6,6 +6,7 @@ import { httpActionNodeHandler } from "./action-http.node.js";
 import { notificationActionNodeHandler } from "./action-notification.node.js";
 import { crmWritebackActionNodeHandler } from "./action-crm-writeback.node.js";
 import { sequenceEnrollActionNodeHandler } from "./action-sequence-enroll.node.js";
+import { approvalNodeHandler } from "./approval.node.js";
 
 const registry: Partial<Record<NodeType, NodeHandler>> = {
   condition: conditionNodeHandler,
@@ -14,6 +15,7 @@ const registry: Partial<Record<NodeType, NodeHandler>> = {
   action_notification: notificationActionNodeHandler,
   action_crm_writeback: crmWritebackActionNodeHandler,
   action_sequence_enroll: sequenceEnrollActionNodeHandler,
+  approval: approvalNodeHandler,
 };
 
 /** Registers a handler for a node type — called by later tasks to add action/approval handlers. */
