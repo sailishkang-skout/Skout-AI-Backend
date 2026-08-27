@@ -51,6 +51,7 @@ import { regionalIntelRoutes } from "./regional-intel.routes.js";
 import { stepUpRoutes } from "./step-up.routes.js";
 import { incidentsRoutes } from "./incidents.routes.js";
 import { modelVersionsRoutes } from "./model-versions.routes.js";
+import { regionalBriefRoutes } from "./regional-brief.routes.js";
 import { dexterPlatformRoutes } from "./dexter-platform.routes.js";
 import { account360Routes } from "./account-360.routes.js";
 import { ssoScimRoutes } from "./sso-scim.routes.js";
@@ -110,6 +111,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(stepUpRoutes);
     await v1.register(incidentsRoutes);
     await v1.register(modelVersionsRoutes);
+    await v1.register(regionalBriefRoutes);
     await v1.register(dexterPlatformRoutes);
     await v1.register(account360Routes);
     await v1.register(ssoScimRoutes);

@@ -6,7 +6,7 @@ import { resolveDatabaseUrl, resolvePostgresSsl } from "./database-url.js";
 try {
   const { config } = await import("dotenv");
   config({ path: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../.env") });
-} catch {}
+} catch { }
 
 const url = resolveDatabaseUrl();
 const ssl = resolvePostgresSsl();

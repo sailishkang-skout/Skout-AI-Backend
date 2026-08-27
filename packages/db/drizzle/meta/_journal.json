@@ -505,6 +505,20 @@
       "when": 1790400000000,
       "tag": "0070_workspace_sso_configs",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1790500000000,
+      "tag": "0071_regional_brief",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1790600000000,
+      "tag": "0072_regional_brief_aliases_and_tam",
+      "breakpoints": true
     }
   ]
 }
