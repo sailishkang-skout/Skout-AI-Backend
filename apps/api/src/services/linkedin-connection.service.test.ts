@@ -71,7 +71,7 @@ describe("checkLinkedinConnectionStatus", () => {
     vi.mocked(LinkedinAccountService).mockImplementation(
       () =>
         ({
-          list: vi.fn().mockResolvedValue([{ id: "acct-1", status: "active" }]),
+          list: vi.fn().mockResolvedValue([{ id: "acct-1", unipileAccountId: "unipile-acct-1", status: "active" }]),
           resolveConfig: vi.fn().mockResolvedValue({}),
         }) as any
     );
@@ -90,13 +90,19 @@ describe("checkLinkedinConnectionStatus", () => {
 
     expect(status).toBe("accepted");
     expect(db._insertValues).toHaveBeenCalledWith(expect.objectContaining({ status: "accepted" }));
+    // Regression guard: Unipile only knows accounts by their own external id — passing
+    // Skout's internal row id instead (a real bug this caught) 404s as "Account not found".
+    expect(unipileListRelations).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ accountId: "unipile-acct-1" })
+    );
   });
 
   it("stays pending when no relation matches", async () => {
     vi.mocked(LinkedinAccountService).mockImplementation(
       () =>
         ({
-          list: vi.fn().mockResolvedValue([{ id: "acct-1", status: "active" }]),
+          list: vi.fn().mockResolvedValue([{ id: "acct-1", unipileAccountId: "unipile-acct-1", status: "active" }]),
           resolveConfig: vi.fn().mockResolvedValue({}),
         }) as any
     );
