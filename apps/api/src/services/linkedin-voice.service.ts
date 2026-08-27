@@ -342,7 +342,7 @@ function toHandoffResult(
     prospectName: row.prospectName,
     linkedinUrl: row.linkedinUrl,
     expiresAt: row.expiresAt ? row.expiresAt.toISOString() : null,
-    mobileUrl: `${frontendBase(config)}/linkedin/voice/h/${row.handoffToken}`,
+    mobileUrl: `${frontendBase(config)}/app/linkedin/voice/h/${row.handoffToken}`,
     note: manualSendNote(),
   };
 }

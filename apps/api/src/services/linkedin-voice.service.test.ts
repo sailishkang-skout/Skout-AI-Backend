@@ -255,7 +255,10 @@ describe("createLinkedinVoiceHandoff", () => {
 
     expect(result.status).toBe("handed_off");
     expect(result.note.toLowerCase()).toContain("manual");
-    expect(result.mobileUrl).toContain(`/linkedin/voice/h/${TOKEN}`);
+    // The frontend is served under Next's basePath: "/app" — a link missing that segment
+    // 404s on any real device (only worked "by accident" for whoever already had the SPA
+    // loaded and happened to hit client-side routing).
+    expect(result.mobileUrl).toContain(`/app/linkedin/voice/h/${TOKEN}`);
     expect(result.linkedinUrl).toContain("linkedin.com/in/ada-lovelace");
     expect(db.insert).toHaveBeenCalled();
   });
