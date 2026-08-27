@@ -14,6 +14,7 @@ import {
   failStep,
 } from "../services/automation-run.service.js";
 import { getNodeHandler } from "../services/automation-nodes/registry.js";
+import { interpolateConfig } from "../services/automation-nodes/interpolate.js";
 import { nextNodeIds, type AutomationGraph } from "../services/automation-graph.js";
 import { AUTOMATION_RUN_QUEUE, enqueueAutomationRunAdvance, type AutomationRunAdvancePayload } from "./automation-run.queue.js";
 
@@ -60,13 +61,14 @@ export async function advanceAutomationRun(
 
   try {
     const handler = getNodeHandler(node.type);
+    const interpolatedNode = { ...node, config: interpolateConfig(node.config, priorOutputs) };
     const result = await handler({
       db,
       config,
       workspaceId: run.workspaceId,
       runId: run.id,
       isSimulation: run.isSimulation,
-      node,
+      node: interpolatedNode,
       priorOutputs,
     });
     await completeStep(db, step.id, result.output);
