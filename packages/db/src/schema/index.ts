@@ -34,3 +34,4 @@ export * from "./model-versions.js";
 export * from "./dsar.js";
 export * from "./competitive-win-loss.js";
 export * from "./dexter-platform.js";
+export * from "./automations.js";
