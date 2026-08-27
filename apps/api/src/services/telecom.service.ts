@@ -33,7 +33,8 @@ export function telecomWebhookBaseUrl(config: Env): string | undefined {
   return config.TELECOM_WEBHOOK_BASE_URL ?? config.TWILIO_WEBHOOK_BASE_URL;
 }
 
-export function callerIdNumber(config: Env): string {
+export function callerIdNumber(config: Env, override?: string | null): string {
+  if (override?.trim()) return override.trim();
   if (config.TWILIO_ENABLED && isTwilioConfigured(config)) return config.TWILIO_PHONE_NUMBER!;
   if (isTelnyxConfigured(config) || isTelnyxSmsConfigured(config)) return config.TELNYX_PHONE_NUMBER!;
   throw new Error("No telecom provider configured");
@@ -59,7 +60,8 @@ export async function sendSms(config: Env, params: SendSmsParams): Promise<SendS
 export function buildBridgeXml(
   config: Env,
   prospectPhone: string,
-  recordingStatusCallbackUrl?: string
+  recordingStatusCallbackUrl?: string,
+  fromNumber?: string | null
 ): string {
-  return buildBridgeTwiml(prospectPhone, callerIdNumber(config), recordingStatusCallbackUrl);
+  return buildBridgeTwiml(prospectPhone, callerIdNumber(config, fromNumber), recordingStatusCallbackUrl);
 }

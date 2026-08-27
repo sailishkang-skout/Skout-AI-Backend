@@ -285,6 +285,8 @@ const envSchema = z
     TELNYX_PHONE_NUMBER: z.string().optional(),
     /** Telnyx TeXML application / connection ID for outbound calls. */
     TELNYX_CONNECTION_ID: z.string().optional(),
+    /** Optional messaging profile attached to newly ordered numbers (SMS/MMS). */
+    TELNYX_MESSAGING_PROFILE_ID: z.string().optional(),
     /** Optional alias for TWILIO_WEBHOOK_BASE_URL (Telnyx TeXML + status callbacks). */
     TELECOM_WEBHOOK_BASE_URL: z.string().optional(),
     // --- R16.2 — meeting-bot vendor (Recall.ai / Fireflies.ai — vendor TBD). All optional. ---

@@ -10,6 +10,7 @@ import {
   isCallingConfigured,
   telecomWebhookBaseUrl,
 } from "../services/telecom.service.js";
+import { resolveWorkspaceCallerId } from "../services/number-request.service.js";
 import { resolveProspectFields } from "../services/prospect-resolver.service.js";
 import { createNotification } from "../services/notifications.service.js";
 import { extractFieldsFromCallNotes } from "../services/call-notes-extraction.service.js";
@@ -38,13 +39,31 @@ export async function callRoutes(app: FastifyInstance) {
   // a "Call" button, and whether the current user still needs to set their phone number.
   app.get("/calls/config", async (request, reply) => {
     if (!request.userId) return reply.code(401).send(errorResponse("Unauthorized", 401));
-    const configured = isCallingConfigured(app.config);
+    let callerId = app.config.TELNYX_PHONE_NUMBER ?? null;
+    if (request.workspaceId) {
+      try {
+        callerId = await resolveWorkspaceCallerId(db(), request.workspaceId, app.config.TELNYX_PHONE_NUMBER);
+      } catch {
+        callerId = app.config.TELNYX_PHONE_NUMBER ?? null;
+      }
+    }
+    if (
+      app.config.TWILIO_ENABLED &&
+      app.config.TWILIO_ACCOUNT_SID &&
+      app.config.TWILIO_AUTH_TOKEN &&
+      app.config.TWILIO_PHONE_NUMBER
+    ) {
+      callerId = app.config.TWILIO_PHONE_NUMBER;
+    }
+    const configured =
+      isCallingConfigured(app.config) ||
+      Boolean(app.config.TELNYX_API_KEY && app.config.TELNYX_CONNECTION_ID && callerId);
     let agentPhoneSet = false;
     if (configured) {
       const [row] = await db().select({ phone: schema.users.phone }).from(schema.users).where(eq(schema.users.id, request.userId)).limit(1);
       agentPhoneSet = Boolean(row?.phone);
     }
-    return reply.send({ data: { enabled: configured, agentPhoneSet } });
+    return reply.send({ data: { enabled: configured, agentPhoneSet, callerId } });
   });
 
   // POST /calls/dial — { prospectId } or { to } + optional { taskId, contactId }.
@@ -56,12 +75,28 @@ export async function callRoutes(app: FastifyInstance) {
       if (!request.workspaceId || !request.userId) {
         return reply.code(401).send(errorResponse("Unauthorized", 401));
       }
-      if (!isCallingConfigured(app.config)) {
+      let fromNumber = app.config.TELNYX_PHONE_NUMBER ?? null;
+      try {
+        fromNumber = await resolveWorkspaceCallerId(
+          db(),
+          request.workspaceId,
+          app.config.TELNYX_PHONE_NUMBER
+        );
+      } catch {
+        fromNumber = app.config.TELNYX_PHONE_NUMBER ?? null;
+      }
+      const callingReady =
+        isCallingConfigured(app.config) ||
+        Boolean(app.config.TELNYX_API_KEY && app.config.TELNYX_CONNECTION_ID && fromNumber);
+      const usingTwilio = Boolean(
+        app.config.TWILIO_ENABLED && app.config.TWILIO_ACCOUNT_SID && app.config.TWILIO_AUTH_TOKEN && app.config.TWILIO_PHONE_NUMBER
+      );
+      if (!callingReady || (!usingTwilio && !fromNumber)) {
         return reply
           .code(422)
           .send(
             errorResponse(
-              "Calling isn't configured yet — set Telnyx creds (TELNYX_API_KEY/TELNYX_PHONE_NUMBER/TELNYX_CONNECTION_ID) or enable TWILIO_ENABLED with Twilio creds.",
+              "Calling isn't configured yet — order a number in Phone numbers, or set TELNYX_PHONE_NUMBER with TELNYX_API_KEY/TELNYX_CONNECTION_ID (or enable Twilio).",
               422
             )
           );
@@ -87,6 +122,7 @@ export async function callRoutes(app: FastifyInstance) {
         const call = await dialBridgeCall(app.config, {
           agentPhone: agent.phone,
           prospectPhone,
+          ...(usingTwilio ? {} : { fromNumber: fromNumber ?? undefined }),
           callbackParams: {
             workspaceId: request.workspaceId,
             userId: request.userId,
@@ -259,7 +295,11 @@ export async function callRoutes(app: FastifyInstance) {
         recordingStatusCallbackUrl = url.toString();
       }
 
-      const twiml = buildBridgeXml(app.config, to, recordingStatusCallbackUrl);
+      const workspaceId = query.workspaceId;
+      const fromNumber = workspaceId
+        ? await resolveWorkspaceCallerId(db(), workspaceId, app.config.TELNYX_PHONE_NUMBER)
+        : app.config.TELNYX_PHONE_NUMBER ?? null;
+      const twiml = buildBridgeXml(app.config, to, recordingStatusCallbackUrl, fromNumber);
       return reply.type("text/xml").send(twiml);
     },
   });
