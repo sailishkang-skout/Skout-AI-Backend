@@ -60,4 +60,15 @@ describe("AutomationService", () => {
     const svc = new AutomationService(db);
     expect(await svc.getDraftVersion("auto-1")).toBeNull();
   });
+
+  it("updateAutomation renames the automation", async () => {
+    const updateReturning = vi.fn().mockResolvedValue([{ id: "auto-1", workspaceId: WORKSPACE_ID, name: "Renamed", currentVersion: 0 }]);
+    const updateWhere = vi.fn().mockReturnValue({ returning: updateReturning });
+    const updateSet = vi.fn().mockReturnValue({ where: updateWhere });
+    const db = makeDb({ update: vi.fn().mockReturnValue({ set: updateSet }) });
+    const svc = new AutomationService(db);
+    const updated = await svc.updateAutomation(WORKSPACE_ID, "auto-1", { name: "Renamed" });
+    expect(updated.name).toBe("Renamed");
+    expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({ name: "Renamed" }));
+  });
 });

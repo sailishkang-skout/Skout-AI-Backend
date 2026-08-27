@@ -36,6 +36,16 @@ export class AutomationService {
     return row;
   }
 
+  async updateAutomation(workspaceId: string, automationId: string, patch: { name?: string; description?: string }) {
+    await this.getAutomation(workspaceId, automationId); // 404s if not found/wrong workspace
+    const [row] = await this.db
+      .update(automations)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(eq(automations.id, automationId))
+      .returning();
+    return row!;
+  }
+
   /** Upserts the single draft version for an automation (version 0 — never published). */
   async saveDraftVersion(workspaceId: string, automationId: string, graph: AutomationGraph) {
     await this.getAutomation(workspaceId, automationId); // 404s if not found/wrong workspace

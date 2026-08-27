@@ -5,7 +5,7 @@ import { z } from "zod";
 import { schema } from "@skout/db";
 import { errorResponse, HttpError } from "../utils/http.js";
 import { AutomationService } from "../services/automation.service.js";
-import { createAutomationRun, getRun, listRuns } from "../services/automation-run.service.js";
+import { createAutomationRun, getRun, listRuns, retryFailedSteps } from "../services/automation-run.service.js";
 import { enqueueAutomationRunAdvance } from "../workers/automation-run.queue.js";
 import type { AutomationGraph } from "../services/automation-graph.js";
 
@@ -42,6 +42,15 @@ export async function automationRoutes(app: FastifyInstance) {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const svc = new AutomationService(db());
     return reply.send({ data: await svc.getAutomation(request.workspaceId, id) });
+  });
+
+  app.patch("/automations/:id", async (request, reply) => {
+    if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z.object({ name: z.string().min(1).max(200).optional(), description: z.string().max(2000).optional() }).parse(request.body ?? {});
+    const svc = new AutomationService(db());
+    const auto = await svc.updateAutomation(request.workspaceId, id, body);
+    return reply.send({ data: auto });
   });
 
   app.post("/automations/:id/versions", async (request, reply) => {
@@ -154,5 +163,16 @@ export async function automationRoutes(app: FastifyInstance) {
     if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const { runId } = z.object({ runId: z.string().uuid() }).parse(request.params);
     return reply.send({ data: await getRun(db(), request.workspaceId, runId) });
+  });
+
+  /** Manual recovery for a failed run — see failStep()'s comment for why failures aren't auto-retried. */
+  app.post("/automations/runs/:runId/retry", async (request, reply) => {
+    if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    const { runId } = z.object({ runId: z.string().uuid() }).parse(request.params);
+    const updatedRun = await retryFailedSteps(db(), request.workspaceId, runId);
+    enqueueAutomationRunAdvance(app.config, { automationRunId: updatedRun.id, workspaceId: updatedRun.workspaceId }).catch((err: unknown) => {
+      app.log.error({ err, runId: updatedRun.id }, "Failed to enqueue automation run advance job after retry");
+    });
+    return reply.code(202).send({ data: updatedRun });
   });
 }

@@ -57,7 +57,7 @@ describe("advanceAutomationRun", () => {
 
     await advanceAutomationRun(makeAdvanceDb(), {} as any, { automationRunId: "run-1", workspaceId: "ws-1" }, GRAPH);
 
-    expect(failSpy).toHaveBeenCalledWith(expect.anything(), "step-1", "boom", { attempt: 1 });
+    expect(failSpy).toHaveBeenCalledWith(expect.anything(), "step-1", "boom");
   });
 
   it("does nothing when there is no pending step to claim", async () => {

@@ -45,7 +45,7 @@ export async function advanceAutomationRun(
 
   const node = graph.nodes.find((n) => n.id === step.nodeId);
   if (!node) {
-    await failStep(db, step.id, `node ${step.nodeId} not found in graph`, { attempt: step.attempt });
+    await failStep(db, step.id, `node ${step.nodeId} not found in graph`);
     return;
   }
 
@@ -100,7 +100,7 @@ export async function advanceAutomationRun(
       log.info("automation run paused for approval", { runId: run.id, nodeId: node.id });
       return;
     }
-    await failStep(db, step.id, message, { attempt: step.attempt });
+    await failStep(db, step.id, message);
     await db.update(automationRuns).set({ status: "failed", finishedAt: new Date() }).where(eq(automationRuns.id, run.id));
     log.error("automation run step failed", err, { runId: run.id, nodeId: node.id });
   }

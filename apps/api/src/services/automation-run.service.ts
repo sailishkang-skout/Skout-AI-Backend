@@ -8,9 +8,6 @@ import { findStartNodes, type AutomationGraph } from "./automation-graph.js";
 const { automationRuns, automationRunSteps } = schema;
 const log = createLogger("automation-run.service");
 
-const MAX_ATTEMPTS = 5;
-const BACKOFF_BASE_MS = 5_000;
-
 export interface CreateRunInput {
   automationId: string;
   automationVersionId: string;
@@ -101,27 +98,46 @@ export async function completeStep(db: Db, stepId: string, output: unknown) {
   return row!;
 }
 
-/** Marks a step failed; if attempts remain, schedules a retry with exponential backoff + jitter. */
-export async function failStep(
-  db: Db,
-  stepId: string,
-  error: string,
-  opts: { attempt: number; maxAttempts?: number }
-) {
-  const maxAttempts = opts.maxAttempts ?? MAX_ATTEMPTS;
-  const willRetry = opts.attempt < maxAttempts;
-  const delayMs = BACKOFF_BASE_MS * 2 ** (opts.attempt - 1) * (0.5 + Math.random());
-
+/**
+ * Marks a step failed. Failures are terminal, not auto-retried — nothing in this worker consumes
+ * a scheduled retry time, so pretending otherwise (an earlier version of this function reset the
+ * step to "pending" with a future nextRetryAt) just left runs permanently stuck: the run itself
+ * was still marked "failed" immediately regardless, and nothing ever re-enqueued the step.
+ * Recovery is retryFailedSteps() below — an explicit, user-triggered action.
+ */
+export async function failStep(db: Db, stepId: string, error: string) {
   const [row] = await db
     .update(automationRunSteps)
-    .set(
-      willRetry
-        ? { status: "pending", attempt: opts.attempt + 1, error, nextRetryAt: new Date(Date.now() + delayMs), updatedAt: new Date() }
-        : { status: "failed", error, updatedAt: new Date() }
-    )
+    .set({ status: "failed", error, updatedAt: new Date() })
     .where(eq(automationRunSteps.id, stepId))
     .returning();
   return row!;
+}
+
+/**
+ * Resets every failed step in a run back to pending and reopens the run — the manual recovery
+ * path for a failed run. Caller is responsible for re-enqueuing the advance job afterward.
+ */
+export async function retryFailedSteps(db: Db, workspaceId: string, runId: string) {
+  const [run] = await db
+    .select()
+    .from(automationRuns)
+    .where(and(eq(automationRuns.id, runId), eq(automationRuns.workspaceId, workspaceId)))
+    .limit(1);
+  if (!run) throw new HttpError("automation_run_not_found", 404);
+  if (run.status !== "failed") throw new HttpError("automation_run_not_failed", 422);
+
+  await db
+    .update(automationRunSteps)
+    .set({ status: "pending", error: null, nextRetryAt: null, updatedAt: new Date() })
+    .where(and(eq(automationRunSteps.automationRunId, runId), eq(automationRunSteps.status, "failed")));
+
+  const [updatedRun] = await db
+    .update(automationRuns)
+    .set({ status: "running", finishedAt: null })
+    .where(eq(automationRuns.id, runId))
+    .returning();
+  return updatedRun!;
 }
 
 export async function getRun(db: Db, workspaceId: string, runId: string) {

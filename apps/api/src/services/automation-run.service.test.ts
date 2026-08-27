@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { createAutomationRun, failStep } from "./automation-run.service.js";
+import { createAutomationRun, failStep, retryFailedSteps } from "./automation-run.service.js";
+import { HttpError } from "../utils/http.js";
 import type { AutomationGraph } from "./automation-graph.js";
 
 const WORKSPACE_ID = "ws-1";
@@ -45,8 +46,48 @@ describe("automation-run.service", () => {
 
   it("failStep records the error via an update call", async () => {
     const db = makeDb();
-    const result = await failStep(db, "step-1", "boom", { attempt: 5, maxAttempts: 5 });
+    const result = await failStep(db, "step-1", "boom");
     expect(result.status).toBe("claimed"); // mocked update always returns this row shape — asserts the call happened
     expect(db.update).toHaveBeenCalled();
+  });
+
+  describe("retryFailedSteps", () => {
+    function makeRetryDb(existingRun: Record<string, unknown> | null) {
+      const runSelectLimit = vi.fn().mockResolvedValue(existingRun ? [existingRun] : []);
+      const runSelectWhere = vi.fn().mockReturnValue({ limit: runSelectLimit });
+      const select = vi.fn().mockReturnValue({ from: vi.fn().mockReturnValue({ where: runSelectWhere }) });
+
+      const stepsUpdateWhere = vi.fn().mockResolvedValue(undefined);
+      const stepsUpdateSet = vi.fn().mockReturnValue({ where: stepsUpdateWhere });
+
+      const runUpdateReturning = vi.fn().mockResolvedValue([{ ...existingRun, status: "running", finishedAt: null }]);
+      const runUpdateWhere = vi.fn().mockReturnValue({ returning: runUpdateReturning });
+      const runUpdateSet = vi.fn().mockReturnValue({ where: runUpdateWhere });
+
+      let updateCalls = 0;
+      const update = vi.fn(() => {
+        updateCalls += 1;
+        return { set: updateCalls === 1 ? stepsUpdateSet : runUpdateSet };
+      });
+
+      return { select, update } as any;
+    }
+
+    it("throws 404 when the run doesn't exist", async () => {
+      const db = makeRetryDb(null);
+      await expect(retryFailedSteps(db, WORKSPACE_ID, "run-missing")).rejects.toThrow(HttpError);
+    });
+
+    it("throws 422 when the run isn't in a failed state", async () => {
+      const db = makeRetryDb({ id: "run-1", workspaceId: WORKSPACE_ID, status: "succeeded" });
+      await expect(retryFailedSteps(db, WORKSPACE_ID, "run-1")).rejects.toThrow(HttpError);
+    });
+
+    it("resets failed steps to pending and reopens the run", async () => {
+      const db = makeRetryDb({ id: "run-1", workspaceId: WORKSPACE_ID, status: "failed" });
+      const updated = await retryFailedSteps(db, WORKSPACE_ID, "run-1");
+      expect(updated.status).toBe("running");
+      expect(db.update).toHaveBeenCalledTimes(2);
+    });
   });
 });
