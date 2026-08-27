@@ -1,5 +1,6 @@
 import type { NodeType } from "../automation-graph.js";
 import type { NodeHandler } from "./types.js";
+import { triggerNodeHandler } from "./trigger.node.js";
 import { conditionNodeHandler } from "./condition.node.js";
 import { delayNodeHandler } from "./delay.node.js";
 import { httpActionNodeHandler } from "./action-http.node.js";
@@ -9,6 +10,7 @@ import { sequenceEnrollActionNodeHandler } from "./action-sequence-enroll.node.j
 import { approvalNodeHandler } from "./approval.node.js";
 
 const registry: Partial<Record<NodeType, NodeHandler>> = {
+  trigger: triggerNodeHandler,
   condition: conditionNodeHandler,
   delay: delayNodeHandler,
   action_http: httpActionNodeHandler,
