@@ -874,6 +874,52 @@ describe("sequence-enrollment worker — email step execution", () => {
 });
 
 // ---------------------------------------------------------------------------
+// advanceEnrollment's "!pending" terminal branch (final-review Finding 1 regression test).
+// This is the branch a re-enqueued advance hits after a WhatsApp/LinkedIn step's own async
+// completeJob() re-enqueue finds no more "scheduled" steps — as opposed to the "!nextPending"
+// branch, which handles email/task/condition steps completing inline in the same tick. Both
+// branches must set the same stopReason/event, or a sequence whose LAST step is WhatsApp/
+// LinkedIn completes with stopReason NULL and no sequence_completed event.
+// ---------------------------------------------------------------------------
+
+describe("sequence-enrollment worker — advanceEnrollment terminal completion (no pending step at all)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(Worker).mockImplementation((() => ({
+      on: vi.fn(),
+      close: vi.fn().mockResolvedValue(undefined),
+    })) as any);
+    vi.mocked(isBusinessHour).mockReturnValue(true);
+  });
+
+  it("sets stopReason SEQUENCE_COMPLETED and records sequence_completed when no step is scheduled — the path a WhatsApp/LinkedIn step's re-enqueued advance takes", async () => {
+    // No pendingStep passed → the "pending step" select resolves empty, hitting the !pending
+    // branch immediately (mirrors the re-enqueued advance BullMQ job that runs after
+    // WhatsappOutreachService/LinkedinOutreachService's completeJob() re-enqueues one).
+    const { select, update, updateSet } = makeWorkerDb({});
+    const db = { select, update, transaction: vi.fn() };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(update).toHaveBeenCalledWith("sequenceEnrollments");
+    expect(updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "completed", stopReason: "SEQUENCE_COMPLETED" })
+    );
+    expect(recordSequenceEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        enrollmentId: "enr-1",
+        workspaceId: "ws-1",
+        prospectId: "p-1",
+        eventType: "sequence_completed",
+        reason: "SEQUENCE_COMPLETED",
+      })
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // executeLinkedinStep's claimNext race guard — invoked indirectly via the captured
 // BullMQ processor function, since executeLinkedinStep/advanceEnrollment aren't
 // exported. This covers the actual bug fix: a send must only be attempted when this

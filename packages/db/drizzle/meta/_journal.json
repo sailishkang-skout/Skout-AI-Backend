@@ -547,6 +547,13 @@
       "when": 1791000000000,
       "tag": "0076_whatsapp_outreach_jobs",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1791100000000,
+      "tag": "0077_whatsapp_outreach_jobs_pending_idx",
+      "breakpoints": true
     }
   ]
 }

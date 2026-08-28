@@ -36,7 +36,15 @@ import {
   type ConditionLeafType,
 } from "../services/sequence-condition.js";
 import { recordSequenceEvent } from "../services/sequence-events.js";
-import { claimNext, reclaimExpiredLeases, recordResult, withLeaseHeartbeat, LeaseLostError } from "@skout/shared";
+import {
+  claimNext,
+  reclaimExpiredLeases,
+  recordResult,
+  withLeaseHeartbeat,
+  LeaseLostError,
+  type ExecutionIntentTable,
+} from "@skout/shared";
+import type { PgColumn } from "drizzle-orm/pg-core";
 
 const log = createLogger("sequence-enrollment.worker");
 
@@ -1384,11 +1392,21 @@ async function advanceEnrollment(
     .limit(1);
 
   if (!pending) {
-    // All steps done — mark enrollment complete
+    // All steps done — mark enrollment complete. This branch is reached both on the
+    // "nothing was ever scheduled" path and on the re-enqueued advance that follows a
+    // WhatsApp/LinkedIn step's own async completion (those channels' completeJob() re-enqueues
+    // an advance rather than falling through to the `!nextPending` block below), so it must set
+    // the same stopReason/event as that block — otherwise a sequence whose last step is
+    // WhatsApp or LinkedIn completes with stopReason NULL and no sequence_completed event.
     await db
       .update(sequenceEnrollments)
-      .set({ status: "completed", completedAt: new Date() })
+      .set({ status: "completed", completedAt: new Date(), stopReason: "SEQUENCE_COMPLETED" })
       .where(eq(sequenceEnrollments.id, enrollmentId));
+    await recordSequenceEvent(db, {
+      workspaceId, sequenceId, enrollmentId,
+      sequenceVersionId: enrollment.sequenceVersionId, prospectId,
+      eventType: "sequence_completed", reason: "SEQUENCE_COMPLETED",
+    });
     log.info("Enrollment completed", { enrollmentId });
     return;
   }
@@ -1641,6 +1659,109 @@ async function advanceEnrollment(
 }
 
 // ---------------------------------------------------------------------------
+// Outreach job reclaim sweep — shared between LinkedIn and WhatsApp
+// ---------------------------------------------------------------------------
+
+/** Structural shape both linkedin_outreach_jobs and whatsapp_outreach_jobs satisfy: the
+ * execution-intent lease columns plus the enrollment/step/workspace/prospect linkage every
+ * outreach-job table needs to recover a stranded step. */
+type OutreachJobTable = ExecutionIntentTable & {
+  enrollmentId: PgColumn;
+  enrollmentStepId: PgColumn;
+  workspaceId: PgColumn;
+  prospectId: PgColumn;
+};
+
+const OUTREACH_RECLAIM_SWEEP_INTERVAL_MS = 30_000;
+
+/**
+ * Runs one channel's expired-lease reclaim sweep on an interval. Extracted so LinkedIn and
+ * WhatsApp outreach — identical in shape (both are execution-intent job tables carrying the
+ * same enrollment/step/workspace/prospect linkage) — share one implementation instead of two
+ * ~60-line copies differing only in the table object and log label.
+ *
+ * Requeued jobs just need their enrollment's advance re-enqueued so the cadence resumes.
+ * Failed jobs (MAX_ATTEMPTS exhausted mid-reclaim) need more: sequence enrollments have no
+ * retryFailedSteps()-equivalent recovery endpoint, so an un-actioned failedIds job strands the
+ * enrollment forever — the parent sequenceEnrollmentSteps row must be marked failed and an
+ * advance re-enqueued so the cadence continues past it, mirroring retryTransientFailure's own
+ * "exhausted" handling in executeLinkedinStep/executeWhatsappStep.
+ *
+ * Returns the timer handle so the caller's disposer can clear it on shutdown.
+ */
+function startOutreachReclaimSweep(
+  db: ReturnType<typeof createDb>["db"],
+  config: Env,
+  table: OutreachJobTable,
+  label: string
+): NodeJS.Timeout {
+  return setInterval(() => {
+    reclaimExpiredLeases(db, table)
+      .then(async (result) => {
+        if (result.requeuedIds.length === 0 && result.failedIds.length === 0) return;
+        log.info(`${label} outreach jobs reclaimed`, {
+          requeued: result.requeuedIds.length,
+          failed: result.failedIds.length,
+        });
+
+        if (result.requeuedIds.length > 0) {
+          const requeuedJobs = await db
+            .selectDistinct({
+              enrollmentId: table.enrollmentId,
+              workspaceId: table.workspaceId,
+              prospectId: table.prospectId,
+            })
+            .from(table)
+            .where(inArray(table.id, result.requeuedIds));
+          for (const row of requeuedJobs) {
+            const enrollmentId = row.enrollmentId as string;
+            const workspaceId = row.workspaceId as string;
+            const prospectId = row.prospectId as string;
+            const [enrollment] = await db
+              .select({ sequenceId: sequenceEnrollments.sequenceId })
+              .from(sequenceEnrollments)
+              .where(eq(sequenceEnrollments.id, enrollmentId))
+              .limit(1);
+            if (!enrollment) continue;
+            await enqueueSequenceAdvanceJob(config, { enrollmentId, workspaceId, prospectId, sequenceId: enrollment.sequenceId }, 0, false);
+          }
+        }
+
+        if (result.failedIds.length > 0) {
+          const strandedJobs = await db
+            .select({
+              enrollmentId: table.enrollmentId,
+              enrollmentStepId: table.enrollmentStepId,
+              workspaceId: table.workspaceId,
+              prospectId: table.prospectId,
+            })
+            .from(table)
+            .where(inArray(table.id, result.failedIds));
+          for (const row of strandedJobs) {
+            const enrollmentId = row.enrollmentId as string;
+            const enrollmentStepId = row.enrollmentStepId as string;
+            const workspaceId = row.workspaceId as string;
+            const prospectId = row.prospectId as string;
+            await db
+              .update(sequenceEnrollmentSteps)
+              .set({ status: "failed", executedAt: new Date(), failureReason: "lease_reclaim_exhausted" })
+              .where(eq(sequenceEnrollmentSteps.id, enrollmentStepId));
+            await resolveNotificationsForEntity(db, "sequence_enrollment_step", enrollmentStepId);
+            const [enrollment] = await db
+              .select({ sequenceId: sequenceEnrollments.sequenceId })
+              .from(sequenceEnrollments)
+              .where(eq(sequenceEnrollments.id, enrollmentId))
+              .limit(1);
+            if (!enrollment) continue;
+            await enqueueSequenceAdvanceJob(config, { enrollmentId, workspaceId, prospectId, sequenceId: enrollment.sequenceId }, 0, false);
+          }
+        }
+      })
+      .catch((err) => log.error(`${label} outreach reclaim sweep failed`, err));
+  }, OUTREACH_RECLAIM_SWEEP_INTERVAL_MS);
+}
+
+// ---------------------------------------------------------------------------
 // Worker export
 // ---------------------------------------------------------------------------
 
@@ -1687,133 +1808,8 @@ export async function startSequenceEnrollmentWorker(config: Env): Promise<() => 
     });
   });
 
-  const LINKEDIN_RECLAIM_SWEEP_INTERVAL_MS = 30_000;
-
-  const linkedinSweepTimer = setInterval(() => {
-    reclaimExpiredLeases(db, linkedinOutreachJobs)
-      .then(async (result) => {
-        if (result.requeuedIds.length === 0 && result.failedIds.length === 0) return;
-        log.info("linkedin outreach jobs reclaimed", {
-          requeued: result.requeuedIds.length,
-          failed: result.failedIds.length,
-        });
-        if (result.requeuedIds.length > 0) {
-          const affectedJobs = await db
-            .selectDistinct({
-              enrollmentId: linkedinOutreachJobs.enrollmentId,
-              workspaceId: linkedinOutreachJobs.workspaceId,
-              prospectId: linkedinOutreachJobs.prospectId,
-            })
-            .from(linkedinOutreachJobs)
-            .where(inArray(linkedinOutreachJobs.id, result.requeuedIds));
-          for (const { enrollmentId, workspaceId, prospectId } of affectedJobs) {
-            const [enrollment] = await db
-              .select({ sequenceId: sequenceEnrollments.sequenceId })
-              .from(sequenceEnrollments)
-              .where(eq(sequenceEnrollments.id, enrollmentId))
-              .limit(1);
-            if (!enrollment) continue;
-            await enqueueSequenceAdvanceJob(config, { enrollmentId, workspaceId, prospectId, sequenceId: enrollment.sequenceId }, 0, false);
-          }
-        }
-
-        // MAX_ATTEMPTS exhausted mid-reclaim — unlike automation_run_steps (which has a manual
-        // retryFailedSteps() recovery endpoint), sequence enrollments have no scheduler/cron
-        // that re-drives a stalled step, so leaving this un-actioned strands the enrollment
-        // forever. Mark the step failed and re-enqueue an advance so the normal cadence
-        // continues past it, mirroring retryTransientFailure's own "exhausted" handling above.
-        if (result.failedIds.length > 0) {
-          const strandedJobs = await db
-            .select({
-              enrollmentId: linkedinOutreachJobs.enrollmentId,
-              enrollmentStepId: linkedinOutreachJobs.enrollmentStepId,
-              workspaceId: linkedinOutreachJobs.workspaceId,
-              prospectId: linkedinOutreachJobs.prospectId,
-            })
-            .from(linkedinOutreachJobs)
-            .where(inArray(linkedinOutreachJobs.id, result.failedIds));
-          for (const { enrollmentId, enrollmentStepId, workspaceId, prospectId } of strandedJobs) {
-            await db
-              .update(sequenceEnrollmentSteps)
-              .set({ status: "failed", executedAt: new Date(), failureReason: "lease_reclaim_exhausted" })
-              .where(eq(sequenceEnrollmentSteps.id, enrollmentStepId));
-            await resolveNotificationsForEntity(db, "sequence_enrollment_step", enrollmentStepId);
-            const [enrollment] = await db
-              .select({ sequenceId: sequenceEnrollments.sequenceId })
-              .from(sequenceEnrollments)
-              .where(eq(sequenceEnrollments.id, enrollmentId))
-              .limit(1);
-            if (!enrollment) continue;
-            await enqueueSequenceAdvanceJob(config, { enrollmentId, workspaceId, prospectId, sequenceId: enrollment.sequenceId }, 0, false);
-          }
-        }
-      })
-      .catch((err) => log.error("linkedin outreach reclaim sweep failed", err));
-  }, LINKEDIN_RECLAIM_SWEEP_INTERVAL_MS);
-
-  const WHATSAPP_RECLAIM_SWEEP_INTERVAL_MS = 30_000;
-
-  const whatsappSweepTimer = setInterval(() => {
-    reclaimExpiredLeases(db, whatsappOutreachJobs)
-      .then(async (result) => {
-        if (result.requeuedIds.length === 0 && result.failedIds.length === 0) return;
-        log.info("whatsapp outreach jobs reclaimed", {
-          requeued: result.requeuedIds.length,
-          failed: result.failedIds.length,
-        });
-
-        if (result.requeuedIds.length > 0) {
-          const requeuedJobs = await db
-            .selectDistinct({
-              enrollmentId: whatsappOutreachJobs.enrollmentId,
-              workspaceId: whatsappOutreachJobs.workspaceId,
-              prospectId: whatsappOutreachJobs.prospectId,
-            })
-            .from(whatsappOutreachJobs)
-            .where(inArray(whatsappOutreachJobs.id, result.requeuedIds));
-          for (const { enrollmentId, workspaceId, prospectId } of requeuedJobs) {
-            const [enrollment] = await db
-              .select({ sequenceId: sequenceEnrollments.sequenceId })
-              .from(sequenceEnrollments)
-              .where(eq(sequenceEnrollments.id, enrollmentId))
-              .limit(1);
-            if (!enrollment) continue;
-            await enqueueSequenceAdvanceJob(config, { enrollmentId, workspaceId, prospectId, sequenceId: enrollment.sequenceId }, 0, false);
-          }
-        }
-
-        // MAX_ATTEMPTS exhausted mid-reclaim — same reasoning as the LinkedIn sweep above:
-        // sequence enrollments have no retryFailedSteps()-equivalent recovery endpoint, so an
-        // un-actioned failedIds job strands the enrollment forever. Mark the step failed and
-        // re-enqueue an advance so the cadence continues past it.
-        if (result.failedIds.length > 0) {
-          const strandedJobs = await db
-            .select({
-              enrollmentStepId: whatsappOutreachJobs.enrollmentStepId,
-              enrollmentId: whatsappOutreachJobs.enrollmentId,
-              workspaceId: whatsappOutreachJobs.workspaceId,
-              prospectId: whatsappOutreachJobs.prospectId,
-            })
-            .from(whatsappOutreachJobs)
-            .where(inArray(whatsappOutreachJobs.id, result.failedIds));
-          for (const { enrollmentStepId, enrollmentId, workspaceId, prospectId } of strandedJobs) {
-            await db
-              .update(sequenceEnrollmentSteps)
-              .set({ status: "failed", executedAt: new Date(), failureReason: "lease_reclaim_exhausted" })
-              .where(eq(sequenceEnrollmentSteps.id, enrollmentStepId));
-            await resolveNotificationsForEntity(db, "sequence_enrollment_step", enrollmentStepId);
-            const [enrollment] = await db
-              .select({ sequenceId: sequenceEnrollments.sequenceId })
-              .from(sequenceEnrollments)
-              .where(eq(sequenceEnrollments.id, enrollmentId))
-              .limit(1);
-            if (!enrollment) continue;
-            await enqueueSequenceAdvanceJob(config, { enrollmentId, workspaceId, prospectId, sequenceId: enrollment.sequenceId }, 0, false);
-          }
-        }
-      })
-      .catch((err) => log.error("whatsapp outreach reclaim sweep failed", err));
-  }, WHATSAPP_RECLAIM_SWEEP_INTERVAL_MS);
+  const linkedinSweepTimer = startOutreachReclaimSweep(db, config, linkedinOutreachJobs, "linkedin");
+  const whatsappSweepTimer = startOutreachReclaimSweep(db, config, whatsappOutreachJobs, "whatsapp");
 
   log.info("Sequence enrollment worker started", { queue: SEQUENCE_ENROLLMENT_QUEUE });
 

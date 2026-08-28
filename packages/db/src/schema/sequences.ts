@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, integer, jsonb, pgTable, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, pgTable, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { inboxes } from "./inbox.js";
 import { linkedinAccounts } from "./linkedin-accounts.js";
 import { lists } from "./prospects.js";
@@ -229,30 +229,40 @@ export const linkedinOutreachJobs = pgTable("linkedin_outreach_jobs", {
 });
 
 /** Pending WhatsApp outreach sends executed via execution-intent. */
-export const whatsappOutreachJobs = pgTable("whatsapp_outreach_jobs", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  workspaceId: uuid("workspace_id")
-    .notNull()
-    .references(() => workspaces.id, { onDelete: "cascade" }),
-  enrollmentId: uuid("enrollment_id")
-    .notNull()
-    .references(() => sequenceEnrollments.id, { onDelete: "cascade" }),
-  enrollmentStepId: uuid("enrollment_step_id")
-    .notNull()
-    .references(() => sequenceEnrollmentSteps.id, { onDelete: "cascade" })
-    .unique(),
-  prospectId: text("prospect_id").notNull(),
-  phone: text("phone").notNull(),
-  message: text("message"),
-  status: text("status").notNull().default("pending"), // pending|claimed|running|succeeded|failed|outcome_unknown
-  failureReason: text("failure_reason"),
-  leaseOwner: text("lease_owner"),
-  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
-  attemptCount: integer("attempt_count").notNull().default(0),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  completedAt: timestamp("completed_at", { withTimezone: true }),
-});
+export const whatsappOutreachJobs = pgTable(
+  "whatsapp_outreach_jobs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    enrollmentId: uuid("enrollment_id")
+      .notNull()
+      .references(() => sequenceEnrollments.id, { onDelete: "cascade" }),
+    enrollmentStepId: uuid("enrollment_step_id")
+      .notNull()
+      .references(() => sequenceEnrollmentSteps.id, { onDelete: "cascade" })
+      .unique(),
+    prospectId: text("prospect_id").notNull(),
+    phone: text("phone").notNull(),
+    message: text("message"),
+    status: text("status").notNull().default("pending"), // pending|claimed|running|succeeded|failed|outcome_unknown
+    failureReason: text("failure_reason"),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => [
+    // Mirrors linkedin_outreach_jobs_pending_idx (0018) — supports listPending()'s
+    // workspace_id/status/created_at lookup and the workspace_id ON DELETE CASCADE FK.
+    index("whatsapp_outreach_jobs_pending_idx")
+      .on(table.workspaceId, table.status, table.createdAt)
+      .where(sql`${table.status} = 'pending'`),
+  ]
+);
 
 /**
  * Dedicated LinkedIn connection-state tracking (condition-engine spec — replaces inferring
