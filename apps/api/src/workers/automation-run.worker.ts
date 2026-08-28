@@ -14,6 +14,7 @@ import {
   failStep,
 } from "../services/automation-run.service.js";
 import { reclaimExpiredLeases, withLeaseHeartbeat, buildIdempotencyKey } from "@skout/shared";
+import { AmbiguousOutcomeError } from "../services/automation-nodes/types.js";
 import { getNodeHandler } from "../services/automation-nodes/registry.js";
 import { interpolateConfig } from "../services/automation-nodes/interpolate.js";
 import { nextNodeIds, type AutomationGraph } from "../services/automation-graph.js";
@@ -74,6 +75,11 @@ export async function advanceAutomationRun(
         priorOutputs,
       })
     );
+    if (result.outcome === "ambiguous") {
+      await failStep(db, step.id, WORKER_ID, "ambiguous provider outcome — needs manual reconciliation", "outcome_unknown");
+      log.warn("automation run step outcome unknown — needs reconciliation", { runId: run.id, nodeId: node.id });
+      return;
+    }
     await completeStep(db, step.id, WORKER_ID, result.output);
 
     const successors = nextNodeIds(graph, node.id, result.branch);
@@ -100,6 +106,11 @@ export async function advanceAutomationRun(
       }
     }
   } catch (err) {
+    if (err instanceof AmbiguousOutcomeError) {
+      await failStep(db, step.id, WORKER_ID, err.message, "outcome_unknown");
+      log.warn("automation run step outcome unknown — needs reconciliation", { runId: run.id, nodeId: node.id });
+      return;
+    }
     const message = err instanceof Error ? err.message : String(err);
     const statusCode = (err as { statusCode?: number })?.statusCode;
     const isPolicyGatewayPause = statusCode === 403 || statusCode === 409;

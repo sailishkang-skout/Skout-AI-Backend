@@ -38,3 +38,39 @@ describe("httpActionNodeHandler", () => {
     expect(result.output.simulated).toBe(true);
   });
 });
+
+describe("httpActionNodeHandler — ambiguous outcomes", () => {
+  const baseCtx = { db: {} as never, config: {} as never, workspaceId: "ws-1", runId: "run-1", isSimulation: false, priorOutputs: {} };
+
+  beforeEach(() => {
+    global.fetch = vi.fn();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("marks a 5xx response as ambiguous rather than a clean failure", async () => {
+    vi.mocked(global.fetch).mockResolvedValue({ status: 502, json: async () => ({ error: "bad gateway" }) } as never);
+    const result = await httpActionNodeHandler({ ...baseCtx, node: { id: "n1", type: "action_http", config: { url: "https://example.com" } } });
+    expect(result.outcome).toBe("ambiguous");
+  });
+
+  it("marks a network/timeout error as ambiguous", async () => {
+    vi.mocked(global.fetch).mockRejectedValue(new Error("fetch failed: timeout"));
+    await expect(
+      httpActionNodeHandler({ ...baseCtx, node: { id: "n1", type: "action_http", config: { url: "https://example.com" } } })
+    ).rejects.toMatchObject({ outcome: "ambiguous" });
+  });
+
+  it("does not mark a clean 2xx response as ambiguous", async () => {
+    vi.mocked(global.fetch).mockResolvedValue({ status: 200, json: async () => ({ ok: true }) } as never);
+    const result = await httpActionNodeHandler({ ...baseCtx, node: { id: "n1", type: "action_http", config: { url: "https://example.com" } } });
+    expect(result.outcome).toBeUndefined();
+  });
+
+  it("does not mark a clean 4xx response as ambiguous — that's a real, non-retryable client error", async () => {
+    vi.mocked(global.fetch).mockResolvedValue({ status: 404, json: async () => ({ error: "not found" }) } as never);
+    const result = await httpActionNodeHandler({ ...baseCtx, node: { id: "n1", type: "action_http", config: { url: "https://example.com" } } });
+    expect(result.outcome).toBeUndefined();
+  });
+});

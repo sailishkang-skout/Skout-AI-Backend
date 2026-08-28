@@ -23,6 +23,7 @@ import { reclaimExpiredLeases } from "@skout/shared";
 import { advanceAutomationRun, startAutomationRunWorker } from "./automation-run.worker.js";
 import * as runService from "../services/automation-run.service.js";
 import * as registry from "../services/automation-nodes/registry.js";
+import { AmbiguousOutcomeError } from "../services/automation-nodes/types.js";
 
 const GRAPH = {
   nodes: [{ id: "n1", type: "delay" as const, config: { seconds: 1 } }],
@@ -87,6 +88,34 @@ describe("advanceAutomationRun", () => {
 
     await advanceAutomationRun(makeAdvanceDb(), {} as any, { automationRunId: "run-1", workspaceId: "ws-1" }, GRAPH);
 
+    expect(completeSpy).not.toHaveBeenCalled();
+  });
+
+  it("routes a resolved ambiguous outcome to failStep(..., \"outcome_unknown\") instead of completeStep", async () => {
+    vi.spyOn(runService, "claimNextStep").mockResolvedValue({ id: "step-1", nodeId: "n1", attempt: 1, automationRunId: "run-1" } as any);
+    vi.spyOn(runService, "markStepRunning").mockResolvedValue({} as any);
+    const completeSpy = vi.spyOn(runService, "completeStep").mockResolvedValue({} as any);
+    const failSpy = vi.spyOn(runService, "failStep").mockResolvedValue({} as any);
+    vi.spyOn(registry, "getNodeHandler").mockReturnValue(async () => ({ output: {}, outcome: "ambiguous" }));
+
+    await advanceAutomationRun(makeAdvanceDb(), {} as any, { automationRunId: "run-1", workspaceId: "ws-1" }, GRAPH);
+
+    expect(failSpy).toHaveBeenCalledWith(expect.anything(), "step-1", expect.any(String), expect.any(String), "outcome_unknown");
+    expect(completeSpy).not.toHaveBeenCalled();
+  });
+
+  it("routes a thrown AmbiguousOutcomeError to failStep(..., \"outcome_unknown\")", async () => {
+    vi.spyOn(runService, "claimNextStep").mockResolvedValue({ id: "step-1", nodeId: "n1", attempt: 1, automationRunId: "run-1" } as any);
+    vi.spyOn(runService, "markStepRunning").mockResolvedValue({} as any);
+    const completeSpy = vi.spyOn(runService, "completeStep").mockResolvedValue({} as any);
+    const failSpy = vi.spyOn(runService, "failStep").mockResolvedValue({} as any);
+    vi.spyOn(registry, "getNodeHandler").mockReturnValue(async () => {
+      throw new AmbiguousOutcomeError("fetch failed: timeout");
+    });
+
+    await advanceAutomationRun(makeAdvanceDb(), {} as any, { automationRunId: "run-1", workspaceId: "ws-1" }, GRAPH);
+
+    expect(failSpy).toHaveBeenCalledWith(expect.anything(), "step-1", expect.any(String), "fetch failed: timeout", "outcome_unknown");
     expect(completeSpy).not.toHaveBeenCalled();
   });
 });
