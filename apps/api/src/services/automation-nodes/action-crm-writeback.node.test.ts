@@ -41,7 +41,10 @@ describe("crmWritebackActionNodeHandler", () => {
     });
     const inserted = db.insert.mock.results[0].value.values.mock.calls[0][0];
     expect(inserted.entityType).toBe("contact");
-    expect(inserted.activityType).toBe("workflow_action");
+    // "note" specifically — the frontend's activity-timeline.tsx only renders its own closed
+    // ActivityType union; anything else fell back to an unstyled entry (or, before that fallback
+    // existed, crashed the whole page).
+    expect(inserted.activityType).toBe("note");
   });
 
   it("throws a clear error instead of a raw NOT NULL violation when entityId is missing", async () => {

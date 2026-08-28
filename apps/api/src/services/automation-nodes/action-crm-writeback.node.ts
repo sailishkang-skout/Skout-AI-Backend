@@ -19,13 +19,18 @@ const { activities } = schema;
 /**
  * Config: { entityType?: string; entityId: string; activityType?: string; subject?: string; body?: string }.
  * `entityType`/`activityType` default here rather than in the config panel — the panel only
- * *displays* "contact"/"workflow_action" as placeholder values, which aren't written into the
- * saved graph unless the user actually touches those fields, and both are NOT NULL columns with
- * no database-level default. `entityId` has no sensible default (it names a specific CRM record),
- * so a missing one fails fast with a clear error instead of a raw NOT NULL violation.
+ * *displays* "contact"/"note" as placeholder values, which aren't written into the saved graph
+ * unless the user actually touches those fields, and both are NOT NULL columns with no
+ * database-level default. `entityId` has no sensible default (it names a specific CRM record), so
+ * a missing one fails fast with a clear error instead of a raw NOT NULL violation.
+ *
+ * activityType defaults to "note" specifically — the frontend's CRM timeline (activity-timeline.tsx)
+ * only has icons/labels for its own closed ActivityType union (note/call/email/meeting/stage_change);
+ * the column itself has no DB-level enum, so anything else renders as an unstyled fallback rather
+ * than a real timeline entry (or, before that fallback existed, crashed the whole page).
  */
 export const crmWritebackActionNodeHandler: NodeHandler = async (ctx) => {
-  const { entityType = "contact", entityId, activityType = "workflow_action", subject, body } = ctx.node.config as {
+  const { entityType = "contact", entityId, activityType = "note", subject, body } = ctx.node.config as {
     entityType?: string;
     entityId: string;
     activityType?: string;
