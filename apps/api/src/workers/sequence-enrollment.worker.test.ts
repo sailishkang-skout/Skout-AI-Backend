@@ -127,6 +127,7 @@ vi.mock("../services/linkedin-account.service.js", () => ({
 
 vi.mock("@skout/shared", () => ({
   claimNext: vi.fn(),
+  reclaimExpiredLeases: vi.fn().mockResolvedValue({ requeuedIds: [], failedIds: [] }),
 }));
 
 import {
@@ -146,7 +147,7 @@ import { pickNextInbox, markInboxUsed } from "../services/inbox-rotation.service
 import { buildEmailSenderFromInbox } from "../services/email-sender.service.js";
 import { renderTemplate } from "../services/template-render.service.js";
 import { sendLinkedinOutreach } from "../services/linkedin-account.service.js";
-import { claimNext } from "@skout/shared";
+import { claimNext, reclaimExpiredLeases } from "@skout/shared";
 import { isRedisAvailable } from "../lib/redis.js";
 
 const BASE_CONFIG = {
@@ -241,6 +242,72 @@ describe("startSequenceEnrollmentWorker", () => {
     await startSequenceEnrollmentWorker(BASE_CONFIG);
 
     expect(mockOn).toHaveBeenCalledWith("failed", expect.any(Function));
+  });
+});
+
+describe("startSequenceEnrollmentWorker — reclaim sweep", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("starts a reclaim sweep interval, re-enqueues advances for requeued jobs, and stops on shutdown", async () => {
+    vi.mocked(reclaimExpiredLeases).mockResolvedValue({ requeuedIds: ["job-1"], failedIds: [] });
+
+    // linkedin_outreach_jobs.enrollmentId doesn't carry sequenceId directly — the sweep looks
+    // up the affected jobs' distinct (enrollmentId, workspaceId, prospectId) first, then joins
+    // out to sequenceEnrollments per enrollment to find sequenceId.
+    const affectedJobs = [{ enrollmentId: "enr-1", workspaceId: "ws-1", prospectId: "prospect-1" }];
+    const selectDistinctWhere = vi.fn().mockResolvedValue(affectedJobs);
+    const selectDistinctFrom = vi.fn().mockReturnValue({ where: selectDistinctWhere });
+    const selectDistinct = vi.fn().mockReturnValue({ from: selectDistinctFrom });
+
+    const selectLimit = vi.fn().mockResolvedValue([{ sequenceId: "seq-1" }]);
+    const selectWhere = vi.fn().mockReturnValue({ limit: selectLimit });
+    const selectFrom = vi.fn().mockReturnValue({ where: selectWhere });
+    const select = vi.fn().mockReturnValue({ from: selectFrom });
+
+    vi.mocked(createDb).mockReturnValueOnce({
+      db: { selectDistinct, select } as any,
+      sql: { end: vi.fn().mockResolvedValue(undefined) } as any,
+    });
+
+    vi.useFakeTimers();
+    try {
+      const stop = await startSequenceEnrollmentWorker({ DATABASE_URL: "postgres://x", REDIS_URL: "redis://x" } as never);
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(reclaimExpiredLeases).toHaveBeenCalled();
+      expect(enqueueSequenceAdvanceJob).toHaveBeenCalledWith(
+        expect.anything(),
+        { enrollmentId: "enr-1", workspaceId: "ws-1", prospectId: "prospect-1", sequenceId: "seq-1" },
+        0,
+        false
+      );
+      await stop();
+      const callsBeforeStop = vi.mocked(reclaimExpiredLeases).mock.calls.length;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(vi.mocked(reclaimExpiredLeases).mock.calls.length).toBe(callsBeforeStop);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not query for affected enrollments when nothing was requeued", async () => {
+    vi.mocked(reclaimExpiredLeases).mockResolvedValue({ requeuedIds: [], failedIds: ["job-2"] });
+    const selectDistinct = vi.fn();
+    vi.mocked(createDb).mockReturnValueOnce({
+      db: { selectDistinct } as any,
+      sql: { end: vi.fn().mockResolvedValue(undefined) } as any,
+    });
+
+    vi.useFakeTimers();
+    try {
+      const stop = await startSequenceEnrollmentWorker({ DATABASE_URL: "postgres://x", REDIS_URL: "redis://x" } as never);
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(reclaimExpiredLeases).toHaveBeenCalled();
+      expect(selectDistinct).not.toHaveBeenCalled();
+      expect(enqueueSequenceAdvanceJob).not.toHaveBeenCalled();
+      await stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

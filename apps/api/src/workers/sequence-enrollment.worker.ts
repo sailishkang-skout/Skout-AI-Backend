@@ -35,7 +35,7 @@ import {
   type ConditionLeafType,
 } from "../services/sequence-condition.js";
 import { recordSequenceEvent } from "../services/sequence-events.js";
-import { claimNext } from "@skout/shared";
+import { claimNext, reclaimExpiredLeases } from "@skout/shared";
 
 const log = createLogger("sequence-enrollment.worker");
 
@@ -1601,9 +1601,42 @@ export async function startSequenceEnrollmentWorker(config: Env): Promise<() => 
     });
   });
 
+  const LINKEDIN_RECLAIM_SWEEP_INTERVAL_MS = 30_000;
+
+  const linkedinSweepTimer = setInterval(() => {
+    reclaimExpiredLeases(db, linkedinOutreachJobs)
+      .then(async (result) => {
+        if (result.requeuedIds.length === 0 && result.failedIds.length === 0) return;
+        log.info("linkedin outreach jobs reclaimed", {
+          requeued: result.requeuedIds.length,
+          failed: result.failedIds.length,
+        });
+        if (result.requeuedIds.length === 0) return;
+        const affectedJobs = await db
+          .selectDistinct({
+            enrollmentId: linkedinOutreachJobs.enrollmentId,
+            workspaceId: linkedinOutreachJobs.workspaceId,
+            prospectId: linkedinOutreachJobs.prospectId,
+          })
+          .from(linkedinOutreachJobs)
+          .where(inArray(linkedinOutreachJobs.id, result.requeuedIds));
+        for (const { enrollmentId, workspaceId, prospectId } of affectedJobs) {
+          const [enrollment] = await db
+            .select({ sequenceId: sequenceEnrollments.sequenceId })
+            .from(sequenceEnrollments)
+            .where(eq(sequenceEnrollments.id, enrollmentId))
+            .limit(1);
+          if (!enrollment) continue;
+          await enqueueSequenceAdvanceJob(config, { enrollmentId, workspaceId, prospectId, sequenceId: enrollment.sequenceId }, 0, false);
+        }
+      })
+      .catch((err) => log.error("linkedin outreach reclaim sweep failed", err));
+  }, LINKEDIN_RECLAIM_SWEEP_INTERVAL_MS);
+
   log.info("Sequence enrollment worker started", { queue: SEQUENCE_ENROLLMENT_QUEUE });
 
   return async () => {
+    clearInterval(linkedinSweepTimer);
     await worker.close();
     await sql.end();
   };
