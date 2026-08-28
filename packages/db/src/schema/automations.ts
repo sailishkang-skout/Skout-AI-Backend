@@ -98,7 +98,15 @@ export const automationRunSteps = pgTable(
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
     attemptCount: integer("attempt_count").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    // $onUpdate is a Drizzle-ORM-level feature (no migration needed): it makes Drizzle include
+    // this column in every UPDATE statement it builds going forward, including the shared
+    // execution-intent library's generic claim/heartbeat/reclaim/recordResult writers, which
+    // don't know about an `updatedAt` column and would otherwise leave it stale on every
+    // transition.
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
   },
   (table) => [
     index("automation_run_steps_run_idx").on(table.automationRunId, table.status),

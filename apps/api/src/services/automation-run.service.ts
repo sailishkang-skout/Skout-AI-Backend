@@ -107,6 +107,11 @@ export async function retryFailedSteps(db: Db, workspaceId: string, runId: strin
   if (!run) throw new HttpError("automation_run_not_found", 404);
   if (run.status !== "failed") throw new HttpError("automation_run_not_failed", 422);
 
+  // Deliberately scoped to status = "failed" only. "outcome_unknown" steps are excluded from
+  // this automatic reset on purpose: they represent an ambiguous provider result (e.g. a request
+  // that timed out with no confirmation of whether it actually went through), not a confirmed
+  // failure — blindly resubmitting one risks a duplicate side effect. They need a human to review
+  // the ambiguous result first; a dedicated reconciliation flow for them is out of scope here.
   await db
     .update(automationRunSteps)
     .set({ status: "pending", error: null, updatedAt: new Date() })
