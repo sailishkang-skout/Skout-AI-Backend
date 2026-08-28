@@ -218,8 +218,11 @@ export const linkedinOutreachJobs = pgTable("linkedin_outreach_jobs", {
   linkedinUrl: text("linkedin_url").notNull(),
   action: text("action").notNull(),
   message: text("message"),
-  status: text("status").notNull().default("pending"),
+  status: text("status").notNull().default("pending"), // pending|claimed|running|succeeded|failed|outcome_unknown
   failureReason: text("failure_reason"),
+  leaseOwner: text("lease_owner"),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  attemptCount: integer("attempt_count").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   completedAt: timestamp("completed_at", { withTimezone: true }),
