@@ -79,7 +79,8 @@ export const automationRuns = pgTable(
   ]
 );
 
-/** One node execution within a run — the claim/heartbeat/complete/fail unit of work. */
+/** One node execution within a run — the claim/heartbeat/complete/fail unit of work, backed by
+ * @skout/shared's execution-intent library. */
 export const automationRunSteps = pgTable(
   "automation_run_steps",
   {
@@ -88,19 +89,21 @@ export const automationRunSteps = pgTable(
       .notNull()
       .references(() => automationRuns.id, { onDelete: "cascade" }),
     nodeId: text("node_id").notNull(),
-    attempt: integer("attempt").notNull().default(1),
-    status: text("status").notNull().default("pending"), // pending|claimed|running|succeeded|failed|skipped
+    status: text("status").notNull().default("pending"), // pending|claimed|running|succeeded|failed|skipped|outcome_unknown
     input: jsonb("input"),
     output: jsonb("output"),
     error: text("error"),
-    claimedAt: timestamp("claimed_at", { withTimezone: true }),
-    claimedByWorker: text("claimed_by_worker"),
-    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }),
-    nextRetryAt: timestamp("next_retry_at", { withTimezone: true }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    attemptCount: integer("attempt_count").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("automation_run_steps_run_idx").on(table.automationRunId, table.status)]
+  (table) => [
+    index("automation_run_steps_run_idx").on(table.automationRunId, table.status),
+    uniqueIndex("automation_run_steps_idempotency_uidx").on(table.idempotencyKey),
+  ]
 );
 
 /** Encrypted credentials an automation's generic HTTP node can reference by id. */
