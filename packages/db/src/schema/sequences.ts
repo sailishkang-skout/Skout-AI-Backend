@@ -228,6 +228,32 @@ export const linkedinOutreachJobs = pgTable("linkedin_outreach_jobs", {
   completedAt: timestamp("completed_at", { withTimezone: true }),
 });
 
+/** Pending WhatsApp outreach sends executed via execution-intent. */
+export const whatsappOutreachJobs = pgTable("whatsapp_outreach_jobs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  enrollmentId: uuid("enrollment_id")
+    .notNull()
+    .references(() => sequenceEnrollments.id, { onDelete: "cascade" }),
+  enrollmentStepId: uuid("enrollment_step_id")
+    .notNull()
+    .references(() => sequenceEnrollmentSteps.id, { onDelete: "cascade" })
+    .unique(),
+  prospectId: text("prospect_id").notNull(),
+  phone: text("phone").notNull(),
+  message: text("message"),
+  status: text("status").notNull().default("pending"), // pending|claimed|running|succeeded|failed|outcome_unknown
+  failureReason: text("failure_reason"),
+  leaseOwner: text("lease_owner"),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+});
+
 /**
  * Dedicated LinkedIn connection-state tracking (condition-engine spec — replaces inferring
  * "accepted" from linkedin_outreach_jobs.status, which only ever reflected whether the invite

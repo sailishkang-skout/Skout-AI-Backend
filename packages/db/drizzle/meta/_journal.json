@@ -540,6 +540,13 @@
       "when": 1790900000000,
       "tag": "0075_linkedin_outreach_jobs_execution_intent",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1791000000000,
+      "tag": "0076_whatsapp_outreach_jobs",
+      "breakpoints": true
     }
   ]
 }
