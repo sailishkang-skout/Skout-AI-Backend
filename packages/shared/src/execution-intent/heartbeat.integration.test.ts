@@ -121,6 +121,12 @@ describe("withLeaseHeartbeat (mocked db)", () => {
       expect(result).toBe("done");
       expect(updateMock).toHaveBeenCalled();
       const callsWhileWorking = updateMock.mock.calls.length;
+      // A single up-front renewal (e.g. a broken implementation that calls renewLease once and
+      // never sets up an interval at all) would also satisfy "toHaveBeenCalled()" above, so that
+      // alone doesn't prove periodic firing. The 45s work() window against a 20s heartbeat
+      // interval (60_000 / HEARTBEAT_INTERVAL_FRACTION) must fire at ~20s and ~40s, i.e. at least
+      // twice, before work() resolves — only a genuine setInterval can produce that.
+      expect(callsWhileWorking).toBeGreaterThanOrEqual(2);
 
       // Advance well past another interval; the timer must have been cleared in withLeaseHeartbeat's
       // `finally` block once work() resolved, so no further renewals should fire.
