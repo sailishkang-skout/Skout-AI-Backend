@@ -26,7 +26,7 @@ import { LinkedinAccountService, sendLinkedinOutreach, sendWhatsappOutreach } fr
 import { UnipileError } from "../services/unipile.client.js";
 import { LinkedinOutreachService } from "../services/linkedin-outreach.service.js";
 import { checkLinkedinConnectionStatus } from "../services/linkedin-connection.service.js";
-import { createNotification } from "../services/notifications.service.js";
+import { createNotification, resolveNotificationsForEntity } from "../services/notifications.service.js";
 import { getIcpScore } from "../services/draft-auto-approve.service.js";
 import {
   evaluateConditionExpression,
@@ -35,7 +35,7 @@ import {
   type ConditionLeafType,
 } from "../services/sequence-condition.js";
 import { recordSequenceEvent } from "../services/sequence-events.js";
-import { claimNext, reclaimExpiredLeases } from "@skout/shared";
+import { claimNext, reclaimExpiredLeases, recordResult, withLeaseHeartbeat, LeaseLostError } from "@skout/shared";
 
 const log = createLogger("sequence-enrollment.worker");
 
@@ -859,7 +859,17 @@ async function executeLinkedinStep(
   }
 
   try {
-    await sendLinkedinOutreach(config, account, { action, linkedinUrl, message }, workspaceId, db);
+    // Heartbeat the lease for the duration of the send itself — unipile.client.ts's fetch()
+    // has no request timeout, so a hung Unipile call can otherwise outlive the 60s lease. If
+    // that happened without a heartbeat, the reclaim sweep would flip this row back to
+    // "pending" mid-send and a second advance-job run could win the next claim and call
+    // sendLinkedinOutreach again while the first call is still in flight — reopening the
+    // exact double-send this claim/lease mechanism exists to prevent. Only the send is
+    // wrapped; markUsed/completeJob/logging below run after the lease is done being renewed
+    // (completeJob itself releases the lease via recordResult).
+    await withLeaseHeartbeat(db, linkedinOutreachJobs, job.id, LINKEDIN_WORKER_ID, 60_000, () =>
+      sendLinkedinOutreach(config, account, { action, linkedinUrl, message }, workspaceId, db)
+    );
     await accounts.markUsed(account.id);
     await outreach.completeJob(workspaceId, job.id);
     log.info("LinkedIn outreach sent via Unipile", {
@@ -897,6 +907,21 @@ async function executeLinkedinStep(
       const outcome = await retryTransientFailure(db, config, payload, pending, reason, now);
       if (outcome === "exhausted") {
         await outreach.failJob(workspaceId, job.id, `retry_exhausted: ${reason}`);
+      } else {
+        // retryTransientFailure already scheduled the real, backoff-delayed re-enqueue — but
+        // it operates purely on sequenceEnrollmentSteps and knows nothing about this job's
+        // lease. Without releasing the lease here, the row sits "claimed" until the reclaim
+        // sweep forcibly requeues it on its own ~90s (lease + sweep interval) cadence,
+        // silently overriding whatever backoff the step actually configured. Release it back
+        // to "pending" now so the row is immediately re-claimable — it won't actually be
+        // re-driven until retryTransientFailure's delayed job fires, so this doesn't cause an
+        // early retry, just avoids a phantom lease sitting around for the sweep to act on.
+        try {
+          await recordResult(db, linkedinOutreachJobs, job.id, LINKEDIN_WORKER_ID, { status: "pending" });
+        } catch (releaseErr) {
+          if (!(releaseErr instanceof LeaseLostError)) throw releaseErr;
+          // Lease already moved on (e.g. the reclaim sweep beat us to it) — nothing left to release.
+        }
       }
       return "waiting";
     }
@@ -1611,23 +1636,55 @@ export async function startSequenceEnrollmentWorker(config: Env): Promise<() => 
           requeued: result.requeuedIds.length,
           failed: result.failedIds.length,
         });
-        if (result.requeuedIds.length === 0) return;
-        const affectedJobs = await db
-          .selectDistinct({
-            enrollmentId: linkedinOutreachJobs.enrollmentId,
-            workspaceId: linkedinOutreachJobs.workspaceId,
-            prospectId: linkedinOutreachJobs.prospectId,
-          })
-          .from(linkedinOutreachJobs)
-          .where(inArray(linkedinOutreachJobs.id, result.requeuedIds));
-        for (const { enrollmentId, workspaceId, prospectId } of affectedJobs) {
-          const [enrollment] = await db
-            .select({ sequenceId: sequenceEnrollments.sequenceId })
-            .from(sequenceEnrollments)
-            .where(eq(sequenceEnrollments.id, enrollmentId))
-            .limit(1);
-          if (!enrollment) continue;
-          await enqueueSequenceAdvanceJob(config, { enrollmentId, workspaceId, prospectId, sequenceId: enrollment.sequenceId }, 0, false);
+        if (result.requeuedIds.length > 0) {
+          const affectedJobs = await db
+            .selectDistinct({
+              enrollmentId: linkedinOutreachJobs.enrollmentId,
+              workspaceId: linkedinOutreachJobs.workspaceId,
+              prospectId: linkedinOutreachJobs.prospectId,
+            })
+            .from(linkedinOutreachJobs)
+            .where(inArray(linkedinOutreachJobs.id, result.requeuedIds));
+          for (const { enrollmentId, workspaceId, prospectId } of affectedJobs) {
+            const [enrollment] = await db
+              .select({ sequenceId: sequenceEnrollments.sequenceId })
+              .from(sequenceEnrollments)
+              .where(eq(sequenceEnrollments.id, enrollmentId))
+              .limit(1);
+            if (!enrollment) continue;
+            await enqueueSequenceAdvanceJob(config, { enrollmentId, workspaceId, prospectId, sequenceId: enrollment.sequenceId }, 0, false);
+          }
+        }
+
+        // MAX_ATTEMPTS exhausted mid-reclaim — unlike automation_run_steps (which has a manual
+        // retryFailedSteps() recovery endpoint), sequence enrollments have no scheduler/cron
+        // that re-drives a stalled step, so leaving this un-actioned strands the enrollment
+        // forever. Mark the step failed and re-enqueue an advance so the normal cadence
+        // continues past it, mirroring retryTransientFailure's own "exhausted" handling above.
+        if (result.failedIds.length > 0) {
+          const strandedJobs = await db
+            .select({
+              enrollmentId: linkedinOutreachJobs.enrollmentId,
+              enrollmentStepId: linkedinOutreachJobs.enrollmentStepId,
+              workspaceId: linkedinOutreachJobs.workspaceId,
+              prospectId: linkedinOutreachJobs.prospectId,
+            })
+            .from(linkedinOutreachJobs)
+            .where(inArray(linkedinOutreachJobs.id, result.failedIds));
+          for (const { enrollmentId, enrollmentStepId, workspaceId, prospectId } of strandedJobs) {
+            await db
+              .update(sequenceEnrollmentSteps)
+              .set({ status: "failed", executedAt: new Date(), failureReason: "lease_reclaim_exhausted" })
+              .where(eq(sequenceEnrollmentSteps.id, enrollmentStepId));
+            await resolveNotificationsForEntity(db, "sequence_enrollment_step", enrollmentStepId);
+            const [enrollment] = await db
+              .select({ sequenceId: sequenceEnrollments.sequenceId })
+              .from(sequenceEnrollments)
+              .where(eq(sequenceEnrollments.id, enrollmentId))
+              .limit(1);
+            if (!enrollment) continue;
+            await enqueueSequenceAdvanceJob(config, { enrollmentId, workspaceId, prospectId, sequenceId: enrollment.sequenceId }, 0, false);
+          }
         }
       })
       .catch((err) => log.error("linkedin outreach reclaim sweep failed", err));

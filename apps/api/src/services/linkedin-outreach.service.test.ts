@@ -13,6 +13,7 @@ vi.mock("./notifications.service.js", () => ({
 }));
 
 import { claimNext, recordResult } from "@skout/shared";
+import { resolveNotificationsForEntity } from "./notifications.service.js";
 import { LinkedinOutreachService } from "./linkedin-outreach.service.js";
 
 const WORKSPACE_ID = "ws-1";
@@ -112,5 +113,25 @@ describe("LinkedinOutreachService — execution-intent delegation", () => {
       expect.any(String),
       expect.objectContaining({ status: "outcome_unknown", failureReason: "unipile timeout" })
     );
+  });
+
+  it("failJob resolves the step's open notifications (a real failure no longer needs a human)", async () => {
+    vi.mocked(recordResult).mockResolvedValue({ ...JOB_ROW, status: "failed" } as never);
+    const db = makeDb([JOB_ROW]);
+    const svc = new LinkedinOutreachService(db, {} as never);
+
+    await svc.failJob(WORKSPACE_ID, "job-1", "boom");
+
+    expect(resolveNotificationsForEntity).toHaveBeenCalledWith(db, "sequence_enrollment_step", "step-1");
+  });
+
+  it("recordOutcomeUnknown does NOT resolve the step's open notifications — ambiguous outcomes still need human reconciliation", async () => {
+    vi.mocked(recordResult).mockResolvedValue({ ...JOB_ROW, status: "outcome_unknown" } as never);
+    const db = makeDb([JOB_ROW]);
+    const svc = new LinkedinOutreachService(db, {} as never);
+
+    await svc.recordOutcomeUnknown(WORKSPACE_ID, "job-1", "unipile timeout");
+
+    expect(resolveNotificationsForEntity).not.toHaveBeenCalled();
   });
 });

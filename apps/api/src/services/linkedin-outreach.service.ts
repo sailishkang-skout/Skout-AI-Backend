@@ -144,7 +144,13 @@ export class LinkedinOutreachService {
       .set({ status: "failed", executedAt: now, failureReason: reason.slice(0, 500) })
       .where(eq(sequenceEnrollmentSteps.id, job.enrollmentStepId));
 
-    await resolveNotificationsForEntity(this.db, "sequence_enrollment_step", job.enrollmentStepId);
+    // "outcome_unknown" means the outcome is genuinely ambiguous (e.g. a Unipile timeout with
+    // no confirmed delivery receipt) and needs manual reconciliation — that's the opposite of
+    // "no longer needs a human's attention". Only a real, confirmed failure resolves the
+    // notification; an ambiguous one must keep surfacing until a human reconciles it.
+    if (status !== "outcome_unknown") {
+      await resolveNotificationsForEntity(this.db, "sequence_enrollment_step", job.enrollmentStepId);
+    }
 
     if (enrollment) {
       await enqueueSequenceAdvanceJob(

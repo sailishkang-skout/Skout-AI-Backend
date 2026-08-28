@@ -94,6 +94,11 @@ vi.mock("../services/sequence-events.js", () => ({
   recordSequenceEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../services/notifications.service.js", () => ({
+  createNotification: vi.fn().mockResolvedValue(undefined),
+  resolveNotificationsForEntity: vi.fn().mockResolvedValue(undefined),
+}));
+
 // LinkedIn send path — mocked wholesale (like the other services above) so the claimNext
 // race-guard wiring in executeLinkedinStep can be exercised without a real Unipile call or a
 // real LinkedinOutreachService/LinkedinAccountService touching the db beyond what advanceEnrollment
@@ -128,6 +133,12 @@ vi.mock("../services/linkedin-account.service.js", () => ({
 vi.mock("@skout/shared", () => ({
   claimNext: vi.fn(),
   reclaimExpiredLeases: vi.fn().mockResolvedValue({ requeuedIds: [], failedIds: [] }),
+  recordResult: vi.fn(),
+  // Real implementation runs `work()` under a renewal interval — for these unit tests the
+  // interval itself is irrelevant, only that the wrapped work still actually executes and its
+  // result/rejection still propagates to the caller.
+  withLeaseHeartbeat: vi.fn((_db: unknown, _table: unknown, _id: unknown, _workerId: unknown, _ms: unknown, work: () => unknown) => work()),
+  LeaseLostError: class LeaseLostError extends Error {},
 }));
 
 import {
@@ -147,7 +158,9 @@ import { pickNextInbox, markInboxUsed } from "../services/inbox-rotation.service
 import { buildEmailSenderFromInbox } from "../services/email-sender.service.js";
 import { renderTemplate } from "../services/template-render.service.js";
 import { sendLinkedinOutreach } from "../services/linkedin-account.service.js";
-import { claimNext, reclaimExpiredLeases } from "@skout/shared";
+import { UnipileError } from "../services/unipile.client.js";
+import { claimNext, reclaimExpiredLeases, recordResult, withLeaseHeartbeat } from "@skout/shared";
+import { resolveNotificationsForEntity } from "../services/notifications.service.js";
 import { isRedisAvailable } from "../lib/redis.js";
 
 const BASE_CONFIG = {
@@ -289,8 +302,8 @@ describe("startSequenceEnrollmentWorker — reclaim sweep", () => {
     }
   });
 
-  it("does not query for affected enrollments when nothing was requeued", async () => {
-    vi.mocked(reclaimExpiredLeases).mockResolvedValue({ requeuedIds: [], failedIds: ["job-2"] });
+  it("does not query selectDistinct (the requeued-jobs lookup) when nothing was requeued", async () => {
+    vi.mocked(reclaimExpiredLeases).mockResolvedValue({ requeuedIds: [], failedIds: [] });
     const selectDistinct = vi.fn();
     vi.mocked(createDb).mockReturnValueOnce({
       db: { selectDistinct } as any,
@@ -304,6 +317,63 @@ describe("startSequenceEnrollmentWorker — reclaim sweep", () => {
       expect(reclaimExpiredLeases).toHaveBeenCalled();
       expect(selectDistinct).not.toHaveBeenCalled();
       expect(enqueueSequenceAdvanceJob).not.toHaveBeenCalled();
+      await stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("marks the enrollment step failed and re-enqueues an advance when a job hits MAX_ATTEMPTS during reclaim (failedIds)", async () => {
+    vi.mocked(reclaimExpiredLeases).mockResolvedValue({ requeuedIds: [], failedIds: ["job-2"] });
+
+    // Sweep looks up the stranded jobs' (enrollmentId, enrollmentStepId, workspaceId,
+    // prospectId) directly (no selectDistinct — one row per failed job id), marks the step
+    // failed, resolves any open notification for it, then joins out to sequenceEnrollments
+    // for sequenceId the same way the requeuedIds branch does.
+    const strandedJobs = [
+      { enrollmentId: "enr-1", enrollmentStepId: "estep-1", workspaceId: "ws-1", prospectId: "prospect-1" },
+    ];
+    const jobsSelectWhere = vi.fn().mockResolvedValue(strandedJobs);
+    const jobsSelectFrom = vi.fn().mockReturnValue({ where: jobsSelectWhere });
+
+    const enrollmentSelectLimit = vi.fn().mockResolvedValue([{ sequenceId: "seq-1" }]);
+    const enrollmentSelectWhere = vi.fn().mockReturnValue({ limit: enrollmentSelectLimit });
+    const enrollmentSelectFrom = vi.fn().mockReturnValue({ where: enrollmentSelectWhere });
+
+    // First select() call in the failedIds branch is the stranded-jobs lookup (no .limit()
+    // chained), the second is the per-enrollment sequenceId lookup (.limit(1) chained).
+    const select = vi.fn();
+    select.mockReturnValueOnce({ from: jobsSelectFrom });
+    select.mockReturnValueOnce({ from: enrollmentSelectFrom });
+
+    const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+    const update = vi.fn().mockReturnValue({ set: updateSet });
+
+    vi.mocked(createDb).mockReturnValueOnce({
+      db: { select, update } as any,
+      sql: { end: vi.fn().mockResolvedValue(undefined) } as any,
+    });
+
+    vi.useFakeTimers();
+    try {
+      const stop = await startSequenceEnrollmentWorker({ DATABASE_URL: "postgres://x", REDIS_URL: "redis://x" } as never);
+      await vi.advanceTimersByTimeAsync(31_000);
+
+      expect(update).toHaveBeenCalledWith("sequenceEnrollmentSteps");
+      expect(updateSet).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "failed", failureReason: "lease_reclaim_exhausted" })
+      );
+      expect(resolveNotificationsForEntity).toHaveBeenCalledWith(
+        expect.anything(),
+        "sequence_enrollment_step",
+        "estep-1"
+      );
+      expect(enqueueSequenceAdvanceJob).toHaveBeenCalledWith(
+        expect.anything(),
+        { enrollmentId: "enr-1", workspaceId: "ws-1", prospectId: "prospect-1", sequenceId: "seq-1" },
+        0,
+        false
+      );
       await stop();
     } finally {
       vi.useRealTimers();
@@ -702,13 +772,13 @@ const LINKEDIN_STEP_ROW = {
   bodyTemplate: null,
 };
 
-function makeLinkedinWorkerDb() {
+function makeLinkedinWorkerDb(stepOverrides: Record<string, unknown> = {}) {
   const select = vi.fn();
   select.mockReturnValueOnce(selectChain([ENROLLMENT_ROW])); // load enrollment
   select.mockReturnValueOnce(selectChain([])); // bounced check
   select.mockReturnValueOnce(selectChain([])); // reply check
   select.mockReturnValueOnce(selectChain([])); // awaiting call disposition (none)
-  select.mockReturnValueOnce(selectChain([LINKEDIN_STEP_ROW])); // pending step
+  select.mockReturnValueOnce(selectChain([{ ...LINKEDIN_STEP_ROW, ...stepOverrides }])); // pending step
   select.mockReturnValueOnce(selectChain([])); // A/B/C variants (none)
 
   const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
@@ -778,6 +848,94 @@ describe("sequence-enrollment worker — LinkedIn step claimNext race guard", ()
     );
     expect(linkedinAccountMocks.markUsed).toHaveBeenCalledWith("acct-1");
     expect(linkedinOutreachMocks.completeJob).toHaveBeenCalledWith("ws-1", "job-1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// executeLinkedinStep's lease heartbeat (Finding 1) and transient-retry lease release
+// (Finding 2) — final whole-branch review of the execution-intent LinkedIn outreach adoption.
+// ---------------------------------------------------------------------------
+
+describe("sequence-enrollment worker — LinkedIn step lease heartbeat + transient-retry lease release", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(Worker).mockImplementation((() => ({
+      on: vi.fn(),
+      close: vi.fn().mockResolvedValue(undefined),
+    })) as any);
+    vi.mocked(isBusinessHour).mockReturnValue(true);
+
+    vi.mocked(resolveProspectFields).mockResolvedValue({
+      prospectId: "p-1",
+      email: "prospect@example.com",
+      linkedinUrl: "https://linkedin.com/in/prospect",
+      firstName: "Ada",
+      lastName: "Lovelace",
+      fullName: "Ada Lovelace",
+    } as any);
+    vi.mocked(isSuppressed).mockResolvedValue(false);
+    linkedinAccountMocks.isConfiguredForWorkspace.mockResolvedValue(true);
+    linkedinAccountMocks.pickNextAccount.mockResolvedValue({ id: "acct-1", displayName: "Sender" });
+    linkedinOutreachMocks.ensureJobForStep.mockResolvedValue({
+      id: "job-1",
+      status: "pending",
+      failureReason: null,
+    });
+    vi.mocked(claimNext).mockResolvedValue({ id: "job-1", status: "claimed" } as any);
+  });
+
+  it("wraps only the Unipile send in withLeaseHeartbeat — markUsed/completeJob run after, not inside it", async () => {
+    vi.mocked(sendLinkedinOutreach).mockResolvedValue({ externalId: "ext-1" });
+
+    const { select, update } = makeLinkedinWorkerDb();
+    const db = { select, update, transaction: vi.fn() };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(withLeaseHeartbeat).toHaveBeenCalledWith(
+      db,
+      "linkedinOutreachJobs",
+      "job-1",
+      expect.any(String),
+      60_000,
+      expect.any(Function)
+    );
+    expect(sendLinkedinOutreach).toHaveBeenCalledTimes(1);
+    // markUsed/completeJob must have actually run — proves the heartbeat wrapper's mock still
+    // let the wrapped work's result flow back out to the rest of the try block.
+    expect(linkedinAccountMocks.markUsed).toHaveBeenCalledWith("acct-1");
+    expect(linkedinOutreachMocks.completeJob).toHaveBeenCalledWith("ws-1", "job-1");
+  });
+
+  it("releases the job's lease back to pending on a transient 429/5xx failure that will retry — does not fail the job", async () => {
+    vi.mocked(sendLinkedinOutreach).mockRejectedValue(new UnipileError("rate limited", 429));
+    vi.mocked(recordResult).mockResolvedValue({ id: "job-1", status: "pending" } as never);
+
+    const { select, update } = makeLinkedinWorkerDb(); // default LINKEDIN_STEP_ROW: no attemptCount → nextAttempt 1 ≤ default maxAttempts 3 → "retry"
+    const db = { select, update, transaction: vi.fn() };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(recordResult).toHaveBeenCalledWith(db, "linkedinOutreachJobs", "job-1", expect.any(String), {
+      status: "pending",
+    });
+    expect(linkedinOutreachMocks.failJob).not.toHaveBeenCalled();
+  });
+
+  it("does not separately release the lease when retries are exhausted — failJob's own recordResult(status: failed) already releases it", async () => {
+    vi.mocked(sendLinkedinOutreach).mockRejectedValue(new UnipileError("rate limited", 429));
+
+    // Force retryTransientFailure's "exhausted" branch: attemptCount already at the step's own cap.
+    const { select, update } = makeLinkedinWorkerDb({ retryMaxAttempts: 1, attemptCount: 1 });
+    const db = { select, update, transaction: vi.fn() };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(linkedinOutreachMocks.failJob).toHaveBeenCalledWith("ws-1", "job-1", expect.stringContaining("retry_exhausted"));
+    expect(recordResult).not.toHaveBeenCalled();
   });
 });
 
