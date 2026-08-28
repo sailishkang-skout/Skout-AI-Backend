@@ -338,7 +338,16 @@ describe("startSequenceEnrollmentWorker — reclaim sweep", () => {
   });
 
   it("marks the enrollment step failed and re-enqueues an advance when a job hits MAX_ATTEMPTS during reclaim (failedIds)", async () => {
-    vi.mocked(reclaimExpiredLeases).mockResolvedValue({ requeuedIds: [], failedIds: ["job-2"] });
+    // reclaimExpiredLeases is shared by both the LinkedIn and WhatsApp sweep timers (both fire on
+    // the same 30s interval) — key the mock on the table argument so the WhatsApp sweep (which
+    // runs in the same tick) resolves empty and doesn't consume this test's LinkedIn-scoped
+    // db.select() mock queue.
+    vi.mocked(reclaimExpiredLeases).mockImplementation((_db: unknown, table: unknown) => {
+      if (table === "linkedinOutreachJobs") {
+        return Promise.resolve({ requeuedIds: [], failedIds: ["job-2"] });
+      }
+      return Promise.resolve({ requeuedIds: [], failedIds: [] });
+    });
 
     // Sweep looks up the stranded jobs' (enrollmentId, enrollmentStepId, workspaceId,
     // prospectId) directly (no selectDistinct — one row per failed job id), marks the step
@@ -389,6 +398,103 @@ describe("startSequenceEnrollmentWorker — reclaim sweep", () => {
         false
       );
       await stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("startSequenceEnrollmentWorker — WhatsApp reclaim sweep", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("re-enqueues an advance for requeued WhatsApp jobs, and marks failed jobs' steps failed with an advance too", async () => {
+    // reclaimExpiredLeases is shared by both the LinkedIn and WhatsApp sweep timers (both fire on
+    // the same 30s interval) — distinguish by the table argument so the LinkedIn sweep (which
+    // runs in the same tick) resolves empty and does nothing, while the WhatsApp sweep gets the
+    // requeued+failed result under test.
+    vi.mocked(reclaimExpiredLeases).mockImplementation((_db: unknown, table: unknown) => {
+      if (table === "whatsappOutreachJobs") {
+        return Promise.resolve({ requeuedIds: ["wjob-1"], failedIds: ["wjob-2"] });
+      }
+      return Promise.resolve({ requeuedIds: [], failedIds: [] });
+    });
+
+    // requeuedIds branch: selectDistinct the affected (enrollmentId, workspaceId, prospectId),
+    // then look up sequenceId per enrollment.
+    const requeuedJobs = [{ enrollmentId: "enr-2", workspaceId: "ws-2", prospectId: "prospect-2" }];
+    const selectDistinctWhere = vi.fn().mockResolvedValue(requeuedJobs);
+    const selectDistinctFrom = vi.fn().mockReturnValue({ where: selectDistinctWhere });
+    const selectDistinct = vi.fn().mockReturnValue({ from: selectDistinctFrom });
+
+    // 1st db.select(): enrollment sequenceId lookup for the requeued job (select/from/where/limit).
+    const requeuedEnrollmentLimit = vi.fn().mockResolvedValue([{ sequenceId: "seq-2" }]);
+    const requeuedEnrollmentWhere = vi.fn().mockReturnValue({ limit: requeuedEnrollmentLimit });
+    const requeuedEnrollmentFrom = vi.fn().mockReturnValue({ where: requeuedEnrollmentWhere });
+
+    // 2nd db.select(): the stranded (failed) jobs lookup — select/from/where resolves directly,
+    // no .limit() chained (mirrors the LinkedIn failedIds test's shape).
+    const failedJobs = [
+      { enrollmentStepId: "westep-1", enrollmentId: "enr-3", workspaceId: "ws-3", prospectId: "prospect-3" },
+    ];
+    const failedJobsWhere = vi.fn().mockResolvedValue(failedJobs);
+    const failedJobsFrom = vi.fn().mockReturnValue({ where: failedJobsWhere });
+
+    // 3rd db.select(): enrollment sequenceId lookup for the failed job.
+    const failedEnrollmentLimit = vi.fn().mockResolvedValue([{ sequenceId: "seq-3" }]);
+    const failedEnrollmentWhere = vi.fn().mockReturnValue({ limit: failedEnrollmentLimit });
+    const failedEnrollmentFrom = vi.fn().mockReturnValue({ where: failedEnrollmentWhere });
+
+    const select = vi.fn();
+    select.mockReturnValueOnce({ from: requeuedEnrollmentFrom });
+    select.mockReturnValueOnce({ from: failedJobsFrom });
+    select.mockReturnValueOnce({ from: failedEnrollmentFrom });
+
+    const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+    const update = vi.fn().mockReturnValue({ set: updateSet });
+
+    vi.mocked(createDb).mockReturnValueOnce({
+      db: { selectDistinct, select, update } as any,
+      sql: { end: vi.fn().mockResolvedValue(undefined) } as any,
+    });
+
+    vi.useFakeTimers();
+    try {
+      const stop = await startSequenceEnrollmentWorker({ DATABASE_URL: "postgres://x", REDIS_URL: "redis://x" } as never);
+      await vi.advanceTimersByTimeAsync(31_000);
+
+      expect(reclaimExpiredLeases).toHaveBeenCalledWith(expect.anything(), "whatsappOutreachJobs");
+
+      // requeuedIds branch — re-enqueues an advance, no step mutation.
+      expect(enqueueSequenceAdvanceJob).toHaveBeenCalledWith(
+        expect.anything(),
+        { enrollmentId: "enr-2", workspaceId: "ws-2", prospectId: "prospect-2", sequenceId: "seq-2" },
+        0,
+        false
+      );
+
+      // failedIds branch — marks the sequenceEnrollmentSteps row failed, resolves its
+      // notifications, and ALSO re-enqueues an advance so the enrollment isn't stranded.
+      expect(update).toHaveBeenCalledWith("sequenceEnrollmentSteps");
+      expect(updateSet).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "failed", failureReason: "lease_reclaim_exhausted" })
+      );
+      expect(resolveNotificationsForEntity).toHaveBeenCalledWith(
+        expect.anything(),
+        "sequence_enrollment_step",
+        "westep-1"
+      );
+      expect(enqueueSequenceAdvanceJob).toHaveBeenCalledWith(
+        expect.anything(),
+        { enrollmentId: "enr-3", workspaceId: "ws-3", prospectId: "prospect-3", sequenceId: "seq-3" },
+        0,
+        false
+      );
+
+      // Disposer clears the WhatsApp sweep timer alongside the LinkedIn one — no leak.
+      await stop();
+      const callsBeforeStop = vi.mocked(reclaimExpiredLeases).mock.calls.length;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(vi.mocked(reclaimExpiredLeases).mock.calls.length).toBe(callsBeforeStop);
     } finally {
       vi.useRealTimers();
     }
