@@ -13,6 +13,7 @@ import {
   completeStep,
   failStep,
 } from "../services/automation-run.service.js";
+import { reclaimExpiredLeases, withLeaseHeartbeat, buildIdempotencyKey } from "@skout/shared";
 import { getNodeHandler } from "../services/automation-nodes/registry.js";
 import { interpolateConfig } from "../services/automation-nodes/interpolate.js";
 import { nextNodeIds, type AutomationGraph } from "../services/automation-graph.js";
@@ -46,7 +47,7 @@ export async function advanceAutomationRun(
 
   const node = graph.nodes.find((n) => n.id === step.nodeId);
   if (!node) {
-    await failStep(db, step.id, `node ${step.nodeId} not found in graph`);
+    await failStep(db, step.id, WORKER_ID, `node ${step.nodeId} not found in graph`);
     return;
   }
 
@@ -62,20 +63,25 @@ export async function advanceAutomationRun(
   try {
     const handler = getNodeHandler(node.type);
     const interpolatedNode = { ...node, config: interpolateConfig(node.config, priorOutputs) };
-    const result = await handler({
-      db,
-      config,
-      workspaceId: run.workspaceId,
-      runId: run.id,
-      isSimulation: run.isSimulation,
-      node: interpolatedNode,
-      priorOutputs,
-    });
-    await completeStep(db, step.id, result.output);
+    const result = await withLeaseHeartbeat(db, automationRunSteps, step.id, WORKER_ID, 60_000, () =>
+      handler({
+        db,
+        config,
+        workspaceId: run.workspaceId,
+        runId: run.id,
+        isSimulation: run.isSimulation,
+        node: interpolatedNode,
+        priorOutputs,
+      })
+    );
+    await completeStep(db, step.id, WORKER_ID, result.output);
 
     const successors = nextNodeIds(graph, node.id, result.branch);
     for (const nodeId of successors) {
-      await db.insert(automationRunSteps).values({ automationRunId: run.id, nodeId, status: "pending" });
+      await db
+        .insert(automationRunSteps)
+        .values({ automationRunId: run.id, nodeId, status: "pending", idempotencyKey: buildIdempotencyKey(run.id, nodeId) })
+        .onConflictDoNothing();
     }
     if (successors.length > 0) {
       await enqueueAutomationRunAdvance(config, payload);
@@ -102,11 +108,13 @@ export async function advanceAutomationRun(
       log.info("automation run paused for approval", { runId: run.id, nodeId: node.id });
       return;
     }
-    await failStep(db, step.id, message);
+    await failStep(db, step.id, WORKER_ID, message);
     await db.update(automationRuns).set({ status: "failed", finishedAt: new Date() }).where(eq(automationRuns.id, run.id));
     log.error("automation run step failed", err, { runId: run.id, nodeId: node.id });
   }
 }
+
+const RECLAIM_SWEEP_INTERVAL_MS = 30_000;
 
 export async function startAutomationRunWorker(config: Env): Promise<() => Promise<void>> {
   if (!config.DATABASE_URL) {
@@ -132,9 +140,20 @@ export async function startAutomationRunWorker(config: Env): Promise<() => Promi
     log.error("automation-run advance job failed", err, { automationRunId: job?.data?.automationRunId });
   });
 
+  const sweepTimer = setInterval(() => {
+    reclaimExpiredLeases(db, automationRunSteps)
+      .then((result) => {
+        if (result.requeued > 0 || result.failed > 0) {
+          log.info("automation run steps reclaimed", { ...result });
+        }
+      })
+      .catch((err) => log.error("automation run reclaim sweep failed", err));
+  }, RECLAIM_SWEEP_INTERVAL_MS);
+
   log.info("Automation run worker started", { queue: AUTOMATION_RUN_QUEUE });
 
   return async () => {
+    clearInterval(sweepTimer);
     await worker.close();
     await sql.end();
   };

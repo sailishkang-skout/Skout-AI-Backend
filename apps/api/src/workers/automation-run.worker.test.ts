@@ -1,5 +1,26 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { advanceAutomationRun } from "./automation-run.worker.js";
+
+vi.mock("../lib/redis.js", () => ({
+  isRedisAvailable: vi.fn().mockResolvedValue(true),
+  redisBullMqConnection: vi.fn().mockReturnValue({ host: "localhost", port: 6379 }),
+}));
+vi.mock("bullmq", () => ({
+  Worker: vi.fn().mockImplementation(() => ({ on: vi.fn(), close: vi.fn().mockResolvedValue(undefined) })),
+}));
+vi.mock("@skout/db", () => ({
+  createDb: vi.fn().mockReturnValue({ db: {}, sql: { end: vi.fn().mockResolvedValue(undefined) } }),
+  schema: { automationRuns: {}, automationVersions: {}, automationRunSteps: {} },
+}));
+vi.mock("@skout/shared", () => ({
+  reclaimExpiredLeases: vi.fn().mockResolvedValue({ requeued: 0, failed: 0 }),
+  // advanceAutomationRun's own tests below don't exercise real lease renewal — the handler
+  // resolves synchronously in these tests, so just run the wrapped work directly.
+  withLeaseHeartbeat: vi.fn((_db, _table, _id, _workerId, _leaseMs, work) => work()),
+  buildIdempotencyKey: vi.fn((...parts: string[]) => parts.join(":")),
+}));
+
+import { reclaimExpiredLeases } from "@skout/shared";
+import { advanceAutomationRun, startAutomationRunWorker } from "./automation-run.worker.js";
 import * as runService from "../services/automation-run.service.js";
 import * as registry from "../services/automation-nodes/registry.js";
 
@@ -28,7 +49,7 @@ function makeAdvanceDb(resultsByCall: unknown[][] = [[RUN_ROW], [], []]) {
   const select = vi.fn().mockImplementation(() => ({
     from: vi.fn().mockReturnValue({ where: vi.fn().mockImplementation(() => terminal()) }),
   }));
-  const insert = vi.fn().mockReturnValue({ values: vi.fn().mockResolvedValue(undefined) });
+  const insert = vi.fn().mockReturnValue({ values: vi.fn().mockReturnValue({ onConflictDoNothing: vi.fn().mockResolvedValue(undefined) }) });
   const update = vi.fn().mockReturnValue({ set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) }) });
   return { select, insert, update } as any;
 }
@@ -44,7 +65,7 @@ describe("advanceAutomationRun", () => {
 
     await advanceAutomationRun(makeAdvanceDb(), {} as any, { automationRunId: "run-1", workspaceId: "ws-1" }, GRAPH);
 
-    expect(runService.completeStep).toHaveBeenCalledWith(expect.anything(), "step-1", { ok: true });
+    expect(runService.completeStep).toHaveBeenCalledWith(expect.anything(), "step-1", expect.any(String), { ok: true });
   });
 
   it("calls failStep when the node handler throws", async () => {
@@ -57,7 +78,7 @@ describe("advanceAutomationRun", () => {
 
     await advanceAutomationRun(makeAdvanceDb(), {} as any, { automationRunId: "run-1", workspaceId: "ws-1" }, GRAPH);
 
-    expect(failSpy).toHaveBeenCalledWith(expect.anything(), "step-1", "boom");
+    expect(failSpy).toHaveBeenCalledWith(expect.anything(), "step-1", expect.any(String), "boom");
   });
 
   it("does nothing when there is no pending step to claim", async () => {
@@ -67,5 +88,24 @@ describe("advanceAutomationRun", () => {
     await advanceAutomationRun(makeAdvanceDb(), {} as any, { automationRunId: "run-1", workspaceId: "ws-1" }, GRAPH);
 
     expect(completeSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("startAutomationRunWorker — reclaim sweep", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("starts a reclaim sweep interval and stops it on shutdown", async () => {
+    vi.useFakeTimers();
+    try {
+      const stop = await startAutomationRunWorker({ DATABASE_URL: "postgres://x", REDIS_URL: "redis://x" } as never);
+      await vi.advanceTimersByTimeAsync(31_000); // > the 30s sweep interval
+      expect(reclaimExpiredLeases).toHaveBeenCalled();
+      await stop();
+      const callsBeforeStop = vi.mocked(reclaimExpiredLeases).mock.calls.length;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(vi.mocked(reclaimExpiredLeases).mock.calls.length).toBe(callsBeforeStop); // no more calls after stop
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
