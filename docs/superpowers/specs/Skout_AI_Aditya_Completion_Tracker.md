@@ -19,8 +19,8 @@ _Tracks completion status of all 18 sections assigned to Aditya from the Enterpr
 
 | Status | Count |
 |---|---|
-| ✅ Complete | 11 |
-| 🔄 In Progress | 1 |
+| ✅ Complete | 12 |
+| 🔄 In Progress | 0 |
 | ⬜ Not Started | 5 |
 | 🚫 Blocked | 0 |
 | 📋 Periodic | 1 |
@@ -74,26 +74,28 @@ _Tracks completion status of all 18 sections assigned to Aditya from the Enterpr
 
 ## **7. Target Platform Architecture**
 
-### 🔄 7.2 — Asynchronous Execution Standard
+### ✅ 7.2 — Asynchronous Execution Standard
 
-**Status:** In Progress — shared library + automation-run-step adoption complete; LinkedIn outreach and sequence-enrollment adoption are separate follow-up plans (per the design doc's own rollout order).  
-**Completed (this slice):** 2026-08-28  
+**Status:** Complete — all 3 adoption phases shipped (library + automation-run-step, LinkedIn outreach, sequence-enrollment/WhatsApp).  
+**Completed:** 2026-08-28  
 **Branch:** `feature/7.2-async-execution-standard`  
 **Design doc:** `docs/superpowers/specs/2026-08-28-async-execution-standard-design.md`  
-**Plan (1 of 3):** `docs/superpowers/plans/2026-08-28-execution-intent-automation-run.md`
+**Plans:** `docs/superpowers/plans/2026-08-28-execution-intent-automation-run.md` (1 of 3) · `docs/superpowers/plans/2026-08-28-execution-intent-linkedin-outreach.md` (2 of 3) · `docs/superpowers/plans/2026-08-28-execution-intent-sequence-enrollment.md` (3 of 3)
 
 **Delivered:**
 - Shared claim/heartbeat/reclaim/backoff/idempotency execution-intent library at `packages/shared/src/execution-intent/` (`claimNext`, `withLeaseHeartbeat`/`renewLease`, `reclaimExpiredLeases`, `recordResult`, `classifyRetry`/`computeBackoffDelay`, `buildIdempotencyKey`) — generic over a structural `ExecutionIntentTable` TS interface, no `sql.raw()`/string-interpolated identifiers anywhere (uses Drizzle's typed `.for("update", {skipLocked:true})` inside a transaction, plus narrow documented `as` casts on real column/table objects only).
 - Corrected the original task-list premise: Warm-Up-Tool's execution-intent state machine lives in a sibling repo (`Skout-Warm-Up-Tool`), not this one, and — confirmed by reading it directly — isn't even shared *there* (a second module hand-rolled a near-duplicate). This library is the first place the pattern is actually generalized into one reusable implementation.
-- `automation_run_steps` (§8.14) retrofitted as the first adopter: migration `0074_automation_run_steps_execution_intent.sql` adds `idempotency_key`/`lease_owner`/`lease_expires_at`/`attempt_count`, drops the now-superseded `attempt`/`claimed_at`/`claimed_by_worker`/`heartbeat_at`/`next_retry_at`. `automation-run.service.ts` and `automation-run.worker.ts` retrofitted onto the shared library.
-- Fixed the two live bugs found during design research: `heartbeatStep` was dead code (zero call sites) — replaced with a genuinely-wired `withLeaseHeartbeat` around every step execution; there was no lease-timeout reclaim at all — added a 30s sweep (`reclaimExpiredLeases`) in the worker's startup loop.
-- New `outcome_unknown` reconciliation status wired end-to-end for the HTTP action node: a 5xx response or a network/timeout error is now routed to manual reconciliation instead of being silently retried or misclassified as a clean failure (`AmbiguousOutcomeError`, `NodeHandlerResult.outcome`).
-- Tests: 98/98 in `@skout/shared` (incl. real-Postgres concurrency/reclaim/lease-renewal integration tests proving exclusive claiming under concurrent callers), 57/57 in `apps/api`'s automation slice. Full workspace typecheck clean.
+- **automation-run-step (plan 1):** `automation_run_steps` (§8.14) retrofitted as the first adopter — migration `0074` adds `idempotency_key`/`lease_owner`/`lease_expires_at`/`attempt_count`, drops the now-superseded `attempt`/`claimed_at`/`claimed_by_worker`/`heartbeat_at`/`next_retry_at`. Fixed the two live bugs found during design research: `heartbeatStep` was dead code (zero call sites) — replaced with a genuinely-wired `withLeaseHeartbeat`; there was no lease-timeout reclaim at all — added a sweep. New `outcome_unknown` reconciliation status wired end-to-end for the HTTP action node. A Critical gap found in this plan's own final review — the reclaim sweep changed a step's status but never re-triggered execution, since `automation-run.worker.ts` is purely push-driven — was fixed in the same review cycle (sweep now re-enqueues an advance job per affected run).
+- **LinkedIn outreach (plan 2):** fixed the real concurrent-send bug found during design research — `executeLinkedinStep` never claimed a job before sending via Unipile, so two concurrent advance-job runs for the same step could both send. `linkedin_outreach_jobs` migrated onto the shared status vocabulary (`processing`→`claimed`, `completed`→`succeeded`); `LinkedinOutreachService` rewritten onto `claimNext`/`recordResult`, keeping its public signatures unchanged since `linkedin-outreach.routes.ts` is still live (confirmed via the Chrome extension's `api.js`, not the separately-confirmed-dead Voyager-API script). This plan's own final review found 1 Critical (no heartbeat around the send, so a hung request could outlive the lease and trigger a duplicate send via the new sweep) + 3 Important gaps (transient-retry never released the lease, so the sweep silently overrode configured backoff; the sweep's failed-job branch stranded enrollments with no recovery path; `outcome_unknown` incorrectly resolved human-attention notifications) — all fixed in one review cycle.
+- **Sequence-enrollment/WhatsApp (plan 3):** same concurrent-send bug, now for WhatsApp. Corrected an assumption carried from the original task list — "consolidate `retryTransientFailure` onto the library's `classifyRetry`/`computeBackoffDelay`" would have silently dropped real, working per-step-configurable retry caps/backoff (the library hardcodes a fixed `MAX_ATTEMPTS=5`), so `retryTransientFailure` was deliberately left untouched as a legitimate, separate concern from the library's job-level lease/reclaim mechanics. `sequenceEnrollmentSteps`' status vocabulary (`scheduled`→`executed`/`failed`/`skipped`, shared by every step type) is incompatible with the library's hardcoded `status='pending'` claim predicate without touching every step type, so WhatsApp got its own `whatsapp_outreach_jobs` table mirroring LinkedIn's pattern instead of retrofitting the shared column. All 4 lessons from plan 2's final review (heartbeat wrap, lease-release-on-retry, failed-job recovery, `outcome_unknown` notification semantics) were baked into this plan's task briefs from the start — 3 of 4 tasks shipped with zero fix rounds, confirming the approach.
+- Tests: `@skout/shared` 100/100 (incl. real-Postgres concurrency/reclaim/lease-renewal integration tests proving exclusive claiming under concurrent callers). `apps/api` full suite 1260/1260. Full workspace typecheck clean throughout.
 
 **Reference implementation (verified, not assumed):** the real Warm-Up-Tool `warmup_execution_intents` state machine (`PENDING→CLAIMED→SENDING→SENT/FAILED/SEND_UNKNOWN`, lease-based `FOR UPDATE SKIP LOCKED` claiming, `SEND_UNKNOWN` as a structurally-excluded-from-retry ambiguous state) — read directly from the sibling repo during design, confirmed to match the task list's description, and used as this library's design reference.
 
-**Not in this slice:** LinkedIn outreach adoption (fixes a real bug found during design research — `claimJob`'s hot path never actually claims before sending, allowing a re-claim race) and sequence-enrollment adoption (consolidates two existing ad hoc retry systems) are scoped as 2 separate follow-up plans. Calling jobs are explicitly out of scope for §7.2 entirely (see design doc's Non-goals) — calling is fully synchronous today with no queue/intent record at all; bringing it onto this library requires first making it asynchronous, a separate architectural decision.  
-**Prerequisite for:** §9.0 (once fully adopted)
+**Known, deliberately parked residuals (not blocking, flagged for awareness):** (1) LinkedIn's reclaim-sweep `failedIds` branch resolves human-attention notifications on a `lease_reclaim_exhausted` terminal state, which a final reviewer argued is arguably *more* ambiguous than a Unipile timeout (zero signal whether the crashed worker died before/during/after the actual send) — debatable, not clearly wrong, parked rather than fixed. (2) A real but pre-existing "two-clock" characteristic: the library's job-level `MAX_ATTEMPTS=5` reclaim cap and each step's own configurable `retryMaxAttempts` are independent counters — a step configured for many retries could still terminate early via the job-level cap. Worth revisiting if any step is ever configured with `retryMaxAttempts > 5`.
+
+**Out of scope for §7.2 entirely** (see design doc's Non-goals): calling jobs — fully synchronous today with no queue/intent record at all; bringing it onto this library requires first making it asynchronous, a separate architectural decision.  
+**Prerequisite for:** §9.0
 
 ---
 
@@ -308,11 +310,9 @@ _Tracks completion status of all 18 sections assigned to Aditya from the Enterpr
 | 2 | ~~§8.8 + §10.5~~ LinkedIn & Voice Handoff ✅ | Done |
 | 3 | ~~§8.11 + §9.0 + §9.1~~ Telephony Marketplace ✅ | Done |
 | 4 | ~~§8.14~~ Automation & Integrations — native Workflow Studio ✅ | Done — needs a live browser dogfooding pass before merge |
-| 5 | 🔄 §7.2 Async Execution Standard — library + automation-run-step | Shared claim/heartbeat done; done |
-| 6 | **§7.2** LinkedIn outreach adoption (plan 2 of 3) | Fixes a real claim-race bug found during design |
-| 7 | **§7.2** Sequence-enrollment adoption (plan 3 of 3) | Consolidates 2 existing ad hoc retry systems |
-| 8 | **§7.3** Dexter Orchestrator & Policy Gateway | Unlocks §8.7, §10.4 |
-| 9 | **§8.7** Dexter Command Center UI | Requires §7.3 |
-| 10 | **§10.4** Approval-to-Learning Lifecycle | Requires §7.3 |
-| 11 | **§6.0** Intelligence Layer Boundary | Unlocks §8.13 copilot convergence |
-| 12 | **§8.13** AI Command Bar | Preview step is independent; convergence needs §6.0 |
+| 5 | ~~§7.2~~ Async Execution Standard (library + automation-run-step + LinkedIn + WhatsApp) ✅ | Done — all 3 adoption plans shipped |
+| 6 | **§7.3** Dexter Orchestrator & Policy Gateway | Unlocks §8.7, §10.4 |
+| 7 | **§8.7** Dexter Command Center UI | Requires §7.3 |
+| 8 | **§10.4** Approval-to-Learning Lifecycle | Requires §7.3 |
+| 9 | **§6.0** Intelligence Layer Boundary | Unlocks §8.13 copilot convergence |
+| 10 | **§8.13** AI Command Bar | Preview step is independent; convergence needs §6.0 |
