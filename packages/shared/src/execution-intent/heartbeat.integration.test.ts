@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { schema } from "@skout/db";
+import type { Db } from "@skout/db";
 import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
 import { getTestDb } from "./test-db.js";
 import { claimNext } from "./claim.js";
@@ -78,31 +79,53 @@ describe.skipIf(!dbHandle)("heartbeat (real Postgres)", () => {
     const renewed = await renewLease(db, automationRunSteps, claimed!.id, "worker-imposter", 60_000);
     expect(renewed).toBe(false);
   });
+});
 
-  // SKIPPED — see task-5-report.md "Escalation" section. Confirmed by a bounded diagnostic
-  // (not just this test) that in this repo/environment, ANY real Postgres query made while
-  // vi.useFakeTimers() is active hangs indefinitely — reproduced with a bare `await renewLease(...)`
-  // and no setInterval/advanceTimersByTimeAsync involved at all, so this is not specific to
-  // withLeaseHeartbeat's implementation. The only other vi.useFakeTimers() usage in this monorepo
-  // (apps/crm/src/services/tasks.service.test.ts) pairs it exclusively with a fully mocked `db`
-  // object, never a real connection — there is no established pattern here for combining fake
-  // timers with real DB I/O. This is flagged in the task brief as an explicit escalation trigger;
-  // left skipped pending a controller decision on how withLeaseHeartbeat's interval behavior
-  // should be tested (e.g. a mocked db for this one test, or real timers + a short real interval).
-  it.skip("withLeaseHeartbeat renews on an interval while work is in progress", async () => {
+// `withLeaseHeartbeat`'s interval-scheduling/cleanup behavior is tested here against a mocked
+// `db`, not the real Postgres connection above. Fake timers (`vi.useFakeTimers()`) and real
+// Postgres I/O don't mix in this repo/environment — a bounded diagnostic confirmed that ANY real
+// query made while fake timers are active hangs indefinitely (the `postgres` driver relies on
+// real setTimeout/setImmediate internally, which fake timers intercept and never fire). See
+// task-5-report.md "Escalation" section for the full investigation. `renewLease`'s real DB
+// semantics (ownership check, expiry check, actual UPDATE) are already fully proven by the two
+// tests above; what's left here is purely "does withLeaseHeartbeat call renewLease at roughly the
+// right cadence, and does it clean up its interval" — a scheduling/lifecycle concern, not a
+// database concern, so mocking `db` is the correct isolation, not a workaround. This also means
+// this suite doesn't need to be gated behind `dbHandle` at all.
+describe("withLeaseHeartbeat (mocked db)", () => {
+  it("renews on an interval while work is in progress, and stops renewing once work completes", async () => {
     vi.useFakeTimers();
     try {
-      await db
-        .insert(automationRunSteps)
-        .values({ automationRunId: runId, nodeId: "node-hb-3", status: "pending", idempotencyKey: `${runId}:node-hb-3` });
-      const claimed = await claimNext(db, automationRunSteps, "worker-hb-3", 60_000, ownRun());
+      const updateMock = vi.fn(() => ({
+        set: () => ({
+          where: () => ({
+            returning: () => Promise.resolve([{ id: "some-id" }]),
+          }),
+        }),
+      }));
+      const mockDb = { update: updateMock } as unknown as Db;
 
-      const workPromise = withLeaseHeartbeat(db, automationRunSteps, claimed!.id, "worker-hb-3", 60_000, async () => {
-        await vi.advanceTimersByTimeAsync(25_000); // > 20s heartbeat interval, well under 60s lease
-        return "done";
-      });
-      const result = await workPromise;
+      const result = await withLeaseHeartbeat(
+        mockDb,
+        automationRunSteps,
+        "some-id",
+        "worker-x",
+        60_000,
+        async () => {
+          // > one 20s heartbeat interval (60_000 / 3), well under the 60s lease.
+          await vi.advanceTimersByTimeAsync(45_000);
+          return "done";
+        }
+      );
+
       expect(result).toBe("done");
+      expect(updateMock).toHaveBeenCalled();
+      const callsWhileWorking = updateMock.mock.calls.length;
+
+      // Advance well past another interval; the timer must have been cleared in withLeaseHeartbeat's
+      // `finally` block once work() resolved, so no further renewals should fire.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(updateMock.mock.calls.length).toBe(callsWhileWorking);
     } finally {
       vi.useRealTimers();
     }
