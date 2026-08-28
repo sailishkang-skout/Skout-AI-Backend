@@ -2,11 +2,14 @@ import { and, asc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
+import { claimNext, recordResult, buildIdempotencyKey } from "@skout/shared";
 import { HttpError } from "../utils/http.js";
 import { findStartNodes, type AutomationGraph } from "./automation-graph.js";
 
 const { automationRuns, automationRunSteps } = schema;
 const log = createLogger("automation-run.service");
+
+const CLAIM_LEASE_MS = 60_000;
 
 export interface CreateRunInput {
   automationId: string;
@@ -51,33 +54,22 @@ export async function createAutomationRun(db: Db, input: CreateRunInput) {
 
   const startNodes = findStartNodes(input.graph);
   for (const node of startNodes) {
-    await db.insert(automationRunSteps).values({ automationRunId: run!.id, nodeId: node.id, status: "pending" });
+    await db.insert(automationRunSteps).values({
+      automationRunId: run!.id,
+      nodeId: node.id,
+      status: "pending",
+      idempotencyKey: buildIdempotencyKey(run!.id, node.id),
+    });
   }
 
   log.info("automation run created", { runId: run!.id, automationId: input.automationId, triggerType: input.triggerType });
   return run!;
 }
 
-/** Claims the oldest pending step for a run, marking it claimed by this worker. */
+/** Claims the oldest pending step for a run via the shared execution-intent library. */
 export async function claimNextStep(db: Db, automationRunId: string, workerId: string) {
-  const [candidate] = await db
-    .select()
-    .from(automationRunSteps)
-    .where(and(eq(automationRunSteps.automationRunId, automationRunId), eq(automationRunSteps.status, "pending")))
-    .orderBy(asc(automationRunSteps.createdAt))
-    .limit(1);
-  if (!candidate) return null;
-
-  const [claimed] = await db
-    .update(automationRunSteps)
-    .set({ status: "claimed", claimedAt: new Date(), claimedByWorker: workerId, updatedAt: new Date() })
-    .where(and(eq(automationRunSteps.id, candidate.id), eq(automationRunSteps.status, "pending")))
-    .returning();
-  return claimed ?? null; // null if another worker claimed it first
-}
-
-export async function heartbeatStep(db: Db, stepId: string) {
-  await db.update(automationRunSteps).set({ heartbeatAt: new Date() }).where(eq(automationRunSteps.id, stepId));
+  const claimed = await claimNext(db, automationRunSteps, workerId, CLAIM_LEASE_MS, eq(automationRunSteps.automationRunId, automationRunId));
+  return claimed ?? null;
 }
 
 export async function markStepRunning(db: Db, stepId: string, input: unknown) {
@@ -89,29 +81,17 @@ export async function markStepRunning(db: Db, stepId: string, input: unknown) {
   return row!;
 }
 
-export async function completeStep(db: Db, stepId: string, output: unknown) {
-  const [row] = await db
-    .update(automationRunSteps)
-    .set({ status: "succeeded", output, updatedAt: new Date() })
-    .where(eq(automationRunSteps.id, stepId))
-    .returning();
-  return row!;
+export async function completeStep(db: Db, stepId: string, workerId: string, output: unknown) {
+  return recordResult(db, automationRunSteps, stepId, workerId, { status: "succeeded", output });
 }
 
 /**
- * Marks a step failed. Failures are terminal, not auto-retried — nothing in this worker consumes
- * a scheduled retry time, so pretending otherwise (an earlier version of this function reset the
- * step to "pending" with a future nextRetryAt) just left runs permanently stuck: the run itself
- * was still marked "failed" immediately regardless, and nothing ever re-enqueued the step.
- * Recovery is retryFailedSteps() below — an explicit, user-triggered action.
+ * Marks a step failed (or outcome_unknown for an ambiguous provider result — see
+ * automation-nodes/action-http.node.ts). Failures are terminal, not auto-retried — recovery is
+ * retryFailedSteps() below, an explicit user-triggered action.
  */
-export async function failStep(db: Db, stepId: string, error: string) {
-  const [row] = await db
-    .update(automationRunSteps)
-    .set({ status: "failed", error, updatedAt: new Date() })
-    .where(eq(automationRunSteps.id, stepId))
-    .returning();
-  return row!;
+export async function failStep(db: Db, stepId: string, workerId: string, error: string, status: "failed" | "outcome_unknown" = "failed") {
+  return recordResult(db, automationRunSteps, stepId, workerId, { status, error });
 }
 
 /**
@@ -129,7 +109,7 @@ export async function retryFailedSteps(db: Db, workspaceId: string, runId: strin
 
   await db
     .update(automationRunSteps)
-    .set({ status: "pending", error: null, nextRetryAt: null, updatedAt: new Date() })
+    .set({ status: "pending", error: null, updatedAt: new Date() })
     .where(and(eq(automationRunSteps.automationRunId, runId), eq(automationRunSteps.status, "failed")));
 
   const [updatedRun] = await db
