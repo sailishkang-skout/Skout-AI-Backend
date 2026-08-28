@@ -6,10 +6,14 @@ import { getTestDb } from "./test-db.js";
 import { claimNext } from "./claim.js";
 
 const { workspaces, automations, automationVersions, automationRuns, automationRunSteps } = schema;
-const dbHandle = getTestDb();
+const dbHandle = await getTestDb();
 
 describe.skipIf(!dbHandle)("claimNext (real Postgres)", () => {
-  const { db, sql } = dbHandle!;
+  // describe.skipIf still runs this factory during test collection (only the individual
+  // it() bodies are skipped), so guard the destructure instead of asserting non-null —
+  // otherwise a null dbHandle throws a TypeError here instead of skipping cleanly.
+  if (!dbHandle) return;
+  const { db, sql } = dbHandle;
   let workspaceId: string;
   let automationId: string;
   let versionId: string;
