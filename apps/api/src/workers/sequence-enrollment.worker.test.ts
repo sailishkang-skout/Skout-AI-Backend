@@ -33,6 +33,7 @@ vi.mock("@skout/db", () => ({
     sequenceStepVariants: "sequenceStepVariants",
     sequenceTrackingEvents: "sequenceTrackingEvents",
     linkedinOutreachJobs: "linkedinOutreachJobs",
+    whatsappOutreachJobs: "whatsappOutreachJobs",
     sequenceVersions: "sequenceVersions",
     sequenceEvents: "sequenceEvents",
   },
@@ -117,6 +118,19 @@ vi.mock("../services/linkedin-outreach.service.js", () => ({
   LinkedinOutreachService: vi.fn().mockImplementation(() => linkedinOutreachMocks),
 }));
 
+// WhatsApp send path — same wholesale-mock treatment as LinkedIn above, so
+// executeWhatsappStep's claimNext race guard can be exercised the same way.
+const whatsappOutreachMocks = vi.hoisted(() => ({
+  ensureJobForStep: vi.fn(),
+  completeJob: vi.fn(),
+  failJob: vi.fn(),
+  recordOutcomeUnknown: vi.fn(),
+}));
+
+vi.mock("../services/whatsapp-outreach.service.js", () => ({
+  WhatsappOutreachService: vi.fn().mockImplementation(() => whatsappOutreachMocks),
+}));
+
 const linkedinAccountMocks = vi.hoisted(() => ({
   isConfiguredForWorkspace: vi.fn(),
   pickNextAccount: vi.fn(),
@@ -157,7 +171,7 @@ import { isSuppressed } from "../services/suppression.service.js";
 import { pickNextInbox, markInboxUsed } from "../services/inbox-rotation.service.js";
 import { buildEmailSenderFromInbox } from "../services/email-sender.service.js";
 import { renderTemplate } from "../services/template-render.service.js";
-import { sendLinkedinOutreach } from "../services/linkedin-account.service.js";
+import { sendLinkedinOutreach, sendWhatsappOutreach } from "../services/linkedin-account.service.js";
 import { UnipileError } from "../services/unipile.client.js";
 import { claimNext, reclaimExpiredLeases, recordResult, withLeaseHeartbeat } from "@skout/shared";
 import { resolveNotificationsForEntity } from "../services/notifications.service.js";
@@ -935,6 +949,183 @@ describe("sequence-enrollment worker — LinkedIn step lease heartbeat + transie
     await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
 
     expect(linkedinOutreachMocks.failJob).toHaveBeenCalledWith("ws-1", "job-1", expect.stringContaining("retry_exhausted"));
+    expect(recordResult).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// executeWhatsappStep's claimNext race guard, lease heartbeat (Finding 1), and
+// transient-retry lease release (Finding 2) — same shape as executeLinkedinStep's
+// equivalent tests above, adapted for WhatsappOutreachService/sendWhatsappOutreach.
+// ---------------------------------------------------------------------------
+
+const WHATSAPP_STEP_ROW = {
+  enrollmentStepId: "estep-wa-1",
+  stepId: "step-wa-1",
+  scheduledAt: PAST_DATE,
+  stepOrder: 1,
+  stepType: "whatsapp",
+  subject: null,
+  bodyTemplate: null,
+};
+
+function makeWhatsappWorkerDb(stepOverrides: Record<string, unknown> = {}) {
+  const select = vi.fn();
+  select.mockReturnValueOnce(selectChain([ENROLLMENT_ROW])); // load enrollment
+  select.mockReturnValueOnce(selectChain([])); // bounced check
+  select.mockReturnValueOnce(selectChain([])); // reply check
+  select.mockReturnValueOnce(selectChain([])); // awaiting call disposition (none)
+  select.mockReturnValueOnce(selectChain([{ ...WHATSAPP_STEP_ROW, ...stepOverrides }])); // pending step
+  // Note: unlike the "linkedin" branch, advanceEnrollment does not call applyStepVariant
+  // for "whatsapp" steps, so there is no A/B/C variants select to reserve here.
+
+  const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+  const update = vi.fn().mockReturnValue({ set: updateSet });
+  return { select, update, updateSet };
+}
+
+describe("sequence-enrollment worker — WhatsApp step claimNext race guard", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(Worker).mockImplementation((() => ({
+      on: vi.fn(),
+      close: vi.fn().mockResolvedValue(undefined),
+    })) as any);
+    vi.mocked(isBusinessHour).mockReturnValue(true);
+
+    vi.mocked(resolveProspectFields).mockResolvedValue({
+      prospectId: "p-1",
+      email: "prospect@example.com",
+      phone: "+15551234567",
+      firstName: "Ada",
+      lastName: "Lovelace",
+      fullName: "Ada Lovelace",
+    } as any);
+    vi.mocked(isSuppressed).mockResolvedValue(false);
+    linkedinAccountMocks.isConfiguredForWorkspace.mockResolvedValue(true);
+    linkedinAccountMocks.pickNextAccount.mockResolvedValue({ id: "acct-1", displayName: "Sender" });
+    whatsappOutreachMocks.ensureJobForStep.mockResolvedValue({
+      id: "job-1",
+      status: "pending",
+      failureReason: null,
+    });
+    vi.mocked(sendWhatsappOutreach).mockResolvedValue({ externalId: "ext-1" } as any);
+  });
+
+  it("does not send when claimNext fails to win the claim (another run already claimed the job)", async () => {
+    vi.mocked(claimNext).mockResolvedValueOnce(undefined);
+
+    const { select, update } = makeWhatsappWorkerDb();
+    const db = { select, update, transaction: vi.fn() };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(claimNext).toHaveBeenCalledTimes(1);
+    expect(sendWhatsappOutreach).not.toHaveBeenCalled();
+    expect(whatsappOutreachMocks.completeJob).not.toHaveBeenCalled();
+    expect(linkedinAccountMocks.markUsed).not.toHaveBeenCalled();
+  });
+
+  it("sends via Unipile when claimNext wins the claim on the job row", async () => {
+    vi.mocked(claimNext).mockResolvedValueOnce({ id: "job-1", status: "claimed" } as any);
+
+    const { select, update } = makeWhatsappWorkerDb();
+    const db = { select, update, transaction: vi.fn() };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(claimNext).toHaveBeenCalledTimes(1);
+    expect(sendWhatsappOutreach).toHaveBeenCalledWith(
+      BASE_CONFIG,
+      expect.objectContaining({ id: "acct-1" }),
+      expect.objectContaining({ phone: "+15551234567" }),
+      "ws-1",
+      db
+    );
+    expect(linkedinAccountMocks.markUsed).toHaveBeenCalledWith("acct-1");
+    expect(whatsappOutreachMocks.completeJob).toHaveBeenCalledWith("ws-1", "job-1");
+  });
+});
+
+describe("sequence-enrollment worker — WhatsApp step lease heartbeat + transient-retry lease release", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(Worker).mockImplementation((() => ({
+      on: vi.fn(),
+      close: vi.fn().mockResolvedValue(undefined),
+    })) as any);
+    vi.mocked(isBusinessHour).mockReturnValue(true);
+
+    vi.mocked(resolveProspectFields).mockResolvedValue({
+      prospectId: "p-1",
+      email: "prospect@example.com",
+      phone: "+15551234567",
+      firstName: "Ada",
+      lastName: "Lovelace",
+      fullName: "Ada Lovelace",
+    } as any);
+    vi.mocked(isSuppressed).mockResolvedValue(false);
+    linkedinAccountMocks.isConfiguredForWorkspace.mockResolvedValue(true);
+    linkedinAccountMocks.pickNextAccount.mockResolvedValue({ id: "acct-1", displayName: "Sender" });
+    whatsappOutreachMocks.ensureJobForStep.mockResolvedValue({
+      id: "job-1",
+      status: "pending",
+      failureReason: null,
+    });
+    vi.mocked(claimNext).mockResolvedValue({ id: "job-1", status: "claimed" } as any);
+  });
+
+  it("wraps only the Unipile send in withLeaseHeartbeat — markUsed/completeJob run after, not inside it", async () => {
+    vi.mocked(sendWhatsappOutreach).mockResolvedValue({ externalId: "ext-1" } as any);
+
+    const { select, update } = makeWhatsappWorkerDb();
+    const db = { select, update, transaction: vi.fn() };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(withLeaseHeartbeat).toHaveBeenCalledWith(
+      db,
+      "whatsappOutreachJobs",
+      "job-1",
+      expect.any(String),
+      60_000,
+      expect.any(Function)
+    );
+    expect(sendWhatsappOutreach).toHaveBeenCalledTimes(1);
+    expect(linkedinAccountMocks.markUsed).toHaveBeenCalledWith("acct-1");
+    expect(whatsappOutreachMocks.completeJob).toHaveBeenCalledWith("ws-1", "job-1");
+  });
+
+  it("releases the job's lease back to pending on a transient 429/5xx failure that will retry — does not fail the job", async () => {
+    vi.mocked(sendWhatsappOutreach).mockRejectedValue(new UnipileError("rate limited", 429));
+    vi.mocked(recordResult).mockResolvedValue({ id: "job-1", status: "pending" } as never);
+
+    const { select, update } = makeWhatsappWorkerDb(); // default WHATSAPP_STEP_ROW: no attemptCount → nextAttempt 1 ≤ default maxAttempts 3 → "retry"
+    const db = { select, update, transaction: vi.fn() };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(recordResult).toHaveBeenCalledWith(db, "whatsappOutreachJobs", "job-1", expect.any(String), {
+      status: "pending",
+    });
+    expect(whatsappOutreachMocks.failJob).not.toHaveBeenCalled();
+  });
+
+  it("does not separately release the lease when retries are exhausted — failJob's own recordResult(status: failed) already releases it", async () => {
+    vi.mocked(sendWhatsappOutreach).mockRejectedValue(new UnipileError("rate limited", 429));
+
+    // Force retryTransientFailure's "exhausted" branch: attemptCount already at the step's own cap.
+    const { select, update } = makeWhatsappWorkerDb({ retryMaxAttempts: 1, attemptCount: 1 });
+    const db = { select, update, transaction: vi.fn() };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(whatsappOutreachMocks.failJob).toHaveBeenCalledWith("ws-1", "job-1", expect.stringContaining("retry_exhausted"));
     expect(recordResult).not.toHaveBeenCalled();
   });
 });

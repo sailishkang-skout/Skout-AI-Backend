@@ -25,6 +25,7 @@ import { dispatchWebhookEvent } from "../services/webhook.service.js";
 import { LinkedinAccountService, sendLinkedinOutreach, sendWhatsappOutreach } from "../services/linkedin-account.service.js";
 import { UnipileError } from "../services/unipile.client.js";
 import { LinkedinOutreachService } from "../services/linkedin-outreach.service.js";
+import { WhatsappOutreachService } from "../services/whatsapp-outreach.service.js";
 import { checkLinkedinConnectionStatus } from "../services/linkedin-connection.service.js";
 import { createNotification, resolveNotificationsForEntity } from "../services/notifications.service.js";
 import { getIcpScore } from "../services/draft-auto-approve.service.js";
@@ -59,6 +60,7 @@ const {
   sequenceStepVariants,
   sequenceTrackingEvents,
   linkedinOutreachJobs,
+  whatsappOutreachJobs,
   sequenceVersions,
   inboxThreads,
   inboxMessages,
@@ -735,6 +737,7 @@ async function executeEmailStep(
 
 const LINKEDIN_RETRY_MS = 60_000;
 const LINKEDIN_WORKER_ID = `linkedin-${process.pid}`;
+const WHATSAPP_WORKER_ID = `whatsapp-${process.pid}`;
 
 /**
  * Sends a LinkedIn connection request or DM via Unipile (server-side).
@@ -1134,37 +1137,95 @@ async function executeWhatsappStep(
       )
     : "";
 
-  try {
-    await sendWhatsappOutreach(config, account, { phone, message }, workspaceId, db);
-    await accounts.markUsed(account.id);
+  const outreach = new WhatsappOutreachService(db, config);
+  const job = await outreach.ensureJobForStep({
+    workspaceId,
+    enrollmentId,
+    enrollmentStepId: pending.enrollmentStepId,
+    prospectId,
+    phone,
+    message: message || null,
+  });
+
+  if (job.status === "succeeded") {
     await markStepTerminal(db, pending.enrollmentStepId, "executed", null, now);
+    return "done";
+  }
+  if (job.status === "failed" || job.status === "outcome_unknown") {
+    await markStepTerminal(db, pending.enrollmentStepId, "failed", job.failureReason ?? "whatsapp_failed", now);
+    return "done";
+  }
+
+  // Call claimNext directly (not the claimJob() wrapper) — same reasoning as executeLinkedinStep:
+  // the wrapper's fallback-to-pre-existing-row makes "status === claimed" ambiguous between
+  // "I just claimed it" and "someone else already has it". claimNext's own return (a row, or
+  // undefined) is unambiguous.
+  const claimed = await claimNext(db, whatsappOutreachJobs, WHATSAPP_WORKER_ID, 60_000, eq(whatsappOutreachJobs.id, job.id));
+  if (!claimed) {
+    log.info("WhatsApp job already claimed by another run — skipping send", {
+      enrollmentId,
+      enrollmentStepId: pending.enrollmentStepId,
+    });
+    return "waiting";
+  }
+
+  try {
+    // The send itself must be wrapped in withLeaseHeartbeat — a hung/slow Unipile request must
+    // not outlive the 60s lease and get forcibly reclaimed mid-flight, which would let the
+    // reclaim sweep's re-enqueue trigger a second concurrent send for the same job.
+    await withLeaseHeartbeat(db, whatsappOutreachJobs, job.id, WHATSAPP_WORKER_ID, 60_000, () =>
+      sendWhatsappOutreach(config, account, { phone, message }, workspaceId, db)
+    );
+    await accounts.markUsed(account.id);
+    await outreach.completeJob(workspaceId, job.id);
     log.info("WhatsApp message sent via Unipile", {
       enrollmentId,
       enrollmentStepId: pending.enrollmentStepId,
       accountId: account.id,
     });
-    return "done";
+    return "waiting"; // completeJob already enqueues the next advance
   } catch (err: unknown) {
+    const status = err instanceof UnipileError ? err.status : 0;
     const reason =
       err instanceof UnipileError
         ? err.message
         : err instanceof Error
           ? err.message
           : "whatsapp_send_failed";
-    const status = err instanceof UnipileError ? err.status : 0;
+
+    if (status === 0) {
+      // Not a structured Unipile HTTP error — a network/connection-level failure with no
+      // confirmed response. Ambiguous, not a clean failure: needs manual reconciliation.
+      await accounts.markError(account.id, reason);
+      await outreach.recordOutcomeUnknown(workspaceId, job.id, reason);
+      log.warn("WhatsApp send outcome unknown — needs reconciliation", { enrollmentId, reason });
+      return "waiting";
+    }
+
     if (status === 429 || status >= 500) {
       await accounts.markError(account.id, reason);
       log.warn("WhatsApp send transient failure", { enrollmentId, reason, status });
       const outcome = await retryTransientFailure(db, config, payload, pending, reason, now);
-      // "exhausted" already marked the step terminal (via retryTransientFailure) — falling
-      // through to "done" lets the normal cadence pick up the next step, same as any other
-      // terminal failure below. "retry" re-enqueued its own job, so wait for that instead.
-      return outcome === "exhausted" ? "done" : "waiting";
+      if (outcome === "exhausted") {
+        await outreach.failJob(workspaceId, job.id, `retry_exhausted: ${reason}`);
+      } else {
+        // "retry": retryTransientFailure already scheduled a delayed re-enqueue with its own
+        // configured backoff — release the lease now so the row is immediately re-claimable,
+        // rather than leaving it "claimed" for the reclaim sweep to forcibly reclaim ~90s later
+        // regardless of what backoff was actually configured (this was Plan 2's Finding 2).
+        try {
+          await recordResult(db, whatsappOutreachJobs, job.id, WHATSAPP_WORKER_ID, { status: "pending" });
+        } catch (releaseErr) {
+          if (!(releaseErr instanceof LeaseLostError)) throw releaseErr;
+        }
+      }
+      return "waiting";
     }
+
     await accounts.markError(account.id, reason);
-    await markStepTerminal(db, pending.enrollmentStepId, "failed", reason, now);
+    await outreach.failJob(workspaceId, job.id, reason);
     log.warn("WhatsApp step failed", { enrollmentId, reason });
-    return "done";
+    return "waiting";
   }
 }
 
