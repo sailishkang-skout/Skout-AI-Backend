@@ -94,6 +94,41 @@ vi.mock("../services/sequence-events.js", () => ({
   recordSequenceEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
+// LinkedIn send path — mocked wholesale (like the other services above) so the claimNext
+// race-guard wiring in executeLinkedinStep can be exercised without a real Unipile call or a
+// real LinkedinOutreachService/LinkedinAccountService touching the db beyond what advanceEnrollment
+// itself queries. The mock objects are shared via vi.hoisted so both the mock factory (which must
+// return the same instance from every `new LinkedinOutreachService(...)` / `new
+// LinkedinAccountService(...)` call) and the test bodies (which configure/assert on them) see the
+// same vi.fn() references.
+const linkedinOutreachMocks = vi.hoisted(() => ({
+  ensureJobForStep: vi.fn(),
+  completeJob: vi.fn(),
+  failJob: vi.fn(),
+  recordOutcomeUnknown: vi.fn(),
+}));
+
+vi.mock("../services/linkedin-outreach.service.js", () => ({
+  LinkedinOutreachService: vi.fn().mockImplementation(() => linkedinOutreachMocks),
+}));
+
+const linkedinAccountMocks = vi.hoisted(() => ({
+  isConfiguredForWorkspace: vi.fn(),
+  pickNextAccount: vi.fn(),
+  markUsed: vi.fn(),
+  markError: vi.fn(),
+}));
+
+vi.mock("../services/linkedin-account.service.js", () => ({
+  LinkedinAccountService: vi.fn().mockImplementation(() => linkedinAccountMocks),
+  sendLinkedinOutreach: vi.fn(),
+  sendWhatsappOutreach: vi.fn(),
+}));
+
+vi.mock("@skout/shared", () => ({
+  claimNext: vi.fn(),
+}));
+
 import {
   startSequenceEnrollmentWorker,
   retryTransientFailure,
@@ -110,6 +145,8 @@ import { isSuppressed } from "../services/suppression.service.js";
 import { pickNextInbox, markInboxUsed } from "../services/inbox-rotation.service.js";
 import { buildEmailSenderFromInbox } from "../services/email-sender.service.js";
 import { renderTemplate } from "../services/template-render.service.js";
+import { sendLinkedinOutreach } from "../services/linkedin-account.service.js";
+import { claimNext } from "@skout/shared";
 import { isRedisAvailable } from "../lib/redis.js";
 
 const BASE_CONFIG = {
@@ -576,6 +613,104 @@ describe("sequence-enrollment worker — email step execution", () => {
 
     expect(transaction).not.toHaveBeenCalled();
     expect(markInboxUsed).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// executeLinkedinStep's claimNext race guard — invoked indirectly via the captured
+// BullMQ processor function, since executeLinkedinStep/advanceEnrollment aren't
+// exported. This covers the actual bug fix: a send must only be attempted when this
+// run wins the claim on the linkedinOutreachJobs row via claimNext — if another
+// concurrent advance-job run already claimed it, this run must not send at all.
+// ---------------------------------------------------------------------------
+
+const LINKEDIN_STEP_ROW = {
+  enrollmentStepId: "estep-li-1",
+  stepId: "step-li-1",
+  scheduledAt: PAST_DATE,
+  stepOrder: 1,
+  stepType: "linkedin",
+  linkedinAction: "connect",
+  subject: null,
+  bodyTemplate: null,
+};
+
+function makeLinkedinWorkerDb() {
+  const select = vi.fn();
+  select.mockReturnValueOnce(selectChain([ENROLLMENT_ROW])); // load enrollment
+  select.mockReturnValueOnce(selectChain([])); // bounced check
+  select.mockReturnValueOnce(selectChain([])); // reply check
+  select.mockReturnValueOnce(selectChain([])); // awaiting call disposition (none)
+  select.mockReturnValueOnce(selectChain([LINKEDIN_STEP_ROW])); // pending step
+  select.mockReturnValueOnce(selectChain([])); // A/B/C variants (none)
+
+  const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+  const update = vi.fn().mockReturnValue({ set: updateSet });
+  return { select, update, updateSet };
+}
+
+describe("sequence-enrollment worker — LinkedIn step claimNext race guard", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(Worker).mockImplementation((() => ({
+      on: vi.fn(),
+      close: vi.fn().mockResolvedValue(undefined),
+    })) as any);
+    vi.mocked(isBusinessHour).mockReturnValue(true);
+
+    vi.mocked(resolveProspectFields).mockResolvedValue({
+      prospectId: "p-1",
+      email: "prospect@example.com",
+      linkedinUrl: "https://linkedin.com/in/prospect",
+      firstName: "Ada",
+      lastName: "Lovelace",
+      fullName: "Ada Lovelace",
+    } as any);
+    vi.mocked(isSuppressed).mockResolvedValue(false);
+    linkedinAccountMocks.isConfiguredForWorkspace.mockResolvedValue(true);
+    linkedinAccountMocks.pickNextAccount.mockResolvedValue({ id: "acct-1", displayName: "Sender" });
+    linkedinOutreachMocks.ensureJobForStep.mockResolvedValue({
+      id: "job-1",
+      status: "pending",
+      failureReason: null,
+    });
+    vi.mocked(sendLinkedinOutreach).mockResolvedValue({ externalId: "ext-1" });
+  });
+
+  it("does not send when claimNext fails to win the claim (another run already claimed the job)", async () => {
+    vi.mocked(claimNext).mockResolvedValueOnce(undefined);
+
+    const { select, update } = makeLinkedinWorkerDb();
+    const db = { select, update, transaction: vi.fn() };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(claimNext).toHaveBeenCalledTimes(1);
+    expect(sendLinkedinOutreach).not.toHaveBeenCalled();
+    expect(linkedinOutreachMocks.completeJob).not.toHaveBeenCalled();
+    expect(linkedinAccountMocks.markUsed).not.toHaveBeenCalled();
+  });
+
+  it("sends via Unipile when claimNext wins the claim on the job row", async () => {
+    vi.mocked(claimNext).mockResolvedValueOnce({ id: "job-1", status: "claimed" } as any);
+
+    const { select, update } = makeLinkedinWorkerDb();
+    const db = { select, update, transaction: vi.fn() };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(claimNext).toHaveBeenCalledTimes(1);
+    expect(sendLinkedinOutreach).toHaveBeenCalledWith(
+      BASE_CONFIG,
+      expect.objectContaining({ id: "acct-1" }),
+      expect.objectContaining({ action: "connect", linkedinUrl: "https://linkedin.com/in/prospect" }),
+      "ws-1",
+      db
+    );
+    expect(linkedinAccountMocks.markUsed).toHaveBeenCalledWith("acct-1");
+    expect(linkedinOutreachMocks.completeJob).toHaveBeenCalledWith("ws-1", "job-1");
   });
 });
 
