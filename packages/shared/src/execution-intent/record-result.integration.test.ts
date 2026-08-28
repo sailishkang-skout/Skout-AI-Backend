@@ -47,11 +47,19 @@ describe.skipIf(!dbHandle)("recordResult (real Postgres)", () => {
     await sql.end();
   });
 
+  // This suite runs against a real, shared local Postgres that also accumulates leftover rows
+  // from other integration test suites in the monorepo. claimNext deliberately claims the oldest
+  // pending row *globally* with no implicit scoping — that's what its `extraWhere` parameter is
+  // for — so every call here scopes to this suite's own runId via extraWhere to stay correct
+  // regardless of what else is sitting in the table.
+  const ownRun = () => eq(automationRunSteps.automationRunId, runId);
+
   it("transitions a claimed row to succeeded and releases the lease", async () => {
     await db
       .insert(automationRunSteps)
       .values({ automationRunId: runId, nodeId: "node-rr-1", status: "pending", idempotencyKey: `${runId}:node-rr-1` });
-    const claimed = await claimNext(db, automationRunSteps, "worker-rr-1", 60_000);
+    const claimed = await claimNext(db, automationRunSteps, "worker-rr-1", 60_000, ownRun());
+    expect(claimed?.nodeId).toBe("node-rr-1");
 
     const result = await recordResult(db, automationRunSteps, claimed!.id, "worker-rr-1", {
       status: "succeeded",
@@ -68,7 +76,7 @@ describe.skipIf(!dbHandle)("recordResult (real Postgres)", () => {
     await db
       .insert(automationRunSteps)
       .values({ automationRunId: runId, nodeId: "node-rr-2", status: "pending", idempotencyKey: `${runId}:node-rr-2` });
-    const claimed = await claimNext(db, automationRunSteps, "worker-rr-2", 60_000);
+    const claimed = await claimNext(db, automationRunSteps, "worker-rr-2", 60_000, ownRun());
 
     await expect(
       recordResult(db, automationRunSteps, claimed!.id, "someone-else", { status: "succeeded" })
@@ -79,7 +87,7 @@ describe.skipIf(!dbHandle)("recordResult (real Postgres)", () => {
     await db
       .insert(automationRunSteps)
       .values({ automationRunId: runId, nodeId: "node-rr-3", status: "pending", idempotencyKey: `${runId}:node-rr-3` });
-    const claimed = await claimNext(db, automationRunSteps, "worker-rr-3", 60_000);
+    const claimed = await claimNext(db, automationRunSteps, "worker-rr-3", 60_000, ownRun());
 
     const result = await recordResult(db, automationRunSteps, claimed!.id, "worker-rr-3", {
       status: "outcome_unknown",
