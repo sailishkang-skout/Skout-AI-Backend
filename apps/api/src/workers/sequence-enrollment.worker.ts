@@ -35,6 +35,7 @@ import {
   type ConditionLeafType,
 } from "../services/sequence-condition.js";
 import { recordSequenceEvent } from "../services/sequence-events.js";
+import { claimNext } from "@skout/shared";
 
 const log = createLogger("sequence-enrollment.worker");
 
@@ -320,8 +321,8 @@ async function linkedinInviteState(
     .orderBy(desc(linkedinOutreachJobs.createdAt))
     .limit(1);
   if (!job) return "not_sent";
-  if (job.status === "completed") {
-    // "completed" on this job only ever meant "the connection REQUEST was sent successfully" —
+  if (job.status === "succeeded") {
+    // "succeeded" on this job only ever meant "the connection REQUEST was sent successfully" —
     // it says nothing about whether the prospect actually accepted it. Check the real,
     // dedicated connection-state tracking instead of treating "sent" as "accepted".
     const status = await checkLinkedinConnectionStatus(config, db, {
@@ -331,7 +332,7 @@ async function linkedinInviteState(
     });
     return status === "accepted" ? "accepted" : "pending";
   }
-  if (job.status === "failed") {
+  if (job.status === "failed" || job.status === "outcome_unknown") {
     const reason = (job.failureReason ?? "").toLowerCase();
     if (reason.includes("declin") || reason.includes("reject")) return "declined";
     return "failed";
@@ -733,6 +734,7 @@ async function executeEmailStep(
 }
 
 const LINKEDIN_RETRY_MS = 60_000;
+const LINKEDIN_WORKER_ID = `linkedin-${process.pid}`;
 
 /**
  * Sends a LinkedIn connection request or DM via Unipile (server-side).
@@ -824,11 +826,11 @@ async function executeLinkedinStep(
     message: message || null,
   });
 
-  if (job.status === "completed") {
+  if (job.status === "succeeded") {
     await markStepTerminal(db, pending.enrollmentStepId, "executed", null, now);
     return "done";
   }
-  if (job.status === "failed") {
+  if (job.status === "failed" || job.status === "outcome_unknown") {
     await markStepTerminal(
       db,
       pending.enrollmentStepId,
@@ -837,6 +839,23 @@ async function executeLinkedinStep(
       now
     );
     return "done";
+  }
+
+  // Call claimNext directly (not the claimJob() wrapper) — the wrapper falls back to returning
+  // the pre-existing job row when nothing was claimed, and that row's `status` is *also*
+  // "claimed" if another worker currently holds it, making "status === claimed" ambiguous
+  // between "I just claimed it" and "someone else already has it". claimNext's own return value
+  // (a row, or undefined) is unambiguous: undefined means this call did not win the claim.
+  const claimed = await claimNext(db, linkedinOutreachJobs, LINKEDIN_WORKER_ID, 60_000, eq(linkedinOutreachJobs.id, job.id));
+  if (!claimed) {
+    // Another concurrent advance-job run already claimed this job (or it settled between our
+    // check above and this claim attempt) — do not send. Let the other run's completeJob/failJob
+    // drive the next advance.
+    log.info("LinkedIn job already claimed by another run — skipping send", {
+      enrollmentId,
+      enrollmentStepId: pending.enrollmentStepId,
+    });
+    return "waiting";
   }
 
   try {
@@ -852,6 +871,7 @@ async function executeLinkedinStep(
     // completeJob already enqueues next advance
     return "waiting";
   } catch (err: unknown) {
+    const status = err instanceof UnipileError ? err.status : 0;
     const reason =
       err instanceof UnipileError
         ? err.message
@@ -859,9 +879,18 @@ async function executeLinkedinStep(
           ? err.message
           : "linkedin_send_failed";
 
+    if (status === 0) {
+      // Not a structured Unipile HTTP error — a network/connection-level failure with no
+      // confirmed response, meaning Unipile may or may not have actually received the send
+      // request. Ambiguous, not a clean failure: needs manual reconciliation, not a retry.
+      await accounts.markError(account.id, reason);
+      await outreach.recordOutcomeUnknown(workspaceId, job.id, reason);
+      log.warn("LinkedIn send outcome unknown — needs reconciliation", { enrollmentId, reason });
+      return "waiting";
+    }
+
     // Rate limits / transient — retry later without failing the step, up to the step's own
     // retryMaxAttempts (see retryTransientFailure — this used to retry every 60s forever).
-    const status = err instanceof UnipileError ? err.status : 0;
     if (status === 429 || status >= 500) {
       await accounts.markError(account.id, reason);
       log.warn("LinkedIn send transient failure", { enrollmentId, reason, status });
