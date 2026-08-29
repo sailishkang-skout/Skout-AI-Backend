@@ -12,6 +12,7 @@ import { buildListService } from "./list.service.js";
 import { buildSequenceService } from "./sequence.service.js";
 import { personalizeProspect } from "./personalize.service.js";
 import { listSignalsForEntity } from "./signal.service.js";
+import { applyPolicy } from "./intelligence-layer.service.js";
 
 const { activationRules, activationRuleRuns, prospectActivations } = schema;
 const log = createLogger("activation-rules.service");
@@ -150,6 +151,9 @@ export async function softDeleteActivationRule(db: Db, workspaceId: string, id: 
  * matched rule and then calling `recordRuleRun` below to log it — kept as two steps so a rule
  * match is never silently un-auditable, and so this module doesn't reach into three unrelated
  * services' constructors just to decide a match.
+ *
+ * §6.0 — the actual matching decision now lives in intelligence-layer.service.ts's applyPolicy
+ * (step 7 of the shared pipeline); this function is a thin DB-fetching wrapper around it.
  */
 export async function matchActivationRules(
   db: Db,
@@ -158,12 +162,7 @@ export async function matchActivationRules(
   activeSignalTypes: string[]
 ): Promise<ActivationRuleDto[]> {
   const rules = await listActivationRules(db, workspaceId);
-  return rules.filter((rule) => {
-    if (!rule.enabled) return false;
-    if (prospectScore < rule.scoreThreshold) return false;
-    if (rule.signalType && !activeSignalTypes.includes(rule.signalType)) return false;
-    return true;
-  });
+  return applyPolicy(rules, prospectScore, activeSignalTypes);
 }
 
 /** Log a rule firing (R13.4 AC: "every auto-action a rule takes is logged and reversible"). */
