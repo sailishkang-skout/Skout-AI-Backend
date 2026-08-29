@@ -92,6 +92,22 @@ describe("dexter-journey.service — actionType extension", () => {
     expect((invoked.outcome as Record<string, unknown>).error).toBeTruthy();
   });
 
+  it("invokeDexterPlan with an unrecognized actionType fails closed (status failed, error captured) instead of reporting success", async () => {
+    const { plan } = await proposeDexterPlan(db, {
+      workspaceId,
+      brief: "Do something not yet implemented",
+      actionType: "enroll_sequences", // typo — not a recognized actionType
+      actionParams: { sequenceId: "seq-x" },
+    });
+    await approveDexterPlan(db, workspaceId, plan.id);
+    const { plan: invoked } = await invokeDexterPlan(db, workspaceId, plan.id);
+
+    expect(invoked.status).toBe("failed");
+    const outcome = invoked.outcome as Record<string, unknown>;
+    expect(outcome.error).toBe("unsupported_action_type: enroll_sequences");
+    expect(outcome.at).toBeTruthy();
+  });
+
   it("rejectDexterPlan sets status to rejected from proposed, and rejects an invalid transition", async () => {
     const { plan } = await proposeDexterPlan(db, { workspaceId, brief: "Plan to be rejected" });
     const rejected = await rejectDexterPlan(db, workspaceId, plan.id);

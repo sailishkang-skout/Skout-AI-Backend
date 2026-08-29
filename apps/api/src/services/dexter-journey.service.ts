@@ -212,6 +212,36 @@ export async function invokeDexterPlan(db: Db, workspaceId: string, planId: stri
     }
   }
 
+  if (actionType !== undefined) {
+    // actionType is present but isn't a recognized/implemented action — fail closed
+    // rather than silently reporting success for work that never ran. Only the
+    // brief-only path (actionType absent entirely) is allowed to fall through to the
+    // canned-outcome stub below.
+    const outcome = { error: `unsupported_action_type: ${actionType}`, at: new Date().toISOString() };
+    const [updated] = await db
+      .update(dexterPlans)
+      .set({ status: "failed", outcome, policyDecisionId: policy.decisionId })
+      .where(eq(dexterPlans.id, planId))
+      .returning();
+
+    try {
+      await enqueueDexterEvent(
+        loadEnv(),
+        createEvent({
+          type: "dexter.action.failed",
+          tenantId: workspaceId,
+          aggregateId: planId,
+          correlationId: plan.id,
+          data: { planId, actionType, error: outcome.error },
+        })
+      );
+    } catch (emitErr) {
+      log.warn("failed to emit dexter.action.failed", { emitErr });
+    }
+
+    return { plan: updated!, policy };
+  }
+
   const outcome = {
     invoked: true,
     at: new Date().toISOString(),
