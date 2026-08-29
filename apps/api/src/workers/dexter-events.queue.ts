@@ -21,7 +21,15 @@ export function getDexterEventsQueue(config: Env): Queue<SkoutEvent<Record<strin
   if (!queue) {
     queue = new Queue(DEXTER_EVENTS_QUEUE, {
       connection: redisBullMqConnection(config.REDIS_URL),
-      defaultJobOptions: { removeOnComplete: 500, removeOnFail: 500 },
+      defaultJobOptions: {
+        // handleDexterEvent has no idempotency/dedup logic (no check for an existing
+        // plan before creating one, no dedup on event id or event+trigger) — do not
+        // raise attempts above 1 without adding dedup, or retries will silently
+        // create duplicate dexter_plans rows and duplicate enroll() invocations.
+        attempts: 1,
+        removeOnComplete: 500,
+        removeOnFail: 500,
+      },
     });
     queue.on("error", (err) => {
       console.error("dexter-events queue error", err);
