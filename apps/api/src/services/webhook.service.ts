@@ -7,10 +7,32 @@ import { enqueueWebhookDelivery } from "../workers/webhook-delivery.queue.js";
 
 const log = createLogger("webhook.service");
 
+/**
+ * Outbound webhook event types — the subset of SKOUT_EVENT_TYPES that are
+ * fan-out delivered to customer webhook endpoints (§12).
+ *
+ * Source-of-truth for all Skout event types is `@skout/shared` → `event-envelope.ts`.
+ * This list is deliberately narrower: not every internal event needs external delivery.
+ */
 export const WEBHOOK_EVENT_TYPES = [
+  // ── Sequence & outreach (§8.6) ──────────────────────────────────────────
   "prospect.enrolled",
   "sequence.step.completed",
   "reply.received",
+  // ── Dexter platform lifecycle / event spine (§7.3) ──────────────────────
+  "icp.approved",
+  "icp.rejected",
+  "tam.approved",
+  "tam.rejected",
+  "regional_brief.approved",
+  "regional_brief.rejected",
+  "dexter.plan.proposed",
+  "dexter.plan.approved",
+  "dexter.plan.blocked",
+  "dexter.action.executed",
+  "dexter.outcome.captured",
+  "dexter.learning.recommended",
+  "dexter.learning.approved",
 ] as const;
 
 export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];
