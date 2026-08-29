@@ -28,3 +28,35 @@ export function applyPolicy(
     return true;
   });
 }
+
+export interface GeneratedSuggestion {
+  actionType: string;
+  headline: string;
+  rationale: string;
+  draftMessage?: string;
+}
+
+/**
+ * Step 6 — generate explanations/recommendations: turn a raw LLM JSON response into a validated
+ * suggestion, with a safe fallback when the model returns malformed JSON or an out-of-set
+ * actionType. Kept scoped to next-best-action's exact response shape for now rather than
+ * generalized further — a second consumer of step 6 is what should drive what actually
+ * generalizes, not a guess made before one exists.
+ */
+export function parseNextBestActionResponse(raw: string, validActionTypes: readonly string[]): GeneratedSuggestion {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { actionType: "wait", headline: "Could not parse a suggestion", rationale: raw.slice(0, 300) };
+  }
+
+  const actionType = validActionTypes.includes(parsed.actionType as string) ? (parsed.actionType as string) : "wait";
+
+  return {
+    actionType,
+    headline: typeof parsed.headline === "string" ? parsed.headline : "Review this record",
+    rationale: typeof parsed.rationale === "string" ? parsed.rationale : "",
+    draftMessage: typeof parsed.draftMessage === "string" ? parsed.draftMessage : undefined,
+  };
+}
