@@ -1,10 +1,14 @@
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
+import { createLogger } from "@skout/observability";
+import { createEvent } from "@skout/shared";
 import { HttpError } from "../utils/http.js";
+import { loadEnv } from "../config/env.js";
 import { classifyAndRecord, assertAllowed } from "./policy-gateway.service.js";
 import { incrJourneyMetric } from "./journey-metrics.js";
 import { buildSequenceService } from "./sequence.service.js";
+import { enqueueDexterEvent } from "../workers/dexter-events.queue.js";
 
 export {
   checkLinkedinVoiceEligibility,
@@ -17,6 +21,7 @@ export {
 } from "./linkedin-voice.service.js";
 
 const { dexterPlans } = schema;
+const log = createLogger("dexter-journey.service");
 
 export async function proposeDexterPlan(
   db: Db,
@@ -60,6 +65,20 @@ export async function proposeDexterPlan(
       createdBy: opts.userId,
     })
     .returning();
+
+  try {
+    await enqueueDexterEvent(
+      loadEnv(),
+      createEvent({
+        type: "dexter.plan.proposed",
+        tenantId: opts.workspaceId,
+        aggregateId: plan!.id,
+        data: { planId: plan!.id, actionType: opts.actionType ?? null },
+      })
+    );
+  } catch (err) {
+    log.warn("failed to emit dexter.plan.proposed", { err });
+  }
 
   return { plan: plan!, policy: classify };
 }
@@ -117,6 +136,22 @@ export async function invokeDexterPlan(db: Db, workspaceId: string, planId: stri
         .where(eq(dexterPlans.id, planId))
         .returning();
       incrJourneyMetric("dexterPlanInvoke");
+
+      try {
+        await enqueueDexterEvent(
+          loadEnv(),
+          createEvent({
+            type: "dexter.action.executed",
+            tenantId: workspaceId,
+            aggregateId: planId,
+            correlationId: plan.id,
+            data: { planId, actionType, outcome },
+          })
+        );
+      } catch (err) {
+        log.warn("failed to emit dexter.action.executed", { err });
+      }
+
       return { plan: updated!, policy };
     } catch (err) {
       const outcome = { error: err instanceof Error ? err.message : String(err), at: new Date().toISOString() };
@@ -125,6 +160,22 @@ export async function invokeDexterPlan(db: Db, workspaceId: string, planId: stri
         .set({ status: "failed", outcome, policyDecisionId: policy.decisionId })
         .where(eq(dexterPlans.id, planId))
         .returning();
+
+      try {
+        await enqueueDexterEvent(
+          loadEnv(),
+          createEvent({
+            type: "dexter.action.failed",
+            tenantId: workspaceId,
+            aggregateId: planId,
+            correlationId: plan.id,
+            data: { planId, actionType, error: outcome.error },
+          })
+        );
+      } catch (emitErr) {
+        log.warn("failed to emit dexter.action.failed", { emitErr });
+      }
+
       return { plan: updated!, policy };
     }
   }
