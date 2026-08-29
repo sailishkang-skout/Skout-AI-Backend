@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { schema } from "@skout/db";
 import { errorResponse } from "../utils/http.js";
 
-const PHONE_RE = /^\+?[1-9]\d{6,14}$/;
+const PHONE_RE = /^\+[1-9]\d{6,14}$/;
 
 export async function userRoutes(app: FastifyInstance) {
   app.get("/me", async (request, reply) => {
