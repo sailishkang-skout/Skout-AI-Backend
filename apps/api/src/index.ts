@@ -7,6 +7,7 @@ import { startCrmExportWorker } from "./workers/crm-export.worker.js";
 import { startListScoreWorker } from "./workers/list-score.worker.js";
 import { startWorkspaceRescoreWorker } from "./workers/workspace-rescore.worker.js";
 import { startSequenceEnrollmentWorker } from "./workers/sequence-enrollment.worker.js";
+import { startAutomationRunWorker } from "./workers/automation-run.worker.js";
 import { startImapPollWorker } from "./workers/imap-poll.worker.js";
 import { startReplyTagWorker } from "./workers/reply-tag.worker.js";
 import { startBlacklistMonitorWorker } from "./workers/blacklist-monitor.worker.js";
@@ -46,6 +47,7 @@ async function main() {
   const stopListScoreWorker = await startListScoreWorker(config);
   const stopWorkspaceRescoreWorker = await startWorkspaceRescoreWorker(config);
   const stopSeqWorker = await startSequenceEnrollmentWorker(config);
+  const stopAutomationRunWorker = await startAutomationRunWorker(config);
   const stopImapPollWorker = await startImapPollWorker(config);
   const stopReplyTagWorker = await startReplyTagWorker(config);
   const stopBlacklistMonitorWorker = await startBlacklistMonitorWorker(config);
@@ -91,6 +93,7 @@ async function main() {
     await stopReplyTagWorker();
     await stopImapPollWorker();
     await stopSeqWorker();
+    await stopAutomationRunWorker();
     await stopWorkspaceRescoreWorker();
     await stopListScoreWorker();
     await stopCrmWorker();
