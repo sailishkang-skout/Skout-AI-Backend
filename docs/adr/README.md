@@ -11,3 +11,4 @@
 | [0007](./0007-email-intel-evidence-merge.md) | Email-Intel → canonical Evidence Ledger merge |
 | [0008](./0008-dod-retroactivity.md) | §15 DoD applies forward-only from 2026-08-24 |
 | [0009](./0009-i18n-sales-comp-deferred.md) | i18n / Regional TAM / territory — in scope (onboarding + LLM) |
+| [0012](./0012-competitive-positioning-proposed-until-validated.md) | §2 positioning proposed until win/loss validated |

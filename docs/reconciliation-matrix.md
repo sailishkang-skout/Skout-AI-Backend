@@ -17,7 +17,7 @@
 | Observability (§11.3) | Datadog APM, OTLP, sweep spans | Baseline live | Low | Business-journey metrics, anomaly detection | 1–2 |
 | SLO targets (§11.2) | `docs/slo-targets.md`, `GET /slo` | **Locked baseline** | Low | Contractual customer-specific overrides | 1 |
 | SSO / SCIM (Stage-6) | ADR 0006, `docs/ops/sso-stage6-checklist.md` | Platform ready | Low | Per-customer IdP bind in Clerk | 6 |
-| Competitive win/loss (§2) | `competitive_win_loss_*` tables + API | **Engineering ready** | **High** until GTM fills ≥4 deals | Product data entry | 0 |
+| Competitive win/loss (§2) | `competitive_win_loss_*` + `positioning` on GET | **Process closed** — GTM entry due 2026-09-09 | Med until deals or gap doc | Product sign-off | 0 |
 | Cross-domain journeys (§10) | `apps/api/src/e2e/journeys.e2e.test.ts` | Contract tests live | Med | Full HTTP E2E per journey | 2–5 |
 | SkoutProd deploy | CDK flags wired | Not deployed | Med | Run forwarder + RBAC scripts | 1 |
 

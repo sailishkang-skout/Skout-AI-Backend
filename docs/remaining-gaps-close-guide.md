@@ -2,7 +2,7 @@
 
 | # | Item | Status |
 |---|------|--------|
-| 1 | §2 Competitive win/loss | **Eng ready** — GTM ≥4 deals due 2026-09-09 |
+| 1 | §2 Competitive win/loss | **Process closed** — GTM validates deals by 2026-09-09; positioning `proposed_not_proven` until ≥4 real deals |
 | 2 | Evidence Ledger Wave 2 | **Closed** — ledger SoT; fieldSources cache |
 | 3 | §3 Product principles | **Closed** — enforcement hooks for all 8 |
 | 4 | §5 api↔crm contract | **Closed** — `/internal/v1` + proof migration |
