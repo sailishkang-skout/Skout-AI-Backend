@@ -44,9 +44,10 @@ product/leadership decision (not an engineering one).
 
 ## §2 — Competitive positioning / win-loss (§2)
 
-**Engineering (2026-08-26):** Postgres-backed `competitive_win_loss_*` tables + API
-(`GET/POST /api/v1/competitive/win-loss*`). Status flips to `complete` at ≥4 real deals.
-Template: `docs/templates/competitive-win-loss.md`.
+**Engineering (2026-08-29):** Postgres-backed `competitive_win_loss_*` + API with `positioning`
+metadata (`proposed_not_proven` until ≥4 real deals). ADR 0012 + ops runbook closed.
+GTM must enter deals or document gap by 2026-09-09.
+Template: `docs/templates/competitive-win-loss.md` · Runbook: `docs/ops/competitive-win-loss-process.md`.
 
 **Still Product/GTM:** enter ≥4 won/lost deals or assign owner by **2026-09-09**. Regional TAM
 marketing gate remains blocked until deals are recorded.

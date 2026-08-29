@@ -129,6 +129,7 @@ if (!config.deployToAws) {
     apiService: compute.apiService,
     apiPublicUrl: compute.apiPublicUrl,
     warmupToolSecret: data.secrets.warmupTool,
+    googleSecret: data.secrets.google,
     imageTag,
     bootstrapMode: warmupToolBootstrap,
     description: `Skout AI ${config.name} Email Warm-Up Tool (api + workers)`,

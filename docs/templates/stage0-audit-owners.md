@@ -16,7 +16,7 @@ as formal Stage-0 ownership — no longer interim-only.
 | Email-Intel merge | Neeraj | Email-Intel owner | 2026-09-15 | Dual-write shipped; forwarder enable |
 | SSO / SCIM Stage-6 | Neeraj | Platform | Stage-6 | ADR 0006 — execute at first enterprise SSO deal |
 | Secrets rotation | Neeraj | Ops | 2026-11-23 | Runbook shipped; prod window approved |
-| Competitive win-loss (§2) | Neeraj | Product/GTM | 2026-09-15 | Template assigned; deals pending |
+| Competitive win-loss (§2) | Neeraj | Product/GTM | 2026-09-09 | Process + ADR 0012 closed; GTM deal/gap sign-off pending |
 | DoD retroactivity (§15) | Neeraj | Eng director | 2026-08-25 | ADR 0008 — forward-only accepted |
 | DSAR fulfillment (§16) | Neeraj | Legal / DPO (when hired) | Ongoing (30-day SLA) | Intake shipped; process owner named |
 

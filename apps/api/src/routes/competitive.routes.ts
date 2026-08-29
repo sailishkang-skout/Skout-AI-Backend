@@ -4,6 +4,7 @@ import { eq, desc } from "drizzle-orm";
 import { schema } from "@skout/db";
 import { errorResponse } from "../utils/http.js";
 import { REGIONAL_TAM_MIN_DEALS, getRegionalTamGate } from "../services/regional-tam-gate.service.js";
+import { buildCompetitivePositioningPolicy } from "../services/competitive-positioning.service.js";
 
 const { competitiveWinLossDeals, competitiveWinLossOwners } = schema;
 
@@ -43,6 +44,8 @@ export async function competitiveRoutes(app: FastifyInstance) {
 
     const dealsReviewed = deals.length;
     const status = dealsReviewed >= MIN_DEALS ? "complete" : "in_progress";
+    const gate = dealsReviewed >= MIN_DEALS ? "validated" : "not_validated";
+    const positioning = buildCompetitivePositioningPolicy(gate, dealsReviewed);
 
     return reply.send({
       data: owner
@@ -65,6 +68,7 @@ export async function competitiveRoutes(app: FastifyInstance) {
         notes: d.notes,
         createdAt: d.createdAt.toISOString(),
       })),
+      positioning,
       defaults: {
         generatedAt: new Date(GENERATION_MS).toISOString(),
         dueAt: new Date(DUE_MS).toISOString(),
@@ -73,6 +77,12 @@ export async function competitiveRoutes(app: FastifyInstance) {
           "Real won/lost deals validate Regional TAM and evidence-backed positioning before build/marketing claims.",
         ownerRule: "Product owner must be the logged-in workspace member who calls assign.",
         templatePath: "docs/templates/competitive-win-loss.md",
+        processDocPath: "docs/ops/competitive-win-loss-process.md",
+        adrPath: "docs/adr/0012-competitive-positioning-proposed-until-validated.md",
+        gapPath:
+          dealsReviewed < MIN_DEALS
+            ? "Document gap in template § Gap documentation; run pilot feedback track."
+            : null,
       },
     });
   });
@@ -151,6 +161,7 @@ export async function competitiveRoutes(app: FastifyInstance) {
       dealsReviewed: count.length,
       status: count.length >= MIN_DEALS ? "complete" : "in_progress",
       regionalTamGate: gate.gate,
+      positioning: buildCompetitivePositioningPolicy(gate.gate, count.length),
     });
   });
 }

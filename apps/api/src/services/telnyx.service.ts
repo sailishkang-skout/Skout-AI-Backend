@@ -43,9 +43,10 @@ function telnyxErrorMessage(json: unknown, fallback: string): string {
  * Calls the SDR first; once they answer, Telnyx fetches TeXML from `/calls/twiml/bridge`.
  */
 export async function dialBridgeCall(config: Env, params: BridgeCallParams): Promise<BridgeCallResult> {
-  if (!isTelnyxConfigured(config)) {
+  const fromNumber = params.fromNumber ?? config.TELNYX_PHONE_NUMBER;
+  if (!config.TELNYX_API_KEY || !config.TELNYX_CONNECTION_ID || !fromNumber) {
     throw new Error(
-      "Telnyx is not configured (TELNYX_API_KEY / TELNYX_PHONE_NUMBER / TELNYX_CONNECTION_ID)"
+      "Telnyx is not configured (TELNYX_API_KEY / TELNYX_CONNECTION_ID / caller ID)"
     );
   }
 
@@ -63,7 +64,7 @@ export async function dialBridgeCall(config: Env, params: BridgeCallParams): Pro
 
   const body = new URLSearchParams({
     To: params.agentPhone,
-    From: config.TELNYX_PHONE_NUMBER!,
+    From: fromNumber,
     Url: texmlUrl.toString(),
     StatusCallback: statusUrl.toString(),
     StatusCallbackEvent: "completed",
@@ -100,8 +101,9 @@ export async function dialBridgeCall(config: Env, params: BridgeCallParams): Pro
 
 /** SMS delivery for reminders and notification-preferences "sms" channel. */
 export async function sendSms(config: Env, params: SendSmsParams): Promise<SendSmsResult> {
-  if (!isTelnyxSmsConfigured(config)) {
-    throw new Error("Telnyx is not configured (TELNYX_API_KEY / TELNYX_PHONE_NUMBER)");
+  const fromNumber = params.fromNumber ?? config.TELNYX_PHONE_NUMBER;
+  if (!config.TELNYX_API_KEY || !fromNumber) {
+    throw new Error("Telnyx is not configured (TELNYX_API_KEY / caller ID)");
   }
 
   const res = await fetch("https://api.telnyx.com/v2/messages", {
@@ -111,7 +113,7 @@ export async function sendSms(config: Env, params: SendSmsParams): Promise<SendS
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      from: config.TELNYX_PHONE_NUMBER,
+      from: fromNumber,
       to: params.to,
       text: params.body,
     }),

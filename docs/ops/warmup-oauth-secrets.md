@@ -18,8 +18,16 @@ Ask Sailesh / platform for **Warm-Up Tool** OAuth app credentials (not Deliverab
   `http://localhost:3010/api/v1/oauth/microsoft/callback`  
   `https://<warmup-public-host>/api/v1/oauth/microsoft/callback`
 
-## Where to set
-Warm-Up ECS task definition / secrets manager for SkoutDev + prod.
+## Where to set (SkoutDev)
+
+**Google (live):** reuse `SkoutDev/google` (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`).  
+CDK injects those into Warm-Up ECS plus:
+
+`GOOGLE_REDIRECT_URI=https://ckoy6iywm0.execute-api.us-east-1.amazonaws.com/api/v1/warmup-tool/oauth/google/callback`
+
+Register that redirect URI on the same Google OAuth client (inbox/calendar app).
+
+**Microsoft (pending):** add `MICROSOFT_*` to `SkoutDev/warmup-tool` or a dedicated secret when Sailesh provides the Entra app; wire in `warmup-tool-stack.ts` the same way as Google.
 
 ## Verify
 Frontend `/warmup` → Connect Google/Microsoft → mailbox status connected.

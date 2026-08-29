@@ -23,6 +23,8 @@ export interface WarmupToolStackProps extends StackProps {
   /** Public Skout API base URL used for OAuth redirect URIs (proxied). */
   readonly apiPublicUrl: string;
   readonly warmupToolSecret: secretsmanager.ISecret;
+  /** Shared with API/calendar/inbox — Warm-Up reuses SkoutDev/google for Gmail OAuth. */
+  readonly googleSecret: secretsmanager.ISecret;
   readonly imageTag?: string;
   /**
    * Deploys services with desiredCount 0 until `email_warmup` DB exists.
@@ -56,6 +58,7 @@ export class WarmupToolStack extends Stack {
       apiService,
       apiPublicUrl,
       warmupToolSecret,
+      googleSecret,
       imageTag,
     } = props;
     const bootstrapMode = props.bootstrapMode ?? false;
@@ -74,10 +77,7 @@ export class WarmupToolStack extends Stack {
       REDIS_URL: `redis://${redis.endpoint}:6379`,
       SERVICE_NAME: "skout-email-warmup-service",
       LOG_LEVEL: "info",
-      // OAuth client id/secret are optional; when configured in Secrets Manager
-      // (warmup-tool secret), add GOOGLE_* / MICROSOFT_* to the task and set:
-      //   GOOGLE_REDIRECT_URI=${publicBase}/api/v1/warmup-tool/oauth/google/callback
-      //   MICROSOFT_REDIRECT_URI=${publicBase}/api/v1/warmup-tool/oauth/microsoft/callback
+      GOOGLE_REDIRECT_URI: `${publicBase}/api/v1/warmup-tool/oauth/google/callback`,
       WARMUP_OAUTH_GOOGLE_CALLBACK: `${publicBase}/api/v1/warmup-tool/oauth/google/callback`,
       WARMUP_OAUTH_MICROSOFT_CALLBACK: `${publicBase}/api/v1/warmup-tool/oauth/microsoft/callback`,
     };
@@ -91,6 +91,8 @@ export class WarmupToolStack extends Stack {
         warmupToolSecret,
         "PLATFORM_PROVISIONING_KEY"
       ),
+      GOOGLE_CLIENT_ID: ecs.Secret.fromSecretsManager(googleSecret, "GOOGLE_CLIENT_ID"),
+      GOOGLE_CLIENT_SECRET: ecs.Secret.fromSecretsManager(googleSecret, "GOOGLE_CLIENT_SECRET"),
     };
 
     const warmupApi = new SkoutEcsService(this, "WarmupToolApiService", {
@@ -122,6 +124,9 @@ export class WarmupToolStack extends Stack {
     });
 
     warmupApi.securityGroup.connections.allowFrom(apiService, ec2.Port.tcp(3010));
+
+    googleSecret.grantRead(warmupApi.taskDefinition.executionRole!);
+    googleSecret.grantRead(warmupApi.taskDefinition.taskRole);
 
     const workerDefs: Array<{ id: string; serviceName: string; command: string[] }> = [
       {
@@ -166,6 +171,8 @@ export class WarmupToolStack extends Stack {
         secrets: sharedSecrets,
         healthCheckCommand: WORKER_NOOP_HEALTHCHECK,
       });
+      googleSecret.grantRead(worker.taskDefinition.executionRole!);
+      googleSecret.grantRead(worker.taskDefinition.taskRole);
       workerSecurityGroups.push([def.serviceName, worker.securityGroup]);
     }
 
