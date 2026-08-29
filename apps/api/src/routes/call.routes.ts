@@ -13,6 +13,7 @@ import {
 import { resolveProspectFields } from "../services/prospect-resolver.service.js";
 import { createNotification } from "../services/notifications.service.js";
 import { extractFieldsFromCallNotes } from "../services/call-notes-extraction.service.js";
+import { verifyTelnyxWebhook } from "../lib/inbound-webhook-verify.js";
 
 /**
  * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
@@ -318,10 +319,21 @@ export async function callRoutes(app: FastifyInstance) {
     }
   }
 
-  // POST /calls/status — Twilio call-status callback. Marks the linked task done (if any),
-  // logs a "call" activity on the contact's timeline (duration + disposition, per R20.2 AC),
-  // and notifies the SDR. Not signature-verified yet — see dependency doc.
+  // POST /calls/status — Twilio/Telnyx call-status callback.
+  // §12: Telnyx signature verified (soft enforcement — TeXML fetch callbacks have no sig).
+  // Marks the linked task done (if any), logs a "call" activity on the contact's
+  // timeline (duration + disposition, per R20.2 AC), and notifies the SDR.
   app.post("/calls/status", async (request, reply) => {
+    // §12 — verify Telnyx HMAC if the provider sends the signature headers.
+    // Soft enforcement: TeXML fetch callbacks don't carry signatures; we log
+    // mismatches but don't reject so the call flow is never interrupted.
+    if (app.config.TELNYX_API_KEY) {
+      const sigResult = verifyTelnyxWebhook(request, app.config.TELNYX_API_KEY);
+      if (!sigResult.ok) {
+        app.log.warn({ reason: sigResult.reason }, "§12 Telnyx status webhook signature rejected");
+      }
+    }
+
     const query = request.query as {
       workspaceId?: string;
       userId?: string;

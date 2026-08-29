@@ -55,6 +55,7 @@ import { regionalBriefRoutes } from "./regional-brief.routes.js";
 import { dexterPlatformRoutes } from "./dexter-platform.routes.js";
 import { account360Routes } from "./account-360.routes.js";
 import { ssoScimRoutes } from "./sso-scim.routes.js";
+import { automationRoutes } from "./automation.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoutes, { prefix: "/api/v1" });
@@ -115,5 +116,6 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(dexterPlatformRoutes);
     await v1.register(account360Routes);
     await v1.register(ssoScimRoutes);
+    await v1.register(automationRoutes);
   }, { prefix: "/api/v1" });
 }
