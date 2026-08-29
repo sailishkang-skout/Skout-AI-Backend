@@ -4,6 +4,7 @@ import { schema } from "@skout/db";
 import { HttpError } from "../utils/http.js";
 import { classifyAndRecord, assertAllowed } from "./policy-gateway.service.js";
 import { incrJourneyMetric } from "./journey-metrics.js";
+import { buildSequenceService } from "./sequence.service.js";
 
 export {
   checkLinkedinVoiceEligibility,
@@ -19,7 +20,13 @@ const { dexterPlans } = schema;
 
 export async function proposeDexterPlan(
   db: Db,
-  opts: { workspaceId: string; brief: string; userId?: string }
+  opts: {
+    workspaceId: string;
+    brief: string;
+    userId?: string;
+    actionType?: string;
+    actionParams?: Record<string, unknown>;
+  }
 ) {
   const classify = await classifyAndRecord(db, {
     workspaceId: opts.workspaceId,
@@ -28,7 +35,7 @@ export async function proposeDexterPlan(
     detail: { phase: "propose" },
   });
 
-  const proposal = {
+  const proposal: Record<string, unknown> = {
     steps: [
       { id: "brief_approval", status: "pending" },
       { id: "policy_gateway_classify", status: "done", mode: classify.mode },
@@ -38,6 +45,8 @@ export async function proposeDexterPlan(
     ],
     hypothesis: `Executing brief: ${opts.brief.slice(0, 200)}`,
   };
+  if (opts.actionType) proposal.actionType = opts.actionType;
+  if (opts.actionParams) proposal.actionParams = opts.actionParams;
 
   const [plan] = await db
     .insert(dexterPlans)
@@ -92,6 +101,33 @@ export async function invokeDexterPlan(db: Db, workspaceId: string, planId: stri
     priorApproval: true,
     detail: { phase: "invoke" },
   });
+
+  const proposal = (plan.proposal ?? {}) as Record<string, unknown>;
+  const actionType = typeof proposal.actionType === "string" ? proposal.actionType : undefined;
+
+  if (actionType === "enroll_sequence") {
+    const actionParams = (proposal.actionParams ?? {}) as { sequenceId?: string; listId?: string };
+    try {
+      const seqSvc = buildSequenceService(db);
+      const result = await seqSvc!.enroll(actionParams.sequenceId!, workspaceId, { listId: actionParams.listId });
+      const outcome = { ...result, at: new Date().toISOString() };
+      const [updated] = await db
+        .update(dexterPlans)
+        .set({ status: "invoked", invokedAt: new Date(), outcome, policyDecisionId: policy.decisionId })
+        .where(eq(dexterPlans.id, planId))
+        .returning();
+      incrJourneyMetric("dexterPlanInvoke");
+      return { plan: updated!, policy };
+    } catch (err) {
+      const outcome = { error: err instanceof Error ? err.message : String(err), at: new Date().toISOString() };
+      const [updated] = await db
+        .update(dexterPlans)
+        .set({ status: "failed", outcome, policyDecisionId: policy.decisionId })
+        .where(eq(dexterPlans.id, planId))
+        .returning();
+      return { plan: updated!, policy };
+    }
+  }
 
   const outcome = {
     invoked: true,
