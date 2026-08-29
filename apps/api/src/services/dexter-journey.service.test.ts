@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createDb, schema } from "@skout/db";
 import { eq } from "drizzle-orm";
 import { loadEnv } from "../config/env.js";
-import { proposeDexterPlan, invokeDexterPlan, approveDexterPlan } from "./dexter-journey.service.js";
+import { proposeDexterPlan, invokeDexterPlan, approveDexterPlan, rejectDexterPlan } from "./dexter-journey.service.js";
 
 const { dexterPlans, workspaces, sequences, sequenceSteps, lists, listMembers } = schema;
 
@@ -90,5 +90,13 @@ describe("dexter-journey.service — actionType extension", () => {
 
     expect(invoked.status).toBe("failed");
     expect((invoked.outcome as Record<string, unknown>).error).toBeTruthy();
+  });
+
+  it("rejectDexterPlan sets status to rejected from proposed, and rejects an invalid transition", async () => {
+    const { plan } = await proposeDexterPlan(db, { workspaceId, brief: "Plan to be rejected" });
+    const rejected = await rejectDexterPlan(db, workspaceId, plan.id);
+    expect(rejected.status).toBe("rejected");
+
+    await expect(rejectDexterPlan(db, workspaceId, plan.id)).rejects.toMatchObject({ statusCode: 422 });
   });
 });

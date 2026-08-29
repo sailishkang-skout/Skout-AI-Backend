@@ -29,6 +29,7 @@ import {
   listLinkedinVoiceHandoffs,
   proposeDexterPlan,
   recordDexterLearning,
+  rejectDexterPlan,
   synthesizeVoiceAudio,
 } from "../services/dexter-journey.service.js";
 import { getRegionalTamGate, seedDemoWinLossDeals } from "../services/regional-tam-gate.service.js";
@@ -200,6 +201,12 @@ export async function dexterPlatformRoutes(app: FastifyInstance) {
     if (!request.workspaceId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     return reply.send({ data: await approveDexterPlan(app.db, request.workspaceId, id) });
+  });
+
+  app.post("/dexter/plans/:id/reject", async (request, reply) => {
+    if (!request.workspaceId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    return reply.send({ data: await rejectDexterPlan(app.db, request.workspaceId, id) });
   });
 
   app.post("/dexter/plans/:id/invoke", async (request, reply) => {

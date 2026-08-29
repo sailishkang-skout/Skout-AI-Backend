@@ -100,6 +100,38 @@ export async function approveDexterPlan(db: Db, workspaceId: string, planId: str
   return updated!;
 }
 
+export async function rejectDexterPlan(db: Db, workspaceId: string, planId: string) {
+  const [plan] = await db
+    .select()
+    .from(dexterPlans)
+    .where(and(eq(dexterPlans.id, planId), eq(dexterPlans.workspaceId, workspaceId)))
+    .limit(1);
+  if (!plan) throw new HttpError("Dexter plan not found", 404);
+  if (plan.status !== "proposed") throw new HttpError(`Plan status is ${plan.status}`, 422);
+
+  const [updated] = await db
+    .update(dexterPlans)
+    .set({ status: "rejected" })
+    .where(eq(dexterPlans.id, planId))
+    .returning();
+
+  try {
+    await enqueueDexterEvent(
+      loadEnv(),
+      createEvent({
+        type: "dexter.plan.rejected",
+        tenantId: workspaceId,
+        aggregateId: planId,
+        data: { planId },
+      })
+    );
+  } catch (err) {
+    log.warn("failed to emit dexter.plan.rejected", { err });
+  }
+
+  return updated!;
+}
+
 export async function invokeDexterPlan(db: Db, workspaceId: string, planId: string, userId?: string) {
   const [plan] = await db
     .select()
