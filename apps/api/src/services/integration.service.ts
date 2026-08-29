@@ -17,6 +17,17 @@ import {
 const log = createLogger("integration.service");
 const { workspaceIntegrations } = schema;
 
+/**
+ * Unipile's own dashboard displays the DSN without a scheme (e.g.
+ * `api61.unipile.com:19183`), so users naturally paste it that way — but
+ * `fetch()` requires an absolute URL. Without this, a schemeless DSN throws
+ * on the ping request and surfaces as an opaque `provider_validation_failed`.
+ */
+export function normalizeUnipileDsn(dsn: string): string {
+  const trimmed = dsn.trim().replace(/\/$/, "");
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
 export interface IntegrationDto {
   provider: IntegrationProviderId;
   name: string;
@@ -116,7 +127,7 @@ export class IntegrationService {
 
     const dsn =
       provider === "unipile"
-        ? (extras?.dsn?.trim() || this.config.UNIPILE_DSN || DEFAULT_UNIPILE_DSN).replace(/\/$/, "")
+        ? normalizeUnipileDsn(extras?.dsn?.trim() || this.config.UNIPILE_DSN || DEFAULT_UNIPILE_DSN)
         : undefined;
 
     await this.validateProviderKey(provider, trimmed, dsn);
@@ -205,7 +216,7 @@ export class IntegrationService {
       provider,
       key,
       provider === "unipile"
-        ? (dsn || this.config.UNIPILE_DSN || DEFAULT_UNIPILE_DSN).replace(/\/$/, "")
+        ? normalizeUnipileDsn(dsn || this.config.UNIPILE_DSN || DEFAULT_UNIPILE_DSN)
         : undefined
     );
 
@@ -268,7 +279,7 @@ export class IntegrationService {
         if (parsed?.apiKey?.trim()) {
           return {
             apiKey: parsed.apiKey.trim(),
-            dsn: (parsed.dsn || this.config.UNIPILE_DSN || DEFAULT_UNIPILE_DSN).replace(/\/$/, ""),
+            dsn: normalizeUnipileDsn(parsed.dsn || this.config.UNIPILE_DSN || DEFAULT_UNIPILE_DSN),
           };
         }
       } catch {
@@ -276,7 +287,7 @@ export class IntegrationService {
         if (raw.trim().length >= 8) {
           return {
             apiKey: raw.trim(),
-            dsn: (this.config.UNIPILE_DSN || DEFAULT_UNIPILE_DSN).replace(/\/$/, ""),
+            dsn: normalizeUnipileDsn(this.config.UNIPILE_DSN || DEFAULT_UNIPILE_DSN),
           };
         }
       }
@@ -401,7 +412,7 @@ export class IntegrationService {
         return res.ok;
       }
       case "unipile": {
-        const base = (dsn || this.config.UNIPILE_DSN || DEFAULT_UNIPILE_DSN).replace(/\/$/, "");
+        const base = normalizeUnipileDsn(dsn || this.config.UNIPILE_DSN || DEFAULT_UNIPILE_DSN);
         const res = await fetch(`${base}/api/v1/accounts`, {
           headers: { "X-API-KEY": apiKey, accept: "application/json" },
           signal,

@@ -114,7 +114,7 @@ export async function checkLinkedinConnectionStatus(
   const resolvedConfig = await accounts.resolveConfig(workspaceId);
   const accepted = await findAcceptedAcrossAccounts(
     resolvedConfig,
-    activeAccounts.map((a) => a.id),
+    activeAccounts.map((a) => a.unipileAccountId),
     publicIdentifier
   );
 

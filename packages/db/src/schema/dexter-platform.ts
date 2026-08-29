@@ -121,7 +121,8 @@ export const dexterPlans = pgTable(
 );
 
 /**
- * §10.5 — LinkedIn AI voice: script → preview → handoff → manual confirm (no background send).
+ * §10.5 — LinkedIn AI voice: script → review → mobile handoff → manual confirm.
+ * Never auto-sends. LinkedIn voice notes are mobile-app-only.
  */
 export const linkedinVoiceHandoffs = pgTable(
   "linkedin_voice_handoffs",
@@ -131,18 +132,28 @@ export const linkedinVoiceHandoffs = pgTable(
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
     prospectId: text("prospect_id").notNull(),
+    prospectName: text("prospect_name"),
+    linkedinUrl: text("linkedin_url"),
     scriptText: text("script_text").notNull(),
-    voiceChoice: text("voice_choice").notNull().default("self"), // self | cloned | none
+    /** personal (user records in LinkedIn) | synthetic (desktop cadence preview only) */
+    voiceChoice: text("voice_choice").notNull().default("personal"),
+    syntheticProfile: text("synthetic_profile"),
+    language: text("language").notNull().default("en"),
     regionalBriefPreview: text("regional_brief_preview"),
     evidenceId: uuid("evidence_id"),
-    status: text("status").notNull().default("preview"), // preview | handed_off | confirmed
+    status: text("status").notNull().default("preview"), // preview | handed_off | confirmed | expired | cancelled
     handoffToken: text("handoff_token").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
     confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    confirmedBy: uuid("confirmed_by").references(() => users.id, { onDelete: "set null" }),
+    outcomeNote: text("outcome_note"),
+    activityId: uuid("activity_id"),
     createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     uniqueIndex("linkedin_voice_handoffs_token_uidx").on(table.handoffToken),
     index("linkedin_voice_handoffs_workspace_idx").on(table.workspaceId),
+    index("linkedin_voice_handoffs_workspace_status_idx").on(table.workspaceId, table.status),
   ]
 );
