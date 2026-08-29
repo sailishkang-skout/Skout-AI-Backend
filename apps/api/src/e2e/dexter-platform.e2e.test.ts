@@ -17,6 +17,7 @@ describe.skipIf(!hasDatabase)("§10 Dexter / Policy / LinkedIn voice HTTP E2E", 
     const config = loadEnv();
     app = await buildApp({
       ...config,
+      NODE_ENV: "test",
       CLERK_SECRET_KEY: undefined,
       LOG_LEVEL: "error",
       AUTH_STUB: true,
@@ -88,7 +89,7 @@ describe.skipIf(!hasDatabase)("§10 Dexter / Policy / LinkedIn voice HTTP E2E", 
       payload: {
         prospectId: "e2e-li-voice-prospect",
         scriptText: "Hi — short regional-aware voice note.",
-        voiceChoice: "self",
+        voiceChoice: "personal",
         regionalBriefPreview: "US West Coast SaaS tone",
       },
     });

@@ -540,6 +540,13 @@
       "when": 1790900000000,
       "tag": "0075_number_request_requirement_group",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1791000000000,
+      "tag": "0076_linkedin_voice_handoff",
+      "breakpoints": true
     }
   ]
 }

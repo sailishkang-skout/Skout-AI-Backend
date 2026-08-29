@@ -250,6 +250,7 @@ try {
   await runSqlMigration("0058_list_source_filters", "0058_list_source_filters.sql");
   await runSqlMigration("0074_number_requests", "0074_number_requests.sql");
   await runSqlMigration("0075_number_request_requirement_group", "0075_number_request_requirement_group.sql");
+  await runSqlMigration("0076_linkedin_voice_handoff", "0076_linkedin_voice_handoff.sql");
 
 } finally {
   await sql.end();

@@ -1,13 +1,21 @@
-import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { HttpError } from "../utils/http.js";
 import { classifyAndRecord, assertAllowed } from "./policy-gateway.service.js";
 import { incrJourneyMetric } from "./journey-metrics.js";
-import { pinAiClaim } from "./ai-evidence.service.js";
 
-const { dexterPlans, linkedinVoiceHandoffs, activities } = schema;
+export {
+  checkLinkedinVoiceEligibility,
+  confirmLinkedinVoiceSent,
+  createLinkedinVoiceHandoff,
+  draftLinkedinVoiceScript,
+  getLinkedinVoiceHandoff,
+  listLinkedinVoiceHandoffs,
+  synthesizeVoiceAudio,
+} from "./linkedin-voice.service.js";
+
+const { dexterPlans } = schema;
 
 export async function proposeDexterPlan(
   db: Db,
@@ -120,104 +128,5 @@ export async function recordDexterLearning(
     .set({ status: "learned", outcome })
     .where(eq(dexterPlans.id, planId))
     .returning();
-  return updated!;
-}
-
-export async function createLinkedinVoiceHandoff(
-  db: Db,
-  opts: {
-    workspaceId: string;
-    prospectId: string;
-    scriptText: string;
-    voiceChoice?: string;
-    regionalBriefPreview?: string;
-    userId?: string;
-  }
-) {
-  let evidenceId: string | undefined;
-  try {
-    const pinned = await pinAiClaim(db, {
-      workspaceId: opts.workspaceId,
-      entityType: "prospect",
-      entityId: opts.prospectId,
-      attribute: "linkedin_voice_script",
-      value: { scriptPreview: opts.scriptText.slice(0, 500), voiceChoice: opts.voiceChoice ?? "self" },
-      source: "linkedin_voice",
-      method: "linkedin_voice_script",
-      versionName: "personalize",
-    });
-    evidenceId = pinned.evidenceId;
-  } catch {
-    // Pin failure must not block handoff preview.
-  }
-
-  const token = randomUUID();
-  const [row] = await db
-    .insert(linkedinVoiceHandoffs)
-    .values({
-      workspaceId: opts.workspaceId,
-      prospectId: opts.prospectId,
-      scriptText: opts.scriptText,
-      voiceChoice: opts.voiceChoice ?? "self",
-      regionalBriefPreview: opts.regionalBriefPreview,
-      evidenceId,
-      status: "handed_off",
-      handoffToken: token,
-      createdBy: opts.userId,
-    })
-    .returning();
-
-  return row!;
-}
-
-export async function confirmLinkedinVoiceSent(
-  db: Db,
-  opts: { workspaceId: string; handoffToken: string; userId?: string }
-) {
-  const [handoff] = await db
-    .select()
-    .from(linkedinVoiceHandoffs)
-    .where(
-      and(
-        eq(linkedinVoiceHandoffs.handoffToken, opts.handoffToken),
-        eq(linkedinVoiceHandoffs.workspaceId, opts.workspaceId)
-      )
-    )
-    .limit(1);
-  if (!handoff) throw new HttpError("Handoff not found", 404);
-  if (handoff.status === "confirmed") return handoff;
-
-  await assertAllowed(db, {
-    workspaceId: opts.workspaceId,
-    actionKey: "linkedin.voice_confirm",
-    actorUserId: opts.userId,
-    entityType: "linkedin_voice_handoff",
-    entityId: handoff.id,
-    priorApproval: true,
-  });
-
-  // Timeline activity (CRM shared table) — manual confirm only, never background send.
-  try {
-    await db.insert(activities).values({
-      workspaceId: opts.workspaceId,
-      entityType: "prospect",
-      entityId: randomUUID(),
-      activityType: "linkedin_voice_sent",
-      subject: "LinkedIn voice message confirmed",
-      body: `${handoff.scriptText.slice(0, 1800)}\n\nprospectId=${handoff.prospectId};handoffId=${handoff.id}`,
-      ownerId: opts.userId,
-      occurredAt: new Date(),
-    });
-  } catch {
-    // activities insert is best-effort for timeline capture.
-  }
-
-  const [updated] = await db
-    .update(linkedinVoiceHandoffs)
-    .set({ status: "confirmed", confirmedAt: new Date() })
-    .where(eq(linkedinVoiceHandoffs.id, handoff.id))
-    .returning();
-
-  incrJourneyMetric("linkedinVoiceConfirm");
   return updated!;
 }

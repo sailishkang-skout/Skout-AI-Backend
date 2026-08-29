@@ -33,6 +33,7 @@ export interface ResolvedProspect {
   companyName?: string;
   companyDomain?: string;
   title?: string;
+  location?: string;
 }
 
 function splitName(fullName: string): { firstName: string; lastName: string } {
@@ -142,5 +143,11 @@ export async function resolveProspectFields(
     companyName: doc?.companyName ?? str(snap.companyName) ?? undefined,
     companyDomain: doc?.companyDomain ?? str(snap.companyDomain) ?? undefined,
     title: doc?.title || str(snap.title) || undefined,
+    location: (() => {
+      const fromDoc = [doc?.city, doc?.state, doc?.country]
+        .filter((p): p is string => Boolean(p))
+        .join(", ");
+      return str(snap.location) ?? str(snap.hqCountry) ?? (fromDoc || undefined);
+    })(),
   };
 }
