@@ -251,7 +251,7 @@ try {
   await runSqlMigration("0074_number_requests", "0074_number_requests.sql");
   await runSqlMigration("0075_number_request_requirement_group", "0075_number_request_requirement_group.sql");
   await runSqlMigration("0076_linkedin_voice_handoff", "0076_linkedin_voice_handoff.sql");
-  await runSqlMigration("0077_dexter_triggers", "0077_dexter_triggers.sql");
+  await runSqlMigration("0081_dexter_triggers", "0081_dexter_triggers.sql");
 
 } finally {
   await sql.end();
