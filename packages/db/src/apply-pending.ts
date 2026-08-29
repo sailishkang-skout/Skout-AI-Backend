@@ -248,6 +248,8 @@ try {
   await runSqlMigration("0048_pipelines_default_unique", "0048_pipelines_default_unique.sql");
   await runSqlMigration("0049_meeting_ics", "0049_meeting_ics.sql");
   await runSqlMigration("0058_list_source_filters", "0058_list_source_filters.sql");
+  await runSqlMigration("0074_number_requests", "0074_number_requests.sql");
+  await runSqlMigration("0075_number_request_requirement_group", "0075_number_request_requirement_group.sql");
 
 } finally {
   await sql.end();

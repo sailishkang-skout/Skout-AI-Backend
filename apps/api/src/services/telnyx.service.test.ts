@@ -77,4 +77,21 @@ describe("dialBridgeCall", () => {
     expect(body.get("Url")).toContain("/api/v1/calls/twiml/bridge");
     expect(body.get("StatusCallback")).toContain("/api/v1/calls/status");
   });
+
+  it("uses the workspace-assigned fromNumber when provided", async () => {
+    const { dialBridgeCall } = await import("./telnyx.service.js");
+    const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ data: { call_sid: "call_xyz", status: "queued" } }), { status: 200 })
+    );
+
+    await dialBridgeCall(CONFIGURED, {
+      agentPhone: "+14155550001",
+      prospectPhone: "+14155550002",
+      fromNumber: "+14155559999",
+      callbackParams: { workspaceId: "ws-1" },
+    });
+
+    const body = new URLSearchParams(fetchSpy.mock.calls[0]![1]?.body as string);
+    expect(body.get("From")).toBe("+14155559999");
+  });
 });
