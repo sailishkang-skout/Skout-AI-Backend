@@ -8,14 +8,12 @@ import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.
 import { resolveNotificationsForEntity } from "./notifications.service.js";
 import type { Env } from "../config/env.js";
 
-const log = createLogger("linkedin-outreach.service");
-const { linkedinOutreachJobs, sequenceEnrollmentSteps, sequenceEnrollments } = schema;
-
-export type LinkedinAction = "connect" | "message";
+const log = createLogger("whatsapp-outreach.service");
+const { whatsappOutreachJobs, sequenceEnrollmentSteps, sequenceEnrollments } = schema;
 
 const CLAIM_LEASE_MS = 60_000;
 
-export class LinkedinOutreachService {
+export class WhatsappOutreachService {
   constructor(
     private readonly db: Db,
     private readonly config: Env
@@ -24,43 +22,31 @@ export class LinkedinOutreachService {
   async listPending(workspaceId: string, limit = 10) {
     return this.db
       .select()
-      .from(linkedinOutreachJobs)
-      .where(
-        and(
-          eq(linkedinOutreachJobs.workspaceId, workspaceId),
-          inArray(linkedinOutreachJobs.status, ["pending", "claimed"])
-        )
-      )
-      .orderBy(asc(linkedinOutreachJobs.createdAt))
+      .from(whatsappOutreachJobs)
+      .where(and(eq(whatsappOutreachJobs.workspaceId, workspaceId), inArray(whatsappOutreachJobs.status, ["pending", "claimed"])))
+      .orderBy(asc(whatsappOutreachJobs.createdAt))
       .limit(Math.min(Math.max(limit, 1), 25));
   }
 
-  /**
-   * Claims a specific, already-known job (by id) if it's still pending — used both by
-   * executeLinkedinStep's hot path and the Chrome-extension-facing /linkedin/outreach/:id/claim
-   * route. `claimNext`'s "oldest pending row" semantics correctly degrade to "this exact row, if
-   * pending" when `extraWhere` pins a single id.
-   */
+  /** Claims a specific, already-known job (by id) if it's still pending. */
   async claimJob(workspaceId: string, jobId: string) {
     const [job] = await this.db
       .select()
-      .from(linkedinOutreachJobs)
-      .where(and(eq(linkedinOutreachJobs.id, jobId), eq(linkedinOutreachJobs.workspaceId, workspaceId)));
-    if (!job) throw new HttpError("linkedin_job_not_found", 404);
-    if (job.status === "succeeded" || job.status === "failed" || job.status === "outcome_unknown") {
-      return job;
-    }
+      .from(whatsappOutreachJobs)
+      .where(and(eq(whatsappOutreachJobs.id, jobId), eq(whatsappOutreachJobs.workspaceId, workspaceId)));
+    if (!job) throw new HttpError("whatsapp_job_not_found", 404);
+    if (job.status === "succeeded" || job.status === "failed" || job.status === "outcome_unknown") return job;
 
-    const claimed = await claimNext(this.db, linkedinOutreachJobs, `linkedin-${process.pid}`, CLAIM_LEASE_MS, eq(linkedinOutreachJobs.id, jobId));
+    const claimed = await claimNext(this.db, whatsappOutreachJobs, `whatsapp-${process.pid}`, CLAIM_LEASE_MS, eq(whatsappOutreachJobs.id, jobId));
     return claimed ?? job;
   }
 
   async completeJob(workspaceId: string, jobId: string) {
     const [job] = await this.db
       .select()
-      .from(linkedinOutreachJobs)
-      .where(and(eq(linkedinOutreachJobs.id, jobId), eq(linkedinOutreachJobs.workspaceId, workspaceId)));
-    if (!job) throw new HttpError("linkedin_job_not_found", 404);
+      .from(whatsappOutreachJobs)
+      .where(and(eq(whatsappOutreachJobs.id, jobId), eq(whatsappOutreachJobs.workspaceId, workspaceId)));
+    if (!job) throw new HttpError("whatsapp_job_not_found", 404);
     if (job.status === "succeeded") return job;
 
     const [enrollment] = await this.db
@@ -72,13 +58,13 @@ export class LinkedinOutreachService {
     const now = new Date();
     let updated;
     try {
-      updated = await recordResult(this.db, linkedinOutreachJobs, jobId, job.leaseOwner ?? `linkedin-${process.pid}`, {
+      updated = await recordResult(this.db, whatsappOutreachJobs, jobId, job.leaseOwner ?? `whatsapp-${process.pid}`, {
         status: "succeeded",
         completedAt: now,
         failureReason: null,
       });
     } catch (err) {
-      if (err instanceof LeaseLostError) return job; // another worker already owns this job now
+      if (err instanceof LeaseLostError) return job;
       throw err;
     }
 
@@ -98,7 +84,7 @@ export class LinkedinOutreachService {
       );
     }
 
-    log.info("linkedin outreach job completed", { workspaceId, jobId });
+    log.info("whatsapp outreach job completed", { workspaceId, jobId });
     return updated;
   }
 
@@ -107,7 +93,7 @@ export class LinkedinOutreachService {
   }
 
   /** Ambiguous provider outcome (Unipile request timeout with no confirmed delivery receipt) —
-   * needs manual reconciliation rather than being silently retried or treated as a clean failure. */
+   * needs manual reconciliation, not a silent retry or a clean-failure classification. */
   async recordOutcomeUnknown(workspaceId: string, jobId: string, reason: string) {
     return this.settleFailed(workspaceId, jobId, reason, "outcome_unknown");
   }
@@ -115,9 +101,9 @@ export class LinkedinOutreachService {
   private async settleFailed(workspaceId: string, jobId: string, reason: string, status: "failed" | "outcome_unknown") {
     const [job] = await this.db
       .select()
-      .from(linkedinOutreachJobs)
-      .where(and(eq(linkedinOutreachJobs.id, jobId), eq(linkedinOutreachJobs.workspaceId, workspaceId)));
-    if (!job) throw new HttpError("linkedin_job_not_found", 404);
+      .from(whatsappOutreachJobs)
+      .where(and(eq(whatsappOutreachJobs.id, jobId), eq(whatsappOutreachJobs.workspaceId, workspaceId)));
+    if (!job) throw new HttpError("whatsapp_job_not_found", 404);
     if (job.status === "succeeded") return job;
 
     const [enrollment] = await this.db
@@ -129,7 +115,7 @@ export class LinkedinOutreachService {
     const now = new Date();
     let updated;
     try {
-      updated = await recordResult(this.db, linkedinOutreachJobs, jobId, job.leaseOwner ?? `linkedin-${process.pid}`, {
+      updated = await recordResult(this.db, whatsappOutreachJobs, jobId, job.leaseOwner ?? `whatsapp-${process.pid}`, {
         status,
         failureReason: reason.slice(0, 500),
         completedAt: now,
@@ -144,11 +130,10 @@ export class LinkedinOutreachService {
       .set({ status: "failed", executedAt: now, failureReason: reason.slice(0, 500) })
       .where(eq(sequenceEnrollmentSteps.id, job.enrollmentStepId));
 
-    // "outcome_unknown" means the outcome is genuinely ambiguous (e.g. a Unipile timeout with
-    // no confirmed delivery receipt) and needs manual reconciliation — that's the opposite of
-    // "no longer needs a human's attention". Only a real, confirmed failure resolves the
-    // notification; an ambiguous one must keep surfacing until a human reconciles it.
-    if (status !== "outcome_unknown") {
+    // outcome_unknown needs manual reconciliation — do NOT resolve the human-attention
+    // notification for it, only for a genuine, confirmed failure (matches the LinkedIn plan's
+    // Finding 4 fix, applied here from the start rather than discovered again).
+    if (status === "failed") {
       await resolveNotificationsForEntity(this.db, "sequence_enrollment_step", job.enrollmentStepId);
     }
 
@@ -161,7 +146,7 @@ export class LinkedinOutreachService {
       );
     }
 
-    log.warn("linkedin outreach job settled", { workspaceId, jobId, status, reason: reason.slice(0, 200) });
+    log.warn("whatsapp outreach job settled", { workspaceId, jobId, status, reason: reason.slice(0, 200) });
     return updated;
   }
 
@@ -170,25 +155,23 @@ export class LinkedinOutreachService {
     enrollmentId: string;
     enrollmentStepId: string;
     prospectId: string;
-    linkedinUrl: string;
-    action: LinkedinAction;
+    phone: string;
     message: string | null;
   }) {
     const [existing] = await this.db
       .select()
-      .from(linkedinOutreachJobs)
-      .where(eq(linkedinOutreachJobs.enrollmentStepId, input.enrollmentStepId));
+      .from(whatsappOutreachJobs)
+      .where(eq(whatsappOutreachJobs.enrollmentStepId, input.enrollmentStepId));
     if (existing) return existing;
 
     const [row] = await this.db
-      .insert(linkedinOutreachJobs)
+      .insert(whatsappOutreachJobs)
       .values({
         workspaceId: input.workspaceId,
         enrollmentId: input.enrollmentId,
         enrollmentStepId: input.enrollmentStepId,
         prospectId: input.prospectId,
-        linkedinUrl: input.linkedinUrl,
-        action: input.action,
+        phone: input.phone,
         message: input.message,
         status: "pending",
       })
@@ -199,13 +182,13 @@ export class LinkedinOutreachService {
 
     const [again] = await this.db
       .select()
-      .from(linkedinOutreachJobs)
-      .where(eq(linkedinOutreachJobs.enrollmentStepId, input.enrollmentStepId));
+      .from(whatsappOutreachJobs)
+      .where(eq(whatsappOutreachJobs.enrollmentStepId, input.enrollmentStepId));
     return again!;
   }
 }
 
-export function buildLinkedinOutreachService(db: Db | null | undefined, config: Env) {
+export function buildWhatsappOutreachService(db: Db | null | undefined, config: Env) {
   if (!db) return null;
-  return new LinkedinOutreachService(db, config);
+  return new WhatsappOutreachService(db, config);
 }

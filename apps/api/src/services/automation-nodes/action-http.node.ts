@@ -1,4 +1,5 @@
 import { resolveAutomationSecret } from "../automation-secrets.service.js";
+import { AmbiguousOutcomeError } from "./types.js";
 import type { NodeHandler } from "./types.js";
 
 /**
@@ -26,11 +27,22 @@ export const httpActionNodeHandler: NodeHandler = async (ctx) => {
     resolvedHeaders[credentialHeaderName ?? "Authorization"] = secretValue;
   }
 
-  const res = await fetch(url, {
-    method,
-    headers: { "content-type": "application/json", ...resolvedHeaders },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      headers: { "content-type": "application/json", ...resolvedHeaders },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch (err) {
+    // A network/timeout error after the request may have already reached the receiving end —
+    // this generic HTTP node has no idempotency-key contract with an arbitrary third-party
+    // endpoint, so we cannot assume it was never processed.
+    throw new AmbiguousOutcomeError(err instanceof Error ? err.message : "http request failed");
+  }
   const responseBody = await res.json().catch(() => null);
+  if (res.status >= 500) {
+    return { output: { status: res.status, body: responseBody }, outcome: "ambiguous" };
+  }
   return { output: { status: res.status, body: responseBody } };
 };
