@@ -394,6 +394,9 @@ importers:
       '@skout/db':
         specifier: workspace:*
         version: link:../db
+      dotenv:
+        specifier: ^16.4.7
+        version: 16.6.1
       drizzle-orm:
         specifier: ^0.44.2
         version: 0.44.7(@opentelemetry/api@1.9.1)(@types/pg@8.6.1)(postgres@3.4.9)

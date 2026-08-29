@@ -6,6 +6,7 @@ import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { listSignalsForEntity } from "./signal.service.js";
 import { recordEvidence } from "./evidence.service.js";
+import { parseNextBestActionResponse } from "./intelligence-layer.service.js";
 
 const log = createLogger("next-best-action.service");
 const {
@@ -210,26 +211,18 @@ export async function suggestNextBestAction(
     throw Object.assign(new Error("AI suggestion failed"), { statusCode: 502 });
   }
 
-  let parsed: Record<string, unknown>;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    parsed = { actionType: "wait", headline: "Could not parse a suggestion", rationale: raw.slice(0, 300) };
-  }
-
-  const actionType: SuggestedActionType = (["call", "email", "meeting", "wait", "task"] as const).includes(
-    parsed.actionType as SuggestedActionType
-  )
-    ? (parsed.actionType as SuggestedActionType)
-    : "wait";
+  // §6.0 — response parsing/validation now lives in intelligence-layer.service.ts's
+  // parseNextBestActionResponse (step 6 of the shared pipeline); this function is a thin
+  // wrapper handling the LLM call itself, which the shared layer deliberately stays free of.
+  const parsedSuggestion = parseNextBestActionResponse(raw, ["call", "email", "meeting", "wait", "task"]);
 
   return {
     label: ctx.label,
     suggestion: {
-      actionType,
-      headline: typeof parsed.headline === "string" ? parsed.headline : "Review this record",
-      rationale: typeof parsed.rationale === "string" ? parsed.rationale : "",
-      draftMessage: typeof parsed.draftMessage === "string" ? parsed.draftMessage : undefined,
+      actionType: parsedSuggestion.actionType as SuggestedActionType,
+      headline: parsedSuggestion.headline,
+      rationale: parsedSuggestion.rationale,
+      draftMessage: parsedSuggestion.draftMessage,
     },
   };
 }

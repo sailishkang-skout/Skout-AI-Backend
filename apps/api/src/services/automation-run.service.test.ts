@@ -1,5 +1,11 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { createAutomationRun, failStep, retryFailedSteps } from "./automation-run.service.js";
+vi.mock("@skout/shared", () => ({
+  claimNext: vi.fn(),
+  recordResult: vi.fn(),
+  buildIdempotencyKey: vi.fn((...parts: string[]) => parts.join(":")),
+}));
+import { claimNext, recordResult } from "@skout/shared";
+import { createAutomationRun, claimNextStep, completeStep, failStep, retryFailedSteps } from "./automation-run.service.js";
 import { HttpError } from "../utils/http.js";
 import type { AutomationGraph } from "./automation-graph.js";
 
@@ -44,13 +50,6 @@ describe("automation-run.service", () => {
     expect(db.insert).toHaveBeenCalled();
   });
 
-  it("failStep records the error via an update call", async () => {
-    const db = makeDb();
-    const result = await failStep(db, "step-1", "boom");
-    expect(result.status).toBe("claimed"); // mocked update always returns this row shape — asserts the call happened
-    expect(db.update).toHaveBeenCalled();
-  });
-
   describe("retryFailedSteps", () => {
     function makeRetryDb(existingRun: Record<string, unknown> | null) {
       const runSelectLimit = vi.fn().mockResolvedValue(existingRun ? [existingRun] : []);
@@ -89,5 +88,42 @@ describe("automation-run.service", () => {
       expect(updated.status).toBe("running");
       expect(db.update).toHaveBeenCalledTimes(2);
     });
+  });
+});
+
+describe("automation-run.service — execution-intent delegation", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("claimNextStep delegates to claimNext with a 60s lease", async () => {
+    vi.mocked(claimNext).mockResolvedValue({ id: "step-1", status: "claimed" } as never);
+    const result = await claimNextStep({} as never, "run-1", "worker-1");
+    expect(claimNext).toHaveBeenCalledWith(expect.anything(), expect.anything(), "worker-1", 60_000, expect.anything());
+    expect(result).toEqual({ id: "step-1", status: "claimed" });
+  });
+
+  it("completeStep delegates to recordResult with status succeeded", async () => {
+    vi.mocked(recordResult).mockResolvedValue({ id: "step-1", status: "succeeded" } as never);
+    const result = await completeStep({} as never, "step-1", "worker-1", { ok: true });
+    expect(recordResult).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "step-1",
+      "worker-1",
+      expect.objectContaining({ status: "succeeded", output: { ok: true } })
+    );
+    expect(result.status).toBe("succeeded");
+  });
+
+  it("failStep delegates to recordResult with status failed", async () => {
+    vi.mocked(recordResult).mockResolvedValue({ id: "step-1", status: "failed" } as never);
+    const result = await failStep({} as never, "step-1", "worker-1", "boom");
+    expect(recordResult).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "step-1",
+      "worker-1",
+      expect.objectContaining({ status: "failed", error: "boom" })
+    );
+    expect(result.status).toBe("failed");
   });
 });
