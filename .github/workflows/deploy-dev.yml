@@ -200,6 +200,8 @@ jobs:
           docker push "$WEB_REPO:$IMAGE_TAG"
           docker push "$WEB_REPO:latest"
 
+      # Microsoft Warm-Up OAuth: after MICROSOFT_CLIENT_ID/SECRET exist in
+      # SkoutDev/warmup-tool, add -c warmupMicrosoftOAuth=true below.
       - name: Deploy CDK stacks
         working-directory: infra
         env:

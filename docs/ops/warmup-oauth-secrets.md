@@ -38,7 +38,7 @@ Register that redirect URI on the same Google OAuth client (inbox/calendar app).
 Entra delegated permissions: `openid`, `email`, `offline_access`, `Mail.Read`, `Mail.Send`.  
 Warm-Up uses `/common` authority and Graph scopes (`https://graph.microsoft.com/Mail.*`) — do not change authority.
 
-CDK (`warmup-tool-stack.ts`) injects `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` from `SkoutDev/warmup-tool` into all Warm-Up ECS tasks.
+CDK injects `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` from `SkoutDev/warmup-tool` **only when** you pass `-c warmupMicrosoftOAuth=true`. Without those JSON keys present, ECS secret hydration fails and the whole Deploy Dev CDK step rolls back — so leave the flag off until the keys are in Secrets Manager.
 
 Verify without printing secrets:
 
@@ -46,7 +46,12 @@ Verify without printing secrets:
 node scripts/verify-microsoft-oauth-config.mjs --from-aws SkoutDev/warmup-tool
 ```
 
-Then redeploy WarmupTool stack + force new ECS deployment on `warmup-tool-api`.
+Then redeploy with Microsoft OAuth enabled:
+
+```bash
+pnpm cdk deploy SkoutDev-WarmupTool -c env=dev -c warmupMicrosoftOAuth=true --require-approval never
+# or full CI: add -c warmupMicrosoftOAuth=true to the Deploy CDK stacks step
+```
 
 ## Verify
 Frontend `/warmup` → Connect Google/Microsoft → mailbox status connected.

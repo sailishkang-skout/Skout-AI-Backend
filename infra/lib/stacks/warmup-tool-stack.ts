@@ -83,6 +83,12 @@ export class WarmupToolStack extends Stack {
       WARMUP_OAUTH_MICROSOFT_CALLBACK: `${publicBase}/api/v1/warmup-tool/oauth/microsoft/callback`,
     };
 
+    // Microsoft OAuth JSON keys must exist in SkoutDev/warmup-tool before enabling.
+    // Missing keys make Warm-Up ECS tasks fail secret hydration and roll back CDK.
+    // Enable with: cdk deploy -c warmupMicrosoftOAuth=true
+    const injectMicrosoftOAuthSecrets =
+      this.node.tryGetContext("warmupMicrosoftOAuth") === "true";
+
     const dbPasswordSecret = ecs.Secret.fromSecretsManager(database.secret, "password");
     const sharedSecrets: Record<string, ecs.Secret> = {
       DATABASE_PASSWORD: dbPasswordSecret,
@@ -94,8 +100,18 @@ export class WarmupToolStack extends Stack {
       ),
       GOOGLE_CLIENT_ID: ecs.Secret.fromSecretsManager(googleSecret, "GOOGLE_CLIENT_ID"),
       GOOGLE_CLIENT_SECRET: ecs.Secret.fromSecretsManager(googleSecret, "GOOGLE_CLIENT_SECRET"),
-      MICROSOFT_CLIENT_ID: ecs.Secret.fromSecretsManager(warmupToolSecret, "MICROSOFT_CLIENT_ID"),
-      MICROSOFT_CLIENT_SECRET: ecs.Secret.fromSecretsManager(warmupToolSecret, "MICROSOFT_CLIENT_SECRET"),
+      ...(injectMicrosoftOAuthSecrets
+        ? {
+            MICROSOFT_CLIENT_ID: ecs.Secret.fromSecretsManager(
+              warmupToolSecret,
+              "MICROSOFT_CLIENT_ID"
+            ),
+            MICROSOFT_CLIENT_SECRET: ecs.Secret.fromSecretsManager(
+              warmupToolSecret,
+              "MICROSOFT_CLIENT_SECRET"
+            ),
+          }
+        : {}),
     };
 
     const warmupApi = new SkoutEcsService(this, "WarmupToolApiService", {
