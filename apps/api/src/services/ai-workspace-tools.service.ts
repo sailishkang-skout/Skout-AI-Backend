@@ -26,6 +26,12 @@ import {
 import { computeCroSummary } from "./cro-summary.service.js";
 import { createRegionalBriefService } from "./regional-brief.service.js";
 import { createCountryIndustryTamService } from "./country-industry-tam.service.js";
+import {
+  MUTATING_TOOL_NAMES,
+  buildToolActionPreview,
+  type ToolActionPreview,
+} from "./intelligence-layer.service.js";
+import { classifyAndRecord } from "./policy-gateway.service.js";
 
 const APP_ROUTES = [
   { path: "/dashboard", purpose: "Workspace overview and recent enrichment jobs" },
@@ -61,6 +67,8 @@ export interface WorkspaceToolRunner {
   getCreatedExports(): ExportArtifact[];
   /** Sequences created during this chat turn. */
   getCreatedSequenceIds(): string[];
+  /** §8.13 — last mutating tool preview awaiting user confirmation. */
+  getPendingToolPreview(): ToolActionPreview | null;
 }
 
 /** Caps to keep tool payloads (and therefore token cost) bounded. */
@@ -516,7 +524,9 @@ export function createWorkspaceToolRunner(
   /** R19.2 — gates the get_cro_summary tool. Only owner/admin callers should pass true. */
   isAdmin = false,
   /** R19.2 — "cro" restricts both the offered tool list and dispatch to CRO_AGENT_TOOLS. */
-  agent: "skout" | "dexter" | "cro" = "skout"
+  agent: "skout" | "dexter" | "cro" = "skout",
+  /** §8.13 — when false, mutating tools return a preview instead of executing. */
+  confirmMutations = false
 ): WorkspaceToolRunner {
   const analytics = createAnalyticsService(db, config);
   const dashboard = createDashboardService(db, config);
@@ -534,6 +544,7 @@ export function createWorkspaceToolRunner(
 
   const createdExports: ExportArtifact[] = [];
   const createdSequenceIds: string[] = [];
+  let pendingToolPreview: ToolActionPreview | null = null;
 
   const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
     get_workspace_overview: () => dashboard.getSummary(workspaceId),
@@ -845,6 +856,7 @@ export function createWorkspaceToolRunner(
         : WORKSPACE_TOOL_DEFS,
     getCreatedExports: () => createdExports,
     getCreatedSequenceIds: () => createdSequenceIds,
+    getPendingToolPreview: () => pendingToolPreview,
     async run(name, args) {
       if (agent === "cro" && !CRO_AGENT_TOOLS.has(name)) {
         log.warn("cro agent attempted a non-allowlisted tool call", { tool: name, workspaceId });
@@ -852,6 +864,21 @@ export function createWorkspaceToolRunner(
       }
       const handler = handlers[name];
       if (!handler) return serialize({ error: `unknown_tool:${name}` });
+
+      if (MUTATING_TOOL_NAMES.has(name) && !confirmMutations && args.confirmed !== true) {
+        let policyMode: string | undefined;
+        if (db) {
+          const policy = await classifyAndRecord(db, {
+            workspaceId,
+            actionKey: "dexter.chat_write",
+            detail: { tool: name, phase: "preview" },
+          });
+          policyMode = policy.mode;
+        }
+        pendingToolPreview = buildToolActionPreview(name, args ?? {}, { policyMode });
+        return serialize({ requiresConfirmation: true, preview: pendingToolPreview });
+      }
+
       try {
         const result = await handler(args ?? {});
         return serialize(result);

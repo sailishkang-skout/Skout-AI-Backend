@@ -79,6 +79,7 @@ export class WarmupToolStack extends Stack {
       LOG_LEVEL: "info",
       GOOGLE_REDIRECT_URI: `${publicBase}/api/v1/warmup-tool/oauth/google/callback`,
       WARMUP_OAUTH_GOOGLE_CALLBACK: `${publicBase}/api/v1/warmup-tool/oauth/google/callback`,
+      MICROSOFT_REDIRECT_URI: `${publicBase}/api/v1/warmup-tool/oauth/microsoft/callback`,
       WARMUP_OAUTH_MICROSOFT_CALLBACK: `${publicBase}/api/v1/warmup-tool/oauth/microsoft/callback`,
     };
 
@@ -93,6 +94,8 @@ export class WarmupToolStack extends Stack {
       ),
       GOOGLE_CLIENT_ID: ecs.Secret.fromSecretsManager(googleSecret, "GOOGLE_CLIENT_ID"),
       GOOGLE_CLIENT_SECRET: ecs.Secret.fromSecretsManager(googleSecret, "GOOGLE_CLIENT_SECRET"),
+      MICROSOFT_CLIENT_ID: ecs.Secret.fromSecretsManager(warmupToolSecret, "MICROSOFT_CLIENT_ID"),
+      MICROSOFT_CLIENT_SECRET: ecs.Secret.fromSecretsManager(warmupToolSecret, "MICROSOFT_CLIENT_SECRET"),
     };
 
     const warmupApi = new SkoutEcsService(this, "WarmupToolApiService", {
@@ -127,6 +130,8 @@ export class WarmupToolStack extends Stack {
 
     googleSecret.grantRead(warmupApi.taskDefinition.executionRole!);
     googleSecret.grantRead(warmupApi.taskDefinition.taskRole);
+    warmupToolSecret.grantRead(warmupApi.taskDefinition.executionRole!);
+    warmupToolSecret.grantRead(warmupApi.taskDefinition.taskRole);
 
     const workerDefs: Array<{ id: string; serviceName: string; command: string[] }> = [
       {
@@ -173,6 +178,8 @@ export class WarmupToolStack extends Stack {
       });
       googleSecret.grantRead(worker.taskDefinition.executionRole!);
       googleSecret.grantRead(worker.taskDefinition.taskRole);
+      warmupToolSecret.grantRead(worker.taskDefinition.executionRole!);
+      warmupToolSecret.grantRead(worker.taskDefinition.taskRole);
       workerSecurityGroups.push([def.serviceName, worker.securityGroup]);
     }
 

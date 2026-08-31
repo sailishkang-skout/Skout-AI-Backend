@@ -67,6 +67,21 @@ interface MicrosoftUserInfo {
   displayName?: string;
 }
 
+/** Strip token/credential material from provider error bodies before surfacing. */
+function sanitizeOAuthProviderError(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const safe: Record<string, unknown> = {};
+    if (typeof parsed.error === "string") safe.error = parsed.error;
+    if (typeof parsed.error_description === "string") {
+      safe.error_description = parsed.error_description.replace(/client_secret=[^&\s]+/gi, "client_secret=[redacted]");
+    }
+    return JSON.stringify(safe);
+  } catch {
+    return raw.replace(/client_secret=[^&\s]+/gi, "client_secret=[redacted]").slice(0, 500);
+  }
+}
+
 async function fetchMicrosoftUserInfo(accessToken: string): Promise<MicrosoftUserInfo> {
   const res = await fetch("https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName,displayName", {
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -182,7 +197,7 @@ export async function handleGoogleCallback(
   });
   if (!tokenRes.ok) {
     const err = await tokenRes.text();
-    throw new HttpError(`Google token exchange failed: ${err}`, 502);
+    throw new HttpError(`Google token exchange failed: ${sanitizeOAuthProviderError(err)}`, 502);
   }
   const tokens = (await tokenRes.json()) as TokenResponse;
 
@@ -241,7 +256,7 @@ export async function handleMicrosoftCallback(
   });
   if (!tokenRes.ok) {
     const err = await tokenRes.text();
-    throw new HttpError(`Microsoft token exchange failed: ${err}`, 502);
+    throw new HttpError(`Microsoft token exchange failed: ${sanitizeOAuthProviderError(err)}`, 502);
   }
   const tokens = (await tokenRes.json()) as TokenResponse;
 

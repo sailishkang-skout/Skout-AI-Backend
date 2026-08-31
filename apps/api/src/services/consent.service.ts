@@ -90,6 +90,32 @@ export class ConsentService {
     return toDto(row);
   }
 
+  /** Workspace-wide consent audit trail (most recent first). */
+  async listWorkspace(
+    workspaceId: string,
+    options: { limit?: number; offset?: number; subjectType?: string } = {}
+  ): Promise<{ data: ConsentDto[]; total: number }> {
+    const limit = Math.min(options.limit ?? 50, 200);
+    const offset = options.offset ?? 0;
+    const conditions = [eq(consents.workspaceId, workspaceId)];
+    if (options.subjectType) conditions.push(eq(consents.subjectType, options.subjectType));
+
+    const rows = await this.db
+      .select()
+      .from(consents)
+      .where(and(...conditions))
+      .orderBy(desc(consents.grantedAt))
+      .limit(limit)
+      .offset(offset);
+
+    const all = await this.db
+      .select({ id: consents.id })
+      .from(consents)
+      .where(and(...conditions));
+
+    return { data: rows.map(toDto), total: all.length };
+  }
+
   /** Full history (granted and revoked) for one subject, most recent grant first. */
   async list(workspaceId: string, subjectType: string, subjectId: string): Promise<ConsentDto[]> {
     const rows = await this.db

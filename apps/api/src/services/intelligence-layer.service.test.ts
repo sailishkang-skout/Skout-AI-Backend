@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { applyPolicy, parseNextBestActionResponse } from "./intelligence-layer.service.js";
+import {
+  applyPolicy,
+  buildToolActionPreview,
+  captureFeedback,
+  deriveActiveSignalTypes,
+  ingestObservation,
+  normalizeEntityKey,
+  parseNextBestActionResponse,
+  resolveCanonicalField,
+  scoreIcpFitLocally,
+} from "./intelligence-layer.service.js";
 import type { ActivationRuleDto } from "./activation-rules.service.js";
 
 function rule(overrides: Partial<ActivationRuleDto> = {}): ActivationRuleDto {
@@ -108,5 +118,73 @@ describe("parseNextBestActionResponse — step 6 of the Intelligence Layer pipel
     const result = parseNextBestActionResponse(raw, validActionTypes);
     expect(result.headline).toBe("Review this record");
     expect(result.rationale).toBe("");
+  });
+});
+
+describe("ingestObservation — step 1", () => {
+  it("normalizes source and observedAt defaults", () => {
+    const obs = ingestObservation({
+      entityType: "company",
+      entityId: "c-1",
+      attribute: "industry",
+      value: "SaaS",
+    });
+    expect(obs.source).toBe("unknown");
+    expect(obs.observedAt).toBeTruthy();
+  });
+});
+
+describe("normalizeEntityKey — step 2", () => {
+  it("builds a stable lowercase key", () => {
+    expect(normalizeEntityKey("Contact", "ABC-123")).toBe("contact:abc-123");
+  });
+});
+
+describe("resolveCanonicalField — step 3", () => {
+  it("picks highest-confidence candidate", () => {
+    const winner = resolveCanonicalField([
+      { value: "old", confidence: 0.4, source: "scrape" },
+      { value: "new", confidence: 0.9, source: "crm" },
+    ]);
+    expect(winner?.value).toBe("new");
+  });
+});
+
+describe("deriveActiveSignalTypes — step 4", () => {
+  it("excludes expired signals", () => {
+    const types = deriveActiveSignalTypes(
+      [
+        { signalType: "recent_hiring", expiresAt: new Date(Date.now() + 60_000).toISOString() },
+        { signalType: "budget_freeze", expiresAt: new Date(Date.now() - 60_000).toISOString() },
+      ],
+      new Date()
+    );
+    expect(types).toEqual(["recent_hiring"]);
+  });
+});
+
+describe("scoreIcpFitLocally — step 5", () => {
+  it("returns a scored result", () => {
+    const result = scoreIcpFitLocally({ prospectId: "p-1", industry: "Software" }, { industries: ["Software"] });
+    expect(result.icpScore).toBeGreaterThan(40);
+  });
+});
+
+describe("captureFeedback — step 8", () => {
+  it("fills attribution defaults", () => {
+    const fb = captureFeedback({ recommendationId: "r-1", outcome: "accepted" });
+    expect(fb.attribution).toBe("user_action");
+    expect(fb.thresholdDelta).toBe(0);
+  });
+});
+
+describe("buildToolActionPreview — §8.13", () => {
+  it("describes create_outbound_sequence scope", () => {
+    const preview = buildToolActionPreview("create_outbound_sequence", {
+      name: "VP outreach",
+      steps: [{ stepType: "email" }, { stepType: "wait" }],
+    });
+    expect(preview.affectedRecordCount).toBe(2);
+    expect(preview.externalSideEffects.length).toBeGreaterThan(0);
   });
 });

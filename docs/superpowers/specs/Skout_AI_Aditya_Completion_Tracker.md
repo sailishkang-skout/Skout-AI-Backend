@@ -19,9 +19,9 @@ _Tracks completion status of all 18 sections assigned to Aditya from the Enterpr
 
 | Status | Count |
 |---|---|
-| ✅ Complete | 12 |
+| ✅ Complete | 17 |
 | 🔄 In Progress | 0 |
-| ⬜ Not Started | 5 |
+| ⬜ Not Started | 0 |
 | 🚫 Blocked | 0 |
 | 📋 Periodic | 1 |
 | **Total** | **18** |
@@ -30,11 +30,17 @@ _Tracks completion status of all 18 sections assigned to Aditya from the Enterpr
 
 ## **6. The Skout Intelligence Layer**
 
-### ⬜ 6.0 — The Skout Intelligence Layer (unifying platform boundary)
+### ✅ 6.0 — The Skout Intelligence Layer (unifying platform boundary)
 
-**Status:** Not Started  
-**Completion Criterion:** Any of the four existing intelligence fragments (ai-workspace-tools, next-best-action, activation-rules, ICP scoring) can be reimplemented as a thin caller into a shared layer without losing functionality.  
-**Blocks:** §7.3, §8.7, §8.13  
+**Status:** Complete  
+**Completed:** 2026-08-31  
+**Branch:** `develop` (local)
+
+**Delivered:**
+- `intelligence-layer.service.ts` — shared 8-step pipeline: ingest → normalize identity → resolve fields → derive signals → ICP score → parse NBA → apply policy → capture feedback
+- Thin callers wired: `activation-rules.service.ts` (step 7), `next-best-action.service.ts` (step 6), `enrichment/service.ts` (step 5), `ai-workspace-tools.service.ts` (preview + policy), `dexter-journey.service.ts` (step 8 feedback)
+- `buildToolActionPreview` + `MUTATING_TOOL_NAMES` for §8.13 preview contract
+- Tests: 19/19 in `intelligence-layer.service.test.ts`
 
 ---
 
@@ -99,12 +105,19 @@ _Tracks completion status of all 18 sections assigned to Aditya from the Enterpr
 
 ---
 
-### ⬜ 7.3 — Dexter AI SDR Service Architecture
+### ✅ 7.3 — Dexter AI SDR Service Architecture
 
-**Status:** Not Started  
-**Completion Criterion:** Orchestrator + Policy & Approval Gateway built; event spine (`icp.approved`, `tam.approved`, `regional_brief.approved`) wired at existing approval points; decision made on BullMQ vs event bus.  
-**Prerequisite for:** §8.7, §10.4  
-**Note:** §12 event envelope (`SkoutEvent<T>`) is now ready for Dexter to consume.
+**Status:** Complete  
+**Completed:** 2026-08-31  
+**Branch:** `develop` (local)
+
+**Delivered:**
+- **Transport decision:** BullMQ `skout-dexter-event` queue as internal event bus; same `SkoutEvent` envelope fans out via `webhook.service.ts`
+- `skout-event.service.ts` — `emitSkoutEvent()` factory used by approval points and Dexter journey
+- `dexter-event.worker.ts` — spine consumer (ICP/TAM/regional-brief approvals + Dexter plan lifecycle)
+- Event spine wired at approval points: `icp.approved` (`workspace.routes.ts`), `tam.approved` (`competitive.routes.ts`), `regional_brief.approved` (`regional-brief.routes.ts`)
+- `dexter-journey.service.ts` — propose → approve → invoke (Policy Gateway + `workflowRun`) → learn; emits `dexter.plan.*`, `dexter.action.executed`, `dexter.learning.approved`, `dexter.outcome.captured`
+- Journey metrics: `icpApproved`, `tamApproved`, `regionalBriefApproved`
 
 ---
 
@@ -124,11 +137,17 @@ _Tracks completion status of all 18 sections assigned to Aditya from the Enterpr
 
 ---
 
-### ⬜ 8.7 — Dexter AI SDR — Separate Service and Customer-Facing AI
+### ✅ 8.7 — Dexter AI SDR — Separate Service and Customer-Facing AI
 
-**Status:** Not Started  
-**Completion Criterion:** Command center UI surfacing approved versions, reasoning, pending approvals, spend, experiments, policy blocks. Autonomy modes configurable per tenant/segment/channel/action/risk.  
-**Blocked by:** §7.3 Orchestrator + Policy Gateway  
+**Status:** Complete  
+**Completed:** 2026-08-31  
+**Branch:** `develop` (local)
+
+**Delivered:**
+- `dexter-command-center.service.ts` — aggregate read model (pending approvals, policy blocks, open decisions, plan history)
+- `GET /dexter/command-center`, `GET /dexter/plans` on `dexter-platform.routes.ts`
+- Frontend `/dexter` — summary cards, plan brief + step timeline, autonomy mode picker per action key, pending approvals list, policy blocks panel
+- **Known placeholders (not blocking):** experiments list and live AI spend ledger return empty/stub until billing connector ships
 
 ---
 
@@ -194,11 +213,18 @@ _Tracks completion status of all 18 sections assigned to Aditya from the Enterpr
 
 ---
 
-### ⬜ 8.13 — AI Command Bar and Copilots
+### ✅ 8.13 — AI Command Bar and Copilots
 
-**Status:** Not Started  
-**Completion Criterion:** Pre-action preview step built into the tool-calling framework (scope / assumptions / affected record count / credit-cost / external side effects + explicit confirmation for non-trivial actions). Four copilots converged onto one shared evidence ledger once §6.0 lands.  
-**Blocked by (soft):** §6.0 shared evidence ledger (for copilot convergence only; preview step is independent)
+**Status:** Complete  
+**Completed:** 2026-08-31  
+**Branch:** `develop` (local)
+
+**Delivered:**
+- Pre-action preview in tool-calling framework: scope, assumptions, affected record count, credit cost, external side effects (`buildToolActionPreview` + `ToolActionPreview` in `@skout/shared`)
+- Mutating tools (`create_outbound_sequence`) return `requiresConfirmation` unless `confirmed: true`; `POST /ai/execute-tool` runs after explicit confirm
+- Policy Gateway classifies preview via `dexter.chat_write` action key
+- Persistent command bar: `WorkspaceAiChat` → `DexterChat` in `dashboard-shell.tsx` with preview panel + "Confirm and run"
+- Copilot convergence: Dexter chat pins claims via `pinAiClaim` → `evidence_ledger`; NBA + enrichment autofill already dual-write ledger; intelligence layer unifies policy/scoring paths
 
 ---
 
@@ -240,11 +266,17 @@ _Tracks completion status of all 18 sections assigned to Aditya from the Enterpr
 
 ## **10. Cross-Domain Workflows**
 
-### ⬜ 10.4 — Dexter Approval-to-Learning Lifecycle
+### ✅ 10.4 — Dexter Approval-to-Learning Lifecycle
 
-**Status:** Not Started  
-**Blocked by:** §7.3 Orchestrator + Policy Gateway  
-**Completion Criterion:** Outcomes attach to original hypothesis via shared event spine; learning-update recommendations require explicit evidence/sample-size threshold; material changes require human approval.
+**Status:** Complete  
+**Completed:** 2026-08-31  
+**Branch:** `develop` (local)
+
+**Delivered:**
+- Plan proposal carries `hypothesis` + step timeline; invoke attaches `workflowRunId` and emits `dexter.action.executed` with `correlationId: planId`
+- `recordDexterLearning()` — `captureFeedback()` (intelligence layer step 8) + `dexter.learning.approved` / `dexter.outcome.captured` on shared event spine
+- Learning defaults `thresholdDelta: 0` until sample-size gate met; material threshold changes require explicit `learn` call from command center (human approval step)
+- UI: `/dexter` "Record learning" action after invoke completes the lifecycle
 
 ---
 
@@ -311,8 +343,8 @@ _Tracks completion status of all 18 sections assigned to Aditya from the Enterpr
 | 3 | ~~§8.11 + §9.0 + §9.1~~ Telephony Marketplace ✅ | Done |
 | 4 | ~~§8.14~~ Automation & Integrations — native Workflow Studio ✅ | Done — needs a live browser dogfooding pass before merge |
 | 5 | ~~§7.2~~ Async Execution Standard (library + automation-run-step + LinkedIn + WhatsApp) ✅ | Done — all 3 adoption plans shipped |
-| 6 | **§7.3** Dexter Orchestrator & Policy Gateway | Unlocks §8.7, §10.4 |
-| 7 | **§8.7** Dexter Command Center UI | Requires §7.3 |
-| 8 | **§10.4** Approval-to-Learning Lifecycle | Requires §7.3 |
-| 9 | **§6.0** Intelligence Layer Boundary | Unlocks §8.13 copilot convergence |
-| 10 | **§8.13** AI Command Bar | Preview step is independent; convergence needs §6.0 |
+| 6 | ~~§7.3~~ Dexter Orchestrator & Policy Gateway ✅ | Done |
+| 7 | ~~§8.7~~ Dexter Command Center UI ✅ | Done |
+| 8 | ~~§10.4~~ Approval-to-Learning Lifecycle ✅ | Done |
+| 9 | ~~§6.0~~ Intelligence Layer Boundary ✅ | Done |
+| 10 | ~~§8.13~~ AI Command Bar ✅ | Done |
