@@ -1,8 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
-import { createWorkspaceToolRunner, requiresConfirmation, type ActionPreview } from "./ai-workspace-tools.service.js";
+import {
+  createWorkspaceToolRunner,
+  evidenceClaim,
+  requiresConfirmation,
+  type ActionPreview,
+} from "./ai-workspace-tools.service.js";
 import type { Env } from "../config/env.js";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { recordEvidence, schema } from "@skout/db";
+
+vi.mock("@skout/db", async () => {
+  const actual = await vi.importActual<typeof import("@skout/db")>("@skout/db");
+  return { ...actual, recordEvidence: vi.fn() };
+});
 
 const CONFIG = {} as Env;
 const { listMembers } = schema;
@@ -131,5 +141,64 @@ describe("createWorkspaceToolRunner — enroll_list preview gate", () => {
     // returning empty.
     expect(parsed.preview.affectedRecordCount).toBe(0);
     expect(fromFn).not.toHaveBeenCalledWith(listMembers);
+  });
+});
+
+describe("evidenceClaim", () => {
+  it("records evidence with the given entityType/entityId/attribute/source, and returns the value wrapped with the new evidenceId", async () => {
+    vi.mocked(recordEvidence).mockResolvedValue({ id: "ev-1" } as never);
+    const fakeDb = {} as Db;
+
+    const result = await evidenceClaim(fakeDb, "ws-1", "get_market_tam", "country_industry_tam", "US:51", {
+      tam: 1_000_000,
+    });
+
+    expect(recordEvidence).toHaveBeenCalledWith(fakeDb, {
+      workspaceId: "ws-1",
+      entityType: "country_industry_tam",
+      entityId: "US:51",
+      attribute: "get_market_tam",
+      value: { tam: 1_000_000 },
+      source: "ai-workspace-tools:get_market_tam",
+      observedAt: expect.any(Date),
+      confidence: 100,
+    });
+    expect(result).toEqual({ value: { tam: 1_000_000 }, evidenceId: "ev-1" });
+  });
+});
+
+describe("createWorkspaceToolRunner — get_workspace_overview evidence wiring", () => {
+  it("wraps dashboard.getSummary's result through evidenceClaim before returning it", async () => {
+    vi.mocked(recordEvidence).mockResolvedValue({ id: "ev-2" } as never);
+    const summaryFixture = { prospectCount: 42 };
+    const dashboardModule = await import("./dashboard.service.js");
+    vi.spyOn(dashboardModule, "createDashboardService").mockReturnValue({
+      getSummary: vi.fn().mockResolvedValue(summaryFixture),
+    } as unknown as ReturnType<typeof dashboardModule.createDashboardService>);
+
+    const runner = createWorkspaceToolRunner(null, CONFIG, "ws-1", false, "skout");
+    const raw = await runner.run("get_workspace_overview", {});
+    const parsed = JSON.parse(raw as string);
+
+    expect(recordEvidence).toHaveBeenCalledWith(
+      null,
+      expect.objectContaining({
+        workspaceId: "ws-1",
+        entityType: "workspace",
+        entityId: "ws-1",
+        attribute: "get_workspace_overview",
+        source: "ai-workspace-tools:get_workspace_overview",
+        confidence: 100,
+      })
+    );
+    expect(parsed.evidenceId).toBe("ev-2");
+    expect(parsed.value).toEqual(summaryFixture);
+  });
+});
+
+describe("assertEvidenced regression guard", () => {
+  it("throws UnevidencedClaimError when a claim has neither evidenceId nor unverified set", async () => {
+    const { assertEvidenced, UnevidencedClaimError } = await import("@skout/shared");
+    expect(() => assertEvidenced({ value: "x" }, "test")).toThrow(UnevidencedClaimError);
   });
 });

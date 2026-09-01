@@ -1,7 +1,7 @@
 import type { OpenAI } from "openai";
 import { count, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { recordEvidence, schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { createAnalyticsService } from "./analytics.service.js";
@@ -14,7 +14,7 @@ import { buildAiDraftService } from "./ai-draft.service.js";
 import { createBillingService } from "./billing.service.js";
 import { createIntegrationService } from "./integration.service.js";
 import { createTeamService } from "./team.service.js";
-import { seniorityEnum } from "@skout/shared";
+import { assertEvidenced, seniorityEnum, type EvidencedClaim } from "@skout/shared";
 import type { z } from "zod";
 import { getWorkspaceIcp } from "./icp.service.js";
 import { createSearchService } from "./search.service.js";
@@ -41,6 +41,32 @@ export interface ActionPreview {
 
 export function requiresConfirmation(preview: ActionPreview): boolean {
   return preview.affectedRecordCount > 1 || preview.creditCost > 0 || preview.externalSideEffects.length > 0;
+}
+
+/**
+ * §6.1 anti-hallucination contract — wraps a computed/derived claim (an aggregation, TAM
+ * estimate, or other analytics value) with a real evidence_ledger row before it can be returned
+ * to a copilot caller, rather than handing back a bare, unaudited number.
+ */
+export async function evidenceClaim<T>(
+  db: Db,
+  workspaceId: string,
+  toolName: string,
+  entityType: string,
+  entityId: string,
+  value: T
+): Promise<EvidencedClaim<T>> {
+  const row = await recordEvidence(db, {
+    workspaceId,
+    entityType,
+    entityId,
+    attribute: toolName,
+    value: value as unknown,
+    source: `ai-workspace-tools:${toolName}`,
+    observedAt: new Date(),
+    confidence: 100,
+  });
+  return assertEvidenced({ value, evidenceId: row.id }, toolName);
 }
 
 const APP_ROUTES = [
@@ -582,23 +608,34 @@ export function createWorkspaceToolRunner(
   const createdSequenceIds: string[] = [];
 
   const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
-    get_workspace_overview: () => dashboard.getSummary(workspaceId),
+    get_workspace_overview: async () => {
+      // No `!db` guard here (unlike the other six handlers below): dashboard.getSummary already
+      // degrades gracefully when db is null (see dashboard.service.ts), and this handler has never
+      // required a live db. `db as Db` only satisfies evidenceClaim's non-null Db parameter type;
+      // it doesn't change runtime behavior when db is actually null.
+      const value = await dashboard.getSummary(workspaceId);
+      return evidenceClaim(db as Db, workspaceId, "get_workspace_overview", "workspace", workspaceId, value);
+    },
 
     get_cro_summary: async () => {
       if (!isAdmin) throw new Error("get_cro_summary is admin-only");
       if (!db) throw new Error("database_unavailable");
-      return computeCroSummary(db, workspaceId);
+      const value = await computeCroSummary(db, workspaceId);
+      return evidenceClaim(db, workspaceId, "get_cro_summary", "workspace", workspaceId, value);
     },
 
     get_credit_analytics: async (args) => {
+      // No `!db` guard here (see the same note on get_workspace_overview above):
+      // analytics.getReport already degrades gracefully when db is null.
       const days = clampInt(args.days, 30, 7, 90);
       const report = await analytics.getReport(workspaceId, days);
-      return {
+      const value = {
         period: report.period,
         credits: report.credits,
         enrichment: report.enrichment,
         lists: report.lists,
       };
+      return evidenceClaim(db as Db, workspaceId, "get_credit_analytics", "workspace", workspaceId, value);
     },
 
     get_credit_transactions: (args) => {
@@ -637,11 +674,13 @@ export function createWorkspaceToolRunner(
       return sequence.getSequenceById(workspaceId, id);
     },
 
-    get_sequence_analytics: (args) => {
+    get_sequence_analytics: async (args) => {
       if (!sequence) throw new Error("database_unavailable");
+      if (!db) throw new Error("database_unavailable");
       const id = String(args.sequenceId ?? "");
       if (!id) throw new Error("sequenceId is required");
-      return sequence.getAnalytics(workspaceId, id);
+      const value = await sequence.getAnalytics(workspaceId, id);
+      return evidenceClaim(db, workspaceId, "get_sequence_analytics", "sequence", id, value);
     },
 
     list_inboxes: () => {
@@ -678,9 +717,10 @@ export function createWorkspaceToolRunner(
       return { context, messages };
     },
 
-    get_deliverability: () => {
+    get_deliverability: async () => {
       if (!db) throw new Error("database_unavailable");
-      return getDeliverabilityMetrics(db, workspaceId);
+      const value = await getDeliverabilityMetrics(db, workspaceId);
+      return evidenceClaim(db, workspaceId, "get_deliverability", "workspace", workspaceId, value);
     },
 
     list_ai_drafts: (args) => {
@@ -814,25 +854,36 @@ export function createWorkspaceToolRunner(
 
     get_regional_selling_brief: async (args) => {
       if (!regionalBrief) throw new Error("database_unavailable");
+      if (!db) throw new Error("database_unavailable");
       const country = String(args.country ?? "").trim();
       const industry = args.industry ? String(args.industry).trim() : undefined;
       if (!country) return { error: "country is required" };
-      return regionalBrief.resolveRegionalBrief({ countryIso: country, industry, workspaceId });
+      const value = await regionalBrief.resolveRegionalBrief({ countryIso: country, industry, workspaceId });
+      return evidenceClaim(
+        db,
+        workspaceId,
+        "get_regional_selling_brief",
+        "regional_brief",
+        `${country}:${industry ?? "*"}`,
+        value
+      );
     },
 
     get_market_tam: async (args) => {
       if (!tamService) throw new Error("database_unavailable");
+      if (!db) throw new Error("database_unavailable");
       const country = String(args.country ?? "").trim();
       const industry = String(args.industry ?? "").trim();
       if (!country || !industry) return { error: "country and industry are required" };
       const icpPct = typeof args.icpFitPct === "number" ? args.icpFitPct : undefined;
       const acvUsd = typeof args.acvUsd === "number" ? args.acvUsd : undefined;
-      return tamService.getTam({
+      const value = await tamService.getTam({
         countryIso: country,
         naicsCode: industry,
         icpPctOverride: icpPct,
         acvUsdOverride: acvUsd,
       });
+      return evidenceClaim(db, workspaceId, "get_market_tam", "country_industry_tam", `${country}:${industry}`, value);
     },
 
     create_outbound_sequence: async (args) => {
