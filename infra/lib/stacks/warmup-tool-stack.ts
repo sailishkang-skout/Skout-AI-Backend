@@ -67,6 +67,12 @@ export class WarmupToolStack extends Stack {
       `node -e "fetch('http://127.0.0.1:${port}${path}').then((r)=>process.exit(r.status<400?0:1)).catch(()=>process.exit(1))"`;
 
     const publicBase = apiPublicUrl.replace(/\/$/, "");
+    // Microsoft OAuth JSON keys must exist in SkoutDev/warmup-tool before enabling.
+    // Missing keys make Warm-Up ECS tasks fail secret hydration and roll back CDK.
+    // Enable with: cdk deploy -c warmupMicrosoftOAuth=true
+    const injectMicrosoftOAuthSecrets =
+      this.node.tryGetContext("warmupMicrosoftOAuth") === "true";
+
     const sharedEnvironment: Record<string, string> = {
       NODE_ENV: "production",
       DATABASE_HOST: database.instance.dbInstanceEndpointAddress,
@@ -79,15 +85,13 @@ export class WarmupToolStack extends Stack {
       LOG_LEVEL: "info",
       GOOGLE_REDIRECT_URI: `${publicBase}/api/v1/warmup-tool/oauth/google/callback`,
       WARMUP_OAUTH_GOOGLE_CALLBACK: `${publicBase}/api/v1/warmup-tool/oauth/google/callback`,
-      MICROSOFT_REDIRECT_URI: `${publicBase}/api/v1/warmup-tool/oauth/microsoft/callback`,
       WARMUP_OAUTH_MICROSOFT_CALLBACK: `${publicBase}/api/v1/warmup-tool/oauth/microsoft/callback`,
+      ...(injectMicrosoftOAuthSecrets
+        ? {
+            MICROSOFT_REDIRECT_URI: `${publicBase}/api/v1/warmup-tool/oauth/microsoft/callback`,
+          }
+        : {}),
     };
-
-    // Microsoft OAuth JSON keys must exist in SkoutDev/warmup-tool before enabling.
-    // Missing keys make Warm-Up ECS tasks fail secret hydration and roll back CDK.
-    // Enable with: cdk deploy -c warmupMicrosoftOAuth=true
-    const injectMicrosoftOAuthSecrets =
-      this.node.tryGetContext("warmupMicrosoftOAuth") === "true";
 
     const dbPasswordSecret = ecs.Secret.fromSecretsManager(database.secret, "password");
     const sharedSecrets: Record<string, ecs.Secret> = {
@@ -146,8 +150,10 @@ export class WarmupToolStack extends Stack {
 
     googleSecret.grantRead(warmupApi.taskDefinition.executionRole!);
     googleSecret.grantRead(warmupApi.taskDefinition.taskRole);
-    warmupToolSecret.grantRead(warmupApi.taskDefinition.executionRole!);
-    warmupToolSecret.grantRead(warmupApi.taskDefinition.taskRole);
+    if (injectMicrosoftOAuthSecrets) {
+      warmupToolSecret.grantRead(warmupApi.taskDefinition.executionRole!);
+      warmupToolSecret.grantRead(warmupApi.taskDefinition.taskRole);
+    }
 
     const workerDefs: Array<{ id: string; serviceName: string; command: string[] }> = [
       {
@@ -194,8 +200,10 @@ export class WarmupToolStack extends Stack {
       });
       googleSecret.grantRead(worker.taskDefinition.executionRole!);
       googleSecret.grantRead(worker.taskDefinition.taskRole);
-      warmupToolSecret.grantRead(worker.taskDefinition.executionRole!);
-      warmupToolSecret.grantRead(worker.taskDefinition.taskRole);
+      if (injectMicrosoftOAuthSecrets) {
+        warmupToolSecret.grantRead(worker.taskDefinition.executionRole!);
+        warmupToolSecret.grantRead(worker.taskDefinition.taskRole);
+      }
       workerSecurityGroups.push([def.serviceName, worker.securityGroup]);
     }
 

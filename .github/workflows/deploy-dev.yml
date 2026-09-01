@@ -200,13 +200,41 @@ jobs:
           docker push "$WEB_REPO:$IMAGE_TAG"
           docker push "$WEB_REPO:latest"
 
-      # Microsoft Warm-Up OAuth: after MICROSOFT_CLIENT_ID/SECRET exist in
-      # SkoutDev/warmup-tool, add -c warmupMicrosoftOAuth=true below.
+      # Deploy stacks individually so a Warm-Up Tool failure does not block
+      # API/web/CRM. Re-enable hard-fail once SkoutDev/warmup-tool Microsoft
+      # keys exist and -c warmupMicrosoftOAuth=true is set.
       - name: Deploy CDK stacks
         working-directory: infra
         env:
           IMAGE_TAG: ${{ steps.meta.outputs.tag }}
-        run: pnpm cdk deploy --all -c env=dev -c imageTag=$IMAGE_TAG -c httpsMode=apigateway --require-approval never
+        run: |
+          set -euo pipefail
+          CTX=(-c env=dev -c "imageTag=${IMAGE_TAG}" -c httpsMode=apigateway)
+          mapfile -t STACKS < <(pnpm cdk list "${CTX[@]}" | sed '/^$/d')
+          echo "Stacks: ${STACKS[*]}"
+          failed=()
+          for stack in "${STACKS[@]}"; do
+            echo "::group::cdk deploy ${stack}"
+            if pnpm cdk deploy "$stack" "${CTX[@]}" --require-approval never; then
+              echo "OK ${stack}"
+            else
+              echo "::error::CDK deploy failed for ${stack}"
+              failed+=("$stack")
+              case "$stack" in
+                *WarmupTool*)
+                  echo "::warning::Continuing past WarmupTool failure so core platform can ship"
+                  ;;
+                *)
+                  echo "Hard-failing on ${stack}"
+                  exit 1
+                  ;;
+              esac
+            fi
+            echo "::endgroup::"
+          done
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "Soft-failed stacks: ${failed[*]}"
+          fi
 
       - name: Run database migrations (ECS one-off task)
         run: bash scripts/ecs-run-migrations.sh SkoutDev
