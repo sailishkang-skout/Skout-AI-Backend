@@ -1486,7 +1486,7 @@ export async function enrollListWithSideEffects(
   await db.insert(schema.auditLogs).values({
     workspaceId,
     actorId: actorUserId,
-    action: "ai:dexter:enroll_list",
+    action: `ai:${executedByAgent}:enroll_list`,
     entityType: "sequence",
     entityId: sequenceId,
     afterState: {

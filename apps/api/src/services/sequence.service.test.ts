@@ -1063,4 +1063,32 @@ describe("enrollListWithSideEffects", () => {
     });
     expect(result).toBe(enrollResult);
   });
+
+  // Finding 2 regression test: the audit action used to be the literal string
+  // "ai:dexter:enroll_list" regardless of which agent actually executed the enroll. Since
+  // enroll_list is now callable from any of the three agents (skout/dexter/cro), a
+  // skout-initiated enroll must not claim to be Dexter in its own audit trail.
+  it("templates the audit action off executedByAgent instead of hardcoding 'dexter'", async () => {
+    const enrollResult = {
+      enrolled: 1,
+      skipped: 0,
+      total: 1,
+      newEnrollments: [
+        { enrollmentId: "enroll-2", prospectId: "p-2", firstStepScheduledAt: null },
+      ],
+    };
+    vi.spyOn(SequenceService.prototype, "enroll").mockResolvedValue(enrollResult);
+
+    const auditValues = vi.fn().mockReturnValue({ execute: vi.fn().mockResolvedValue(undefined) });
+    const db = {
+      insert: vi.fn().mockReturnValue({ values: auditValues }),
+    } as unknown as Db;
+    const config = { BYPASS_BUSINESS_HOURS: true } as Env;
+
+    await enrollListWithSideEffects(db, config, "ws-1", "list-1", "seq-1", "user-1", "skout");
+
+    expect(auditValues).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "ai:skout:enroll_list" })
+    );
+  });
 });
