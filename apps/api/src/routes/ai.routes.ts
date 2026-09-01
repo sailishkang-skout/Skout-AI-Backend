@@ -20,9 +20,7 @@ import { computeOutcomeInsights, insightsToPrompt } from "../services/outcome-in
 import { buildChatGrounding } from "../services/ai-chat-context.service.js";
 import { createWorkspaceToolRunner } from "../services/ai-workspace-tools.service.js";
 import { readAiExport } from "../services/ai-export.service.js";
-import { buildSequenceService } from "../services/sequence.service.js";
-import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.js";
-import { dispatchWebhookEvent } from "../services/webhook.service.js";
+import { buildSequenceService, enrollListWithSideEffects } from "../services/sequence.service.js";
 import { HttpError } from "../utils/http.js";
 import { pinAiClaim } from "../services/ai-evidence.service.js";
 
@@ -593,54 +591,21 @@ export async function aiRoutes(app: FastifyInstance) {
     if (!app.db) return reply.status(500).send({ error: "Database not available" });
 
     const { listId, sequenceId } = parse.data;
-    const seqSvc = buildSequenceService(app.db);
-    if (!seqSvc) return reply.status(500).send({ error: "Database not available" });
-
-    let result: Awaited<ReturnType<typeof seqSvc.enroll>>;
+    let result: Awaited<ReturnType<typeof enrollListWithSideEffects>>;
     try {
-      result = await seqSvc.enroll(sequenceId, request.workspaceId, { listId });
+      result = await enrollListWithSideEffects(
+        app.db,
+        app.config,
+        request.workspaceId,
+        listId,
+        sequenceId,
+        request.userId,
+        "dexter"
+      );
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
       return reply.status(e.statusCode ?? 500).send({ error: e.message ?? "Could not enroll list in sequence" });
     }
-
-    for (const e of result.newEnrollments) {
-      const delayMs =
-        app.config.BYPASS_BUSINESS_HOURS || !e.firstStepScheduledAt
-          ? 0
-          : Math.max(0, e.firstStepScheduledAt.getTime() - Date.now());
-      enqueueSequenceAdvanceJob(
-        app.config,
-        { enrollmentId: e.enrollmentId, workspaceId: request.workspaceId, prospectId: e.prospectId, sequenceId },
-        delayMs
-      ).catch((err: unknown) => {
-        app.log.error({ err, enrollmentId: e.enrollmentId }, "Failed to enqueue advance job");
-      });
-      dispatchWebhookEvent(app.db, app.config, "prospect.enrolled", request.workspaceId, {
-        enrollmentId: e.enrollmentId,
-        sequenceId,
-        prospectId: e.prospectId,
-      }).catch((err: unknown) => {
-        app.log.error({ err, enrollmentId: e.enrollmentId }, "Failed to dispatch webhook event");
-      });
-    }
-
-    // Audit write happens in the same request as the enroll itself (not a separate client
-    // call afterward) — a crash here means the enroll response never reaches the client either,
-    // so there's no window where the action succeeded silently and unaudited.
-    await app.db.insert(schema.auditLogs).values({
-      workspaceId: request.workspaceId,
-      actorId: request.userId,
-      action: "ai:dexter:enroll_list",
-      entityType: "sequence",
-      entityId: sequenceId,
-      afterState: {
-        listId,
-        enrolled: result.enrolled,
-        executedByAgent: "dexter",
-        onBehalfOfUserId: request.userId,
-      },
-    });
 
     return reply.code(201).send({ data: result });
   });

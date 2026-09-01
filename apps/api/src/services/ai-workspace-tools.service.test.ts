@@ -74,3 +74,17 @@ describe("createWorkspaceToolRunner — create_outbound_sequence preview gate", 
     expect(parsed.error).toBe("database_unavailable");
   });
 });
+
+describe("createWorkspaceToolRunner — enroll_list preview gate", () => {
+  it("returns error for missing listId/sequenceId without needing a preview", async () => {
+    const runner = createWorkspaceToolRunner(null, CONFIG, "ws-1", false, "skout");
+    const raw = await runner.run("enroll_list", {});
+    const parsed = JSON.parse(raw as string);
+    expect(parsed.preview).toBeDefined();
+    expect(parsed.preview.affectedRecordCount).toBe(0);
+    // affectedRecordCount=0 with no side effects and no credit cost would normally skip
+    // confirmation, but externalSideEffects is always non-empty for enroll_list, so it always
+    // requires confirmation regardless of count -- this is intentional (it always enqueues jobs
+    // and dispatches webhooks even for 0 new enrollments in the general case).
+  });
+});

@@ -2,6 +2,7 @@ import { and, asc, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm"
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
+import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import { stepScheduledAt } from "../utils/scheduling.js";
 import {
@@ -9,6 +10,8 @@ import {
   type ConditionExpression,
 } from "./sequence-condition.js";
 import { recordSequenceEvent } from "./sequence-events.js";
+import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.js";
+import { dispatchWebhookEvent } from "./webhook.service.js";
 
 const log = createLogger("sequence.service");
 
@@ -1437,4 +1440,62 @@ async function upsertVariants(db: Db, stepId: string, variants: StepVariantInput
 export function buildSequenceService(db: Db | null): SequenceService | null {
   if (!db) return null;
   return new SequenceService(db);
+}
+
+/**
+ * Enrolls a list into a sequence and performs all the side effects a successful enroll requires:
+ * per-enrollment advance-job scheduling, per-enrollment webhook dispatch, and an audit log row.
+ * Extracted from POST /ai/actions/enroll-list (R15.2) so the dispatcher's `enroll_list` tool can
+ * share the exact same behavior instead of duplicating it.
+ */
+export async function enrollListWithSideEffects(
+  db: Db,
+  config: Env,
+  workspaceId: string,
+  listId: string,
+  sequenceId: string,
+  actorUserId: string,
+  executedByAgent: string
+): Promise<Awaited<ReturnType<SequenceService["enroll"]>>> {
+  const seqSvc = buildSequenceService(db);
+  if (!seqSvc) throw new HttpError("Database not available", 500);
+
+  const result = await seqSvc.enroll(sequenceId, workspaceId, { listId });
+
+  for (const e of result.newEnrollments) {
+    const delayMs =
+      config.BYPASS_BUSINESS_HOURS || !e.firstStepScheduledAt
+        ? 0
+        : Math.max(0, e.firstStepScheduledAt.getTime() - Date.now());
+    enqueueSequenceAdvanceJob(
+      config,
+      { enrollmentId: e.enrollmentId, workspaceId, prospectId: e.prospectId, sequenceId },
+      delayMs
+    ).catch((err: unknown) => {
+      log.error("Failed to enqueue advance job", err, { enrollmentId: e.enrollmentId });
+    });
+    dispatchWebhookEvent(db, config, "prospect.enrolled", workspaceId, {
+      enrollmentId: e.enrollmentId,
+      sequenceId,
+      prospectId: e.prospectId,
+    }).catch((err: unknown) => {
+      log.error("Failed to dispatch webhook event", err, { enrollmentId: e.enrollmentId });
+    });
+  }
+
+  await db.insert(schema.auditLogs).values({
+    workspaceId,
+    actorId: actorUserId,
+    action: "ai:dexter:enroll_list",
+    entityType: "sequence",
+    entityId: sequenceId,
+    afterState: {
+      listId,
+      enrolled: result.enrolled,
+      executedByAgent,
+      onBehalfOfUserId: actorUserId,
+    },
+  });
+
+  return result;
 }

@@ -1,12 +1,14 @@
 import type { OpenAI } from "openai";
+import { count, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
+import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { createAnalyticsService } from "./analytics.service.js";
 import { createDashboardService } from "./dashboard.service.js";
 import { createWorkspaceService } from "./workspace.service.js";
 import { buildEnrichmentService } from "./enrichment/index.js";
-import { buildSequenceService } from "./sequence.service.js";
+import { buildSequenceService, enrollListWithSideEffects } from "./sequence.service.js";
 import { buildInboxService, getDeliverabilityMetrics } from "./inbox.service.js";
 import { buildAiDraftService } from "./ai-draft.service.js";
 import { createBillingService } from "./billing.service.js";
@@ -61,6 +63,8 @@ const APP_ROUTES = [
   { path: "/settings/team", purpose: "Invite teammates and manage roles" },
   { path: "/settings/workspace", purpose: "Workspace name, credits, billing" },
 ] as const;
+
+const { listMembers } = schema;
 
 const log = createLogger("ai-workspace-tools");
 
@@ -513,6 +517,27 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "enroll_list",
+      description:
+        "Enroll every eligible prospect on a list into an active outbound sequence. Use this when the user asks to enroll, start, or launch outreach for a specific list into a specific sequence.",
+      parameters: {
+        type: "object",
+        properties: {
+          listId: { type: "string", description: "The list's ID." },
+          sequenceId: { type: "string", description: "The sequence's ID." },
+          confirmed: {
+            type: "boolean",
+            description:
+              "Set to true only after the user has explicitly confirmed they want to proceed, having seen the preview shown in your previous response. Never set this on the first call.",
+          },
+        },
+        required: ["listId", "sequenceId"],
+      },
+    },
+  },
 ];
 
 /**
@@ -857,6 +882,14 @@ export function createWorkspaceToolRunner(
         message: `Sequence "${seq.name}" with ${seq.steps.length} steps created successfully in your workspace!`,
       };
     },
+
+    enroll_list: async (args) => {
+      if (!db) throw new Error("database_unavailable");
+      const listId = String(args.listId ?? "");
+      const sequenceId = String(args.sequenceId ?? "");
+      if (!listId || !sequenceId) return { error: "listId and sequenceId are required" };
+      return enrollListWithSideEffects(db, config, workspaceId, listId, sequenceId, userId ?? "unknown", agent);
+    },
   };
 
   const previewBuilders: Record<string, (args: Record<string, unknown>) => ActionPreview | Promise<ActionPreview>> = {
@@ -872,6 +905,27 @@ export function createWorkspaceToolRunner(
         externalSideEffects: rawSteps.some((s) => s.stepType === "linkedin")
           ? ["Will send LinkedIn actions once prospects are enrolled into this sequence"]
           : [],
+      };
+    },
+
+    enroll_list: async (args) => {
+      const listId = String(args.listId ?? "");
+      const sequenceId = String(args.sequenceId ?? "");
+      let memberCount = 0;
+      if (db && listId) {
+        const [row] = await db
+          .select({ count: count() })
+          .from(listMembers)
+          .where(eq(listMembers.listId, listId));
+        memberCount = row?.count ?? 0;
+      }
+      return {
+        toolName: "enroll_list",
+        scope: `Enroll ${memberCount} prospect(s) from this list into the sequence.`,
+        assumptions: !listId || !sequenceId ? ["Missing listId or sequenceId — will fail validation."] : [],
+        affectedRecordCount: memberCount,
+        creditCost: 0,
+        externalSideEffects: ["Enqueues outreach sends for each newly enrolled prospect", "Dispatches a prospect.enrolled webhook per enrollment"],
       };
     },
   };
