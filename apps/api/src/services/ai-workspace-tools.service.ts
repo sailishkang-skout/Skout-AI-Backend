@@ -136,6 +136,28 @@ function serialize(value: unknown): string {
 }
 
 /**
+ * §8.13 — server-side cache of the exact args a preview was computed from, keyed by
+ * (workspaceId, toolName). A confirm call executes these cached args verbatim, never whatever the
+ * model resupplies on the second call — this is a correctness property (the confirmed action must
+ * be exactly what was previewed, not something the model could quietly drift on) as much as a
+ * convenience: the model doesn't need to recall/resupply the full original arguments (a sequence's
+ * complete multi-step copy, for example) to confirm — it only needs to call the tool again with
+ * confirmed: true. In-memory and process-local by design: losing a pending preview across a
+ * restart just means the user re-states their request, which is an acceptable, low-frequency cost
+ * for this slice — not a data-safety issue, since nothing executes without an explicit confirm.
+ */
+interface PendingPreview {
+  args: Record<string, unknown>;
+  expiresAt: number;
+}
+const pendingPreviews = new Map<string, PendingPreview>();
+const PENDING_PREVIEW_TTL_MS = 10 * 60 * 1000;
+
+function pendingPreviewKey(workspaceId: string, toolName: string): string {
+  return `${workspaceId}:${toolName}`;
+}
+
+/**
  * The catalog of read-only tools. Keeping this as a plain list keeps the JSON schema (sent to the
  * model) and the executor switch in one place, so adding a tool is a single edit.
  */
@@ -1003,39 +1025,55 @@ export function createWorkspaceToolRunner(
       if (!handler) return serialize({ error: `unknown_tool:${name}` });
 
       const previewBuilder = previewBuilders[name];
+      let execArgs = args ?? {};
       if (previewBuilder) {
-        try {
-          const preview = await previewBuilder(args ?? {});
-          if (db) {
-            try {
-              await classifyAndRecord(db, {
-                workspaceId,
-                actionKey: `tool:${name}`,
-                actorUserId: userId,
-                detail: preview as unknown as Record<string, unknown>,
-              });
-            } catch (err) {
-              const message = err instanceof Error ? err.message : String(err);
-              log.warn("failed to record tool-call audit decision", { tool: name, workspaceId, err: message });
+        const key = pendingPreviewKey(workspaceId, name);
+        if (execArgs.confirmed === true) {
+          // Confirming: execute the EXACT args the preview was computed from, never whatever the
+          // model resupplied — see the pendingPreviews doc comment for why. Fall back to the
+          // model-supplied args only if there's no matching cached preview (e.g. it expired, or
+          // the model confirmed something it never actually previewed) — this preserves today's
+          // behavior for that edge case rather than hard-failing it.
+          const cached = pendingPreviews.get(key);
+          if (cached && cached.expiresAt > Date.now()) {
+            execArgs = { ...cached.args, confirmed: true };
+          }
+          pendingPreviews.delete(key);
+        } else {
+          try {
+            const preview = await previewBuilder(execArgs);
+            if (db) {
+              try {
+                await classifyAndRecord(db, {
+                  workspaceId,
+                  actionKey: `tool:${name}`,
+                  actorUserId: userId,
+                  detail: preview as unknown as Record<string, unknown>,
+                });
+              } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                log.warn("failed to record tool-call audit decision", { tool: name, workspaceId, err: message });
+              }
             }
+            if (requiresConfirmation(preview)) {
+              pendingPreviews.set(key, { args: execArgs, expiresAt: Date.now() + PENDING_PREVIEW_TTL_MS });
+              return serialize({
+                preview,
+                requiresConfirmation: true,
+                nextStep:
+                  "Relay this preview to the user in your reply and stop. Do not call this tool again in this same turn. Once the user explicitly agrees in a later message, call this exact tool again with ONLY confirmed: true — you do not need to resupply the other arguments, the server remembers them from this preview.",
+              });
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            log.warn("preview builder failed", { tool: name, workspaceId, err: message });
+            return serialize({ error: message });
           }
-          if (requiresConfirmation(preview) && (args ?? {}).confirmed !== true) {
-            return serialize({
-              preview,
-              requiresConfirmation: true,
-              nextStep:
-                "Relay this preview to the user in your reply and stop. Do not call this tool again in this same turn — wait for the user's next message, then re-call with confirmed: true only if they explicitly agree.",
-            });
-          }
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          log.warn("preview builder failed", { tool: name, workspaceId, err: message });
-          return serialize({ error: message });
         }
       }
 
       try {
-        const result = await handler(args ?? {});
+        const result = await handler(execArgs);
         return serialize(result);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
