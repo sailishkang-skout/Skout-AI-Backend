@@ -8,4 +8,5 @@ export * from "./google-calendar-events.js";
 export * from "./evidence-contract.js";
 export * from "./identity-merge.js";
 export * from "./event-envelope.js";
+export * from "./action-preview.js";
 export * from "./execution-intent/index.js";

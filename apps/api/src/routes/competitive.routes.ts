@@ -156,6 +156,16 @@ export async function competitiveRoutes(app: FastifyInstance) {
 
     const gate = await getRegionalTamGate(app.db, request.workspaceId);
 
+    if (count.length === MIN_DEALS) {
+      const { emitSkoutEvent } = await import("../services/skout-event.service.js");
+      await emitSkoutEvent(app.db, app.config, {
+        type: "tam.approved",
+        tenantId: request.workspaceId,
+        aggregateId: request.workspaceId,
+        data: { dealsReviewed: count.length, minDeals: MIN_DEALS },
+      });
+    }
+
     return reply.code(201).send({
       data: row,
       dealsReviewed: count.length,

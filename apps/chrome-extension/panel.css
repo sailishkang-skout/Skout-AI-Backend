@@ -4,3 +4,53 @@ body.side-panel {
   width: 100%;
   min-height: 100vh;
 }
+
+.vision-kicker {
+  margin: 0 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #60a5fa;
+}
+
+.vision-title {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.vision-desc {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #94a3b8;
+}
+
+.vision-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.vision-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid #334155;
+  background: #1e293b;
+  padding: 2px 8px;
+  font-size: 10px;
+  color: #cbd5e1;
+}
+
+.vision-chip.warning {
+  border-color: #b45309;
+  color: #fcd34d;
+}
+
+.vision-chip.danger {
+  border-color: #b91c1c;
+  color: #fca5a5;
+}

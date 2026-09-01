@@ -31,6 +31,7 @@ import {
   recordDexterLearning,
   synthesizeVoiceAudio,
 } from "../services/dexter-journey.service.js";
+import { getDexterCommandCenter, listDexterPlans } from "../services/dexter-command-center.service.js";
 import { getRegionalTamGate, seedDemoWinLossDeals } from "../services/regional-tam-gate.service.js";
 
 
@@ -183,12 +184,26 @@ export async function dexterPlatformRoutes(app: FastifyInstance) {
     });
   });
 
+  // ── Dexter §8.7 command center ────────────────────────────────────
+  app.get("/dexter/command-center", async (request, reply) => {
+    if (!request.workspaceId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    return reply.send({ data: await getDexterCommandCenter(app.db, request.workspaceId) });
+  });
+
+  app.get("/dexter/plans", async (request, reply) => {
+    if (!request.workspaceId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    const status = typeof (request.query as { status?: string }).status === "string"
+      ? (request.query as { status?: string }).status
+      : undefined;
+    return reply.send({ data: await listDexterPlans(app.db, request.workspaceId, status) });
+  });
+
   // ── Dexter §10.4 ────────────────────────────────────────────────
   app.post("/dexter/plans", async (request, reply) => {
     if (!request.workspaceId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const body = z.object({ brief: z.string().min(1).max(4000) }).safeParse(request.body ?? {});
     if (!body.success) return reply.code(400).send(errorResponse("Invalid brief", 400));
-    const result = await proposeDexterPlan(app.db, {
+    const result = await proposeDexterPlan(app.db, app.config, {
       workspaceId: request.workspaceId,
       brief: body.data.brief,
       userId: request.userId,
@@ -199,14 +214,14 @@ export async function dexterPlatformRoutes(app: FastifyInstance) {
   app.post("/dexter/plans/:id/approve", async (request, reply) => {
     if (!request.workspaceId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-    return reply.send({ data: await approveDexterPlan(app.db, request.workspaceId, id) });
+    return reply.send({ data: await approveDexterPlan(app.db, app.config, request.workspaceId, id) });
   });
 
   app.post("/dexter/plans/:id/invoke", async (request, reply) => {
     if (!request.workspaceId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     return reply.send({
-      data: await invokeDexterPlan(app.db, request.workspaceId, id, request.userId),
+      data: await invokeDexterPlan(app.db, app.config, request.workspaceId, id, request.userId),
     });
   });
 
@@ -216,7 +231,7 @@ export async function dexterPlatformRoutes(app: FastifyInstance) {
     const body = z.object({ learning: z.record(z.unknown()) }).safeParse(request.body ?? {});
     if (!body.success) return reply.code(400).send(errorResponse("Invalid learning payload", 400));
     return reply.send({
-      data: await recordDexterLearning(app.db, request.workspaceId, id, body.data.learning),
+      data: await recordDexterLearning(app.db, app.config, request.workspaceId, id, body.data.learning),
     });
   });
 

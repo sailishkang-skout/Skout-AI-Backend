@@ -16,7 +16,7 @@ import { conditionExpressionSchema } from "../services/sequence-condition.js";
 import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.js";
 import { dispatchWebhookEvent } from "../services/webhook.service.js";
 import { HttpError } from "../utils/http.js";
-import { buildConsentService } from "../services/consent.service.js";
+import { gateEnrollConsent } from "../services/consent-enroll.service.js";
 
 const generateSequenceSchema = z.object({
   goal: z.string().min(1).max(600),
@@ -257,6 +257,24 @@ export async function sequenceRoutes(app: FastifyInstance) {
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const body = enrollSequenceSchema.parse(request.body ?? {});
+
+    if (app.db) {
+      const consent = await gateEnrollConsent(app.db, app.config, {
+        workspaceId,
+        prospectIds: body.prospectIds,
+        listId: body.listId,
+        consentBasis: body.consentBasis,
+        recordedBy: request.userId,
+      });
+      if (!consent.ok) {
+        return reply.status(403).send({
+          error: "consent_required",
+          message: "Active email consent is required before enrolling these prospects.",
+          missingConsentProspectIds: consent.missingConsentProspectIds,
+        });
+      }
+    }
+
     try {
       const experiment = await svc.getExperiment(workspaceId, id);
       if (!experiment) return reply.status(404).send({ error: "experiment_not_found" });
@@ -577,35 +595,20 @@ export async function sequenceRoutes(app: FastifyInstance) {
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const body = enrollSequenceSchema.parse(request.body ?? {});
 
-    // §5.1 / §16 — fail-closed consent gate (CONSENT_ENFORCEMENT_ENABLED)
-    if (app.config.CONSENT_ENFORCEMENT_ENABLED && app.db && body.prospectIds?.length) {
-      const consentSvc = buildConsentService(app.db);
-      if (consentSvc) {
-        const missing: string[] = [];
-        for (const prospectId of body.prospectIds) {
-          const ok = await consentSvc.hasActive(workspaceId, "prospect", prospectId, "email");
-          if (!ok) missing.push(prospectId);
-        }
-        if (missing.length > 0) {
-          if (body.consentBasis) {
-            for (const prospectId of missing) {
-              await consentSvc.record({
-                workspaceId,
-                subjectType: "prospect",
-                subjectId: prospectId,
-                type: "email",
-                basis: body.consentBasis,
-                recordedBy: request.userId,
-              });
-            }
-          } else {
-            return reply.status(403).send({
-              error: "consent_required",
-              message: "Active email consent is required before enrolling these prospects.",
-              missingConsentProspectIds: missing,
-            });
-          }
-        }
+    if (app.db) {
+      const consent = await gateEnrollConsent(app.db, app.config, {
+        workspaceId,
+        prospectIds: body.prospectIds,
+        listId: body.listId,
+        consentBasis: body.consentBasis,
+        recordedBy: request.userId,
+      });
+      if (!consent.ok) {
+        return reply.status(403).send({
+          error: "consent_required",
+          message: "Active email consent is required before enrolling these prospects.",
+          missingConsentProspectIds: consent.missingConsentProspectIds,
+        });
       }
     }
 

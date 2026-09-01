@@ -1,9 +1,13 @@
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
+import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import { classifyAndRecord, assertAllowed } from "./policy-gateway.service.js";
 import { incrJourneyMetric } from "./journey-metrics.js";
+import { emitSkoutEvent } from "./skout-event.service.js";
+import { captureFeedback } from "./intelligence-layer.service.js";
+import { startWorkflowRun } from "./decision-workflow.service.js";
 
 export {
   checkLinkedinVoiceEligibility,
@@ -19,6 +23,7 @@ const { dexterPlans } = schema;
 
 export async function proposeDexterPlan(
   db: Db,
+  config: Env,
   opts: { workspaceId: string; brief: string; userId?: string }
 ) {
   const classify = await classifyAndRecord(db, {
@@ -30,13 +35,16 @@ export async function proposeDexterPlan(
 
   const proposal = {
     steps: [
-      { id: "brief_approval", status: "pending" },
-      { id: "policy_gateway_classify", status: "done", mode: classify.mode },
-      { id: "post_approval_invoke", status: "blocked_until_approve" },
-      { id: "outcome_hypothesis_attribution", status: "pending" },
-      { id: "learning_update_threshold", status: "pending" },
+      { id: "brief_approval", status: "pending", label: "Review plan brief" },
+      { id: "policy_gateway_classify", status: "done", mode: classify.mode, label: "Policy classification" },
+      { id: "post_approval_invoke", status: "blocked_until_approve", label: "Execute after approval" },
+      { id: "outcome_hypothesis_attribution", status: "pending", label: "Attribute outcomes" },
+      { id: "learning_update_threshold", status: "pending", label: "Update learning thresholds" },
     ],
     hypothesis: `Executing brief: ${opts.brief.slice(0, 200)}`,
+    scope: "Workspace GTM actions governed by Policy Gateway",
+    creditCost: 0,
+    externalSideEffects: ["May enroll contacts or activate sequences after invoke"],
   };
 
   const [plan] = await db
@@ -52,10 +60,25 @@ export async function proposeDexterPlan(
     })
     .returning();
 
-  return { plan: plan!, policy: classify };
+  const event =
+    classify.outcome === "denied"
+      ? await emitSkoutEvent(db, config, {
+          type: "dexter.plan.blocked",
+          tenantId: opts.workspaceId,
+          aggregateId: plan!.id,
+          data: { planId: plan!.id, brief: opts.brief, policyMode: classify.mode },
+        })
+      : await emitSkoutEvent(db, config, {
+          type: "dexter.plan.proposed",
+          tenantId: opts.workspaceId,
+          aggregateId: plan!.id,
+          data: { planId: plan!.id, brief: opts.brief, policyMode: classify.mode },
+        });
+
+  return { plan: plan!, policy: classify, correlationId: event.correlationId };
 }
 
-export async function approveDexterPlan(db: Db, workspaceId: string, planId: string) {
+export async function approveDexterPlan(db: Db, config: Env, workspaceId: string, planId: string) {
   const [plan] = await db
     .select()
     .from(dexterPlans)
@@ -69,10 +92,24 @@ export async function approveDexterPlan(db: Db, workspaceId: string, planId: str
     .set({ status: "approved", approvedAt: new Date() })
     .where(eq(dexterPlans.id, planId))
     .returning();
+
+  await emitSkoutEvent(db, config, {
+    type: "dexter.plan.approved",
+    tenantId: workspaceId,
+    aggregateId: planId,
+    data: { planId, brief: plan.brief },
+  });
+
   return updated!;
 }
 
-export async function invokeDexterPlan(db: Db, workspaceId: string, planId: string, userId?: string) {
+export async function invokeDexterPlan(
+  db: Db,
+  config: Env,
+  workspaceId: string,
+  planId: string,
+  userId?: string
+) {
   const [plan] = await db
     .select()
     .from(dexterPlans)
@@ -93,9 +130,19 @@ export async function invokeDexterPlan(db: Db, workspaceId: string, planId: stri
     detail: { phase: "invoke" },
   });
 
+  const proposal = (plan.proposal ?? {}) as { steps?: Array<{ id: string; status?: string; label?: string }> };
+  const workflow = await startWorkflowRun(db, {
+    workspaceId,
+    name: `Dexter plan: ${plan.brief.slice(0, 80)}`,
+    steps: (proposal.steps ?? []).map((s) => ({ name: s.label ?? s.id, status: s.status ?? "pending" })),
+    correlationId: planId,
+    userId,
+  });
+
   const outcome = {
     invoked: true,
     at: new Date().toISOString(),
+    workflowRunId: workflow.id,
     learningHint: "threshold_unchanged",
   };
 
@@ -105,12 +152,21 @@ export async function invokeDexterPlan(db: Db, workspaceId: string, planId: stri
     .where(eq(dexterPlans.id, planId))
     .returning();
 
+  await emitSkoutEvent(db, config, {
+    type: "dexter.action.executed",
+    tenantId: workspaceId,
+    aggregateId: planId,
+    correlationId: planId,
+    data: { planId, workflowRunId: workflow.id, brief: plan.brief },
+  });
+
   incrJourneyMetric("dexterPlanInvoke");
-  return { plan: updated!, policy };
+  return { plan: updated!, policy, workflowRun: workflow };
 }
 
 export async function recordDexterLearning(
   db: Db,
+  config: Env,
   workspaceId: string,
   planId: string,
   learning: Record<string, unknown>
@@ -122,11 +178,39 @@ export async function recordDexterLearning(
     .limit(1);
   if (!plan) throw new HttpError("Dexter plan not found", 404);
 
-  const outcome = { ...(typeof plan.outcome === "object" && plan.outcome ? plan.outcome : {}), learning };
+  const feedback = captureFeedback({
+    recommendationId: planId,
+    outcome: "accepted",
+    attribution: typeof learning.attribution === "string" ? learning.attribution : "dexter_plan",
+    thresholdDelta: typeof learning.thresholdDelta === "number" ? learning.thresholdDelta : 0,
+  });
+
+  const outcome = {
+    ...(typeof plan.outcome === "object" && plan.outcome ? plan.outcome : {}),
+    learning,
+    feedback,
+  };
   const [updated] = await db
     .update(dexterPlans)
     .set({ status: "learned", outcome })
     .where(eq(dexterPlans.id, planId))
     .returning();
+
+  await emitSkoutEvent(db, config, {
+    type: "dexter.learning.approved",
+    tenantId: workspaceId,
+    aggregateId: planId,
+    correlationId: planId,
+    data: { planId, learning: feedback },
+  });
+
+  await emitSkoutEvent(db, config, {
+    type: "dexter.outcome.captured",
+    tenantId: workspaceId,
+    aggregateId: planId,
+    correlationId: planId,
+    data: { planId, outcome: feedback },
+  });
+
   return updated!;
 }

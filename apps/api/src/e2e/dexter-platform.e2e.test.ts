@@ -22,6 +22,7 @@ describe.skipIf(!hasDatabase)("§10 Dexter / Policy / LinkedIn voice HTTP E2E", 
       LOG_LEVEL: "error",
       AUTH_STUB: true,
       OPENROUTER_API_KEY: undefined,
+      REDIS_URL: undefined as unknown as string,
     });
   }, 60_000);
 

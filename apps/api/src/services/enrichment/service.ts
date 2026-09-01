@@ -1,7 +1,7 @@
 import { EnrichmentEngine, type EnrichField } from "@skout/pal";
 import { generateCompanyId, generateProspectId } from "@skout/shared";
 import { createLogger, captureException } from "@skout/observability";
-import { scoreProspect, type IcpConfig, type ScoreInput, type ScoreResult } from "./ai-client.js";
+import { scoreProspectIcp, type IcpConfig, type ScoreInput, type ScoreResult } from "../intelligence-layer.service.js";
 import {
   InsufficientCreditsError,
   type EnrichmentBatch,
@@ -239,7 +239,13 @@ export class EnrichmentService {
       companyDomain: scored.companyDomain,
       signals: scored.signals,
     };
-    const result = await scoreProspect(this.aiServiceUrl, input, resolvedIcp, this.aiTimeoutMs, this.openrouterApiKey);
+    const result = await scoreProspectIcp(
+      this.aiServiceUrl,
+      input,
+      resolvedIcp,
+      this.aiTimeoutMs ?? 5000,
+      this.openrouterApiKey
+    );
     await this.store.deductCredits(workspaceId, creditCost, "ai_score", prospectId);
     await this.store.setScore({
       workspaceId,

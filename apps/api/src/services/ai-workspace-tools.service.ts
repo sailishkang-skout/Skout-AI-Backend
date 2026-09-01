@@ -29,6 +29,7 @@ import { computeCroSummary } from "./cro-summary.service.js";
 import { createRegionalBriefService } from "./regional-brief.service.js";
 import { createCountryIndustryTamService } from "./country-industry-tam.service.js";
 import { classifyAndRecord } from "./policy-gateway.service.js";
+import { type ToolActionPreview } from "./intelligence-layer.service.js";
 
 export interface ActionPreview {
   toolName: string;
@@ -110,6 +111,8 @@ export interface WorkspaceToolRunner {
   getCreatedExports(): ExportArtifact[];
   /** Sequences created during this chat turn. */
   getCreatedSequenceIds(): string[];
+  /** §8.13 — last mutating tool preview awaiting user confirmation. */
+  getPendingToolPreview(): ToolActionPreview | null;
 }
 
 /** Caps to keep tool payloads (and therefore token cost) bounded. */
@@ -618,7 +621,9 @@ export function createWorkspaceToolRunner(
   /** R19.2 — "cro" restricts both the offered tool list and dispatch to CRO_AGENT_TOOLS. */
   agent: "skout" | "dexter" | "cro" = "skout",
   /** §8.13 — actor for the tool-call audit trail (policy_decisions.detail). Optional: audit is best-effort. */
-  userId?: string
+  userId?: string,
+  /** §8.13 — when true, mutating tools execute directly instead of returning a preview (autonomous "auto" mode, or a caller that already confirmed via /ai/execute-tool). */
+  confirmMutations = false
 ): WorkspaceToolRunner {
   const analytics = createAnalyticsService(db, config);
   const dashboard = createDashboardService(db, config);
@@ -636,6 +641,7 @@ export function createWorkspaceToolRunner(
 
   const createdExports: ExportArtifact[] = [];
   const createdSequenceIds: string[] = [];
+  let pendingToolPreview: ToolActionPreview | null = null;
 
   const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
     get_workspace_overview: async () => {
@@ -1016,6 +1022,7 @@ export function createWorkspaceToolRunner(
         : WORKSPACE_TOOL_DEFS,
     getCreatedExports: () => createdExports,
     getCreatedSequenceIds: () => createdSequenceIds,
+    getPendingToolPreview: () => pendingToolPreview,
     async run(name, args) {
       if (agent === "cro" && !CRO_AGENT_TOOLS.has(name)) {
         log.warn("cro agent attempted a non-allowlisted tool call", { tool: name, workspaceId });
@@ -1028,7 +1035,7 @@ export function createWorkspaceToolRunner(
       let execArgs = args ?? {};
       if (previewBuilder) {
         const key = pendingPreviewKey(workspaceId, name);
-        if (execArgs.confirmed === true) {
+        if (execArgs.confirmed === true || confirmMutations) {
           // Confirming: execute the EXACT args the preview was computed from, never whatever the
           // model resupplied — see the pendingPreviews doc comment for why. Fall back to the
           // model-supplied args only if there's no matching cached preview (e.g. it expired, or

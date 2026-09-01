@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Skout AI — AI Features Testing Guide (Sailesh)</title>
+  <style>
+    @page { size: A4; margin: 16mm 14mm; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      font-size: 10.5pt;
+      line-height: 1.45;
+      color: #111;
+      max-width: 210mm;
+      margin: 0 auto;
+      padding: 12mm;
+    }
+    h1 { font-size: 22pt; margin: 0 0 6px; line-height: 1.2; }
+    .subtitle { font-size: 11pt; color: #444; margin: 0 0 14px; }
+    h2 {
+      font-size: 13pt;
+      margin: 20px 0 8px;
+      border-bottom: 2px solid #222;
+      padding-bottom: 4px;
+      page-break-after: avoid;
+    }
+    h3 { font-size: 11pt; margin: 14px 0 6px; page-break-after: avoid; }
+    p, li { margin: 4px 0; }
+    ul { margin: 6px 0 10px 18px; padding: 0; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 8px 0 14px;
+      font-size: 9.5pt;
+      page-break-inside: avoid;
+    }
+    th, td {
+      border: 1px solid #999;
+      padding: 5px 7px;
+      vertical-align: top;
+      text-align: left;
+    }
+    th { background: #eee; font-weight: 600; }
+    td.tick, th.tick { width: 28px; text-align: center; }
+    .meta {
+      background: #f5f5f5;
+      border: 1px solid #ccc;
+      padding: 10px 12px;
+      margin: 12px 0 18px;
+    }
+    .meta table { margin: 0; border: none; }
+    .meta td, .meta th { border: none; padding: 2px 8px 2px 0; background: transparent; }
+    .tip {
+      background: #fffbea;
+      border: 1px solid #e6d98a;
+      padding: 8px 10px;
+      margin: 10px 0;
+      font-size: 9.5pt;
+    }
+    .warn {
+      background: #fff0f0;
+      border: 1px solid #e0a0a0;
+      padding: 8px 10px;
+      margin: 10px 0;
+      font-size: 9.5pt;
+    }
+    hr { border: none; border-top: 1px solid #ccc; margin: 16px 0; }
+    .footer { margin-top: 20px; font-size: 9pt; color: #555; }
+    .nav-path { font-family: ui-monospace, monospace; font-size: 9pt; color: #333; }
+    @media print {
+      body { padding: 0; }
+      h2 { page-break-before: auto; }
+    }
+  </style>
+</head>
+<body>
+
+<h1>Skout AI — AI Features Testing Guide</h1>
+<p class="subtitle">Step-by-step instructions for Sailesh · Test as a normal app user · August 2026</p>
+
+<div class="meta">
+  <table>
+    <tr><th>App URL</th><td><strong>https://www.skoutai.io/app</strong></td></tr>
+    <tr><th>Browser</th><td>Google Chrome (recommended)</td></tr>
+    <tr><th>Account</th><td>Sign in with your Skout workspace (owner or admin preferred)</td></tr>
+    <tr><th>Tester name</th><td>______________________________</td></tr>
+    <tr><th>Date tested</th><td>______________________________</td></tr>
+  </table>
+</div>
+
+<p><strong>How to use this guide:</strong> Work through each section in order. In the <strong>Pass?</strong> column, tick ☐ when the step works as described. If something fails, write a short note in the <strong>Notes</strong> column at the end.</p>
+
+<div class="tip">
+  <strong>Tip:</strong> The round <strong>AI chat button</strong> (sparkle icon) sits at the bottom-right corner on almost every page. That is Dexter — your main AI assistant.
+</div>
+
+<hr>
+
+<h2>Before you start</h2>
+<table>
+  <tr><th>#</th><th>What you do</th><th>What you should see</th><th class="tick">Pass?</th></tr>
+  <tr><td>0.1</td><td>Open <strong>https://www.skoutai.io/app</strong> in Chrome and sign in</td><td>Home / Dashboard loads (no blank screen or error)</td><td class="tick">☐</td></tr>
+  <tr><td>0.2</td><td>Look at the left sidebar — confirm menu items load</td><td>Discover, Outreach, CRM, Intelligence sections visible</td><td class="tick">☐</td></tr>
+  <tr><td>0.3</td><td>Refresh the page (F5 or Cmd+R)</td><td>You stay signed in</td><td class="tick">☐</td></tr>
+</table>
+
+<div class="warn">
+  <strong>If AI replies are blank or show an error:</strong> tell engineering — the server may need an API key configured. You can still test navigation and non-AI screens.
+</div>
+
+<hr>
+
+<h2>1. Set up your ICP (feeds all AI scoring)</h2>
+<p>Skout uses your Ideal Customer Profile to score prospects and personalize AI suggestions.</p>
+
+<table>
+  <tr><th>#</th><th>What you do</th><th>What you should see</th><th class="tick">Pass?</th></tr>
+  <tr>
+    <td>1.1</td>
+    <td>In the sidebar, go to <strong>Discover → ICP</strong><br><span class="nav-path">(or Help → Setup wizard)</span></td>
+    <td>ICP form with industry, company size, geography</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>1.2</td>
+    <td>Fill in your target industries and company size, then <strong>Save</strong></td>
+    <td>Success message; settings stay after refresh</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>1.3</td>
+    <td>Go to <strong>Discover → Prospect search</strong>, search for a job title (e.g. "VP Sales")</td>
+    <td>Results list or a clear "no results" message</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>1.4</td>
+    <td>Click one prospect to open their detail panel</td>
+    <td>Name, company, and any ICP / score info shown</td>
+    <td class="tick">☐</td>
+  </tr>
+</table>
+
+<hr>
+
+<h2>2. Dexter AI chat (floating assistant)</h2>
+<p>This is the main AI command bar — available while you work anywhere in the app.</p>
+
+<table>
+  <tr><th>#</th><th>What you do</th><th>What you should see</th><th class="tick">Pass?</th></tr>
+  <tr>
+    <td>2.1</td>
+    <td>Click the <strong>round AI button</strong> at the bottom-right of the screen</td>
+    <td>Chat panel opens with a text box and suggestion chips</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>2.2</td>
+    <td>Type: <em>"Take me to sequences"</em> and press Enter</td>
+    <td>App navigates to Sequences, or Dexter gives a clear link</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>2.3</td>
+    <td>Open Dexter again. Ask: <em>"How healthy is deliverability?"</em></td>
+    <td>A written answer (not blank, not a server error)</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>2.4</td>
+    <td>Ask: <em>"Open AI Review"</em></td>
+    <td>Navigates to the AI Review page</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>2.5</td>
+    <td>Close the chat, go to <strong>CRM → Contacts</strong>, open Dexter again</td>
+    <td>Chat still works from the new page</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>2.6</td>
+    <td><strong>Optional — voice:</strong> tap the microphone icon, say a short question, stop</td>
+    <td>Your words appear as text; Dexter replies</td>
+    <td class="tick">☐</td>
+  </tr>
+</table>
+
+<h3>2A. Create a sequence through Dexter (with safety check)</h3>
+<table>
+  <tr><th>#</th><th>What you do</th><th>What you should see</th><th class="tick">Pass?</th></tr>
+  <tr>
+    <td>2A.1</td>
+    <td>In Dexter, ask: <em>"Create an outbound sequence called Test Cadence with one email step"</em></td>
+    <td>A yellow <strong>"Review before executing"</strong> box with scope and side effects</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>2A.2</td>
+    <td>Click <strong>Confirm and run</strong></td>
+    <td>Success message; new sequence appears under <strong>Outreach → Sequences</strong></td>
+    <td class="tick">☐</td>
+  </tr>
+</table>
+<p class="tip"><strong>Note:</strong> Step 2A needs the latest app version. If you only get text with no review box, tell engineering to deploy the newest frontend.</p>
+
+<hr>
+
+<h2>3. AI Review — approve AI-written emails before sending</h2>
+
+<table>
+  <tr><th>#</th><th>What you do</th><th>What you should see</th><th class="tick">Pass?</th></tr>
+  <tr>
+    <td>3.1</td>
+    <td>Sidebar: <strong>Intelligence → AI Review</strong></td>
+    <td>Queue of drafts, or "nothing to review" empty state</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>3.2</td>
+    <td>Go to <strong>Discover → Prospect search</strong>, open a prospect, find <strong>Generate draft</strong> (or similar)</td>
+    <td>Button to create a personalized email draft</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>3.3</td>
+    <td>Click generate, then open <strong>AI Review</strong> again</td>
+    <td>New draft listed as <strong>Needs review</strong></td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>3.4</td>
+    <td>Open the draft, read subject and body, click <strong>Approve</strong> or <strong>Reject</strong></td>
+    <td>Status updates; draft moves out of "Needs review"</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>3.5</td>
+    <td>Sidebar: <strong>Outreach → Draft auto-approve</strong> (settings)</td>
+    <td>Threshold sliders / settings page loads</td>
+    <td class="tick">☐</td>
+  </tr>
+</table>
+
+<hr>
+
+<h2>4. Inbox — AI suggest reply</h2>
+
+<table>
+  <tr><th>#</th><th>What you do</th><th>What you should see</th><th class="tick">Pass?</th></tr>
+  <tr>
+    <td>4.1</td>
+    <td>Sidebar: <strong>Outreach → Inbox → Conversations</strong></td>
+    <td>Thread list (or empty state if no mail connected)</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>4.2</td>
+    <td>Select any conversation with at least one message</td>
+    <td>Message thread opens on the right</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>4.3</td>
+    <td>Click <strong>Suggest reply</strong></td>
+    <td>AI draft text appears in the reply area (may take a few seconds)</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>4.4</td>
+    <td>Edit the draft if you want, then send or discard</td>
+    <td>Normal send flow works, or clear error if mailbox not set up</td>
+    <td class="tick">☐</td>
+  </tr>
+</table>
+
+<hr>
+
+<h2>5. CRM 360 — AI next best action</h2>
+<p>AI recommends what to do next for a specific contact or deal, based on real CRM history.</p>
+
+<table>
+  <tr><th>#</th><th>What you do</th><th>What you should see</th><th class="tick">Pass?</th></tr>
+  <tr>
+    <td>5.1</td>
+    <td>Sidebar: <strong>CRM → Contacts</strong> — pick a contact that has some activity</td>
+    <td>Contact detail page</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>5.2</td>
+    <td>Sidebar: <strong>CRM → Account 360</strong></td>
+    <td>360 view with company / person toggle</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>5.3</td>
+    <td>Load your contact (paste ID or search if the page asks)</td>
+    <td>Deals, tasks, signals sections (some may be empty)</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>5.4</td>
+    <td>Find the <strong>Suggest next action</strong> card and click it</td>
+    <td>Headline + short rationale (e.g. "Schedule a call because…")</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>5.5</td>
+    <td>Click <strong>Create task</strong> on the suggestion</td>
+    <td>Confirmation that a task was created</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>5.6</td>
+    <td><strong>Optional:</strong> choose <strong>Enroll in sequence</strong> if shown</td>
+    <td>Enrollment succeeds or clear message why not</td>
+    <td class="tick">☐</td>
+  </tr>
+</table>
+
+<hr>
+
+<h2>6. Decisions — act on AI recommendations</h2>
+
+<table>
+  <tr><th>#</th><th>What you do</th><th>What you should see</th><th class="tick">Pass?</th></tr>
+  <tr>
+    <td>6.1</td>
+    <td>Sidebar: <strong>Intelligence → Decision views</strong></td>
+    <td>Open decisions list</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>6.2</td>
+    <td>If there is a <strong>Create from next best action</strong> option, use a contact ID from step 5</td>
+    <td>New item appears in the queue</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>6.3</td>
+    <td>Open a decision, pick an option or dismiss</td>
+    <td>Item leaves the open queue</td>
+    <td class="tick">☐</td>
+  </tr>
+</table>
+
+<hr>
+
+<h2>7. Dexter Orchestrator — governed AI plans</h2>
+<p>For GTM actions that need human approval before they run.</p>
+
+<table>
+  <tr><th>#</th><th>What you do</th><th>What you should see</th><th class="tick">Pass?</th></tr>
+  <tr>
+    <td>7.1</td>
+    <td>Sidebar: <strong>Outreach → Dexter Orchestrator</strong></td>
+    <td>Command center with summary cards and plan form</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>7.2</td>
+    <td>In the plan brief box, type a goal (e.g. <em>"Enroll high-fit SaaS VPs in a cadence"</em>) and click <strong>Propose</strong></td>
+    <td>Plan ID shown; item appears under pending approvals</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>7.3</td>
+    <td>Click <strong>Approve</strong></td>
+    <td>Success message</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>7.4</td>
+    <td>Click <strong>Invoke</strong> <em>(only works after approve)</em></td>
+    <td>Invoke succeeds</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>7.5</td>
+    <td>Click <strong>Record learning</strong></td>
+    <td>Outcome saved on the plan</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>7.6</td>
+    <td>Scroll to <strong>Recent policy blocks</strong></td>
+    <td>List of blocks or "no recent denials" (no crash)</td>
+    <td class="tick">☐</td>
+  </tr>
+</table>
+
+<hr>
+
+<h2>8. Policy Gateway — control how autonomous AI is</h2>
+
+<table>
+  <tr><th>#</th><th>What you do</th><th>What you should see</th><th class="tick">Pass?</th></tr>
+  <tr>
+    <td>8.1</td>
+    <td>Sidebar: <strong>Automation → Policy Gateway</strong></td>
+    <td>Table of actions with modes: ask, auto, draft, approve</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>8.2</td>
+    <td>Change one action (e.g. plan invoke) to <strong>approve</strong> and save</td>
+    <td>Setting persists after page refresh</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>8.3</td>
+    <td>Change it back to your preferred mode</td>
+    <td>Saves successfully</td>
+    <td class="tick">☐</td>
+  </tr>
+</table>
+
+<hr>
+
+<h2>9. LinkedIn Voice — AI script for voice notes</h2>
+
+<table>
+  <tr><th>#</th><th>What you do</th><th>What you should see</th><th class="tick">Pass?</th></tr>
+  <tr>
+    <td>9.1</td>
+    <td>Sidebar: <strong>Outreach → LinkedIn Voice</strong></td>
+    <td>Voice wizard (steps: pick contact → draft → review → handoff)</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>9.2</td>
+    <td>If prompted, connect LinkedIn under <strong>Deliverability</strong> first</td>
+    <td>Connected account shown</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>9.3</td>
+    <td>Pick an eligible 1st-degree contact and generate a script</td>
+    <td>AI-written script text appears</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>9.4</td>
+    <td><strong>Optional:</strong> play audio preview</td>
+    <td>Audio plays (preview only — not sent to LinkedIn)</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>9.5</td>
+    <td>Use mobile handoff (QR code), send manually in LinkedIn app, then confirm in Skout</td>
+    <td>Activity logged on contact timeline</td>
+    <td class="tick">☐</td>
+  </tr>
+</table>
+
+<hr>
+
+<h2>10. CRO Copilot — executive AI (admin only)</h2>
+
+<table>
+  <tr><th>#</th><th>What you do</th><th>What you should see</th><th class="tick">Pass?</th></tr>
+  <tr>
+    <td>10.1</td>
+    <td>Sidebar: <strong>Intelligence → CRO Copilot</strong></td>
+    <td>Pipeline summary cards + chat panel</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>10.2</td>
+    <td>Ask: <em>"Which reps are behind on pipeline this week?"</em></td>
+    <td>Answer based on your workspace data</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>10.3</td>
+    <td><strong>If you have a non-admin test account:</strong> try opening CRO Copilot</td>
+    <td>Access denied message (not a crash)</td>
+    <td class="tick">☐</td>
+  </tr>
+</table>
+
+<hr>
+
+<h2>11. Enrichment &amp; signals (AI context)</h2>
+
+<table>
+  <tr><th>#</th><th>What you do</th><th>What you should see</th><th class="tick">Pass?</th></tr>
+  <tr>
+    <td>11.1</td>
+    <td><strong>Discover → Enrichment workbooks</strong> — create a workbook and run it on a small list</td>
+    <td>Run progresses (queued → running → done)</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>11.2</td>
+    <td><strong>Intelligence → Signal Center</strong></td>
+    <td>Signal feed or empty state</td>
+    <td class="tick">☐</td>
+  </tr>
+  <tr>
+    <td>11.3</td>
+    <td>Return to <strong>Account 360</strong> for a company with signals</td>
+    <td>Signals section shows related items</td>
+    <td class="tick">☐</td>
+  </tr>
+</table>
+
+<hr>
+
+<h2>12. Quick 15-minute smoke test</h2>
+<p>If you are short on time, do only these steps:</p>
+<ol>
+  <li>Sign in → Dashboard loads (0.1)</li>
+  <li>Dexter chat → ask one navigation question (2.2)</li>
+  <li>Dexter chat → ask one product question (2.3)</li>
+  <li>AI Review page opens (3.1)</li>
+  <li>Account 360 → Suggest next action (5.4)</li>
+  <li>Dexter Orchestrator → Propose → Approve → Invoke (7.2–7.4)</li>
+  <li>CRO Copilot → one pipeline question (10.2)</li>
+</ol>
+
+<hr>
+
+<h2>Sign-off</h2>
+<table>
+  <tr><th>Overall result</th><td>☐ Pass &nbsp;&nbsp; ☐ Partial &nbsp;&nbsp; ☐ Fail</td></tr>
+  <tr><th>Tester</th><td>______________________________</td></tr>
+  <tr><th>Date</th><td>______________________________</td></tr>
+</table>
+
+<h3>Notes (failures, screenshots, blockers)</h3>
+<p style="border:1px solid #999; min-height:80px; padding:8px;">&nbsp;</p>
+<p style="border:1px solid #999; min-height:80px; padding:8px;">&nbsp;</p>
+
+<div class="footer">
+  Skout AI · AI Features Testing Guide · Generated 2026-08-31 ·
+  To save as PDF: open this file in Chrome → File → Print → Save as PDF
+</div>
+
+</body>
+</html>

@@ -55,6 +55,10 @@ vi.mock("../services/ai-draft-send.service.js", () => ({
   sendApprovedDraftEmail: (...args: unknown[]) => mockSend(...args),
 }));
 
+vi.mock("../services/ai-evidence.service.js", () => ({
+  pinAiClaim: vi.fn().mockResolvedValue({ evidenceId: "ev-1", modelVersionId: null, promptVersionId: null }),
+}));
+
 async function buildTestApp(): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   app.decorate("config", { OPENROUTER_API_KEY: "test-key" } as never);
