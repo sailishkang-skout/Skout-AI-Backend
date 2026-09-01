@@ -1,8 +1,26 @@
 import { describe, expect, it, vi } from "vitest";
 import { createWorkspaceToolRunner, requiresConfirmation, type ActionPreview } from "./ai-workspace-tools.service.js";
 import type { Env } from "../config/env.js";
+import type { Db } from "@skout/db";
+import { schema } from "@skout/db";
 
 const CONFIG = {} as Env;
+const { listMembers } = schema;
+
+/**
+ * Fake db exposing just the select().from().where() chain the enroll_list preview builder's
+ * list_members count query uses. classifyAndRecord's own db.select(...).where(...).limit(1) call
+ * (fired unconditionally afterward whenever db is truthy) hits this same mock too, but its
+ * `.limit` call throws on the resolved chain and is swallowed by run()'s own try/catch — it
+ * never reaches the preview computation these tests assert on.
+ */
+function makeListMembersCountDb(rows: { count: number }[]) {
+  const whereFn = vi.fn().mockResolvedValue(rows);
+  const fromFn = vi.fn().mockReturnValue({ where: whereFn });
+  const selectFn = vi.fn().mockReturnValue({ from: fromFn });
+  const db = { select: selectFn } as unknown as Db;
+  return { db, selectFn, fromFn, whereFn };
+}
 
 describe("requiresConfirmation", () => {
   const base: ActionPreview = {
@@ -86,5 +104,32 @@ describe("createWorkspaceToolRunner — enroll_list preview gate", () => {
     // confirmation, but externalSideEffects is always non-empty for enroll_list, so it always
     // requires confirmation regardless of count -- this is intentional (it always enqueues jobs
     // and dispatches webhooks even for 0 new enrollments in the general case).
+  });
+
+  it("queries the real list_members count for the given listId and surfaces it as affectedRecordCount", async () => {
+    const { db, fromFn, whereFn } = makeListMembersCountDb([{ count: 3 }]);
+    const runner = createWorkspaceToolRunner(db, CONFIG, "ws-1", false, "skout");
+    const raw = await runner.run("enroll_list", { listId: "list-1", sequenceId: "seq-1" });
+    const parsed = JSON.parse(raw as string);
+    expect(parsed.preview).toBeDefined();
+    // Proves the query actually executed and its row was parsed -- not the {}-args fallback.
+    expect(parsed.preview.affectedRecordCount).toBe(3);
+    expect(fromFn).toHaveBeenCalledWith(listMembers);
+    // whereFn is shared with classifyAndRecord's own unrelated select().where().limit() call
+    // (fired unconditionally afterward since db is truthy here), so assert it ran at all rather
+    // than an exact count.
+    expect(whereFn).toHaveBeenCalled();
+  });
+
+  it("does not run the count query when listId is missing, even with a real db (falls back to 0)", async () => {
+    const { db, fromFn } = makeListMembersCountDb([{ count: 7 }]);
+    const runner = createWorkspaceToolRunner(db, CONFIG, "ws-1", false, "skout");
+    const raw = await runner.run("enroll_list", { sequenceId: "seq-1" });
+    const parsed = JSON.parse(raw as string);
+    // If the listMembers query had run against this mock it would have returned 7, not 0 --
+    // proves the `db && listId` guard actually skipped the query rather than the query itself
+    // returning empty.
+    expect(parsed.preview.affectedRecordCount).toBe(0);
+    expect(fromFn).not.toHaveBeenCalledWith(listMembers);
   });
 });
