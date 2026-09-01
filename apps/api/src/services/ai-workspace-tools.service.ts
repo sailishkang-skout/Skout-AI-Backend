@@ -26,6 +26,20 @@ import {
 import { computeCroSummary } from "./cro-summary.service.js";
 import { createRegionalBriefService } from "./regional-brief.service.js";
 import { createCountryIndustryTamService } from "./country-industry-tam.service.js";
+import { classifyAndRecord } from "./policy-gateway.service.js";
+
+export interface ActionPreview {
+  toolName: string;
+  scope: string;
+  assumptions: string[];
+  affectedRecordCount: number;
+  creditCost: number;
+  externalSideEffects: string[];
+}
+
+export function requiresConfirmation(preview: ActionPreview): boolean {
+  return preview.affectedRecordCount > 1 || preview.creditCost > 0 || preview.externalSideEffects.length > 0;
+}
 
 const APP_ROUTES = [
   { path: "/dashboard", purpose: "Workspace overview and recent enrichment jobs" },
@@ -489,6 +503,11 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
               required: ["stepType", "delayDays"],
             },
           },
+          confirmed: {
+            type: "boolean",
+            description:
+              "Set to true only after the user has explicitly confirmed they want to proceed, having seen the preview shown in your previous response. Never set this on the first call for a multi-step sequence.",
+          },
         },
         required: ["name", "steps"],
       },
@@ -516,7 +535,9 @@ export function createWorkspaceToolRunner(
   /** R19.2 — gates the get_cro_summary tool. Only owner/admin callers should pass true. */
   isAdmin = false,
   /** R19.2 — "cro" restricts both the offered tool list and dispatch to CRO_AGENT_TOOLS. */
-  agent: "skout" | "dexter" | "cro" = "skout"
+  agent: "skout" | "dexter" | "cro" = "skout",
+  /** §8.13 — actor for the tool-call audit trail (policy_decisions.detail). Optional: audit is best-effort. */
+  userId?: string
 ): WorkspaceToolRunner {
   const analytics = createAnalyticsService(db, config);
   const dashboard = createDashboardService(db, config);
@@ -838,6 +859,23 @@ export function createWorkspaceToolRunner(
     },
   };
 
+  const previewBuilders: Record<string, (args: Record<string, unknown>) => ActionPreview | Promise<ActionPreview>> = {
+    create_outbound_sequence: (args) => {
+      const name = typeof args.name === "string" && args.name.trim() ? args.name.trim() : "Outbound Cadence";
+      const rawSteps = Array.isArray(args.steps) ? (args.steps as Record<string, unknown>[]) : [];
+      return {
+        toolName: "create_outbound_sequence",
+        scope: `Create a new outbound sequence "${name}" with ${rawSteps.length} step(s).`,
+        assumptions: rawSteps.length === 0 ? ["No steps provided — the sequence will fail validation."] : [],
+        affectedRecordCount: rawSteps.length,
+        creditCost: 0,
+        externalSideEffects: rawSteps.some((s) => s.stepType === "linkedin")
+          ? ["Will send LinkedIn actions once prospects are enrolled into this sequence"]
+          : [],
+      };
+    },
+  };
+
   return {
     tools:
       agent === "cro"
@@ -852,6 +890,28 @@ export function createWorkspaceToolRunner(
       }
       const handler = handlers[name];
       if (!handler) return serialize({ error: `unknown_tool:${name}` });
+
+      const previewBuilder = previewBuilders[name];
+      if (previewBuilder) {
+        const preview = await previewBuilder(args ?? {});
+        if (db) {
+          try {
+            await classifyAndRecord(db, {
+              workspaceId,
+              actionKey: `tool:${name}`,
+              actorUserId: userId,
+              detail: preview as unknown as Record<string, unknown>,
+            });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            log.warn("failed to record tool-call audit decision", { tool: name, workspaceId, err: message });
+          }
+        }
+        if (requiresConfirmation(preview) && (args ?? {}).confirmed !== true) {
+          return serialize({ preview });
+        }
+      }
+
       try {
         const result = await handler(args ?? {});
         return serialize(result);

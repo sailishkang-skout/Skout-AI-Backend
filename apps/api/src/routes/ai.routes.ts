@@ -341,7 +341,14 @@ export async function aiRoutes(app: FastifyInstance) {
         }),
       ]);
 
-      const toolRunner = createWorkspaceToolRunner(app.db ?? null, app.config, workspaceId, isAdmin, body.agent);
+      const toolRunner = createWorkspaceToolRunner(
+        app.db ?? null,
+        app.config,
+        workspaceId,
+        isAdmin,
+        body.agent,
+        request.userId
+      );
 
       const result = await aiService.chat(
         {
