@@ -1,5 +1,5 @@
 import type { OpenAI } from "openai";
-import { count, eq } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { recordEvidence, schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
@@ -90,13 +90,18 @@ const APP_ROUTES = [
   { path: "/settings/workspace", purpose: "Workspace name, credits, billing" },
 ] as const;
 
-const { listMembers } = schema;
+const { listMembers, lists } = schema;
 
 const log = createLogger("ai-workspace-tools");
 
 type ToolDef = OpenAI.Chat.Completions.ChatCompletionTool;
 
-/** Read-only workspace tools the in-app assistant may call to fetch live data on demand. */
+/**
+ * Workspace tools the in-app assistant may call. Most are read-only fetches, but a handler that
+ * mutates data, spends credits, or has an external side effect (e.g. create_outbound_sequence,
+ * enroll_list) MUST register a `previewBuilders` entry so its effects are gated behind an
+ * explicit user confirmation before running.
+ */
 export interface WorkspaceToolRunner {
   tools: ToolDef[];
   /** Execute a tool by name; always resolves to a JSON string (errors are returned, not thrown). */
@@ -567,8 +572,11 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
 ];
 
 /**
- * Builds a runner bound to one workspace. All handlers are READ-ONLY — nothing here mutates data
- * or spends credits. The db may be null (returns a friendly error per call).
+ * Builds a runner bound to one workspace. Most handlers are read-only, but a handler that
+ * mutates data, spends credits, or has an external side effect MUST register a `previewBuilders`
+ * entry so its effects are gated behind an explicit user confirmation — see
+ * `create_outbound_sequence` and `enroll_list` for the pattern. The db may be null (returns a
+ * friendly error per call).
  */
 /**
  * R19.2 — the "cro" agent's tool set is a real allowlist, enforced both in what's offered to the
@@ -935,7 +943,8 @@ export function createWorkspaceToolRunner(
       const listId = String(args.listId ?? "");
       const sequenceId = String(args.sequenceId ?? "");
       if (!listId || !sequenceId) return { error: "listId and sequenceId are required" };
-      return enrollListWithSideEffects(db, config, workspaceId, listId, sequenceId, userId ?? "unknown", agent);
+      if (!userId) return { error: "actor_unknown" };
+      return enrollListWithSideEffects(db, config, workspaceId, listId, sequenceId, userId, agent);
     },
   };
 
@@ -963,7 +972,8 @@ export function createWorkspaceToolRunner(
         const [row] = await db
           .select({ count: count() })
           .from(listMembers)
-          .where(eq(listMembers.listId, listId));
+          .innerJoin(lists, eq(lists.id, listMembers.listId))
+          .where(and(eq(listMembers.listId, listId), eq(lists.workspaceId, workspaceId)));
         memberCount = row?.count ?? 0;
       }
       return {
@@ -994,22 +1004,33 @@ export function createWorkspaceToolRunner(
 
       const previewBuilder = previewBuilders[name];
       if (previewBuilder) {
-        const preview = await previewBuilder(args ?? {});
-        if (db) {
-          try {
-            await classifyAndRecord(db, {
-              workspaceId,
-              actionKey: `tool:${name}`,
-              actorUserId: userId,
-              detail: preview as unknown as Record<string, unknown>,
-            });
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            log.warn("failed to record tool-call audit decision", { tool: name, workspaceId, err: message });
+        try {
+          const preview = await previewBuilder(args ?? {});
+          if (db) {
+            try {
+              await classifyAndRecord(db, {
+                workspaceId,
+                actionKey: `tool:${name}`,
+                actorUserId: userId,
+                detail: preview as unknown as Record<string, unknown>,
+              });
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              log.warn("failed to record tool-call audit decision", { tool: name, workspaceId, err: message });
+            }
           }
-        }
-        if (requiresConfirmation(preview) && (args ?? {}).confirmed !== true) {
-          return serialize({ preview });
+          if (requiresConfirmation(preview) && (args ?? {}).confirmed !== true) {
+            return serialize({
+              preview,
+              requiresConfirmation: true,
+              nextStep:
+                "Relay this preview to the user in your reply and stop. Do not call this tool again in this same turn — wait for the user's next message, then re-call with confirmed: true only if they explicitly agree.",
+            });
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          log.warn("preview builder failed", { tool: name, workspaceId, err: message });
+          return serialize({ error: message });
         }
       }
 

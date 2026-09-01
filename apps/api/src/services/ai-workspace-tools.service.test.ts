@@ -8,6 +8,7 @@ import {
 import type { Env } from "../config/env.js";
 import type { Db } from "@skout/db";
 import { recordEvidence, schema } from "@skout/db";
+import { and, eq } from "drizzle-orm";
 
 vi.mock("@skout/db", async () => {
   const actual = await vi.importActual<typeof import("@skout/db")>("@skout/db");
@@ -15,21 +16,24 @@ vi.mock("@skout/db", async () => {
 });
 
 const CONFIG = {} as Env;
-const { listMembers } = schema;
+const { listMembers, lists } = schema;
 
 /**
- * Fake db exposing just the select().from().where() chain the enroll_list preview builder's
- * list_members count query uses. classifyAndRecord's own db.select(...).where(...).limit(1) call
- * (fired unconditionally afterward whenever db is truthy) hits this same mock too, but its
- * `.limit` call throws on the resolved chain and is swallowed by run()'s own try/catch — it
+ * Fake db exposing just the select().from().innerJoin().where() chain the enroll_list preview
+ * builder's list_members count query uses (joined through `lists` so the count is
+ * workspace-scoped). classifyAndRecord's own db.select(...).where(...).limit(1) call (fired
+ * unconditionally afterward whenever db is truthy) hits this same mock too, but its `.where`
+ * call throws on the resolved chain (this mock's `.from()` return value only exposes
+ * `innerJoin`) and is swallowed by run()'s own try/catch around the classifyAndRecord call — it
  * never reaches the preview computation these tests assert on.
  */
 function makeListMembersCountDb(rows: { count: number }[]) {
   const whereFn = vi.fn().mockResolvedValue(rows);
-  const fromFn = vi.fn().mockReturnValue({ where: whereFn });
+  const innerJoinFn = vi.fn().mockReturnValue({ where: whereFn });
+  const fromFn = vi.fn().mockReturnValue({ innerJoin: innerJoinFn });
   const selectFn = vi.fn().mockReturnValue({ from: fromFn });
   const db = { select: selectFn } as unknown as Db;
-  return { db, selectFn, fromFn, whereFn };
+  return { db, selectFn, fromFn, innerJoinFn, whereFn };
 }
 
 describe("requiresConfirmation", () => {
@@ -73,6 +77,11 @@ describe("createWorkspaceToolRunner — create_outbound_sequence preview gate", 
     expect(parsed.preview).toBeDefined();
     expect(parsed.preview.toolName).toBe("create_outbound_sequence");
     expect(parsed.preview.affectedRecordCount).toBe(2);
+    // Finding 1: the gated response also carries explicit guidance so the model relays the
+    // preview and stops instead of self-confirming within the same turn.
+    expect(parsed.requiresConfirmation).toBe(true);
+    expect(typeof parsed.nextStep).toBe("string");
+    expect(parsed.nextStep.length).toBeGreaterThan(0);
   });
 
   it("executes when confirmed is true, even with multiple steps", async () => {
@@ -125,9 +134,6 @@ describe("createWorkspaceToolRunner — enroll_list preview gate", () => {
     // Proves the query actually executed and its row was parsed -- not the {}-args fallback.
     expect(parsed.preview.affectedRecordCount).toBe(3);
     expect(fromFn).toHaveBeenCalledWith(listMembers);
-    // whereFn is shared with classifyAndRecord's own unrelated select().where().limit() call
-    // (fired unconditionally afterward since db is truthy here), so assert it ran at all rather
-    // than an exact count.
     expect(whereFn).toHaveBeenCalled();
   });
 
@@ -141,6 +147,88 @@ describe("createWorkspaceToolRunner — enroll_list preview gate", () => {
     // returning empty.
     expect(parsed.preview.affectedRecordCount).toBe(0);
     expect(fromFn).not.toHaveBeenCalledWith(listMembers);
+  });
+
+  // Finding 4 regression test: the count query used to be a bare
+  // `where(eq(listMembers.listId, listId))` with no ownership check at all -- a listId from a
+  // DIFFERENT workspace would return that other workspace's real member count in the preview.
+  // The fix joins through `lists` and additionally filters on `lists.workspaceId`, so a foreign
+  // listId now matches zero rows (no lists row satisfies both the id AND this workspaceId), not
+  // the leaked real count. Asserting the exact join/where arguments (rather than just the
+  // resulting number) proves the workspace scoping is actually wired into the query, not just
+  // that the query happens to produce the right output for this fixture.
+  it("scopes the preview count through a join on `lists` filtered by the calling workspace (Finding 4 — cross-tenant leak fix)", async () => {
+    const { db, fromFn, innerJoinFn, whereFn } = makeListMembersCountDb([{ count: 3 }]);
+    const runner = createWorkspaceToolRunner(db, CONFIG, "ws-1", false, "skout");
+    await runner.run("enroll_list", { listId: "list-1", sequenceId: "seq-1" });
+
+    expect(fromFn).toHaveBeenCalledWith(listMembers);
+    expect(innerJoinFn).toHaveBeenCalledWith(lists, eq(lists.id, listMembers.listId));
+    expect(whereFn).toHaveBeenCalledWith(
+      and(eq(listMembers.listId, "list-1"), eq(lists.workspaceId, "ws-1"))
+    );
+  });
+
+  it("returns affectedRecordCount 0 (not a leaked count) when the join/filter matches no rows, as happens for a foreign-workspace listId", async () => {
+    // A listId belonging to a different workspace never satisfies `lists.workspaceId = ws-1` in
+    // the join, so the real query returns zero rows -- simulated here directly by the mock
+    // resolving an empty array instead of a real row with the other workspace's count.
+    const { db } = makeListMembersCountDb([]);
+    const runner = createWorkspaceToolRunner(db, CONFIG, "ws-1", false, "skout");
+    const raw = await runner.run("enroll_list", { listId: "foreign-list", sequenceId: "seq-1" });
+    const parsed = JSON.parse(raw as string);
+    expect(parsed.preview.affectedRecordCount).toBe(0);
+  });
+});
+
+describe("createWorkspaceToolRunner — preview builder failure isolation (Finding 1)", () => {
+  it("returns a serialized error instead of throwing/rejecting when the preview builder itself throws", async () => {
+    // A db whose select().from().innerJoin().where() chain rejects, simulating a transient DB
+    // error inside enroll_list's preview count query. Before the fix, this throw propagated out
+    // of run() entirely (previewBuilder was awaited outside any try/catch); after the fix it
+    // must be caught and surfaced the same way handler errors are: serialize({ error: message }).
+    const boom = new Error("connection reset");
+    const whereFn = vi.fn().mockRejectedValue(boom);
+    const innerJoinFn = vi.fn().mockReturnValue({ where: whereFn });
+    const fromFn = vi.fn().mockReturnValue({ innerJoin: innerJoinFn });
+    const selectFn = vi.fn().mockReturnValue({ from: fromFn });
+    const db = { select: selectFn } as unknown as Db;
+
+    const runner = createWorkspaceToolRunner(db, CONFIG, "ws-1", false, "skout");
+
+    // run() must resolve (not reject) with a normal serialized-error string.
+    await expect(
+      runner.run("enroll_list", { listId: "list-1", sequenceId: "seq-1" })
+    ).resolves.toEqual(expect.any(String));
+
+    const raw = await runner.run("enroll_list", { listId: "list-1", sequenceId: "seq-1" });
+    const parsed = JSON.parse(raw as string);
+    expect(parsed).toEqual({ error: "connection reset" });
+  });
+});
+
+describe("createWorkspaceToolRunner — enroll_list actor guard (Finding 5)", () => {
+  it("returns {error: 'actor_unknown'} and never calls enrollListWithSideEffects when userId is absent", async () => {
+    const sequenceServiceModule = await import("./sequence.service.js");
+    const enrollSpy = vi.spyOn(sequenceServiceModule, "enrollListWithSideEffects");
+
+    // A real (mocked) db so the preview builder's own count query succeeds -- this test is about
+    // the actor guard in the handler, not the preview gate, so confirmed:true is passed to reach
+    // the handler at all.
+    const { db } = makeListMembersCountDb([{ count: 1 }]);
+    // No userId passed to createWorkspaceToolRunner (the 6th arg, optional).
+    const runner = createWorkspaceToolRunner(db, CONFIG, "ws-1", false, "skout");
+    const raw = await runner.run("enroll_list", {
+      listId: "list-1",
+      sequenceId: "seq-1",
+      confirmed: true,
+    });
+    const parsed = JSON.parse(raw as string);
+
+    expect(parsed).toEqual({ error: "actor_unknown" });
+    expect(enrollSpy).not.toHaveBeenCalled();
+
+    enrollSpy.mockRestore();
   });
 });
 
