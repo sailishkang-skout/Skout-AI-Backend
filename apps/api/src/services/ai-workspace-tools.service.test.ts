@@ -168,7 +168,7 @@ describe("evidenceClaim", () => {
 });
 
 describe("createWorkspaceToolRunner — get_workspace_overview evidence wiring", () => {
-  it("wraps dashboard.getSummary's result through evidenceClaim before returning it", async () => {
+  it("wraps dashboard.getSummary's result through evidenceClaim before returning it, when db is available", async () => {
     vi.mocked(recordEvidence).mockResolvedValue({ id: "ev-2" } as never);
     const summaryFixture = { prospectCount: 42 };
     const dashboardModule = await import("./dashboard.service.js");
@@ -176,12 +176,13 @@ describe("createWorkspaceToolRunner — get_workspace_overview evidence wiring",
       getSummary: vi.fn().mockResolvedValue(summaryFixture),
     } as unknown as ReturnType<typeof dashboardModule.createDashboardService>);
 
-    const runner = createWorkspaceToolRunner(null, CONFIG, "ws-1", false, "skout");
+    const fakeDb = {} as Db;
+    const runner = createWorkspaceToolRunner(fakeDb, CONFIG, "ws-1", false, "skout");
     const raw = await runner.run("get_workspace_overview", {});
     const parsed = JSON.parse(raw as string);
 
     expect(recordEvidence).toHaveBeenCalledWith(
-      null,
+      fakeDb,
       expect.objectContaining({
         workspaceId: "ws-1",
         entityType: "workspace",
@@ -193,6 +194,20 @@ describe("createWorkspaceToolRunner — get_workspace_overview evidence wiring",
     );
     expect(parsed.evidenceId).toBe("ev-2");
     expect(parsed.value).toEqual(summaryFixture);
+  });
+
+  // §6.1 anti-hallucination contract: when db is unavailable, get_workspace_overview must fail
+  // loud (never silently degrade to an unevidenced/unattributed response) -- same as the other
+  // six evidence-converged tools. The `!db` guard must throw before evidenceClaim/recordEvidence
+  // is ever reached, so this also proves recordEvidence's call count doesn't increase.
+  it("fails loud with database_unavailable when db is null, never reaching evidenceClaim/recordEvidence", async () => {
+    vi.mocked(recordEvidence).mockClear();
+    const runner = createWorkspaceToolRunner(null, CONFIG, "ws-1", false, "skout");
+    const raw = await runner.run("get_workspace_overview", {});
+    const parsed = JSON.parse(raw as string);
+
+    expect(parsed).toEqual({ error: "database_unavailable" });
+    expect(recordEvidence).not.toHaveBeenCalled();
   });
 });
 

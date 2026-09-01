@@ -609,12 +609,9 @@ export function createWorkspaceToolRunner(
 
   const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
     get_workspace_overview: async () => {
-      // No `!db` guard here (unlike the other six handlers below): dashboard.getSummary already
-      // degrades gracefully when db is null (see dashboard.service.ts), and this handler has never
-      // required a live db. `db as Db` only satisfies evidenceClaim's non-null Db parameter type;
-      // it doesn't change runtime behavior when db is actually null.
+      if (!db) throw new Error("database_unavailable");
       const value = await dashboard.getSummary(workspaceId);
-      return evidenceClaim(db as Db, workspaceId, "get_workspace_overview", "workspace", workspaceId, value);
+      return evidenceClaim(db, workspaceId, "get_workspace_overview", "workspace", workspaceId, value);
     },
 
     get_cro_summary: async () => {
@@ -625,8 +622,7 @@ export function createWorkspaceToolRunner(
     },
 
     get_credit_analytics: async (args) => {
-      // No `!db` guard here (see the same note on get_workspace_overview above):
-      // analytics.getReport already degrades gracefully when db is null.
+      if (!db) throw new Error("database_unavailable");
       const days = clampInt(args.days, 30, 7, 90);
       const report = await analytics.getReport(workspaceId, days);
       const value = {
@@ -635,7 +631,7 @@ export function createWorkspaceToolRunner(
         enrichment: report.enrichment,
         lists: report.lists,
       };
-      return evidenceClaim(db as Db, workspaceId, "get_credit_analytics", "workspace", workspaceId, value);
+      return evidenceClaim(db, workspaceId, "get_credit_analytics", "workspace", workspaceId, value);
     },
 
     get_credit_transactions: (args) => {
