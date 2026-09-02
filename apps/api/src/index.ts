@@ -23,6 +23,7 @@ import { startRiskDecaySweepWorker } from "./workers/risk-decay-sweep.worker.js"
 import { startWorkbookRunWorker } from "./workers/workbook-run.worker.js";
 import { startReportDeliverySweepWorker } from "./workers/report-delivery-sweep.worker.js";
 import { startIdentityMergeDiscoveryWorker } from "./workers/identity-merge-discovery.worker.js";
+import { startDexterEventWorker } from "./workers/dexter-event.worker.js";
 
 async function main() {
   const config = loadEnv();
@@ -64,6 +65,7 @@ async function main() {
   const stopWorkbookRunWorker = await startWorkbookRunWorker(config);
   const stopReportDeliverySweepWorker = await startReportDeliverySweepWorker(config);
   const stopIdentityMergeDiscoveryWorker = await startIdentityMergeDiscoveryWorker(config);
+  const stopDexterEventWorker = await startDexterEventWorker(config);
 
   const app = await buildApp(config);
 
@@ -83,6 +85,7 @@ async function main() {
     await stopReportDeliverySweepWorker();
     await stopWorkbookRunWorker();
     await stopIdentityMergeDiscoveryWorker();
+    await stopDexterEventWorker();
     await stopRiskDecaySweepWorker();
     await stopAlertDigestSweepWorker();
     await stopSignalAlertSweepWorker();

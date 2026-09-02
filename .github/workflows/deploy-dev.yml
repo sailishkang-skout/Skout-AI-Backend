@@ -200,11 +200,31 @@ jobs:
           docker push "$WEB_REPO:$IMAGE_TAG"
           docker push "$WEB_REPO:latest"
 
+      # Deploy core stacks first (excludes WarmupTool). Warm-Up is soft-failed
+      # until MICROSOFT_CLIENT_* exist in SkoutDev/warmup-tool and CI passes
+      # -c warmupMicrosoftOAuth=true.
       - name: Deploy CDK stacks
         working-directory: infra
         env:
           IMAGE_TAG: ${{ steps.meta.outputs.tag }}
-        run: pnpm cdk deploy --all -c env=dev -c imageTag=$IMAGE_TAG -c httpsMode=apigateway --require-approval never
+        run: |
+          set -euo pipefail
+          CTX=(-c env=dev -c "imageTag=${IMAGE_TAG}" -c httpsMode=apigateway)
+          echo "Deploying core stacks (excluding WarmupTool)…"
+          pnpm exec cdk deploy \
+            SkoutDev-Network \
+            SkoutDev-Data \
+            SkoutDev-Registry \
+            SkoutDev-Compute \
+            SkoutDev-Workers \
+            SkoutDev-EmailIntel \
+            SkoutDev-Observability \
+            "${CTX[@]}" \
+            --require-approval never
+          echo "Deploying WarmupTool (soft-fail)…"
+          if ! pnpm exec cdk deploy SkoutDev-WarmupTool "${CTX[@]}" --require-approval never; then
+            echo "::warning::SkoutDev-WarmupTool CDK deploy failed — core API/web/CRM already deployed. Add MICROSOFT_CLIENT_ID/SECRET to SkoutDev/warmup-tool, then redeploy with -c warmupMicrosoftOAuth=true."
+          fi
 
       - name: Run database migrations (ECS one-off task)
         run: bash scripts/ecs-run-migrations.sh SkoutDev

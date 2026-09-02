@@ -37,7 +37,7 @@ export async function handleDexterEvent(
   for (const trigger of triggers) {
     let planId: string | undefined;
     try {
-      const { plan, policy } = await proposeDexterPlan(db, {
+      const { plan, policy } = await proposeDexterPlan(db, config, {
         workspaceId: event.tenantId,
         brief: `Auto-triggered by ${event.type} (trigger ${trigger.id})`,
         actionType: trigger.actionType,
@@ -47,8 +47,8 @@ export async function handleDexterEvent(
       log.info("dexter plan proposed from event", { planId: plan.id, eventType: event.type, mode: policy.mode });
 
       if (policy.mode === "auto") {
-        await approveDexterPlan(db, event.tenantId, plan.id);
-        await invokeDexterPlan(db, event.tenantId, plan.id);
+        await approveDexterPlan(db, config, event.tenantId, plan.id);
+        await invokeDexterPlan(db, config, event.tenantId, plan.id);
       }
     } catch (err) {
       // Isolate this trigger's failure so it can't stop remaining triggers for this

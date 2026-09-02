@@ -17,7 +17,10 @@ function selectChain(result: unknown[]) {
 }
 
 function makeDb(selectResult: unknown[]) {
-  const insertValues = vi.fn().mockReturnValue({ onConflictDoNothing: vi.fn().mockResolvedValue(undefined) });
+  const returning = vi.fn().mockResolvedValue([
+    { id: "row-1", workspaceId: "ws-1", email: "test@example.com", reason: "unsubscribed", createdAt: new Date("2026-01-01T00:00:00Z") },
+  ]);
+  const insertValues = vi.fn().mockReturnValue({ onConflictDoNothing: vi.fn().mockReturnValue({ returning }) });
   return {
     select: vi.fn().mockReturnValue(selectChain(selectResult)),
     insert: vi.fn().mockReturnValue({ values: insertValues }),

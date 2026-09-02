@@ -61,7 +61,47 @@ export function initPanel() {
     if (!statusEl) return;
     statusEl.textContent = message;
     statusEl.className = isError ? "status-error" : "status-ok";
+    updateVisionSystemState(message, isError);
   }
+
+  const visionPolicyChip = document.getElementById("vision-policy-chip");
+  const visionFreshnessChip = document.getElementById("vision-freshness-chip");
+  const visionConfidenceChip = document.getElementById("vision-confidence-chip");
+  const visionSideEffects = document.getElementById("vision-side-effects");
+  const visionSystemState = document.getElementById("vision-system-state");
+
+  function setVisionChip(el, text, tone) {
+    if (!el) return;
+    el.textContent = text;
+    el.classList.remove("warning", "danger");
+    if (tone) el.classList.add(tone);
+  }
+
+  function updateVisionIntelligence({ policy = "Ask", confidence, hitl = false } = {}) {
+    setVisionChip(visionPolicyChip, `Policy · ${policy}`, hitl ? "warning" : undefined);
+    setVisionChip(visionFreshnessChip, "Context · Live");
+    if (confidence != null) {
+      setVisionChip(
+        visionConfidenceChip,
+        `Confidence · ${Math.round(confidence)}%`,
+        confidence < 60 ? "danger" : confidence < 80 ? "warning" : undefined
+      );
+    }
+  }
+
+  function updateVisionSideEffects(effects) {
+    if (!visionSideEffects) return;
+    visionSideEffects.textContent =
+      effects.length > 0 ? `Side effects: ${effects.join(" · ")}` : "No blocking side effects detected.";
+  }
+
+  function updateVisionSystemState(message, isError = false) {
+    if (!visionSystemState) return;
+    visionSystemState.textContent = isError ? `Blocked — ${message}` : message || "Ready.";
+  }
+
+  updateVisionIntelligence();
+  updateVisionSideEffects(["List write", "Audit event on enroll"]);
 
   function setAuthStatus(message, connected = false) {
     if (!authStatusEl) return;
@@ -448,6 +488,11 @@ export function initPanel() {
       const hitlNote = result.requiresHitl
         ? " — low confidence, flagged for review"
         : "";
+      updateVisionIntelligence({
+        policy: result.requiresHitl ? "Approve" : "Ask",
+        confidence: typeof result.score === "number" ? result.score : undefined,
+        hitl: Boolean(result.requiresHitl),
+      });
       setStatus((result.message || `Scored ${result.fullName}.`) + hitlNote);
     } catch (error) {
       setStatus(
@@ -514,6 +559,8 @@ export function initPanel() {
     hitlWarningEl?.classList.add("hidden");
     hitlConfirmed = false;
     if (enrollConfirmEl) enrollConfirmEl.classList.add("hidden");
+    updateVisionSideEffects(["Sequence enroll", "Consent check", "Audit log entry"]);
+    updateVisionIntelligence({ policy: lastRequiresHitl ? "Approve" : "Ask", hitl: lastRequiresHitl });
     setBusy(button, true, "Enrolling…");
     try {
       if (!(await ensurePanelSignedIn())) return;

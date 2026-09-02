@@ -16,6 +16,9 @@ const counters = {
   workflowRunStart: 0,
   dexterPlanInvoke: 0,
   linkedinVoiceConfirm: 0,
+  icpApproved: 0,
+  tamApproved: 0,
+  regionalBriefApproved: 0,
 };
 
 export type JourneyMetric = keyof typeof counters;
@@ -69,6 +72,15 @@ export function formatJourneyMetricsPrometheus(): string {
     "# HELP skout_journey_linkedin_voice_confirm_total LinkedIn voice manual confirms",
     "# TYPE skout_journey_linkedin_voice_confirm_total counter",
     `skout_journey_linkedin_voice_confirm_total ${counters.linkedinVoiceConfirm}`,
+    "# HELP skout_journey_icp_approved_total ICP versions approved",
+    "# TYPE skout_journey_icp_approved_total counter",
+    `skout_journey_icp_approved_total ${counters.icpApproved}`,
+    "# HELP skout_journey_tam_approved_total TAM versions approved",
+    "# TYPE skout_journey_tam_approved_total counter",
+    `skout_journey_tam_approved_total ${counters.tamApproved}`,
+    "# HELP skout_journey_regional_brief_approved_total Regional brief versions approved",
+    "# TYPE skout_journey_regional_brief_approved_total counter",
+    `skout_journey_regional_brief_approved_total ${counters.regionalBriefApproved}`,
   ];
   return lines.join("\n");
 }

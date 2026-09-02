@@ -220,6 +220,18 @@ export async function workspaceRoutes(app: FastifyInstance) {
       } catch (err) {
         request.log.warn({ err, workspaceId: request.workspaceId }, "ICP rescore enqueue failed");
       }
+
+      const { emitSkoutEvent } = await import("../services/skout-event.service.js");
+      await emitSkoutEvent(app.db, app.config, {
+        type: "icp.approved",
+        tenantId: request.workspaceId,
+        aggregateId: request.workspaceId,
+        data: {
+          workspaceId: request.workspaceId,
+          version,
+          approvedBy: request.userId ?? null,
+        },
+      });
     }
 
     return reply.send({ data: icp, rescoreJob });

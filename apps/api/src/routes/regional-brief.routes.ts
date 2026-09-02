@@ -221,6 +221,17 @@ export async function regionalBriefRoutes(app: FastifyInstance) {
     if (slot && GLOBAL_LAYERS.has(slot.layerType)) requirePlatformAdmin(request);
 
     const approved = await svc.approveVersion(id, request.userId!);
+    const { emitSkoutEvent } = await import("../services/skout-event.service.js");
+    await emitSkoutEvent(app.db ?? null, app.config, {
+      type: "regional_brief.approved",
+      tenantId: request.workspaceId!,
+      aggregateId: version.slotId,
+      data: {
+        versionId: approved.id,
+        slotId: version.slotId,
+        reviewerId: request.userId,
+      },
+    });
     return reply.send(approved);
   });
 

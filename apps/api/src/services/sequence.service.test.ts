@@ -1,6 +1,25 @@
 import { describe, expect, it, vi } from "vitest";
-import { SequenceService, buildSequenceService, SEQUENCE_STATUSES, STEP_TYPES, SEQUENCE_MODES, CONDITION_TYPES } from "./sequence.service.js";
+import {
+  SequenceService,
+  buildSequenceService,
+  enrollListWithSideEffects,
+  SEQUENCE_STATUSES,
+  STEP_TYPES,
+  SEQUENCE_MODES,
+  CONDITION_TYPES,
+} from "./sequence.service.js";
 import { HttpError } from "../utils/http.js";
+import type { Db } from "@skout/db";
+import type { Env } from "../config/env.js";
+import * as sequenceEnrollmentQueue from "../workers/sequence-enrollment.queue.js";
+import * as webhookService from "./webhook.service.js";
+
+vi.mock("../workers/sequence-enrollment.queue.js", () => ({
+  enqueueSequenceAdvanceJob: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("./webhook.service.js", () => ({
+  dispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
+}));
 
 // ---------------------------------------------------------------------------
 // Mock chain builders
@@ -985,5 +1004,91 @@ describe("exported enums", () => {
     expect(SEQUENCE_STATUSES).toContain("active");
     expect(SEQUENCE_STATUSES).toContain("paused");
     expect(SEQUENCE_STATUSES).toContain("archived");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// enrollListWithSideEffects
+// ---------------------------------------------------------------------------
+
+describe("enrollListWithSideEffects", () => {
+  it("calls enroll, enqueues an advance job per new enrollment, dispatches a webhook per new enrollment, and writes an audit log row", async () => {
+    const enrollResult = {
+      enrolled: 1,
+      skipped: 0,
+      total: 1,
+      newEnrollments: [
+        { enrollmentId: "enroll-1", prospectId: "p-1", firstStepScheduledAt: null },
+      ],
+    };
+    const enrollSpy = vi.fn().mockResolvedValue(enrollResult);
+    vi.spyOn(SequenceService.prototype, "enroll").mockImplementation(enrollSpy);
+
+    const auditValues = vi.fn().mockReturnValue({ execute: vi.fn().mockResolvedValue(undefined) });
+    const db = {
+      insert: vi.fn().mockReturnValue({ values: auditValues }),
+    } as unknown as Db;
+    const config = { BYPASS_BUSINESS_HOURS: true } as Env;
+
+    const result = await enrollListWithSideEffects(
+      db,
+      config,
+      "ws-1",
+      "list-1",
+      "seq-1",
+      "user-1",
+      "dexter"
+    );
+
+    expect(enrollSpy).toHaveBeenCalledWith("seq-1", "ws-1", { listId: "list-1" });
+    expect(sequenceEnrollmentQueue.enqueueSequenceAdvanceJob).toHaveBeenCalledTimes(1);
+    expect(sequenceEnrollmentQueue.enqueueSequenceAdvanceJob).toHaveBeenCalledWith(
+      config,
+      { enrollmentId: "enroll-1", workspaceId: "ws-1", prospectId: "p-1", sequenceId: "seq-1" },
+      0
+    );
+    expect(webhookService.dispatchWebhookEvent).toHaveBeenCalledTimes(1);
+    expect(webhookService.dispatchWebhookEvent).toHaveBeenCalledWith(db, config, "prospect.enrolled", "ws-1", {
+      enrollmentId: "enroll-1",
+      sequenceId: "seq-1",
+      prospectId: "p-1",
+    });
+    expect(auditValues).toHaveBeenCalledWith({
+      workspaceId: "ws-1",
+      actorId: "user-1",
+      action: "ai:dexter:enroll_list",
+      entityType: "sequence",
+      entityId: "seq-1",
+      afterState: { listId: "list-1", enrolled: 1, executedByAgent: "dexter", onBehalfOfUserId: "user-1" },
+    });
+    expect(result).toBe(enrollResult);
+  });
+
+  // Finding 2 regression test: the audit action used to be the literal string
+  // "ai:dexter:enroll_list" regardless of which agent actually executed the enroll. Since
+  // enroll_list is now callable from any of the three agents (skout/dexter/cro), a
+  // skout-initiated enroll must not claim to be Dexter in its own audit trail.
+  it("templates the audit action off executedByAgent instead of hardcoding 'dexter'", async () => {
+    const enrollResult = {
+      enrolled: 1,
+      skipped: 0,
+      total: 1,
+      newEnrollments: [
+        { enrollmentId: "enroll-2", prospectId: "p-2", firstStepScheduledAt: null },
+      ],
+    };
+    vi.spyOn(SequenceService.prototype, "enroll").mockResolvedValue(enrollResult);
+
+    const auditValues = vi.fn().mockReturnValue({ execute: vi.fn().mockResolvedValue(undefined) });
+    const db = {
+      insert: vi.fn().mockReturnValue({ values: auditValues }),
+    } as unknown as Db;
+    const config = { BYPASS_BUSINESS_HOURS: true } as Env;
+
+    await enrollListWithSideEffects(db, config, "ws-1", "list-1", "seq-1", "user-1", "skout");
+
+    expect(auditValues).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "ai:skout:enroll_list" })
+    );
   });
 });

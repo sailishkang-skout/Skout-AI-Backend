@@ -98,7 +98,7 @@ describe("handleDexterEvent", () => {
     const [plan] = await db.select().from(dexterPlans).where(eq(dexterPlans.workspaceId, workspaceId)).limit(1);
     expect(plan!.status).toBe("proposed");
 
-    const rejected = await rejectDexterPlan(db, workspaceId, plan!.id);
+    const rejected = await rejectDexterPlan(db, config, workspaceId, plan!.id);
     expect(rejected.status).toBe("rejected");
   });
 

@@ -1,18 +1,20 @@
 import type { OpenAI } from "openai";
+import { and, count, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
+import { recordEvidence, schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { createAnalyticsService } from "./analytics.service.js";
 import { createDashboardService } from "./dashboard.service.js";
 import { createWorkspaceService } from "./workspace.service.js";
 import { buildEnrichmentService } from "./enrichment/index.js";
-import { buildSequenceService } from "./sequence.service.js";
+import { buildSequenceService, enrollListWithSideEffects } from "./sequence.service.js";
 import { buildInboxService, getDeliverabilityMetrics } from "./inbox.service.js";
 import { buildAiDraftService } from "./ai-draft.service.js";
 import { createBillingService } from "./billing.service.js";
 import { createIntegrationService } from "./integration.service.js";
 import { createTeamService } from "./team.service.js";
-import { seniorityEnum } from "@skout/shared";
+import { assertEvidenced, seniorityEnum, type EvidencedClaim } from "@skout/shared";
 import type { z } from "zod";
 import { getWorkspaceIcp } from "./icp.service.js";
 import { createSearchService } from "./search.service.js";
@@ -26,6 +28,47 @@ import {
 import { computeCroSummary } from "./cro-summary.service.js";
 import { createRegionalBriefService } from "./regional-brief.service.js";
 import { createCountryIndustryTamService } from "./country-industry-tam.service.js";
+import { classifyAndRecord } from "./policy-gateway.service.js";
+import { type ToolActionPreview } from "./intelligence-layer.service.js";
+
+export interface ActionPreview {
+  toolName: string;
+  scope: string;
+  assumptions: string[];
+  affectedRecordCount: number;
+  creditCost: number;
+  externalSideEffects: string[];
+}
+
+export function requiresConfirmation(preview: ActionPreview): boolean {
+  return preview.affectedRecordCount > 1 || preview.creditCost > 0 || preview.externalSideEffects.length > 0;
+}
+
+/**
+ * §6.1 anti-hallucination contract — wraps a computed/derived claim (an aggregation, TAM
+ * estimate, or other analytics value) with a real evidence_ledger row before it can be returned
+ * to a copilot caller, rather than handing back a bare, unaudited number.
+ */
+export async function evidenceClaim<T>(
+  db: Db,
+  workspaceId: string,
+  toolName: string,
+  entityType: string,
+  entityId: string,
+  value: T
+): Promise<EvidencedClaim<T>> {
+  const row = await recordEvidence(db, {
+    workspaceId,
+    entityType,
+    entityId,
+    attribute: toolName,
+    value: value as unknown,
+    source: `ai-workspace-tools:${toolName}`,
+    observedAt: new Date(),
+    confidence: 100,
+  });
+  return assertEvidenced({ value, evidenceId: row.id }, toolName);
+}
 
 const APP_ROUTES = [
   { path: "/dashboard", purpose: "Workspace overview and recent enrichment jobs" },
@@ -48,11 +91,18 @@ const APP_ROUTES = [
   { path: "/settings/workspace", purpose: "Workspace name, credits, billing" },
 ] as const;
 
+const { listMembers, lists } = schema;
+
 const log = createLogger("ai-workspace-tools");
 
 type ToolDef = OpenAI.Chat.Completions.ChatCompletionTool;
 
-/** Read-only workspace tools the in-app assistant may call to fetch live data on demand. */
+/**
+ * Workspace tools the in-app assistant may call. Most are read-only fetches, but a handler that
+ * mutates data, spends credits, or has an external side effect (e.g. create_outbound_sequence,
+ * enroll_list) MUST register a `previewBuilders` entry so its effects are gated behind an
+ * explicit user confirmation before running.
+ */
 export interface WorkspaceToolRunner {
   tools: ToolDef[];
   /** Execute a tool by name; always resolves to a JSON string (errors are returned, not thrown). */
@@ -61,6 +111,8 @@ export interface WorkspaceToolRunner {
   getCreatedExports(): ExportArtifact[];
   /** Sequences created during this chat turn. */
   getCreatedSequenceIds(): string[];
+  /** §8.13 — last mutating tool preview awaiting user confirmation. */
+  getPendingToolPreview(): ToolActionPreview | null;
 }
 
 /** Caps to keep tool payloads (and therefore token cost) bounded. */
@@ -84,6 +136,28 @@ function serialize(value: unknown): string {
     out = out.slice(0, MAX_RESULT_CHARS) + `…"[truncated ${out.length - MAX_RESULT_CHARS} chars]`;
   }
   return out;
+}
+
+/**
+ * §8.13 — server-side cache of the exact args a preview was computed from, keyed by
+ * (workspaceId, toolName). A confirm call executes these cached args verbatim, never whatever the
+ * model resupplies on the second call — this is a correctness property (the confirmed action must
+ * be exactly what was previewed, not something the model could quietly drift on) as much as a
+ * convenience: the model doesn't need to recall/resupply the full original arguments (a sequence's
+ * complete multi-step copy, for example) to confirm — it only needs to call the tool again with
+ * confirmed: true. In-memory and process-local by design: losing a pending preview across a
+ * restart just means the user re-states their request, which is an acceptable, low-frequency cost
+ * for this slice — not a data-safety issue, since nothing executes without an explicit confirm.
+ */
+interface PendingPreview {
+  args: Record<string, unknown>;
+  expiresAt: number;
+}
+const pendingPreviews = new Map<string, PendingPreview>();
+const PENDING_PREVIEW_TTL_MS = 10 * 60 * 1000;
+
+function pendingPreviewKey(workspaceId: string, toolName: string): string {
+  return `${workspaceId}:${toolName}`;
 }
 
 /**
@@ -489,16 +563,45 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
               required: ["stepType", "delayDays"],
             },
           },
+          confirmed: {
+            type: "boolean",
+            description:
+              "Set to true only after the user has explicitly confirmed they want to proceed, having seen the preview shown in your previous response. Never set this on the first call for a multi-step sequence.",
+          },
         },
         required: ["name", "steps"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "enroll_list",
+      description:
+        "Enroll every eligible prospect on a list into an active outbound sequence. Use this when the user asks to enroll, start, or launch outreach for a specific list into a specific sequence.",
+      parameters: {
+        type: "object",
+        properties: {
+          listId: { type: "string", description: "The list's ID." },
+          sequenceId: { type: "string", description: "The sequence's ID." },
+          confirmed: {
+            type: "boolean",
+            description:
+              "Set to true only after the user has explicitly confirmed they want to proceed, having seen the preview shown in your previous response. Never set this on the first call.",
+          },
+        },
+        required: ["listId", "sequenceId"],
       },
     },
   },
 ];
 
 /**
- * Builds a runner bound to one workspace. All handlers are READ-ONLY — nothing here mutates data
- * or spends credits. The db may be null (returns a friendly error per call).
+ * Builds a runner bound to one workspace. Most handlers are read-only, but a handler that
+ * mutates data, spends credits, or has an external side effect MUST register a `previewBuilders`
+ * entry so its effects are gated behind an explicit user confirmation — see
+ * `create_outbound_sequence` and `enroll_list` for the pattern. The db may be null (returns a
+ * friendly error per call).
  */
 /**
  * R19.2 — the "cro" agent's tool set is a real allowlist, enforced both in what's offered to the
@@ -516,7 +619,11 @@ export function createWorkspaceToolRunner(
   /** R19.2 — gates the get_cro_summary tool. Only owner/admin callers should pass true. */
   isAdmin = false,
   /** R19.2 — "cro" restricts both the offered tool list and dispatch to CRO_AGENT_TOOLS. */
-  agent: "skout" | "dexter" | "cro" = "skout"
+  agent: "skout" | "dexter" | "cro" = "skout",
+  /** §8.13 — actor for the tool-call audit trail (policy_decisions.detail). Optional: audit is best-effort. */
+  userId?: string,
+  /** §8.13 — when true, mutating tools execute directly instead of returning a preview (autonomous "auto" mode, or a caller that already confirmed via /ai/execute-tool). */
+  confirmMutations = false
 ): WorkspaceToolRunner {
   const analytics = createAnalyticsService(db, config);
   const dashboard = createDashboardService(db, config);
@@ -534,25 +641,33 @@ export function createWorkspaceToolRunner(
 
   const createdExports: ExportArtifact[] = [];
   const createdSequenceIds: string[] = [];
+  let pendingToolPreview: ToolActionPreview | null = null;
 
   const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
-    get_workspace_overview: () => dashboard.getSummary(workspaceId),
+    get_workspace_overview: async () => {
+      if (!db) throw new Error("database_unavailable");
+      const value = await dashboard.getSummary(workspaceId);
+      return evidenceClaim(db, workspaceId, "get_workspace_overview", "workspace", workspaceId, value);
+    },
 
     get_cro_summary: async () => {
       if (!isAdmin) throw new Error("get_cro_summary is admin-only");
       if (!db) throw new Error("database_unavailable");
-      return computeCroSummary(db, workspaceId);
+      const value = await computeCroSummary(db, workspaceId);
+      return evidenceClaim(db, workspaceId, "get_cro_summary", "workspace", workspaceId, value);
     },
 
     get_credit_analytics: async (args) => {
+      if (!db) throw new Error("database_unavailable");
       const days = clampInt(args.days, 30, 7, 90);
       const report = await analytics.getReport(workspaceId, days);
-      return {
+      const value = {
         period: report.period,
         credits: report.credits,
         enrichment: report.enrichment,
         lists: report.lists,
       };
+      return evidenceClaim(db, workspaceId, "get_credit_analytics", "workspace", workspaceId, value);
     },
 
     get_credit_transactions: (args) => {
@@ -591,11 +706,13 @@ export function createWorkspaceToolRunner(
       return sequence.getSequenceById(workspaceId, id);
     },
 
-    get_sequence_analytics: (args) => {
+    get_sequence_analytics: async (args) => {
       if (!sequence) throw new Error("database_unavailable");
+      if (!db) throw new Error("database_unavailable");
       const id = String(args.sequenceId ?? "");
       if (!id) throw new Error("sequenceId is required");
-      return sequence.getAnalytics(workspaceId, id);
+      const value = await sequence.getAnalytics(workspaceId, id);
+      return evidenceClaim(db, workspaceId, "get_sequence_analytics", "sequence", id, value);
     },
 
     list_inboxes: () => {
@@ -632,9 +749,10 @@ export function createWorkspaceToolRunner(
       return { context, messages };
     },
 
-    get_deliverability: () => {
+    get_deliverability: async () => {
       if (!db) throw new Error("database_unavailable");
-      return getDeliverabilityMetrics(db, workspaceId);
+      const value = await getDeliverabilityMetrics(db, workspaceId);
+      return evidenceClaim(db, workspaceId, "get_deliverability", "workspace", workspaceId, value);
     },
 
     list_ai_drafts: (args) => {
@@ -768,25 +886,36 @@ export function createWorkspaceToolRunner(
 
     get_regional_selling_brief: async (args) => {
       if (!regionalBrief) throw new Error("database_unavailable");
+      if (!db) throw new Error("database_unavailable");
       const country = String(args.country ?? "").trim();
       const industry = args.industry ? String(args.industry).trim() : undefined;
       if (!country) return { error: "country is required" };
-      return regionalBrief.resolveRegionalBrief({ countryIso: country, industry, workspaceId });
+      const value = await regionalBrief.resolveRegionalBrief({ countryIso: country, industry, workspaceId });
+      return evidenceClaim(
+        db,
+        workspaceId,
+        "get_regional_selling_brief",
+        "regional_brief",
+        `${country}:${industry ?? "*"}`,
+        value
+      );
     },
 
     get_market_tam: async (args) => {
       if (!tamService) throw new Error("database_unavailable");
+      if (!db) throw new Error("database_unavailable");
       const country = String(args.country ?? "").trim();
       const industry = String(args.industry ?? "").trim();
       if (!country || !industry) return { error: "country and industry are required" };
       const icpPct = typeof args.icpFitPct === "number" ? args.icpFitPct : undefined;
       const acvUsd = typeof args.acvUsd === "number" ? args.acvUsd : undefined;
-      return tamService.getTam({
+      const value = await tamService.getTam({
         countryIso: country,
         naicsCode: industry,
         icpPctOverride: icpPct,
         acvUsdOverride: acvUsd,
       });
+      return evidenceClaim(db, workspaceId, "get_market_tam", "country_industry_tam", `${country}:${industry}`, value);
     },
 
     create_outbound_sequence: async (args) => {
@@ -836,6 +965,54 @@ export function createWorkspaceToolRunner(
         message: `Sequence "${seq.name}" with ${seq.steps.length} steps created successfully in your workspace!`,
       };
     },
+
+    enroll_list: async (args) => {
+      if (!db) throw new Error("database_unavailable");
+      const listId = String(args.listId ?? "");
+      const sequenceId = String(args.sequenceId ?? "");
+      if (!listId || !sequenceId) return { error: "listId and sequenceId are required" };
+      if (!userId) return { error: "actor_unknown" };
+      return enrollListWithSideEffects(db, config, workspaceId, listId, sequenceId, userId, agent);
+    },
+  };
+
+  const previewBuilders: Record<string, (args: Record<string, unknown>) => ActionPreview | Promise<ActionPreview>> = {
+    create_outbound_sequence: (args) => {
+      const name = typeof args.name === "string" && args.name.trim() ? args.name.trim() : "Outbound Cadence";
+      const rawSteps = Array.isArray(args.steps) ? (args.steps as Record<string, unknown>[]) : [];
+      return {
+        toolName: "create_outbound_sequence",
+        scope: `Create a new outbound sequence "${name}" with ${rawSteps.length} step(s).`,
+        assumptions: rawSteps.length === 0 ? ["No steps provided — the sequence will fail validation."] : [],
+        affectedRecordCount: rawSteps.length,
+        creditCost: 0,
+        externalSideEffects: rawSteps.some((s) => s.stepType === "linkedin")
+          ? ["Will send LinkedIn actions once prospects are enrolled into this sequence"]
+          : [],
+      };
+    },
+
+    enroll_list: async (args) => {
+      const listId = String(args.listId ?? "");
+      const sequenceId = String(args.sequenceId ?? "");
+      let memberCount = 0;
+      if (db && listId) {
+        const [row] = await db
+          .select({ count: count() })
+          .from(listMembers)
+          .innerJoin(lists, eq(lists.id, listMembers.listId))
+          .where(and(eq(listMembers.listId, listId), eq(lists.workspaceId, workspaceId)));
+        memberCount = row?.count ?? 0;
+      }
+      return {
+        toolName: "enroll_list",
+        scope: `Enroll ${memberCount} prospect(s) from this list into the sequence.`,
+        assumptions: !listId || !sequenceId ? ["Missing listId or sequenceId — will fail validation."] : [],
+        affectedRecordCount: memberCount,
+        creditCost: 0,
+        externalSideEffects: ["Enqueues outreach sends for each newly enrolled prospect", "Dispatches a prospect.enrolled webhook per enrollment"],
+      };
+    },
   };
 
   return {
@@ -845,6 +1022,7 @@ export function createWorkspaceToolRunner(
         : WORKSPACE_TOOL_DEFS,
     getCreatedExports: () => createdExports,
     getCreatedSequenceIds: () => createdSequenceIds,
+    getPendingToolPreview: () => pendingToolPreview,
     async run(name, args) {
       if (agent === "cro" && !CRO_AGENT_TOOLS.has(name)) {
         log.warn("cro agent attempted a non-allowlisted tool call", { tool: name, workspaceId });
@@ -852,8 +1030,57 @@ export function createWorkspaceToolRunner(
       }
       const handler = handlers[name];
       if (!handler) return serialize({ error: `unknown_tool:${name}` });
+
+      const previewBuilder = previewBuilders[name];
+      let execArgs = args ?? {};
+      if (previewBuilder) {
+        const key = pendingPreviewKey(workspaceId, name);
+        if (execArgs.confirmed === true || confirmMutations) {
+          // Confirming: execute the EXACT args the preview was computed from, never whatever the
+          // model resupplied — see the pendingPreviews doc comment for why. Fall back to the
+          // model-supplied args only if there's no matching cached preview (e.g. it expired, or
+          // the model confirmed something it never actually previewed) — this preserves today's
+          // behavior for that edge case rather than hard-failing it.
+          const cached = pendingPreviews.get(key);
+          if (cached && cached.expiresAt > Date.now()) {
+            execArgs = { ...cached.args, confirmed: true };
+          }
+          pendingPreviews.delete(key);
+        } else {
+          try {
+            const preview = await previewBuilder(execArgs);
+            if (db) {
+              try {
+                await classifyAndRecord(db, {
+                  workspaceId,
+                  actionKey: `tool:${name}`,
+                  actorUserId: userId,
+                  detail: preview as unknown as Record<string, unknown>,
+                });
+              } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                log.warn("failed to record tool-call audit decision", { tool: name, workspaceId, err: message });
+              }
+            }
+            if (requiresConfirmation(preview)) {
+              pendingPreviews.set(key, { args: execArgs, expiresAt: Date.now() + PENDING_PREVIEW_TTL_MS });
+              return serialize({
+                preview,
+                requiresConfirmation: true,
+                nextStep:
+                  "Relay this preview to the user in your reply and stop. Do not call this tool again in this same turn. Once the user explicitly agrees in a later message, call this exact tool again with ONLY confirmed: true — you do not need to resupply the other arguments, the server remembers them from this preview.",
+              });
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            log.warn("preview builder failed", { tool: name, workspaceId, err: message });
+            return serialize({ error: message });
+          }
+        }
+      }
+
       try {
-        const result = await handler(args ?? {});
+        const result = await handler(execArgs);
         return serialize(result);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

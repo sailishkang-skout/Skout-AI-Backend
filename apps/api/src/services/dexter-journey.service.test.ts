@@ -25,7 +25,7 @@ describe("dexter-journey.service — actionType extension", () => {
   });
 
   it("proposeDexterPlan without actionType keeps the existing brief-only proposal shape", async () => {
-    const { plan } = await proposeDexterPlan(db, { workspaceId, brief: "Just a brief, no action" });
+    const { plan } = await proposeDexterPlan(db, config, { workspaceId, brief: "Just a brief, no action" });
     expect(plan.status).toBe("proposed");
     const proposal = plan.proposal as Record<string, unknown>;
     expect(proposal.actionType).toBeUndefined();
@@ -33,7 +33,7 @@ describe("dexter-journey.service — actionType extension", () => {
   });
 
   it("proposeDexterPlan with actionType/actionParams folds them into proposal", async () => {
-    const { plan } = await proposeDexterPlan(db, {
+    const { plan } = await proposeDexterPlan(db, config, {
       workspaceId,
       brief: "Enroll regional list into sequence",
       actionType: "enroll_sequence",
@@ -45,9 +45,9 @@ describe("dexter-journey.service — actionType extension", () => {
   });
 
   it("invokeDexterPlan with no actionType keeps today's canned-outcome stub behavior", async () => {
-    const { plan } = await proposeDexterPlan(db, { workspaceId, brief: "Brief only plan" });
-    await approveDexterPlan(db, workspaceId, plan.id);
-    const { plan: invoked } = await invokeDexterPlan(db, workspaceId, plan.id);
+    const { plan } = await proposeDexterPlan(db, config, { workspaceId, brief: "Brief only plan" });
+    await approveDexterPlan(db, config, workspaceId, plan.id);
+    const { plan: invoked } = await invokeDexterPlan(db, config, workspaceId, plan.id);
     expect(invoked.status).toBe("invoked");
     expect((invoked.outcome as Record<string, unknown>).invoked).toBe(true);
     expect((invoked.outcome as Record<string, unknown>).learningHint).toBe("threshold_unchanged");
@@ -63,14 +63,14 @@ describe("dexter-journey.service — actionType extension", () => {
     const [list] = await db.insert(lists).values({ workspaceId, name: "Orchestrator Test List" }).returning();
     await db.insert(listMembers).values({ listId: list!.id, prospectId });
 
-    const { plan } = await proposeDexterPlan(db, {
+    const { plan } = await proposeDexterPlan(db, config, {
       workspaceId,
       brief: "Enroll test list into test sequence",
       actionType: "enroll_sequence",
       actionParams: { sequenceId: seq!.id, listId: list!.id },
     });
-    await approveDexterPlan(db, workspaceId, plan.id);
-    const { plan: invoked } = await invokeDexterPlan(db, workspaceId, plan.id);
+    await approveDexterPlan(db, config, workspaceId, plan.id);
+    const { plan: invoked } = await invokeDexterPlan(db, config, workspaceId, plan.id);
 
     expect(invoked.status).toBe("invoked");
     const outcome = invoked.outcome as Record<string, unknown>;
@@ -79,28 +79,28 @@ describe("dexter-journey.service — actionType extension", () => {
   });
 
   it("invokeDexterPlan moves to status failed (not left dangling at approved) when the adapter throws", async () => {
-    const { plan } = await proposeDexterPlan(db, {
+    const { plan } = await proposeDexterPlan(db, config, {
       workspaceId,
       brief: "Enroll into a sequence that doesn't exist",
       actionType: "enroll_sequence",
       actionParams: { sequenceId: "00000000-0000-0000-0000-000000000000", listId: "00000000-0000-0000-0000-000000000000" },
     });
-    await approveDexterPlan(db, workspaceId, plan.id);
-    const { plan: invoked } = await invokeDexterPlan(db, workspaceId, plan.id);
+    await approveDexterPlan(db, config, workspaceId, plan.id);
+    const { plan: invoked } = await invokeDexterPlan(db, config, workspaceId, plan.id);
 
     expect(invoked.status).toBe("failed");
     expect((invoked.outcome as Record<string, unknown>).error).toBeTruthy();
   });
 
   it("invokeDexterPlan with an unrecognized actionType fails closed (status failed, error captured) instead of reporting success", async () => {
-    const { plan } = await proposeDexterPlan(db, {
+    const { plan } = await proposeDexterPlan(db, config, {
       workspaceId,
       brief: "Do something not yet implemented",
       actionType: "enroll_sequences", // typo — not a recognized actionType
       actionParams: { sequenceId: "seq-x" },
     });
-    await approveDexterPlan(db, workspaceId, plan.id);
-    const { plan: invoked } = await invokeDexterPlan(db, workspaceId, plan.id);
+    await approveDexterPlan(db, config, workspaceId, plan.id);
+    const { plan: invoked } = await invokeDexterPlan(db, config, workspaceId, plan.id);
 
     expect(invoked.status).toBe("failed");
     const outcome = invoked.outcome as Record<string, unknown>;
@@ -109,10 +109,10 @@ describe("dexter-journey.service — actionType extension", () => {
   });
 
   it("rejectDexterPlan sets status to rejected from proposed, and rejects an invalid transition", async () => {
-    const { plan } = await proposeDexterPlan(db, { workspaceId, brief: "Plan to be rejected" });
-    const rejected = await rejectDexterPlan(db, workspaceId, plan.id);
+    const { plan } = await proposeDexterPlan(db, config, { workspaceId, brief: "Plan to be rejected" });
+    const rejected = await rejectDexterPlan(db, config, workspaceId, plan.id);
     expect(rejected.status).toBe("rejected");
 
-    await expect(rejectDexterPlan(db, workspaceId, plan.id)).rejects.toMatchObject({ statusCode: 422 });
+    await expect(rejectDexterPlan(db, config, workspaceId, plan.id)).rejects.toMatchObject({ statusCode: 422 });
   });
 });

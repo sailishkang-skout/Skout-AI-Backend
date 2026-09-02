@@ -10,6 +10,7 @@ async function buildTestApp(platformAdminEmails: string[] = []) {
     LOG_LEVEL: "fatal",
     OPENSEARCH_URL: undefined,
     PLATFORM_ADMIN_EMAILS: platformAdminEmails,
+    REDIS_URL: undefined as unknown as string,
   });
 }
 

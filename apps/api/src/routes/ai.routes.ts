@@ -19,12 +19,12 @@ import {
 import { computeOutcomeInsights, insightsToPrompt } from "../services/outcome-insights.service.js";
 import { buildChatGrounding } from "../services/ai-chat-context.service.js";
 import { createWorkspaceToolRunner } from "../services/ai-workspace-tools.service.js";
+import { MUTATING_TOOL_NAMES } from "../services/intelligence-layer.service.js";
 import { readAiExport } from "../services/ai-export.service.js";
-import { buildSequenceService } from "../services/sequence.service.js";
-import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.js";
-import { dispatchWebhookEvent } from "../services/webhook.service.js";
+import { buildSequenceService, enrollListWithSideEffects } from "../services/sequence.service.js";
 import { HttpError } from "../utils/http.js";
 import { pinAiClaim } from "../services/ai-evidence.service.js";
+import { gateEnrollConsent } from "../services/consent-enroll.service.js";
 
 /**
  * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
@@ -223,6 +223,7 @@ export async function aiRoutes(app: FastifyInstance) {
   /** Create a draft — either from provided subject/body or OpenRouter generation. */
   app.post("/ai/drafts", async (request, reply) => {
     const workspaceId = request.workspaceId ?? "unknown";
+    try {
     const body = createDraftSchema.parse(request.body ?? {});
     const drafts = draftsOr503(app);
 
@@ -253,21 +254,17 @@ export async function aiRoutes(app: FastifyInstance) {
       model = process.env.AI_MODEL ?? "openai/gpt-4o-mini";
 
       if (app.db && workspaceId !== "unknown") {
-        try {
-          await pinAiClaim(app.db, {
-            workspaceId,
-            entityType: body.prospectId ? "prospect" : "ai_generation",
-            entityId: body.prospectId ?? workspaceId,
-            attribute: "ai_draft",
-            value: { subject, bodyPreview: String(content).slice(0, 500), model },
-            source: "ai_draft_generate",
-            method: "ai_drafts",
-            versionName: "generate-email",
-          });
-        } catch (err) {
-          // Draft delivery must not fail closed on evidence pin — log and continue.
-          app.log.warn({ err, workspaceId }, "ai draft evidence pin failed");
-        }
+        const pinned = await pinAiClaim(app.db, {
+          workspaceId,
+          entityType: body.prospectId ? "prospect" : "ai_generation",
+          entityId: body.prospectId ?? workspaceId,
+          attribute: "ai_draft",
+          value: { subject, bodyPreview: String(content).slice(0, 500), model },
+          source: "ai_draft_generate",
+          method: "ai_drafts",
+          versionName: "generate-email",
+        });
+        assertEvidenced({ value: { subject, bodyPreview: String(content).slice(0, 500) }, evidenceId: pinned.evidenceId }, "ai draft");
       }
     }
 
@@ -281,6 +278,13 @@ export async function aiRoutes(app: FastifyInstance) {
     // thresholds; if so, send it now instead of leaving it approved-but-undelivered.
     const result = await sendIfApproved(app, workspaceId, draft);
     return reply.status(201).send({ ...result.draft, send: result.send });
+    } catch (err: unknown) {
+      const e = err as { statusCode?: number; message?: string; name?: string };
+      if (e.name === "UnevidencedClaimError") {
+        return reply.status(500).send({ error: e.message ?? "Unevidenced AI claim rejected" });
+      }
+      throw err;
+    }
   });
 
   app.patch("/ai/drafts/:id", async (request, reply) => {
@@ -341,7 +345,15 @@ export async function aiRoutes(app: FastifyInstance) {
         }),
       ]);
 
-      const toolRunner = createWorkspaceToolRunner(app.db ?? null, app.config, workspaceId, isAdmin, body.agent);
+      const toolRunner = createWorkspaceToolRunner(
+        app.db ?? null,
+        app.config,
+        workspaceId,
+        isAdmin,
+        body.agent,
+        request.userId,
+        body.mode === "auto"
+      );
 
       const result = await aiService.chat(
         {
@@ -427,6 +439,7 @@ export async function aiRoutes(app: FastifyInstance) {
         evidenceId = pinned.evidenceId;
         modelVersionId = pinned.modelVersionId;
         promptVersionId = pinned.promptVersionId;
+        assertEvidenced({ value: result.reply, evidenceId }, "chat reply");
       }
 
       return reply.send({
@@ -436,6 +449,7 @@ export async function aiRoutes(app: FastifyInstance) {
         sequenceId,
         draftId,
         exports: toolRunner.getCreatedExports(),
+        toolPreview: toolRunner.getPendingToolPreview(),
         mode: body.mode,
         segregated: Boolean(draftId),
         evidenceId,
@@ -449,6 +463,64 @@ export async function aiRoutes(app: FastifyInstance) {
       }
       return reply.status(e.statusCode ?? 500).send({ error: e.message ?? "chat_failed" });
     }
+  });
+
+  /** §8.13 — Confirm and execute a mutating tool after preview. */
+  app.post("/ai/execute-tool", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const body = z
+      .object({
+        toolName: z.string().min(1),
+        args: z.record(z.unknown()).default({}),
+      })
+      .parse(request.body ?? {});
+
+    if (!MUTATING_TOOL_NAMES.has(body.toolName)) {
+      return reply.status(400).send({ error: "tool_not_mutating" });
+    }
+
+    const isAdmin = request.role === "owner" || request.role === "admin";
+    const toolRunner = createWorkspaceToolRunner(
+      app.db ?? null,
+      app.config,
+      workspaceId,
+      isAdmin,
+      "skout",
+      request.userId,
+      true
+    );
+
+    const output = await toolRunner.run(body.toolName, { ...body.args, confirmed: true });
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(output) as Record<string, unknown>;
+    } catch {
+      parsed = { raw: output };
+    }
+
+    let evidenceId: string | null = null;
+    if (app.db && workspaceId !== "unknown") {
+      const pinned = await pinAiClaim(app.db, {
+        workspaceId,
+        entityType: "ai_tool_execution",
+        entityId: workspaceId,
+        attribute: body.toolName,
+        value: { args: body.args, resultPreview: parsed },
+        source: "ai_execute_tool",
+        method: "execute_tool",
+        versionName: "chat",
+      });
+      evidenceId = pinned.evidenceId;
+      assertEvidenced({ value: parsed, evidenceId }, `execute-tool:${body.toolName}`);
+    }
+
+    const sequenceIds = toolRunner.getCreatedSequenceIds();
+    return reply.send({
+      result: parsed,
+      sequenceId: sequenceIds[0],
+      applied: sequenceIds.length > 0 || parsed.success === true,
+      evidenceId,
+    });
   });
 
   /**
@@ -513,6 +585,10 @@ export async function aiRoutes(app: FastifyInstance) {
         evidenceId = pinned.evidenceId;
         modelVersionId = pinned.modelVersionId;
         promptVersionId = pinned.promptVersionId;
+        assertEvidenced(
+          { value: { subject: result.subject, bodyPreview: String(result.html ?? "").slice(0, 500) }, evidenceId },
+          "generate-email"
+        );
       }
 
       return reply.send({
@@ -565,6 +641,7 @@ export async function aiRoutes(app: FastifyInstance) {
   const enrollListActionSchema = z.object({
     listId: z.string().min(1),
     sequenceId: z.string().min(1),
+    consentBasis: z.enum(["opt_in", "legitimate_interest", "contract", "legal_obligation"]).optional(),
   });
 
   /**
@@ -585,55 +662,36 @@ export async function aiRoutes(app: FastifyInstance) {
     }
     if (!app.db) return reply.status(500).send({ error: "Database not available" });
 
-    const { listId, sequenceId } = parse.data;
-    const seqSvc = buildSequenceService(app.db);
-    if (!seqSvc) return reply.status(500).send({ error: "Database not available" });
+    const { listId, sequenceId, consentBasis } = parse.data;
 
-    let result: Awaited<ReturnType<typeof seqSvc.enroll>>;
+    const consent = await gateEnrollConsent(app.db, app.config, {
+      workspaceId: request.workspaceId,
+      listId,
+      consentBasis,
+      recordedBy: request.userId,
+    });
+    if (!consent.ok) {
+      return reply.status(403).send({
+        error: "consent_required",
+        missingConsentProspectIds: consent.missingConsentProspectIds,
+      });
+    }
+
+    let result: Awaited<ReturnType<typeof enrollListWithSideEffects>>;
     try {
-      result = await seqSvc.enroll(sequenceId, request.workspaceId, { listId });
+      result = await enrollListWithSideEffects(
+        app.db,
+        app.config,
+        request.workspaceId,
+        listId,
+        sequenceId,
+        request.userId,
+        "dexter"
+      );
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
       return reply.status(e.statusCode ?? 500).send({ error: e.message ?? "Could not enroll list in sequence" });
     }
-
-    for (const e of result.newEnrollments) {
-      const delayMs =
-        app.config.BYPASS_BUSINESS_HOURS || !e.firstStepScheduledAt
-          ? 0
-          : Math.max(0, e.firstStepScheduledAt.getTime() - Date.now());
-      enqueueSequenceAdvanceJob(
-        app.config,
-        { enrollmentId: e.enrollmentId, workspaceId: request.workspaceId, prospectId: e.prospectId, sequenceId },
-        delayMs
-      ).catch((err: unknown) => {
-        app.log.error({ err, enrollmentId: e.enrollmentId }, "Failed to enqueue advance job");
-      });
-      dispatchWebhookEvent(app.db, app.config, "prospect.enrolled", request.workspaceId, {
-        enrollmentId: e.enrollmentId,
-        sequenceId,
-        prospectId: e.prospectId,
-      }).catch((err: unknown) => {
-        app.log.error({ err, enrollmentId: e.enrollmentId }, "Failed to dispatch webhook event");
-      });
-    }
-
-    // Audit write happens in the same request as the enroll itself (not a separate client
-    // call afterward) — a crash here means the enroll response never reaches the client either,
-    // so there's no window where the action succeeded silently and unaudited.
-    await app.db.insert(schema.auditLogs).values({
-      workspaceId: request.workspaceId,
-      actorId: request.userId,
-      action: "ai:dexter:enroll_list",
-      entityType: "sequence",
-      entityId: sequenceId,
-      afterState: {
-        listId,
-        enrolled: result.enrolled,
-        executedByAgent: "dexter",
-        onBehalfOfUserId: request.userId,
-      },
-    });
 
     return reply.code(201).send({ data: result });
   });
