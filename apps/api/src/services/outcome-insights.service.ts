@@ -1,6 +1,6 @@
-import { and, desc, eq, gte, inArray, isNotNull, or, sql } from "drizzle-orm";
+import { desc, eq, gte, inArray, isNotNull, or, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 
 const { inboxThreads, inboxMessages } = schema;
 
@@ -34,11 +34,7 @@ export async function computeOutcomeInsights(
     .from(inboxMessages)
     .innerJoin(inboxThreads, eq(inboxMessages.threadId, inboxThreads.id))
     .where(
-      and(
-        eq(inboxThreads.workspaceId, workspaceId),
-        eq(inboxMessages.direction, "outbound"),
-        gte(inboxMessages.sentAt, cutoff)
-      )
+      scopedTo(inboxThreads, workspaceId, eq(inboxMessages.direction, "outbound"), gte(inboxMessages.sentAt, cutoff))
     );
   const sent = Number(sentRow?.value ?? 0);
 
@@ -46,30 +42,24 @@ export async function computeOutcomeInsights(
     .select({ value: sql<number>`count(*)::int` })
     .from(inboxThreads)
     .where(
-      and(
-        eq(inboxThreads.workspaceId, workspaceId),
-        or(
+      scopedTo(inboxThreads, workspaceId, or(
           inArray(inboxThreads.status, ["replied", "meeting_booked"]),
           isNotNull(inboxThreads.replyTag)
-        )
-      )
+        ))
     );
   const replies = Number(replyRow?.value ?? 0);
 
   const [bounceRow] = await db
     .select({ value: sql<number>`count(*)::int` })
     .from(inboxThreads)
-    .where(and(eq(inboxThreads.workspaceId, workspaceId), eq(inboxThreads.status, "bounced")));
+    .where(scopedTo(inboxThreads, workspaceId, eq(inboxThreads.status, "bounced")));
   const bounces = Number(bounceRow?.value ?? 0);
 
   const winners = await db
     .select({ subject: inboxThreads.subject })
     .from(inboxThreads)
     .where(
-      and(
-        eq(inboxThreads.workspaceId, workspaceId),
-        or(eq(inboxThreads.replyTag, "positive"), eq(inboxThreads.status, "meeting_booked"))
-      )
+      scopedTo(inboxThreads, workspaceId, or(eq(inboxThreads.replyTag, "positive"), eq(inboxThreads.status, "meeting_booked")))
     )
     .orderBy(desc(inboxThreads.lastMessageAt))
     .limit(MAX_WINNING_SUBJECTS);

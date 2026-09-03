@@ -165,7 +165,7 @@ describe("createWorkspaceToolRunner — enroll_list preview gate", () => {
     expect(fromFn).toHaveBeenCalledWith(listMembers);
     expect(innerJoinFn).toHaveBeenCalledWith(lists, eq(lists.id, listMembers.listId));
     expect(whereFn).toHaveBeenCalledWith(
-      and(eq(listMembers.listId, "list-1"), eq(lists.workspaceId, "ws-1"))
+      and(eq(lists.workspaceId, "ws-1"), eq(listMembers.listId, "list-1"))
     );
   });
 

@@ -31,10 +31,16 @@ interface WorkspaceScopedTableWithId extends WorkspaceScopedTable {
 /**
  * A WHERE condition scoping `table` to `workspaceId`, AND-ed with any additional conditions.
  * Use for list/filter queries: `db.select().from(t).where(scopedTo(t, workspaceId, eq(t.status, "active")))`.
+ *
+ * `workspaceId` also accepts a `PgColumn` — not just a literal string — so a join can scope the
+ * joined table to the *anchor* row's workspace rather than a known value, e.g.
+ * `.leftJoin(prospectActivations, scopedTo(prospectActivations, aiDrafts.workspaceId, eq(...)))`
+ * asserts the joined row belongs to the same workspace as `aiDrafts`, which is exactly the kind
+ * of tenant check this helper exists to make impossible to accidentally omit.
  */
 export function scopedTo<T extends WorkspaceScopedTable>(
   table: T,
-  workspaceId: string,
+  workspaceId: string | PgColumn,
   ...rest: Array<SQL | undefined>
 ): SQL {
   const conditions: SQL[] = [eq(table.workspaceId, workspaceId)];
@@ -50,11 +56,14 @@ export function scopedTo<T extends WorkspaceScopedTable>(
  * A WHERE condition for the single most common shape: "fetch/update/delete this one row, and
  * it must belong to this workspace." Use for get-by-id/update/delete call sites:
  * `db.select().from(t).where(scopedById(t, workspaceId, id))`.
+ *
+ * Both `workspaceId` and `id` also accept a `PgColumn` for the same join-condition reason as
+ * `scopedTo` — e.g. `.innerJoin(lists, scopedById(lists, workspaceId, listMembers.listId))`.
  */
 export function scopedById<T extends WorkspaceScopedTableWithId>(
   table: T,
-  workspaceId: string,
-  id: string
+  workspaceId: string | PgColumn,
+  id: string | PgColumn
 ): SQL {
   return and(eq(table.id, id), eq(table.workspaceId, workspaceId))!;
 }

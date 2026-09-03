@@ -20,6 +20,12 @@ vi.mock("@skout/db", () => ({
     db: {},
     sql: { end: vi.fn().mockResolvedValue(undefined) },
   }),
+  // Every mocked `.where()`/`.leftJoin()`/`.innerJoin()` call in this file ignores its
+  // argument's actual content (see e.g. makeThreadDb below) — these just need to exist as
+  // callable functions so building the real scopedTo(...)/scopedById(...) call sites in
+  // sequence-enrollment.worker.ts doesn't throw "not a function".
+  scopedTo: (...args: unknown[]) => ({ __scopedTo: args }),
+  scopedById: (...args: unknown[]) => ({ __scopedById: args }),
   schema: {
     sequenceEnrollments: "sequenceEnrollments",
     sequenceEnrollmentSteps: "sequenceEnrollmentSteps",

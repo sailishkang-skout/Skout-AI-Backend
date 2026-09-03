@@ -1,6 +1,6 @@
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo, scopedById } from "@skout/db";
 import { HttpError } from "../utils/http.js";
 import { incrJourneyMetric } from "./journey-metrics.js";
 
@@ -11,13 +11,13 @@ export async function listDecisionViews(db: Db, workspaceId: string, status?: st
     ? await db
         .select()
         .from(decisionViews)
-        .where(and(eq(decisionViews.workspaceId, workspaceId), eq(decisionViews.status, status)))
+        .where(scopedTo(decisionViews, workspaceId, eq(decisionViews.status, status)))
         .orderBy(desc(decisionViews.createdAt))
         .limit(50)
     : await db
         .select()
         .from(decisionViews)
-        .where(eq(decisionViews.workspaceId, workspaceId))
+        .where(scopedTo(decisionViews, workspaceId))
         .orderBy(desc(decisionViews.createdAt))
         .limit(50);
   return rows;
@@ -27,7 +27,7 @@ export async function getDecisionView(db: Db, workspaceId: string, id: string) {
   const [row] = await db
     .select()
     .from(decisionViews)
-    .where(and(eq(decisionViews.id, id), eq(decisionViews.workspaceId, workspaceId)))
+    .where(scopedById(decisionViews, workspaceId, id))
     .limit(1);
   if (!row) throw new HttpError("Decision not found", 404);
   return row;
@@ -47,11 +47,7 @@ export async function createDecisionFromNba(
     .select()
     .from(nextBestActionSuggestions)
     .where(
-      and(
-        eq(nextBestActionSuggestions.workspaceId, opts.workspaceId),
-        eq(nextBestActionSuggestions.entityType, opts.entityType),
-        eq(nextBestActionSuggestions.entityId, opts.entityId)
-      )
+      scopedTo(nextBestActionSuggestions, opts.workspaceId, eq(nextBestActionSuggestions.entityType, opts.entityType), eq(nextBestActionSuggestions.entityId, opts.entityId))
     )
     .orderBy(desc(nextBestActionSuggestions.createdAt))
     .limit(1);
@@ -93,7 +89,7 @@ export async function decideView(
   const [row] = await db
     .update(decisionViews)
     .set({ status: choice === "decided" ? "decided" : "dismissed", decidedAt: new Date(), updatedAt: new Date() })
-    .where(and(eq(decisionViews.id, id), eq(decisionViews.workspaceId, workspaceId)))
+    .where(scopedById(decisionViews, workspaceId, id))
     .returning();
   if (!row) throw new HttpError("Decision not found", 404);
   return row;
@@ -134,7 +130,7 @@ export async function getWorkflowRun(db: Db, workspaceId: string, id: string) {
   const [row] = await db
     .select()
     .from(workflowRuns)
-    .where(and(eq(workflowRuns.id, id), eq(workflowRuns.workspaceId, workspaceId)))
+    .where(scopedById(workflowRuns, workspaceId, id))
     .limit(1);
   if (!row) throw new HttpError("Workflow run not found", 404);
 
@@ -156,7 +152,7 @@ export async function completeWorkflowRun(
   const [row] = await db
     .update(workflowRuns)
     .set({ status, errorMessage, completedAt: new Date() })
-    .where(and(eq(workflowRuns.id, id), eq(workflowRuns.workspaceId, workspaceId)))
+    .where(scopedById(workflowRuns, workspaceId, id))
     .returning();
   if (!row) throw new HttpError("Workflow run not found", 404);
   return row;
@@ -166,7 +162,7 @@ export async function listWorkflowRuns(db: Db, workspaceId: string) {
   return db
     .select()
     .from(workflowRuns)
-    .where(eq(workflowRuns.workspaceId, workspaceId))
+    .where(scopedTo(workflowRuns, workspaceId))
     .orderBy(desc(workflowRuns.createdAt))
     .limit(50);
 }

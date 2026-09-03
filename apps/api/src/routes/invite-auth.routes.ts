@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { and, eq, gt } from "drizzle-orm";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import { generateOtp, hashOtp, verifyOtp } from "../utils/otp.js";
 import { sendMail, buildOtpEmail } from "../services/mail.service.js";
 import { errorResponse, HttpError } from "../utils/http.js";
@@ -137,10 +137,7 @@ export async function inviteAuthRoutes(app: FastifyInstance) {
         .select({ userId: schema.workspaceMembers.userId })
         .from(schema.workspaceMembers)
         .where(
-          and(
-            eq(schema.workspaceMembers.workspaceId, invite.workspaceId),
-            eq(schema.workspaceMembers.userId, userId)
-          )
+          scopedTo(schema.workspaceMembers, invite.workspaceId, eq(schema.workspaceMembers.userId, userId))
         )
         .limit(1);
 

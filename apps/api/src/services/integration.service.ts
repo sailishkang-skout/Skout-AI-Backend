@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
@@ -70,7 +70,7 @@ export class IntegrationService {
       ? await this.db
           .select()
           .from(workspaceIntegrations)
-          .where(eq(workspaceIntegrations.workspaceId, workspaceId))
+          .where(scopedTo(workspaceIntegrations, workspaceId))
       : [];
 
     const byProvider = new Map(rows.map((r) => [r.provider, r]));
@@ -179,10 +179,7 @@ export class IntegrationService {
     await this.db
       .delete(workspaceIntegrations)
       .where(
-        and(
-          eq(workspaceIntegrations.workspaceId, workspaceId),
-          eq(workspaceIntegrations.provider, provider)
-        )
+        scopedTo(workspaceIntegrations, workspaceId, eq(workspaceIntegrations.provider, provider))
       );
     log.info("integration removed", { workspaceId, provider });
   }
@@ -225,10 +222,7 @@ export class IntegrationService {
         .update(workspaceIntegrations)
         .set({ lastValidatedAt: new Date(), status: "active", updatedAt: new Date() })
         .where(
-          and(
-            eq(workspaceIntegrations.workspaceId, workspaceId),
-            eq(workspaceIntegrations.provider, provider)
-          )
+          scopedTo(workspaceIntegrations, workspaceId, eq(workspaceIntegrations.provider, provider))
         );
     }
 
@@ -241,7 +235,7 @@ export class IntegrationService {
     const rows = await this.db
       .select()
       .from(workspaceIntegrations)
-      .where(eq(workspaceIntegrations.workspaceId, workspaceId));
+      .where(scopedTo(workspaceIntegrations, workspaceId));
 
     const keys: Partial<Record<IntegrationProviderId, string>> = {};
     for (const row of rows) {
@@ -265,10 +259,7 @@ export class IntegrationService {
       .select()
       .from(workspaceIntegrations)
       .where(
-        and(
-          eq(workspaceIntegrations.workspaceId, workspaceId),
-          eq(workspaceIntegrations.provider, "unipile")
-        )
+        scopedTo(workspaceIntegrations, workspaceId, eq(workspaceIntegrations.provider, "unipile"))
       )
       .limit(1);
     if (!row) return null;
@@ -311,10 +302,7 @@ export class IntegrationService {
       .select()
       .from(workspaceIntegrations)
       .where(
-        and(
-          eq(workspaceIntegrations.workspaceId, workspaceId),
-          eq(workspaceIntegrations.provider, provider)
-        )
+        scopedTo(workspaceIntegrations, workspaceId, eq(workspaceIntegrations.provider, provider))
       )
       .limit(1);
     if (!row) return null;

@@ -1,6 +1,6 @@
 import { and, asc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo, scopedById } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import { claimNext, recordResult, buildIdempotencyKey } from "@skout/shared";
 import { HttpError } from "../utils/http.js";
@@ -102,7 +102,7 @@ export async function retryFailedSteps(db: Db, workspaceId: string, runId: strin
   const [run] = await db
     .select()
     .from(automationRuns)
-    .where(and(eq(automationRuns.id, runId), eq(automationRuns.workspaceId, workspaceId)))
+    .where(scopedById(automationRuns, workspaceId, runId))
     .limit(1);
   if (!run) throw new HttpError("automation_run_not_found", 404);
   if (run.status !== "failed") throw new HttpError("automation_run_not_failed", 422);
@@ -129,7 +129,7 @@ export async function getRun(db: Db, workspaceId: string, runId: string) {
   const [run] = await db
     .select()
     .from(automationRuns)
-    .where(and(eq(automationRuns.id, runId), eq(automationRuns.workspaceId, workspaceId)))
+    .where(scopedById(automationRuns, workspaceId, runId))
     .limit(1);
   if (!run) throw new HttpError("automation_run_not_found", 404);
   const steps = await db.select().from(automationRunSteps).where(eq(automationRunSteps.automationRunId, runId)).orderBy(asc(automationRunSteps.createdAt));
@@ -140,6 +140,6 @@ export async function listRuns(db: Db, workspaceId: string, automationId: string
   return db
     .select()
     .from(automationRuns)
-    .where(and(eq(automationRuns.automationId, automationId), eq(automationRuns.workspaceId, workspaceId)))
+    .where(scopedTo(automationRuns, workspaceId, eq(automationRuns.automationId, automationId)))
     .orderBy(asc(automationRuns.createdAt));
 }

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
-import { and, eq } from "drizzle-orm";
-import { getLatestEvidenceByAttribute, recordEvidence, schema } from "@skout/db";
+import { eq } from "drizzle-orm";
+import { getLatestEvidenceByAttribute, recordEvidence, schema, scopedById } from "@skout/db";
 import { filterAutoFillablePatch, mergeAutoFillSources, asFieldSourcesMap } from "@skout/shared";
 import { errorResponse, HttpError } from "../utils/http.js";
 import {
@@ -165,7 +165,7 @@ export async function callRoutes(app: FastifyInstance) {
       const [contact] = await db()
         .select()
         .from(schema.contacts)
-        .where(and(eq(schema.contacts.id, contactId), eq(schema.contacts.workspaceId, workspaceId)))
+        .where(scopedById(schema.contacts, workspaceId, contactId))
         .limit(1);
       if (contact) {
         const existingSources = asFieldSourcesMap(contact.fieldSources);
@@ -201,7 +201,7 @@ export async function callRoutes(app: FastifyInstance) {
           const [company] = await db()
             .select()
             .from(schema.companies)
-            .where(and(eq(schema.companies.id, contact.companyId), eq(schema.companies.workspaceId, workspaceId)))
+            .where(scopedById(schema.companies, workspaceId, contact.companyId))
             .limit(1);
           if (company) {
             const existingCompanySources = asFieldSourcesMap(company.fieldSources);
@@ -256,7 +256,7 @@ export async function callRoutes(app: FastifyInstance) {
     const [callRow] = await db()
       .update(schema.calls)
       .set({ notes, updatedAt: new Date() })
-      .where(and(eq(schema.calls.id, request.params.id), eq(schema.calls.workspaceId, request.workspaceId)))
+      .where(scopedById(schema.calls, request.workspaceId, request.params.id))
       .returning();
     if (!callRow) return reply.code(404).send(errorResponse("Call not found", 404));
 

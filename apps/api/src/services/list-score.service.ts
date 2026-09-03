@@ -1,7 +1,7 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { createLogger } from "@skout/observability";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedById } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import { isRedisAvailable } from "../lib/redis.js";
@@ -69,7 +69,7 @@ export class ListScoreService {
     const [job] = await this.db
       .select()
       .from(asyncJobs)
-      .where(and(eq(asyncJobs.id, jobId), eq(asyncJobs.workspaceId, workspaceId)));
+      .where(scopedById(asyncJobs, workspaceId, jobId));
     if (!job) throw new HttpError("job_not_found", 404);
     return {
       id: job.id,

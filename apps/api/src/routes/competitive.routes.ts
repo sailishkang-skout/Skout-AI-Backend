@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { eq, desc } from "drizzle-orm";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import { errorResponse } from "../utils/http.js";
 import { REGIONAL_TAM_MIN_DEALS, getRegionalTamGate } from "../services/regional-tam-gate.service.js";
 import { buildCompetitivePositioningPolicy } from "../services/competitive-positioning.service.js";
@@ -33,13 +33,13 @@ export async function competitiveRoutes(app: FastifyInstance) {
     const [owner] = await app.db
       .select()
       .from(competitiveWinLossOwners)
-      .where(eq(competitiveWinLossOwners.workspaceId, request.workspaceId))
+      .where(scopedTo(competitiveWinLossOwners, request.workspaceId))
       .limit(1);
 
     const deals = await app.db
       .select()
       .from(competitiveWinLossDeals)
-      .where(eq(competitiveWinLossDeals.workspaceId, request.workspaceId))
+      .where(scopedTo(competitiveWinLossDeals, request.workspaceId))
       .orderBy(desc(competitiveWinLossDeals.createdAt));
 
     const dealsReviewed = deals.length;
@@ -112,7 +112,7 @@ export async function competitiveRoutes(app: FastifyInstance) {
     const deals = await app.db
       .select({ id: competitiveWinLossDeals.id })
       .from(competitiveWinLossDeals)
-      .where(eq(competitiveWinLossDeals.workspaceId, request.workspaceId));
+      .where(scopedTo(competitiveWinLossDeals, request.workspaceId));
 
     return reply.code(201).send({
       data: {
@@ -152,7 +152,7 @@ export async function competitiveRoutes(app: FastifyInstance) {
     const count = await app.db
       .select({ id: competitiveWinLossDeals.id })
       .from(competitiveWinLossDeals)
-      .where(eq(competitiveWinLossDeals.workspaceId, request.workspaceId));
+      .where(scopedTo(competitiveWinLossDeals, request.workspaceId));
 
     const gate = await getRegionalTamGate(app.db, request.workspaceId);
 

@@ -1,6 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 
 const { dexterTriggers } = schema;
 
@@ -23,11 +23,7 @@ export async function matchTriggers(
     .select()
     .from(dexterTriggers)
     .where(
-      and(
-        eq(dexterTriggers.workspaceId, workspaceId),
-        eq(dexterTriggers.eventType, eventType),
-        eq(dexterTriggers.enabled, true)
-      )
+      scopedTo(dexterTriggers, workspaceId, eq(dexterTriggers.eventType, eventType), eq(dexterTriggers.enabled, true))
     );
   return rows as DexterTrigger[];
 }

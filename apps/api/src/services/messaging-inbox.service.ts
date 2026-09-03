@@ -1,6 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import { createIntegrationService } from "./integration.service.js";
@@ -178,17 +178,18 @@ export class MessagingInboxService {
     channel: MessagingChannel,
     accountRowId?: string
   ) {
-    const conditions = [
-      eq(linkedinAccounts.workspaceId, workspaceId),
-      eq(linkedinAccounts.channel, channel),
-      eq(linkedinAccounts.status, "active"),
-    ];
-    if (accountRowId) conditions.push(eq(linkedinAccounts.id, accountRowId));
-
     const [row] = await this.db
       .select()
       .from(linkedinAccounts)
-      .where(and(...conditions))
+      .where(
+        scopedTo(
+          linkedinAccounts,
+          workspaceId,
+          eq(linkedinAccounts.channel, channel),
+          eq(linkedinAccounts.status, "active"),
+          accountRowId ? eq(linkedinAccounts.id, accountRowId) : undefined
+        )
+      )
       .limit(1);
     if (!row) {
       throw new HttpError(
@@ -208,11 +209,7 @@ export class MessagingInboxService {
       .select()
       .from(linkedinAccounts)
       .where(
-        and(
-          eq(linkedinAccounts.workspaceId, workspaceId),
-          eq(linkedinAccounts.unipileAccountId, unipileAccountId),
-          eq(linkedinAccounts.channel, channel)
-        )
+        scopedTo(linkedinAccounts, workspaceId, eq(linkedinAccounts.unipileAccountId, unipileAccountId), eq(linkedinAccounts.channel, channel))
       )
       .limit(1);
     if (!account) throw new HttpError(`${channel}_account_not_found`, 404);
@@ -231,7 +228,7 @@ export class MessagingInboxService {
       })
       .from(linkedinAccounts)
       .where(
-        and(eq(linkedinAccounts.workspaceId, workspaceId), eq(linkedinAccounts.channel, channel))
+        scopedTo(linkedinAccounts, workspaceId, eq(linkedinAccounts.channel, channel))
       );
   }
 

@@ -1,6 +1,6 @@
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
-import { eq, and } from "drizzle-orm";
+import { schema, scopedTo } from "@skout/db";
+import { eq } from "drizzle-orm";
 import type { Env } from "../config/env.js";
 import { buildEnrichmentService, type ProspectSnapshot } from "./enrichment/index.js";
 import { buildListService } from "./list.service.js";
@@ -59,7 +59,7 @@ export async function seedDemoData(
   const [existing] = await db
     .select({ id: schema.lists.id })
     .from(schema.lists)
-    .where(and(eq(schema.lists.workspaceId, workspaceId), eq(schema.lists.name, DEMO_LIST_NAME)))
+    .where(scopedTo(schema.lists, workspaceId, eq(schema.lists.name, DEMO_LIST_NAME)))
     .limit(1);
   if (existing) {
     return { listId: existing.id, added: 0, alreadySeeded: true };

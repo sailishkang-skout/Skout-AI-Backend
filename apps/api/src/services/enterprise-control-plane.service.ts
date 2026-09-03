@@ -1,6 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { IntegrationService } from "./integration.service.js";
 import { buildIncidentsService } from "./incidents.service.js";
@@ -18,7 +18,7 @@ export async function getEnterpriseControlPlane(db: Db, config: Env, workspaceId
     db
       .select()
       .from(auditLogs)
-      .where(eq(auditLogs.workspaceId, workspaceId))
+      .where(scopedTo(auditLogs, workspaceId))
       .orderBy(desc(auditLogs.createdAt))
       .limit(40),
     integrationSvc.list(workspaceId),

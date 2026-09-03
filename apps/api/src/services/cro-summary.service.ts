@@ -1,6 +1,6 @@
-import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
+import { desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import { buildDemoCorpus, searchProspects } from "@skout/opensearch";
 import type { Env } from "../config/env.js";
 import { openSearchConfigFromEnv } from "../lib/opensearch-config.js";
@@ -43,22 +43,17 @@ const STALE_DEAL_DAYS = 14;
  */
 export async function computeCroSummary(db: Db, workspaceId: string) {
   const [companyRows, contactRows, openDealRows, staleDealRows, repActivityRows, overdueTaskRows] = await Promise.all([
-    db.select({ id: companies.id }).from(companies).where(and(eq(companies.workspaceId, workspaceId), isNull(companies.deletedAt))),
-    db.select({ id: contacts.id }).from(contacts).where(and(eq(contacts.workspaceId, workspaceId), isNull(contacts.deletedAt))),
+    db.select({ id: companies.id }).from(companies).where(scopedTo(companies, workspaceId, isNull(companies.deletedAt))),
+    db.select({ id: contacts.id }).from(contacts).where(scopedTo(contacts, workspaceId, isNull(contacts.deletedAt))),
     db
       .select({ amount: deals.amount, currency: deals.currency })
       .from(deals)
-      .where(and(eq(deals.workspaceId, workspaceId), eq(deals.status, "open"), isNull(deals.deletedAt))),
+      .where(scopedTo(deals, workspaceId, eq(deals.status, "open"), isNull(deals.deletedAt))),
     db
       .select({ id: deals.id, name: deals.name, amount: deals.amount, currency: deals.currency, updatedAt: deals.updatedAt })
       .from(deals)
       .where(
-        and(
-          eq(deals.workspaceId, workspaceId),
-          eq(deals.status, "open"),
-          isNull(deals.deletedAt),
-          lt(deals.updatedAt, sql`now() - interval '${sql.raw(String(STALE_DEAL_DAYS))} days'`)
-        )
+        scopedTo(deals, workspaceId, eq(deals.status, "open"), isNull(deals.deletedAt), lt(deals.updatedAt, sql`now() - interval '${sql.raw(String(STALE_DEAL_DAYS))} days'`))
       )
       .orderBy(deals.updatedAt)
       .limit(10),
@@ -69,7 +64,7 @@ export async function computeCroSummary(db: Db, workspaceId: string) {
       })
       .from(activities)
       .leftJoin(users, eq(users.id, activities.ownerId))
-      .where(and(eq(activities.workspaceId, workspaceId), sql`${activities.occurredAt} >= now() - interval '7 days'`))
+      .where(scopedTo(activities, workspaceId, sql`${activities.occurredAt} >= now() - interval '7 days'`))
       .groupBy(users.fullName, users.email)
       .orderBy(desc(sql`count(*)`))
       .limit(10),
@@ -77,12 +72,7 @@ export async function computeCroSummary(db: Db, workspaceId: string) {
       .select({ id: tasks.id })
       .from(tasks)
       .where(
-        and(
-          eq(tasks.workspaceId, workspaceId),
-          eq(tasks.status, "open"),
-          isNull(tasks.deletedAt),
-          sql`${tasks.dueDate} < now()`
-        )
+        scopedTo(tasks, workspaceId, eq(tasks.status, "open"), isNull(tasks.deletedAt), sql`${tasks.dueDate} < now()`)
       ),
   ]);
 
@@ -149,18 +139,18 @@ export interface CroRollup {
  */
 export async function computeCroRollup(db: Db, config: Env, workspaceId: string): Promise<CroRollup> {
   const [activatedRows, enrichedRows, contactedRows, repliedRows, openDealRows] = await Promise.all([
-    db.selectDistinct({ prospectId: prospectActivations.prospectId }).from(prospectActivations).where(eq(prospectActivations.workspaceId, workspaceId)),
-    db.selectDistinct({ prospectId: enrichmentResults.prospectId }).from(enrichmentResults).where(eq(enrichmentResults.workspaceId, workspaceId)),
-    db.selectDistinct({ prospectId: sequenceEnrollments.prospectId }).from(sequenceEnrollments).where(eq(sequenceEnrollments.workspaceId, workspaceId)),
+    db.selectDistinct({ prospectId: prospectActivations.prospectId }).from(prospectActivations).where(scopedTo(prospectActivations, workspaceId)),
+    db.selectDistinct({ prospectId: enrichmentResults.prospectId }).from(enrichmentResults).where(scopedTo(enrichmentResults, workspaceId)),
+    db.selectDistinct({ prospectId: sequenceEnrollments.prospectId }).from(sequenceEnrollments).where(scopedTo(sequenceEnrollments, workspaceId)),
     db
       .selectDistinct({ prospectId: inboxThreads.prospectId })
       .from(inboxThreads)
       .innerJoin(inboxMessages, eq(inboxMessages.threadId, inboxThreads.id))
-      .where(and(eq(inboxThreads.workspaceId, workspaceId), eq(inboxMessages.direction, "inbound"))),
+      .where(scopedTo(inboxThreads, workspaceId, eq(inboxMessages.direction, "inbound"))),
     db
       .select({ id: deals.id, companyId: deals.companyId, amount: deals.amount, currency: deals.currency })
       .from(deals)
-      .where(and(eq(deals.workspaceId, workspaceId), eq(deals.status, "open"), isNull(deals.deletedAt))),
+      .where(scopedTo(deals, workspaceId, eq(deals.status, "open"), isNull(deals.deletedAt))),
   ]);
 
   let tamTotal = 0;
@@ -222,7 +212,7 @@ export async function computeCroRollup(db: Db, config: Env, workspaceId: string)
       const [row] = await db
         .select({ lastActivity: sql<Date | null>`max(${activities.occurredAt})` })
         .from(activities)
-        .where(and(eq(activities.workspaceId, workspaceId), inArray(activities.entityId, entityIds)));
+        .where(scopedTo(activities, workspaceId, inArray(activities.entityId, entityIds)));
       const lastActivity = row?.lastActivity ? new Date(row.lastActivity) : null;
       const daysSinceLastActivity = lastActivity ? Math.floor((Date.now() - lastActivity.getTime()) / (1000 * 60 * 60 * 24)) : null;
       const company = companyRows.find((c) => c.id === companyId);

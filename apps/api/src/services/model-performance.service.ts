@@ -1,6 +1,6 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { computeCroRollup, type CroRollup } from "./cro-summary.service.js";
 
@@ -46,7 +46,7 @@ async function acceptanceStatsFor(db: Db, workspaceId: string, surface: string):
   const rows = await db
     .select({ outcome: modelDecisionEvents.outcome, count: sql<number>`count(*)` })
     .from(modelDecisionEvents)
-    .where(and(eq(modelDecisionEvents.workspaceId, workspaceId), eq(modelDecisionEvents.surface, surface)))
+    .where(scopedTo(modelDecisionEvents, workspaceId, eq(modelDecisionEvents.surface, surface)))
     .groupBy(modelDecisionEvents.outcome);
 
   const accepted = Number(rows.find((r) => r.outcome === "accepted")?.count ?? 0);
@@ -81,11 +81,7 @@ async function repliedProspectIds(db: Db, workspaceId: string, prospectIds: stri
     .from(inboxThreads)
     .innerJoin(inboxMessages, eq(inboxMessages.threadId, inboxThreads.id))
     .where(
-      and(
-        eq(inboxThreads.workspaceId, workspaceId),
-        eq(inboxMessages.direction, "inbound"),
-        inArray(inboxThreads.prospectId, prospectIds)
-      )
+      scopedTo(inboxThreads, workspaceId, eq(inboxMessages.direction, "inbound"), inArray(inboxThreads.prospectId, prospectIds))
     );
   return new Set(rows.map((r) => r.prospectId).filter((id): id is string => id != null));
 }
@@ -112,7 +108,7 @@ export async function computeCalibration(db: Db, workspaceId: string): Promise<C
   const scored = await db
     .select({ prospectId: prospectScores.prospectId, score: prospectScores.score })
     .from(prospectScores)
-    .where(eq(prospectScores.workspaceId, workspaceId));
+    .where(scopedTo(prospectScores, workspaceId));
 
   const replied = await repliedProspectIds(db, workspaceId, scored.map((s) => s.prospectId));
 
@@ -142,7 +138,7 @@ export async function computePrecision(db: Db, workspaceId: string): Promise<Pre
   const ready = await db
     .select({ prospectId: prospectScores.prospectId })
     .from(prospectScores)
-    .where(and(eq(prospectScores.workspaceId, workspaceId), eq(prospectScores.priority, "ready")));
+    .where(scopedTo(prospectScores, workspaceId, eq(prospectScores.priority, "ready")));
 
   const replied = await repliedProspectIds(db, workspaceId, ready.map((r) => r.prospectId));
   const readyAndReplied = ready.filter((r) => replied.has(r.prospectId)).length;
@@ -167,7 +163,7 @@ export async function computeFairnessDrift(db: Db, workspaceId: string): Promise
   const scored = await db
     .select({ prospectId: prospectScores.prospectId, score: prospectScores.score, scoredAt: prospectScores.scoredAt })
     .from(prospectScores)
-    .where(eq(prospectScores.workspaceId, workspaceId))
+    .where(scopedTo(prospectScores, workspaceId))
     .orderBy(prospectScores.scoredAt);
 
   const mid = Math.floor(scored.length / 2);
@@ -181,10 +177,7 @@ export async function computeFairnessDrift(db: Db, workspaceId: string): Promise
     .select({ prospectId: prospectActivations.prospectId, snapshot: prospectActivations.snapshot })
     .from(prospectActivations)
     .where(
-      and(
-        eq(prospectActivations.workspaceId, workspaceId),
-        inArray(prospectActivations.prospectId, scored.map((s) => s.prospectId))
-      )
+      scopedTo(prospectActivations, workspaceId, inArray(prospectActivations.prospectId, scored.map((s) => s.prospectId)))
     );
   const industryByProspect = new Map<string, string>();
   for (const a of activations) {

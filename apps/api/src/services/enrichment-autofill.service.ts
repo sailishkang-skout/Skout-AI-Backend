@@ -1,6 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema, getLatestEvidenceByAttribute } from "@skout/db";
+import { schema, getLatestEvidenceByAttribute, scopedTo, scopedById } from "@skout/db";
 import { filterAutoFillablePatch, mergeAutoFillSources, asFieldSourcesMap, DEFAULT_AUTO_FILL_CONFIDENCE } from "@skout/shared";
 import { createLogger } from "@skout/observability";
 import { recordEvidence } from "./evidence.service.js";
@@ -62,7 +62,7 @@ export async function applyEnrichmentAutoFill(
           const [row] = await db
             .select()
             .from(contacts)
-            .where(and(eq(contacts.id, String(remote.id)), eq(contacts.workspaceId, workspaceId)))
+            .where(scopedById(contacts, workspaceId, String(remote.id)))
             .limit(1);
           contact = row ?? null;
           log.info("enrichment autofill contact resolved via CRM internal API", {
@@ -78,7 +78,7 @@ export async function applyEnrichmentAutoFill(
       const [row] = await db
         .select()
         .from(contacts)
-        .where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.sourceProspectId, snapshot.prospectId)))
+        .where(scopedTo(contacts, workspaceId, eq(contacts.sourceProspectId, snapshot.prospectId)))
         .limit(1);
       contact = row ?? null;
     }
@@ -128,7 +128,7 @@ export async function applyEnrichmentAutoFill(
     const [company] = await db
       .select()
       .from(companies)
-      .where(and(eq(companies.workspaceId, workspaceId), eq(companies.sourceProspectCompanyId, snapshot.companyId)))
+      .where(scopedTo(companies, workspaceId, eq(companies.sourceProspectCompanyId, snapshot.companyId)))
       .limit(1);
     if (company) {
       const existingSources = asFieldSourcesMap(company.fieldSources);

@@ -1,6 +1,6 @@
 import { and, asc, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo, scopedById } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
@@ -142,11 +142,7 @@ export class SequenceService {
     return this.db
       .select()
       .from(sequences)
-      .where(
-        status
-          ? and(eq(sequences.workspaceId, workspaceId), eq(sequences.status, status))
-          : eq(sequences.workspaceId, workspaceId)
-      )
+      .where(scopedTo(sequences, workspaceId, status ? eq(sequences.status, status) : undefined))
       .orderBy(sequences.createdAt);
   }
 
@@ -261,7 +257,7 @@ export class SequenceService {
     const recent = await this.db
       .select({ id: sequences.id, name: sequences.name })
       .from(sequences)
-      .where(eq(sequences.workspaceId, workspaceId))
+      .where(scopedTo(sequences, workspaceId))
       .orderBy(desc(sequences.createdAt))
       .limit(limit);
     if (recent.length === 0) return [];
@@ -289,7 +285,7 @@ export class SequenceService {
     const [seq] = await this.db
       .select()
       .from(sequences)
-      .where(and(eq(sequences.id, id), eq(sequences.workspaceId, workspaceId)));
+      .where(scopedById(sequences, workspaceId, id));
     if (!seq) return null;
 
     const steps = await this.db
@@ -324,7 +320,7 @@ export class SequenceService {
     const [existing] = await this.db
       .select()
       .from(sequences)
-      .where(and(eq(sequences.id, id), eq(sequences.workspaceId, workspaceId)));
+      .where(scopedById(sequences, workspaceId, id));
     if (!existing) return null;
 
     if (patch.status) {
@@ -381,7 +377,7 @@ export class SequenceService {
         ...(patch.mode !== undefined ? { mode: patch.mode } : {}),
         updatedAt: new Date(),
       })
-      .where(and(eq(sequences.id, id), eq(sequences.workspaceId, workspaceId)))
+      .where(scopedById(sequences, workspaceId, id))
       .returning();
     if (patch.status === "active" && existing.status === "draft" && updated) {
       await this.publishVersion(workspaceId, id);
@@ -400,7 +396,7 @@ export class SequenceService {
     const [existing] = await this.db
       .select()
       .from(sequences)
-      .where(and(eq(sequences.id, id), eq(sequences.workspaceId, workspaceId)));
+      .where(scopedById(sequences, workspaceId, id));
     if (!existing) return null;
     if (existing.mode !== "C") {
       throw new HttpError(`Only Mode C sequences require approval (this sequence is mode "${existing.mode}")`, 422);
@@ -409,7 +405,7 @@ export class SequenceService {
     const [updated] = await this.db
       .update(sequences)
       .set({ modeCApprovedAt: new Date(), modeCApprovedBy: approvedBy, updatedAt: new Date() })
-      .where(and(eq(sequences.id, id), eq(sequences.workspaceId, workspaceId)))
+      .where(scopedById(sequences, workspaceId, id))
       .returning();
     log.info("sequence mode C approved", { workspaceId, sequenceId: id, approvedBy });
     return updated!;
@@ -436,7 +432,7 @@ export class SequenceService {
     await this.db
       .update(sequences)
       .set({ currentVersion: nextVersion, updatedAt: new Date() })
-      .where(and(eq(sequences.id, sequenceId), eq(sequences.workspaceId, workspaceId)));
+      .where(scopedById(sequences, workspaceId, sequenceId));
     log.info("sequence version published", { workspaceId, sequenceId, version: nextVersion });
     return row!;
   }
@@ -445,7 +441,7 @@ export class SequenceService {
     const [seq] = await this.db
       .select({ id: sequences.id })
       .from(sequences)
-      .where(and(eq(sequences.id, sequenceId), eq(sequences.workspaceId, workspaceId)));
+      .where(scopedById(sequences, workspaceId, sequenceId));
     if (!seq) return null;
     return this.db
       .select({
@@ -463,7 +459,7 @@ export class SequenceService {
     const [seq] = await this.db
       .select({ id: sequences.id })
       .from(sequences)
-      .where(and(eq(sequences.id, sequenceId), eq(sequences.workspaceId, workspaceId)));
+      .where(scopedById(sequences, workspaceId, sequenceId));
     if (!seq) return null;
     const limit = Math.min(Math.max(opts?.limit ?? 100, 1), 500);
     const rows = await this.db
@@ -482,7 +478,7 @@ export class SequenceService {
   async deleteSequence(workspaceId: string, id: string) {
     await this.db
       .delete(sequences)
-      .where(and(eq(sequences.id, id), eq(sequences.workspaceId, workspaceId)));
+      .where(scopedById(sequences, workspaceId, id));
     log.info("sequence deleted", { workspaceId, sequenceId: id });
   }
 
@@ -490,7 +486,7 @@ export class SequenceService {
     const [seq] = await this.db
       .select()
       .from(sequences)
-      .where(and(eq(sequences.id, sequenceId), eq(sequences.workspaceId, workspaceId)));
+      .where(scopedById(sequences, workspaceId, sequenceId));
     if (!seq) return null;
 
     if (input.bodyTemplate) {
@@ -544,7 +540,7 @@ export class SequenceService {
     const [seq] = await this.db
       .select()
       .from(sequences)
-      .where(and(eq(sequences.id, sequenceId), eq(sequences.workspaceId, workspaceId)));
+      .where(scopedById(sequences, workspaceId, sequenceId));
     if (!seq) return null;
 
     if (input.bodyTemplate) {
@@ -582,7 +578,7 @@ export class SequenceService {
     const [seq] = await this.db
       .select()
       .from(sequences)
-      .where(and(eq(sequences.id, sequenceId), eq(sequences.workspaceId, workspaceId)));
+      .where(scopedById(sequences, workspaceId, sequenceId));
     if (!seq) return false;
 
     await this.db
@@ -613,7 +609,7 @@ export class SequenceService {
     const [seq] = await this.db
       .select()
       .from(sequences)
-      .where(and(eq(sequences.id, sequenceId), eq(sequences.workspaceId, workspaceId)));
+      .where(scopedById(sequences, workspaceId, sequenceId));
     if (!seq) return null;
 
     const existing = await this.db
@@ -688,7 +684,7 @@ export class SequenceService {
     const [seq] = await this.db
       .select()
       .from(sequences)
-      .where(and(eq(sequences.id, sequenceId), eq(sequences.workspaceId, workspaceId)));
+      .where(scopedById(sequences, workspaceId, sequenceId));
     if (!seq) throw new HttpError("sequence_not_found", 404);
     if (seq.status !== "active") {
       throw new HttpError(`Cannot enroll into a ${seq.status} sequence`, 422, {
@@ -842,7 +838,7 @@ export class SequenceService {
     const [seq] = await this.db
       .select()
       .from(sequences)
-      .where(and(eq(sequences.id, sequenceId), eq(sequences.workspaceId, workspaceId)));
+      .where(scopedById(sequences, workspaceId, sequenceId));
     if (!seq) return null;
 
     const steps = await this.db
@@ -854,7 +850,7 @@ export class SequenceService {
     const enrollments = await this.db
       .select({ id: sequenceEnrollments.id, status: sequenceEnrollments.status })
       .from(sequenceEnrollments)
-      .where(and(eq(sequenceEnrollments.sequenceId, sequenceId), eq(sequenceEnrollments.workspaceId, workspaceId)));
+      .where(scopedTo(sequenceEnrollments, workspaceId, eq(sequenceEnrollments.sequenceId, sequenceId)));
 
     const enrollmentSummary = {
       total: enrollments.length,
@@ -970,11 +966,7 @@ export class SequenceService {
       .update(sequenceEnrollments)
       .set({ status: "cancelled", completedAt: new Date(), stopReason: "USER_STOPPED" })
       .where(
-        and(
-          eq(sequenceEnrollments.sequenceId, sequenceId),
-          eq(sequenceEnrollments.workspaceId, workspaceId),
-          eq(sequenceEnrollments.prospectId, prospectId)
-        )
+        scopedTo(sequenceEnrollments, workspaceId, eq(sequenceEnrollments.sequenceId, sequenceId), eq(sequenceEnrollments.prospectId, prospectId))
       )
       .returning({ id: sequenceEnrollments.id, sequenceVersionId: sequenceEnrollments.sequenceVersionId });
     if (updated) {
@@ -1002,10 +994,7 @@ export class SequenceService {
       })
       .from(sequenceEnrollments)
       .where(
-        and(
-          eq(sequenceEnrollments.workspaceId, workspaceId),
-          eq(sequenceEnrollments.prospectId, prospectId)
-        )
+        scopedTo(sequenceEnrollments, workspaceId, eq(sequenceEnrollments.prospectId, prospectId))
       )
       .orderBy(desc(sequenceEnrollments.enrolledAt));
   }
@@ -1015,7 +1004,7 @@ export class SequenceService {
     const [seq] = await this.db
       .select()
       .from(sequences)
-      .where(and(eq(sequences.id, sequenceId), eq(sequences.workspaceId, workspaceId)));
+      .where(scopedById(sequences, workspaceId, sequenceId));
     if (!seq) return null;
 
     const rows = await this.db
@@ -1037,12 +1026,9 @@ export class SequenceService {
       .from(sequenceEnrollments)
       .leftJoin(
         prospectActivations,
-        and(
-          eq(prospectActivations.workspaceId, sequenceEnrollments.workspaceId),
-          eq(prospectActivations.prospectId, sequenceEnrollments.prospectId)
-        )
+        scopedTo(prospectActivations, sequenceEnrollments.workspaceId, eq(prospectActivations.prospectId, sequenceEnrollments.prospectId))
       )
-      .where(and(eq(sequenceEnrollments.sequenceId, sequenceId), eq(sequenceEnrollments.workspaceId, workspaceId)))
+      .where(scopedTo(sequenceEnrollments, workspaceId, eq(sequenceEnrollments.sequenceId, sequenceId)))
       .orderBy(desc(sequenceEnrollments.enrolledAt));
 
     return rows;
@@ -1053,7 +1039,7 @@ export class SequenceService {
     const [seq] = await this.db
       .select()
       .from(sequences)
-      .where(and(eq(sequences.id, sequenceId), eq(sequences.workspaceId, workspaceId)));
+      .where(scopedById(sequences, workspaceId, sequenceId));
     if (!seq) return null;
 
     // Join via listMembers so we catch both list-enrolled AND member-selected enrollments
@@ -1068,12 +1054,9 @@ export class SequenceService {
       })
       .from(sequenceEnrollments)
       .innerJoin(listMembers, eq(listMembers.prospectId, sequenceEnrollments.prospectId))
-      .innerJoin(lists, and(eq(lists.id, listMembers.listId), eq(lists.workspaceId, workspaceId)))
+      .innerJoin(lists, scopedById(lists, workspaceId, listMembers.listId))
       .where(
-        and(
-          eq(sequenceEnrollments.sequenceId, sequenceId),
-          eq(sequenceEnrollments.workspaceId, workspaceId),
-        )
+        scopedTo(sequenceEnrollments, workspaceId, eq(sequenceEnrollments.sequenceId, sequenceId))
       )
       .groupBy(listMembers.listId, lists.name)
       .orderBy(sql`min(${sequenceEnrollments.enrolledAt}) desc`);
@@ -1093,7 +1076,7 @@ export class SequenceService {
     const [list] = await this.db
       .select({ id: lists.id })
       .from(lists)
-      .where(and(eq(lists.id, listId), eq(lists.workspaceId, workspaceId)));
+      .where(scopedById(lists, workspaceId, listId));
     if (!list) return null;
 
     // Collect all prospectIds in this list so we can match enrollments done via prospectIds too
@@ -1116,12 +1099,9 @@ export class SequenceService {
       .from(sequenceEnrollments)
       .leftJoin(sequences, eq(sequences.id, sequenceEnrollments.sequenceId))
       .where(
-        and(
-          eq(sequenceEnrollments.workspaceId, workspaceId),
-          memberIds.length > 0
+        scopedTo(sequenceEnrollments, workspaceId, memberIds.length > 0
             ? inArray(sequenceEnrollments.prospectId, memberIds)
-            : eq(sequenceEnrollments.listId, listId),
-        )
+            : eq(sequenceEnrollments.listId, listId))
       )
       .groupBy(sequenceEnrollments.sequenceId, sequences.name, sequences.status)
       .orderBy(sql`min(${sequenceEnrollments.enrolledAt}) desc`);
@@ -1183,7 +1163,7 @@ export class SequenceService {
     const rows = await this.db
       .select()
       .from(sequenceExperiments)
-      .where(eq(sequenceExperiments.workspaceId, workspaceId))
+      .where(scopedTo(sequenceExperiments, workspaceId))
       .orderBy(desc(sequenceExperiments.createdAt));
     return rows;
   }
@@ -1192,7 +1172,7 @@ export class SequenceService {
     const [row] = await this.db
       .select()
       .from(sequenceExperiments)
-      .where(and(eq(sequenceExperiments.id, id), eq(sequenceExperiments.workspaceId, workspaceId)));
+      .where(scopedById(sequenceExperiments, workspaceId, id));
     if (!row) return null;
     const [seqA] = await this.db.select({ id: sequences.id, name: sequences.name, status: sequences.status, mode: sequences.mode }).from(sequences).where(eq(sequences.id, row.sequenceAId));
     const [seqB] = await this.db.select({ id: sequences.id, name: sequences.name, status: sequences.status, mode: sequences.mode }).from(sequences).where(eq(sequences.id, row.sequenceBId));
@@ -1224,7 +1204,7 @@ export class SequenceService {
         ...(patch.status === "completed" || patch.status === "paused" ? { endedAt: new Date() } : {}),
         updatedAt: new Date(),
       })
-      .where(and(eq(sequenceExperiments.id, id), eq(sequenceExperiments.workspaceId, workspaceId)))
+      .where(scopedById(sequenceExperiments, workspaceId, id))
       .returning();
     return updated ?? null;
   }
@@ -1302,7 +1282,7 @@ export class SequenceService {
         status: sequenceEnrollments.status,
       })
       .from(sequenceEnrollments)
-      .where(and(eq(sequenceEnrollments.experimentId, experimentId), eq(sequenceEnrollments.workspaceId, workspaceId)));
+      .where(scopedTo(sequenceEnrollments, workspaceId, eq(sequenceEnrollments.experimentId, experimentId)));
 
     const empty = { enrolled: 0, active: 0, completed: 0, replied: 0, bounced: 0, stopped: 0 };
     const byVariant: Record<"A" | "B", typeof empty> = {

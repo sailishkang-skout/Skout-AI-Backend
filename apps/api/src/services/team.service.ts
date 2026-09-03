@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo, scopedById } from "@skout/db";
 import { createLogger } from "@skout/observability";
-import { and, count, eq, gt, isNull, ne } from "drizzle-orm";
+import { count, eq, gt, isNull, ne } from "drizzle-orm";
 import { HttpError } from "../utils/http.js";
 
 const log = createLogger("team.service");
@@ -55,10 +55,7 @@ async function syncFineGrainedMemberRole(
   await db
     .delete(schema.workspaceMemberRoles)
     .where(
-      and(
-        eq(schema.workspaceMemberRoles.workspaceId, workspaceId),
-        eq(schema.workspaceMemberRoles.userId, userId)
-      )
+      scopedTo(schema.workspaceMemberRoles, workspaceId, eq(schema.workspaceMemberRoles.userId, userId))
     );
 
   await db.insert(schema.workspaceMemberRoles).values({
@@ -82,7 +79,7 @@ export function createTeamService(db: Db) {
         })
         .from(schema.workspaceMembers)
         .innerJoin(schema.users, eq(schema.users.id, schema.workspaceMembers.userId))
-        .where(eq(schema.workspaceMembers.workspaceId, workspaceId));
+        .where(scopedTo(schema.workspaceMembers, workspaceId));
 
       return rows.map((r) => ({
         userId: r.userId,
@@ -99,11 +96,7 @@ export function createTeamService(db: Db) {
         .select()
         .from(schema.workspaceInvites)
         .where(
-          and(
-            eq(schema.workspaceInvites.workspaceId, workspaceId),
-            isNull(schema.workspaceInvites.acceptedAt),
-            gt(schema.workspaceInvites.expiresAt, now)
-          )
+          scopedTo(schema.workspaceInvites, workspaceId, isNull(schema.workspaceInvites.acceptedAt), gt(schema.workspaceInvites.expiresAt, now))
         );
 
       return rows.map((r) => ({
@@ -131,18 +124,14 @@ export function createTeamService(db: Db) {
       const [memberCount] = await db
         .select({ value: count() })
         .from(schema.workspaceMembers)
-        .where(eq(schema.workspaceMembers.workspaceId, workspaceId));
+        .where(scopedTo(schema.workspaceMembers, workspaceId));
 
       const now = new Date();
       const [pendingCount] = await db
         .select({ value: count() })
         .from(schema.workspaceInvites)
         .where(
-          and(
-            eq(schema.workspaceInvites.workspaceId, workspaceId),
-            isNull(schema.workspaceInvites.acceptedAt),
-            gt(schema.workspaceInvites.expiresAt, now)
-          )
+          scopedTo(schema.workspaceInvites, workspaceId, isNull(schema.workspaceInvites.acceptedAt), gt(schema.workspaceInvites.expiresAt, now))
         );
 
       const total = (memberCount?.value ?? 0) + (pendingCount?.value ?? 0);
@@ -159,10 +148,7 @@ export function createTeamService(db: Db) {
         .from(schema.workspaceMembers)
         .innerJoin(schema.users, eq(schema.users.id, schema.workspaceMembers.userId))
         .where(
-          and(
-            eq(schema.workspaceMembers.workspaceId, workspaceId),
-            eq(schema.users.email, email.toLowerCase())
-          )
+          scopedTo(schema.workspaceMembers, workspaceId, eq(schema.users.email, email.toLowerCase()))
         )
         .limit(1);
 
@@ -175,11 +161,7 @@ export function createTeamService(db: Db) {
         .select({ id: schema.workspaceInvites.id })
         .from(schema.workspaceInvites)
         .where(
-          and(
-            eq(schema.workspaceInvites.workspaceId, workspaceId),
-            eq(schema.workspaceInvites.email, email.toLowerCase()),
-            isNull(schema.workspaceInvites.acceptedAt)
-          )
+          scopedTo(schema.workspaceInvites, workspaceId, eq(schema.workspaceInvites.email, email.toLowerCase()), isNull(schema.workspaceInvites.acceptedAt))
         )
         .limit(1);
 
@@ -266,10 +248,7 @@ export function createTeamService(db: Db) {
         .select({ userId: schema.workspaceMembers.userId })
         .from(schema.workspaceMembers)
         .where(
-          and(
-            eq(schema.workspaceMembers.workspaceId, invite.workspaceId),
-            eq(schema.workspaceMembers.userId, userId)
-          )
+          scopedTo(schema.workspaceMembers, invite.workspaceId, eq(schema.workspaceMembers.userId, userId))
         )
         .limit(1);
 
@@ -338,10 +317,7 @@ export function createTeamService(db: Db) {
         .select({ role: schema.workspaceMembers.role })
         .from(schema.workspaceMembers)
         .where(
-          and(
-            eq(schema.workspaceMembers.workspaceId, workspaceId),
-            eq(schema.workspaceMembers.userId, targetUserId)
-          )
+          scopedTo(schema.workspaceMembers, workspaceId, eq(schema.workspaceMembers.userId, targetUserId))
         )
         .limit(1);
 
@@ -352,10 +328,7 @@ export function createTeamService(db: Db) {
         .update(schema.workspaceMembers)
         .set({ role: newRole })
         .where(
-          and(
-            eq(schema.workspaceMembers.workspaceId, workspaceId),
-            eq(schema.workspaceMembers.userId, targetUserId)
-          )
+          scopedTo(schema.workspaceMembers, workspaceId, eq(schema.workspaceMembers.userId, targetUserId))
         );
 
       try {
@@ -395,10 +368,7 @@ export function createTeamService(db: Db) {
         .select({ role: schema.workspaceMembers.role })
         .from(schema.workspaceMembers)
         .where(
-          and(
-            eq(schema.workspaceMembers.workspaceId, workspaceId),
-            eq(schema.workspaceMembers.userId, targetUserId)
-          )
+          scopedTo(schema.workspaceMembers, workspaceId, eq(schema.workspaceMembers.userId, targetUserId))
         )
         .limit(1);
 
@@ -408,21 +378,14 @@ export function createTeamService(db: Db) {
       await db
         .delete(schema.workspaceMembers)
         .where(
-          and(
-            eq(schema.workspaceMembers.workspaceId, workspaceId),
-            eq(schema.workspaceMembers.userId, targetUserId),
-            ne(schema.workspaceMembers.role, "owner")
-          )
+          scopedTo(schema.workspaceMembers, workspaceId, eq(schema.workspaceMembers.userId, targetUserId), ne(schema.workspaceMembers.role, "owner"))
         );
 
       try {
         await db
           .delete(schema.workspaceMemberRoles)
           .where(
-            and(
-              eq(schema.workspaceMemberRoles.workspaceId, workspaceId),
-              eq(schema.workspaceMemberRoles.userId, targetUserId)
-            )
+            scopedTo(schema.workspaceMemberRoles, workspaceId, eq(schema.workspaceMemberRoles.userId, targetUserId))
           );
       } catch (err) {
         log.warn("RBAC workspace_member_roles cleanup failed on member remove", {
@@ -446,10 +409,7 @@ export function createTeamService(db: Db) {
         .select({ id: schema.workspaceInvites.id })
         .from(schema.workspaceInvites)
         .where(
-          and(
-            eq(schema.workspaceInvites.id, inviteId),
-            eq(schema.workspaceInvites.workspaceId, workspaceId)
-          )
+          scopedById(schema.workspaceInvites, workspaceId, inviteId)
         )
         .limit(1);
 

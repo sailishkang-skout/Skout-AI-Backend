@@ -1,5 +1,5 @@
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import { eq, desc, sql } from "drizzle-orm";
 
@@ -29,7 +29,7 @@ export function createWorkspaceService(db: Db) {
           dealPromotionThreshold: schema.workspaces.dealPromotionThreshold,
         })
         .from(schema.workspaces)
-        .leftJoin(schema.creditBalances, eq(schema.creditBalances.workspaceId, schema.workspaces.id))
+        .leftJoin(schema.creditBalances, scopedTo(schema.creditBalances, schema.workspaces.id))
         .where(eq(schema.workspaces.id, workspaceId))
         .limit(1);
       return row ?? null;
@@ -85,7 +85,7 @@ export function createWorkspaceService(db: Db) {
       const [row] = await db
         .select()
         .from(schema.workspaceIcp)
-        .where(eq(schema.workspaceIcp.workspaceId, workspaceId))
+        .where(scopedTo(schema.workspaceIcp, workspaceId))
         .limit(1);
       return row ?? null;
     },
@@ -111,7 +111,7 @@ export function createWorkspaceService(db: Db) {
       const [row] = await db
         .select({ balance: schema.creditBalances.balance, updatedAt: schema.creditBalances.updatedAt })
         .from(schema.creditBalances)
-        .where(eq(schema.creditBalances.workspaceId, workspaceId))
+        .where(scopedTo(schema.creditBalances, workspaceId))
         .limit(1);
       return row ?? { balance: 0, updatedAt: null };
     },
@@ -120,12 +120,12 @@ export function createWorkspaceService(db: Db) {
       const [countRow] = await db
         .select({ total: sql<number>`count(*)::int` })
         .from(schema.creditTransactions)
-        .where(eq(schema.creditTransactions.workspaceId, workspaceId));
+        .where(scopedTo(schema.creditTransactions, workspaceId));
 
       const rows = await db
         .select()
         .from(schema.creditTransactions)
-        .where(eq(schema.creditTransactions.workspaceId, workspaceId))
+        .where(scopedTo(schema.creditTransactions, workspaceId))
         .orderBy(desc(schema.creditTransactions.createdAt))
         .limit(limit)
         .offset(offset);

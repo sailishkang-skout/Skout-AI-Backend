@@ -1,6 +1,6 @@
 import { Worker, Queue } from "bullmq";
-import { and, asc, eq, isNull } from "drizzle-orm";
-import { createDb, schema } from "@skout/db";
+import { asc, eq, isNull } from "drizzle-orm";
+import { createDb, schema, scopedTo } from "@skout/db";
 import { createLogger, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
@@ -57,11 +57,7 @@ export async function matchAndNotifySignal(db: Db, config: Env, signal: SignalRo
       .select()
       .from(alertRules)
       .where(
-        and(
-          eq(alertRules.workspaceId, owner.workspaceId),
-          eq(alertRules.signalType, signal.signalType),
-          eq(alertRules.enabled, true)
-        )
+        scopedTo(alertRules, owner.workspaceId, eq(alertRules.signalType, signal.signalType), eq(alertRules.enabled, true))
       )
       .limit(1);
     if (!rule) continue;

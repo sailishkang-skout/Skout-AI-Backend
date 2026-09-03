@@ -1,6 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedById, scopedTo } from "@skout/db";
 import { computeNextSendAt, type ReportCadence } from "./report-cadence.js";
 
 const { reportSchedules } = schema;
@@ -62,7 +62,7 @@ export async function createReportSchedule(
 }
 
 export async function listReportSchedules(db: Db, workspaceId: string): Promise<ReportScheduleRecord[]> {
-  const rows = await db.select().from(reportSchedules).where(eq(reportSchedules.workspaceId, workspaceId));
+  const rows = await db.select().from(reportSchedules).where(scopedTo(reportSchedules, workspaceId));
   return rows.map(serialize);
 }
 
@@ -74,7 +74,7 @@ export async function getReportSchedule(
   const [row] = await db
     .select()
     .from(reportSchedules)
-    .where(and(eq(reportSchedules.id, id), eq(reportSchedules.workspaceId, workspaceId)));
+    .where(scopedById(reportSchedules, workspaceId, id));
   return row ? serialize(row) : null;
 }
 

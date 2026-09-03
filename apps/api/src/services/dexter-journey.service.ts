@@ -1,6 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedById } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import { classifyAndRecord, assertAllowed } from "./policy-gateway.service.js";
@@ -101,7 +101,7 @@ export async function approveDexterPlan(db: Db, config: Env, workspaceId: string
   const [plan] = await db
     .select()
     .from(dexterPlans)
-    .where(and(eq(dexterPlans.id, planId), eq(dexterPlans.workspaceId, workspaceId)))
+    .where(scopedById(dexterPlans, workspaceId, planId))
     .limit(1);
   if (!plan) throw new HttpError("Dexter plan not found", 404);
   if (plan.status !== "proposed") throw new HttpError(`Plan status is ${plan.status}`, 422);
@@ -126,7 +126,7 @@ export async function rejectDexterPlan(db: Db, config: Env, workspaceId: string,
   const [plan] = await db
     .select()
     .from(dexterPlans)
-    .where(and(eq(dexterPlans.id, planId), eq(dexterPlans.workspaceId, workspaceId)))
+    .where(scopedById(dexterPlans, workspaceId, planId))
     .limit(1);
   if (!plan) throw new HttpError("Dexter plan not found", 404);
   if (plan.status !== "proposed") throw new HttpError(`Plan status is ${plan.status}`, 422);
@@ -157,7 +157,7 @@ export async function invokeDexterPlan(
   const [plan] = await db
     .select()
     .from(dexterPlans)
-    .where(and(eq(dexterPlans.id, planId), eq(dexterPlans.workspaceId, workspaceId)))
+    .where(scopedById(dexterPlans, workspaceId, planId))
     .limit(1);
   if (!plan) throw new HttpError("Dexter plan not found", 404);
   if (plan.status !== "approved") {
@@ -287,7 +287,7 @@ export async function recordDexterLearning(
   const [plan] = await db
     .select()
     .from(dexterPlans)
-    .where(and(eq(dexterPlans.id, planId), eq(dexterPlans.workspaceId, workspaceId)))
+    .where(scopedById(dexterPlans, workspaceId, planId))
     .limit(1);
   if (!plan) throw new HttpError("Dexter plan not found", 404);
 

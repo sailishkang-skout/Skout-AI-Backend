@@ -1,6 +1,6 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo, scopedById } from "@skout/db";
 import { createLogger, injectTraceContext } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
@@ -108,7 +108,7 @@ export class SuggestReplyService {
     const [thread] = await this.db
       .select()
       .from(inboxThreads)
-      .where(and(eq(inboxThreads.workspaceId, workspaceId), eq(inboxThreads.id, threadId)))
+      .where(scopedById(inboxThreads, workspaceId, threadId))
       .limit(1);
     if (!thread) throw new HttpError("thread_not_found", 404);
 
@@ -134,10 +134,7 @@ export class SuggestReplyService {
         .select({ snapshot: prospectActivations.snapshot })
         .from(prospectActivations)
         .where(
-          and(
-            eq(prospectActivations.workspaceId, workspaceId),
-            eq(prospectActivations.prospectId, thread.prospectId)
-          )
+          scopedTo(prospectActivations, workspaceId, eq(prospectActivations.prospectId, thread.prospectId))
         )
         .limit(1);
       const snap = (activation?.snapshot ?? {}) as Record<string, unknown>;
@@ -150,10 +147,7 @@ export class SuggestReplyService {
         .select({ score: prospectScores.score })
         .from(prospectScores)
         .where(
-          and(
-            eq(prospectScores.workspaceId, workspaceId),
-            eq(prospectScores.prospectId, thread.prospectId)
-          )
+          scopedTo(prospectScores, workspaceId, eq(prospectScores.prospectId, thread.prospectId))
         )
         .limit(1);
       icpScore = score?.score ?? null;
@@ -246,11 +240,7 @@ export class SuggestReplyService {
         .select({ id: aiDrafts.id })
         .from(aiDrafts)
         .where(
-          and(
-            eq(aiDrafts.workspaceId, workspaceId),
-            eq(aiDrafts.threadId, threadId),
-            eq(aiDrafts.status, "pending_review")
-          )
+          scopedTo(aiDrafts, workspaceId, eq(aiDrafts.threadId, threadId), eq(aiDrafts.status, "pending_review"))
         )
         .orderBy(desc(aiDrafts.createdAt))
         .limit(5);

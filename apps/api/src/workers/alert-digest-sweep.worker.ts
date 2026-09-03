@@ -1,6 +1,6 @@
 import { Worker, Queue } from "bullmq";
 import { and, eq, inArray, isNull } from "drizzle-orm";
-import { createDb, schema } from "@skout/db";
+import { createDb, schema, scopedTo } from "@skout/db";
 import { createLogger, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
@@ -60,11 +60,7 @@ export async function runAlertDigestSweep(db: Db, config: Env): Promise<{ emaile
         .select()
         .from(notificationPreferences)
         .where(
-          and(
-            eq(notificationPreferences.workspaceId, workspaceId),
-            eq(notificationPreferences.userId, userId),
-            eq(notificationPreferences.type, DIGEST_TYPE)
-          )
+          scopedTo(notificationPreferences, workspaceId, eq(notificationPreferences.userId, userId), eq(notificationPreferences.type, DIGEST_TYPE))
         )
         .limit(1);
 

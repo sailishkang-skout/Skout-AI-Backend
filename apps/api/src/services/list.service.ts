@@ -1,6 +1,6 @@
 import { and, count, desc, eq, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo, scopedById } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import { getProspectById, type OpenSearchConfig, type ProspectDocument, type SearchFilters } from "@skout/opensearch";
 import type { ProspectList, ProspectListMember } from "./enrichment/types.js";
@@ -84,7 +84,7 @@ export class ListService {
       })
       .from(lists)
       .leftJoin(listMembers, eq(listMembers.listId, lists.id))
-      .where(eq(lists.workspaceId, workspaceId))
+      .where(scopedTo(lists, workspaceId))
       .groupBy(lists.id, lists.workspaceId, lists.name, lists.sourceFilters, lists.createdAt)
       .orderBy(desc(lists.createdAt));
 
@@ -110,7 +110,7 @@ export class ListService {
       })
       .from(lists)
       .leftJoin(listMembers, eq(listMembers.listId, lists.id))
-      .where(and(eq(lists.id, listId), eq(lists.workspaceId, workspaceId)))
+      .where(scopedById(lists, workspaceId, listId))
       .groupBy(lists.id, lists.workspaceId, lists.name, lists.sourceFilters, lists.createdAt);
 
     const row = rows[0];
@@ -131,7 +131,7 @@ export class ListService {
     await this.db
       .update(lists)
       .set({ sourceFilters: filters })
-      .where(and(eq(lists.id, listId), eq(lists.workspaceId, workspaceId)));
+      .where(scopedById(lists, workspaceId, listId));
   }
 
   async addMembers(
@@ -167,10 +167,7 @@ export class ListService {
         .select()
         .from(prospectActivations)
         .where(
-          and(
-            eq(prospectActivations.workspaceId, workspaceId),
-            eq(prospectActivations.prospectId, prospectId)
-          )
+          scopedTo(prospectActivations, workspaceId, eq(prospectActivations.prospectId, prospectId))
         )
         .limit(1);
 
@@ -249,10 +246,7 @@ export class ListService {
       .from(listMembers)
       .leftJoin(
         prospectActivations,
-        and(
-          eq(prospectActivations.prospectId, listMembers.prospectId),
-          eq(prospectActivations.workspaceId, workspaceId)
-        )
+        scopedTo(prospectActivations, workspaceId, eq(prospectActivations.prospectId, listMembers.prospectId))
       )
       .where(eq(listMembers.listId, listId));
 
@@ -278,10 +272,7 @@ export class ListService {
       .from(listMembers)
       .leftJoin(
         prospectActivations,
-        and(
-          eq(prospectActivations.prospectId, listMembers.prospectId),
-          eq(prospectActivations.workspaceId, workspaceId)
-        )
+        scopedTo(prospectActivations, workspaceId, eq(prospectActivations.prospectId, listMembers.prospectId))
       )
       .where(eq(listMembers.listId, listId));
 

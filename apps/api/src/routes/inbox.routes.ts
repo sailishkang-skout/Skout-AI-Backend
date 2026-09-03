@@ -1,7 +1,7 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { schema } from "@skout/db";
+import { schema, scopedTo, scopedById } from "@skout/db";
 import {
   InboxService,
   listInboxes,
@@ -380,7 +380,7 @@ export async function inboxRoutes(app: FastifyInstance) {
     await db
       .update(s.inboxes)
       .set({ warmupStatus: "warming", warmupDay: 0, warmupStartedAt: new Date(), updatedAt: new Date() })
-      .where(and(eq(s.inboxes.workspaceId, workspaceId), eq(s.inboxes.sendingDomainId, id)));
+      .where(scopedTo(s.inboxes, workspaceId, eq(s.inboxes.sendingDomainId, id)));
     return reply.send({ ok: true });
   });
 
@@ -393,7 +393,7 @@ export async function inboxRoutes(app: FastifyInstance) {
     await db
       .update(s.inboxes)
       .set({ warmupStatus: "cold", updatedAt: new Date() })
-      .where(and(eq(s.inboxes.workspaceId, workspaceId), eq(s.inboxes.sendingDomainId, id)));
+      .where(scopedTo(s.inboxes, workspaceId, eq(s.inboxes.sendingDomainId, id)));
     return reply.send({ ok: true });
   });
 
@@ -407,7 +407,7 @@ export async function inboxRoutes(app: FastifyInstance) {
     const [row] = await db
       .select({ domain: s.sendingDomains.domain })
       .from(s.sendingDomains)
-      .where(and(eq(s.sendingDomains.workspaceId, workspaceId), eq(s.sendingDomains.id, id)))
+      .where(scopedById(s.sendingDomains, workspaceId, id))
       .limit(1);
     if (!row) return reply.status(404).send({ error: "domain_not_found" });
     const result = await checkDomainBlacklist(row.domain);
@@ -608,10 +608,7 @@ export async function inboxRoutes(app: FastifyInstance) {
       .select({ id: schema.inboxes.id })
       .from(schema.inboxes)
       .where(
-        and(
-          eq(schema.inboxes.workspaceId, workspaceId),
-          eq(schema.inboxes.emailAddress, body.inboxEmailAddress)
-        )
+        scopedTo(schema.inboxes, workspaceId, eq(schema.inboxes.emailAddress, body.inboxEmailAddress))
       )
       .limit(1);
 

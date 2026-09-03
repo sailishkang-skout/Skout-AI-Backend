@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
-import { schema } from "@skout/db";
+import { schema, scopedTo, scopedById } from "@skout/db";
 import { errorResponse } from "../utils/http.js";
 
 const { companies, contacts, deals, activities, signals } = schema;
@@ -20,31 +20,27 @@ export async function account360Routes(app: FastifyInstance) {
       const [company] = await app.db
         .select()
         .from(companies)
-        .where(and(eq(companies.id, companyId), eq(companies.workspaceId, request.workspaceId)))
+        .where(scopedById(companies, request.workspaceId, companyId))
         .limit(1);
       if (!company) return reply.code(404).send(errorResponse("Company not found", 404));
 
       const companyContacts = await app.db
         .select()
         .from(contacts)
-        .where(and(eq(contacts.companyId, companyId), eq(contacts.workspaceId, request.workspaceId)))
+        .where(scopedTo(contacts, request.workspaceId, eq(contacts.companyId, companyId)))
         .limit(50);
 
       const companyDeals = await app.db
         .select()
         .from(deals)
-        .where(and(eq(deals.companyId, companyId), eq(deals.workspaceId, request.workspaceId)))
+        .where(scopedTo(deals, request.workspaceId, eq(deals.companyId, companyId)))
         .limit(50);
 
       const timeline = await app.db
         .select()
         .from(activities)
         .where(
-          and(
-            eq(activities.workspaceId, request.workspaceId),
-            eq(activities.entityType, "company"),
-            eq(activities.entityId, companyId)
-          )
+          scopedTo(activities, request.workspaceId, eq(activities.entityType, "company"), eq(activities.entityId, companyId))
         )
         .orderBy(desc(activities.occurredAt))
         .limit(30);
@@ -108,7 +104,7 @@ export async function account360Routes(app: FastifyInstance) {
       const [contact] = await app.db
         .select()
         .from(contacts)
-        .where(and(eq(contacts.id, contactId), eq(contacts.workspaceId, request.workspaceId)))
+        .where(scopedById(contacts, request.workspaceId, contactId))
         .limit(1);
       if (!contact) return reply.code(404).send(errorResponse("Contact not found", 404));
 
@@ -117,7 +113,7 @@ export async function account360Routes(app: FastifyInstance) {
         const [c] = await app.db
           .select()
           .from(companies)
-          .where(and(eq(companies.id, contact.companyId), eq(companies.workspaceId, request.workspaceId)))
+          .where(scopedById(companies, request.workspaceId, contact.companyId))
           .limit(1);
         company = c ?? null;
       }
@@ -126,11 +122,7 @@ export async function account360Routes(app: FastifyInstance) {
         .select()
         .from(activities)
         .where(
-          and(
-            eq(activities.workspaceId, request.workspaceId),
-            eq(activities.entityType, "contact"),
-            eq(activities.entityId, contactId)
-          )
+          scopedTo(activities, request.workspaceId, eq(activities.entityType, "contact"), eq(activities.entityId, contactId))
         )
         .orderBy(desc(activities.occurredAt))
         .limit(30);

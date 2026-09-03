@@ -229,7 +229,7 @@ export class NumberRequestService {
     const [tenantRow] = await this.db
       .select({ tenantId: tenantWorkspaces.tenantId })
       .from(tenantWorkspaces)
-      .where(eq(tenantWorkspaces.workspaceId, workspaceId))
+      .where(scopedTo(tenantWorkspaces, workspaceId))
       .limit(1);
 
     const [inserted] = await this.db

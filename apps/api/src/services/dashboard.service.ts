@@ -1,6 +1,6 @@
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
-import { and, eq, gte, sql } from "drizzle-orm";
+import { schema, scopedTo } from "@skout/db";
+import { eq, gte, sql } from "drizzle-orm";
 import { createWorkspaceService } from "./workspace.service.js";
 import { buildEnrichmentService } from "./enrichment/index.js";
 import type { Env } from "../config/env.js";
@@ -37,7 +37,7 @@ export function createDashboardService(db: Db | null, config: Env) {
         const [icpRow] = await db
           .select()
           .from(schema.workspaceIcp)
-          .where(eq(schema.workspaceIcp.workspaceId, workspaceId))
+          .where(scopedTo(schema.workspaceIcp, workspaceId))
           .limit(1);
         if (icpRow?.config && typeof icpRow.config === "object") {
           const cfg = icpRow.config as Record<string, unknown>;
@@ -57,10 +57,7 @@ export function createDashboardService(db: Db | null, config: Env) {
           })
           .from(schema.creditTransactions)
           .where(
-            and(
-              eq(schema.creditTransactions.workspaceId, workspaceId),
-              gte(schema.creditTransactions.createdAt, since)
-            )
+            scopedTo(schema.creditTransactions, workspaceId, gte(schema.creditTransactions.createdAt, since))
           )
           .groupBy(schema.creditTransactions.action);
 

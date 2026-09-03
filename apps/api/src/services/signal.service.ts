@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import type { Env } from "../config/env.js";
 import type { TargetAction } from "./activation-rules.service.js";
 
@@ -353,7 +353,7 @@ export async function listWorkspaceAccountSignals(
   const activations = await db
     .select({ companyId: prospectActivations.companyId, snapshot: prospectActivations.snapshot })
     .from(prospectActivations)
-    .where(eq(prospectActivations.workspaceId, workspaceId));
+    .where(scopedTo(prospectActivations, workspaceId));
 
   if (activations.length === 0) return [];
 
