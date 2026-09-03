@@ -1,6 +1,6 @@
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedById, scopedTo } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import {
@@ -177,7 +177,7 @@ export async function resolveWorkspaceCallerId(
   const rows = await db
     .select({ phoneNumber: numberRequests.phoneNumber })
     .from(numberRequests)
-    .where(and(eq(numberRequests.workspaceId, workspaceId), eq(numberRequests.status, "active")))
+    .where(scopedTo(numberRequests, workspaceId, eq(numberRequests.status, "active")))
     .orderBy(desc(numberRequests.activatedAt), desc(numberRequests.createdAt))
     .limit(5);
   return pickWorkspaceCallerId(
@@ -197,7 +197,7 @@ export class NumberRequestService {
     const rows = await this.db
       .select()
       .from(numberRequests)
-      .where(eq(numberRequests.workspaceId, workspaceId))
+      .where(scopedTo(numberRequests, workspaceId))
       .orderBy(desc(numberRequests.createdAt))
       .limit(100);
     return rows.map(toDto);
@@ -221,12 +221,7 @@ export class NumberRequestService {
       const [existing] = await this.db
         .select()
         .from(numberRequests)
-        .where(
-          and(
-            eq(numberRequests.workspaceId, workspaceId),
-            eq(numberRequests.idempotencyKey, input.idempotencyKey)
-          )
-        )
+        .where(scopedTo(numberRequests, workspaceId, eq(numberRequests.idempotencyKey, input.idempotencyKey)))
         .limit(1);
       if (existing) return toDto(existing);
     }
@@ -508,7 +503,7 @@ export class NumberRequestService {
     const [row] = await this.db
       .select()
       .from(numberRequests)
-      .where(and(eq(numberRequests.id, id), eq(numberRequests.workspaceId, workspaceId)))
+      .where(scopedById(numberRequests, workspaceId, id))
       .limit(1);
     if (!row) throw new HttpError("Number request not found", 404);
     return row;

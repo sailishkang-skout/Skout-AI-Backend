@@ -1,7 +1,7 @@
 import { createLogger } from "@skout/observability";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import {
@@ -54,8 +54,9 @@ export async function runHubSpotExportJob(
             .select()
             .from(crmProspectMappings)
             .where(
-              and(
-                eq(crmProspectMappings.workspaceId, workspaceId),
+              scopedTo(
+                crmProspectMappings,
+                workspaceId,
                 eq(crmProspectMappings.provider, HUBSPOT_PROVIDER),
                 inArray(crmProspectMappings.prospectId, prospectIds)
               )
@@ -75,8 +76,9 @@ export async function runHubSpotExportJob(
             })
             .from(enrichmentResults)
             .where(
-              and(
-                eq(enrichmentResults.workspaceId, workspaceId),
+              scopedTo(
+                enrichmentResults,
+                workspaceId,
                 inArray(enrichmentResults.prospectId, prospectIds),
                 eq(enrichmentResults.fieldName, "email")
               )
@@ -95,12 +97,7 @@ export async function runHubSpotExportJob(
       const [activation] = await db
         .select()
         .from(prospectActivations)
-        .where(
-          and(
-            eq(prospectActivations.workspaceId, workspaceId),
-            eq(prospectActivations.prospectId, member.prospectId)
-          )
-        );
+        .where(scopedTo(prospectActivations, workspaceId, eq(prospectActivations.prospectId, member.prospectId)));
       const snap = (activation?.snapshot ?? {}) as Record<string, unknown>;
       const email =
         (typeof snap.email === "string" && snap.email.trim()) ||
@@ -314,9 +311,7 @@ async function getHubSpotConnection(db: Db, workspaceId: string): Promise<Connec
   const [row] = await db
     .select()
     .from(crmConnections)
-    .where(
-      and(eq(crmConnections.workspaceId, workspaceId), eq(crmConnections.provider, HUBSPOT_PROVIDER))
-    );
+    .where(scopedTo(crmConnections, workspaceId, eq(crmConnections.provider, HUBSPOT_PROVIDER)));
   return (row as ConnectionRow) ?? null;
 }
 
@@ -324,9 +319,7 @@ async function markConnectionError(db: Db, workspaceId: string): Promise<void> {
   await db
     .update(crmConnections)
     .set({ status: "error", updatedAt: new Date() })
-    .where(
-      and(eq(crmConnections.workspaceId, workspaceId), eq(crmConnections.provider, HUBSPOT_PROVIDER))
-    );
+    .where(scopedTo(crmConnections, workspaceId, eq(crmConnections.provider, HUBSPOT_PROVIDER)));
 }
 
 export function createDefaultCredentialsStore(config: Env): HubSpotCredentialsStore {

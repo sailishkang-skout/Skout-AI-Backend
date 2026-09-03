@@ -1,8 +1,8 @@
 import { createLogger } from "@skout/observability";
 import { createHmac } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedById, scopedTo } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import { signOAuthState, verifyOAuthState } from "../utils/oauth-state.js";
@@ -185,7 +185,7 @@ export class CrmService {
     const rows = await this.db
       .select()
       .from(crmConnections)
-      .where(eq(crmConnections.workspaceId, workspaceId));
+      .where(scopedTo(crmConnections, workspaceId));
     const data = rows.map((r) => this.toConnectionDto(r as ConnectionRow));
     return { workspaceId, data, total: data.length };
   }
@@ -238,9 +238,7 @@ export class CrmService {
 
     await this.db
       .delete(crmConnections)
-      .where(
-        and(eq(crmConnections.workspaceId, workspaceId), eq(crmConnections.provider, HUBSPOT_PROVIDER))
-      );
+      .where(scopedTo(crmConnections, workspaceId, eq(crmConnections.provider, HUBSPOT_PROVIDER)));
   }
 
   async listHubSpotLists(workspaceId: string): Promise<{ data: HubSpotListSummary[]; total: number }> {
@@ -334,7 +332,7 @@ export class CrmService {
     const [list] = await this.db
       .select()
       .from(lists)
-      .where(and(eq(lists.id, listId), eq(lists.workspaceId, workspaceId)));
+      .where(scopedById(lists, workspaceId, listId));
     if (!list) throw new HttpError("list_not_found", 404);
 
     const members = await this.db.select().from(listMembers).where(eq(listMembers.listId, listId));
@@ -398,7 +396,7 @@ export class CrmService {
     const [job] = await this.db
       .select()
       .from(asyncJobs)
-      .where(and(eq(asyncJobs.id, jobId), eq(asyncJobs.workspaceId, workspaceId)));
+      .where(scopedById(asyncJobs, workspaceId, jobId));
     if (!job) throw new HttpError("job_not_found", 404);
     return {
       id: job.id,
@@ -426,9 +424,7 @@ export class CrmService {
     const [row] = await this.db
       .select()
       .from(crmConnections)
-      .where(
-        and(eq(crmConnections.workspaceId, workspaceId), eq(crmConnections.provider, HUBSPOT_PROVIDER))
-      );
+      .where(scopedTo(crmConnections, workspaceId, eq(crmConnections.provider, HUBSPOT_PROVIDER)));
     return (row as ConnectionRow) ?? null;
   }
 
