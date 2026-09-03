@@ -1,3 +1,4 @@
+// cSpell:ignore opensearch OPENSEARCH
 import { seniorityEnum, type SearchProspectsRequest, type SearchProspectsResponse } from "@skout/shared";
 import {
   buildDemoCorpus,
@@ -9,8 +10,26 @@ import {
   type SearchFilters,
 } from "@skout/opensearch";
 import { createLogger } from "@skout/observability";
+import type { Db } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
+import { 
+  listSignalsForEntities, 
+  computeSignalStackScore, 
+  signalStackWeightsFromEnv,
+  type SignalStackScore 
+} from "./signal.service.js";
+
+/** Seniority tiers treated as a reachable decision-maker (matches signal.service.ts) */
+const DECISION_MAKER_SENIORITIES = new Set([
+  "founder",
+  "co_founder",
+  "ceo",
+  "c_level",
+  "vp",
+  "director",
+  "head",
+]);
 
 const log = createLogger("search.service");
 
@@ -90,7 +109,7 @@ function recordTypeFor(doc: ProspectDocument): "person" | "company" {
   return "company";
 }
 
-function mapDocToSummary(doc: ProspectDocument) {
+function mapDocToSummary(doc: ProspectDocument, signalStackScore?: SignalStackScore) {
   return {
     prospectId: doc.prospectId,
     companyId: doc.companyId,
@@ -105,6 +124,11 @@ function mapDocToSummary(doc: ProspectDocument) {
     companyName: doc.companyName,
     recordType: recordTypeFor(doc),
     employeeCount: doc.employeeCount,
+    // Fit score: ICP/firmographic match (original icpScore)
+    fitScore: doc.icpScore,
+    // Timing score: signal-stacking score
+    timingScore: signalStackScore?.score,
+    // Keep existing fields for backward compatibility temporarily
     icpScore: doc.icpScore,
     intentScore: doc.intentScore,
     painPoints: doc.painPoints,
@@ -190,7 +214,7 @@ export function buildDetailFromSnapshot(
  * Search service — OpenSearch corpus with demo fallback when OPENSEARCH_URL unset.
  */
 export class SearchService {
-  constructor(private readonly env: Env) {}
+  constructor(private readonly env: Env, private readonly db: Db) {}
 
   /** True when this id resolves to a real OpenSearch/demo doc (not the hardcoded fallback). */
   async findExistingProspect(prospectId: string) {
@@ -217,8 +241,53 @@ export class SearchService {
           total: res.total,
           source: "opensearch",
         });
+
+        let results;
+        // Only load signals and compute stack scores if this.db is a valid database instance
+        if (this.db && typeof this.db.select === "function") {
+          // Batch load all signals for entities in search results to compute signal stack scores
+          const entityIds = new Set<string>();
+          res.hits.forEach(hit => {
+            entityIds.add(hit.prospectId);
+            if (hit.companyId && hit.companyId !== hit.prospectId) {
+              entityIds.add(hit.companyId);
+            }
+          });
+
+          // Compute which entities have reachable decision-makers
+          const reachableDecisionMakerByEntity = new Set<string>();
+          res.hits.forEach(hit => {
+            if (hit.seniority && DECISION_MAKER_SENIORITIES.has(hit.seniority.toLowerCase())) {
+              reachableDecisionMakerByEntity.add(hit.companyId);
+            }
+          });
+
+          // Load all signals from database
+          const byEntity = await listSignalsForEntities(this.db, Array.from(entityIds));
+          const weights = signalStackWeightsFromEnv(this.env);
+
+          // Compute signal stack score for each hit
+          results = res.hits.map(hit => {
+            // Merge prospect and company signals
+            const mergedSignals = [
+              ...(byEntity.get(hit.prospectId) ?? []),
+              ...(hit.companyId && hit.companyId !== hit.prospectId ? (byEntity.get(hit.companyId) ?? []) : []),
+            ];
+            // Compute stack score
+            const stackScore = computeSignalStackScore(mergedSignals, {
+              weights,
+              reachableDecisionMaker: reachableDecisionMakerByEntity.has(hit.companyId),
+            });
+            return mapDocToSummary(hit, stackScore);
+          });
+        } else {
+          // Fallback for tests/demo mode where database isn't fully initialized
+          log.debug("Database not available, skipping signal stack score calculation", { page, pageSize });
+          results = res.hits.map(hit => mapDocToSummary(hit));
+        }
+
         return {
-          results: res.hits.map((h) => mapDocToSummary(h)),
+          results,
           total: res.total,
           page,
           pageSize,
@@ -253,10 +322,25 @@ export class SearchService {
 
   private demoSearch(body: SearchProspectsRequest, page: number, pageSize: number): SearchProspectsResponse {
     const filtered = filterDemoCorpus(demoCorpus(this.env), toFilters(body));
+    // Compute which entities have reachable decision-makers for signal stack consistency
+    const reachableDecisionMakerByEntity = new Set<string>();
+    filtered.forEach(hit => {
+      if (hit.seniority && DECISION_MAKER_SENIORITIES.has(hit.seniority.toLowerCase())) {
+        reachableDecisionMakerByEntity.add(hit.companyId);
+      }
+    });
+    const weights = signalStackWeightsFromEnv(this.env);
     const start = (page - 1) * pageSize;
     const slice = filtered.slice(start, start + pageSize);
     return {
-      results: slice.map((h) => mapDocToSummary(h)),
+      results: slice.map(hit => {
+        // Compute dummy stack score for consistency with OpenSearch path
+        const stackScore = computeSignalStackScore([], {
+          weights,
+          reachableDecisionMaker: reachableDecisionMakerByEntity.has(hit.companyId),
+        });
+        return mapDocToSummary(hit, stackScore);
+      }),
       total: filtered.length,
       page,
       pageSize,
@@ -266,6 +350,6 @@ export class SearchService {
   }
 }
 
-export function createSearchService(env: Env) {
-  return new SearchService(env);
+export function createSearchService(env: Env, db: Db) {
+  return new SearchService(env, db);
 }
