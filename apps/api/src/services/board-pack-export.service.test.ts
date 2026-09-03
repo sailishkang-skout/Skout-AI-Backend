@@ -45,6 +45,8 @@ const FORECAST = {
   repCommittedReason: null,
   repCommittedBy: null,
   repGapToModel: null,
+  uncertainty: null,
+  dataGaps: [],
   createdAt: "2026-08-01T00:00:00.000Z",
   updatedAt: "2026-08-01T00:00:00.000Z",
 };

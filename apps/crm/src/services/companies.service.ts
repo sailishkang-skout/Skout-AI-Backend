@@ -30,6 +30,7 @@ export interface CompanyDto {
   location: string | null;
   ownerId: string | null;
   status: string;
+  contractEndDate: string | null;
   sourceProspectCompanyId: string | null;
   fieldSources: FieldSourcesMap;
   /** §8.12 Task 29 — RetentionRulesService.classify() result against status, or null if
@@ -57,6 +58,7 @@ type CompanyDbUpdatePatch = Partial<{
   location: string | null;
   ownerId: string | null;
   status: string;
+  contractEndDate: string | null;
   sourceProspectCompanyId: string | null;
   retentionClassification: string | null;
 }>;
@@ -73,6 +75,7 @@ function toDto(row: typeof companies.$inferSelect): CompanyDto {
     location: row.location,
     ownerId: row.ownerId,
     status: row.status,
+    contractEndDate: row.contractEndDate,
     sourceProspectCompanyId: row.sourceProspectCompanyId,
     fieldSources: asFieldSourcesMap(row.fieldSources),
     retentionClassification: row.retentionClassification,
@@ -141,6 +144,7 @@ export class CompaniesService {
           location: input.location,
           ownerId: input.ownerId,
           status: input.status,
+          contractEndDate: input.contractEndDate,
           sourceProspectCompanyId: input.sourceProspectCompanyId,
         })
         .returning();
@@ -187,6 +191,7 @@ export class CompaniesService {
       ...(input.location !== undefined ? { location: input.location } : {}),
       ...(input.ownerId !== undefined ? { ownerId: input.ownerId } : {}),
       ...(input.status !== undefined ? { status: input.status } : {}),
+      ...(input.contractEndDate !== undefined ? { contractEndDate: input.contractEndDate } : {}),
       ...(input.sourceProspectCompanyId !== undefined
         ? { sourceProspectCompanyId: input.sourceProspectCompanyId }
         : {}),

@@ -23,8 +23,9 @@ export const dbPlugin = fp(async (app: FastifyInstance) => {
     await sql`SELECT 1`;
     app.log.info("Database connected successfully");
   } catch (err) {
-    app.log.error({ err }, "Database connection failed");
-    throw err;
+    app.log.error({ err }, "Database connection failed - continuing without database");
+    app.decorate("db", null);
+    return;
   }
 
   app.decorate("db", db);

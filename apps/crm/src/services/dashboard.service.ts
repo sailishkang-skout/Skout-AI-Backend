@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { ActivitiesService, ActivityDto } from "./activities.service.js";
@@ -8,7 +8,7 @@ import type { MeetingsService } from "./meetings.service.js";
 import { serviceLog } from "../lib/obs.js";
 
 const log = serviceLog("dashboard");
-const { companies, contacts, deals, activities, users, crmProspectMappings, creditTransactions } = schema;
+const { companies, contacts, deals, activities, users, crmProspectMappings, creditTransactions, buyingCommittees, buyingCommitteeMembers } = schema;
 
 export interface DashboardOverviewDto {
   workspaceId: string;
@@ -50,6 +50,24 @@ export interface StaleDealSummary {
   daysSinceUpdate: number;
 }
 
+export interface MissingStakeholderEvidence {
+  role: string;
+  contactId: string;
+  contactName: string;
+  ruleTriggered: string;
+  computedAt: string;
+}
+
+export interface MissingStakeholderDealSummary {
+  id: string;
+  name: string;
+  amount: number | null;
+  currency: string;
+  companyId: string;
+  companyName: string;
+  evidence: MissingStakeholderEvidence[];
+}
+
 export interface RepActivitySummary {
   userId: string | null;
   name: string;
@@ -71,6 +89,28 @@ export interface CroSummaryDto {
 const STALE_DEAL_DAYS = 14;
 const STALE_DEALS_LIMIT = 10;
 
+/**
+ * Validates workspace ID format
+ * @internal
+ */
+function validateWorkspaceId(workspaceId: string): void {
+  if (!workspaceId || workspaceId.trim().length === 0) {
+    throw new Error("Invalid workspace ID: empty or null");
+  }
+}
+
+export interface DecisionMakerCandidate {
+  contactId: string;
+  contactName: string;
+}
+
+export function findMissingDecisionMakers(
+  companyDecisionMakers: DecisionMakerCandidate[],
+  dealMemberContactIds: ReadonlySet<string>
+): DecisionMakerCandidate[] {
+  return companyDecisionMakers.filter((decisionMaker) => !dealMemberContactIds.has(decisionMaker.contactId));
+}
+
 export class DashboardService {
   constructor(
     private readonly db: Db,
@@ -80,7 +120,16 @@ export class DashboardService {
     private readonly meetingsService: MeetingsService | null
   ) {}
 
+  /**
+   * Gets dashboard overview with key metrics (companies, contacts, deals, tasks, meetings, recent activities).
+   * All metrics are workspace-scoped, non-deleted records only.
+   *
+   * @param workspaceId Workspace identifier
+   * @returns Dashboard overview DTO with aggregated metrics
+   * @throws {Error} If workspace ID is invalid
+   */
   async overview(workspaceId: string): Promise<DashboardOverviewDto> {
+    validateWorkspaceId(workspaceId);
     const [companyRows, contactRows, dealsSummary, taskCounts, recentActivities, upcomingMeetings] =
       await Promise.all([
         this.db
@@ -119,17 +168,17 @@ export class DashboardService {
   }
 
   /**
-   * R14.3 — internal-only "product moat" metric, as ONE combined weekly signal (admin-only):
-   * (1) native-linked % — what fraction of CRM records trace back to a Skout-native activation
-   * (`sourceProspectId`/`sourceProspectCompanyId`) rather than being created purely by external
-   * means (manual entry, HubSpot import), and (2) how much data is *leaving* Skout weekly via
-   * HubSpot export (`crm_prospect_mappings`, provider="hubspot") and CSV export
-   * (`credit_transactions` action="export_csv"). Both of those tables live in the same shared
-   * Postgres @skout/db schema apps/crm already reads other cross-service tables from (e.g.
-   * `notifications`) — nothing stops joining them in here, so this combines all three into one
-   * DTO instead of leaving it to a separate BI layer.
+   * R14.3 — Computes switching cost metrics (native link rate and export volumes).
+   * Internal-only "product moat" signal combining:
+   * (1) Native-linked % — fraction of CRM records tracing back to Skout activations
+   * (2) Data leaving Skout — HubSpot and CSV export volumes (trailing 7 days)
+   *
+   * @param workspaceId Workspace identifier
+   * @returns Switching cost DTO with native link rate and export metrics
+   * @throws {Error} If workspace ID is invalid
    */
   async switchingCost(workspaceId: string): Promise<SwitchingCostDto> {
+    validateWorkspaceId(workspaceId);
     const sevenDaysAgo = sql`now() - interval '7 days'`;
 
     const [contactRows, nativeContactRows, companyRows, nativeCompanyRows, hubspotExportRows, csvExportRows] =
@@ -199,38 +248,210 @@ export class DashboardService {
       note: "Weekly (trailing 7 days) for the two export-volume fields; native-link rate is a live snapshot, not windowed.",
     };
   }
-  /** Open deals untouched for STALE_DEAL_DAYS+ — not role-gated. Unlike switchingCost/croSummary
-   *  (org-internal exec metrics), knowing which of the workspace's own deals need attention is
-   *  useful to every rep, not just owners/admins. */
+  /**
+   * Lists open deals untouched for STALE_DEAL_DAYS+ (14 days by default).
+   * Non role-gated: all workspace members can see which deals need attention.
+   * Results ordered by recency (oldest first), limited to STALE_DEALS_LIMIT.
+   *
+   * @param workspaceId Workspace identifier
+   * @returns Array of stale deal summaries with days since last update
+   * @throws {Error} If workspace ID is invalid
+   */
   async staleDeals(workspaceId: string): Promise<StaleDealSummary[]> {
-    const rows = await this.db
-      .select({
-        id: deals.id,
-        name: deals.name,
-        amount: deals.amount,
-        currency: deals.currency,
-        updatedAt: deals.updatedAt,
-      })
-      .from(deals)
-      .where(
-        and(
-          eq(deals.workspaceId, workspaceId),
-          eq(deals.status, "open"),
-          isNull(deals.deletedAt),
-          lt(deals.updatedAt, sql`now() - interval '${sql.raw(String(STALE_DEAL_DAYS))} days'`)
-        )
-      )
-      .orderBy(deals.updatedAt)
-      .limit(STALE_DEALS_LIMIT);
+    validateWorkspaceId(workspaceId);
+    
+    try {
+      if (!this.db) {
+        log.warn("Database not available for stale deals query");
+        return [];
+      }
 
-    const now = Date.now();
-    return rows.map((d) => ({
-      id: d.id,
-      name: d.name,
-      amount: d.amount === null ? null : Number(d.amount),
-      currency: d.currency,
-      daysSinceUpdate: Math.floor((now - d.updatedAt.getTime()) / (1000 * 60 * 60 * 24)),
-    }));
+      const rows = await this.db
+        .select({
+          id: deals.id,
+          name: deals.name,
+          amount: deals.amount,
+          currency: deals.currency,
+          updatedAt: deals.updatedAt,
+        })
+        .from(deals)
+        .where(
+          and(
+            eq(deals.workspaceId, workspaceId),
+            eq(deals.status, "open"),
+            isNull(deals.deletedAt),
+            lt(deals.updatedAt, sql`now() - interval '${sql.raw(String(STALE_DEAL_DAYS))} days'`)
+          )
+        )
+        .orderBy(deals.updatedAt)
+        .limit(STALE_DEALS_LIMIT);
+
+      const now = Date.now();
+      const result = rows.map((d) => ({
+        id: d.id,
+        name: d.name,
+        amount: d.amount === null ? null : Number(d.amount),
+        currency: d.currency,
+        daysSinceUpdate: Math.floor((now - d.updatedAt.getTime()) / (1000 * 60 * 60 * 24)),
+      }));
+      
+      log.debug("stale deals loaded", { workspaceId, count: result.length });
+      return result;
+    } catch (err) {
+      log.error("Error fetching stale deals", { workspaceId, error: String(err) });
+      return [];
+    }
+  }
+
+  /** Deals that have a Decision Maker (economic_buyer) on the account's buying committee
+   *  but that contact is not linked to the deal's own buying committee. Follows the same
+   *  non-role-gated access pattern as staleDeals — useful to all reps, not just admins.
+   *  Optimized to avoid N+1 queries: single bulk queries for all committees/members. */
+  async missingStakeholderDeals(workspaceId: string): Promise<MissingStakeholderDealSummary[]> {
+    try {
+      const computedAt = new Date().toISOString();
+      const MISSING_STAKEHOLDERS_LIMIT = 10;
+
+      // Return empty array if database isn't available
+      if (!this.db) return [];
+
+      // Step 1: Get all open deals with their company information (single query)
+      const openDeals = await this.db
+        .select({
+          dealId: deals.id,
+          dealName: deals.name,
+          dealAmount: deals.amount,
+          dealCurrency: deals.currency,
+          companyId: companies.id,
+          companyName: companies.name,
+        })
+        .from(deals)
+        .innerJoin(companies, eq(deals.companyId, companies.id))
+        .where(
+          and(
+            eq(deals.workspaceId, workspaceId),
+            eq(deals.status, "open"),
+            isNull(deals.deletedAt),
+            isNull(companies.deletedAt)
+          )
+        )
+        .limit(MISSING_STAKEHOLDERS_LIMIT);
+
+      if (openDeals.length === 0) return [];
+
+      // Extract all deal IDs and company IDs for bulk queries
+      const dealIds = openDeals.map(d => d.dealId);
+      const companyIds = openDeals.map(d => d.companyId).filter(Boolean) as string[];
+      if (companyIds.length === 0) return [];
+
+      // Step 2: Bulk fetch ALL company buying committees for our open deals' companies (single query)
+      const companyCommittees = await this.db
+        .select({
+          committeeId: buyingCommittees.id,
+          companyId: buyingCommittees.companyId,
+        })
+        .from(buyingCommittees)
+        .where(and(
+          inArray(buyingCommittees.companyId, companyIds),
+          eq(buyingCommittees.workspaceId, workspaceId)
+        ));
+      const companyCommitteeMap = new Map(companyCommittees.map(c => [c.companyId!, c.committeeId]));
+
+      // Step 3: Bulk fetch ALL deal buying committees for our open deals (single query)
+      const validDealIds = dealIds.filter((id): id is string => id !== null);
+      const dealCommittees = await this.db
+        .select({
+          committeeId: buyingCommittees.id,
+          dealId: buyingCommittees.dealId,
+        })
+        .from(buyingCommittees)
+        .where(and(
+          inArray(buyingCommittees.dealId, validDealIds),
+          eq(buyingCommittees.workspaceId, workspaceId)
+        ));
+      const dealCommitteeMap = new Map(dealCommittees.map(c => [c.dealId!, c.committeeId]));
+      const allCommitteeIds = [...new Set([...companyCommittees.map(c => c.committeeId), ...dealCommittees.map(c => c.committeeId)])];
+
+      if (allCommitteeIds.length === 0) return [];
+
+      // Step 4: Bulk fetch ALL committee members for ALL committees (company + deal) (single query)
+      const allCommitteeMembers = await this.db
+        .select({
+          committeeId: buyingCommitteeMembers.committeeId,
+          contactId: buyingCommitteeMembers.contactId,
+          role: buyingCommitteeMembers.role,
+          firstName: contacts.firstName,
+          lastName: contacts.lastName,
+        })
+        .from(buyingCommitteeMembers)
+        .innerJoin(contacts, eq(contacts.id, buyingCommitteeMembers.contactId))
+        .where(and(
+          inArray(buyingCommitteeMembers.committeeId, allCommitteeIds),
+          isNull(contacts.deletedAt)
+        ));
+
+      // Build maps for company decision makers and deal members
+      const companyDecisionMakersByCompany = new Map<string, Array<{contactId: string; contactName: string}>>();
+      const dealMembersByDeal = new Map<string, Set<string>>();
+
+      // Populate maps from bulk member data
+      for (const member of allCommitteeMembers) {
+        // Check if this is a company committee member (economic buyer)
+        const companyEntry = companyCommittees.find(c => c.committeeId === member.committeeId);
+        if (companyEntry && member.role === "economic_buyer") {
+          const existing = companyDecisionMakersByCompany.get(companyEntry.companyId!) || [];
+          existing.push({
+            contactId: member.contactId,
+            contactName: `${member.firstName ?? ""} ${member.lastName ?? ""}`.trim() || "Unknown Contact"
+          });
+          companyDecisionMakersByCompany.set(companyEntry.companyId!, existing);
+        }
+        // Check if this is a deal committee member
+        const dealEntry = dealCommittees.find(c => c.committeeId === member.committeeId);
+        if (dealEntry?.dealId) {
+          const existing = dealMembersByDeal.get(dealEntry.dealId) || new Set();
+          existing.add(member.contactId);
+          dealMembersByDeal.set(dealEntry.dealId, existing);
+        }
+      }
+
+      // Step 5: Process all deals with pre-fetched data (no more DB calls!)
+      const result: MissingStakeholderDealSummary[] = [];
+      for (const deal of openDeals) {
+        if (!deal.companyId) continue;
+        
+        const companyDecisionMakers = companyDecisionMakersByCompany.get(deal.companyId) || [];
+        if (companyDecisionMakers.length === 0) continue;
+
+        const dealMemberContactIds = dealMembersByDeal.get(deal.dealId) || new Set();
+        const missingDecisionMakers = findMissingDecisionMakers(companyDecisionMakers, dealMemberContactIds);
+
+        if (missingDecisionMakers.length > 0) {
+          const evidence: MissingStakeholderEvidence[] = missingDecisionMakers.map(dm => ({
+            role: "Decision Maker",
+            contactId: dm.contactId,
+            contactName: dm.contactName,
+            ruleTriggered: "missing_account_decision_maker",
+            computedAt,
+          }));
+
+          result.push({
+            id: deal.dealId,
+            name: deal.dealName,
+            amount: deal.dealAmount === null ? null : Number(deal.dealAmount),
+            currency: deal.dealCurrency,
+            companyId: deal.companyId,
+            companyName: deal.companyName,
+            evidence,
+          });
+        }
+      }
+
+      return result;
+    } catch (err) {
+      console.error("Error fetching missing stakeholder deals:", err);
+      return [];
+    }
   }
 
   /** R19.1 — admin-gated exec rollup combining overview + switching-cost + real risk-adjacent

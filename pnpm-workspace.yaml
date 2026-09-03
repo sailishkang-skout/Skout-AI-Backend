@@ -5,3 +5,7 @@ packages:
   - "workers/scrapers/orchestrator"
   - "workers/scrapers/cleaner"
   - "workers/scrapers/ingestor"
+  - "packages/scraper-contracts"
+  - "packages/observability"
+  - "packages/pal"
+  - "packages/opensearch"

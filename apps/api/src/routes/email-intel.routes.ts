@@ -77,7 +77,8 @@ export async function emailIntelRoutes(app: FastifyInstance) {
       path.endsWith("/patterns");
     if (!needsProvider) return;
 
-    if (!isEmailIntelConfigured(app.config) && !hasDiscoverFallback(app.config)) {
+    // Allow local mock mode even if no external provider is configured
+    if (!isEmailIntelConfigured(app.config) && !hasDiscoverFallback(app.config) && process.env.NODE_ENV !== "development") {
       return reply.code(503).send({
         error: "email_intel_not_configured",
         message: "Set EMAIL_INTEL_SERVICE_URL or HUNTER_API_KEY to use email intelligence.",

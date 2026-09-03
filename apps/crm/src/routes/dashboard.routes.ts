@@ -55,12 +55,34 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
   /** CRM Intelligence page — open to every workspace member (unlike switching-cost/cro-summary
    *  below, this isn't an org-internal exec metric, just "which deals need attention"). */
-  app.get("/dashboard/stale-deals", async (request) => {
-    const workspaceId = request.workspaceId ?? "unknown";
-    const svc = service();
-    if (!svc) return { workspaceId, staleDeals: [], generatedAt: new Date().toISOString() };
-    const staleDeals = await svc.staleDeals(workspaceId);
-    return { workspaceId, staleDeals, generatedAt: new Date().toISOString() };
+  app.get("/dashboard/stale-deals", async (request, reply) => {
+    try {
+      const workspaceId = request.workspaceId ?? "unknown";
+      const svc = service();
+      if (!svc) return { workspaceId, staleDeals: [], generatedAt: new Date().toISOString() };
+      const staleDeals = await svc.staleDeals(workspaceId);
+      return { workspaceId, staleDeals, generatedAt: new Date().toISOString() };
+    } catch (err) {
+      app.log.error(err, "Failed to fetch stale deals");
+      return { workspaceId: request.workspaceId ?? "unknown", staleDeals: [], generatedAt: new Date().toISOString() };
+    }
+  });
+
+
+
+  /** CRM Intelligence page — missing stakeholder detection: deals that have a Decision Maker
+   *  on the account's buying committee but not linked to the deal itself. Open to every workspace member. */
+  app.get("/dashboard/missing-stakeholder-deals", async (request, reply) => {
+    try {
+      const workspaceId = request.workspaceId ?? "unknown";
+      const svc = service();
+      if (!svc) return { workspaceId, missingStakeholderDeals: [], generatedAt: new Date().toISOString() };
+      const missingStakeholderDeals = await svc.missingStakeholderDeals(workspaceId);
+      return { workspaceId, missingStakeholderDeals, generatedAt: new Date().toISOString() };
+    } catch (err) {
+      app.log.error(err, "Failed to fetch missing stakeholder deals");
+      return { workspaceId: request.workspaceId ?? "unknown", missingStakeholderDeals: [], generatedAt: new Date().toISOString() };
+    }
   });
 
   /** R14.3 — internal-only "switching cost" metric. Owner/admin only; not for reps or customers. */

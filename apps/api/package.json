@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "predev": "pnpm --filter @skout/db build && pnpm --filter @skout/shared build && pnpm --filter @skout/auth build && pnpm --filter @skout/storage build && pnpm --filter @skout/scraper-orchestrator build && pnpm --filter @skout/crm-bridge build",
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --ignore '**/node_modules/**' --ignore '**/dist/**' src/index.ts",
     "worker:crm-export": "tsx src/workers/crm-export.worker.ts",
     "worker:sequence": "tsx src/workers/sequence-enrollment.worker.ts",
     "build": "tsc",

@@ -14,8 +14,15 @@ const config = {} as never;
 function selectChain(result: unknown[]) {
   const c: Record<string, unknown> = {};
   c.from = vi.fn().mockReturnValue(c);
+  c.leftJoin = vi.fn().mockReturnValue(c);
   c.where = vi.fn().mockResolvedValue(result);
   return c;
+}
+
+function forecastDb(forecastRows: unknown[], dealRows: unknown[] = []) {
+  return {
+    select: vi.fn((fields?: unknown) => selectChain(fields ? dealRows : forecastRows)),
+  };
 }
 
 function insertOnConflict(result: unknown[]) {
@@ -63,7 +70,10 @@ beforeEach(() => {
 
 describe("refreshModelForecast", () => {
   it("upserts the model amount from the live rollup's pipeline value", async () => {
-    const db = { insert: vi.fn().mockReturnValue(insertOnConflict([FORECAST_ROW])) };
+    const db = {
+      ...forecastDb([FORECAST_ROW]),
+      insert: vi.fn().mockReturnValue(insertOnConflict([FORECAST_ROW])),
+    };
     const result = await refreshModelForecast(db as never, config, WORKSPACE, PERIOD);
     expect(result.modelAmount).toBe(80000);
     expect(result.currency).toBe("USD");
@@ -74,29 +84,53 @@ describe("refreshModelForecast", () => {
 
 describe("getForecast / listForecasts", () => {
   it("returns null when no forecast exists for the period", async () => {
-    const db = { select: vi.fn().mockReturnValue(selectChain([])) };
+    const db = forecastDb([]);
     const result = await getForecast(db as never, WORKSPACE, PERIOD);
     expect(result).toBeNull();
   });
 
   it("computes the manager/rep gap-to-model when figures are set", async () => {
     const row = { ...FORECAST_ROW, managerAdjustedAmount: "95000.00", repCommittedAmount: "70000.00" };
-    const db = { select: vi.fn().mockReturnValue(selectChain([row])) };
+    const db = forecastDb([row]);
     const result = await getForecast(db as never, WORKSPACE, PERIOD);
     expect(result?.managerGapToModel).toBe(15000); // 95000 - 80000
     expect(result?.repGapToModel).toBe(-10000); // 70000 - 80000
   });
 
   it("lists all forecasts for the workspace", async () => {
-    const db = { select: vi.fn().mockReturnValue(selectChain([FORECAST_ROW])) };
+    const db = forecastDb([FORECAST_ROW]);
     const result = await listForecasts(db as never, WORKSPACE);
     expect(result).toHaveLength(1);
+  });
+
+  it("computes historical uncertainty and surfaces open-deal data gaps", async () => {
+    const forecasts = [
+      FORECAST_ROW,
+      { ...FORECAST_ROW, id: "fc-2", periodLabel: "2026-07", modelAmount: "100.00" },
+      { ...FORECAST_ROW, id: "fc-3", periodLabel: "2026-06", modelAmount: "100.00" },
+    ];
+    const dealRows = [
+      { id: "deal-won-july", name: "July win", amount: "120.00", closeDate: "2026-07-15", status: "won", stageName: "Closed Won", isClosedWon: true },
+      { id: "deal-won-june", name: "June win", amount: "80.00", closeDate: "2026-06-15", status: "won", stageName: "Closed Won", isClosedWon: true },
+      { id: "deal-gap", name: "Incomplete deal", amount: null, closeDate: null, status: "open", stageName: null, isClosedWon: false },
+    ];
+    const db = forecastDb(forecasts, dealRows);
+
+    const result = await getForecast(db as never, WORKSPACE, PERIOD);
+
+    expect(result?.uncertainty?.sampleSize).toBe(2);
+    expect(result?.uncertainty?.percentage).toBeCloseTo(Math.sqrt(0.08), 8);
+    expect(result?.uncertainty?.lowerBound).toBeCloseTo(80000 * (1 - Math.sqrt(0.08)), 5);
+    expect(result?.uncertainty?.upperBound).toBeCloseTo(80000 * (1 + Math.sqrt(0.08)), 5);
+    expect(result?.dataGaps).toEqual([
+      { dealId: "deal-gap", dealName: "Incomplete deal", missingFields: ["amount", "closeDate", "stage"] },
+    ]);
   });
 });
 
 describe("setManagerAdjustment / setRepCommitment", () => {
   it("throws HttpError 404 when the forecast (model figure) doesn't exist yet", async () => {
-    const db = { select: vi.fn().mockReturnValue(selectChain([])) };
+    const db = forecastDb([]);
     await expect(
       setManagerAdjustment(db as never, WORKSPACE, PERIOD, { amount: 90000, reason: "Q3 renewal push" })
     ).rejects.toBeInstanceOf(HttpError);
@@ -110,7 +144,7 @@ describe("setManagerAdjustment / setRepCommitment", () => {
       managerAdjustedBy: "user-1",
     };
     const db = {
-      select: vi.fn().mockReturnValue(selectChain([FORECAST_ROW])),
+      ...forecastDb([FORECAST_ROW]),
       update: vi.fn().mockReturnValue(updateReturning([updated])),
     };
     const result = await setManagerAdjustment(db as never, WORKSPACE, PERIOD, {
@@ -131,7 +165,7 @@ describe("setManagerAdjustment / setRepCommitment", () => {
       repCommittedBy: "user-2",
     };
     const db = {
-      select: vi.fn().mockReturnValue(selectChain([FORECAST_ROW])),
+      ...forecastDb([FORECAST_ROW]),
       update: vi.fn().mockReturnValue(updateReturning([updated])),
     };
     const result = await setRepCommitment(db as never, WORKSPACE, PERIOD, {

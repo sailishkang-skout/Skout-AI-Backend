@@ -582,7 +582,13 @@
       "when": 1791500000000,
       "tag": "0081_dexter_triggers",
       "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1791600000000,
+      "tag": "0082_companies_contract_end_date",
+      "breakpoints": true
     }
   ]
 }
-

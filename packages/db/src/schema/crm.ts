@@ -32,6 +32,8 @@ export const companies = pgTable(
     location: text("location"),
     ownerId: uuid("owner_id").references(() => users.id, { onDelete: "set null" }),
     status: text("status").notNull().default("active"),
+    /** §8.12 SS-02 — contractual end date used by the retention renewal-risk sweep. */
+    contractEndDate: date("contract_end_date"),
     sourceProspectCompanyId: text("source_prospect_company_id"),
     /** R13.3 — per-field provenance: { [field]: { source, confidence?, setAt } }. "manual" wins forever. */
     fieldSources: jsonb("field_sources").notNull().default({}),

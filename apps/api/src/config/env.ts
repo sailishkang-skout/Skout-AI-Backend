@@ -328,6 +328,12 @@ const envSchema = z
     RISK_DECAY_SWEEP_INTERVAL_HOURS: z.coerce.number().int().positive().default(24),
     /** No opens/replies/activity for this many days -> engagement_decay signal. */
     RISK_DECAY_INACTIVITY_DAYS: z.coerce.number().int().positive().default(21),
+    // --- §8.12 SS-02 CRM retention workflows. ---
+    RETENTION_SWEEP_INTERVAL_HOURS: z.coerce.number().int().positive().default(24),
+    RETENTION_DISENGAGEMENT_DAYS: z.coerce.number().int().positive().default(30),
+    RETENTION_RENEWAL_WINDOW_DAYS: z.coerce.number().int().positive().default(90),
+    RETENTION_POSITIVE_SIGNAL_DAYS: z.coerce.number().int().positive().default(30),
+    RETENTION_EXPANSION_SIGNAL_DAYS: z.coerce.number().int().positive().default(30),
     // --- §5.2 identity-merge candidate discovery. ---
     /** How often the discovery worker scans for probable-duplicate company/contact pairs and
      * writes identity_merge_proposals rows for a human to review — see identity-merge.service.ts.

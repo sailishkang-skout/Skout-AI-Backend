@@ -464,6 +464,7 @@ export const companyCreateSchema = z.object({
   location: z.string().max(255).optional(),
   ownerId: z.string().uuid().optional(),
   status: z.enum(COMPANY_STATUSES).default("active"),
+  contractEndDate: z.string().date().optional(),
   sourceProspectCompanyId: z.string().optional(),
 });
 
