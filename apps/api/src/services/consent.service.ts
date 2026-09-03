@@ -1,6 +1,6 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { desc, eq, isNull } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedById, scopedTo } from "@skout/db";
 import { HttpError } from "../utils/http.js";
 
 const { consents } = schema;
@@ -77,14 +77,14 @@ export class ConsentService {
     const [existing] = await this.db
       .select()
       .from(consents)
-      .where(and(eq(consents.id, id), eq(consents.workspaceId, workspaceId)));
+      .where(scopedById(consents, workspaceId, id));
     if (!existing) throw new HttpError("consent_not_found", 404);
     if (existing.revokedAt) throw new HttpError("consent_already_revoked", 409);
 
     const [row] = await this.db
       .update(consents)
       .set({ revokedAt: new Date() })
-      .where(and(eq(consents.id, id), eq(consents.workspaceId, workspaceId)))
+      .where(scopedById(consents, workspaceId, id))
       .returning();
     if (!row) throw new HttpError("consent_not_found", 404);
     return toDto(row);
@@ -97,13 +97,12 @@ export class ConsentService {
   ): Promise<{ data: ConsentDto[]; total: number }> {
     const limit = Math.min(options.limit ?? 50, 200);
     const offset = options.offset ?? 0;
-    const conditions = [eq(consents.workspaceId, workspaceId)];
-    if (options.subjectType) conditions.push(eq(consents.subjectType, options.subjectType));
+    const extra = options.subjectType ? eq(consents.subjectType, options.subjectType) : undefined;
 
     const rows = await this.db
       .select()
       .from(consents)
-      .where(and(...conditions))
+      .where(scopedTo(consents, workspaceId, extra))
       .orderBy(desc(consents.grantedAt))
       .limit(limit)
       .offset(offset);
@@ -111,7 +110,7 @@ export class ConsentService {
     const all = await this.db
       .select({ id: consents.id })
       .from(consents)
-      .where(and(...conditions));
+      .where(scopedTo(consents, workspaceId, extra));
 
     return { data: rows.map(toDto), total: all.length };
   }
@@ -122,11 +121,7 @@ export class ConsentService {
       .select()
       .from(consents)
       .where(
-        and(
-          eq(consents.workspaceId, workspaceId),
-          eq(consents.subjectType, subjectType),
-          eq(consents.subjectId, subjectId)
-        )
+        scopedTo(consents, workspaceId, eq(consents.subjectType, subjectType), eq(consents.subjectId, subjectId))
       )
       .orderBy(desc(consents.grantedAt));
     return rows.map(toDto);
@@ -143,8 +138,9 @@ export class ConsentService {
       .select({ id: consents.id })
       .from(consents)
       .where(
-        and(
-          eq(consents.workspaceId, workspaceId),
+        scopedTo(
+          consents,
+          workspaceId,
           eq(consents.subjectType, subjectType),
           eq(consents.subjectId, subjectId),
           eq(consents.type, type),
