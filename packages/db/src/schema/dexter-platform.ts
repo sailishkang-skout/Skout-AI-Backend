@@ -1,4 +1,4 @@
-import { index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { users } from "./users.js";
 import { workspaces } from "./workspaces.js";
 
@@ -118,6 +118,26 @@ export const dexterPlans = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("dexter_plans_workspace_status_idx").on(table.workspaceId, table.status)]
+);
+
+/**
+ * §7.3 — Dexter Orchestrator: deterministic "when event X fires for this workspace,
+ * propose action Y" config. This IS the non-LLM planning logic for this slice.
+ */
+export const dexterTriggers = pgTable(
+  "dexter_triggers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    eventType: text("event_type").notNull(),
+    actionType: text("action_type").notNull(),
+    actionParams: jsonb("action_params").notNull().default({}),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("dexter_triggers_workspace_event_idx").on(table.workspaceId, table.eventType)]
 );
 
 /**

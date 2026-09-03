@@ -82,6 +82,32 @@ describe.skipIf(!hasDatabase)("§10 Dexter / Policy / LinkedIn voice HTTP E2E", 
     expect((learned.json() as { data: { status: string } }).data.status).toBe("learned");
   });
 
+  it("§7.3 — a proposed Dexter plan can be rejected instead of approved", async () => {
+    const proposed = await app.inject({
+      method: "POST",
+      url: "/api/v1/dexter/plans",
+      headers: headers(),
+      payload: { brief: "Plan I will reject" },
+    });
+    expect(proposed.statusCode).toBe(201);
+    const planId = (proposed.json() as { data: { plan: { id: string } } }).data.plan.id;
+
+    const rejected = await app.inject({
+      method: "POST",
+      url: `/api/v1/dexter/plans/${planId}/reject`,
+      headers: headers(),
+    });
+    expect(rejected.statusCode).toBe(200);
+    expect((rejected.json() as { data: { status: string } }).data.status).toBe("rejected");
+
+    const approveAfterReject = await app.inject({
+      method: "POST",
+      url: `/api/v1/dexter/plans/${planId}/approve`,
+      headers: headers(),
+    });
+    expect(approveAfterReject.statusCode).toBe(422);
+  });
+
   it("§10.5 — LinkedIn voice handoff + manual confirm (no background send)", async () => {
     const handoff = await app.inject({
       method: "POST",

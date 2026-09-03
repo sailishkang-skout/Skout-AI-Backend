@@ -172,6 +172,39 @@ describe("approveVersion / rejectVersion", () => {
     const [reloadedSlot] = await db.select().from(schema.regionalBriefSlots).where(eq(schema.regionalBriefSlots.id, slot.id));
     expect(reloadedSlot!.currentVersionId).toBe(initialCurrentId);
   });
+
+  it("approveVersion on a global-tier slot (no workspaceId) does not throw and emits no dexter event", async () => {
+    const config = loadEnv();
+    const { db } = createDb(config.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/skout");
+    const svc = createRegionalBriefService(db, config);
+
+    const [reviewer] = await db
+      .insert(schema.users)
+      .values({ email: `global-skip-reviewer-${Date.now()}@test.com`, fullName: "Reviewer" })
+      .returning();
+    const [author] = await db
+      .insert(schema.users)
+      .values({ email: `global-skip-author-${Date.now()}@test.com`, fullName: "Author" })
+      .returning();
+
+    const slot = await svc.findOrCreateSlot({
+      layerType: "global",
+      fieldCategory: "market_economics",
+      // no workspaceId
+    });
+    const draft = await svc.createDraftVersion(slot.id, {
+      content: { summary: "Global default", details: [] },
+      source: "test",
+      effectiveDate: new Date(),
+      confidence: 80,
+      evidence: "test evidence",
+      createdBy: author!.id,
+    });
+
+    // Must resolve without throwing even though there's no workspaceId to emit an event for.
+    const approved = await svc.approveVersion(draft.id, reviewer!.id);
+    expect(approved.status).toBe("approved");
+  });
 });
 
 // ── resolveRegionalBrief ───────────────────────────────────────────────────────
