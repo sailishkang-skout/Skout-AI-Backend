@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createIntegrationService } from "../services/integration.service.js";
 import { importApolloSequence, listApolloSequences } from "../services/apollo-import.service.js";
-import { HttpError, errorResponse } from "../utils/http.js";
+import { HttpError, errorResponse, requireWorkspaceId } from "../utils/http.js";
 
 const saveSchema = z.object({
   apiKey: z.string().min(8).max(512),
@@ -16,13 +16,13 @@ const testSchema = z.object({
 
 export async function integrationRoutes(app: FastifyInstance) {
   app.get("/integrations", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = createIntegrationService(app.db, app.config);
     return reply.send(await svc.list(workspaceId));
   });
 
   app.put("/integrations/:provider", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { provider } = request.params as { provider: string };
     const body = saveSchema.parse(request.body ?? {});
     const svc = createIntegrationService(app.db, app.config);
@@ -38,7 +38,7 @@ export async function integrationRoutes(app: FastifyInstance) {
   });
 
   app.delete("/integrations/:provider", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { provider } = request.params as { provider: string };
     const svc = createIntegrationService(app.db, app.config);
     try {
@@ -53,7 +53,7 @@ export async function integrationRoutes(app: FastifyInstance) {
   });
 
   app.post("/integrations/:provider/test", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { provider } = request.params as { provider: string };
     const body = testSchema.parse(request.body ?? {});
     const svc = createIntegrationService(app.db, app.config);
@@ -69,7 +69,7 @@ export async function integrationRoutes(app: FastifyInstance) {
 
   // R22.3 — browse the workspace's Apollo sequences ("Emailer Campaigns") to import.
   app.get("/integrations/apollo/sequences", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.status(500).send(errorResponse("Database not available", 500));
     const svc = createIntegrationService(app.db, app.config);
     const apiKey = await svc.getDecryptedProviderKey(workspaceId, "apollo");
@@ -89,7 +89,7 @@ export async function integrationRoutes(app: FastifyInstance) {
 
   // R22.3 — import one Apollo sequence as a Skout draft sequence.
   app.post("/integrations/apollo/sequences/:id/import", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { id } = request.params as { id: string };
     if (!app.db) return reply.status(500).send(errorResponse("Database not available", 500));
     const svc = createIntegrationService(app.db, app.config);

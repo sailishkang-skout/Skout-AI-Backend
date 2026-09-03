@@ -18,7 +18,7 @@ import {
   updateSmartListRefreshSchedule,
 } from "../services/smart-list.service.js";
 import { CADENCE_VALUES } from "../services/smart-list-cadence.js";
-import { HttpError, errorResponse } from "../utils/http.js";
+import { HttpError, errorResponse, requireWorkspaceId } from "../utils/http.js";
 
 const createSchema = z.object({
   name: z.string().min(1).max(255),
@@ -59,13 +59,13 @@ function formatRunResponse(result: NonNullable<Awaited<ReturnType<typeof runSmar
 
 export async function smartListRoutes(app: FastifyInstance) {
   app.get("/smart-lists", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const data = await listSmartLists(app.db, workspaceId);
     return reply.send({ workspaceId, data, total: data.length });
   });
 
   app.post("/smart-lists", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = createSchema.parse(request.body ?? {});
     const list = await createSmartList(app.db, workspaceId, body.name, body.filters);
     return reply.status(201).send(list);
@@ -73,7 +73,7 @@ export async function smartListRoutes(app: FastifyInstance) {
 
   app.patch("/smart-lists/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = updateSchema.parse(request.body ?? {});
     const updated = await updateSmartList(app.db, workspaceId, id, body);
     if (!updated) return reply.status(404).send({ error: "smart_list_not_found" });
@@ -84,7 +84,7 @@ export async function smartListRoutes(app: FastifyInstance) {
   /** Configure the auto-refresh cadence (R10.2): "off" | "daily" | "weekly". */
   app.patch("/smart-lists/:id/refresh-schedule", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = refreshScheduleSchema.parse(request.body ?? {});
     const updated = await updateSmartListRefreshSchedule(app.db, workspaceId, id, body.cadence);
     if (!updated) return reply.status(404).send({ error: "smart_list_not_found" });
@@ -94,7 +94,7 @@ export async function smartListRoutes(app: FastifyInstance) {
   /** Paginated auto-refresh history, each entry including its full added/dropped diff. */
   app.get("/smart-lists/:id/refreshes", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { limit } = request.query as { limit?: string };
     const parsedLimit = limit ? Number(limit) : 20;
     const data = await listSmartListRefreshes(
@@ -109,7 +109,7 @@ export async function smartListRoutes(app: FastifyInstance) {
   /** Full diff (added/dropped prospects) for a single refresh. */
   app.get("/smart-lists/:id/refreshes/:refreshId", async (request, reply) => {
     const { id, refreshId } = request.params as { id: string; refreshId: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const detail = await getSmartListRefresh(app.db, workspaceId, id, refreshId);
     if (!detail) return reply.status(404).send({ error: "smart_list_refresh_not_found" });
     return reply.send(detail);
@@ -118,7 +118,7 @@ export async function smartListRoutes(app: FastifyInstance) {
   /** One-click revert of a refresh's membership change (only the most recent refresh qualifies). */
   app.post("/smart-lists/:id/refreshes/:refreshId/revert", async (request, reply) => {
     const { id, refreshId } = request.params as { id: string; refreshId: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     try {
       const reverted = await revertSmartListRefresh(app.db, workspaceId, id, refreshId);
       if (!reverted) return reply.status(404).send({ error: "smart_list_refresh_not_found" });
@@ -134,7 +134,7 @@ export async function smartListRoutes(app: FastifyInstance) {
 
   app.delete("/smart-lists/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const deleted = await deleteSmartList(app.db, workspaceId, id);
     if (!deleted) return reply.status(404).send({ error: "smart_list_not_found" });
     await createSearchCacheService(app.config).invalidateSmartList(workspaceId, id);
@@ -143,7 +143,7 @@ export async function smartListRoutes(app: FastifyInstance) {
 
   app.post("/smart-lists/:id/run", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const cache = createSearchCacheService(app.config);
 
     const cached = await cache.getSmartList(workspaceId, id);
@@ -159,7 +159,7 @@ export async function smartListRoutes(app: FastifyInstance) {
   /** Run smart list, activate all matches, and create a workspace prospect list. */
   app.post("/smart-lists/:id/activate", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = activateSchema.parse(request.body ?? {});
 
     const result = await runSmartList(app.db, osConfig(app), workspaceId, id);
@@ -203,7 +203,7 @@ export async function smartListRoutes(app: FastifyInstance) {
   /** Batch re-score all prospects matched by a smart list (corpus scope). */
   app.post("/smart-lists/:id/score", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const result = await runSmartList(app.db, osConfig(app), workspaceId, id);
     if (!result) return reply.status(404).send({ error: "smart_list_not_found" });
 

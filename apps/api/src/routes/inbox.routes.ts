@@ -28,7 +28,7 @@ import {
   getMicrosoftConnectUrl,
   handleMicrosoftCallback,
 } from "../services/inbox-oauth.service.js";
-import { HttpError } from "../utils/http.js";
+import { HttpError, requireWorkspaceId } from "../utils/http.js";
 
 const PROVIDER_ALIASES: Record<string, "smtp" | "google" | "microsoft"> = {
   google: "google",
@@ -143,7 +143,7 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   // GET /inboxes
   app.get("/inboxes", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!db) return reply.send({ workspaceId, data: [], total: 0 });
     const result = await listInboxes(db, workspaceId);
     try {
@@ -170,7 +170,7 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   // POST /inboxes
   app.post("/inboxes", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!db) return reply.status(503).send({ error: "database_unavailable" });
     const body = createInboxBody.parse(request.body ?? {});
     const svc = new InboxService(db, app.config);
@@ -181,7 +181,7 @@ export async function inboxRoutes(app: FastifyInstance) {
   // GET /inboxes/:id
   app.get("/inboxes/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!db) return reply.status(503).send({ error: "database_unavailable" });
     const inbox = await getInboxById(db, workspaceId, id);
     if (!inbox) return reply.status(404).send({ error: "inbox_not_found" });
@@ -191,7 +191,7 @@ export async function inboxRoutes(app: FastifyInstance) {
   // PATCH /inboxes/:id
   app.patch("/inboxes/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!db) return reply.status(503).send({ error: "database_unavailable" });
     const body = updateInboxBody.parse(request.body ?? {});
     const inbox = await updateInbox(db, workspaceId, id, body);
@@ -202,7 +202,7 @@ export async function inboxRoutes(app: FastifyInstance) {
   // DELETE /inboxes/:id
   app.delete("/inboxes/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!db) return reply.status(503).send({ error: "database_unavailable" });
     const deleted = await deleteInbox(db, workspaceId, id);
     if (!deleted) return reply.status(404).send({ error: "inbox_not_found" });
@@ -212,7 +212,7 @@ export async function inboxRoutes(app: FastifyInstance) {
   // POST /inboxes/:id/pause
   app.post("/inboxes/:id/pause", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!db) return reply.status(503).send({ error: "database_unavailable" });
     const inbox = await pauseInbox(db, workspaceId, id);
     if (!inbox) return reply.status(404).send({ error: "inbox_not_found" });
@@ -222,7 +222,7 @@ export async function inboxRoutes(app: FastifyInstance) {
   // POST /inboxes/:id/resume
   app.post("/inboxes/:id/resume", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!db) return reply.status(503).send({ error: "database_unavailable" });
     const { resetCounters } = resumeBody.parse(request.body ?? {});
     const inbox = await resumeInbox(db, workspaceId, id, resetCounters);
@@ -233,7 +233,7 @@ export async function inboxRoutes(app: FastifyInstance) {
   // POST /inboxes/:id/bounce
   app.post("/inboxes/:id/bounce", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!db) return reply.status(503).send({ error: "database_unavailable" });
     const inbox = await getInboxById(db, workspaceId, id);
     if (!inbox) return reply.status(404).send({ error: "inbox_not_found" });
@@ -244,7 +244,7 @@ export async function inboxRoutes(app: FastifyInstance) {
   // POST /inboxes/:id/spam
   app.post("/inboxes/:id/spam", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!db) return reply.status(503).send({ error: "database_unavailable" });
     const inbox = await getInboxById(db, workspaceId, id);
     if (!inbox) return reply.status(404).send({ error: "inbox_not_found" });
@@ -255,7 +255,7 @@ export async function inboxRoutes(app: FastifyInstance) {
   // POST /inboxes/:id/test-send — verify SMTP/OAuth credentials and activate inbox
   app.post("/inboxes/:id/test-send", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!db) return reply.status(503).send({ error: "database_unavailable" });
     const svc = new InboxService(db, app.config);
     try {
@@ -270,7 +270,7 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   // GET /inboxes/connect/google — initiate Google OAuth for Gmail inbox
   app.get("/inboxes/connect/google", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     try {
       const url = getGoogleConnectUrl(workspaceId, app.config);
       return reply.redirect(url);
@@ -298,7 +298,7 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   // GET /inboxes/connect/microsoft — initiate Microsoft OAuth for Outlook inbox
   app.get("/inboxes/connect/microsoft", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     try {
       const url = getMicrosoftConnectUrl(workspaceId, app.config);
       return reply.redirect(url);
@@ -326,14 +326,14 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   // GET /domains
   app.get("/domains", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!db) return reply.send({ workspaceId, data: [], total: 0 });
     return reply.send(await listDomains(db, workspaceId));
   });
 
   // POST /domains
   app.post("/domains", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!db) return reply.status(503).send({ error: "database_unavailable" });
     const { domain } = z.object({ domain: z.string().min(1) }).parse(request.body ?? {});
     const row = await addDomain(db, workspaceId, domain);
@@ -343,7 +343,7 @@ export async function inboxRoutes(app: FastifyInstance) {
   // DELETE /domains/:id
   app.delete("/domains/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!db) return reply.status(503).send({ error: "database_unavailable" });
     const deleted = await removeDomain(db, workspaceId, id);
     if (!deleted) return reply.status(404).send({ error: "domain_not_found" });
@@ -353,7 +353,7 @@ export async function inboxRoutes(app: FastifyInstance) {
   // GET /domains/:id/dns
   app.get("/domains/:id/dns", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!db) return reply.status(503).send({ error: "database_unavailable" });
     const result = await getDomainDns(db, workspaceId, id);
     if (!result) return reply.status(404).send({ error: "domain_not_found" });
@@ -363,7 +363,7 @@ export async function inboxRoutes(app: FastifyInstance) {
   // POST /domains/:id/verify — live DNS check, updates dns_records + status
   app.post("/domains/:id/verify", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!db) return reply.status(503).send({ error: "database_unavailable" });
     const result = await verifyDomain(db, workspaceId, id);
     if (!result) return reply.status(404).send({ error: "domain_not_found" });
@@ -373,7 +373,7 @@ export async function inboxRoutes(app: FastifyInstance) {
   // POST /domains/:id/warmup/start
   app.post("/domains/:id/warmup/start", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!db) return reply.status(503).send({ error: "database_unavailable" });
     // Update all inboxes linked to this sending domain
     const { schema: s } = await import("@skout/db");
@@ -387,7 +387,7 @@ export async function inboxRoutes(app: FastifyInstance) {
   // POST /domains/:id/warmup/stop
   app.post("/domains/:id/warmup/stop", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!db) return reply.status(503).send({ error: "database_unavailable" });
     const { schema: s } = await import("@skout/db");
     await db
@@ -400,7 +400,7 @@ export async function inboxRoutes(app: FastifyInstance) {
   // POST /domains/:id/blacklist-check — manual trigger
   app.post("/domains/:id/blacklist-check", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!db) return reply.status(503).send({ error: "database_unavailable" });
     const { checkDomainBlacklist } = await import("../services/blacklist-check.service.js");
     const { schema: s } = await import("@skout/db");
@@ -426,14 +426,14 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   // GET /deliverability/metrics — warmup + bounce/spam chart data + summary
   app.get("/deliverability/metrics", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!db) return reply.status(503).send({ error: "database_unavailable" });
     return reply.send(await getDeliverabilityMetrics(db, workspaceId));
   });
 
   // GET /inbox/threads — filterable by ?status=&unread=true
   app.get("/inbox/threads", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildInboxService(db, app.config);
     if (!svc) return reply.send({ workspaceId, data: [], total: 0 });
     const { status, unread, inboxId, folder, limit, offset } = listThreadsQuerySchema.parse(request.query ?? {});
@@ -456,7 +456,7 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   // GET /inbox/unread-counts — workspace unread badge counts by status
   app.get("/inbox/unread-counts", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildInboxService(db, app.config);
     if (!svc) return reply.send({ workspaceId, total: 0, byStatus: {} });
     return reply.send(await svc.getUnreadCounts(workspaceId));
@@ -464,7 +464,7 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   // GET /inbox/threads/:threadId
   app.get("/inbox/threads/:threadId", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { threadId } = request.params as { threadId: string };
     const svc = buildInboxService(db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
@@ -478,7 +478,7 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   // GET /inbox/threads/:threadId/messages
   app.get("/inbox/threads/:threadId/messages", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { threadId } = request.params as { threadId: string };
     const { limit, offset } = request.query as { limit?: string; offset?: string };
     const svc = buildInboxService(db, app.config);
@@ -498,7 +498,7 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   // GET /inbox/threads/:threadId/context
   app.get("/inbox/threads/:threadId/context", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { threadId } = request.params as { threadId: string };
     const svc = buildInboxService(db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
@@ -512,7 +512,7 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   // POST /inbox/threads/:threadId/suggest-reply — one-click AI draft for HITL reply
   app.post("/inbox/threads/:threadId/suggest-reply", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { threadId } = request.params as { threadId: string };
     if (!db) return reply.status(503).send({ error: "database_unavailable" });
     try {
@@ -531,7 +531,7 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   // POST /inbox/threads/:threadId/read — mark all messages as read
   app.post("/inbox/threads/:threadId/read", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { threadId } = request.params as { threadId: string };
     const svc = buildInboxService(db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
@@ -545,7 +545,7 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   // PATCH /inbox/threads/:threadId/status
   app.patch("/inbox/threads/:threadId/status", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { threadId } = request.params as { threadId: string };
     const svc = buildInboxService(db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
@@ -560,7 +560,7 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   // GET /inbox/manual-review — threads awaiting human resolution of a low-confidence AI tag
   app.get("/inbox/manual-review", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildInboxService(db, app.config);
     if (!svc) return reply.send({ workspaceId, data: [], total: 0 });
     return reply.send(await svc.listManualReviewThreads(workspaceId));
@@ -568,7 +568,7 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   // POST /inbox/threads/:threadId/manual-review/resolve — apply the AI's suggested action, or dismiss it
   app.post("/inbox/threads/:threadId/manual-review/resolve", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { threadId } = request.params as { threadId: string };
     const svc = buildInboxService(db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
@@ -583,7 +583,7 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   // POST /inbox/threads/:threadId/reply
   app.post("/inbox/threads/:threadId/reply", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { threadId } = request.params as { threadId: string };
     const svc = buildInboxService(db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
@@ -599,7 +599,7 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   // POST /inbox/webhooks/inbound
   app.post("/inbox/webhooks/inbound", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!db) return reply.status(503).send({ error: "database_unavailable" });
 
     const body = inboundWebhookSchema.parse(request.body ?? {});

@@ -2,13 +2,13 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { buildLinkedinAccountService } from "../services/linkedin-account.service.js";
 import { UnipileError } from "../services/unipile.client.js";
-import { HttpError } from "../utils/http.js";
+import { HttpError, requireWorkspaceId } from "../utils/http.js";
 
 const channelSchema = z.enum(["linkedin", "whatsapp"]);
 
 export async function linkedinAccountRoutes(app: FastifyInstance) {
   app.get("/linkedin/accounts", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildLinkedinAccountService(app.db, app.config);
     if (!svc) return reply.send({ workspaceId, data: [], total: 0, unipileConfigured: false });
     const query = z.object({ channel: channelSchema.optional() }).parse(request.query ?? {});
@@ -22,7 +22,7 @@ export async function linkedinAccountRoutes(app: FastifyInstance) {
   });
 
   app.post("/linkedin/accounts", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildLinkedinAccountService(app.db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const body = z
@@ -39,7 +39,7 @@ export async function linkedinAccountRoutes(app: FastifyInstance) {
   });
 
   app.post("/linkedin/accounts/hosted-auth", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildLinkedinAccountService(app.db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const body = z
@@ -58,7 +58,7 @@ export async function linkedinAccountRoutes(app: FastifyInstance) {
 
   /** Pull accounts already linked in Unipile into this workspace (webhook fallback). */
   app.post("/linkedin/accounts/sync", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildLinkedinAccountService(app.db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const body = z.object({ channel: channelSchema.optional() }).parse(request.body ?? {});
@@ -84,7 +84,7 @@ export async function linkedinAccountRoutes(app: FastifyInstance) {
 
   app.patch("/linkedin/accounts/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildLinkedinAccountService(app.db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const body = z.object({ status: z.enum(["active", "paused"]) }).parse(request.body ?? {});
@@ -95,7 +95,7 @@ export async function linkedinAccountRoutes(app: FastifyInstance) {
 
   app.delete("/linkedin/accounts/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildLinkedinAccountService(app.db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     await svc.disconnect(workspaceId, id);

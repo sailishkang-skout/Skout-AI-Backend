@@ -8,11 +8,11 @@ import {
   createSearchCacheService,
 } from "../services/search-cache.service.js";
 import { mergeTranslatedFilters, translateNaturalLanguageQuery } from "../services/nl-search.service.js";
-import { apiError, HttpError } from "../utils/http.js";
+import { HttpError, apiError, requireWorkspaceId } from "../utils/http.js";
 
 export async function searchRoutes(app: FastifyInstance) {
   app.post("/search/prospects", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     let body = searchProspectsRequestSchema.parse(request.body ?? {});
 
     // 8.2 — one query model: free text is translated into the same structured SearchFilters
@@ -98,7 +98,7 @@ export async function searchRoutes(app: FastifyInstance) {
 
   app.get("/search/prospects/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const cache = createSearchCacheService(app.config);
 
     const cached = await cache.getById(workspaceId, id);
