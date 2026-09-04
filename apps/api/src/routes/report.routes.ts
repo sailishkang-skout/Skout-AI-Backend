@@ -16,6 +16,7 @@ import {
 } from "../services/report-delivery.service.js";
 import {
   getForecast,
+  getForecastDetail,
   listForecasts,
   refreshModelForecast,
   setManagerAdjustment,
@@ -190,11 +191,13 @@ export async function reportRoutes(app: FastifyInstance) {
     return reply.send({ data, total: data.length });
   });
 
+  /** §8.15 SS-03 — the detail view: adds the historical uncertainty band and the open-pipeline
+   * data-gaps list on top of the plain model/manager/rep figures `getForecast` returns. */
   app.get("/forecasts/:periodLabel", async (request, reply) => {
     const { periodLabel } = request.params as { periodLabel: string };
     const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
-    const forecast = await getForecast(app.db, workspaceId, periodLabel);
+    const forecast = await getForecastDetail(app.db, workspaceId, periodLabel);
     if (!forecast) return reply.status(404).send({ error: "forecast_not_found" });
     return reply.send(forecast);
   });
