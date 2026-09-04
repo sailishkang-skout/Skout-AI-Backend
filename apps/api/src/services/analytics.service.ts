@@ -1,6 +1,6 @@
-import { and, desc, eq, gte } from "drizzle-orm";
+import { desc, eq, gte } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import { buildEnrichmentService } from "./enrichment/index.js";
 import { createWorkspaceService } from "./workspace.service.js";
 import type { Env } from "../config/env.js";
@@ -69,10 +69,7 @@ export function createAnalyticsService(db: Db | null, config: Env) {
           .select()
           .from(schema.creditTransactions)
           .where(
-            and(
-              eq(schema.creditTransactions.workspaceId, workspaceId),
-              gte(schema.creditTransactions.createdAt, since)
-            )
+            scopedTo(schema.creditTransactions, workspaceId, gte(schema.creditTransactions.createdAt, since))
           )
           .orderBy(desc(schema.creditTransactions.createdAt));
 

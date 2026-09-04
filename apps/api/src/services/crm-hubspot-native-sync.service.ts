@@ -1,6 +1,6 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { eq, isNull } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema, getLatestEvidenceByAttribute } from "@skout/db";
+import { schema, getLatestEvidenceByAttribute, scopedTo } from "@skout/db";
 import {
   asFieldSourcesMap,
   filterAutoFillablePatch,
@@ -35,9 +35,7 @@ async function findOrCreateCompany(
     const [byDomain] = await db
       .select({ id: companies.id })
       .from(companies)
-      .where(
-        and(eq(companies.workspaceId, workspaceId), eq(companies.domain, domain), isNull(companies.deletedAt))
-      )
+      .where(scopedTo(companies, workspaceId, eq(companies.domain, domain), isNull(companies.deletedAt)))
       .limit(1);
     if (byDomain) return byDomain.id;
   }
@@ -95,9 +93,7 @@ export async function syncHubSpotContactsToNativeCrm(
     const [existing] = await db
       .select()
       .from(contacts)
-      .where(
-        and(eq(contacts.workspaceId, workspaceId), eq(contacts.email, email), isNull(contacts.deletedAt))
-      )
+      .where(scopedTo(contacts, workspaceId, eq(contacts.email, email), isNull(contacts.deletedAt)))
       .limit(1);
 
     if (!existing) {
@@ -210,7 +206,7 @@ export async function syncHubSpotDealsToNativeCrm(
   const [pipeline] = await db
     .select()
     .from(pipelines)
-    .where(and(eq(pipelines.workspaceId, workspaceId), isNull(pipelines.deletedAt)))
+    .where(scopedTo(pipelines, workspaceId, isNull(pipelines.deletedAt)))
     .limit(1);
   if (!pipeline) {
     log.warn("no CRM pipeline — skipping HubSpot deal sync", { workspaceId });
@@ -242,7 +238,7 @@ export async function syncHubSpotDealsToNativeCrm(
     const [existing] = await db
       .select()
       .from(deals)
-      .where(and(eq(deals.workspaceId, workspaceId), eq(deals.name, name), isNull(deals.deletedAt)))
+      .where(scopedTo(deals, workspaceId, eq(deals.name, name), isNull(deals.deletedAt)))
       .limit(1);
 
     if (!existing) {

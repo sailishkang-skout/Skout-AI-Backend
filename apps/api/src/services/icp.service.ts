@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import type { IcpConfig, OnboardingProfile } from "./enrichment/ai-client.js";
 
 const { workspaceIcp } = schema;
@@ -17,7 +17,7 @@ export async function getWorkspaceIcp(db: Db | null, workspaceId: string): Promi
   if (!db) {
     return memoryIcpByWorkspace.get(workspaceId)?.config ?? {};
   }
-  const [row] = await db.select().from(workspaceIcp).where(eq(workspaceIcp.workspaceId, workspaceId));
+  const [row] = await db.select().from(workspaceIcp).where(scopedTo(workspaceIcp, workspaceId));
   if (!row) return {};
   const cfg = row.config as Record<string, unknown>;
   return {
@@ -81,7 +81,7 @@ export async function setWorkspaceIcp(db: Db | null, workspaceId: string, config
 
 export async function getWorkspaceIcpVersion(db: Db | null, workspaceId: string): Promise<number> {
   if (!db) return memoryIcpByWorkspace.get(workspaceId)?.version ?? 0;
-  const [row] = await db.select().from(workspaceIcp).where(eq(workspaceIcp.workspaceId, workspaceId));
+  const [row] = await db.select().from(workspaceIcp).where(scopedTo(workspaceIcp, workspaceId));
   return row?.version ?? 0;
 }
 

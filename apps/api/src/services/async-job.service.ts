@@ -1,6 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedById } from "@skout/db";
 import { HttpError } from "../utils/http.js";
 
 const { asyncJobs } = schema;
@@ -29,7 +29,7 @@ export async function cancelAsyncJob(db: Db, workspaceId: string, jobId: string)
   const [job] = await db
     .select()
     .from(asyncJobs)
-    .where(and(eq(asyncJobs.id, jobId), eq(asyncJobs.workspaceId, workspaceId)));
+    .where(scopedById(asyncJobs, workspaceId, jobId));
   if (!job) throw new HttpError("job_not_found", 404);
   if (!CANCELLABLE_STATUSES.has(job.status)) {
     throw new HttpError("job_not_cancellable", 409);
@@ -47,7 +47,7 @@ export async function getAsyncJob(db: Db, workspaceId: string, jobId: string): P
   const [job] = await db
     .select()
     .from(asyncJobs)
-    .where(and(eq(asyncJobs.id, jobId), eq(asyncJobs.workspaceId, workspaceId)));
+    .where(scopedById(asyncJobs, workspaceId, jobId));
   if (!job) throw new HttpError("job_not_found", 404);
   return {
     id: job.id,

@@ -1,6 +1,6 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo, scopedById } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import { claimNext, recordResult, LeaseLostError } from "@skout/shared";
 import { HttpError } from "../utils/http.js";
@@ -23,7 +23,7 @@ export class WhatsappOutreachService {
     return this.db
       .select()
       .from(whatsappOutreachJobs)
-      .where(and(eq(whatsappOutreachJobs.workspaceId, workspaceId), inArray(whatsappOutreachJobs.status, ["pending", "claimed"])))
+      .where(scopedTo(whatsappOutreachJobs, workspaceId, inArray(whatsappOutreachJobs.status, ["pending", "claimed"])))
       .orderBy(asc(whatsappOutreachJobs.createdAt))
       .limit(Math.min(Math.max(limit, 1), 25));
   }
@@ -33,7 +33,7 @@ export class WhatsappOutreachService {
     const [job] = await this.db
       .select()
       .from(whatsappOutreachJobs)
-      .where(and(eq(whatsappOutreachJobs.id, jobId), eq(whatsappOutreachJobs.workspaceId, workspaceId)));
+      .where(scopedById(whatsappOutreachJobs, workspaceId, jobId));
     if (!job) throw new HttpError("whatsapp_job_not_found", 404);
     if (job.status === "succeeded" || job.status === "failed" || job.status === "outcome_unknown") return job;
 
@@ -45,7 +45,7 @@ export class WhatsappOutreachService {
     const [job] = await this.db
       .select()
       .from(whatsappOutreachJobs)
-      .where(and(eq(whatsappOutreachJobs.id, jobId), eq(whatsappOutreachJobs.workspaceId, workspaceId)));
+      .where(scopedById(whatsappOutreachJobs, workspaceId, jobId));
     if (!job) throw new HttpError("whatsapp_job_not_found", 404);
     if (job.status === "succeeded") return job;
 
@@ -102,7 +102,7 @@ export class WhatsappOutreachService {
     const [job] = await this.db
       .select()
       .from(whatsappOutreachJobs)
-      .where(and(eq(whatsappOutreachJobs.id, jobId), eq(whatsappOutreachJobs.workspaceId, workspaceId)));
+      .where(scopedById(whatsappOutreachJobs, workspaceId, jobId));
     if (!job) throw new HttpError("whatsapp_job_not_found", 404);
     if (job.status === "succeeded") return job;
 

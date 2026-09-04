@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { createDb, schema } from "@skout/db";
+import { createDb, schema, scopedTo } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { enqueueReplyTagJob } from "../workers/reply-tag.queue.js";
@@ -229,7 +229,7 @@ export async function ingestInboundMessage(
       .from(inboxMessages)
       .innerJoin(inboxThreads, eq(inboxMessages.threadId, inboxThreads.id))
       .where(
-        and(eq(inboxThreads.workspaceId, workspaceId), eq(inboxMessages.messageId, msgId))
+        scopedTo(inboxThreads, workspaceId, eq(inboxMessages.messageId, msgId))
       )
       .limit(1);
     if (existing) {
@@ -257,10 +257,7 @@ export async function ingestInboundMessage(
       .from(inboxMessages)
       .innerJoin(inboxThreads, eq(inboxMessages.threadId, inboxThreads.id))
       .where(
-        and(
-          eq(inboxThreads.workspaceId, workspaceId),
-          inArray(inboxMessages.messageId, parentIds)
-        )
+        scopedTo(inboxThreads, workspaceId, inArray(inboxMessages.messageId, parentIds))
       )
       .limit(1);
 

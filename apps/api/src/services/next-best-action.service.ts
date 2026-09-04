@@ -1,7 +1,7 @@
 import { OpenAI } from "openai";
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo, scopedById } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { listSignalsForEntity } from "./signal.service.js";
@@ -78,14 +78,14 @@ async function gatherContext(
   const lines: string[] = [];
 
   if (entityType === "contact") {
-    const [contact] = await db.select().from(contacts).where(and(eq(contacts.id, entityId), eq(contacts.workspaceId, workspaceId))).limit(1);
+    const [contact] = await db.select().from(contacts).where(scopedById(contacts, workspaceId, entityId)).limit(1);
     if (!contact) return null;
     contactId = contact.id;
     companyId = contact.companyId;
     label = `${contact.firstName} ${contact.lastName ?? ""}`.trim();
     lines.push(`Contact: ${label}, title: ${contact.title ?? "unknown"}, lifecycle stage: ${contact.lifecycleStage}`);
   } else {
-    const [deal] = await db.select().from(deals).where(and(eq(deals.id, entityId), eq(deals.workspaceId, workspaceId))).limit(1);
+    const [deal] = await db.select().from(deals).where(scopedById(deals, workspaceId, entityId)).limit(1);
     if (!deal) return null;
     companyId = deal.companyId;
     label = deal.name;
@@ -100,7 +100,7 @@ async function gatherContext(
   const recentActivities = await db
     .select()
     .from(activities)
-    .where(and(eq(activities.workspaceId, workspaceId), eq(activities.entityType, entityType), eq(activities.entityId, entityId)))
+    .where(scopedTo(activities, workspaceId, eq(activities.entityType, entityType), eq(activities.entityId, entityId)))
     .orderBy(desc(activities.occurredAt))
     .limit(5);
   if (recentActivities.length) {
@@ -115,7 +115,7 @@ async function gatherContext(
   const openTasks = await db
     .select()
     .from(tasks)
-    .where(and(eq(tasks.workspaceId, workspaceId), eq(tasks.relatedEntityType, entityType), eq(tasks.relatedEntityId, entityId), eq(tasks.status, "open")))
+    .where(scopedTo(tasks, workspaceId, eq(tasks.relatedEntityType, entityType), eq(tasks.relatedEntityId, entityId), eq(tasks.status, "open")))
     .limit(5);
   if (openTasks.length) {
     lines.push("Open tasks:");
@@ -126,7 +126,7 @@ async function gatherContext(
     const recentMeeting = await db
       .select()
       .from(meetings)
-      .where(and(eq(meetings.workspaceId, workspaceId), eq(meetings.contactId, contactId)))
+      .where(scopedTo(meetings, workspaceId, eq(meetings.contactId, contactId)))
       .orderBy(desc(meetings.scheduledAt))
       .limit(1);
     const meeting = recentMeeting[0];
@@ -149,12 +149,12 @@ async function gatherContext(
     const [scoreRow] = await db
       .select()
       .from(prospectActivations)
-      .where(and(eq(prospectActivations.workspaceId, workspaceId), eq(prospectActivations.prospectId, sourceProspectId)))
+      .where(scopedTo(prospectActivations, workspaceId, eq(prospectActivations.prospectId, sourceProspectId)))
       .limit(1);
     const [score] = await db
       .select()
       .from(prospectScores)
-      .where(and(eq(prospectScores.workspaceId, workspaceId), eq(prospectScores.prospectId, sourceProspectId)))
+      .where(scopedTo(prospectScores, workspaceId, eq(prospectScores.prospectId, sourceProspectId)))
       .limit(1);
     if (score) {
       lines.push(`ICP score: ${score.score}/100${score.priority ? ` (priority: ${score.priority})` : ""}`);
@@ -310,7 +310,7 @@ export async function markSuggestionAccepted(
   const [row] = await db
     .update(nextBestActionSuggestions)
     .set({ acceptedAt: new Date(), acceptedAction, acceptedRefId })
-    .where(and(eq(nextBestActionSuggestions.id, suggestionId), eq(nextBestActionSuggestions.workspaceId, workspaceId)))
+    .where(scopedById(nextBestActionSuggestions, workspaceId, suggestionId))
     .returning({
       id: nextBestActionSuggestions.id,
       entityType: nextBestActionSuggestions.entityType,
@@ -349,12 +349,12 @@ export async function getSuggestionStats(
   const totalLedger = await db
     .select({ id: evidenceLedger.id })
     .from(evidenceLedger)
-    .where(and(eq(evidenceLedger.workspaceId, workspaceId), eq(evidenceLedger.attribute, "next_best_action")));
+    .where(scopedTo(evidenceLedger, workspaceId, eq(evidenceLedger.attribute, "next_best_action")));
 
   const acceptedLedger = await db
     .select({ id: evidenceLedger.id })
     .from(evidenceLedger)
-    .where(and(eq(evidenceLedger.workspaceId, workspaceId), eq(evidenceLedger.attribute, "next_best_action_accepted")));
+    .where(scopedTo(evidenceLedger, workspaceId, eq(evidenceLedger.attribute, "next_best_action_accepted")));
 
   if (totalLedger.length > 0 || acceptedLedger.length > 0) {
     const total = totalLedger.length;
@@ -371,7 +371,7 @@ export async function getSuggestionStats(
   const rows = await db
     .select({ acceptedAt: nextBestActionSuggestions.acceptedAt })
     .from(nextBestActionSuggestions)
-    .where(eq(nextBestActionSuggestions.workspaceId, workspaceId));
+    .where(scopedTo(nextBestActionSuggestions, workspaceId));
   const total = rows.length;
   const accepted = rows.filter((r) => r.acceptedAt !== null).length;
   return { total, accepted, acceptanceRate: total > 0 ? accepted / total : 0, source: "nba_table" };

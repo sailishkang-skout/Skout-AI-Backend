@@ -1,6 +1,6 @@
 import { Worker, Queue } from "bullmq";
-import { and, eq, isNull } from "drizzle-orm";
-import { createDb, schema } from "@skout/db";
+import { eq, isNull } from "drizzle-orm";
+import { createDb, schema, scopedTo } from "@skout/db";
 import type { Db } from "@skout/db";
 import { createLogger, withSpan } from "@skout/observability";
 import type { MatchCandidate } from "@skout/shared";
@@ -72,7 +72,7 @@ async function existingProposalPairKeys(db: Db, workspaceId: string, entityType:
   const rows = await db
     .select({ leftEntityId: identityMergeProposals.leftEntityId, rightEntityId: identityMergeProposals.rightEntityId })
     .from(identityMergeProposals)
-    .where(and(eq(identityMergeProposals.workspaceId, workspaceId), eq(identityMergeProposals.entityType, entityType)));
+    .where(scopedTo(identityMergeProposals, workspaceId, eq(identityMergeProposals.entityType, entityType)));
   return new Set(rows.map((r) => pairKey(r.leftEntityId, r.rightEntityId)));
 }
 
@@ -93,7 +93,7 @@ export async function sweepWorkspaceForCompanyMergeCandidates(db: Db, workspaceI
   const rows: CompanyBlockRow[] = await db
     .select({ id: companies.id, name: companies.name, domain: companies.domain, location: companies.location })
     .from(companies)
-    .where(and(eq(companies.workspaceId, workspaceId), isNull(companies.deletedAt)));
+    .where(scopedTo(companies, workspaceId, isNull(companies.deletedAt)));
   if (rows.length < 2) return 0;
 
   const buckets = bucketize(rows, (row) => {
@@ -156,7 +156,7 @@ export async function sweepWorkspaceForContactMergeCandidates(db: Db, workspaceI
     })
     .from(contacts)
     .leftJoin(companies, eq(companies.id, contacts.companyId))
-    .where(and(eq(contacts.workspaceId, workspaceId), isNull(contacts.deletedAt)));
+    .where(scopedTo(contacts, workspaceId, isNull(contacts.deletedAt)));
   if (rows.length < 2) return 0;
 
   const buckets = bucketize(rows, (row) => {

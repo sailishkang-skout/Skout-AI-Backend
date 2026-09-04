@@ -1,6 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import { computeCroRollup } from "./cro-summary.service.js";
@@ -84,7 +84,7 @@ export async function refreshModelForecast(
 }
 
 export async function listForecasts(db: Db, workspaceId: string): Promise<RevenueForecastRecord[]> {
-  const rows = await db.select().from(revenueForecasts).where(eq(revenueForecasts.workspaceId, workspaceId));
+  const rows = await db.select().from(revenueForecasts).where(scopedTo(revenueForecasts, workspaceId));
   return rows.map(serialize);
 }
 
@@ -96,7 +96,7 @@ export async function getForecast(
   const [row] = await db
     .select()
     .from(revenueForecasts)
-    .where(and(eq(revenueForecasts.workspaceId, workspaceId), eq(revenueForecasts.periodLabel, periodLabel)));
+    .where(scopedTo(revenueForecasts, workspaceId, eq(revenueForecasts.periodLabel, periodLabel)));
   return row ? serialize(row) : null;
 }
 
@@ -124,7 +124,7 @@ export async function setManagerAdjustment(
       managerAdjustedBy: input.userId ?? null,
       updatedAt: new Date(),
     })
-    .where(and(eq(revenueForecasts.workspaceId, workspaceId), eq(revenueForecasts.periodLabel, periodLabel)))
+    .where(scopedTo(revenueForecasts, workspaceId, eq(revenueForecasts.periodLabel, periodLabel)))
     .returning();
   return serialize(row!);
 }
@@ -146,7 +146,7 @@ export async function setRepCommitment(
       repCommittedBy: input.userId ?? null,
       updatedAt: new Date(),
     })
-    .where(and(eq(revenueForecasts.workspaceId, workspaceId), eq(revenueForecasts.periodLabel, periodLabel)))
+    .where(scopedTo(revenueForecasts, workspaceId, eq(revenueForecasts.periodLabel, periodLabel)))
     .returning();
   return serialize(row!);
 }

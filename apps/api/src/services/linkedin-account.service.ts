@@ -1,6 +1,6 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo, scopedById } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import {
@@ -53,12 +53,10 @@ export class LinkedinAccountService {
   }
 
   async list(workspaceId: string, channel?: MessagingChannel) {
-    const conditions = [eq(linkedinAccounts.workspaceId, workspaceId)];
-    if (channel) conditions.push(eq(linkedinAccounts.channel, channel));
     return this.db
       .select()
       .from(linkedinAccounts)
-      .where(and(...conditions))
+      .where(scopedTo(linkedinAccounts, workspaceId, channel ? eq(linkedinAccounts.channel, channel) : undefined))
       .orderBy(asc(linkedinAccounts.createdAt));
   }
 
@@ -180,7 +178,7 @@ export class LinkedinAccountService {
     const [row] = await this.db
       .update(linkedinAccounts)
       .set({ status, updatedAt: new Date() })
-      .where(and(eq(linkedinAccounts.id, id), eq(linkedinAccounts.workspaceId, workspaceId)))
+      .where(scopedById(linkedinAccounts, workspaceId, id))
       .returning();
     return row ?? null;
   }
@@ -188,7 +186,7 @@ export class LinkedinAccountService {
   async disconnect(workspaceId: string, id: string) {
     await this.db
       .delete(linkedinAccounts)
-      .where(and(eq(linkedinAccounts.id, id), eq(linkedinAccounts.workspaceId, workspaceId)));
+      .where(scopedById(linkedinAccounts, workspaceId, id));
   }
 
   /** Reset daily counters when the UTC day rolls over, then pick least-recently-used account. */
@@ -198,24 +196,14 @@ export class LinkedinAccountService {
       .update(linkedinAccounts)
       .set({ sentCount: 0, updatedAt: new Date() })
       .where(
-        and(
-          eq(linkedinAccounts.workspaceId, workspaceId),
-          eq(linkedinAccounts.channel, channel),
-          sql`(${linkedinAccounts.lastUsedAt} is null or ${linkedinAccounts.lastUsedAt} < ${dayStart})`,
-          sql`${linkedinAccounts.sentCount} > 0`
-        )
+        scopedTo(linkedinAccounts, workspaceId, eq(linkedinAccounts.channel, channel), sql`(${linkedinAccounts.lastUsedAt} is null or ${linkedinAccounts.lastUsedAt} < ${dayStart})`, sql`${linkedinAccounts.sentCount} > 0`)
       );
 
     const [account] = await this.db
       .select()
       .from(linkedinAccounts)
       .where(
-        and(
-          eq(linkedinAccounts.workspaceId, workspaceId),
-          eq(linkedinAccounts.channel, channel),
-          eq(linkedinAccounts.status, "active"),
-          sql`${linkedinAccounts.sentCount} < ${linkedinAccounts.dailySendLimit}`
-        )
+        scopedTo(linkedinAccounts, workspaceId, eq(linkedinAccounts.channel, channel), eq(linkedinAccounts.status, "active"), sql`${linkedinAccounts.sentCount} < ${linkedinAccounts.dailySendLimit}`)
       )
       .orderBy(
         sql`case when ${linkedinAccounts.lastUsedAt} is null then 0 else 1 end`,

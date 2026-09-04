@@ -1,6 +1,5 @@
-import { and, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedById } from "@skout/db";
 import { encryptSecret, decryptSecretWithFallback } from "@skout/shared";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
@@ -21,7 +20,7 @@ export async function resolveAutomationSecret(db: Db, config: Env, workspaceId: 
   const [row] = await db
     .select()
     .from(automationSecrets)
-    .where(and(eq(automationSecrets.id, secretId), eq(automationSecrets.workspaceId, workspaceId)))
+    .where(scopedById(automationSecrets, workspaceId, secretId))
     .limit(1);
   if (!row) throw new HttpError("automation_secret_not_found", 404);
   return decryptSecretWithFallback(row.encryptedValue, encryptionSecret(config), config.INTEGRATION_ENCRYPTION_KEY_PREVIOUS);

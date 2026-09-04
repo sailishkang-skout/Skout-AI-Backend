@@ -1,6 +1,6 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { eq, isNull } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import { recordEvidence } from "./evidence.service.js";
 
@@ -27,13 +27,7 @@ export async function ensureContactLinkedToProspect(
   const [existing] = await db
     .select({ id: contacts.id, companyId: contacts.companyId })
     .from(contacts)
-    .where(
-      and(
-        eq(contacts.workspaceId, workspaceId),
-        eq(contacts.sourceProspectId, prospectId),
-        isNull(contacts.deletedAt)
-      )
-    )
+    .where(scopedTo(contacts, workspaceId, eq(contacts.sourceProspectId, prospectId), isNull(contacts.deletedAt)))
     .limit(1);
   if (existing) {
     return { contactId: existing.id, companyId: existing.companyId, created: false };
@@ -48,9 +42,7 @@ export async function ensureContactLinkedToProspect(
     const [activation] = await db
       .select({ snapshot: prospectActivations.snapshot })
       .from(prospectActivations)
-      .where(
-        and(eq(prospectActivations.workspaceId, workspaceId), eq(prospectActivations.prospectId, prospectId))
-      )
+      .where(scopedTo(prospectActivations, workspaceId, eq(prospectActivations.prospectId, prospectId)))
       .limit(1);
     const snap = (activation?.snapshot ?? {}) as Record<string, unknown>;
     email = email ?? (typeof snap.email === "string" ? snap.email.toLowerCase() : null);
@@ -72,13 +64,7 @@ export async function ensureContactLinkedToProspect(
       const [byDomain] = await db
         .select({ id: companies.id })
         .from(companies)
-        .where(
-          and(
-            eq(companies.workspaceId, workspaceId),
-            eq(companies.domain, companyDomain),
-            isNull(companies.deletedAt)
-          )
-        )
+        .where(scopedTo(companies, workspaceId, eq(companies.domain, companyDomain), isNull(companies.deletedAt)))
         .limit(1);
       companyId = byDomain?.id ?? null;
     }

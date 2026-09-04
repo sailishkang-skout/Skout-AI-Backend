@@ -1,6 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import {
@@ -82,7 +82,7 @@ export async function checkLinkedinConnectionStatus(
   const [existing] = await db
     .select()
     .from(linkedinConnections)
-    .where(and(eq(linkedinConnections.workspaceId, workspaceId), eq(linkedinConnections.prospectId, prospectId)))
+    .where(scopedTo(linkedinConnections, workspaceId, eq(linkedinConnections.prospectId, prospectId)))
     .limit(1);
 
   // Already confirmed accepted — this never reverts, so skip re-checking entirely.

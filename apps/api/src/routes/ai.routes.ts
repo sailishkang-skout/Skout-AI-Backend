@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { and, eq } from "drizzle-orm";
-import { schema } from "@skout/db";
+import { eq } from "drizzle-orm";
+import { schema, scopedById } from "@skout/db";
 import { aiService } from "../services/ai.service.js";
 import {
   suggestNextBestAction,
@@ -793,7 +793,7 @@ export async function aiRoutes(app: FastifyInstance) {
     const [contact] = await app.db
       .select({ sourceProspectId: schema.contacts.sourceProspectId })
       .from(schema.contacts)
-      .where(and(eq(schema.contacts.id, parse.data.entityId), eq(schema.contacts.workspaceId, request.workspaceId)))
+      .where(scopedById(schema.contacts, request.workspaceId, parse.data.entityId))
       .limit(1);
     if (!contact) return reply.status(404).send({ error: "contact_not_found" });
     if (!contact.sourceProspectId) {

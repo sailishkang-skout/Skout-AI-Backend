@@ -1,6 +1,6 @@
-import { and, count, eq, isNull } from "drizzle-orm";
+import { count, eq, isNull } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo, scopedById } from "@skout/db";
 import { getProspectById, type OpenSearchConfig } from "@skout/opensearch";
 import { createLogger } from "@skout/observability";
 import { HttpError } from "../utils/http.js";
@@ -64,7 +64,7 @@ export async function listActivationRules(db: Db, workspaceId: string): Promise<
   const rows = await db
     .select()
     .from(activationRules)
-    .where(and(eq(activationRules.workspaceId, workspaceId), isNull(activationRules.deletedAt)));
+    .where(scopedTo(activationRules, workspaceId, isNull(activationRules.deletedAt)));
   return rows.map(toDto);
 }
 
@@ -82,7 +82,7 @@ export async function createActivationRule(
     .select({ activeCount: count() })
     .from(activationRules)
     .where(
-      and(eq(activationRules.workspaceId, workspaceId), eq(activationRules.enabled, true), isNull(activationRules.deletedAt))
+      scopedTo(activationRules, workspaceId, eq(activationRules.enabled, true), isNull(activationRules.deletedAt))
     );
   if (Number(activeCount) >= MAX_ACTIVE_RULES_PER_WORKSPACE) {
     throw new HttpError(
@@ -117,11 +117,7 @@ export async function setActivationRuleEnabled(
       .select({ activeCount: count() })
       .from(activationRules)
       .where(
-        and(
-          eq(activationRules.workspaceId, workspaceId),
-          eq(activationRules.enabled, true),
-          isNull(activationRules.deletedAt)
-        )
+        scopedTo(activationRules, workspaceId, eq(activationRules.enabled, true), isNull(activationRules.deletedAt))
       );
     if (Number(activeCount) >= MAX_ACTIVE_RULES_PER_WORKSPACE) {
       throw new HttpError(`Workspace already has ${MAX_ACTIVE_RULES_PER_WORKSPACE} active rules.`, 422);
@@ -130,7 +126,7 @@ export async function setActivationRuleEnabled(
   const [row] = await db
     .update(activationRules)
     .set({ enabled, updatedAt: new Date() })
-    .where(and(eq(activationRules.id, id), eq(activationRules.workspaceId, workspaceId)))
+    .where(scopedById(activationRules, workspaceId, id))
     .returning();
   return row ? toDto(row) : null;
 }
@@ -139,7 +135,7 @@ export async function softDeleteActivationRule(db: Db, workspaceId: string, id: 
   const [row] = await db
     .update(activationRules)
     .set({ deletedAt: new Date(), enabled: false, updatedAt: new Date() })
-    .where(and(eq(activationRules.id, id), eq(activationRules.workspaceId, workspaceId)))
+    .where(scopedById(activationRules, workspaceId, id))
     .returning();
   return Boolean(row);
 }
@@ -195,7 +191,7 @@ export async function reverseRuleRun(
   const [run] = await db
     .select()
     .from(activationRuleRuns)
-    .where(and(eq(activationRuleRuns.id, runId), eq(activationRuleRuns.workspaceId, workspaceId)))
+    .where(scopedById(activationRuleRuns, workspaceId, runId))
     .limit(1);
   if (!run) return null;
   if (run.reversedAt) return { reversed: true, undone: false };
@@ -217,18 +213,16 @@ export async function reverseRuleRun(
   const [row] = await db
     .update(activationRuleRuns)
     .set({ reversedAt: new Date() })
-    .where(and(eq(activationRuleRuns.id, runId), eq(activationRuleRuns.workspaceId, workspaceId)))
+    .where(scopedById(activationRuleRuns, workspaceId, runId))
     .returning();
   return row ? { reversed: true, undone } : null;
 }
 
 export async function listRuleRuns(db: Db, workspaceId: string, ruleId?: string) {
-  const conditions = [eq(activationRuleRuns.workspaceId, workspaceId)];
-  if (ruleId) conditions.push(eq(activationRuleRuns.ruleId, ruleId));
   return db
     .select()
     .from(activationRuleRuns)
-    .where(and(...conditions));
+    .where(scopedTo(activationRuleRuns, workspaceId, ruleId ? eq(activationRuleRuns.ruleId, ruleId) : undefined));
 }
 
 /**
@@ -247,7 +241,7 @@ async function buildSnapshotForActivate(
   const [existing] = await db
     .select()
     .from(prospectActivations)
-    .where(and(eq(prospectActivations.workspaceId, workspaceId), eq(prospectActivations.prospectId, prospectId)))
+    .where(scopedTo(prospectActivations, workspaceId, eq(prospectActivations.prospectId, prospectId)))
     .limit(1);
   if (existing?.snapshot && typeof existing.snapshot === "object") {
     const snap = existing.snapshot as Record<string, unknown>;

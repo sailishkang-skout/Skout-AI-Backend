@@ -1,6 +1,6 @@
 import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedById, scopedTo } from "@skout/db";
 import { HttpError } from "../utils/http.js";
 import type { AutomationGraph } from "./automation-graph.js";
 
@@ -23,14 +23,14 @@ export class AutomationService {
   }
 
   async listAutomations(workspaceId: string) {
-    return this.db.select().from(automations).where(eq(automations.workspaceId, workspaceId)).orderBy(desc(automations.createdAt));
+    return this.db.select().from(automations).where(scopedTo(automations, workspaceId)).orderBy(desc(automations.createdAt));
   }
 
   async getAutomation(workspaceId: string, automationId: string) {
     const [row] = await this.db
       .select()
       .from(automations)
-      .where(and(eq(automations.id, automationId), eq(automations.workspaceId, workspaceId)))
+      .where(scopedById(automations, workspaceId, automationId))
       .limit(1);
     if (!row) throw new HttpError("automation_not_found", 404);
     return row;

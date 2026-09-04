@@ -1,6 +1,7 @@
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import type { Db } from "./client.js";
 import { evidenceLedger } from "./schema/evidence.js";
+import { scopedTo } from "./tenant-scope.js";
 
 export interface LatestEvidenceRow {
   id: string;
@@ -42,13 +43,7 @@ export async function getLatestEvidenceByAttribute(
       observedAt: evidenceLedger.observedAt,
     })
     .from(evidenceLedger)
-    .where(
-      and(
-        eq(evidenceLedger.workspaceId, workspaceId),
-        eq(evidenceLedger.entityType, entityType),
-        eq(evidenceLedger.entityId, entityId)
-      )
-    )
+    .where(scopedTo(evidenceLedger, workspaceId, eq(evidenceLedger.entityType, entityType), eq(evidenceLedger.entityId, entityId)))
     .orderBy(desc(evidenceLedger.observedAt))
     .limit(500);
 

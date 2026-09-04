@@ -1,6 +1,6 @@
 import { count, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import { getWorkspaceIcp, isIcpConfigured } from "./icp.service.js";
 
 export interface SetupChecklistItem {
@@ -31,7 +31,7 @@ export async function isReadyForOutboundSend(db: Db | null, workspaceId: string)
   const [{ mailboxCount }] = await db
     .select({ mailboxCount: count() })
     .from(schema.inboxes)
-    .where(eq(schema.inboxes.workspaceId, workspaceId));
+    .where(scopedTo(schema.inboxes, workspaceId));
   return Number(mailboxCount) > 0;
 }
 
@@ -50,12 +50,12 @@ export async function getSetupChecklist(db: Db | null, workspaceId: string): Pro
   }
 
   const [[{ listCount }], [{ mailboxCount }], [{ prospectCount }]] = await Promise.all([
-    db.select({ listCount: count() }).from(schema.lists).where(eq(schema.lists.workspaceId, workspaceId)),
-    db.select({ mailboxCount: count() }).from(schema.inboxes).where(eq(schema.inboxes.workspaceId, workspaceId)),
+    db.select({ listCount: count() }).from(schema.lists).where(scopedTo(schema.lists, workspaceId)),
+    db.select({ mailboxCount: count() }).from(schema.inboxes).where(scopedTo(schema.inboxes, workspaceId)),
     db
       .select({ prospectCount: count() })
       .from(schema.prospectActivations)
-      .where(eq(schema.prospectActivations.workspaceId, workspaceId)),
+      .where(scopedTo(schema.prospectActivations, workspaceId)),
   ]);
 
   const items: SetupChecklistItem[] = [

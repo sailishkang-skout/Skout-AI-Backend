@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import {
   runSmartListQueryWithFallback,
@@ -99,7 +99,7 @@ export async function listSmartLists(db: Db | null, workspaceId: string): Promis
   const rows = await db
     .select()
     .from(smartLists)
-    .where(eq(smartLists.workspaceId, workspaceId))
+    .where(scopedTo(smartLists, workspaceId))
     .orderBy(desc(smartLists.updatedAt));
   return rows.map(toSmartListRecord);
 }

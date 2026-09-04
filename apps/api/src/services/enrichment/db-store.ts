@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo, scopedById } from "@skout/db";
 import type { FieldResult, AttemptLog, AttemptStatus } from "@skout/pal";
 import {
   InsufficientCreditsError,
@@ -35,7 +35,7 @@ export class DbStore implements EnrichmentStore {
     const [row] = await this.db
       .select()
       .from(creditBalances)
-      .where(eq(creditBalances.workspaceId, workspaceId));
+      .where(scopedTo(creditBalances, workspaceId));
     return row?.balance ?? 0;
   }
 
@@ -84,7 +84,7 @@ export class DbStore implements EnrichmentStore {
     const rows = await this.db
       .select()
       .from(prospectActivations)
-      .where(eq(prospectActivations.workspaceId, workspaceId))
+      .where(scopedTo(prospectActivations, workspaceId))
       .orderBy(desc(prospectActivations.updatedAt));
     return rows.map((r) => this.toActivation(r));
   }
@@ -94,7 +94,7 @@ export class DbStore implements EnrichmentStore {
       .select()
       .from(prospectActivations)
       .where(
-        and(eq(prospectActivations.workspaceId, workspaceId), eq(prospectActivations.prospectId, prospectId))
+        scopedTo(prospectActivations, workspaceId, eq(prospectActivations.prospectId, prospectId))
       );
     return row ? this.toActivation(row) : null;
   }
@@ -124,7 +124,7 @@ export class DbStore implements EnrichmentStore {
     const [list] = await this.db
       .select()
       .from(lists)
-      .where(and(eq(lists.id, listId), eq(lists.workspaceId, workspaceId)));
+      .where(scopedById(lists, workspaceId, listId));
     if (!list) return null;
     if (prospectIds.length) {
       await this.db
@@ -146,7 +146,7 @@ export class DbStore implements EnrichmentStore {
     const rows = await this.db
       .select()
       .from(lists)
-      .where(eq(lists.workspaceId, workspaceId))
+      .where(scopedTo(lists, workspaceId))
       .orderBy(desc(lists.createdAt));
     const out: ProspectList[] = [];
     for (const r of rows) {
@@ -166,7 +166,7 @@ export class DbStore implements EnrichmentStore {
     const [row] = await this.db
       .update(lists)
       .set({ name, updatedAt: new Date() })
-      .where(and(eq(lists.id, listId), eq(lists.workspaceId, workspaceId)))
+      .where(scopedById(lists, workspaceId, listId))
       .returning();
     if (!row) return null;
     const members = await this.db.select().from(listMembers).where(eq(listMembers.listId, listId));
@@ -176,7 +176,7 @@ export class DbStore implements EnrichmentStore {
   async deleteList(workspaceId: string, listId: string): Promise<boolean> {
     const result = await this.db
       .delete(lists)
-      .where(and(eq(lists.id, listId), eq(lists.workspaceId, workspaceId)))
+      .where(scopedById(lists, workspaceId, listId))
       .returning({ id: lists.id });
     return result.length > 0;
   }
@@ -185,7 +185,7 @@ export class DbStore implements EnrichmentStore {
     const [list] = await this.db
       .select()
       .from(lists)
-      .where(and(eq(lists.id, listId), eq(lists.workspaceId, workspaceId)));
+      .where(scopedById(lists, workspaceId, listId));
     if (!list) return null;
     await this.db
       .delete(listMembers)
@@ -198,7 +198,7 @@ export class DbStore implements EnrichmentStore {
     const [list] = await this.db
       .select()
       .from(lists)
-      .where(and(eq(lists.id, listId), eq(lists.workspaceId, workspaceId)));
+      .where(scopedById(lists, workspaceId, listId));
     if (!list) return [];
     const rows = await this.db.select().from(listMembers).where(eq(listMembers.listId, listId));
     return rows.map((r) => r.prospectId);
@@ -283,7 +283,7 @@ export class DbStore implements EnrichmentStore {
     const [row] = await this.db
       .select()
       .from(enrichmentJobs)
-      .where(and(eq(enrichmentJobs.id, id), eq(enrichmentJobs.workspaceId, workspaceId)));
+      .where(scopedById(enrichmentJobs, workspaceId, id));
     return row ? this.toJob(row, await this.loadResults(id), await this.loadAttempts(id)) : null;
   }
 
@@ -291,7 +291,7 @@ export class DbStore implements EnrichmentStore {
     const rows = await this.db
       .select()
       .from(enrichmentJobs)
-      .where(eq(enrichmentJobs.workspaceId, workspaceId))
+      .where(scopedTo(enrichmentJobs, workspaceId))
       .orderBy(desc(enrichmentJobs.queuedAt));
     return Promise.all(
       rows.map(async (row) => this.toJob(row, await this.loadResults(row.id), await this.loadAttempts(row.id)))
@@ -329,7 +329,7 @@ export class DbStore implements EnrichmentStore {
     const [row] = await this.db
       .select()
       .from(enrichmentBatches)
-      .where(and(eq(enrichmentBatches.id, id), eq(enrichmentBatches.workspaceId, workspaceId)));
+      .where(scopedById(enrichmentBatches, workspaceId, id));
     if (!row) return null;
     const jobs = await this.db.select().from(enrichmentJobs).where(eq(enrichmentJobs.batchId, id));
     return { ...this.toBatch(row), jobIds: jobs.map((j) => j.id) };
@@ -365,7 +365,7 @@ export class DbStore implements EnrichmentStore {
     const [row] = await this.db
       .select()
       .from(prospectScores)
-      .where(and(eq(prospectScores.workspaceId, workspaceId), eq(prospectScores.prospectId, prospectId)));
+      .where(scopedTo(prospectScores, workspaceId, eq(prospectScores.prospectId, prospectId)));
     return row
       ? {
           workspaceId,
@@ -386,7 +386,7 @@ export class DbStore implements EnrichmentStore {
       .select()
       .from(prospectScores)
       .where(
-        and(eq(prospectScores.workspaceId, workspaceId), inArray(prospectScores.prospectId, prospectIds))
+        scopedTo(prospectScores, workspaceId, inArray(prospectScores.prospectId, prospectIds))
       );
     return rows.map((row) => ({
       workspaceId,
@@ -404,7 +404,7 @@ export class DbStore implements EnrichmentStore {
     const [list] = await this.db
       .select()
       .from(lists)
-      .where(and(eq(lists.id, listId), eq(lists.workspaceId, workspaceId)));
+      .where(scopedById(lists, workspaceId, listId));
     if (!list) return null;
     const members = await this.db.select().from(listMembers).where(eq(listMembers.listId, listId));
     return {

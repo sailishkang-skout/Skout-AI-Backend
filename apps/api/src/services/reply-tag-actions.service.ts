@@ -1,6 +1,6 @@
-import { and, eq, ne, or, sql } from "drizzle-orm";
+import { eq, ne, or, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo, scopedById } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import {
@@ -47,7 +47,7 @@ async function escalateWrongPerson(
       companyDomain: sql<string | null>`${prospectActivations.snapshot} ->> 'companyDomain'`,
     })
     .from(prospectActivations)
-    .where(and(eq(prospectActivations.workspaceId, workspaceId), eq(prospectActivations.prospectId, prospectId)))
+    .where(scopedTo(prospectActivations, workspaceId, eq(prospectActivations.prospectId, prospectId)))
     .limit(1);
   const companyDomain = current?.companyDomain;
   if (!companyDomain) return;
@@ -60,11 +60,7 @@ async function escalateWrongPerson(
     })
     .from(prospectActivations)
     .where(
-      and(
-        eq(prospectActivations.workspaceId, workspaceId),
-        ne(prospectActivations.prospectId, prospectId),
-        sql`${prospectActivations.snapshot} ->> 'companyDomain' = ${companyDomain}`
-      )
+      scopedTo(prospectActivations, workspaceId, ne(prospectActivations.prospectId, prospectId), sql`${prospectActivations.snapshot} ->> 'companyDomain' = ${companyDomain}`)
     )
     .limit(10);
 
@@ -102,7 +98,7 @@ async function escalateWrongPerson(
     .select({ userId: workspaceMembers.userId })
     .from(workspaceMembers)
     .where(
-      and(eq(workspaceMembers.workspaceId, workspaceId), or(eq(workspaceMembers.role, "owner"), eq(workspaceMembers.role, "admin")))
+      scopedTo(workspaceMembers, workspaceId, or(eq(workspaceMembers.role, "owner"), eq(workspaceMembers.role, "admin")))
     );
 
   for (const { userId } of owners) {
@@ -133,7 +129,7 @@ async function suppressThreadSender(db: Db, workspaceId: string, prospectId: str
   const [activation] = await db
     .select({ snapshot: prospectActivations.snapshot })
     .from(prospectActivations)
-    .where(and(eq(prospectActivations.workspaceId, workspaceId), eq(prospectActivations.prospectId, prospectId)))
+    .where(scopedTo(prospectActivations, workspaceId, eq(prospectActivations.prospectId, prospectId)))
     .limit(1);
   const email = (activation?.snapshot as Record<string, unknown> | undefined)?.email;
   if (typeof email === "string" && email.includes("@")) {
@@ -180,7 +176,7 @@ export async function applyReplyTagActions(
       status: inboxThreads.status,
     })
     .from(inboxThreads)
-    .where(and(eq(inboxThreads.workspaceId, workspaceId), eq(inboxThreads.id, threadId)))
+    .where(scopedById(inboxThreads, workspaceId, threadId))
     .limit(1);
 
   if (!thread) return;

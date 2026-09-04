@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { createWorkspaceService } from "./workspace.service.js";
@@ -285,7 +285,7 @@ export function createBillingService(db: Db, config: Env) {
       const rows = await db
         .select()
         .from(schema.paymentOrders)
-        .where(and(eq(schema.paymentOrders.workspaceId, workspaceId), eq(schema.paymentOrders.status, "paid")))
+        .where(scopedTo(schema.paymentOrders, workspaceId, eq(schema.paymentOrders.status, "paid")))
         .orderBy(desc(schema.paymentOrders.paidAt), desc(schema.paymentOrders.createdAt));
 
       const invoices = rows.map((r) => this.toInvoice(r));
@@ -309,9 +309,10 @@ export function createBillingService(db: Db, config: Env) {
         .select()
         .from(schema.paymentOrders)
         .where(
-          and(
+          scopedTo(
+            schema.paymentOrders,
+            workspaceId,
             eq(schema.paymentOrders.id, invoiceId),
-            eq(schema.paymentOrders.workspaceId, workspaceId),
             eq(schema.paymentOrders.status, "paid")
           )
         )

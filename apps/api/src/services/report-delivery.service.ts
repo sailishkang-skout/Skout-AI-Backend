@@ -1,7 +1,7 @@
-import { and, desc, eq, max } from "drizzle-orm";
+import { desc, eq, max } from "drizzle-orm";
 import { createLogger } from "@skout/observability";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo, scopedById } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { computeCroRollup, type CroRollup } from "./cro-summary.service.js";
 import { sendMail } from "./mail.service.js";
@@ -68,7 +68,7 @@ export async function listReportSnapshots(
   const rows = await db
     .select()
     .from(reportSnapshots)
-    .where(and(eq(reportSnapshots.scheduleId, scheduleId), eq(reportSnapshots.workspaceId, workspaceId)))
+    .where(scopedTo(reportSnapshots, workspaceId, eq(reportSnapshots.scheduleId, scheduleId)))
     .orderBy(desc(reportSnapshots.version));
   return rows.map(serialize);
 }
@@ -81,7 +81,7 @@ export async function getReportSnapshot(
   const [row] = await db
     .select()
     .from(reportSnapshots)
-    .where(and(eq(reportSnapshots.id, id), eq(reportSnapshots.workspaceId, workspaceId)));
+    .where(scopedById(reportSnapshots, workspaceId, id));
   return row ? serialize(row) : null;
 }
 

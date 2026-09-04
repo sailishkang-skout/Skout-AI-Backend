@@ -1,6 +1,6 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import type { EmailVerdict } from "@skout/pal";
 import type { OpenSearchConfig } from "@skout/opensearch";
 import { createLogger } from "@skout/observability";
@@ -255,10 +255,7 @@ export class EmailVerificationService {
       .select()
       .from(emailVerifications)
       .where(
-        and(
-          eq(emailVerifications.workspaceId, workspaceId),
-          inArray(emailVerifications.prospectId, prospectIds)
-        )
+        scopedTo(emailVerifications, workspaceId, inArray(emailVerifications.prospectId, prospectIds))
       );
     const map: Record<string, MemberVerification> = {};
     for (const r of rows) {

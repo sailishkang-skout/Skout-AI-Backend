@@ -1,5 +1,5 @@
-import { eq, and } from "drizzle-orm";
-import { createDb, schema } from "@skout/db";
+import { eq } from "drizzle-orm";
+import { createDb, schema, scopedTo } from "@skout/db";
 import {
   encryptSecret,
   findCalendarConnectionForUser,
@@ -190,7 +190,7 @@ export async function listConnectedGoogleCalendarEvents(
 export async function disconnectCalendar(db: Db, workspaceId: string, userId: string): Promise<boolean> {
   const deleted = await db
     .delete(calendarConnections)
-    .where(and(eq(calendarConnections.workspaceId, workspaceId), eq(calendarConnections.userId, userId)))
+    .where(scopedTo(calendarConnections, workspaceId, eq(calendarConnections.userId, userId)))
     .returning({ id: calendarConnections.id });
   return deleted.length > 0;
 }

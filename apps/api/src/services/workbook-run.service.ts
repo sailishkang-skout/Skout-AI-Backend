@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo, scopedById } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import { buildEnrichmentService, InsufficientCreditsError } from "./enrichment/index.js";
@@ -227,7 +227,7 @@ export async function getWorkbookRun(
   const [row] = await db
     .select()
     .from(enrichmentWorkbookRuns)
-    .where(and(eq(enrichmentWorkbookRuns.id, runId), eq(enrichmentWorkbookRuns.workspaceId, workspaceId)));
+    .where(scopedById(enrichmentWorkbookRuns, workspaceId, runId));
   return row ? serialize(row) : null;
 }
 
@@ -240,7 +240,7 @@ export async function listWorkbookRuns(
     .select()
     .from(enrichmentWorkbookRuns)
     .where(
-      and(eq(enrichmentWorkbookRuns.workbookId, workbookId), eq(enrichmentWorkbookRuns.workspaceId, workspaceId))
+      scopedTo(enrichmentWorkbookRuns, workspaceId, eq(enrichmentWorkbookRuns.workbookId, workbookId))
     )
     .orderBy(desc(enrichmentWorkbookRuns.queuedAt));
   return rows.map(serialize);

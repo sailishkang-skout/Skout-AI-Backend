@@ -1,6 +1,6 @@
 import { and, asc, count, eq, gte, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { createLogger } from "@skout/observability";
 
@@ -39,7 +39,7 @@ export async function pickNextInbox(db: Db, workspaceId: string): Promise<InboxR
   const candidates = await db
     .select()
     .from(inboxes)
-    .where(and(eq(inboxes.workspaceId, workspaceId), eq(inboxes.status, "active")))
+    .where(scopedTo(inboxes, workspaceId, eq(inboxes.status, "active")))
     .orderBy(sql`${inboxes.lastUsedAt} asc nulls first`, asc(inboxes.createdAt));
 
   for (const inbox of candidates) {

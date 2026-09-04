@@ -1,6 +1,6 @@
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema, recordEvidence, type RecordEvidenceInput } from "@skout/db";
+import { schema, recordEvidence, scopedTo, type RecordEvidenceInput } from "@skout/db";
 
 const { evidenceLedger } = schema;
 
@@ -22,17 +22,16 @@ export interface GetEvidenceQuery {
 
 /** Most recent evidence first, so callers naturally get "current belief" at index 0. */
 export async function getEvidence(db: Db, query: GetEvidenceQuery, limit = 20) {
-  const conditions = [
-    eq(evidenceLedger.workspaceId, query.workspaceId),
+  const extra = [
     eq(evidenceLedger.entityType, query.entityType),
     eq(evidenceLedger.entityId, query.entityId),
+    ...(query.attribute ? [eq(evidenceLedger.attribute, query.attribute)] : []),
   ];
-  if (query.attribute) conditions.push(eq(evidenceLedger.attribute, query.attribute));
 
   return db
     .select()
     .from(evidenceLedger)
-    .where(and(...conditions))
+    .where(scopedTo(evidenceLedger, query.workspaceId, ...extra))
     .orderBy(desc(evidenceLedger.observedAt))
     .limit(limit);
 }

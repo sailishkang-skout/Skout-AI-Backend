@@ -1,6 +1,6 @@
 import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 
 const { draftAutoApproveSettings, listMembers, prospectScores } = schema;
 
@@ -33,7 +33,7 @@ export async function getDraftAutoApproveSettings(
   const [row] = await db
     .select()
     .from(draftAutoApproveSettings)
-    .where(eq(draftAutoApproveSettings.workspaceId, workspaceId))
+    .where(scopedTo(draftAutoApproveSettings, workspaceId))
     .limit(1);
   return row ? toDto(row) : null;
 }
@@ -115,7 +115,7 @@ export async function getIcpScore(db: Db, workspaceId: string, prospectId: strin
   const [row] = await db
     .select({ score: prospectScores.score })
     .from(prospectScores)
-    .where(and(eq(prospectScores.workspaceId, workspaceId), eq(prospectScores.prospectId, prospectId)))
+    .where(scopedTo(prospectScores, workspaceId, eq(prospectScores.prospectId, prospectId)))
     .limit(1);
   return row?.score ?? null;
 }

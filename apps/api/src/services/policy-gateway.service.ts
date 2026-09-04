@@ -1,6 +1,6 @@
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import { HttpError } from "../utils/http.js";
 import { incrJourneyMetric } from "./journey-metrics.js";
 
@@ -33,7 +33,7 @@ export async function getActionMode(
   const [row] = await db
     .select()
     .from(automationPolicies)
-    .where(and(eq(automationPolicies.workspaceId, workspaceId), eq(automationPolicies.actionKey, actionKey)))
+    .where(scopedTo(automationPolicies, workspaceId, eq(automationPolicies.actionKey, actionKey)))
     .limit(1);
   if (row && isAutomationMode(row.mode)) return row.mode;
   return DEFAULT_ACTION_MODES[actionKey] ?? "ask";
@@ -67,7 +67,7 @@ export async function listPolicies(db: Db, workspaceId: string) {
   const rows = await db
     .select()
     .from(automationPolicies)
-    .where(eq(automationPolicies.workspaceId, workspaceId));
+    .where(scopedTo(automationPolicies, workspaceId));
   const keys = new Set(rows.map((r) => r.actionKey));
   const defaults = Object.entries(DEFAULT_ACTION_MODES)
     .filter(([k]) => !keys.has(k))
@@ -172,7 +172,7 @@ export async function listDecisions(db: Db, workspaceId: string, limit = 50) {
   return db
     .select()
     .from(policyDecisions)
-    .where(eq(policyDecisions.workspaceId, workspaceId))
+    .where(scopedTo(policyDecisions, workspaceId))
     .orderBy(desc(policyDecisions.createdAt))
     .limit(limit);
 }

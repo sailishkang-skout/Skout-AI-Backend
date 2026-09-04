@@ -1,6 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import { decryptSecretWithFallback, encryptSecret, maskApiKey } from "@skout/shared";
 import type { Env } from "../config/env.js";
@@ -115,10 +115,7 @@ export async function resolveWorkspaceWarmupApiKey(
     .select()
     .from(workspaceIntegrations)
     .where(
-      and(
-        eq(workspaceIntegrations.workspaceId, workspaceId),
-        eq(workspaceIntegrations.provider, WARMUP_TOOL_PROVIDER)
-      )
+      scopedTo(workspaceIntegrations, workspaceId, eq(workspaceIntegrations.provider, WARMUP_TOOL_PROVIDER))
     )
     .limit(1);
 
@@ -299,7 +296,7 @@ export async function pollIntegrationEvents(
   const [state] = await db
     .select()
     .from(warmupToolSyncState)
-    .where(eq(warmupToolSyncState.workspaceId, workspaceId))
+    .where(scopedTo(warmupToolSyncState, workspaceId))
     .limit(1);
 
   const cursor = state?.lastEventId ?? null;
