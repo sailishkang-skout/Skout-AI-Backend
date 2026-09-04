@@ -7,7 +7,7 @@ import {
   recordSignal,
   signalStackWeightsFromEnv,
 } from "../services/signal.service.js";
-import { errorResponse } from "../utils/http.js";
+import { errorResponse, requireWorkspaceId } from "../utils/http.js";
 
 const listSignalsQuerySchema = z.object({
   entityId: z.string().min(1),
@@ -40,7 +40,7 @@ export async function signalRoutes(app: FastifyInstance) {
    * signal, ranked by stacking score. Must be registered before /signals/:something-shaped
    * routes if any are added later — Fastify matches "/signals/accounts" as its own literal path. */
   app.get("/signals/accounts", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const parsed = listAccountSignalsQuerySchema.safeParse(request.query ?? {});
     if (!parsed.success) {
       return reply.status(400).send(errorResponse("invalid query", 400, parsed.error.flatten()));

@@ -9,7 +9,6 @@ import { configPlugin } from "./plugins/config.js";
 import { dbPlugin } from "./plugins/db.js";
 import { loggingPlugin } from "./plugins/logging.js";
 import { securityPlugin } from "./plugins/security.js";
-import { workspaceContext } from "./plugins/workspace-context.js";
 import { registerRoutes } from "./routes/index.js";
 import { apiError, HttpError, isDatabaseError } from "./utils/http.js";
 
@@ -163,8 +162,6 @@ export async function buildApp(config: Env) {
     credentials: true,
     exposedHeaders: ["x-request-id"],
   });
-
-  app.addHook("preHandler", workspaceContext);
 
   // Track registered routes so the not-found handler can distinguish a genuinely
   // unknown path (404) from a known path hit with an unsupported method (405).

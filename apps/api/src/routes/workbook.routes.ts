@@ -16,7 +16,7 @@ import {
   resumeWorkbookRun,
   startWorkbookRun,
 } from "../services/workbook-run.service.js";
-import { HttpError, errorResponse } from "../utils/http.js";
+import { HttpError, errorResponse, requireWorkspaceId } from "../utils/http.js";
 
 const ENRICH_FIELDS = ["company", "email", "validation", "phone"] as const;
 
@@ -53,7 +53,7 @@ function handleError(err: unknown, reply: { status: (code: number) => { send: (b
 /** 8.3 Enrichment workbooks — a named waterfall config plus pausable/resumable batch runs. */
 export async function workbookRoutes(app: FastifyInstance) {
   app.post("/workbooks", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = createWorkbookSchema.parse(request.body ?? {});
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const workbook = await createWorkbook(app.db, workspaceId, body);
@@ -61,7 +61,7 @@ export async function workbookRoutes(app: FastifyInstance) {
   });
 
   app.get("/workbooks", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.send({ data: [], total: 0 });
     const data = await listWorkbooks(app.db, workspaceId);
     return reply.send({ data, total: data.length });
@@ -69,7 +69,7 @@ export async function workbookRoutes(app: FastifyInstance) {
 
   app.get("/workbooks/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const workbook = await getWorkbook(app.db, workspaceId, id);
     if (!workbook) return reply.status(404).send({ error: "workbook_not_found" });
@@ -78,7 +78,7 @@ export async function workbookRoutes(app: FastifyInstance) {
 
   app.patch("/workbooks/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = updateWorkbookSchema.parse(request.body ?? {});
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const workbook = await updateWorkbook(app.db, workspaceId, id, body);
@@ -89,7 +89,7 @@ export async function workbookRoutes(app: FastifyInstance) {
   /** Explicit production-activation step — never an implicit side effect of a sample run. */
   app.post("/workbooks/:id/activate", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     try {
       const workbook = await activateWorkbook(app.db, workspaceId, id);
@@ -101,7 +101,7 @@ export async function workbookRoutes(app: FastifyInstance) {
 
   app.post("/workbooks/:id/runs", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = startRunSchema.parse(request.body ?? {});
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     try {
@@ -114,7 +114,7 @@ export async function workbookRoutes(app: FastifyInstance) {
 
   app.get("/workbooks/:id/runs", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.send({ data: [], total: 0 });
     const data = await listWorkbookRuns(app.db, workspaceId, id);
     return reply.send({ data, total: data.length });
@@ -122,7 +122,7 @@ export async function workbookRoutes(app: FastifyInstance) {
 
   app.get("/workbooks/:id/runs/:runId", async (request, reply) => {
     const { runId } = request.params as { id: string; runId: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const run = await getWorkbookRun(app.db, workspaceId, runId);
     if (!run) return reply.status(404).send({ error: "run_not_found" });
@@ -131,7 +131,7 @@ export async function workbookRoutes(app: FastifyInstance) {
 
   app.post("/workbooks/:id/runs/:runId/pause", async (request, reply) => {
     const { runId } = request.params as { id: string; runId: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     try {
       const run = await pauseWorkbookRun(app.db, workspaceId, runId);
@@ -143,7 +143,7 @@ export async function workbookRoutes(app: FastifyInstance) {
 
   app.post("/workbooks/:id/runs/:runId/resume", async (request, reply) => {
     const { runId } = request.params as { id: string; runId: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     try {
       const run = await resumeWorkbookRun(app.db, app.config, workspaceId, runId);
@@ -156,7 +156,7 @@ export async function workbookRoutes(app: FastifyInstance) {
   /** Reruns only the failed rows from this run — never the whole workbook. */
   app.post("/workbooks/:id/runs/:runId/rerun-failed", async (request, reply) => {
     const { runId } = request.params as { id: string; runId: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     try {
       const run = await rerunFailedRows(app.db, app.config, workspaceId, runId);

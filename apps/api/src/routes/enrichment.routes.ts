@@ -5,7 +5,7 @@ import { buildEnrichmentService, InsufficientCreditsError, SCORE_CREDIT_COST } f
 import { getWorkspaceIcp } from "../services/icp.service.js";
 import { getAsyncJob } from "../services/async-job.service.js";
 import { personalizeProspect } from "../services/personalize.service.js";
-import { HttpError, errorResponse } from "../utils/http.js";
+import { HttpError, errorResponse, requireWorkspaceId } from "../utils/http.js";
 import { buildEntitlementsService } from "../services/entitlements.service.js";
 import { recordEvidence } from "../services/evidence.service.js";
 import { assertEvidenced } from "@skout/shared";
@@ -40,13 +40,13 @@ const scoreBodySchema = z.object({
 
 export async function enrichmentRoutes(app: FastifyInstance) {
   app.get("/enrichment/credits", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildEnrichmentService(app.db, app.config);
     return reply.send({ workspaceId, balance: await svc.getCredits(workspaceId) });
   });
 
   app.get("/enrichment/jobs", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildEnrichmentService(app.db, app.config);
     const data = await svc.listJobs(workspaceId);
     return reply.send({ workspaceId, data, total: data.length });
@@ -58,7 +58,7 @@ export async function enrichmentRoutes(app: FastifyInstance) {
     // isn't a real job and was never going to be found — a clean 404 here, not a raw
     // invalid-uuid DB error, since this route's own contract already documents "not found".
     if (!jobIdSchema.safeParse(jobId).success) return reply.status(404).send({ error: "job_not_found" });
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildEnrichmentService(app.db, app.config);
     const job = await svc.getJob(workspaceId, jobId);
     if (!job) return reply.status(404).send({ error: "job_not_found" });
@@ -68,7 +68,7 @@ export async function enrichmentRoutes(app: FastifyInstance) {
   app.post("/enrichment/jobs/:jobId/retry", async (request, reply) => {
     const { jobId } = request.params as { jobId: string };
     if (!jobIdSchema.safeParse(jobId).success) return reply.status(404).send({ error: "job_not_found" });
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildEnrichmentService(app.db, app.config);
     try {
       const job = await svc.retryJob(workspaceId, jobId);
@@ -99,7 +99,7 @@ export async function enrichmentRoutes(app: FastifyInstance) {
 
   app.get("/enrichment/batches/:batchId", async (request, reply) => {
     const { batchId } = request.params as { batchId: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildEnrichmentService(app.db, app.config);
     const batch = await svc.getBatch(workspaceId, batchId);
     if (!batch) return reply.status(404).send({ error: "batch_not_found" });
@@ -107,7 +107,7 @@ export async function enrichmentRoutes(app: FastifyInstance) {
   });
 
   app.post("/enrichment/score", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = scoreBodySchema.parse(request.body ?? {});
     const svc = buildEnrichmentService(app.db, app.config);
     const icp = body.icp ?? (await getWorkspaceIcp(app.db, workspaceId));
@@ -166,7 +166,7 @@ export async function enrichmentRoutes(app: FastifyInstance) {
   });
 
   app.post("/enrichment/scores/lookup", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = z.object({ prospectIds: z.array(z.string()).min(1).max(100) }).parse(request.body ?? {});
     const svc = buildEnrichmentService(app.db, app.config);
     const scores = await svc.lookupScores(workspaceId, body.prospectIds);
@@ -175,7 +175,7 @@ export async function enrichmentRoutes(app: FastifyInstance) {
 
   app.get("/enrichment/score-jobs/:jobId", async (request, reply) => {
     const { jobId } = request.params as { jobId: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     try {
       const job = await getAsyncJob(app.db, workspaceId, jobId);
@@ -189,7 +189,7 @@ export async function enrichmentRoutes(app: FastifyInstance) {
   });
 
   app.post("/enrichment/personalize", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = z
       .object({
         prospectId: z.string(),

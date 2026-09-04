@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { HttpError, errorResponse } from "../utils/http.js";
+import { HttpError, errorResponse, requireWorkspaceId } from "../utils/http.js";
 import { REPORT_CADENCE_VALUES } from "../services/report-cadence.js";
 import {
   createReportSchedule,
@@ -69,7 +69,7 @@ function handleError(err: unknown, reply: { status: (code: number) => { send: (b
 /** 8.15 — scheduled report delivery (snapshot/version history) and the forecasting split. */
 export async function reportRoutes(app: FastifyInstance) {
   app.post("/report-schedules", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = createScheduleSchema.parse(request.body ?? {});
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const schedule = await createReportSchedule(app.db, workspaceId, body);
@@ -77,7 +77,7 @@ export async function reportRoutes(app: FastifyInstance) {
   });
 
   app.get("/report-schedules", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.send({ data: [], total: 0 });
     const data = await listReportSchedules(app.db, workspaceId);
     return reply.send({ data, total: data.length });
@@ -85,7 +85,7 @@ export async function reportRoutes(app: FastifyInstance) {
 
   app.get("/report-schedules/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const schedule = await getReportSchedule(app.db, workspaceId, id);
     if (!schedule) return reply.status(404).send({ error: "schedule_not_found" });
@@ -94,7 +94,7 @@ export async function reportRoutes(app: FastifyInstance) {
 
   app.patch("/report-schedules/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = updateScheduleSchema.parse(request.body ?? {});
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const schedule = await updateReportSchedule(app.db, workspaceId, id, body);
@@ -104,7 +104,7 @@ export async function reportRoutes(app: FastifyInstance) {
 
   app.delete("/report-schedules/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const deleted = await deleteReportSchedule(app.db, workspaceId, id);
     if (!deleted) return reply.status(404).send({ error: "schedule_not_found" });
@@ -114,7 +114,7 @@ export async function reportRoutes(app: FastifyInstance) {
   /** Trigger delivery right now, outside the schedule's normal cadence (e.g. for testing). */
   app.post("/report-schedules/:id/deliver", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     try {
       const result = await deliverReportSchedule(app.db, app.config, workspaceId, id);
@@ -126,7 +126,7 @@ export async function reportRoutes(app: FastifyInstance) {
 
   app.get("/report-schedules/:id/snapshots", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.send({ data: [], total: 0 });
     const data = await listReportSnapshots(app.db, workspaceId, id);
     return reply.send({ data, total: data.length });
@@ -134,7 +134,7 @@ export async function reportRoutes(app: FastifyInstance) {
 
   app.get("/report-schedules/:id/snapshots/:snapshotId", async (request, reply) => {
     const { snapshotId } = request.params as { id: string; snapshotId: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const snapshot = await getReportSnapshot(app.db, workspaceId, snapshotId);
     if (!snapshot) return reply.status(404).send({ error: "snapshot_not_found" });
@@ -144,7 +144,7 @@ export async function reportRoutes(app: FastifyInstance) {
   /** 8.15 task 33 — board-pack export of a specific historical snapshot (PDF or XLSX). */
   app.get("/report-schedules/:id/snapshots/:snapshotId/export", async (request, reply) => {
     const { snapshotId } = request.params as { id: string; snapshotId: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const format = formatFromQuery(request.query);
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const snapshot = await getReportSnapshot(app.db, workspaceId, snapshotId);
@@ -162,7 +162,7 @@ export async function reportRoutes(app: FastifyInstance) {
 
   /** 8.15 task 33 — ad-hoc board-pack export from the live rollup (also saves a snapshot). */
   app.post("/board-pack/export", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = boardPackExportSchema.parse(request.body ?? {});
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
 
@@ -177,14 +177,14 @@ export async function reportRoutes(app: FastifyInstance) {
 
   app.post("/forecasts/:periodLabel/refresh-model", async (request, reply) => {
     const { periodLabel } = request.params as { periodLabel: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const forecast = await refreshModelForecast(app.db, app.config, workspaceId, periodLabel);
     return reply.send(forecast);
   });
 
   app.get("/forecasts", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.send({ data: [], total: 0 });
     const data = await listForecasts(app.db, workspaceId);
     return reply.send({ data, total: data.length });
@@ -192,7 +192,7 @@ export async function reportRoutes(app: FastifyInstance) {
 
   app.get("/forecasts/:periodLabel", async (request, reply) => {
     const { periodLabel } = request.params as { periodLabel: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const forecast = await getForecast(app.db, workspaceId, periodLabel);
     if (!forecast) return reply.status(404).send({ error: "forecast_not_found" });
@@ -201,7 +201,7 @@ export async function reportRoutes(app: FastifyInstance) {
 
   app.put("/forecasts/:periodLabel/manager-adjustment", async (request, reply) => {
     const { periodLabel } = request.params as { periodLabel: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = forecastFigureSchema.parse(request.body ?? {});
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     try {
@@ -217,7 +217,7 @@ export async function reportRoutes(app: FastifyInstance) {
 
   app.put("/forecasts/:periodLabel/rep-commitment", async (request, reply) => {
     const { periodLabel } = request.params as { periodLabel: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = forecastFigureSchema.parse(request.body ?? {});
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     try {
