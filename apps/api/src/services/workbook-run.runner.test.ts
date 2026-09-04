@@ -20,6 +20,9 @@ vi.mock("./enrichment/index.js", () => ({
 const emitSkoutEvent = vi.fn(async (_db: unknown, _config: unknown, input: unknown) => ({ id: "evt-1", ...(input as object) }));
 vi.mock("./skout-event.service.js", () => ({ emitSkoutEvent }));
 
+const computeColumnsForRow = vi.fn().mockResolvedValue(undefined);
+vi.mock("./workbook-column-compute.service.js", () => ({ computeColumnsForRow: (...args: unknown[]) => computeColumnsForRow(...args) }));
+
 const { InsufficientCreditsError } = await import("./enrichment/index.js");
 const { runWorkbookRunJob } = await import("./workbook-run.runner.js");
 
@@ -67,7 +70,11 @@ function baseRun(overrides: Record<string, unknown> = {}) {
 }
 
 /** Fake db keyed on drizzle table identity so the same select/update code path works for both tables. */
-function makeFakeDb(run: ReturnType<typeof baseRun>, workbook: typeof WORKBOOK_ROW | null = WORKBOOK_ROW) {
+function makeFakeDb(
+  run: ReturnType<typeof baseRun>,
+  workbook: typeof WORKBOOK_ROW | null = WORKBOOK_ROW,
+  columnDefs: unknown[] = []
+) {
   let runState = { ...run };
   let batchState: Record<string, unknown> | null = null;
   let batchCounter = 0;
@@ -76,9 +83,13 @@ function makeFakeDb(run: ReturnType<typeof baseRun>, workbook: typeof WORKBOOK_R
     select: vi.fn((_cols?: unknown) => ({
       from: vi.fn((table: unknown) => ({
         where: vi.fn(() => {
-          if (table === schema.enrichmentWorkbookRuns) return Promise.resolve([runState]);
-          if (table === schema.enrichmentWorkbooks) return Promise.resolve(workbook ? [workbook] : []);
-          return Promise.resolve([]);
+          const result = (() => {
+            if (table === schema.enrichmentWorkbookRuns) return [runState];
+            if (table === schema.enrichmentWorkbooks) return workbook ? [workbook] : [];
+            if (table === schema.workbookColumnDefinitions) return columnDefs;
+            return [];
+          })();
+          return Object.assign(Promise.resolve(result), { orderBy: vi.fn(() => Promise.resolve(result)) });
         }),
       })),
     })),
@@ -107,12 +118,13 @@ function makeFakeDb(run: ReturnType<typeof baseRun>, workbook: typeof WORKBOOK_R
   return { db, getRunState: () => runState, getBatchState: () => batchState };
 }
 
-function okJob(prospectId: string, creditsUsed = 1) {
-  return { id: `job-${prospectId}`, status: "completed", creditsUsed };
+function okJob(prospectId: string, creditsUsed = 1, results: unknown[] = []) {
+  return { id: `job-${prospectId}`, status: "completed", creditsUsed, results };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  computeColumnsForRow.mockResolvedValue(undefined);
   getActivation.mockImplementation((_ws: string, prospectId: string) =>
     Promise.resolve({ id: `act-${prospectId}`, snapshot: { companyDomain: "acme.com" } })
   );
@@ -254,5 +266,71 @@ describe("runWorkbookRunJob", () => {
     await runWorkbookRunJob(db as never, config, RUN_ID, WORKSPACE);
     expect(getRunState().status).toBe("failed");
     expect(getRunState().errorMessage).toBe("workbook_not_found");
+  });
+
+  it("computes flexible columns for each successful row when the workbook has any", async () => {
+    enrichProspect.mockImplementation((_ws: string, snap: { prospectId: string }) =>
+      Promise.resolve(
+        okJob(snap.prospectId, 1, [{ field: "company", value: undefined, valueJson: { companyName: "Acme" }, provider: "x" }])
+      )
+    );
+    const { db } = makeFakeDb(baseRun({ targetProspectIds: ["p1"] }), WORKBOOK_ROW, [
+      {
+        id: "col-1",
+        workspaceId: WORKSPACE,
+        workbookId: "wb-1",
+        key: "summary",
+        label: "Summary",
+        columnType: "derived",
+        config: { template: "{{company}}" },
+        orderIndex: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ]);
+
+    await runWorkbookRunJob(db as never, config, RUN_ID, WORKSPACE);
+
+    expect(computeColumnsForRow).toHaveBeenCalledTimes(1);
+    expect(computeColumnsForRow).toHaveBeenCalledWith(
+      db,
+      config,
+      WORKSPACE,
+      RUN_ID,
+      [expect.objectContaining({ id: "col-1", key: "summary" })],
+      "p1",
+      expect.objectContaining({ company: "Acme" })
+    );
+  });
+
+  it("does not call computeColumnsForRow at all when the workbook has no flexible columns", async () => {
+    enrichProspect.mockImplementation((_ws: string, snap: { prospectId: string }) => Promise.resolve(okJob(snap.prospectId)));
+    const { db } = makeFakeDb(baseRun({ targetProspectIds: ["p1"] }), WORKBOOK_ROW, []);
+
+    await runWorkbookRunJob(db as never, config, RUN_ID, WORKSPACE);
+
+    expect(computeColumnsForRow).not.toHaveBeenCalled();
+  });
+
+  it("does not call computeColumnsForRow for a row whose enrichProspect call failed", async () => {
+    enrichProspect.mockResolvedValue({ id: "job-p1", status: "failed", creditsUsed: 0, results: [] });
+    const { db } = makeFakeDb(baseRun({ targetProspectIds: ["p1"] }), WORKBOOK_ROW, [
+      {
+        id: "col-1",
+        workspaceId: WORKSPACE,
+        workbookId: "wb-1",
+        key: "summary",
+        label: "Summary",
+        columnType: "derived",
+        config: { template: "{{company}}" },
+        orderIndex: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ]);
+
+    await runWorkbookRunJob(db as never, config, RUN_ID, WORKSPACE);
+
+    expect(computeColumnsForRow).not.toHaveBeenCalled();
   });
 });
