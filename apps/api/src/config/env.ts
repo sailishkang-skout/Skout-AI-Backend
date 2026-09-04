@@ -334,6 +334,9 @@ const envSchema = z
      * Never auto-merges anything; this only closes the "scoring function exists but nothing
      * calls it" gap by generating the candidates a reviewer sees in the merge-review UI. */
     IDENTITY_MERGE_DISCOVERY_INTERVAL_HOURS: z.coerce.number().int().positive().default(24),
+    // --- §8.12 CRM sync checkpoint + push-back (ADI-10). ---
+    /** How often the outbound-write worker drains pending crm_outbound_writes rows. */
+    CRM_OUTBOUND_WRITE_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(5),
   })
   .transform((data) => {
     let next = data;
