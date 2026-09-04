@@ -63,6 +63,16 @@ export async function dashboardRoutes(app: FastifyInstance) {
     return { workspaceId, staleDeals, generatedAt: new Date().toISOString() };
   });
 
+  /** §8.12 CRM Intelligence — missing-stakeholder pipeline-risk flag. Open to every workspace
+   *  member, same as stale-deals above (not an org-internal exec metric). */
+  app.get("/dashboard/missing-stakeholders", async (request) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) return { workspaceId, missingStakeholders: [], generatedAt: new Date().toISOString() };
+    const missingStakeholders = await svc.missingStakeholders(workspaceId);
+    return { workspaceId, missingStakeholders, generatedAt: new Date().toISOString() };
+  });
+
   /** R14.3 — internal-only "switching cost" metric. Owner/admin only; not for reps or customers. */
   app.get("/dashboard/switching-cost", async (request) => {
     requireRole(request, ["owner", "admin"]);
