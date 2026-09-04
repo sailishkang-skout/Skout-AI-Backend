@@ -334,6 +334,15 @@ const envSchema = z
      * Never auto-merges anything; this only closes the "scoring function exists but nothing
      * calls it" gap by generating the candidates a reviewer sees in the merge-review UI. */
     IDENTITY_MERGE_DISCOVERY_INTERVAL_HOURS: z.coerce.number().int().positive().default(24),
+    // --- §11.3 anomaly detection PoC — bounce-rate spike (ADI-07). ---
+    /** How often the sweep compares each workspace's last-24h bounce rate to its 7-day baseline. */
+    BOUNCE_ANOMALY_SWEEP_INTERVAL_HOURS: z.coerce.number().int().positive().default(6),
+    /** Minimum outbound sends in BOTH the recent (24h) and baseline (7d) windows before a rate is
+     * trusted enough to compare — avoids flagging a 1-of-2 bounce as a "spike". */
+    BOUNCE_ANOMALY_MIN_SENT: z.coerce.number().int().positive().default(20),
+    /** Recent-vs-baseline bounce-rate delta (0-1 scale, e.g. 0.15 = 15 percentage points) that
+     * crosses from "normal variance" to "spike, open an incident". */
+    BOUNCE_ANOMALY_SPIKE_DELTA: z.coerce.number().min(0).max(1).default(0.15),
   })
   .transform((data) => {
     let next = data;
