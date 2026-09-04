@@ -66,3 +66,17 @@ and review trigger.
 ## Wave 2 status (2026-08-26)
 Internal API + one proof read path shipped. Full migration of BullMQ/transactional writers to HTTP
 remains deferred (latency/tx risk). Remaining rows keep exception comments.
+
+## Wave 3 additions (2026-09-04)
+
+| File | Tables touched | Read/write |
+|---|---|---|
+| `apps/api/src/services/forecast.service.ts` | deals, pipelineStages | read |
+
+`forecast.service.ts`'s addition (§8.15 SS-03 forecast uncertainty band + data-gaps) is a
+synchronous read on the existing forecast-detail request path — same latency rationale as
+`cro-summary.service.ts`, which this file already calls into for its model-forecast figure.
+
+(A pending, not-yet-merged PR for SS-02's `retention-signals-sweep.worker.ts` also adds a Wave 3
+row here — expect a small merge-order conflict on this section, resolved by keeping both rows,
+whichever PR lands second.)
