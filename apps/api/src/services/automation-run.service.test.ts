@@ -5,9 +5,17 @@ vi.mock("@skout/shared", () => ({
   buildIdempotencyKey: vi.fn((...parts: string[]) => parts.join(":")),
 }));
 import { claimNext, recordResult } from "@skout/shared";
-import { createAutomationRun, claimNextStep, completeStep, failStep, retryFailedSteps } from "./automation-run.service.js";
+import { createAutomationRun, claimNextStep, completeStep, failStep, getRun, retryFailedSteps } from "./automation-run.service.js";
 import { HttpError } from "../utils/http.js";
 import type { AutomationGraph } from "./automation-graph.js";
+import type { Env } from "../config/env.js";
+import { schema } from "@skout/db";
+
+const listAutomationSecretValues = vi.fn(async (..._args: unknown[]) => [] as string[]);
+vi.mock("./automation-secrets.service.js", async () => {
+  const actual = await vi.importActual<typeof import("./automation-secrets.service.js")>("./automation-secrets.service.js");
+  return { ...actual, listAutomationSecretValues: (...args: unknown[]) => listAutomationSecretValues(...args) };
+});
 
 const WORKSPACE_ID = "ws-1";
 const GRAPH: AutomationGraph = {
@@ -125,5 +133,87 @@ describe("automation-run.service — execution-intent delegation", () => {
       expect.objectContaining({ status: "failed", error: "boom" })
     );
     expect(result.status).toBe("failed");
+  });
+});
+
+/** SP-07 — getRun must mask any workspace secret's plaintext value out of every step's
+ * input/output before it leaves the service, regardless of where in the JSON it appears. */
+describe("getRun — secret masking", () => {
+  const { automationRuns, automationRunSteps } = schema;
+  const config = {} as Env;
+
+  function makeRunDb(run: Record<string, unknown>, steps: Record<string, unknown>[]) {
+    return {
+      select: vi.fn(() => ({
+        from: vi.fn((table: unknown) => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(() => Promise.resolve(table === automationRuns ? [run] : [])),
+            orderBy: vi.fn(() => Promise.resolve(table === automationRunSteps ? steps : [])),
+          })),
+        })),
+      })),
+    } as never;
+  }
+
+  beforeEach(() => {
+    listAutomationSecretValues.mockClear();
+    listAutomationSecretValues.mockResolvedValue([]);
+  });
+
+  it("throws automation_run_not_found when the run doesn't exist", async () => {
+    const emptyDb = { select: vi.fn(() => ({ from: vi.fn(() => ({ where: vi.fn(() => ({ limit: vi.fn().mockResolvedValue([]) })) })) })) } as never;
+    await expect(getRun(emptyDb, config, "ws-1", "run-missing")).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it("redacts a secret value that leaked into a step's output, wherever it's nested", async () => {
+    listAutomationSecretValues.mockResolvedValue(["sk-live-abcdef123456"]);
+    const run = { id: "run-1", workspaceId: "ws-1", status: "failed" };
+    const steps = [
+      {
+        id: "step-1",
+        nodeId: "n1",
+        status: "failed",
+        input: {},
+        output: { status: 401, body: { message: "Unauthorized: token sk-live-abcdef123456 rejected" } },
+      },
+    ];
+    const db = makeRunDb(run, steps);
+
+    const result = await getRun(db, config, "ws-1", "run-1");
+
+    expect(JSON.stringify(result.steps)).not.toContain("sk-live-abcdef123456");
+    expect((result.steps[0]!.output as { body: { message: string } }).body.message).toBe(
+      "Unauthorized: token [REDACTED] rejected"
+    );
+  });
+
+  it("redacts a secret used as an exact header value", async () => {
+    listAutomationSecretValues.mockResolvedValue(["sk-live-abcdef123456"]);
+    const run = { id: "run-1", workspaceId: "ws-1", status: "succeeded" };
+    const steps = [
+      {
+        id: "step-1",
+        nodeId: "n1",
+        status: "succeeded",
+        input: { headers: { Authorization: "sk-live-abcdef123456" } },
+        output: {},
+      },
+    ];
+    const db = makeRunDb(run, steps);
+
+    const result = await getRun(db, config, "ws-1", "run-1");
+
+    expect((result.steps[0]!.input as { headers: { Authorization: string } }).headers.Authorization).toBe("[REDACTED]");
+  });
+
+  it("leaves step data untouched when the workspace has no secrets", async () => {
+    listAutomationSecretValues.mockResolvedValue([]);
+    const run = { id: "run-1", workspaceId: "ws-1", status: "succeeded" };
+    const steps = [{ id: "step-1", nodeId: "n1", status: "succeeded", input: { a: 1 }, output: { b: "hello" } }];
+    const db = makeRunDb(run, steps);
+
+    const result = await getRun(db, config, "ws-1", "run-1");
+
+    expect(result.steps[0]!.output).toEqual({ b: "hello" });
   });
 });

@@ -17,7 +17,7 @@ export async function dealsRoutes(app: FastifyInstance) {
     const companiesService = buildCompaniesService(db, auditService);
     const pipelinesService = buildPipelinesService(db, auditService);
     const activitiesService = buildActivitiesService(db);
-    return buildDealsService(db, companiesService, pipelinesService, activitiesService, auditService);
+    return buildDealsService(db, companiesService, pipelinesService, activitiesService, auditService, app.config);
   };
 
   // Registered before "/deals/:id" so the literal path takes precedence.

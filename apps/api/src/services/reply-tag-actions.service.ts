@@ -12,6 +12,7 @@ import {
 import { recordSignal } from "./signal.service.js";
 import { addSuppression, isSuppressed } from "./suppression.service.js";
 import { createNotification } from "./notifications.service.js";
+import { emitSkoutEvent } from "./skout-event.service.js";
 
 const log = createLogger("reply-tag-actions");
 const { inboxThreads, prospectActivations, tasks, workspaceMembers } = schema;
@@ -183,10 +184,24 @@ export async function applyReplyTagActions(
 
   const now = new Date();
 
+  await emitSkoutEvent(db, config, {
+    type: "reply.classified",
+    tenantId: workspaceId,
+    aggregateId: threadId,
+    data: {
+      workspaceId,
+      threadId,
+      prospectId: thread.prospectId,
+      tag,
+      confidence,
+      negativeSubtype: negativeSubtype ?? null,
+    },
+  }).catch((err: unknown) => log.warn("reply-tag-actions: failed to emit reply.classified", { threadId, err }));
+
   if (tag === "negative" && thread.prospectId) {
     const snippet = bodyText?.trim().slice(0, 240);
     try {
-      await recordSignal(db, {
+      const signal = await recordSignal(db, {
         entityType: "prospect",
         entityId: thread.prospectId,
         signalType: "negative_sentiment",
@@ -196,6 +211,12 @@ export async function applyReplyTagActions(
         source: "reply-tagger",
         detectedAt: now,
       });
+      await emitSkoutEvent(db, config, {
+        type: "signal.detected",
+        tenantId: workspaceId,
+        aggregateId: thread.prospectId,
+        data: { workspaceId, signalId: signal.id, entityType: signal.entityType, entityId: signal.entityId, signalType: signal.signalType },
+      }).catch((err: unknown) => log.warn("reply-tag-actions: failed to emit signal.detected", { threadId, err }));
     } catch (err) {
       log.warn("reply-tag-actions: failed to record negative_sentiment signal", { threadId, err });
     }
@@ -207,7 +228,7 @@ export async function applyReplyTagActions(
     try {
       const budgetFreeze = await detectBudgetFreeze(bodyText, openRouterApiKey);
       if (budgetFreeze?.detected) {
-        await recordSignal(db, {
+        const signal = await recordSignal(db, {
           entityType: "prospect",
           entityId: thread.prospectId,
           signalType: "budget_freeze",
@@ -217,6 +238,12 @@ export async function applyReplyTagActions(
           source: "reply-tagger",
           detectedAt: now,
         });
+        await emitSkoutEvent(db, config, {
+          type: "signal.detected",
+          tenantId: workspaceId,
+          aggregateId: thread.prospectId,
+          data: { workspaceId, signalId: signal.id, entityType: signal.entityType, entityId: signal.entityId, signalType: signal.signalType },
+        }).catch((err: unknown) => log.warn("reply-tag-actions: failed to emit signal.detected", { threadId, err }));
       }
     } catch (err) {
       log.warn("reply-tag-actions: budget-freeze detection failed", { threadId, err });

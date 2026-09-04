@@ -16,6 +16,8 @@ import {
   type FieldSource,
   type FieldSourcesMap,
 } from "../utils/field-sources.js";
+import { emitSkoutEvent } from "./skout-event.service.js";
+import type { Env } from "../config/env.js";
 
 const log = serviceLog("deals");
 const { deals, pipelineStages } = schema;
@@ -84,7 +86,8 @@ export class DealsService {
     private readonly companiesService: CompaniesService,
     private readonly pipelinesService: PipelinesService,
     private readonly activitiesService: ActivitiesService,
-    private readonly auditService: AuditService
+    private readonly auditService: AuditService,
+    private readonly config?: Env
   ) {}
 
   async list(
@@ -317,6 +320,24 @@ export class DealsService {
     }
 
     if (row) log.info("deal updated", { workspaceId, dealId: id });
+
+    if (dto && this.config) {
+      await emitSkoutEvent(this.config, {
+        type: "opportunity.updated",
+        tenantId: workspaceId,
+        aggregateId: id,
+        data: {
+          workspaceId,
+          dealId: id,
+          stageId: dto.stageId,
+          status: dto.status,
+          amount: dto.amount,
+          currency: dto.currency,
+          updatedBy: actorId ?? null,
+        },
+      }).catch((err: unknown) => log.warn("failed to emit opportunity.updated", { err, workspaceId, dealId: id }));
+    }
+
     return dto;
   }
 
@@ -385,9 +406,10 @@ export function buildDealsService(
   companiesService: CompaniesService | null,
   pipelinesService: PipelinesService | null,
   activitiesService: ActivitiesService | null,
-  auditService: AuditService | null
+  auditService: AuditService | null,
+  config?: Env
 ): DealsService | null {
   return db && companiesService && pipelinesService && activitiesService && auditService
-    ? new DealsService(db, companiesService, pipelinesService, activitiesService, auditService)
+    ? new DealsService(db, companiesService, pipelinesService, activitiesService, auditService, config)
     : null;
 }

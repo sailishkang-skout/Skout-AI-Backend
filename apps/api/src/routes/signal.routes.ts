@@ -7,6 +7,7 @@ import {
   recordSignal,
   signalStackWeightsFromEnv,
 } from "../services/signal.service.js";
+import { emitSkoutEvent } from "../services/skout-event.service.js";
 import { errorResponse, requireWorkspaceId } from "../utils/http.js";
 
 const listSignalsQuerySchema = z.object({
@@ -88,12 +89,19 @@ export async function signalRoutes(app: FastifyInstance) {
     }
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
 
+    const workspaceId = request.workspaceId ?? "unknown";
     const signal = await recordSignal(app.db, {
       ...parsed.data,
       source: parsed.data.source ?? "manual",
       observedAt: parsed.data.observedAt ? new Date(parsed.data.observedAt) : undefined,
       expiresAt: parsed.data.expiresAt ? new Date(parsed.data.expiresAt) : undefined,
     });
+    await emitSkoutEvent(app.db, app.config, {
+      type: "signal.detected",
+      tenantId: workspaceId,
+      aggregateId: signal.entityId,
+      data: { workspaceId, signalId: signal.id, entityType: signal.entityType, entityId: signal.entityId, signalType: signal.signalType },
+    }).catch((err: unknown) => request.log.warn({ err }, "failed to emit signal.detected"));
     return reply.status(201).send({ signal });
   });
 }

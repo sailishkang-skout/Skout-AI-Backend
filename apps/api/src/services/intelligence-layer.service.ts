@@ -173,7 +173,12 @@ export interface ToolActionPreview {
   args: Record<string, unknown>;
 }
 
-export const MUTATING_TOOL_NAMES = new Set(["create_outbound_sequence"]);
+export const MUTATING_TOOL_NAMES = new Set([
+  "create_outbound_sequence",
+  "enroll_list",
+  "start_enrichment_run",
+  "draft_content",
+]);
 
 export function buildToolActionPreview(
   toolName: string,

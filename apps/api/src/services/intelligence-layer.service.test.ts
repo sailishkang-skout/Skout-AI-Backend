@@ -5,12 +5,14 @@ import {
   captureFeedback,
   deriveActiveSignalTypes,
   ingestObservation,
+  MUTATING_TOOL_NAMES,
   normalizeEntityKey,
   parseNextBestActionResponse,
   resolveCanonicalField,
   scoreIcpFitLocally,
 } from "./intelligence-layer.service.js";
 import type { ActivationRuleDto } from "./activation-rules.service.js";
+import { WORKSPACE_TOOL_DEFS } from "./ai-workspace-tools.service.js";
 
 function rule(overrides: Partial<ActivationRuleDto> = {}): ActivationRuleDto {
   return {
@@ -186,5 +188,37 @@ describe("buildToolActionPreview — §8.13", () => {
     });
     expect(preview.affectedRecordCount).toBe(2);
     expect(preview.externalSideEffects.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * SP-04 — structural regression test: MUTATING_TOOL_NAMES was hand-maintained with no check,
+ * which is exactly how enroll_list silently fell out of the allowlist despite having its own
+ * `confirmed` field and preview builder (POST /ai/execute-tool 400'd it as "tool_not_mutating").
+ * A tool declaring a `confirmed` parameter is, by construction, a tool the model is meant to
+ * call twice — preview, then confirm — so it MUST be in the allowlist or that second call 400s.
+ */
+describe("MUTATING_TOOL_NAMES — §8.13 structural check", () => {
+  function declaresConfirmedParam(toolName: string): boolean {
+    const tool = WORKSPACE_TOOL_DEFS.find((t) => t.type === "function" && t.function.name === toolName);
+    if (!tool || tool.type !== "function") return false;
+    const parameters = tool.function.parameters as { properties?: Record<string, unknown> } | undefined;
+    return Boolean(parameters?.properties && "confirmed" in parameters.properties);
+  }
+
+  const toolsWithConfirmedParam = WORKSPACE_TOOL_DEFS.filter(
+    (t) => t.type === "function" && declaresConfirmedParam(t.function.name)
+  ).map((t) => (t.type === "function" ? t.function.name : ""));
+
+  it("finds at least the two known mutating tools (sanity check the introspection itself works)", () => {
+    expect(toolsWithConfirmedParam).toEqual(expect.arrayContaining(["create_outbound_sequence", "enroll_list"]));
+  });
+
+  it.each(toolsWithConfirmedParam)("every tool with a 'confirmed' parameter is in MUTATING_TOOL_NAMES: %s", (name) => {
+    expect(MUTATING_TOOL_NAMES.has(name)).toBe(true);
+  });
+
+  it("enroll_list specifically is allowlisted (the bug this ticket fixes)", () => {
+    expect(MUTATING_TOOL_NAMES.has("enroll_list")).toBe(true);
   });
 });
