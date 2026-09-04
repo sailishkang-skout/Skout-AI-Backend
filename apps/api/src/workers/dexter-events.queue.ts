@@ -32,7 +32,7 @@ export function getDexterEventsQueue(config: Env): Queue<SkoutEvent<Record<strin
       },
     });
     queue.on("error", (err) => {
-      console.error("dexter-events queue error", err);
+      log.warn("dexter-events queue error", { message: err.message });
     });
   }
   return queue;
