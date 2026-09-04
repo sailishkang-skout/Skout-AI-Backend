@@ -319,6 +319,7 @@ export async function recordDexterLearning(
     outcome: "accepted",
     attribution: typeof learning.attribution === "string" ? learning.attribution : "dexter_plan",
     thresholdDelta: typeof learning.thresholdDelta === "number" ? learning.thresholdDelta : 0,
+    sampleSize: typeof learning.sampleSize === "number" ? learning.sampleSize : 0,
   });
 
   const outcome = {

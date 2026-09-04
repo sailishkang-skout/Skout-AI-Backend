@@ -146,18 +146,47 @@ export function applyPolicy(
 
 // ── Step 8: capture feedback ─────────────────────────────────────────────────
 
+/**
+ * SP-03 — minimum observation count before a thresholdDelta can move away from 0.
+ * Conservative starting value; a caller reporting fewer observations than this for
+ * whatever segment/cohort backs their feedback gets their delta forced to 0 rather
+ * than trusted at face value (small samples are noise, not signal).
+ */
+export const MIN_LEARNING_SAMPLE_SIZE = 20;
+
 export interface IntelligenceFeedback {
   recommendationId: string;
   outcome: "accepted" | "rejected" | "ignored";
   attribution?: string;
   thresholdDelta?: number;
+  /** Observation count backing thresholdDelta, for the sample-size gate. Missing/omitted
+   * is treated as 0 — fail closed rather than trust an unstated sample size. */
+  sampleSize?: number;
 }
 
-export function captureFeedback(feedback: IntelligenceFeedback): IntelligenceFeedback {
+export interface CapturedFeedback extends IntelligenceFeedback {
+  attribution: string;
+  thresholdDelta: number;
+  /** True when a nonzero thresholdDelta request was zeroed out by the sample-size gate. */
+  thresholdDeltaGated: boolean;
+  /** Set whenever the gate isn't met, even if thresholdDelta was already 0 — so callers can
+   * always see why, rather than the gate silently doing nothing. */
+  gateReason: string | null;
+}
+
+export function captureFeedback(feedback: IntelligenceFeedback): CapturedFeedback {
+  const sampleSize = feedback.sampleSize ?? 0;
+  const requestedDelta = feedback.thresholdDelta ?? 0;
+  const gateMet = sampleSize >= MIN_LEARNING_SAMPLE_SIZE;
+
   return {
     ...feedback,
     attribution: feedback.attribution ?? "user_action",
-    thresholdDelta: feedback.thresholdDelta ?? 0,
+    thresholdDelta: gateMet ? requestedDelta : 0,
+    thresholdDeltaGated: !gateMet && requestedDelta !== 0,
+    gateReason: gateMet
+      ? null
+      : `sample size ${sampleSize} is below the minimum of ${MIN_LEARNING_SAMPLE_SIZE} observations required to move thresholdDelta`,
   };
 }
 

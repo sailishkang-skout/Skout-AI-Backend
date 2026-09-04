@@ -5,6 +5,7 @@ import {
   captureFeedback,
   deriveActiveSignalTypes,
   ingestObservation,
+  MIN_LEARNING_SAMPLE_SIZE,
   MUTATING_TOOL_NAMES,
   normalizeEntityKey,
   parseNextBestActionResponse,
@@ -177,6 +178,62 @@ describe("captureFeedback — step 8", () => {
     const fb = captureFeedback({ recommendationId: "r-1", outcome: "accepted" });
     expect(fb.attribution).toBe("user_action");
     expect(fb.thresholdDelta).toBe(0);
+  });
+
+  it("defaults sampleSize to 0 (fail closed) when omitted, gating a requested nonzero delta", () => {
+    const fb = captureFeedback({ recommendationId: "r-1", outcome: "accepted", thresholdDelta: 5 });
+    expect(fb.thresholdDelta).toBe(0);
+    expect(fb.thresholdDeltaGated).toBe(true);
+    expect(fb.gateReason).toMatch(/sample size 0/);
+  });
+
+  describe("SP-03 sample-size gate", () => {
+    it(`forces thresholdDelta to 0 at n = ${MIN_LEARNING_SAMPLE_SIZE - 1} even when a nonzero delta is explicitly requested`, () => {
+      const fb = captureFeedback({
+        recommendationId: "r-1",
+        outcome: "accepted",
+        thresholdDelta: 0.15,
+        sampleSize: MIN_LEARNING_SAMPLE_SIZE - 1,
+      });
+      expect(fb.thresholdDelta).toBe(0);
+      expect(fb.thresholdDeltaGated).toBe(true);
+      expect(fb.gateReason).toBeTruthy();
+    });
+
+    it(`lets thresholdDelta through unmodified at n = ${MIN_LEARNING_SAMPLE_SIZE}`, () => {
+      const fb = captureFeedback({
+        recommendationId: "r-1",
+        outcome: "accepted",
+        thresholdDelta: 0.15,
+        sampleSize: MIN_LEARNING_SAMPLE_SIZE,
+      });
+      expect(fb.thresholdDelta).toBe(0.15);
+      expect(fb.thresholdDeltaGated).toBe(false);
+      expect(fb.gateReason).toBeNull();
+    });
+
+    it("does not gate (and reports no reason) when the requested delta is already 0, regardless of sample size", () => {
+      const fb = captureFeedback({
+        recommendationId: "r-1",
+        outcome: "accepted",
+        thresholdDelta: 0,
+        sampleSize: 1,
+      });
+      expect(fb.thresholdDelta).toBe(0);
+      expect(fb.thresholdDeltaGated).toBe(false);
+      expect(fb.gateReason).toBeTruthy(); // still surfaced: n=1 doesn't meet the gate
+    });
+
+    it("gates a negative requested delta the same as a positive one", () => {
+      const fb = captureFeedback({
+        recommendationId: "r-1",
+        outcome: "accepted",
+        thresholdDelta: -0.2,
+        sampleSize: MIN_LEARNING_SAMPLE_SIZE - 1,
+      });
+      expect(fb.thresholdDelta).toBe(0);
+      expect(fb.thresholdDeltaGated).toBe(true);
+    });
   });
 });
 
