@@ -328,12 +328,32 @@ const envSchema = z
     RISK_DECAY_SWEEP_INTERVAL_HOURS: z.coerce.number().int().positive().default(24),
     /** No opens/replies/activity for this many days -> engagement_decay signal. */
     RISK_DECAY_INACTIVITY_DAYS: z.coerce.number().int().positive().default(21),
+    // --- §8.12 CRM Intelligence retention signals (SS-02): disengagement / renewal-risk / expansion. ---
+    /** How often the retention-signals sweep re-evaluates every workspace's accounts/deals. */
+    RETENTION_SIGNALS_SWEEP_INTERVAL_HOURS: z.coerce.number().int().positive().default(24),
+    /** No activity (company + its deals + its contacts) for this many days -> disengagement flag. */
+    RETENTION_DISENGAGEMENT_INACTIVITY_DAYS: z.coerce.number().int().positive().default(30),
+    /** A won deal's contractEndDate within this many days (including already past) -> renewal-risk candidate. */
+    RETENTION_RENEWAL_WINDOW_DAYS: z.coerce.number().int().positive().default(60),
+    /** How far back a reply/meeting still counts as a "recent positive signal" for renewal risk. */
+    RETENTION_POSITIVE_SIGNAL_LOOKBACK_DAYS: z.coerce.number().int().positive().default(30),
+    /** How far back a hiring/funding-shaped signal still counts as a fresh expansion opportunity. */
+    RETENTION_EXPANSION_LOOKBACK_DAYS: z.coerce.number().int().positive().default(14),
     // --- §5.2 identity-merge candidate discovery. ---
     /** How often the discovery worker scans for probable-duplicate company/contact pairs and
      * writes identity_merge_proposals rows for a human to review — see identity-merge.service.ts.
      * Never auto-merges anything; this only closes the "scoring function exists but nothing
      * calls it" gap by generating the candidates a reviewer sees in the merge-review UI. */
     IDENTITY_MERGE_DISCOVERY_INTERVAL_HOURS: z.coerce.number().int().positive().default(24),
+    // --- §11.3 anomaly detection PoC — bounce-rate spike (ADI-07). ---
+    /** How often the sweep compares each workspace's last-24h bounce rate to its 7-day baseline. */
+    BOUNCE_ANOMALY_SWEEP_INTERVAL_HOURS: z.coerce.number().int().positive().default(6),
+    /** Minimum outbound sends in BOTH the recent (24h) and baseline (7d) windows before a rate is
+     * trusted enough to compare — avoids flagging a 1-of-2 bounce as a "spike". */
+    BOUNCE_ANOMALY_MIN_SENT: z.coerce.number().int().positive().default(20),
+    /** Recent-vs-baseline bounce-rate delta (0-1 scale, e.g. 0.15 = 15 percentage points) that
+     * crosses from "normal variance" to "spike, open an incident". */
+    BOUNCE_ANOMALY_SPIKE_DELTA: z.coerce.number().min(0).max(1).default(0.15),
     // --- §8.12 CRM sync checkpoint + push-back (ADI-10). ---
     /** How often the outbound-write worker drains pending crm_outbound_writes rows. */
     CRM_OUTBOUND_WRITE_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(5),

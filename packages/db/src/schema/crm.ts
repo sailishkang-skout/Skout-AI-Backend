@@ -143,6 +143,10 @@ export const deals = pgTable(
     closeDate: date("close_date"),
     probability: integer("probability"),
     status: text("status").notNull().default("open"),
+    /** §8.12 CRM Intelligence — renewal-risk detection needs a contract end date to compare
+     * against; didn't exist anywhere on companies/deals before this. Nullable: most deals (open,
+     * not-yet-won, or won-without-a-tracked-term) have no contract end date to report. */
+    contractEndDate: date("contract_end_date"),
     /** R16.3 — per-field provenance for LLM-extracted deal fields (amount/closeDate), same
      * pattern R13.3 built for contacts/companies. "manual" wins forever. */
     fieldSources: jsonb("field_sources").notNull().default({}),

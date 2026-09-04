@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { ActivitiesService, ActivityDto } from "./activities.service.js";
@@ -8,7 +8,17 @@ import type { MeetingsService } from "./meetings.service.js";
 import { serviceLog } from "../lib/obs.js";
 
 const log = serviceLog("dashboard");
-const { companies, contacts, deals, activities, users, crmProspectMappings, creditTransactions } = schema;
+const {
+  companies,
+  contacts,
+  deals,
+  activities,
+  users,
+  crmProspectMappings,
+  creditTransactions,
+  buyingCommittees,
+  buyingCommitteeMembers,
+} = schema;
 
 export interface DashboardOverviewDto {
   workspaceId: string;
@@ -56,6 +66,24 @@ export interface RepActivitySummary {
   activityCount7d: number;
 }
 
+/** §8.12 CRM Intelligence — pipeline-risk flag for a Decision Maker who exists on the deal's
+ * account (Account 360's buying-committee classification) but has no corresponding
+ * buying_committee_members row on the deal itself. Evidence fields (accountRole/rule/computedAt)
+ * follow the ticket's ask to carry "which role, which rule, when computed" alongside the flag. */
+export interface MissingStakeholderFlag {
+  dealId: string;
+  dealName: string;
+  companyId: string;
+  contactId: string;
+  contactName: string;
+  /** The Account 360 buying-committee role that triggered this flag, e.g. "Decision Maker". */
+  accountRole: string;
+  /** Which detection rule raised this flag. */
+  rule: string;
+  /** ISO 8601 timestamp of when this flag was computed. */
+  computedAt: string;
+}
+
 /** R19.1 — admin-only exec rollup. Deliberately omits a "risk score" — R18 (risk detection)
  * doesn't exist yet, so "stale deals" (no update in 14+ days) stands in as an honest, real
  * signal rather than a fabricated one. See docs/tickets for the R18 dependency note. */
@@ -70,6 +98,34 @@ export interface CroSummaryDto {
 
 const STALE_DEAL_DAYS = 14;
 const STALE_DEALS_LIMIT = 10;
+const MISSING_STAKEHOLDER_DEALS_LIMIT = 200;
+const MISSING_STAKEHOLDER_RULE = "decision_maker_not_linked_to_deal";
+const DECISION_MAKER_ROLE = "Decision Maker";
+
+/** Mirrors account-360.routes.ts's inline "Buying Committee Influence Map" title heuristic
+ * (apps/api/src/routes/account-360.routes.ts) so this account-role signal doesn't require a
+ * cross-service call — account-360 stays read-only/untouched per the ticket, and this is a
+ * pure function of `contacts.title` with no persistence of its own. Keep in sync with that
+ * file if the heuristic changes. */
+function classifyAccountRole(title: string | null): string {
+  const titleLower = (title ?? "").toLowerCase();
+  if (
+    titleLower.includes("vp") ||
+    titleLower.includes("chief") ||
+    titleLower.includes("head") ||
+    titleLower.includes("ceo") ||
+    titleLower.includes("cxo")
+  ) {
+    return DECISION_MAKER_ROLE;
+  }
+  if (titleLower.includes("director") || titleLower.includes("lead") || titleLower.includes("manager")) {
+    return "Champion";
+  }
+  if (titleLower.includes("procurement") || titleLower.includes("legal") || titleLower.includes("security")) {
+    return "Blocker / Gatekeeper";
+  }
+  return "Evaluator";
+}
 
 export class DashboardService {
   constructor(
@@ -231,6 +287,92 @@ export class DashboardService {
       currency: d.currency,
       daysSinceUpdate: Math.floor((now - d.updatedAt.getTime()) / (1000 * 60 * 60 * 24)),
     }));
+  }
+
+  /** §8.12 CRM Intelligence pipeline-risk — flags deals where a Decision Maker exists on the
+   * deal's account (per Account 360's role classification) but isn't linked to the deal's own
+   * buying committee. Read-only join over data Account 360 and BuyingCommitteeService already
+   * compute/store; raises no new data collection. Not role-gated, same as staleDeals(). */
+  async missingStakeholders(workspaceId: string): Promise<MissingStakeholderFlag[]> {
+    const openDeals = await this.db
+      .select({ id: deals.id, name: deals.name, companyId: deals.companyId })
+      .from(deals)
+      .where(and(eq(deals.workspaceId, workspaceId), eq(deals.status, "open"), isNull(deals.deletedAt)))
+      .orderBy(deals.updatedAt)
+      .limit(MISSING_STAKEHOLDER_DEALS_LIMIT);
+
+    const dealsWithCompany = openDeals.filter(
+      (d): d is { id: string; name: string; companyId: string } => d.companyId !== null
+    );
+    if (dealsWithCompany.length === 0) return [];
+
+    const companyIds = [...new Set(dealsWithCompany.map((d) => d.companyId))];
+    const dealIds = dealsWithCompany.map((d) => d.id);
+
+    const [companyContacts, linkedRows] = await Promise.all([
+      this.db
+        .select({
+          id: contacts.id,
+          companyId: contacts.companyId,
+          title: contacts.title,
+          firstName: contacts.firstName,
+          lastName: contacts.lastName,
+        })
+        .from(contacts)
+        .where(
+          and(
+            eq(contacts.workspaceId, workspaceId),
+            isNull(contacts.deletedAt),
+            inArray(contacts.companyId, companyIds)
+          )
+        ),
+      this.db
+        .select({ dealId: buyingCommittees.dealId, contactId: buyingCommitteeMembers.contactId })
+        .from(buyingCommitteeMembers)
+        .innerJoin(buyingCommittees, eq(buyingCommittees.id, buyingCommitteeMembers.committeeId))
+        .where(and(eq(buyingCommittees.workspaceId, workspaceId), inArray(buyingCommittees.dealId, dealIds))),
+    ]);
+
+    const decisionMakersByCompany = new Map<
+      string,
+      { id: string; title: string | null; firstName: string; lastName: string | null }[]
+    >();
+    for (const c of companyContacts) {
+      if (!c.companyId || classifyAccountRole(c.title) !== DECISION_MAKER_ROLE) continue;
+      const list = decisionMakersByCompany.get(c.companyId) ?? [];
+      list.push(c);
+      decisionMakersByCompany.set(c.companyId, list);
+    }
+
+    const linkedContactIdsByDeal = new Map<string, Set<string>>();
+    for (const row of linkedRows) {
+      if (!row.dealId) continue;
+      const set = linkedContactIdsByDeal.get(row.dealId) ?? new Set<string>();
+      set.add(row.contactId);
+      linkedContactIdsByDeal.set(row.dealId, set);
+    }
+
+    const computedAt = new Date().toISOString();
+    const flags: MissingStakeholderFlag[] = [];
+    for (const deal of dealsWithCompany) {
+      const decisionMakers = decisionMakersByCompany.get(deal.companyId) ?? [];
+      if (decisionMakers.length === 0) continue;
+      const linked = linkedContactIdsByDeal.get(deal.id) ?? new Set<string>();
+      for (const contact of decisionMakers) {
+        if (linked.has(contact.id)) continue;
+        flags.push({
+          dealId: deal.id,
+          dealName: deal.name,
+          companyId: deal.companyId,
+          contactId: contact.id,
+          contactName: `${contact.firstName ?? ""} ${contact.lastName ?? ""}`.trim() || "Unknown Contact",
+          accountRole: DECISION_MAKER_ROLE,
+          rule: MISSING_STAKEHOLDER_RULE,
+          computedAt,
+        });
+      }
+    }
+    return flags;
   }
 
   /** R19.1 — admin-gated exec rollup combining overview + switching-cost + real risk-adjacent

@@ -67,7 +67,7 @@ export async function resolveProspectFields(
   workspaceId: string,
   prospectId: string
 ): Promise<ResolvedProspect | null> {
-  const search = new SearchService(env);
+  const search = new SearchService(env, db);
   // OpenSearch lookup — may return null for manually-created prospects
   const doc = await search.findExistingProspect(prospectId).catch(() => null);
 

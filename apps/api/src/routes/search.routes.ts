@@ -21,6 +21,7 @@ export async function searchRoutes(app: FastifyInstance) {
     let nlMethod: "llm" | "heuristic" | null = null;
     let nlUnverified = false;
     if (body.query && body.query.trim()) {
+      // cSpell:ignore openrouter OPENROUTER
       const { filters: translated, method, unverified } = await translateNaturalLanguageQuery(body.query, {
         openrouterApiKey: app.config.OPENROUTER_API_KEY,
       });
@@ -65,7 +66,8 @@ export async function searchRoutes(app: FastifyInstance) {
       throw err;
     }
 
-    const svc = createSearchService(app.config);
+    // Handle case where db might be null (matches other route patterns)
+    const svc = createSearchService(app.config, app.db || {} as any);
     let result;
     try {
       result = await svc.searchProspects(body);
@@ -104,7 +106,8 @@ export async function searchRoutes(app: FastifyInstance) {
     const cached = await cache.getById(workspaceId, id);
     if (cached) return reply.send(cached);
 
-    const svc = createSearchService(app.config);
+    // Handle case where db might be null (matches other route patterns)
+    const svc = createSearchService(app.config, app.db || {} as any);
 
     // Prefer the workspace's own captured/activated data (e.g. LinkedIn extension)
     // over the OpenSearch corpus or the demo fallback.
