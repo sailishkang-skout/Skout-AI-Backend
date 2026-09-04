@@ -8,6 +8,9 @@ import { notificationActionNodeHandler } from "./action-notification.node.js";
 import { crmWritebackActionNodeHandler } from "./action-crm-writeback.node.js";
 import { sequenceEnrollActionNodeHandler } from "./action-sequence-enroll.node.js";
 import { approvalNodeHandler } from "./approval.node.js";
+import { aiActionNodeHandler } from "./action-ai.node.js";
+import { enrichmentActionNodeHandler } from "./action-enrichment.node.js";
+import { crmSyncActionNodeHandler } from "./action-crm-sync.node.js";
 
 const registry: Partial<Record<NodeType, NodeHandler>> = {
   trigger: triggerNodeHandler,
@@ -17,6 +20,9 @@ const registry: Partial<Record<NodeType, NodeHandler>> = {
   action_notification: notificationActionNodeHandler,
   action_crm_writeback: crmWritebackActionNodeHandler,
   action_sequence_enroll: sequenceEnrollActionNodeHandler,
+  action_ai: aiActionNodeHandler,
+  action_enrichment: enrichmentActionNodeHandler,
+  action_crm_sync: crmSyncActionNodeHandler,
   approval: approvalNodeHandler,
 };
 
