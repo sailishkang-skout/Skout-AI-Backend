@@ -80,3 +80,9 @@ synchronous read on the existing forecast-detail request path — same latency r
 (A pending, not-yet-merged PR for SS-02's `retention-signals-sweep.worker.ts` also adds a Wave 3
 row here — expect a small merge-order conflict on this section, resolved by keeping both rows,
 whichever PR lands second.)
+| `apps/api/src/workers/retention-signals-sweep.worker.ts` | companies, deals, contacts, activities, meetings | read |
+
+Same rationale as `reminder-sweep.worker.ts`/`risk-decay-sweep.worker.ts`: a periodic BullMQ sweep
+(§8.12 CRM Intelligence retention signals, SS-02) — HTTP round trips per workspace per sweep tick
+would add latency/failure modes for a read-only scan. Carries the formal exception comment block
+at its top, matching this ADR's template.
