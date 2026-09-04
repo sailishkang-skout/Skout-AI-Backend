@@ -635,7 +635,7 @@ export function createWorkspaceToolRunner(
   const drafts = db ? buildAiDraftService(db) : null;
   const billing = db ? createBillingService(db, config) : null;
   const team = db ? createTeamService(db) : null;
-  const search = createSearchService(config);
+  const search = db ? createSearchService(config, db) : createSearchService(config, {} as any); // db might be null in some cases
   const regionalBrief = db ? createRegionalBriefService(db) : null;
   const tamService = db ? createCountryIndustryTamService(db) : null;
 
