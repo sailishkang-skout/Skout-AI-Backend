@@ -30,6 +30,16 @@ import {
   XLSX_CONTENT_TYPE,
   type BoardPackFormat,
 } from "../services/board-pack-export.service.js";
+import { queryGtmLearningOutcomes, runGtmLearningAggregation } from "../services/gtm-learning.service.js";
+
+const gtmLearningQuerySchema = z.object({
+  channel: z.string().max(50).optional(),
+  signalType: z.string().max(100).optional(),
+  variantKey: z.string().max(10).optional(),
+  sequenceId: z.string().uuid().optional(),
+  icpPriority: z.string().max(50).optional(),
+  limit: z.coerce.number().int().min(1).max(1000).optional(),
+});
 
 const createScheduleSchema = z.object({
   name: z.string().min(1).max(200),
@@ -232,5 +242,26 @@ export async function reportRoutes(app: FastifyInstance) {
     } catch (err) {
       return handleError(err, reply);
     }
+  });
+
+  // §8.15 SP-10 — GTM-learning cross-tab: slice by any combination of ICP/signal/message/
+  // sequence/channel; the sweep worker keeps the table current on its own schedule, this is
+  // read-only.
+  app.get("/gtm-learning-outcomes", async (request, reply) => {
+    const workspaceId = requireWorkspaceId(request);
+    if (!app.db) return reply.send({ data: [], total: 0 });
+    const query = gtmLearningQuerySchema.parse(request.query ?? {});
+    const { limit, ...filters } = query;
+    const data = await queryGtmLearningOutcomes(app.db, workspaceId, filters, limit);
+    return reply.send({ data, total: data.length });
+  });
+
+  // On-demand refresh — useful right after a backfill/test-data seed, without waiting for the
+  // next scheduled sweep tick.
+  app.post("/gtm-learning-outcomes/refresh", async (request, reply) => {
+    const workspaceId = requireWorkspaceId(request);
+    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
+    const result = await runGtmLearningAggregation(app.db, workspaceId);
+    return reply.send({ data: result });
   });
 }
