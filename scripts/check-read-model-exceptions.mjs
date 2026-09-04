@@ -51,6 +51,8 @@ const KNOWN_EXCEPTION_FILES = new Set([
   "apps/api/src/services/next-best-action.service.ts",
   "apps/api/src/services/reply-tag-actions.service.ts",
   "apps/api/src/services/tam.service.ts",
+  "apps/api/src/services/forecast.service.ts",
+  "apps/api/src/services/retention-workflow.service.ts",
   "apps/api/src/workers/reminder-sweep.worker.ts",
   "apps/api/src/workers/sequence-enrollment.worker.ts",
 ]);

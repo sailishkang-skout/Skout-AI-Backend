@@ -6,6 +6,22 @@ import type { Env } from "../config/env.js";
 
 const { activities, companies, signals } = schema;
 
+/**
+ * §7.1/§5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) — see
+ * docs/adr/0003-read-model-exceptions.md for the full policy and the other confirmed instances.
+ *   - Tables read directly: companies, activities (both owned by apps/crm)
+ *   - Owning service: apps/crm (apps/api has read-only access via the shared Postgres instance;
+ *     this file only reads these tables — writes go to apps/api-owned signals)
+ *   - Reason: the retention sweep is a BullMQ worker job that scans every active/customer company
+ *     in a workspace and its recent activity history to detect disengagement, renewal-risk, and
+ *     expansion signals; apps/api and apps/crm are separately deployed services sharing one
+ *     Postgres with no formal internal API for this bulk query shape yet, and per-company HTTP
+ *     round-trips would add material latency and load to a batch job that already fans out
+ *     per-company queries
+ *   - Review date: revisit at the next architecture review after apps/crm's internal API surface
+ *     covers this query shape (tracked in ADR 0003, Wave 2)
+ */
+
 export const RETENTION_SIGNAL_TYPES = [
   "retention_disengagement",
   "retention_renewal_risk",

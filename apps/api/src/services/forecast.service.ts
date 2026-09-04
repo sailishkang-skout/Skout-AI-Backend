@@ -7,6 +7,20 @@ import { computeCroRollup } from "./cro-summary.service.js";
 
 const { deals, pipelineStages, revenueForecasts } = schema;
 
+/**
+ * §7.1/§5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) — see
+ * docs/adr/0003-read-model-exceptions.md for the full policy and the other confirmed instances.
+ *   - Tables read directly: deals, pipelineStages (both owned by apps/crm)
+ *   - Owning service: apps/crm (apps/api has read-only access via the shared Postgres instance;
+ *     this file only reads these tables — writes go to apps/api-owned revenueForecasts)
+ *   - Reason: forecast enrichment (uncertainty bands, data-gap detection) needs the live open
+ *     pipeline on every read of a forecast; apps/api and apps/crm are separately deployed
+ *     services sharing one Postgres with no formal internal API for this query shape yet, and an
+ *     HTTP round-trip per forecast read/list call would add material latency to a synchronous path
+ *   - Review date: revisit at the next architecture review after apps/crm's internal API surface
+ *     covers this query shape (tracked in ADR 0003, Wave 2)
+ */
+
 /** Maximum number of historical periods used for uncertainty calculation */
 const DEFAULT_HISTORY_PERIODS = 6;
 /** Minimum number of observations required for statistical confidence */

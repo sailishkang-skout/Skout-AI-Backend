@@ -66,3 +66,17 @@ and review trigger.
 ## Wave 2 status (2026-08-26)
 Internal API + one proof read path shipped. Full migration of BullMQ/transactional writers to HTTP
 remains deferred (latency/tx risk). Remaining rows keep exception comments.
+
+## Wave 3 additions (2026-09-04)
+
+Flagged by the §7.1 CI check (`scripts/check-read-model-exceptions.mjs`) on PR #69.
+
+| File | Tables touched | Read/write |
+|---|---|---|
+| `apps/api/src/services/forecast.service.ts` | deals, pipelineStages | read |
+| `apps/api/src/services/retention-workflow.service.ts` | companies, activities | read |
+
+Both received the formal exception comment block and were added to the CI script's allowlist.
+Same rationale class as the rest of this ADR: synchronous/batch read paths where a per-call HTTP
+round-trip into apps/crm would add material latency, and no internal API covers these query
+shapes yet. Remain documented exceptions until migrated (tracked with the rest of Wave 2).
