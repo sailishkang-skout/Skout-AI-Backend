@@ -162,7 +162,7 @@ export async function automationRoutes(app: FastifyInstance) {
   app.get("/automations/runs/:runId", async (request, reply) => {
     if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const { runId } = z.object({ runId: z.string().uuid() }).parse(request.params);
-    return reply.send({ data: await getRun(db(), request.workspaceId, runId) });
+    return reply.send({ data: await getRun(db(), app.config, request.workspaceId, runId) });
   });
 
   /** Manual recovery for a failed run — see failStep()'s comment for why failures aren't auto-retried. */

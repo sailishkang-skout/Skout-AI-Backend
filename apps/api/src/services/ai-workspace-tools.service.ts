@@ -16,8 +16,14 @@ import { createIntegrationService } from "./integration.service.js";
 import { createTeamService } from "./team.service.js";
 import { assertEvidenced, seniorityEnum, type EvidencedClaim } from "@skout/shared";
 import type { z } from "zod";
-import { getWorkspaceIcp } from "./icp.service.js";
+import { getWorkspaceIcp, getWorkspaceIcpVersion } from "./icp.service.js";
 import { createSearchService } from "./search.service.js";
+import { startWorkbookRun } from "./workbook-run.service.js";
+import { getWorkbook } from "./workbook.service.js";
+import { aiService } from "./ai.service.js";
+import { computeSignalStackScore, listSignalsForEntity, signalStackWeightsFromEnv } from "./signal.service.js";
+import { scoreIcpFitLocally, type ScoreInput } from "./intelligence-layer.service.js";
+import { getCopilotPersonaDef, type CopilotPersona } from "./ai-copilot-personas.service.js";
 import {
   EXPORT_DATASETS,
   buildDatasetCsv,
@@ -594,6 +600,77 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "start_enrichment_run",
+      description:
+        "Start an enrichment workbook run against a list of prospects. Use this when the user asks to enrich, run, or process a list through a workbook.",
+      parameters: {
+        type: "object",
+        properties: {
+          workbookId: { type: "string", description: "The enrichment workbook's ID." },
+          listId: { type: "string", description: "The list's ID to pull target prospects from." },
+          mode: {
+            type: "string",
+            enum: ["sample", "selected", "changed_rows", "scheduled"],
+            description:
+              "'sample' tests a handful of rows and is always allowed. The other modes require the workbook to already be active.",
+          },
+          selectedProspectIds: {
+            type: "array",
+            items: { type: "string" },
+            description: "Required when mode is 'selected' — the exact prospect IDs to run.",
+          },
+          confirmed: {
+            type: "boolean",
+            description:
+              "Set to true only after the user has explicitly confirmed they want to proceed, having seen the preview shown in your previous response. Never set this on the first call.",
+          },
+        },
+        required: ["workbookId", "listId", "mode"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "draft_content",
+      description:
+        "Generate an outreach email for one prospect and save it as a pending-review AI draft. Use this when the user asks to draft, write, or compose a message/email for a specific prospect.",
+      parameters: {
+        type: "object",
+        properties: {
+          prospectId: { type: "string", description: "The prospect this draft is for." },
+          prompt: {
+            type: "string",
+            description: "What the email should say — tone, angle, offer, or context to reference.",
+          },
+          confirmed: {
+            type: "boolean",
+            description:
+              "Set to true only after the user has explicitly confirmed they want to proceed, having seen the preview shown in your previous response. Never set this on the first call.",
+          },
+        },
+        required: ["prospectId", "prompt"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "explain_score",
+      description:
+        "Explain why a prospect has the ICP/signal score they do — returns the per-dimension breakdown and contributing signals, not just the final number. Read-only, no confirmation needed.",
+      parameters: {
+        type: "object",
+        properties: {
+          prospectId: { type: "string", description: "The prospect to explain the score for." },
+        },
+        required: ["prospectId"],
+      },
+    },
+  },
 ];
 
 /**
@@ -623,8 +700,14 @@ export function createWorkspaceToolRunner(
   /** §8.13 — actor for the tool-call audit trail (policy_decisions.detail). Optional: audit is best-effort. */
   userId?: string,
   /** §8.13 — when true, mutating tools execute directly instead of returning a preview (autonomous "auto" mode, or a caller that already confirmed via /ai/execute-tool). */
-  confirmMutations = false
+  confirmMutations = false,
+  /** §8.13 SP-06 — orthogonal to `agent`: when a persona declares `allowedToolNames`, tool
+   * visibility/dispatch is narrowed the same way CRO_AGENT_TOOLS narrows the "cro" agent —
+   * composes with (never loosens) any agent-level restriction already in effect. */
+  persona?: CopilotPersona
 ): WorkspaceToolRunner {
+  const personaDef = getCopilotPersonaDef(persona);
+  const personaToolNames = personaDef?.allowedToolNames ? new Set(personaDef.allowedToolNames) : null;
   const analytics = createAnalyticsService(db, config);
   const dashboard = createDashboardService(db, config);
   const enrichment = buildEnrichmentService(db, config);
@@ -974,6 +1057,113 @@ export function createWorkspaceToolRunner(
       if (!userId) return { error: "actor_unknown" };
       return enrollListWithSideEffects(db, config, workspaceId, listId, sequenceId, userId, agent);
     },
+
+    start_enrichment_run: async (args) => {
+      if (!db) throw new Error("database_unavailable");
+      const workbookId = String(args.workbookId ?? "");
+      const listId = String(args.listId ?? "");
+      const mode = String(args.mode ?? "");
+      if (!workbookId || !listId || !mode) return { error: "workbookId, listId, and mode are required" };
+      if (!["sample", "selected", "changed_rows", "scheduled"].includes(mode)) {
+        return { error: "invalid_mode" };
+      }
+      const selectedProspectIds = Array.isArray(args.selectedProspectIds)
+        ? (args.selectedProspectIds as unknown[]).map(String)
+        : undefined;
+      try {
+        const run = await startWorkbookRun(db, config, workspaceId, workbookId, {
+          listId,
+          mode: mode as "sample" | "selected" | "changed_rows" | "scheduled",
+          selectedProspectIds,
+        });
+        return {
+          success: true,
+          runId: run.id,
+          status: run.status,
+          totalRows: run.totalRows,
+          path: `/workbooks/${workbookId}/runs/${run.id}`,
+          message: `Enrichment run started — processing ${run.totalRows} row(s).`,
+        };
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : "failed_to_start_run" };
+      }
+    },
+
+    draft_content: async (args) => {
+      if (!db || !drafts) throw new Error("database_unavailable");
+      const prospectId = String(args.prospectId ?? "").trim();
+      const prompt = String(args.prompt ?? "").trim();
+      if (!prospectId || !prompt) return { error: "prospectId and prompt are required" };
+
+      const generated = await aiService.generateEmail(prompt, config.OPENROUTER_API_KEY);
+      const draft = await drafts.create(workspaceId, {
+        prospectId,
+        subject: generated.subject,
+        body: generated.html,
+        model: process.env.AI_MODEL ?? "openai/gpt-4o-mini",
+      });
+
+      return {
+        success: true,
+        draftId: draft.id,
+        subject: draft.subject,
+        status: draft.status,
+        path: "/ai/drafts",
+        message: `Draft "${draft.subject}" created and pending review.`,
+      };
+    },
+
+    explain_score: async (args) => {
+      if (!db) throw new Error("database_unavailable");
+      const prospectId = String(args.prospectId ?? "").trim();
+      if (!prospectId) return { error: "prospectId is required" };
+
+      const prospect = await search.getProspectById(prospectId);
+      if (!prospect) return { error: "prospect_not_found" };
+
+      const icp = await getWorkspaceIcp(db, workspaceId);
+      const icpVersion = await getWorkspaceIcpVersion(db, workspaceId);
+      const scoreInput: ScoreInput = {
+        prospectId: prospect.prospectId,
+        fullName: prospect.fullName ?? undefined,
+        title: prospect.title ?? undefined,
+        seniority: prospect.seniority ?? undefined,
+        industry: prospect.industry ?? undefined,
+        country: prospect.country ?? undefined,
+        employeeCount: prospect.employeeCount ?? undefined,
+        companyDomain: prospect.companyDomain ?? undefined,
+        signals: (prospect.signals ?? []).map((s) => s.type),
+      };
+      // Local heuristic scorer, not the LLM path (scoreProspectIcp) — this is a free, synchronous
+      // re-derivation of the same weighting logic already used as apps/ai's fallback, appropriate
+      // for a read-only "explain" tool that shouldn't itself cost credits or call an external model.
+      const icpBreakdown = scoreIcpFitLocally(scoreInput, icp);
+
+      const signalRows = await listSignalsForEntity(db, prospectId, { entityType: "prospect" });
+      const weights = signalStackWeightsFromEnv(config);
+      const signalStack = computeSignalStackScore(signalRows, { weights });
+
+      const value = {
+        prospectId,
+        icp: {
+          score: icpBreakdown.icpScore,
+          band: icpBreakdown.icpBand,
+          version: icpVersion,
+          source: icpBreakdown.source,
+          dimensions: icpBreakdown.dimensions,
+          reasoning: icpBreakdown.reasoning,
+        },
+        signalStack: {
+          score: signalStack.score,
+          band: signalStack.band,
+          distinctSignalTypes: signalStack.distinctSignalTypes,
+          reachableDecisionMaker: signalStack.reachableDecisionMaker,
+          contributingSignals: signalStack.contributingSignals,
+          weights,
+        },
+      };
+      return evidenceClaim(db, workspaceId, "explain_score", "prospect", prospectId, value);
+    },
   };
 
   const previewBuilders: Record<string, (args: Record<string, unknown>) => ActionPreview | Promise<ActionPreview>> = {
@@ -1013,13 +1203,64 @@ export function createWorkspaceToolRunner(
         externalSideEffects: ["Enqueues outreach sends for each newly enrolled prospect", "Dispatches a prospect.enrolled webhook per enrollment"],
       };
     },
+
+    start_enrichment_run: async (args) => {
+      const workbookId = String(args.workbookId ?? "");
+      const listId = String(args.listId ?? "");
+      const mode = String(args.mode ?? "");
+      let memberCount = 0;
+      let budgetCreditsPerRun: number | null = null;
+      if (db && listId) {
+        const [row] = await db
+          .select({ count: count() })
+          .from(listMembers)
+          .innerJoin(lists, eq(lists.id, listMembers.listId))
+          .where(and(eq(listMembers.listId, listId), eq(lists.workspaceId, workspaceId)));
+        memberCount = row?.count ?? 0;
+      }
+      if (db && workbookId) {
+        const workbook = await getWorkbook(db, workspaceId, workbookId);
+        budgetCreditsPerRun = workbook?.budgetCreditsPerRun ?? null;
+      }
+      const assumptions: string[] = [];
+      if (!workbookId || !listId || !mode) assumptions.push("Missing workbookId, listId, or mode — will fail validation.");
+      if (mode === "sample") assumptions.push("'sample' mode only processes a small test batch, not the full list count shown here.");
+      return {
+        toolName: "start_enrichment_run",
+        scope: `Run the enrichment workbook against ~${memberCount} prospect(s) on this list (mode: ${mode || "unspecified"}).`,
+        assumptions,
+        affectedRecordCount: memberCount,
+        creditCost: budgetCreditsPerRun ?? 0,
+        externalSideEffects: ["Calls enrichment providers per row, consuming workspace credits"],
+      };
+    },
+
+    draft_content: (args) => {
+      const prospectId = String(args.prospectId ?? "");
+      const prompt = String(args.prompt ?? "").trim();
+      return {
+        toolName: "draft_content",
+        scope: prospectId
+          ? `Draft an outreach email for prospect ${prospectId}: "${prompt.slice(0, 120)}"`
+          : "Draft an outreach email.",
+        assumptions: !prospectId || !prompt ? ["Missing prospectId or prompt — will fail validation."] : [],
+        affectedRecordCount: 1,
+        creditCost: 0,
+        externalSideEffects: ["Calls the configured LLM provider to generate content", "Creates a pending-review AI draft"],
+      };
+    },
   };
 
+  let tools =
+    agent === "cro"
+      ? WORKSPACE_TOOL_DEFS.filter((t) => t.type === "function" && CRO_AGENT_TOOLS.has(t.function.name))
+      : WORKSPACE_TOOL_DEFS;
+  if (personaToolNames) {
+    tools = tools.filter((t) => t.type === "function" && personaToolNames.has(t.function.name));
+  }
+
   return {
-    tools:
-      agent === "cro"
-        ? WORKSPACE_TOOL_DEFS.filter((t) => t.type === "function" && CRO_AGENT_TOOLS.has(t.function.name))
-        : WORKSPACE_TOOL_DEFS,
+    tools,
     getCreatedExports: () => createdExports,
     getCreatedSequenceIds: () => createdSequenceIds,
     getPendingToolPreview: () => pendingToolPreview,
@@ -1027,6 +1268,10 @@ export function createWorkspaceToolRunner(
       if (agent === "cro" && !CRO_AGENT_TOOLS.has(name)) {
         log.warn("cro agent attempted a non-allowlisted tool call", { tool: name, workspaceId });
         return serialize({ error: `tool_not_available_for_agent:${name}` });
+      }
+      if (personaToolNames && !personaToolNames.has(name)) {
+        log.warn("persona attempted a tool outside its allowlist", { tool: name, persona, workspaceId });
+        return serialize({ error: `tool_not_available_for_persona:${name}` });
       }
       const handler = handlers[name];
       if (!handler) return serialize({ error: `unknown_tool:${name}` });

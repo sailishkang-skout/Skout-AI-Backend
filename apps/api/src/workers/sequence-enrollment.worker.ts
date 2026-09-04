@@ -22,6 +22,7 @@ import {
   type SeqAdvanceJobPayload,
 } from "./sequence-enrollment.queue.js";
 import { dispatchWebhookEvent } from "../services/webhook.service.js";
+import { emitSkoutEvent } from "../services/skout-event.service.js";
 import { LinkedinAccountService, sendLinkedinOutreach, sendWhatsappOutreach } from "../services/linkedin-account.service.js";
 import { UnipileError } from "../services/unipile.client.js";
 import { LinkedinOutreachService } from "../services/linkedin-outreach.service.js";
@@ -739,6 +740,21 @@ async function executeEmailStep(
     stepId: pending.stepId,
     stepType: pending.stepType,
   }).catch((err: unknown) => log.warn("webhook dispatch failed", { err, event: "sequence.step.completed" }));
+
+  emitSkoutEvent(db, config, {
+    type: "touchpoint.completed",
+    tenantId: workspaceId,
+    aggregateId: pending.enrollmentStepId,
+    data: {
+      workspaceId,
+      enrollmentId,
+      sequenceId: payload.sequenceId,
+      prospectId,
+      stepId: pending.stepId,
+      stepType: pending.stepType,
+      channel: "email",
+    },
+  }).catch((err: unknown) => log.warn("failed to emit touchpoint.completed", { err }));
 
   return { status: "sent" };
 }

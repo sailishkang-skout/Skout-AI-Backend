@@ -17,6 +17,9 @@ vi.mock("./enrichment/index.js", () => ({
   },
 }));
 
+const emitSkoutEvent = vi.fn(async (_db: unknown, _config: unknown, input: unknown) => ({ id: "evt-1", ...(input as object) }));
+vi.mock("./skout-event.service.js", () => ({ emitSkoutEvent }));
+
 const { InsufficientCreditsError } = await import("./enrichment/index.js");
 const { runWorkbookRunJob } = await import("./workbook-run.runner.js");
 
@@ -133,6 +136,16 @@ describe("runWorkbookRunJob", () => {
     expect(state.completedAt).toBeInstanceOf(Date);
     expect(getBatchState()?.status).toBe("completed");
     expect(enrichProspect).toHaveBeenCalledTimes(3);
+    expect(emitSkoutEvent).toHaveBeenCalledWith(
+      db,
+      config,
+      expect.objectContaining({
+        type: "enrichment.completed",
+        tenantId: WORKSPACE,
+        aggregateId: RUN_ID,
+        data: expect.objectContaining({ runId: RUN_ID, status: "completed", succeededRows: 3 }),
+      })
+    );
   });
 
   it("counts a missing activation as a failed row without calling enrichProspect", async () => {

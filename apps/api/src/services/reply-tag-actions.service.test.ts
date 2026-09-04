@@ -9,9 +9,13 @@ vi.mock("./suppression.service.js", () => ({
 vi.mock("./notifications.service.js", () => ({
   createNotification: vi.fn(async () => ({})),
 }));
+vi.mock("./skout-event.service.js", () => ({
+  emitSkoutEvent: vi.fn(async (_db, _config, input) => ({ id: "evt-1", ...input })),
+}));
 
 import { addSuppression, isSuppressed } from "./suppression.service.js";
 import { createNotification } from "./notifications.service.js";
+import { emitSkoutEvent } from "./skout-event.service.js";
 
 const fakeConfig = {} as Env;
 
@@ -62,6 +66,39 @@ describe("applyReplyTagActions", () => {
   beforeEach(() => {
     vi.mocked(addSuppression).mockClear();
     vi.mocked(createNotification).mockClear();
+    vi.mocked(emitSkoutEvent).mockClear();
+  });
+
+  it("emits reply.classified for every tag, including neutral", async () => {
+    const db = makeDb({ id: "t1", prospectId: "p1", status: "replied" });
+    await applyReplyTagActions(db, fakeConfig, "ws1", "t1", "neutral");
+    expect(emitSkoutEvent).toHaveBeenCalledWith(
+      db,
+      fakeConfig,
+      expect.objectContaining({
+        type: "reply.classified",
+        tenantId: "ws1",
+        aggregateId: "t1",
+        data: expect.objectContaining({ threadId: "t1", prospectId: "p1", tag: "neutral" }),
+      })
+    );
+  });
+
+  it("emits signal.detected when a negative reply raises a negative_sentiment signal", async () => {
+    const db = makeDb({ id: "t1", prospectId: "p1", status: "replied" });
+    await applyReplyTagActions(db, fakeConfig, "ws1", "t1", "negative", {
+      bodyText: "This isn't working for us, please stop emailing.",
+    });
+    expect(emitSkoutEvent).toHaveBeenCalledWith(
+      db,
+      fakeConfig,
+      expect.objectContaining({
+        type: "signal.detected",
+        tenantId: "ws1",
+        aggregateId: "p1",
+        data: expect.objectContaining({ signalId: "sig-1", signalType: "negative_sentiment" }),
+      })
+    );
   });
 
   it("marks meeting_booked on meeting_request", async () => {

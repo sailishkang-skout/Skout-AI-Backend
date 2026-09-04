@@ -29,6 +29,7 @@ import {
   listLinkedinVoiceHandoffs,
   proposeDexterPlan,
   recordDexterLearning,
+  rejectDexterPlan,
   synthesizeVoiceAudio,
 } from "../services/dexter-journey.service.js";
 import { getDexterCommandCenter, listDexterPlans } from "../services/dexter-command-center.service.js";
@@ -217,12 +218,30 @@ export async function dexterPlatformRoutes(app: FastifyInstance) {
     return reply.send({ data: await approveDexterPlan(app.db, app.config, request.workspaceId, id) });
   });
 
+  // §7.3 Evaluation Loop — the "overridden" half of accepted-vs-overridden.
+  app.post("/dexter/plans/:id/reject", async (request, reply) => {
+    if (!request.workspaceId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z.object({ reason: z.string().max(2000).optional() }).safeParse(request.body ?? {});
+    if (!body.success) return reply.code(400).send(errorResponse("Invalid reject payload", 400, body.error.flatten()));
+    const data = await rejectDexterPlan(app.db, app.config, request.workspaceId, id, request.userId, body.data.reason);
+    return reply.send({ data });
+  });
+
   app.post("/dexter/plans/:id/invoke", async (request, reply) => {
     if (!request.workspaceId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-    return reply.send({
-      data: await invokeDexterPlan(app.db, app.config, request.workspaceId, id, request.userId),
-    });
+    const body = z.object({ sequenceId: z.string().uuid().optional() }).safeParse(request.body ?? {});
+    if (!body.success) return reply.code(400).send(errorResponse("Invalid invoke payload", 400, body.error.flatten()));
+    const data = await invokeDexterPlan(
+      app.db,
+      app.config,
+      request.workspaceId,
+      id,
+      request.userId,
+      body.data.sequenceId ? { sequenceId: body.data.sequenceId } : undefined
+    );
+    return reply.send({ data });
   });
 
   app.post("/dexter/plans/:id/learn", async (request, reply) => {

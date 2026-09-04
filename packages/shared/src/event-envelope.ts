@@ -59,6 +59,7 @@ export const DEXTER_EVENT_TYPES = [
   "regional_brief.rejected",
   "dexter.plan.proposed",
   "dexter.plan.approved",
+  "dexter.plan.rejected",
   "dexter.plan.blocked",
   "dexter.action.executed",
   "dexter.outcome.captured",
@@ -73,10 +74,27 @@ export const SEQUENCE_EVENT_TYPES = [
   "reply.received",
 ] as const;
 
+/**
+ * §7.3 — the remaining 7 of the 10 minimum Dexter event-spine types. Distinct from
+ * SEQUENCE_EVENT_TYPES above: those are pre-existing ad-hoc webhook-only events dispatched
+ * directly via dispatchWebhookEvent; these are first-class spine events carrying the full
+ * versioned envelope (BullMQ + webhook fan-out via emitSkoutEvent).
+ */
+export const GTM_OUTCOME_EVENT_TYPES = [
+  "signal.detected",
+  "enrichment.completed",
+  "sequence.approved",
+  "touchpoint.completed",
+  "reply.classified",
+  "meeting.completed",
+  "opportunity.updated",
+] as const;
+
 /** All first-class Skout event types. Single source of truth. */
 export const SKOUT_EVENT_TYPES = [
   ...DEXTER_EVENT_TYPES,
   ...SEQUENCE_EVENT_TYPES,
+  ...GTM_OUTCOME_EVENT_TYPES,
 ] as const;
 
 export type SkoutEventType = (typeof SKOUT_EVENT_TYPES)[number];

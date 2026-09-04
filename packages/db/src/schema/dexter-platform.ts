@@ -115,6 +115,9 @@ export const dexterPlans = pgTable(
     createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
     invokedAt: timestamp("invoked_at", { withTimezone: true }),
+    /** §7.3 Evaluation Loop — set when a human declines a proposed plan instead of approving it. */
+    rejectedAt: timestamp("rejected_at", { withTimezone: true }),
+    rejectedBy: uuid("rejected_by").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("dexter_plans_workspace_status_idx").on(table.workspaceId, table.status)]

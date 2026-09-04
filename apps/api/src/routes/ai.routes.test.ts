@@ -44,9 +44,11 @@ vi.mock("../services/ai-draft.service.js", async () => {
   };
 });
 
+const mockChat = vi.fn().mockResolvedValue({ reply: "Hi there", action: { type: "none" } });
 vi.mock("../services/ai.service.js", () => ({
   aiService: {
     generateEmail: vi.fn().mockResolvedValue({ subject: "Gen subject", html: "<p>Hi</p>" }),
+    chat: (...args: unknown[]) => mockChat(...args),
   },
 }));
 
@@ -57,6 +59,17 @@ vi.mock("../services/ai-draft-send.service.js", () => ({
 
 vi.mock("../services/ai-evidence.service.js", () => ({
   pinAiClaim: vi.fn().mockResolvedValue({ evidenceId: "ev-1", modelVersionId: null, promptVersionId: null }),
+}));
+
+const mockToolRunner = {
+  tools: [],
+  run: vi.fn().mockResolvedValue(JSON.stringify({ ok: true })),
+  getCreatedExports: vi.fn().mockReturnValue([]),
+  getCreatedSequenceIds: vi.fn().mockReturnValue([]),
+  getPendingToolPreview: vi.fn().mockReturnValue(null),
+};
+vi.mock("../services/ai-workspace-tools.service.js", () => ({
+  createWorkspaceToolRunner: vi.fn(() => mockToolRunner),
 }));
 
 async function buildTestApp(): Promise<FastifyInstance> {
@@ -178,5 +191,142 @@ describe("ai routes — draft review", () => {
     });
     expect(res.statusCode).toBe(201);
     expect(mockDrafts.create).toHaveBeenCalled();
+  });
+});
+
+/** SP-04 — POST /ai/execute-tool with toolName: "enroll_list" and confirmed: true must
+ * succeed, not 400 with tool_not_mutating (the live bug MUTATING_TOOL_NAMES was missing it). */
+describe("ai routes — POST /ai/execute-tool (§8.13)", () => {
+  let app: FastifyInstance;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockToolRunner.run.mockResolvedValue(JSON.stringify({ ok: true }));
+    app = await buildTestApp();
+  });
+
+  it("enroll_list with confirmed: true succeeds instead of 400ing", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/ai/execute-tool",
+      payload: { toolName: "enroll_list", args: { listId: "list-1", sequenceId: "seq-1", confirmed: true } },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(mockToolRunner.run).toHaveBeenCalledWith("enroll_list", {
+      listId: "list-1",
+      sequenceId: "seq-1",
+      confirmed: true,
+    });
+  });
+
+  it("create_outbound_sequence with confirmed: true still succeeds (no regression)", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/ai/execute-tool",
+      payload: { toolName: "create_outbound_sequence", args: { name: "Q4 outbound", steps: [], confirmed: true } },
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it("400s a tool that is not in MUTATING_TOOL_NAMES, without ever calling the runner", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/ai/execute-tool",
+      payload: { toolName: "get_thread", args: { confirmed: true } },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: "tool_not_mutating" });
+    expect(mockToolRunner.run).not.toHaveBeenCalled();
+  });
+
+  /** SP-05 — the two new mutating tools must pass this same route-level gate. The runner's own
+   * preview/confirm/execute logic for these is covered in ai-workspace-tools.service.test.ts;
+   * this only proves the route's MUTATING_TOOL_NAMES check doesn't 400 them. */
+  it("start_enrichment_run with confirmed: true succeeds instead of 400ing", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/ai/execute-tool",
+      payload: { toolName: "start_enrichment_run", args: { workbookId: "wb-1", listId: "list-1", mode: "scheduled", confirmed: true } },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(mockToolRunner.run).toHaveBeenCalledWith("start_enrichment_run", {
+      workbookId: "wb-1",
+      listId: "list-1",
+      mode: "scheduled",
+      confirmed: true,
+    });
+  });
+
+  it("draft_content with confirmed: true succeeds instead of 400ing", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/ai/execute-tool",
+      payload: { toolName: "draft_content", args: { prospectId: "p-1", prompt: "Follow up", confirmed: true } },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(mockToolRunner.run).toHaveBeenCalledWith("draft_content", {
+      prospectId: "p-1",
+      prompt: "Follow up",
+      confirmed: true,
+    });
+  });
+});
+
+/** SP-06 — POST /ai/chat must thread an optional `persona` through to both the tool runner
+ * (which narrows the tool set) and aiService.chat (which composes the system prompt) — the two
+ * places persona actually does anything, per ai-copilot-personas.service.ts's decision. */
+describe("ai routes — POST /ai/chat persona threading (§8.13 SP-06)", () => {
+  let app: FastifyInstance;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockToolRunner.run.mockResolvedValue(JSON.stringify({ ok: true }));
+    mockChat.mockResolvedValue({ reply: "Hi there", action: { type: "none" } });
+    app = await buildTestApp();
+  });
+
+  it("passes persona through to createWorkspaceToolRunner and aiService.chat when given", async () => {
+    const createRunnerModule = await import("../services/ai-workspace-tools.service.js");
+    const res = await app.inject({
+      method: "POST",
+      url: "/ai/chat",
+      payload: { messages: [{ role: "user", content: "hi" }], persona: "crm_data" },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(createRunnerModule.createWorkspaceToolRunner).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "ws-1",
+      false,
+      "skout",
+      "u-1",
+      false,
+      "crm_data"
+    );
+    expect(mockChat).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: "skout", persona: "crm_data" }),
+      expect.anything()
+    );
+  });
+
+  it("works with no persona given (undefined, backward compatible)", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/ai/chat",
+      payload: { messages: [{ role: "user", content: "hi" }] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(mockChat).toHaveBeenCalledWith(expect.objectContaining({ persona: undefined }), expect.anything());
+  });
+
+  it("400s an unknown persona value", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/ai/chat",
+      payload: { messages: [{ role: "user", content: "hi" }], persona: "marketing" },
+    });
+    expect(res.statusCode).toBe(400);
   });
 });

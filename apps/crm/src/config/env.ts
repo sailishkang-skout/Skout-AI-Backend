@@ -99,6 +99,13 @@ const envSchema = z.object({
   MEETING_INVITE_FROM_ADDRESS: z.string().optional(),
   /** Shared secret for HMAC-verifying inbound RSVP webhook payloads. */
   MEETING_RSVP_WEBHOOK_SECRET: z.string().optional(),
+  /**
+   * §7.3 — Dexter event spine: apps/crm enqueues onto the same BullMQ queue apps/api's
+   * dexter-event worker consumes ("skout-dexter-event"), so meeting/deal events raised here
+   * join the same spine as apps/api-originated ones. Optional — when unset, event emission is
+   * skipped with a warning, same graceful-degradation behavior as apps/api's own REDIS_URL.
+   */
+  REDIS_URL: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

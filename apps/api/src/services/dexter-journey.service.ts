@@ -19,7 +19,7 @@ export {
   synthesizeVoiceAudio,
 } from "./linkedin-voice.service.js";
 
-const { dexterPlans } = schema;
+const { dexterPlans, sequences } = schema;
 
 export async function proposeDexterPlan(
   db: Db,
@@ -103,12 +103,47 @@ export async function approveDexterPlan(db: Db, config: Env, workspaceId: string
   return updated!;
 }
 
+/** §7.3 Evaluation Loop — the "overridden" half of accepted-vs-overridden: a human explicitly
+ * declining a proposed plan instead of approving it. Mirrors approveDexterPlan's guard shape. */
+export async function rejectDexterPlan(
+  db: Db,
+  config: Env,
+  workspaceId: string,
+  planId: string,
+  userId?: string,
+  reason?: string
+) {
+  const [plan] = await db
+    .select()
+    .from(dexterPlans)
+    .where(and(eq(dexterPlans.id, planId), eq(dexterPlans.workspaceId, workspaceId)))
+    .limit(1);
+  if (!plan) throw new HttpError("Dexter plan not found", 404);
+  if (plan.status !== "proposed") throw new HttpError(`Plan status is ${plan.status}`, 422);
+
+  const [updated] = await db
+    .update(dexterPlans)
+    .set({ status: "rejected", rejectedAt: new Date(), rejectedBy: userId })
+    .where(eq(dexterPlans.id, planId))
+    .returning();
+
+  await emitSkoutEvent(db, config, {
+    type: "dexter.plan.rejected",
+    tenantId: workspaceId,
+    aggregateId: planId,
+    data: { planId, brief: plan.brief, reason: reason ?? null },
+  });
+
+  return updated!;
+}
+
 export async function invokeDexterPlan(
   db: Db,
   config: Env,
   workspaceId: string,
   planId: string,
-  userId?: string
+  userId?: string,
+  opts?: { sequenceId?: string }
 ) {
   const [plan] = await db
     .select()
@@ -118,6 +153,15 @@ export async function invokeDexterPlan(
   if (!plan) throw new HttpError("Dexter plan not found", 404);
   if (plan.status !== "approved") {
     throw new HttpError("Dexter plan must be approved before invoke", 422);
+  }
+
+  if (opts?.sequenceId) {
+    const [targetSequence] = await db
+      .select({ id: sequences.id })
+      .from(sequences)
+      .where(and(eq(sequences.id, opts.sequenceId), eq(sequences.workspaceId, workspaceId)))
+      .limit(1);
+    if (!targetSequence) throw new HttpError("sequence_not_found", 404);
   }
 
   const policy = await assertAllowed(db, {
@@ -151,6 +195,10 @@ export async function invokeDexterPlan(
     .set({ status: "invoked", invokedAt: new Date(), outcome, policyDecisionId: policy.decisionId })
     .where(eq(dexterPlans.id, planId))
     .returning();
+
+  if (opts?.sequenceId) {
+    await db.update(sequences).set({ dexterPlanId: planId }).where(eq(sequences.id, opts.sequenceId));
+  }
 
   await emitSkoutEvent(db, config, {
     type: "dexter.action.executed",

@@ -15,6 +15,7 @@ import { SEQUENCE_TEMPLATES, getSequenceTemplate } from "../services/sequence-te
 import { conditionExpressionSchema } from "../services/sequence-condition.js";
 import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.js";
 import { dispatchWebhookEvent } from "../services/webhook.service.js";
+import { emitSkoutEvent } from "../services/skout-event.service.js";
 import { HttpError } from "../utils/http.js";
 import { gateEnrollConsent } from "../services/consent-enroll.service.js";
 
@@ -479,6 +480,17 @@ export async function sequenceRoutes(app: FastifyInstance) {
     try {
       const sequence = await svc.approveModeC(workspaceId, id, request.userId ?? "unknown");
       if (!sequence) return reply.status(404).send({ error: "sequence_not_found" });
+      await emitSkoutEvent(app.db, app.config, {
+        type: "sequence.approved",
+        tenantId: workspaceId,
+        aggregateId: id,
+        data: {
+          workspaceId,
+          sequenceId: id,
+          mode: sequence.mode,
+          approvedBy: request.userId ?? null,
+        },
+      }).catch((err: unknown) => request.log.warn({ err }, "failed to emit sequence.approved"));
       return reply.send(sequence);
     } catch (err) {
       if (err instanceof HttpError) {
