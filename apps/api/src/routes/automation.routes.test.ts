@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
+import { schema } from "@skout/db";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
+import { saveAutomationSecret } from "../services/automation-secrets.service.js";
 import type { FastifyInstance } from "fastify";
 
 let app: FastifyInstance;
@@ -237,5 +240,66 @@ describe("automation routes", () => {
     });
     expect(run.statusCode).toBe(202);
     expect(run.json().data.status).toBe("pending");
+  });
+
+  /** SP-07 — a workspace secret's plaintext value must never survive to the API response for a
+   * run's detail endpoint, no matter how it ended up in a step's input/output column. This test
+   * doesn't rely on any one node handler's own care (that's exactly the class of bug this fixes:
+   * a future/other node forgetting to scrub it) — it directly writes the secret's plaintext into
+   * a real step row via the DB, the same way any node's output realistically could, then verifies
+   * the API layer catches it regardless. */
+  it("GET /automations/runs/:runId masks a secret value from step output, even if a node leaked it there", async () => {
+    if (!app.db) return; // db-less test environment — masking's own logic is covered elsewhere
+    const email = "automation-secret-mask@test.com";
+    const secretValue = "sk-live-testsecret-1234567890";
+
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/v1/automations",
+      headers: { ...asUser(email), "content-type": "application/json" },
+      payload: { name: "Secret masking test automation" },
+    });
+    const { id, workspaceId } = create.json().data;
+
+    await saveAutomationSecret(app.db, app.config, workspaceId, "test-api-key", secretValue);
+
+    const graph = { nodes: [{ id: "n1", type: "delay", config: { seconds: 0 } }], edges: [] };
+    await app.inject({
+      method: "POST",
+      url: `/api/v1/automations/${id}/versions/publish`,
+      headers: { ...asUser(email), "content-type": "application/json" },
+      payload: { graph },
+    });
+    const run = await app.inject({
+      method: "POST",
+      url: `/api/v1/automations/${id}/run`,
+      headers: { ...asUser(email), "content-type": "application/json" },
+      payload: { isSimulation: true },
+    });
+    const runId = run.json().data.id;
+
+    const { advanceAutomationRun } = await import("../workers/automation-run.worker.js");
+    const config = loadEnv();
+    await advanceAutomationRun(app.db, config, { automationRunId: runId, workspaceId });
+
+    // Simulate a leak: a step's output now contains the secret's raw plaintext, nested inside a
+    // realistic-looking response body — the exact shape doesn't matter, only that the value is
+    // somewhere in the JSON tree the API will serialize.
+    const [stepRow] = await app.db
+      .select({ id: schema.automationRunSteps.id })
+      .from(schema.automationRunSteps)
+      .where(eq(schema.automationRunSteps.automationRunId, runId))
+      .limit(1);
+    await app.db
+      .update(schema.automationRunSteps)
+      .set({ output: { status: 200, body: { message: `Authenticated with ${secretValue}` } } })
+      .where(eq(schema.automationRunSteps.id, stepRow!.id));
+
+    const detail = await app.inject({ method: "GET", url: `/api/v1/automations/runs/${runId}`, headers: asUser(email) });
+    expect(detail.statusCode).toBe(200);
+    const body = detail.body;
+    expect(body).not.toContain(secretValue);
+    const maskedStep = detail.json().data.steps.find((s: { id: string }) => s.id === stepRow!.id);
+    expect(maskedStep.output.body.message).toBe("Authenticated with [REDACTED]");
   });
 });

@@ -28,11 +28,20 @@ export const WEBHOOK_EVENT_TYPES = [
   "regional_brief.rejected",
   "dexter.plan.proposed",
   "dexter.plan.approved",
+  "dexter.plan.rejected",
   "dexter.plan.blocked",
   "dexter.action.executed",
   "dexter.outcome.captured",
   "dexter.learning.recommended",
   "dexter.learning.approved",
+  // ── GTM outcome / event-spine completion (§7.3) ─────────────────────────
+  "signal.detected",
+  "enrichment.completed",
+  "sequence.approved",
+  "touchpoint.completed",
+  "reply.classified",
+  "meeting.completed",
+  "opportunity.updated",
 ] as const;
 
 export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];

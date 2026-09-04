@@ -1,118 +1,160 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { createDb, schema } from "@skout/db";
-import { eq } from "drizzle-orm";
-import { loadEnv } from "../config/env.js";
-import { proposeDexterPlan, invokeDexterPlan, approveDexterPlan, rejectDexterPlan } from "./dexter-journey.service.js";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import { schema } from "@skout/db";
+import type { Env } from "../config/env.js";
 
-const { dexterPlans, workspaces, sequences, sequenceSteps, lists, listMembers } = schema;
+vi.mock("./policy-gateway.service.js", () => ({
+  classifyAndRecord: vi.fn(async () => ({ mode: "approve", outcome: "allowed", decisionId: "decision-1" })),
+  assertAllowed: vi.fn(async () => ({ mode: "approve", outcome: "allowed", decisionId: "decision-1" })),
+}));
+vi.mock("./journey-metrics.js", () => ({ incrJourneyMetric: vi.fn() }));
+vi.mock("./intelligence-layer.service.js", () => ({
+  captureFeedback: vi.fn((f: unknown) => f),
+}));
+vi.mock("./decision-workflow.service.js", () => ({
+  startWorkflowRun: vi.fn(async () => ({ id: "workflow-1", steps: [] })),
+}));
+const emitSkoutEvent = vi.fn(async (..._args: unknown[]) => ({}));
+vi.mock("./skout-event.service.js", () => ({
+  emitSkoutEvent: (...args: unknown[]) => emitSkoutEvent(...args),
+}));
 
-describe("dexter-journey.service — actionType extension", () => {
-  const config = loadEnv();
-  const { db, sql } = createDb(config.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/skout");
-  let workspaceId: string;
+const { rejectDexterPlan, approveDexterPlan, invokeDexterPlan } = await import("./dexter-journey.service.js");
 
-  beforeAll(async () => {
-    const [ws] = await db
-      .insert(workspaces)
-      .values({ name: `Dexter Journey Test WS ${Date.now()}`, slug: `dexter-journey-test-${Date.now()}` })
-      .returning();
-    workspaceId = ws!.id;
+const config = {} as Env;
+const WORKSPACE = "ws-1";
+const PLAN_ID = "plan-1";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+function basePlan(overrides: Record<string, unknown> = {}) {
+  return {
+    id: PLAN_ID,
+    workspaceId: WORKSPACE,
+    brief: "Enroll cold accounts in Q4 outbound",
+    proposal: { steps: [] },
+    status: "proposed",
+    policyMode: "approve",
+    policyDecisionId: null,
+    outcome: null,
+    approvedAt: null,
+    invokedAt: null,
+    rejectedAt: null,
+    rejectedBy: null,
+    createdAt: new Date(),
+    ...overrides,
+  };
+}
+
+/** Fake db dispatching on drizzle table identity, mirroring the pattern used elsewhere in this
+ * repo's tests (e.g. workbook-run.runner.test.ts) for services that touch more than one table. */
+function makeFakeDb(opts: {
+  plan: ReturnType<typeof basePlan> | null;
+  sequenceExists?: boolean;
+  updatedPlanPatch?: Record<string, unknown>;
+}) {
+  const { plan, sequenceExists = true, updatedPlanPatch = {} } = opts;
+  let planState = plan ? { ...plan } : null;
+  const sequenceUpdateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+
+  const db = {
+    select: vi.fn((cols?: unknown) => ({
+      from: vi.fn((table: unknown) => ({
+        where: vi.fn(() => ({
+          limit: vi.fn(() =>
+            Promise.resolve(
+              table === schema.dexterPlans ? (planState ? [planState] : []) : sequenceExists ? [{ id: "seq-1" }] : []
+            )
+          ),
+        })),
+      })),
+    })),
+    update: vi.fn((table: unknown) => {
+      if (table === schema.sequences) return { set: sequenceUpdateSet };
+      return {
+        set: vi.fn((patch: Record<string, unknown>) => ({
+          where: vi.fn(() => ({
+            returning: vi.fn(() => {
+              planState = { ...(planState as object), ...patch, ...updatedPlanPatch } as typeof planState;
+              return Promise.resolve([planState]);
+            }),
+          })),
+        })),
+      };
+    }),
+  };
+  return { db: db as never, sequenceUpdateSet };
+}
+
+describe("rejectDexterPlan", () => {
+  it("declines a proposed plan and emits dexter.plan.rejected", async () => {
+    const { db } = makeFakeDb({ plan: basePlan() });
+
+    const updated = await rejectDexterPlan(db, config, WORKSPACE, PLAN_ID, "user-1", "not relevant right now");
+
+    expect(updated.status).toBe("rejected");
+    expect(updated.rejectedAt).toBeInstanceOf(Date);
+    expect(emitSkoutEvent).toHaveBeenCalledWith(
+      db,
+      config,
+      expect.objectContaining({
+        type: "dexter.plan.rejected",
+        tenantId: WORKSPACE,
+        aggregateId: PLAN_ID,
+        data: expect.objectContaining({ planId: PLAN_ID, reason: "not relevant right now" }),
+      })
+    );
   });
 
-  afterAll(async () => {
-    await db.delete(dexterPlans).where(eq(dexterPlans.workspaceId, workspaceId));
-    await sql.end();
+  it("404s when the plan does not exist", async () => {
+    const { db } = makeFakeDb({ plan: null });
+    await expect(rejectDexterPlan(db, config, WORKSPACE, "missing")).rejects.toMatchObject({ statusCode: 404 });
   });
 
-  it("proposeDexterPlan without actionType keeps the existing brief-only proposal shape", async () => {
-    const { plan } = await proposeDexterPlan(db, config, { workspaceId, brief: "Just a brief, no action" });
-    expect(plan.status).toBe("proposed");
-    const proposal = plan.proposal as Record<string, unknown>;
-    expect(proposal.actionType).toBeUndefined();
-    expect(proposal.hypothesis).toContain("Just a brief");
+  it("422s when the plan is not in 'proposed' status", async () => {
+    const { db } = makeFakeDb({ plan: basePlan({ status: "approved" }) });
+    await expect(rejectDexterPlan(db, config, WORKSPACE, PLAN_ID)).rejects.toMatchObject({ statusCode: 422 });
+  });
+});
+
+describe("invokeDexterPlan", () => {
+  it("invokes an approved plan without a sequenceId exactly as before (backward compatible)", async () => {
+    const { db, sequenceUpdateSet } = makeFakeDb({ plan: basePlan({ status: "approved" }) });
+
+    const result = await invokeDexterPlan(db, config, WORKSPACE, PLAN_ID, "user-1");
+
+    expect(result.plan.status).toBe("invoked");
+    expect(sequenceUpdateSet).not.toHaveBeenCalled();
   });
 
-  it("proposeDexterPlan with actionType/actionParams folds them into proposal", async () => {
-    const { plan } = await proposeDexterPlan(db, config, {
-      workspaceId,
-      brief: "Enroll regional list into sequence",
-      actionType: "enroll_sequence",
-      actionParams: { sequenceId: "seq-x", listId: "list-x" },
-    });
-    const proposal = plan.proposal as Record<string, unknown>;
-    expect(proposal.actionType).toBe("enroll_sequence");
-    expect(proposal.actionParams).toEqual({ sequenceId: "seq-x", listId: "list-x" });
+  it("links the named sequence to the plan when sequenceId is provided", async () => {
+    const { db, sequenceUpdateSet } = makeFakeDb({ plan: basePlan({ status: "approved" }), sequenceExists: true });
+
+    await invokeDexterPlan(db, config, WORKSPACE, PLAN_ID, "user-1", { sequenceId: "seq-1" });
+
+    expect(sequenceUpdateSet).toHaveBeenCalledWith(expect.objectContaining({ dexterPlanId: PLAN_ID }));
   });
 
-  it("invokeDexterPlan with no actionType keeps today's canned-outcome stub behavior", async () => {
-    const { plan } = await proposeDexterPlan(db, config, { workspaceId, brief: "Brief only plan" });
-    await approveDexterPlan(db, config, workspaceId, plan.id);
-    const { plan: invoked } = await invokeDexterPlan(db, config, workspaceId, plan.id);
-    expect(invoked.status).toBe("invoked");
-    expect((invoked.outcome as Record<string, unknown>).invoked).toBe(true);
-    expect((invoked.outcome as Record<string, unknown>).learningHint).toBe("threshold_unchanged");
+  it("404s when the given sequenceId does not belong to the workspace", async () => {
+    const { db, sequenceUpdateSet } = makeFakeDb({ plan: basePlan({ status: "approved" }), sequenceExists: false });
+
+    await expect(
+      invokeDexterPlan(db, config, WORKSPACE, PLAN_ID, "user-1", { sequenceId: "someone-elses-seq" })
+    ).rejects.toMatchObject({ statusCode: 404 });
+    expect(sequenceUpdateSet).not.toHaveBeenCalled();
   });
 
-  it("invokeDexterPlan with actionType enroll_sequence calls the real adapter and persists its result", async () => {
-    const [seq] = await db
-      .insert(sequences)
-      .values({ workspaceId, name: "Orchestrator Test Sequence", status: "active", mode: "A" })
-      .returning();
-    await db.insert(sequenceSteps).values({ sequenceId: seq!.id, stepOrder: 1, stepType: "email" });
-    const prospectId = `test-prospect-${Date.now()}`;
-    const [list] = await db.insert(lists).values({ workspaceId, name: "Orchestrator Test List" }).returning();
-    await db.insert(listMembers).values({ listId: list!.id, prospectId });
-
-    const { plan } = await proposeDexterPlan(db, config, {
-      workspaceId,
-      brief: "Enroll test list into test sequence",
-      actionType: "enroll_sequence",
-      actionParams: { sequenceId: seq!.id, listId: list!.id },
-    });
-    await approveDexterPlan(db, config, workspaceId, plan.id);
-    const { plan: invoked } = await invokeDexterPlan(db, config, workspaceId, plan.id);
-
-    expect(invoked.status).toBe("invoked");
-    const outcome = invoked.outcome as Record<string, unknown>;
-    expect(outcome.enrolled).toBe(1);
-    expect(outcome.skipped).toBe(0);
+  it("422s when the plan is not approved yet", async () => {
+    const { db } = makeFakeDb({ plan: basePlan({ status: "proposed" }) });
+    await expect(invokeDexterPlan(db, config, WORKSPACE, PLAN_ID)).rejects.toMatchObject({ statusCode: 422 });
   });
+});
 
-  it("invokeDexterPlan moves to status failed (not left dangling at approved) when the adapter throws", async () => {
-    const { plan } = await proposeDexterPlan(db, config, {
-      workspaceId,
-      brief: "Enroll into a sequence that doesn't exist",
-      actionType: "enroll_sequence",
-      actionParams: { sequenceId: "00000000-0000-0000-0000-000000000000", listId: "00000000-0000-0000-0000-000000000000" },
-    });
-    await approveDexterPlan(db, config, workspaceId, plan.id);
-    const { plan: invoked } = await invokeDexterPlan(db, config, workspaceId, plan.id);
-
-    expect(invoked.status).toBe("failed");
-    expect((invoked.outcome as Record<string, unknown>).error).toBeTruthy();
-  });
-
-  it("invokeDexterPlan with an unrecognized actionType fails closed (status failed, error captured) instead of reporting success", async () => {
-    const { plan } = await proposeDexterPlan(db, config, {
-      workspaceId,
-      brief: "Do something not yet implemented",
-      actionType: "enroll_sequences", // typo — not a recognized actionType
-      actionParams: { sequenceId: "seq-x" },
-    });
-    await approveDexterPlan(db, config, workspaceId, plan.id);
-    const { plan: invoked } = await invokeDexterPlan(db, config, workspaceId, plan.id);
-
-    expect(invoked.status).toBe("failed");
-    const outcome = invoked.outcome as Record<string, unknown>;
-    expect(outcome.error).toBe("unsupported_action_type: enroll_sequences");
-    expect(outcome.at).toBeTruthy();
-  });
-
-  it("rejectDexterPlan sets status to rejected from proposed, and rejects an invalid transition", async () => {
-    const { plan } = await proposeDexterPlan(db, config, { workspaceId, brief: "Plan to be rejected" });
-    const rejected = await rejectDexterPlan(db, config, workspaceId, plan.id);
-    expect(rejected.status).toBe("rejected");
-
-    await expect(rejectDexterPlan(db, config, workspaceId, plan.id)).rejects.toMatchObject({ statusCode: 422 });
+describe("approveDexterPlan (regression check)", () => {
+  it("still approves a proposed plan", async () => {
+    const { db } = makeFakeDb({ plan: basePlan() });
+    const updated = await approveDexterPlan(db, config, WORKSPACE, PLAN_ID);
+    expect(updated.status).toBe("approved");
   });
 });

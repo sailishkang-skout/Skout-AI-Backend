@@ -5,6 +5,7 @@ import { schema } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { buildEnrichmentService, InsufficientCreditsError } from "./enrichment/index.js";
 import { getWorkbook } from "./workbook.service.js";
+import { emitSkoutEvent } from "./skout-event.service.js";
 
 const { enrichmentWorkbookRuns, enrichmentBatches } = schema;
 const log = createLogger("workbook-run.runner");
@@ -147,6 +148,24 @@ export async function runWorkbookRunJob(db: Db, config: Env, runId: string, work
     .update(enrichmentBatches)
     .set({ done: succeededRows, failed: failedRows, status: finalStatus === "failed" ? "failed" : "completed" })
     .where(eq(enrichmentBatches.id, batchId));
+
+  await emitSkoutEvent(db, config, {
+    type: "enrichment.completed",
+    tenantId: workspaceId,
+    aggregateId: runId,
+    data: {
+      workspaceId,
+      runId,
+      workbookId: run.workbookId,
+      batchId,
+      status: finalStatus,
+      processedRows,
+      succeededRows,
+      failedRows,
+      creditsUsed,
+      stoppedReason,
+    },
+  }).catch((err: unknown) => log.warn("workbook-run: failed to emit enrichment.completed", { runId, err }));
 
   log.info("workbook run finished", {
     runId,

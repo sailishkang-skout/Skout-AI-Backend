@@ -7,6 +7,7 @@ import type { ActivitiesService } from "./activities.service.js";
 import { serviceLog } from "../lib/obs.js";
 import { generateMeetingIcs } from "./ics-generator.service.js";
 import { sendMeetingInviteEmail } from "./meeting-invite-mail.service.js";
+import { emitSkoutEvent } from "./skout-event.service.js";
 import type { Env } from "../config/env.js";
 
 const log = serviceLog("meetings");
@@ -345,7 +346,27 @@ export class MeetingsService {
       .where(and(eq(meetings.id, id), eq(meetings.workspaceId, workspaceId)))
       .returning();
     if (row) log.info("meeting updated", { workspaceId, meetingId: id });
-    return row ? toDto(row) : null;
+    const dto = row ? toDto(row) : null;
+
+    // §7.3 — event-spine trigger: a meeting outcome being recorded is what "meeting.completed"
+    // means here, not any other field on the meeting changing.
+    if (dto && this.config && input.outcome !== undefined) {
+      await emitSkoutEvent(this.config, {
+        type: "meeting.completed",
+        tenantId: workspaceId,
+        aggregateId: id,
+        data: {
+          workspaceId,
+          meetingId: id,
+          outcome: dto.outcome,
+          contactId: dto.contactId,
+          companyId: dto.companyId,
+          dealId: dto.dealId,
+        },
+      }).catch((err: unknown) => log.warn("failed to emit meeting.completed", { err, workspaceId, meetingId: id }));
+    }
+
+    return dto;
   }
 
   async softDelete(workspaceId: string, id: string): Promise<boolean> {
