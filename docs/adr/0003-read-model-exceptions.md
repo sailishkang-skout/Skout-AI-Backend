@@ -66,3 +66,14 @@ and review trigger.
 ## Wave 2 status (2026-08-26)
 Internal API + one proof read path shipped. Full migration of BullMQ/transactional writers to HTTP
 remains deferred (latency/tx risk). Remaining rows keep exception comments.
+
+## Wave 3 additions (2026-09-04)
+
+| File | Tables touched | Read/write |
+|---|---|---|
+| `apps/api/src/workers/retention-signals-sweep.worker.ts` | companies, deals, contacts, activities, meetings | read |
+
+Same rationale as `reminder-sweep.worker.ts`/`risk-decay-sweep.worker.ts`: a periodic BullMQ sweep
+(§8.12 CRM Intelligence retention signals, SS-02) — HTTP round trips per workspace per sweep tick
+would add latency/failure modes for a read-only scan. Carries the formal exception comment block
+at its top, matching this ADR's template.
