@@ -139,9 +139,9 @@ function mapDocToSummary(doc: ProspectDocument, signalStackScore?: SignalStackSc
   };
 }
 
-function mapDocToDetail(doc: ProspectDocument) {
+function mapDocToDetail(doc: ProspectDocument, signalStackScore?: SignalStackScore) {
   return {
-    ...mapDocToSummary(doc),
+    ...mapDocToSummary(doc, signalStackScore),
     signals: doc.signals,
     techStack: doc.techStack,
     email: doc.email,
@@ -216,15 +216,39 @@ export function buildDetailFromSnapshot(
 export class SearchService {
   constructor(private readonly env: Env, private readonly db: Db) {}
 
+  /**
+   * §8.2 SS-04 — same per-hit signal-stack computation `searchProspects` already does for list
+   * results, but for a single doc, so `timingScore` isn't silently undefined on detail/lookup
+   * responses just because they take a different code path through this service.
+   */
+  private async computeStackScoreForDoc(doc: ProspectDocument): Promise<SignalStackScore | undefined> {
+    if (!this.db || typeof this.db.select !== "function") return undefined;
+
+    const entityIds = [doc.prospectId];
+    if (doc.companyId && doc.companyId !== doc.prospectId) entityIds.push(doc.companyId);
+    const byEntity = await listSignalsForEntities(this.db, entityIds);
+    const mergedSignals = [
+      ...(byEntity.get(doc.prospectId) ?? []),
+      ...(doc.companyId && doc.companyId !== doc.prospectId ? (byEntity.get(doc.companyId) ?? []) : []),
+    ];
+    const reachableDecisionMaker = Boolean(
+      doc.seniority && DECISION_MAKER_SENIORITIES.has(doc.seniority.toLowerCase())
+    );
+    return computeSignalStackScore(mergedSignals, {
+      weights: signalStackWeightsFromEnv(this.env),
+      reachableDecisionMaker,
+    });
+  }
+
   /** True when this id resolves to a real OpenSearch/demo doc (not the hardcoded fallback). */
   async findExistingProspect(prospectId: string) {
     const cfg = osConfig(this.env);
     if (cfg) {
       const doc = await osGetById(cfg, prospectId).catch(() => null);
-      if (doc) return mapDocToDetail(doc);
+      if (doc) return mapDocToDetail(doc, await this.computeStackScoreForDoc(doc));
     }
     const doc = demoCorpus(this.env).find((row) => row.prospectId === prospectId);
-    return doc ? mapDocToDetail(doc) : null;
+    return doc ? mapDocToDetail(doc, await this.computeStackScoreForDoc(doc)) : null;
   }
 
   async searchProspects(body: SearchProspectsRequest): Promise<SearchProspectsResponse> {
@@ -311,11 +335,11 @@ export class SearchService {
     const cfg = osConfig(this.env);
     if (cfg) {
       const doc = await osGetById(cfg, prospectId).catch(() => null);
-      if (doc) return mapDocToDetail(doc);
+      if (doc) return mapDocToDetail(doc, await this.computeStackScoreForDoc(doc));
     }
 
     const doc = demoCorpus(this.env).find((row) => row.prospectId === prospectId);
-    if (doc) return mapDocToDetail(doc);
+    if (doc) return mapDocToDetail(doc, await this.computeStackScoreForDoc(doc));
 
     return null;
   }
