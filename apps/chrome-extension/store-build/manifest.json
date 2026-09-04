@@ -45,7 +45,6 @@
         "dist/linkedin-scrape.js",
         "linkedin-search-scrape.js",
         "dist/linkedin-bridge.js",
-        "linkedin-outreach.js",
         "dist/content-script.js"
       ],
       "run_at": "document_idle"

@@ -1,11 +1,20 @@
 /**
  * @deprecated [DEPRECATED - §8.8 / Enterprise Platform Vision]
  * Executes LinkedIn connection requests and DMs from the page context via Voyager API.
- * 
- * AUDIT NOTE: This script is confirmed INACTIVE / DEAD CODE. The Chrome extension's
- * background.js does not invoke SKOUT_LINKEDIN_OUTREACH. All LinkedIn outreach actions
- * (invites, messages) are officially routed through the server-side Unipile backend.
- * Do not inject or re-enable this script; it is retained pending final maintainer deletion sign-off.
+ *
+ * AUDIT NOTE (SP-09, confirmed independently — see manifest.json / package-chrome-extension.mjs
+ * history): this script is dead by every reachable path, not just unwired. No file anywhere in
+ * this extension ever posts a chrome.runtime message of type SKOUT_LINKEDIN_OUTREACH (its only
+ * entry point), and no chrome.scripting.executeScript call (dynamic injection) references this
+ * file either — the only reference to it used to be the static manifest.json content_scripts
+ * entry, now removed. All LinkedIn outreach actions (invites, messages) are officially routed
+ * through the server-side Unipile backend.
+ *
+ * Per updated guidance (same call as email-intel.service.ts's warmup proxy, see git history):
+ * kept in-repo rather than deleted, for possible future reference — but deliberately NOT wired
+ * into manifest.json's content_scripts or package-chrome-extension.mjs's RAW_CONTENT_SCRIPTS, so
+ * it is never loaded into a real LinkedIn page. Do not re-add either wiring without a deliberate,
+ * reviewed decision to re-enable page-context LinkedIn outreach.
  */
 (function skoutLinkedInOutreach() {
   if (window.__skoutLinkedInOutreach) return;
