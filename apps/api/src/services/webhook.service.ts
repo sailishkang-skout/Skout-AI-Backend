@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, sql } from "drizzle-orm";
-import { createDb, schema } from "@skout/db";
+import { desc, eq, sql } from "drizzle-orm";
+import { createDb, schema, scopedTo, scopedById } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { enqueueWebhookDelivery } from "../workers/webhook-delivery.queue.js";
@@ -90,7 +90,7 @@ export function buildWebhookService(db: DbClient | null) {
       const rows = await db
         .select()
         .from(webhookEndpoints)
-        .where(eq(webhookEndpoints.workspaceId, workspaceId))
+        .where(scopedTo(webhookEndpoints, workspaceId))
         .orderBy(desc(webhookEndpoints.createdAt));
       return rows.map(toEndpointRow);
     },
@@ -99,7 +99,7 @@ export function buildWebhookService(db: DbClient | null) {
       const [row] = await db
         .select()
         .from(webhookEndpoints)
-        .where(and(eq(webhookEndpoints.id, id), eq(webhookEndpoints.workspaceId, workspaceId)))
+        .where(scopedById(webhookEndpoints, workspaceId, id))
         .limit(1);
       return row ? toEndpointRow(row) : null;
     },
@@ -137,7 +137,7 @@ export function buildWebhookService(db: DbClient | null) {
           ...(input.eventTypes !== undefined && { eventTypes: input.eventTypes }),
           updatedAt: new Date(),
         })
-        .where(and(eq(webhookEndpoints.id, id), eq(webhookEndpoints.workspaceId, workspaceId)))
+        .where(scopedById(webhookEndpoints, workspaceId, id))
         .returning();
       return row ? toEndpointRow(row) : null;
     },
@@ -145,7 +145,7 @@ export function buildWebhookService(db: DbClient | null) {
     async deleteEndpoint(id: string, workspaceId: string): Promise<boolean> {
       const result = await db
         .delete(webhookEndpoints)
-        .where(and(eq(webhookEndpoints.id, id), eq(webhookEndpoints.workspaceId, workspaceId)))
+        .where(scopedById(webhookEndpoints, workspaceId, id))
         .returning({ id: webhookEndpoints.id });
       return result.length > 0;
     },
@@ -155,7 +155,7 @@ export function buildWebhookService(db: DbClient | null) {
       const [row] = await db
         .update(webhookEndpoints)
         .set({ secret: newSecret, updatedAt: new Date() })
-        .where(and(eq(webhookEndpoints.id, id), eq(webhookEndpoints.workspaceId, workspaceId)))
+        .where(scopedById(webhookEndpoints, workspaceId, id))
         .returning({ id: webhookEndpoints.id });
       return row ? newSecret : null;
     },
@@ -169,10 +169,7 @@ export function buildWebhookService(db: DbClient | null) {
         .select()
         .from(webhookDeliveries)
         .where(
-          and(
-            eq(webhookDeliveries.endpointId, endpointId),
-            eq(webhookDeliveries.workspaceId, workspaceId)
-          )
+          scopedTo(webhookDeliveries, workspaceId, eq(webhookDeliveries.endpointId, endpointId))
         )
         .orderBy(desc(webhookDeliveries.createdAt))
         .limit(limit);
@@ -199,8 +196,9 @@ export async function dispatchWebhookEvent(
     .select()
     .from(webhookEndpoints)
     .where(
-      and(
-        eq(webhookEndpoints.workspaceId, workspaceId),
+      scopedTo(
+        webhookEndpoints,
+        workspaceId,
         eq(webhookEndpoints.enabled, true),
         // jsonb @> operator: endpoint's event_types array contains this event type
         sql`${webhookEndpoints.eventTypes} @> ${JSON.stringify([eventType])}::jsonb`

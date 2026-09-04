@@ -1,6 +1,6 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo, scopedById } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import { claimNext, recordResult, LeaseLostError } from "@skout/shared";
 import { HttpError } from "../utils/http.js";
@@ -26,10 +26,7 @@ export class LinkedinOutreachService {
       .select()
       .from(linkedinOutreachJobs)
       .where(
-        and(
-          eq(linkedinOutreachJobs.workspaceId, workspaceId),
-          inArray(linkedinOutreachJobs.status, ["pending", "claimed"])
-        )
+        scopedTo(linkedinOutreachJobs, workspaceId, inArray(linkedinOutreachJobs.status, ["pending", "claimed"]))
       )
       .orderBy(asc(linkedinOutreachJobs.createdAt))
       .limit(Math.min(Math.max(limit, 1), 25));
@@ -45,7 +42,7 @@ export class LinkedinOutreachService {
     const [job] = await this.db
       .select()
       .from(linkedinOutreachJobs)
-      .where(and(eq(linkedinOutreachJobs.id, jobId), eq(linkedinOutreachJobs.workspaceId, workspaceId)));
+      .where(scopedById(linkedinOutreachJobs, workspaceId, jobId));
     if (!job) throw new HttpError("linkedin_job_not_found", 404);
     if (job.status === "succeeded" || job.status === "failed" || job.status === "outcome_unknown") {
       return job;
@@ -59,7 +56,7 @@ export class LinkedinOutreachService {
     const [job] = await this.db
       .select()
       .from(linkedinOutreachJobs)
-      .where(and(eq(linkedinOutreachJobs.id, jobId), eq(linkedinOutreachJobs.workspaceId, workspaceId)));
+      .where(scopedById(linkedinOutreachJobs, workspaceId, jobId));
     if (!job) throw new HttpError("linkedin_job_not_found", 404);
     if (job.status === "succeeded") return job;
 
@@ -116,7 +113,7 @@ export class LinkedinOutreachService {
     const [job] = await this.db
       .select()
       .from(linkedinOutreachJobs)
-      .where(and(eq(linkedinOutreachJobs.id, jobId), eq(linkedinOutreachJobs.workspaceId, workspaceId)));
+      .where(scopedById(linkedinOutreachJobs, workspaceId, jobId));
     if (!job) throw new HttpError("linkedin_job_not_found", 404);
     if (job.status === "succeeded") return job;
 

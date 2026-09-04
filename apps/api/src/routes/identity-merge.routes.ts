@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
-import { and, eq } from "drizzle-orm";
-import { schema } from "@skout/db";
+import { eq } from "drizzle-orm";
+import { schema, scopedById } from "@skout/db";
 import { z } from "zod";
 import {
   listPendingMergeProposals,
@@ -104,10 +104,7 @@ export async function identityMergeRoutes(app: FastifyInstance) {
         .select()
         .from(schema.identityMergeProposals)
         .where(
-          and(
-            eq(schema.identityMergeProposals.id, request.params.id),
-            eq(schema.identityMergeProposals.workspaceId, request.workspaceId)
-          )
+          scopedById(schema.identityMergeProposals, request.workspaceId, request.params.id)
         )
         .limit(1);
       if (!proposal) return reply.status(404).send(errorResponse("Proposal not found", 404));

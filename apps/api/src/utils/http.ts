@@ -1,3 +1,6 @@
+import { HttpError } from "@skout/auth";
+import type { FastifyRequest } from "fastify";
+
 export function errorResponse(message: string, statusCode = 400, details?: unknown) {
   return {
     ok: false,
@@ -14,7 +17,21 @@ export function successResponse(data: unknown) {
   };
 }
 
-export { HttpError } from "@skout/auth";
+export { HttpError };
+
+/**
+ * `authPlugin`'s preHandler hook always sets `request.workspaceId` from server-verified
+ * identity before any route handler runs (Clerk JWT / stub auth / invite session / admin
+ * import token) — a missing value here means that guarantee was somehow violated, not a
+ * normal "no tenant" case. Fail closed (401) instead of silently proceeding with a
+ * placeholder tenant id, which is what `request.workspaceId ?? "unknown"` used to do.
+ */
+export function requireWorkspaceId(request: FastifyRequest): string {
+  if (!request.workspaceId) {
+    throw new HttpError("Missing workspace context", 401);
+  }
+  return request.workspaceId;
+}
 
 /**
  * True when an error originates from the database layer (Drizzle/postgres).

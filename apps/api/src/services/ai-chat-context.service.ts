@@ -1,6 +1,6 @@
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
-import { and, count, eq } from "drizzle-orm";
+import { schema, scopedTo } from "@skout/db";
+import { count, eq } from "drizzle-orm";
 import type { Env } from "../config/env.js";
 import { createDashboardService } from "./dashboard.service.js";
 import { buildEnrichmentService } from "./enrichment/index.js";
@@ -62,7 +62,7 @@ export async function buildChatGrounding(
       const [seqRow] = await db
         .select({ n: count() })
         .from(schema.sequences)
-        .where(eq(schema.sequences.workspaceId, workspaceId));
+        .where(scopedTo(schema.sequences, workspaceId));
       sequenceCount = seqRow?.n ?? 0;
     } catch {
       /* ignore */
@@ -71,7 +71,7 @@ export async function buildChatGrounding(
       const [inboxRow] = await db
         .select({ n: count() })
         .from(schema.inboxes)
-        .where(and(eq(schema.inboxes.workspaceId, workspaceId), eq(schema.inboxes.status, "active")));
+        .where(scopedTo(schema.inboxes, workspaceId, eq(schema.inboxes.status, "active")));
       inboxCount = inboxRow?.n ?? 0;
     } catch {
       /* ignore */
@@ -81,7 +81,7 @@ export async function buildChatGrounding(
         .select({ n: count() })
         .from(schema.inboxThreads)
         .where(
-          and(eq(schema.inboxThreads.workspaceId, workspaceId), eq(schema.inboxThreads.status, "new"))
+          scopedTo(schema.inboxThreads, workspaceId, eq(schema.inboxThreads.status, "new"))
         );
       unreadApprox = threadRow?.n ?? 0;
     } catch {
@@ -92,10 +92,7 @@ export async function buildChatGrounding(
         .select({ n: count() })
         .from(schema.aiDrafts)
         .where(
-          and(
-            eq(schema.aiDrafts.workspaceId, workspaceId),
-            eq(schema.aiDrafts.status, "pending_review")
-          )
+          scopedTo(schema.aiDrafts, workspaceId, eq(schema.aiDrafts.status, "pending_review"))
         );
       recentDrafts = draftRow?.n ?? 0;
     } catch {

@@ -1,6 +1,6 @@
-import { and, eq, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { aiService } from "./ai.service.js";
 import { pinAiClaim } from "./ai-evidence.service.js";
@@ -41,10 +41,7 @@ async function buildAudienceSummary(
     .from(listMembers)
     .innerJoin(
       prospectActivations,
-      and(
-        eq(prospectActivations.prospectId, listMembers.prospectId),
-        eq(prospectActivations.workspaceId, workspaceId)
-      )
+      scopedTo(prospectActivations, workspaceId, eq(prospectActivations.prospectId, listMembers.prospectId))
     )
     .where(eq(listMembers.listId, listId))
     .limit(AUDIENCE_SAMPLE);

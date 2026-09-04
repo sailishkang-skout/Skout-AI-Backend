@@ -1,6 +1,6 @@
-import { and, desc, eq, ilike } from "drizzle-orm";
+import { desc, eq, ilike } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo, scopedById } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import { signToken, verifyToken } from "../utils/signed-token.js";
@@ -27,7 +27,7 @@ export async function isSuppressed(db: Db, workspaceId: string, email: string): 
   const [row] = await db
     .select({ id: suppressions.id })
     .from(suppressions)
-    .where(and(eq(suppressions.workspaceId, workspaceId), eq(suppressions.email, normalizeEmail(email))))
+    .where(scopedTo(suppressions, workspaceId, eq(suppressions.email, normalizeEmail(email))))
     .limit(1);
   return !!row;
 }
@@ -49,15 +49,14 @@ export async function listSuppressions(
 ): Promise<{ data: SuppressionDto[]; total: number }> {
   const limit = Math.min(options.limit ?? 50, 200);
   const offset = options.offset ?? 0;
-  const conditions = [eq(suppressions.workspaceId, workspaceId)];
-  if (options.email?.trim()) {
-    conditions.push(ilike(suppressions.email, `%${normalizeEmail(options.email)}%`));
-  }
+  const emailFilter = options.email?.trim()
+    ? ilike(suppressions.email, `%${normalizeEmail(options.email)}%`)
+    : undefined;
 
   const rows = await db
     .select()
     .from(suppressions)
-    .where(and(...conditions))
+    .where(scopedTo(suppressions, workspaceId, emailFilter))
     .orderBy(desc(suppressions.createdAt))
     .limit(limit)
     .offset(offset);
@@ -65,7 +64,7 @@ export async function listSuppressions(
   const all = await db
     .select({ id: suppressions.id })
     .from(suppressions)
-    .where(and(...conditions));
+    .where(scopedTo(suppressions, workspaceId, emailFilter));
 
   return { data: rows.map(toSuppressionDto), total: all.length };
 }
@@ -86,7 +85,7 @@ export async function addSuppression(
   const [existing] = await db
     .select()
     .from(suppressions)
-    .where(and(eq(suppressions.workspaceId, workspaceId), eq(suppressions.email, normalizeEmail(email))))
+    .where(scopedTo(suppressions, workspaceId, eq(suppressions.email, normalizeEmail(email))))
     .limit(1);
   if (!existing) throw new HttpError("suppression_create_failed", 500);
   return toSuppressionDto(existing);
@@ -95,7 +94,7 @@ export async function addSuppression(
 export async function removeSuppression(db: Db, workspaceId: string, id: string): Promise<void> {
   const [row] = await db
     .delete(suppressions)
-    .where(and(eq(suppressions.id, id), eq(suppressions.workspaceId, workspaceId)))
+    .where(scopedById(suppressions, workspaceId, id))
     .returning({ id: suppressions.id });
   if (!row) throw new HttpError("suppression_not_found", 404);
 }

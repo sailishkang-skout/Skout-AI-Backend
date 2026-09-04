@@ -6,7 +6,7 @@ import { searchFiltersSchema } from "@skout/shared";
 import { buildEnrichmentService, InsufficientCreditsError } from "../services/enrichment/index.js";
 import { createCrmService } from "../services/crm.service.js";
 import { ListScoreService } from "../services/list-score.service.js";
-import { HttpError, errorResponse } from "../utils/http.js";
+import { HttpError, errorResponse, requireWorkspaceId } from "../utils/http.js";
 import { buildListService } from "../services/list.service.js";
 import { buildEmailVerificationService } from "../services/email-verification.service.js";
 import { exportListCsv, CSV_EXPORT_CREDIT_COST } from "../services/list-export.service.js";
@@ -49,7 +49,7 @@ const enrichListSchema = z.object({
 
 export async function listRoutes(app: FastifyInstance) {
   app.get("/lists", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildListService(app.db, osConfig(app.config));
     if (!svc) return reply.send({ workspaceId, data: [], total: 0 });
     const data = await svc.getLists(workspaceId);
@@ -65,7 +65,7 @@ export async function listRoutes(app: FastifyInstance) {
   });
 
   app.post("/lists", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { name, mode, filters } = createListSchema.parse(request.body ?? {});
 
     if (mode === "smart") {
@@ -83,7 +83,7 @@ export async function listRoutes(app: FastifyInstance) {
   // recorded (currently: lists created by activating a smart list into a brand-new list).
   app.post("/lists/:id/convert-to-smart-list", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildListService(app.db, osConfig(app.config));
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
 
@@ -102,7 +102,7 @@ export async function listRoutes(app: FastifyInstance) {
 
   app.post("/lists/:id/import-to-crm", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
 
     try {
@@ -118,7 +118,7 @@ export async function listRoutes(app: FastifyInstance) {
 
   app.get("/lists/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const listSvc = buildListService(app.db, osConfig(app.config));
     if (!listSvc) return reply.status(503).send({ error: "database_unavailable" });
     const list = await listSvc.getListById(workspaceId, id);
@@ -150,7 +150,7 @@ export async function listRoutes(app: FastifyInstance) {
 
   app.get("/lists/:id/members", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildListService(app.db, osConfig(app.config));
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const members = await svc.getMembers(workspaceId, id);
@@ -160,7 +160,7 @@ export async function listRoutes(app: FastifyInstance) {
 
   app.post("/lists/:id/members", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const memberSnapshotSchema = z.object({
       prospectId: z.string().min(1),
       fullName: z.string().optional(),
@@ -211,7 +211,7 @@ export async function listRoutes(app: FastifyInstance) {
 
   app.post("/lists/:id/enrich", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = enrichListSchema.parse(request.body ?? {});
     const svc = buildEnrichmentService(app.db, app.config);
     const batch = await svc.enrichList(workspaceId, id, { fields: body.fields });
@@ -220,7 +220,7 @@ export async function listRoutes(app: FastifyInstance) {
 
   app.post("/lists/:id/score", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const svc = new ListScoreService(app.db, app.config);
     try {
@@ -248,7 +248,7 @@ export async function listRoutes(app: FastifyInstance) {
   // and return a deliverability summary (valid / risky / invalid / catch-all / unknown).
   app.post("/lists/:id/verify", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildEmailVerificationService(app.db, app.config, osConfig(app.config));
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const summary = await svc.verifyList(workspaceId, id);
@@ -258,7 +258,7 @@ export async function listRoutes(app: FastifyInstance) {
 
   app.patch("/lists/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = z.object({ name: z.string().min(1).max(255) }).parse(request.body ?? {});
     const svc = buildEnrichmentService(app.db, app.config);
     const list = await svc.renameList(workspaceId, id, body.name);
@@ -268,7 +268,7 @@ export async function listRoutes(app: FastifyInstance) {
 
   app.delete("/lists/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildEnrichmentService(app.db, app.config);
     await svc.deleteList(workspaceId, id);
     return reply.status(204).send();
@@ -276,7 +276,7 @@ export async function listRoutes(app: FastifyInstance) {
 
   app.delete("/lists/:id/members", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = z.object({ prospectIds: z.array(z.string()).min(1) }).parse(request.body ?? {});
     const svc = buildEnrichmentService(app.db, app.config);
     const list = await svc.removeMembersFromList(workspaceId, id, body.prospectIds);
@@ -286,7 +286,7 @@ export async function listRoutes(app: FastifyInstance) {
 
   app.delete("/lists/:id/members/:prospectId", async (request, reply) => {
     const { id, prospectId } = request.params as { id: string; prospectId: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildEnrichmentService(app.db, app.config);
     const list = await svc.removeMembersFromList(workspaceId, id, [prospectId]);
     if (!list) return reply.status(404).send({ error: "list_not_found" });
@@ -295,7 +295,7 @@ export async function listRoutes(app: FastifyInstance) {
 
   app.get("/lists/:id/export/csv", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const listSvc = buildListService(app.db, osConfig(app.config));
     if (!listSvc) return reply.status(503).send({ error: "database_unavailable" });
     const enrichment = buildEnrichmentService(app.db, app.config);
@@ -339,7 +339,7 @@ export async function listRoutes(app: FastifyInstance) {
 
   app.get("/lists/:id/export/csv/download", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { key } = z.object({ key: z.string().min(1) }).parse(request.query ?? {});
 
     if (!key.startsWith(`exports/${workspaceId}/${id}/`)) {
@@ -365,7 +365,7 @@ export async function listRoutes(app: FastifyInstance) {
 
   app.post("/lists/:id/export/hubspot", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const crm = createCrmService(app.db, app.config);
     try {
       const result = await crm.startHubSpotListExport(workspaceId, id);
@@ -381,7 +381,7 @@ export async function listRoutes(app: FastifyInstance) {
   // GET /lists/:id/sequences — sequences running on this list (has enrollments from this list)
   app.get("/lists/:id/sequences", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const seqSvc = buildSequenceService(app.db);
     if (!seqSvc) return reply.status(503).send({ error: "database_unavailable" });
     const data = await seqSvc.listSequencesForList(workspaceId, id);

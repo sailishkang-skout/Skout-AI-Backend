@@ -1,11 +1,12 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { buildLinkedinOutreachService } from "../services/linkedin-outreach.service.js";
+import { requireWorkspaceId } from "../utils/http.js";
 
 export async function linkedinOutreachRoutes(app: FastifyInstance) {
   // GET /linkedin/outreach/pending — Chrome extension polls this
   app.get("/linkedin/outreach/pending", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildLinkedinOutreachService(app.db, app.config);
     if (!svc) return reply.send({ workspaceId, data: [], total: 0 });
     const q = request.query as { limit?: string };
@@ -17,7 +18,7 @@ export async function linkedinOutreachRoutes(app: FastifyInstance) {
   // POST /linkedin/outreach/:id/claim — mark processing before send
   app.post("/linkedin/outreach/:id/claim", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildLinkedinOutreachService(app.db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const job = await svc.claimJob(workspaceId, id);
@@ -27,7 +28,7 @@ export async function linkedinOutreachRoutes(app: FastifyInstance) {
   // POST /linkedin/outreach/:id/complete
   app.post("/linkedin/outreach/:id/complete", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildLinkedinOutreachService(app.db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const job = await svc.completeJob(workspaceId, id);
@@ -37,7 +38,7 @@ export async function linkedinOutreachRoutes(app: FastifyInstance) {
   // POST /linkedin/outreach/:id/fail
   app.post("/linkedin/outreach/:id/fail", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildLinkedinOutreachService(app.db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const body = z

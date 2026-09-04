@@ -1,7 +1,7 @@
 import type { OpenAI } from "openai";
 import { and, count, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { recordEvidence, schema } from "@skout/db";
+import { recordEvidence, schema, scopedTo } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { createAnalyticsService } from "./analytics.service.js";
@@ -718,7 +718,7 @@ export function createWorkspaceToolRunner(
   const drafts = db ? buildAiDraftService(db) : null;
   const billing = db ? createBillingService(db, config) : null;
   const team = db ? createTeamService(db) : null;
-  const search = createSearchService(config);
+  const search = db ? createSearchService(config, db) : createSearchService(config, {} as any); // db might be null in some cases
   const regionalBrief = db ? createRegionalBriefService(db) : null;
   const tamService = db ? createCountryIndustryTamService(db) : null;
 
@@ -1191,7 +1191,7 @@ export function createWorkspaceToolRunner(
           .select({ count: count() })
           .from(listMembers)
           .innerJoin(lists, eq(lists.id, listMembers.listId))
-          .where(and(eq(listMembers.listId, listId), eq(lists.workspaceId, workspaceId)));
+          .where(scopedTo(lists, workspaceId, eq(listMembers.listId, listId)));
         memberCount = row?.count ?? 0;
       }
       return {

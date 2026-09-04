@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import OpenAI from "openai";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import { HttpError } from "../utils/http.js";
 import { assertAllowed } from "./policy-gateway.service.js";
@@ -450,7 +450,7 @@ async function resolveTimelineContactId(
   const [bySource] = await db
     .select({ id: contacts.id })
     .from(contacts)
-    .where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.sourceProspectId, prospectId)))
+    .where(scopedTo(contacts, workspaceId, eq(contacts.sourceProspectId, prospectId)))
     .limit(1);
   if (bySource?.id) return bySource.id;
   if (UUID_RE.test(prospectId)) return prospectId;
@@ -465,10 +465,7 @@ export async function confirmLinkedinVoiceSent(
     .select()
     .from(linkedinVoiceHandoffs)
     .where(
-      and(
-        eq(linkedinVoiceHandoffs.handoffToken, opts.handoffToken),
-        eq(linkedinVoiceHandoffs.workspaceId, opts.workspaceId)
-      )
+      scopedTo(linkedinVoiceHandoffs, opts.workspaceId, eq(linkedinVoiceHandoffs.handoffToken, opts.handoffToken))
     )
     .limit(1);
   if (!handoff) throw new HttpError("Handoff not found", 404);
@@ -555,10 +552,7 @@ export async function getLinkedinVoiceHandoff(
     .select()
     .from(linkedinVoiceHandoffs)
     .where(
-      and(
-        eq(linkedinVoiceHandoffs.handoffToken, opts.handoffToken),
-        eq(linkedinVoiceHandoffs.workspaceId, opts.workspaceId)
-      )
+      scopedTo(linkedinVoiceHandoffs, opts.workspaceId, eq(linkedinVoiceHandoffs.handoffToken, opts.handoffToken))
     )
     .limit(1);
   if (!handoff) throw new HttpError("Handoff not found", 404);
@@ -569,7 +563,7 @@ export async function listLinkedinVoiceHandoffs(db: Db, workspaceId: string, lim
   return db
     .select()
     .from(linkedinVoiceHandoffs)
-    .where(eq(linkedinVoiceHandoffs.workspaceId, workspaceId))
+    .where(scopedTo(linkedinVoiceHandoffs, workspaceId))
     .orderBy(desc(linkedinVoiceHandoffs.createdAt))
     .limit(Math.min(50, Math.max(1, limit)));
 }

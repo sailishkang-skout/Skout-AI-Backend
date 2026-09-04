@@ -1,6 +1,6 @@
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedById, scopedTo } from "@skout/db";
 import type { EnrichField } from "@skout/pal";
 import { HttpError } from "../utils/http.js";
 
@@ -66,7 +66,7 @@ export async function listWorkbooks(db: Db, workspaceId: string): Promise<Enrich
   const rows = await db
     .select()
     .from(enrichmentWorkbooks)
-    .where(eq(enrichmentWorkbooks.workspaceId, workspaceId))
+    .where(scopedTo(enrichmentWorkbooks, workspaceId))
     .orderBy(desc(enrichmentWorkbooks.createdAt));
   return rows.map(serialize);
 }
@@ -79,7 +79,7 @@ export async function getWorkbook(
   const [row] = await db
     .select()
     .from(enrichmentWorkbooks)
-    .where(and(eq(enrichmentWorkbooks.id, id), eq(enrichmentWorkbooks.workspaceId, workspaceId)));
+    .where(scopedById(enrichmentWorkbooks, workspaceId, id));
   return row ? serialize(row) : null;
 }
 

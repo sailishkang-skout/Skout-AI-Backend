@@ -5,7 +5,7 @@ import {
   type MessagingChannel,
 } from "../services/messaging-inbox.service.js";
 import { UnipileError } from "../services/unipile.client.js";
-import { HttpError } from "../utils/http.js";
+import { HttpError, requireWorkspaceId } from "../utils/http.js";
 
 const channelSchema = z.enum(["linkedin", "whatsapp"]);
 
@@ -27,7 +27,7 @@ function parseChannel(raw: string): MessagingChannel {
 
 export async function messagingInboxRoutes(app: FastifyInstance) {
   app.get("/messaging/:channel/accounts", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { channel: channelRaw } = request.params as { channel: string };
     const svc = buildMessagingInboxService(app.db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
@@ -41,7 +41,7 @@ export async function messagingInboxRoutes(app: FastifyInstance) {
   });
 
   app.get("/messaging/:channel/chats", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { channel: channelRaw } = request.params as { channel: string };
     const svc = buildMessagingInboxService(app.db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
@@ -61,7 +61,7 @@ export async function messagingInboxRoutes(app: FastifyInstance) {
   });
 
   app.get("/messaging/:channel/chats/:threadId/messages", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { threadId } = request.params as { channel: string; threadId: string };
     const svc = buildMessagingInboxService(app.db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
@@ -81,7 +81,7 @@ export async function messagingInboxRoutes(app: FastifyInstance) {
   });
 
   app.post("/messaging/:channel/chats/:threadId/reply", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { threadId } = request.params as { channel: string; threadId: string };
     const svc = buildMessagingInboxService(app.db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
@@ -95,7 +95,7 @@ export async function messagingInboxRoutes(app: FastifyInstance) {
   });
 
   app.post("/messaging/:channel/chats/:threadId/read", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { threadId } = request.params as { channel: string; threadId: string };
     const svc = buildMessagingInboxService(app.db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
@@ -108,7 +108,7 @@ export async function messagingInboxRoutes(app: FastifyInstance) {
   });
 
   app.get("/messaging/:channel/chats/:threadId/context", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { threadId } = request.params as { channel: string; threadId: string };
     const svc = buildMessagingInboxService(app.db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
@@ -122,7 +122,7 @@ export async function messagingInboxRoutes(app: FastifyInstance) {
 
   // LinkedIn-only people search / outreach
   app.get("/messaging/linkedin/people", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildMessagingInboxService(app.db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const query = z
@@ -149,7 +149,7 @@ export async function messagingInboxRoutes(app: FastifyInstance) {
   });
 
   app.post("/messaging/linkedin/outreach", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildMessagingInboxService(app.db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const body = z
@@ -181,7 +181,7 @@ export async function messagingInboxRoutes(app: FastifyInstance) {
   });
 
   app.post("/messaging/whatsapp/outreach", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildMessagingInboxService(app.db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const body = z

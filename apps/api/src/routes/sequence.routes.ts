@@ -16,7 +16,7 @@ import { conditionExpressionSchema } from "../services/sequence-condition.js";
 import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.js";
 import { dispatchWebhookEvent } from "../services/webhook.service.js";
 import { emitSkoutEvent } from "../services/skout-event.service.js";
-import { HttpError } from "../utils/http.js";
+import { HttpError, requireWorkspaceId } from "../utils/http.js";
 import { gateEnrollConsent } from "../services/consent-enroll.service.js";
 
 const generateSequenceSchema = z.object({
@@ -122,7 +122,7 @@ const reorderStepsSchema = z.object({
 export async function sequenceRoutes(app: FastifyInstance) {
   // GET /sequences — list sequences for the workspace, optionally filtered by status
   app.get("/sequences", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { status } = request.query as { status?: string };
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.send({ workspaceId, data: [], total: 0 });
@@ -132,7 +132,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
 
   // POST /sequences — create a new draft sequence
   app.post("/sequences", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const { name, source, mode } = createSequenceSchema.parse(request.body ?? {});
@@ -141,7 +141,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
   });
 
   app.get("/sequences/experiments", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const data = await svc.listExperiments(workspaceId);
@@ -149,7 +149,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
   });
 
   app.post("/sequences/experiments", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const body = z
@@ -206,7 +206,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
   });
 
   app.get("/sequences/experiments/:id", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { id } = request.params as { id: string };
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
@@ -216,7 +216,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
   });
 
   app.patch("/sequences/experiments/:id", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { id } = request.params as { id: string };
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
@@ -243,7 +243,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
   });
 
   app.get("/sequences/experiments/:id/analytics", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { id } = request.params as { id: string };
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
@@ -253,7 +253,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
   });
 
   app.post("/sequences/experiments/:id/enroll", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { id } = request.params as { id: string };
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
@@ -330,7 +330,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
   });
 
   app.post("/sequences/from-template", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const body = z
@@ -354,7 +354,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
 
   // POST /sequences/generate — AI-generate a draft multi-step cadence from a goal + list.
   app.post("/sequences/generate", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const body = generateSequenceSchema.parse(request.body ?? {});
     try {
@@ -370,7 +370,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
 
   // POST /sequences/from-steps — persist a provided cadence as a draft sequence (chat "Apply").
   app.post("/sequences/from-steps", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const body = fromStepsSchema.parse(request.body ?? {});
@@ -380,7 +380,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
 
   app.get("/sequences/:id/versions", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const data = await svc.listVersions(workspaceId, id);
@@ -390,7 +390,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
 
   app.post("/sequences/:id/versions", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     try {
@@ -406,7 +406,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
 
   app.get("/sequences/:id/events", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const q = request.query as { enrollmentId?: string; limit?: string };
@@ -421,7 +421,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
   // GET /sequences/:id — fetch sequence with its steps
   app.get("/sequences/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const sequence = await svc.getSequenceById(workspaceId, id);
@@ -432,7 +432,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
   // GET /sequences/:id/analytics — per-step funnel metrics + enrollment summary
   app.get("/sequences/:id/analytics", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const analytics = await svc.getAnalytics(workspaceId, id);
@@ -443,7 +443,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
   // GET /sequences/:id/enrollments — live per-prospect enrollment status
   app.get("/sequences/:id/enrollments", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.send({ workspaceId, data: [], total: 0 });
     const data = await svc.listEnrollments(workspaceId, id);
@@ -454,7 +454,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
   // PATCH /sequences/:id — update name and/or status (lifecycle-validated)
   app.patch("/sequences/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const body = updateSequenceSchema.parse(request.body ?? {});
@@ -474,7 +474,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
   // ("God Mode") sequence can be activated.
   app.post("/sequences/:id/approve-mode-c", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     try {
@@ -503,7 +503,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
   // DELETE /sequences/:id — delete sequence and all its steps (cascade)
   app.delete("/sequences/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     await svc.deleteSequence(workspaceId, id);
@@ -513,7 +513,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
   // PUT /sequences/:id/steps/reorder — reorder all steps (must come before /:stepId routes)
   app.put("/sequences/:id/steps/reorder", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const { stepIds } = reorderStepsSchema.parse(request.body ?? {});
@@ -532,7 +532,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
   // POST /sequences/:id/steps — add a step (appended at the end)
   app.post("/sequences/:id/steps", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const body = createStepSchema.parse(request.body ?? {});
@@ -551,7 +551,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
   // PATCH /sequences/:id/steps/:stepId — update step fields
   app.patch("/sequences/:id/steps/:stepId", async (request, reply) => {
     const { id, stepId } = request.params as { id: string; stepId: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const body = updateStepSchema.parse(request.body ?? {});
@@ -570,7 +570,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
   // DELETE /sequences/:id/steps/:stepId — remove step and reorder remaining
   app.delete("/sequences/:id/steps/:stepId", async (request, reply) => {
     const { id, stepId } = request.params as { id: string; stepId: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const found = await svc.deleteStep(workspaceId, id, stepId);
@@ -581,7 +581,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
   // DELETE /sequences/:id/enrollments/:prospectId — unenroll a prospect
   app.delete("/sequences/:id/enrollments/:prospectId", async (request, reply) => {
     const { id, prospectId } = request.params as { id: string; prospectId: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const result = await svc.unenroll(workspaceId, id, prospectId);
@@ -592,7 +592,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
   // GET /sequences/prospects/:prospectId/enrollments — get all enrollments for a prospect
   app.get("/sequences/prospects/:prospectId/enrollments", async (request, reply) => {
     const { prospectId } = request.params as { prospectId: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const enrollments = await svc.getProspectEnrollments(workspaceId, prospectId);
@@ -602,7 +602,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
   // POST /sequences/:id/enroll — enroll prospects into a sequence
   app.post("/sequences/:id/enroll", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const body = enrollSequenceSchema.parse(request.body ?? {});
@@ -671,7 +671,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
   // GET /sequences/:id/lists — lists that have enrollments in this sequence
   app.get("/sequences/:id/lists", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildSequenceService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const data = await svc.listEnrolledLists(workspaceId, id);

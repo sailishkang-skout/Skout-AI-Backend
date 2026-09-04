@@ -1,6 +1,6 @@
 import { Worker, Queue } from "bullmq";
 import { and, desc, eq, gte, isNotNull } from "drizzle-orm";
-import { createDb, schema } from "@skout/db";
+import { createDb, schema, scopedTo } from "@skout/db";
 import { createLogger, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
@@ -38,12 +38,7 @@ export async function computeEngagementRecency(
     .from(sequenceEnrollmentSteps)
     .innerJoin(sequenceEnrollments, eq(sequenceEnrollments.id, sequenceEnrollmentSteps.enrollmentId))
     .where(
-      and(
-        eq(sequenceEnrollments.workspaceId, workspaceId),
-        eq(sequenceEnrollments.prospectId, prospectId),
-        isNotNull(sequenceEnrollmentSteps.executedAt),
-        gte(sequenceEnrollmentSteps.executedAt, lookbackCutoff)
-      )
+      scopedTo(sequenceEnrollments, workspaceId, eq(sequenceEnrollments.prospectId, prospectId), isNotNull(sequenceEnrollmentSteps.executedAt), gte(sequenceEnrollmentSteps.executedAt, lookbackCutoff))
     );
 
   const messageEvents = await db
@@ -51,11 +46,7 @@ export async function computeEngagementRecency(
     .from(inboxMessages)
     .innerJoin(inboxThreads, eq(inboxThreads.id, inboxMessages.threadId))
     .where(
-      and(
-        eq(inboxThreads.workspaceId, workspaceId),
-        eq(inboxThreads.prospectId, prospectId),
-        gte(inboxMessages.sentAt, lookbackCutoff)
-      )
+      scopedTo(inboxThreads, workspaceId, eq(inboxThreads.prospectId, prospectId), gte(inboxMessages.sentAt, lookbackCutoff))
     );
 
   const allDates = [
@@ -90,7 +81,7 @@ export async function sweepWorkspaceForDecay(
   const activations = await db
     .select({ prospectId: prospectActivations.prospectId, activatedAt: prospectActivations.activatedAt })
     .from(prospectActivations)
-    .where(eq(prospectActivations.workspaceId, workspaceId));
+    .where(scopedTo(prospectActivations, workspaceId));
 
   let flagged = 0;
 

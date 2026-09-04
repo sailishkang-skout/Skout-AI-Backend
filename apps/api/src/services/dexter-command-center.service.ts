@@ -1,6 +1,6 @@
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import { listDecisions, listPolicies } from "./policy-gateway.service.js";
 import { listDecisionViews } from "./decision-workflow.service.js";
 import { computeDexterPlanMetrics, computeWorkspaceEvaluationSummary } from "./dexter-evaluation-loop.service.js";
@@ -13,14 +13,14 @@ export async function getDexterCommandCenter(db: Db, workspaceId: string) {
     db
       .select()
       .from(dexterPlans)
-      .where(eq(dexterPlans.workspaceId, workspaceId))
+      .where(scopedTo(dexterPlans, workspaceId))
       .orderBy(desc(dexterPlans.createdAt))
       .limit(20),
     listPolicies(db, workspaceId),
     db
       .select()
       .from(policyDecisions)
-      .where(and(eq(policyDecisions.workspaceId, workspaceId), eq(policyDecisions.outcome, "denied")))
+      .where(scopedTo(policyDecisions, workspaceId, eq(policyDecisions.outcome, "denied")))
       .orderBy(desc(policyDecisions.createdAt))
       .limit(10),
     listDecisionViews(db, workspaceId, "open"),
@@ -74,11 +74,7 @@ export async function listDexterPlans(db: Db, workspaceId: string, status?: stri
   const rows = await db
     .select()
     .from(dexterPlans)
-    .where(
-      status
-        ? and(eq(dexterPlans.workspaceId, workspaceId), eq(dexterPlans.status, status))
-        : eq(dexterPlans.workspaceId, workspaceId)
-    )
+    .where(scopedTo(dexterPlans, workspaceId, status ? eq(dexterPlans.status, status) : undefined))
     .orderBy(desc(dexterPlans.createdAt))
     .limit(50);
   return rows;

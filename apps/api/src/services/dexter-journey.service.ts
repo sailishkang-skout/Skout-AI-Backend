@@ -1,10 +1,11 @@
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedById } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import { classifyAndRecord, assertAllowed } from "./policy-gateway.service.js";
 import { incrJourneyMetric } from "./journey-metrics.js";
+import { buildSequenceService } from "./sequence.service.js";
 import { emitSkoutEvent } from "./skout-event.service.js";
 import { captureFeedback } from "./intelligence-layer.service.js";
 import { startWorkflowRun } from "./decision-workflow.service.js";
@@ -24,7 +25,13 @@ const { dexterPlans, sequences } = schema;
 export async function proposeDexterPlan(
   db: Db,
   config: Env,
-  opts: { workspaceId: string; brief: string; userId?: string }
+  opts: {
+    workspaceId: string;
+    brief: string;
+    userId?: string;
+    actionType?: string;
+    actionParams?: Record<string, unknown>;
+  }
 ) {
   const classify = await classifyAndRecord(db, {
     workspaceId: opts.workspaceId,
@@ -33,7 +40,7 @@ export async function proposeDexterPlan(
     detail: { phase: "propose" },
   });
 
-  const proposal = {
+  const proposal: Record<string, unknown> = {
     steps: [
       { id: "brief_approval", status: "pending", label: "Review plan brief" },
       { id: "policy_gateway_classify", status: "done", mode: classify.mode, label: "Policy classification" },
@@ -46,6 +53,8 @@ export async function proposeDexterPlan(
     creditCost: 0,
     externalSideEffects: ["May enroll contacts or activate sequences after invoke"],
   };
+  if (opts.actionType) proposal.actionType = opts.actionType;
+  if (opts.actionParams) proposal.actionParams = opts.actionParams;
 
   const [plan] = await db
     .insert(dexterPlans)
@@ -66,13 +75,23 @@ export async function proposeDexterPlan(
           type: "dexter.plan.blocked",
           tenantId: opts.workspaceId,
           aggregateId: plan!.id,
-          data: { planId: plan!.id, brief: opts.brief, policyMode: classify.mode },
+          data: {
+            planId: plan!.id,
+            brief: opts.brief,
+            policyMode: classify.mode,
+            actionType: opts.actionType ?? null,
+          },
         })
       : await emitSkoutEvent(db, config, {
           type: "dexter.plan.proposed",
           tenantId: opts.workspaceId,
           aggregateId: plan!.id,
-          data: { planId: plan!.id, brief: opts.brief, policyMode: classify.mode },
+          data: {
+            planId: plan!.id,
+            brief: opts.brief,
+            policyMode: classify.mode,
+            actionType: opts.actionType ?? null,
+          },
         });
 
   return { plan: plan!, policy: classify, correlationId: event.correlationId };
@@ -82,7 +101,7 @@ export async function approveDexterPlan(db: Db, config: Env, workspaceId: string
   const [plan] = await db
     .select()
     .from(dexterPlans)
-    .where(and(eq(dexterPlans.id, planId), eq(dexterPlans.workspaceId, workspaceId)))
+    .where(scopedById(dexterPlans, workspaceId, planId))
     .limit(1);
   if (!plan) throw new HttpError("Dexter plan not found", 404);
   if (plan.status !== "proposed") throw new HttpError(`Plan status is ${plan.status}`, 422);
@@ -116,7 +135,7 @@ export async function rejectDexterPlan(
   const [plan] = await db
     .select()
     .from(dexterPlans)
-    .where(and(eq(dexterPlans.id, planId), eq(dexterPlans.workspaceId, workspaceId)))
+    .where(scopedById(dexterPlans, workspaceId, planId))
     .limit(1);
   if (!plan) throw new HttpError("Dexter plan not found", 404);
   if (plan.status !== "proposed") throw new HttpError(`Plan status is ${plan.status}`, 422);
@@ -148,7 +167,7 @@ export async function invokeDexterPlan(
   const [plan] = await db
     .select()
     .from(dexterPlans)
-    .where(and(eq(dexterPlans.id, planId), eq(dexterPlans.workspaceId, workspaceId)))
+    .where(scopedById(dexterPlans, workspaceId, planId))
     .limit(1);
   if (!plan) throw new HttpError("Dexter plan not found", 404);
   if (plan.status !== "approved") {
@@ -174,7 +193,76 @@ export async function invokeDexterPlan(
     detail: { phase: "invoke" },
   });
 
-  const proposal = (plan.proposal ?? {}) as { steps?: Array<{ id: string; status?: string; label?: string }> };
+  const proposal = (plan.proposal ?? {}) as Record<string, unknown> & {
+    steps?: Array<{ id: string; status?: string; label?: string }>;
+  };
+  const actionType = typeof proposal.actionType === "string" ? proposal.actionType : undefined;
+
+  if (actionType === "enroll_sequence") {
+    const actionParams = (proposal.actionParams ?? {}) as { sequenceId?: string; listId?: string };
+    try {
+      const seqSvc = buildSequenceService(db);
+      const result = await seqSvc!.enroll(actionParams.sequenceId!, workspaceId, { listId: actionParams.listId });
+      const outcome = { ...result, at: new Date().toISOString() };
+      const [updated] = await db
+        .update(dexterPlans)
+        .set({ status: "invoked", invokedAt: new Date(), outcome, policyDecisionId: policy.decisionId })
+        .where(eq(dexterPlans.id, planId))
+        .returning();
+      incrJourneyMetric("dexterPlanInvoke");
+
+      await emitSkoutEvent(db, config, {
+        type: "dexter.action.executed",
+        tenantId: workspaceId,
+        aggregateId: planId,
+        correlationId: planId,
+        data: { planId, actionType, outcome },
+      });
+
+      return { plan: updated!, policy };
+    } catch (err) {
+      const outcome = { error: err instanceof Error ? err.message : String(err), at: new Date().toISOString() };
+      const [updated] = await db
+        .update(dexterPlans)
+        .set({ status: "failed", outcome, policyDecisionId: policy.decisionId })
+        .where(eq(dexterPlans.id, planId))
+        .returning();
+
+      await emitSkoutEvent(db, config, {
+        type: "dexter.action.failed",
+        tenantId: workspaceId,
+        aggregateId: planId,
+        correlationId: planId,
+        data: { planId, actionType, error: outcome.error },
+      });
+
+      return { plan: updated!, policy };
+    }
+  }
+
+  if (actionType !== undefined) {
+    // actionType is present but isn't a recognized/implemented action — fail closed
+    // rather than silently reporting success for work that never ran. Only the
+    // brief-only path (actionType absent entirely) is allowed to fall through to the
+    // workflow-run stub below.
+    const outcome = { error: `unsupported_action_type: ${actionType}`, at: new Date().toISOString() };
+    const [updated] = await db
+      .update(dexterPlans)
+      .set({ status: "failed", outcome, policyDecisionId: policy.decisionId })
+      .where(eq(dexterPlans.id, planId))
+      .returning();
+
+    await emitSkoutEvent(db, config, {
+      type: "dexter.action.failed",
+      tenantId: workspaceId,
+      aggregateId: planId,
+      correlationId: planId,
+      data: { planId, actionType, error: outcome.error },
+    });
+
+    return { plan: updated!, policy };
+  }
+
   const workflow = await startWorkflowRun(db, {
     workspaceId,
     name: `Dexter plan: ${plan.brief.slice(0, 80)}`,
@@ -222,7 +310,7 @@ export async function recordDexterLearning(
   const [plan] = await db
     .select()
     .from(dexterPlans)
-    .where(and(eq(dexterPlans.id, planId), eq(dexterPlans.workspaceId, workspaceId)))
+    .where(scopedById(dexterPlans, workspaceId, planId))
     .limit(1);
   if (!plan) throw new HttpError("Dexter plan not found", 404);
 

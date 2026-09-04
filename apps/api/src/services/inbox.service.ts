@@ -1,5 +1,5 @@
-import { and, asc, count, desc, eq, exists, gt, gte, inArray, sql } from "drizzle-orm";
-import { createDb, schema } from "@skout/db";
+import { and, asc, count, desc, eq, exists, gt, gte, inArray, sql, type SQL } from "drizzle-orm";
+import { createDb, schema, scopedTo, scopedById } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { encryptSecret, decryptSecret } from "@skout/shared";
@@ -82,7 +82,7 @@ export async function listInboxes(db: Db, workspaceId: string) {
   const rows = await db
     .select()
     .from(inboxes)
-    .where(eq(inboxes.workspaceId, workspaceId))
+    .where(scopedTo(inboxes, workspaceId))
     .orderBy(inboxes.createdAt);
   const data = await withDailyStats(db, rows);
   return { workspaceId, data, total: data.length };
@@ -92,7 +92,7 @@ export async function getInboxById(db: Db, workspaceId: string, id: string) {
   const [row] = await db
     .select()
     .from(inboxes)
-    .where(and(eq(inboxes.workspaceId, workspaceId), eq(inboxes.id, id)))
+    .where(scopedById(inboxes, workspaceId, id))
     .limit(1);
   if (!row) return null;
   const [withStats] = await withDailyStats(db, [row]);
@@ -113,7 +113,7 @@ export async function updateInbox(
   const [row] = await db
     .update(inboxes)
     .set(set)
-    .where(and(eq(inboxes.workspaceId, workspaceId), eq(inboxes.id, id)))
+    .where(scopedById(inboxes, workspaceId, id))
     .returning();
   return row ?? null;
 }
@@ -122,7 +122,7 @@ export async function pauseInbox(db: Db, workspaceId: string, id: string) {
   const [row] = await db
     .update(inboxes)
     .set({ status: "paused", updatedAt: new Date() })
-    .where(and(eq(inboxes.workspaceId, workspaceId), eq(inboxes.id, id)))
+    .where(scopedById(inboxes, workspaceId, id))
     .returning();
   return row ?? null;
 }
@@ -142,7 +142,7 @@ export async function resumeInbox(
   const [row] = await db
     .update(inboxes)
     .set(set)
-    .where(and(eq(inboxes.workspaceId, workspaceId), eq(inboxes.id, id)))
+    .where(scopedById(inboxes, workspaceId, id))
     .returning();
   return row ?? null;
 }
@@ -150,7 +150,7 @@ export async function resumeInbox(
 export async function deleteInbox(db: Db, workspaceId: string, id: string): Promise<boolean> {
   const result = await db
     .delete(inboxes)
-    .where(and(eq(inboxes.workspaceId, workspaceId), eq(inboxes.id, id)))
+    .where(scopedById(inboxes, workspaceId, id))
     .returning({ id: inboxes.id });
   return result.length > 0;
 }
@@ -159,7 +159,7 @@ export async function listThreads(db: Db, workspaceId: string) {
   const data = await db
     .select()
     .from(inboxThreads)
-    .where(eq(inboxThreads.workspaceId, workspaceId))
+    .where(scopedTo(inboxThreads, workspaceId))
     .orderBy(sql`${inboxThreads.lastMessageAt} DESC NULLS LAST`);
   return { workspaceId, data, total: data.length };
 }
@@ -231,7 +231,7 @@ export async function listDomains(db: Db, workspaceId: string) {
   const rows = await db
     .select()
     .from(sendingDomains)
-    .where(eq(sendingDomains.workspaceId, workspaceId))
+    .where(scopedTo(sendingDomains, workspaceId))
     .orderBy(sendingDomains.createdAt);
   return { workspaceId, data: rows.map(shapeDomain), total: rows.length };
 }
@@ -249,7 +249,7 @@ export async function addDomain(db: Db, workspaceId: string, domain: string) {
 export async function removeDomain(db: Db, workspaceId: string, id: string) {
   const [deleted] = await db
     .delete(sendingDomains)
-    .where(and(eq(sendingDomains.workspaceId, workspaceId), eq(sendingDomains.id, id)))
+    .where(scopedById(sendingDomains, workspaceId, id))
     .returning({ id: sendingDomains.id });
   return !!deleted;
 }
@@ -258,7 +258,7 @@ export async function getDomainDns(db: Db, workspaceId: string, id: string) {
   const [row] = await db
     .select()
     .from(sendingDomains)
-    .where(and(eq(sendingDomains.workspaceId, workspaceId), eq(sendingDomains.id, id)))
+    .where(scopedById(sendingDomains, workspaceId, id))
     .limit(1);
   if (!row) return null;
   return { domain: row.domain, records: (row.dnsRecords as StoredDnsRecord[]) ?? [] };
@@ -268,7 +268,7 @@ export async function verifyDomain(db: Db, workspaceId: string, id: string) {
   const [row] = await db
     .select()
     .from(sendingDomains)
-    .where(and(eq(sendingDomains.workspaceId, workspaceId), eq(sendingDomains.id, id)))
+    .where(scopedById(sendingDomains, workspaceId, id))
     .limit(1);
   if (!row) return null;
 
@@ -320,7 +320,7 @@ export async function getDeliverabilityMetrics(db: Db, workspaceId: string) {
       spamCount: inboxes.spamCount,
     })
     .from(inboxes)
-    .where(eq(inboxes.workspaceId, workspaceId));
+    .where(scopedTo(inboxes, workspaceId));
 
   // Daily outbound message counts (source of truth for volume)
   const dailySent = await db
@@ -332,11 +332,7 @@ export async function getDeliverabilityMetrics(db: Db, workspaceId: string) {
     .innerJoin(inboxThreads, eq(inboxMessages.threadId, inboxThreads.id))
     .innerJoin(inboxes, eq(inboxThreads.inboxId, inboxes.id))
     .where(
-      and(
-        eq(inboxes.workspaceId, workspaceId),
-        eq(inboxMessages.direction, "outbound"),
-        gte(inboxMessages.sentAt, thirtyDaysAgo),
-      )
+      scopedTo(inboxes, workspaceId, eq(inboxMessages.direction, "outbound"), gte(inboxMessages.sentAt, thirtyDaysAgo))
     )
     .groupBy(sql`(date_trunc('day', ${inboxMessages.sentAt} AT TIME ZONE 'UTC'))::date`)
     .orderBy(sql`(date_trunc('day', ${inboxMessages.sentAt} AT TIME ZONE 'UTC'))::date`);
@@ -352,11 +348,7 @@ export async function getDeliverabilityMetrics(db: Db, workspaceId: string) {
     .innerJoin(inboxThreads, eq(inboxMessages.threadId, inboxThreads.id))
     .innerJoin(inboxes, eq(inboxThreads.inboxId, inboxes.id))
     .where(
-      and(
-        eq(inboxes.workspaceId, workspaceId),
-        eq(inboxMessages.direction, "inbound"),
-        gte(inboxMessages.sentAt, thirtyDaysAgo),
-      )
+      scopedTo(inboxes, workspaceId, eq(inboxMessages.direction, "inbound"), gte(inboxMessages.sentAt, thirtyDaysAgo))
     )
     .groupBy(sql`(date_trunc('day', ${inboxMessages.sentAt} AT TIME ZONE 'UTC'))::date`)
     .orderBy(sql`(date_trunc('day', ${inboxMessages.sentAt} AT TIME ZONE 'UTC'))::date`);
@@ -503,7 +495,7 @@ export class InboxService {
     const rows = await this.db
       .select()
       .from(inboxes)
-      .where(eq(inboxes.workspaceId, workspaceId))
+      .where(scopedTo(inboxes, workspaceId))
       .orderBy(inboxes.createdAt);
     const data = rows.map(toPublicInbox);
     return { workspaceId, data, total: data.length };
@@ -586,7 +578,7 @@ export class InboxService {
       offset?: number;
     } = {}
   ) {
-    const conditions = [eq(inboxThreads.workspaceId, workspaceId)];
+    const conditions: SQL[] = [];
 
     if (options.inboxId) {
       conditions.push(eq(inboxThreads.inboxId, options.inboxId));
@@ -625,7 +617,7 @@ export class InboxService {
 
     const limit = Math.min(options.limit ?? 50, 200);
     const offset = options.offset ?? 0;
-    const where = and(...conditions);
+    const where = scopedTo(inboxThreads, workspaceId, ...conditions);
 
     const [{ total }] = await this.db.select({ total: count() }).from(inboxThreads).where(where);
 
@@ -651,10 +643,7 @@ export class InboxService {
         })
         .from(prospectActivations)
         .where(
-          and(
-            eq(prospectActivations.workspaceId, workspaceId),
-            inArray(prospectActivations.prospectId, prospectIds)
-          )
+          scopedTo(prospectActivations, workspaceId, inArray(prospectActivations.prospectId, prospectIds))
         );
 
       for (const a of activations) {
@@ -674,7 +663,7 @@ export class InboxService {
         })
         .from(prospectScores)
         .where(
-          and(eq(prospectScores.workspaceId, workspaceId), inArray(prospectScores.prospectId, prospectIds))
+          scopedTo(prospectScores, workspaceId, inArray(prospectScores.prospectId, prospectIds))
         );
       for (const s of scores) {
         const existing = prospectById.get(s.prospectId) ?? {};
@@ -730,7 +719,7 @@ export class InboxService {
     const [thread] = await this.db
       .select()
       .from(inboxThreads)
-      .where(and(eq(inboxThreads.workspaceId, workspaceId), eq(inboxThreads.id, threadId)))
+      .where(scopedById(inboxThreads, workspaceId, threadId))
       .limit(1);
     if (!thread) throw new HttpError("thread_not_found", 404);
     return thread;
@@ -745,10 +734,7 @@ export class InboxService {
         .select({ snapshot: prospectActivations.snapshot })
         .from(prospectActivations)
         .where(
-          and(
-            eq(prospectActivations.workspaceId, workspaceId),
-            eq(prospectActivations.prospectId, thread.prospectId)
-          )
+          scopedTo(prospectActivations, workspaceId, eq(prospectActivations.prospectId, thread.prospectId))
         )
         .limit(1);
 
@@ -761,10 +747,7 @@ export class InboxService {
         })
         .from(prospectScores)
         .where(
-          and(
-            eq(prospectScores.workspaceId, workspaceId),
-            eq(prospectScores.prospectId, thread.prospectId)
-          )
+          scopedTo(prospectScores, workspaceId, eq(prospectScores.prospectId, thread.prospectId))
         )
         .limit(1);
 
@@ -823,11 +806,7 @@ export class InboxService {
       })
       .from(aiDrafts)
       .where(
-        and(
-          eq(aiDrafts.workspaceId, workspaceId),
-          eq(aiDrafts.threadId, threadId),
-          inArray(aiDrafts.status, ["pending_review", "edited", "approved"])
-        )
+        scopedTo(aiDrafts, workspaceId, eq(aiDrafts.threadId, threadId), inArray(aiDrafts.status, ["pending_review", "edited", "approved"]))
       )
       .orderBy(desc(aiDrafts.createdAt))
       .limit(1);
@@ -859,7 +838,7 @@ export class InboxService {
     await this.db
       .update(inboxThreads)
       .set({ unreadCount: 0, updatedAt: new Date() })
-      .where(and(eq(inboxThreads.workspaceId, workspaceId), eq(inboxThreads.id, threadId)));
+      .where(scopedById(inboxThreads, workspaceId, threadId));
     return { ok: true };
   }
 
@@ -874,7 +853,7 @@ export class InboxService {
     const [updated] = await this.db
       .update(inboxThreads)
       .set({ status: targetStatus, statusChangedAt: now, updatedAt: now })
-      .where(and(eq(inboxThreads.workspaceId, workspaceId), eq(inboxThreads.id, threadId)))
+      .where(scopedById(inboxThreads, workspaceId, threadId))
       .returning();
     log.info("thread status transitioned", {
       workspaceId,
@@ -891,7 +870,7 @@ export class InboxService {
     const rows = await this.db
       .select()
       .from(inboxThreads)
-      .where(and(eq(inboxThreads.workspaceId, workspaceId), eq(inboxThreads.needsReview, true)))
+      .where(scopedTo(inboxThreads, workspaceId, eq(inboxThreads.needsReview, true)))
       .orderBy(desc(inboxThreads.updatedAt));
     return { workspaceId, data: rows, total: rows.length };
   }
@@ -926,7 +905,7 @@ export class InboxService {
         suggestedReason: null,
         updatedAt: now,
       })
-      .where(and(eq(inboxThreads.workspaceId, workspaceId), eq(inboxThreads.id, threadId)));
+      .where(scopedById(inboxThreads, workspaceId, threadId));
 
     // 8.15 task 34 — model/prompt performance tracking (override rate / action acceptance).
     // Captured here, not read back from inboxThreads, because the update above clears
@@ -949,7 +928,7 @@ export class InboxService {
     const [inbox] = await this.db
       .select()
       .from(inboxes)
-      .where(and(eq(inboxes.workspaceId, workspaceId), eq(inboxes.id, thread.inboxId)))
+      .where(scopedById(inboxes, workspaceId, thread.inboxId))
       .limit(1);
 
     if (!inbox) throw new HttpError("inbox_not_found", 404);
@@ -1016,7 +995,7 @@ export class InboxService {
     await this.db
       .update(inboxThreads)
       .set({ lastMessageAt: now, updatedAt: now })
-      .where(and(eq(inboxThreads.workspaceId, workspaceId), eq(inboxThreads.id, threadId)));
+      .where(scopedById(inboxThreads, workspaceId, threadId));
 
     await markInboxUsed(this.db, inbox.id);
 
@@ -1034,7 +1013,7 @@ export class InboxService {
     const [inbox] = await this.db
       .select()
       .from(inboxes)
-      .where(and(eq(inboxes.workspaceId, workspaceId), eq(inboxes.id, inboxId)))
+      .where(scopedById(inboxes, workspaceId, inboxId))
       .limit(1);
     if (!inbox) throw new HttpError("inbox_not_found", 404);
 
@@ -1100,7 +1079,7 @@ export class InboxService {
     const rows = await this.db
       .select({ status: inboxThreads.status, threads: count() })
       .from(inboxThreads)
-      .where(eq(inboxThreads.workspaceId, workspaceId))
+      .where(scopedTo(inboxThreads, workspaceId))
       .groupBy(inboxThreads.status);
     const byStatus = Object.fromEntries(rows.map((r) => [r.status, r.threads]));
     const total = rows.reduce((acc, r) => acc + r.threads, 0);

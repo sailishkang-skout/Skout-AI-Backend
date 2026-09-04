@@ -8,6 +8,7 @@ import {
 } from "@skout/opensearch";
 import { buildEnrichmentService, InsufficientCreditsError } from "../services/enrichment/index.js";
 import type { Env } from "../config/env.js";
+import { requireWorkspaceId } from "../utils/http.js";
 
 function osConfig(env: Env): OpenSearchConfig | null {
   if (!env.OPENSEARCH_URL) return null;
@@ -102,7 +103,7 @@ export async function prospectRoutes(app: FastifyInstance) {
   // Manual lead entry — OpenSearch index + workspace activation + optional enrich/list add.
   app.post("/prospects/manual", async (request, reply) => {
     const body = manualProspectSchema.parse(request.body ?? {});
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
 
     const domain = normalizeDomain(body.companyDomain);
     const companyId = generateCompanyId(domain);
@@ -214,7 +215,7 @@ export async function prospectRoutes(app: FastifyInstance) {
   });
 
   app.get("/prospects", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildEnrichmentService(app.db, app.config);
     const data = await svc.listActivations(workspaceId);
     return reply.send({ workspaceId, data, total: data.length });
@@ -222,7 +223,7 @@ export async function prospectRoutes(app: FastifyInstance) {
 
   // Add corpus prospects to the workspace (activation, no external spend).
   app.post("/prospects/activate", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = activateBodySchema.parse(request.body ?? {});
     const names = body.prospects.map((p) => p.fullName).filter(Boolean);
     request.log.info(
@@ -236,7 +237,7 @@ export async function prospectRoutes(app: FastifyInstance) {
 
   app.post("/prospects/:id/enrich", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = enrichBodySchema.parse(request.body ?? {});
     const svc = buildEnrichmentService(app.db, app.config);
 

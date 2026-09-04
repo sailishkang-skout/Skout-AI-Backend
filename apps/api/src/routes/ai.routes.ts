@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { and, eq } from "drizzle-orm";
-import { schema } from "@skout/db";
+import { eq } from "drizzle-orm";
+import { schema, scopedById } from "@skout/db";
 import { aiService } from "../services/ai.service.js";
 import {
   suggestNextBestAction,
@@ -23,7 +23,7 @@ import { MUTATING_TOOL_NAMES } from "../services/intelligence-layer.service.js";
 import { COPILOT_PERSONAS } from "../services/ai-copilot-personas.service.js";
 import { readAiExport } from "../services/ai-export.service.js";
 import { buildSequenceService, enrollListWithSideEffects } from "../services/sequence.service.js";
-import { HttpError } from "../utils/http.js";
+import { HttpError, requireWorkspaceId } from "../utils/http.js";
 import { pinAiClaim } from "../services/ai-evidence.service.js";
 import { gateEnrollConsent } from "../services/consent-enroll.service.js";
 
@@ -150,7 +150,7 @@ const draftAutoApproveSettingsSchema = z.object({
 export async function aiRoutes(app: FastifyInstance) {
   // R13.2 — workspace-level auto-approve thresholds for AI drafts.
   app.get("/ai/draft-auto-approve-settings", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.code(503).send({ error: "database_unavailable" });
     const settings = await getDraftAutoApproveSettings(app.db, workspaceId);
     return reply.send({
@@ -167,7 +167,7 @@ export async function aiRoutes(app: FastifyInstance) {
   });
 
   app.put("/ai/draft-auto-approve-settings", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.code(503).send({ error: "database_unavailable" });
     const input = draftAutoApproveSettingsSchema.parse(request.body ?? {});
     const settings = await setDraftAutoApproveSettings(app.db, workspaceId, input, request.userId);
@@ -175,7 +175,7 @@ export async function aiRoutes(app: FastifyInstance) {
   });
 
   app.get("/ai/drafts", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const query = listQuerySchema.parse(request.query ?? {});
     try {
       const drafts = draftsOr503(app);
@@ -189,7 +189,7 @@ export async function aiRoutes(app: FastifyInstance) {
   });
 
   app.post("/ai/drafts/bulk-approve", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = bulkApproveSchema.parse(request.body ?? {});
     const drafts = draftsOr503(app);
     const result = await drafts.bulkApprove(workspaceId, body.ids, request.userId);
@@ -216,7 +216,7 @@ export async function aiRoutes(app: FastifyInstance) {
   });
 
   app.get("/ai/drafts/:id", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const drafts = draftsOr503(app);
     const draft = await drafts.getById(workspaceId, id);
@@ -226,7 +226,7 @@ export async function aiRoutes(app: FastifyInstance) {
 
   /** Create a draft — either from provided subject/body or OpenRouter generation. */
   app.post("/ai/drafts", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     try {
     const body = createDraftSchema.parse(request.body ?? {});
     const drafts = draftsOr503(app);
@@ -292,7 +292,7 @@ export async function aiRoutes(app: FastifyInstance) {
   });
 
   app.patch("/ai/drafts/:id", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const patch = patchDraftSchema.parse(request.body ?? {});
     const drafts = draftsOr503(app);
@@ -301,7 +301,7 @@ export async function aiRoutes(app: FastifyInstance) {
   });
 
   app.post("/ai/drafts/:id/approve", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const drafts = draftsOr503(app);
     const draft = await drafts.approve(workspaceId, id, request.userId);
@@ -310,7 +310,7 @@ export async function aiRoutes(app: FastifyInstance) {
   });
 
   app.post("/ai/drafts/:id/reject", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const drafts = draftsOr503(app);
     const draft = await drafts.reject(workspaceId, id, request.userId);
@@ -327,7 +327,7 @@ export async function aiRoutes(app: FastifyInstance) {
    * - **Ask** — propose only; client confirms. Optionally `stageForReview` queues email into AI Review.
    */
   app.post("/ai/chat", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = chatSchema.parse(request.body ?? {});
 
     const isAdmin = request.role === "owner" || request.role === "admin";
@@ -473,7 +473,7 @@ export async function aiRoutes(app: FastifyInstance) {
 
   /** §8.13 — Confirm and execute a mutating tool after preview. */
   app.post("/ai/execute-tool", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const body = z
       .object({
         toolName: z.string().min(1),
@@ -534,7 +534,7 @@ export async function aiRoutes(app: FastifyInstance) {
    * The key is namespaced to the caller's workspace, so cross-workspace access is rejected.
    */
   app.get("/ai/exports/download", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const { key } = z.object({ key: z.string().min(1) }).parse(request.query ?? {});
 
     if (!key.startsWith(`exports/${workspaceId}/`)) {
@@ -560,7 +560,7 @@ export async function aiRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: parse.error.errors[0]?.message ?? "Invalid request" });
     }
     try {
-      const workspaceId = request.workspaceId ?? "unknown";
+      const workspaceId = requireWorkspaceId(request);
       const insights = app.db
         ? insightsToPrompt(await computeOutcomeInsights(app.db, workspaceId).catch(() => null))
         : null;
@@ -799,7 +799,7 @@ export async function aiRoutes(app: FastifyInstance) {
     const [contact] = await app.db
       .select({ sourceProspectId: schema.contacts.sourceProspectId })
       .from(schema.contacts)
-      .where(and(eq(schema.contacts.id, parse.data.entityId), eq(schema.contacts.workspaceId, request.workspaceId)))
+      .where(scopedById(schema.contacts, request.workspaceId, parse.data.entityId))
       .limit(1);
     if (!contact) return reply.status(404).send({ error: "contact_not_found" });
     if (!contact.sourceProspectId) {

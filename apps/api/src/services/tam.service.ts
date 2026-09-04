@@ -1,6 +1,6 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo, scopedById } from "@skout/db";
 import {
   aggregateDemoCorpus,
   aggregateProspects,
@@ -218,7 +218,7 @@ async function computeCoverage(db: Db, workspaceId: string, filterConfig: TamFil
   const activations = await db
     .select({ id: prospectActivations.id, prospectId: prospectActivations.prospectId, companyId: prospectActivations.companyId, snapshot: prospectActivations.snapshot })
     .from(prospectActivations)
-    .where(eq(prospectActivations.workspaceId, workspaceId));
+    .where(scopedTo(prospectActivations, workspaceId));
 
   const inTam = activations.filter((a) => matchesFilterConfig((a.snapshot as Record<string, unknown>) ?? {}, filterConfig));
   if (inTam.length === 0) return { ...EMPTY_COVERAGE, total: totalCount };
@@ -230,20 +230,20 @@ async function computeCoverage(db: Db, workspaceId: string, filterConfig: TamFil
     db
       .select({ prospectId: enrichmentJobs.prospectId })
       .from(enrichmentJobs)
-      .where(and(eq(enrichmentJobs.workspaceId, workspaceId), eq(enrichmentJobs.status, "completed"), inArray(enrichmentJobs.prospectId, prospectIds))),
+      .where(scopedTo(enrichmentJobs, workspaceId, eq(enrichmentJobs.status, "completed"), inArray(enrichmentJobs.prospectId, prospectIds))),
     db
       .select({ prospectId: sequenceEnrollments.prospectId })
       .from(sequenceEnrollments)
-      .where(and(eq(sequenceEnrollments.workspaceId, workspaceId), inArray(sequenceEnrollments.prospectId, prospectIds))),
+      .where(scopedTo(sequenceEnrollments, workspaceId, inArray(sequenceEnrollments.prospectId, prospectIds))),
     db
       .select({ prospectId: inboxThreads.prospectId })
       .from(inboxThreads)
-      .where(and(eq(inboxThreads.workspaceId, workspaceId), inArray(inboxThreads.prospectId, prospectIds))),
+      .where(scopedTo(inboxThreads, workspaceId, inArray(inboxThreads.prospectId, prospectIds))),
     db
       .select({ sourceProspectCompanyId: companies.sourceProspectCompanyId })
       .from(deals)
       .innerJoin(companies, eq(companies.id, deals.companyId))
-      .where(and(eq(deals.workspaceId, workspaceId), inArray(companies.sourceProspectCompanyId, companyIds))),
+      .where(scopedTo(deals, workspaceId, inArray(companies.sourceProspectCompanyId, companyIds))),
   ]);
 
   const enrichedSet = new Set(enrichedRows.map((r) => r.prospectId));
@@ -264,12 +264,12 @@ async function computeCoverage(db: Db, workspaceId: string, filterConfig: TamFil
 }
 
 export async function listTams(db: Db, workspaceId: string): Promise<TamDto[]> {
-  const rows = await db.select().from(tams).where(eq(tams.workspaceId, workspaceId));
+  const rows = await db.select().from(tams).where(scopedTo(tams, workspaceId));
   return rows.map(toDto);
 }
 
 export async function getTam(db: Db, workspaceId: string, id: string): Promise<TamDto | null> {
-  const [row] = await db.select().from(tams).where(and(eq(tams.id, id), eq(tams.workspaceId, workspaceId))).limit(1);
+  const [row] = await db.select().from(tams).where(scopedById(tams, workspaceId, id)).limit(1);
   return row ? toDto(row) : null;
 }
 
@@ -323,7 +323,7 @@ export async function recomputeTam(db: Db, env: Env, workspaceId: string, id: st
       lastComputedAt: new Date(),
       updatedAt: new Date(),
     })
-    .where(and(eq(tams.id, id), eq(tams.workspaceId, workspaceId)))
+    .where(scopedById(tams, workspaceId, id))
     .returning();
   return toDto(row!);
 }

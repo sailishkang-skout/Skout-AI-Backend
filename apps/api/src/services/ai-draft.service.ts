@@ -1,6 +1,6 @@
-import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
+import { count, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo, scopedById } from "@skout/db";
 import { HttpError } from "../utils/http.js";
 import {
   getDraftAutoApproveSettings,
@@ -89,10 +89,7 @@ export class AiDraftService {
   ): Promise<{ data: AiDraftRow[]; total: number; workspaceId: string }> {
     const limit = Math.min(Math.max(opts.limit ?? 50, 1), 100);
     const offset = Math.max(opts.offset ?? 0, 0);
-    const filters = [eq(aiDrafts.workspaceId, workspaceId)];
-    if (opts.status) filters.push(eq(aiDrafts.status, opts.status));
-
-    const where = and(...filters);
+    const where = scopedTo(aiDrafts, workspaceId, opts.status ? eq(aiDrafts.status, opts.status) : undefined);
 
     const [totalRow] = await this.db.select({ value: count() }).from(aiDrafts).where(where);
     const rows = await this.db
@@ -119,17 +116,11 @@ export class AiDraftService {
       .from(aiDrafts)
       .leftJoin(
         prospectActivations,
-        and(
-          eq(prospectActivations.workspaceId, aiDrafts.workspaceId),
-          eq(prospectActivations.prospectId, aiDrafts.prospectId)
-        )
+        scopedTo(prospectActivations, aiDrafts.workspaceId, eq(prospectActivations.prospectId, aiDrafts.prospectId))
       )
       .leftJoin(
         prospectScores,
-        and(
-          eq(prospectScores.workspaceId, aiDrafts.workspaceId),
-          eq(prospectScores.prospectId, aiDrafts.prospectId)
-        )
+        scopedTo(prospectScores, aiDrafts.workspaceId, eq(prospectScores.prospectId, aiDrafts.prospectId))
       )
       .where(where)
       .orderBy(desc(aiDrafts.createdAt))
@@ -168,19 +159,13 @@ export class AiDraftService {
       .from(aiDrafts)
       .leftJoin(
         prospectActivations,
-        and(
-          eq(prospectActivations.workspaceId, aiDrafts.workspaceId),
-          eq(prospectActivations.prospectId, aiDrafts.prospectId)
-        )
+        scopedTo(prospectActivations, aiDrafts.workspaceId, eq(prospectActivations.prospectId, aiDrafts.prospectId))
       )
       .leftJoin(
         prospectScores,
-        and(
-          eq(prospectScores.workspaceId, aiDrafts.workspaceId),
-          eq(prospectScores.prospectId, aiDrafts.prospectId)
-        )
+        scopedTo(prospectScores, aiDrafts.workspaceId, eq(prospectScores.prospectId, aiDrafts.prospectId))
       )
-      .where(and(eq(aiDrafts.id, id), eq(aiDrafts.workspaceId, workspaceId)))
+      .where(scopedById(aiDrafts, workspaceId, id))
       .limit(1);
 
     return row ? toDto(row) : null;
@@ -283,7 +268,7 @@ export class AiDraftService {
         reviewedAt: new Date(),
         reviewedBy: reviewedBy ?? existing.reviewedBy,
       })
-      .where(and(eq(aiDrafts.id, id), eq(aiDrafts.workspaceId, workspaceId)))
+      .where(scopedById(aiDrafts, workspaceId, id))
       .returning();
 
     return toDto(row!);
@@ -311,7 +296,7 @@ export class AiDraftService {
         threadId,
         reviewedAt: new Date(),
       })
-      .where(and(eq(aiDrafts.id, id), eq(aiDrafts.workspaceId, workspaceId)))
+      .where(scopedById(aiDrafts, workspaceId, id))
       .returning();
     if (!row) throw new HttpError("draft_not_found", 404);
     // No longer sitting in the review queue (R17.2) — resolve any pending stale-draft reminder.
@@ -335,11 +320,7 @@ export class AiDraftService {
         reviewedBy: reviewedBy ?? null,
       })
       .where(
-        and(
-          eq(aiDrafts.workspaceId, workspaceId),
-          inArray(aiDrafts.id, unique),
-          inArray(aiDrafts.status, REVIEWABLE_STATUSES)
-        )
+        scopedTo(aiDrafts, workspaceId, inArray(aiDrafts.id, unique), inArray(aiDrafts.status, REVIEWABLE_STATUSES))
       )
       .returning({ id: aiDrafts.id });
 
@@ -366,7 +347,7 @@ export class AiDraftService {
         reviewedAt: new Date(),
         reviewedBy: reviewedBy ?? null,
       })
-      .where(and(eq(aiDrafts.id, id), eq(aiDrafts.workspaceId, workspaceId)))
+      .where(scopedById(aiDrafts, workspaceId, id))
       .returning();
 
     // No longer sitting in the review queue (R17.2) — resolve any pending stale-draft reminder.
@@ -379,7 +360,7 @@ export class AiDraftService {
     const [row] = await this.db
       .select()
       .from(aiDrafts)
-      .where(and(eq(aiDrafts.id, id), eq(aiDrafts.workspaceId, workspaceId)))
+      .where(scopedById(aiDrafts, workspaceId, id))
       .limit(1);
     if (!row) throw new HttpError("draft_not_found", 404);
     return toDto(row);

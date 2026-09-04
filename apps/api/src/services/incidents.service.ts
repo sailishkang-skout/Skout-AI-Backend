@@ -1,6 +1,6 @@
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedById, scopedTo } from "@skout/db";
 import { HttpError } from "../utils/http.js";
 
 const { incidents } = schema;
@@ -85,12 +85,10 @@ export class IncidentsService {
   }
 
   async list(workspaceId: string, status?: string): Promise<IncidentDto[]> {
-    const conditions = [eq(incidents.workspaceId, workspaceId)];
-    if (status) conditions.push(eq(incidents.status, status));
     const rows = await this.db
       .select()
       .from(incidents)
-      .where(and(...conditions))
+      .where(scopedTo(incidents, workspaceId, status ? eq(incidents.status, status) : undefined))
       .orderBy(desc(incidents.detectedAt));
     return rows.map(toDto);
   }
@@ -99,7 +97,7 @@ export class IncidentsService {
     const [row] = await this.db
       .select()
       .from(incidents)
-      .where(and(eq(incidents.id, id), eq(incidents.workspaceId, workspaceId)));
+      .where(scopedById(incidents, workspaceId, id));
     return row ? toDto(row) : null;
   }
 
@@ -109,7 +107,7 @@ export class IncidentsService {
     const [row] = await this.db
       .update(incidents)
       .set({ status: "investigating", updatedAt: new Date() })
-      .where(and(eq(incidents.id, id), eq(incidents.workspaceId, workspaceId)))
+      .where(scopedById(incidents, workspaceId, id))
       .returning();
     if (!row) throw new HttpError("incident_not_found", 404);
     return toDto(row);
@@ -119,7 +117,7 @@ export class IncidentsService {
     const [existing] = await this.db
       .select()
       .from(incidents)
-      .where(and(eq(incidents.id, id), eq(incidents.workspaceId, workspaceId)));
+      .where(scopedById(incidents, workspaceId, id));
     if (!existing) throw new HttpError("incident_not_found", 404);
     if (existing.status === "resolved") throw new HttpError("incident_already_resolved", 409);
 
@@ -132,7 +130,7 @@ export class IncidentsService {
         resolutionNotes: resolutionNotes ?? null,
         updatedAt: new Date(),
       })
-      .where(and(eq(incidents.id, id), eq(incidents.workspaceId, workspaceId)))
+      .where(scopedById(incidents, workspaceId, id))
       .returning();
     if (!row) throw new HttpError("incident_not_found", 404);
     return toDto(row);

@@ -8,6 +8,7 @@ import { startListScoreWorker } from "./workers/list-score.worker.js";
 import { startWorkspaceRescoreWorker } from "./workers/workspace-rescore.worker.js";
 import { startSequenceEnrollmentWorker } from "./workers/sequence-enrollment.worker.js";
 import { startAutomationRunWorker } from "./workers/automation-run.worker.js";
+import { startDexterOrchestratorWorker } from "./workers/dexter-orchestrator.worker.js";
 import { startImapPollWorker } from "./workers/imap-poll.worker.js";
 import { startReplyTagWorker } from "./workers/reply-tag.worker.js";
 import { startBlacklistMonitorWorker } from "./workers/blacklist-monitor.worker.js";
@@ -23,6 +24,7 @@ import { startWorkbookRunWorker } from "./workers/workbook-run.worker.js";
 import { startReportDeliverySweepWorker } from "./workers/report-delivery-sweep.worker.js";
 import { startIdentityMergeDiscoveryWorker } from "./workers/identity-merge-discovery.worker.js";
 import { startDexterEventWorker } from "./workers/dexter-event.worker.js";
+import { startBounceAnomalySweepWorker } from "./workers/bounce-anomaly-sweep.worker.js";
 
 async function main() {
   const config = loadEnv();
@@ -49,6 +51,7 @@ async function main() {
   const stopWorkspaceRescoreWorker = await startWorkspaceRescoreWorker(config);
   const stopSeqWorker = await startSequenceEnrollmentWorker(config);
   const stopAutomationRunWorker = await startAutomationRunWorker(config);
+  const stopDexterOrchestratorWorker = await startDexterOrchestratorWorker(config);
   const stopImapPollWorker = await startImapPollWorker(config);
   const stopReplyTagWorker = await startReplyTagWorker(config);
   const stopBlacklistMonitorWorker = await startBlacklistMonitorWorker(config);
@@ -64,6 +67,7 @@ async function main() {
   const stopReportDeliverySweepWorker = await startReportDeliverySweepWorker(config);
   const stopIdentityMergeDiscoveryWorker = await startIdentityMergeDiscoveryWorker(config);
   const stopDexterEventWorker = await startDexterEventWorker(config);
+  const stopBounceAnomalySweepWorker = await startBounceAnomalySweepWorker(config);
 
   const app = await buildApp(config);
 
@@ -80,6 +84,7 @@ async function main() {
   }
 
   const shutdown = async () => {
+    await stopBounceAnomalySweepWorker();
     await stopReportDeliverySweepWorker();
     await stopWorkbookRunWorker();
     await stopIdentityMergeDiscoveryWorker();
@@ -97,6 +102,7 @@ async function main() {
     await stopImapPollWorker();
     await stopSeqWorker();
     await stopAutomationRunWorker();
+    await stopDexterOrchestratorWorker();
     await stopWorkspaceRescoreWorker();
     await stopListScoreWorker();
     await stopCrmWorker();

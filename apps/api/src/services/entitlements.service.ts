@@ -1,6 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import { HttpError } from "../utils/http.js";
 
 const { entitlements } = schema;
@@ -36,7 +36,7 @@ export class EntitlementsService {
   constructor(private readonly db: Db) {}
 
   async list(workspaceId: string): Promise<EntitlementDto[]> {
-    const rows = await this.db.select().from(entitlements).where(eq(entitlements.workspaceId, workspaceId));
+    const rows = await this.db.select().from(entitlements).where(scopedTo(entitlements, workspaceId));
     return rows.map(toDto);
   }
 
@@ -44,7 +44,7 @@ export class EntitlementsService {
     const [row] = await this.db
       .select()
       .from(entitlements)
-      .where(and(eq(entitlements.workspaceId, workspaceId), eq(entitlements.key, key)))
+      .where(scopedTo(entitlements, workspaceId, eq(entitlements.key, key)))
       .limit(1);
     return row ? toDto(row) : null;
   }
@@ -80,7 +80,7 @@ export class EntitlementsService {
   }
 
   async remove(workspaceId: string, key: string): Promise<void> {
-    await this.db.delete(entitlements).where(and(eq(entitlements.workspaceId, workspaceId), eq(entitlements.key, key)));
+    await this.db.delete(entitlements).where(scopedTo(entitlements, workspaceId, eq(entitlements.key, key)));
   }
 }
 

@@ -1,6 +1,6 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { SearchService } from "./search.service.js";
 
@@ -67,7 +67,7 @@ export async function resolveProspectFields(
   workspaceId: string,
   prospectId: string
 ): Promise<ResolvedProspect | null> {
-  const search = new SearchService(env);
+  const search = new SearchService(env, db);
   // OpenSearch lookup — may return null for manually-created prospects
   const doc = await search.findExistingProspect(prospectId).catch(() => null);
 
@@ -75,7 +75,7 @@ export async function resolveProspectFields(
     .select()
     .from(prospectActivations)
     .where(
-      and(eq(prospectActivations.workspaceId, workspaceId), eq(prospectActivations.prospectId, prospectId))
+      scopedTo(prospectActivations, workspaceId, eq(prospectActivations.prospectId, prospectId))
     );
   const snap = (activation?.snapshot ?? {}) as Record<string, unknown>;
 
@@ -95,11 +95,7 @@ export async function resolveProspectFields(
     .select({ fieldValue: enrichmentResults.fieldValue, isPrimary: enrichmentResults.isPrimary })
     .from(enrichmentResults)
     .where(
-      and(
-        eq(enrichmentResults.workspaceId, workspaceId),
-        inArray(enrichmentResults.prospectId, [prospectId]),
-        eq(enrichmentResults.fieldName, "email")
-      )
+      scopedTo(enrichmentResults, workspaceId, inArray(enrichmentResults.prospectId, [prospectId]), eq(enrichmentResults.fieldName, "email"))
     )
     .orderBy(desc(enrichmentResults.createdAt));
   const primary = rows.find((r) => r.isPrimary && r.fieldValue);
@@ -109,11 +105,7 @@ export async function resolveProspectFields(
     .select({ fieldValue: enrichmentResults.fieldValue, isPrimary: enrichmentResults.isPrimary })
     .from(enrichmentResults)
     .where(
-      and(
-        eq(enrichmentResults.workspaceId, workspaceId),
-        inArray(enrichmentResults.prospectId, [prospectId]),
-        eq(enrichmentResults.fieldName, "phone")
-      )
+      scopedTo(enrichmentResults, workspaceId, inArray(enrichmentResults.prospectId, [prospectId]), eq(enrichmentResults.fieldName, "phone"))
     )
     .orderBy(desc(enrichmentResults.createdAt));
   const primaryPhone = phoneRows.find((r) => r.isPrimary && r.fieldValue);

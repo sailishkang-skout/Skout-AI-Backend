@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import { errorResponse } from "../utils/http.js";
 
 const { workspaceSsoConfigs } = schema;
@@ -50,7 +50,7 @@ export async function ssoScimRoutes(app: FastifyInstance) {
     const [cfg] = await app.db
       .select()
       .from(workspaceSsoConfigs)
-      .where(eq(workspaceSsoConfigs.workspaceId, request.workspaceId))
+      .where(scopedTo(workspaceSsoConfigs, request.workspaceId))
       .limit(1);
     return reply.send({
       data: {
@@ -80,7 +80,7 @@ export async function ssoScimRoutes(app: FastifyInstance) {
     const [cfg] = await app.db
       .select()
       .from(workspaceSsoConfigs)
-      .where(eq(workspaceSsoConfigs.workspaceId, request.workspaceId))
+      .where(scopedTo(workspaceSsoConfigs, request.workspaceId))
       .limit(1);
     return reply.send({ data: cfg ?? null });
   });
@@ -146,7 +146,7 @@ export async function ssoScimRoutes(app: FastifyInstance) {
     const [cfg] = await app.db
       .select()
       .from(workspaceSsoConfigs)
-      .where(eq(workspaceSsoConfigs.workspaceId, request.workspaceId))
+      .where(scopedTo(workspaceSsoConfigs, request.workspaceId))
       .limit(1);
     if (!cfg) {
       return reply.code(404).send(errorResponse("Save SSO config before activate", 404));
@@ -164,7 +164,7 @@ export async function ssoScimRoutes(app: FastifyInstance) {
         activatedBy: request.userId,
         updatedAt: new Date(),
       })
-      .where(eq(workspaceSsoConfigs.workspaceId, request.workspaceId))
+      .where(scopedTo(workspaceSsoConfigs, request.workspaceId))
       .returning();
     return reply.send({
       data: row,
@@ -188,7 +188,7 @@ export async function ssoScimRoutes(app: FastifyInstance) {
     const [cfg] = await app.db
       .select()
       .from(workspaceSsoConfigs)
-      .where(eq(workspaceSsoConfigs.workspaceId, request.workspaceId))
+      .where(scopedTo(workspaceSsoConfigs, request.workspaceId))
       .limit(1);
 
     const planned = parsed.data.members.map((m) => ({

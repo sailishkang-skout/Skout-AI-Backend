@@ -1,6 +1,6 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import { HttpError } from "../utils/http.js";
 
 const { competitiveWinLossDeals } = schema;
@@ -14,7 +14,7 @@ export async function countWinLossDeals(db: Db, workspaceId: string): Promise<nu
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(competitiveWinLossDeals)
-    .where(eq(competitiveWinLossDeals.workspaceId, workspaceId));
+    .where(scopedTo(competitiveWinLossDeals, workspaceId));
   return Number(row?.n ?? 0);
 }
 
@@ -83,7 +83,7 @@ export async function listRecentDeals(db: Db, workspaceId: string, limit = 20) {
   return db
     .select()
     .from(competitiveWinLossDeals)
-    .where(and(eq(competitiveWinLossDeals.workspaceId, workspaceId)))
+    .where(scopedTo(competitiveWinLossDeals, workspaceId))
     .orderBy(desc(competitiveWinLossDeals.createdAt))
     .limit(limit);
 }

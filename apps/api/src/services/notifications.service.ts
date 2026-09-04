@@ -1,6 +1,6 @@
 import { and, desc, eq, isNull, or } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { sendMail } from "./mail.service.js";
@@ -69,16 +69,18 @@ export async function listNotifications(
   userId: string,
   opts: { unreadOnly?: boolean; type?: string; limit?: number } = {}
 ): Promise<NotificationDto[]> {
-  const conditions = [
-    eq(notifications.workspaceId, workspaceId),
-    or(eq(notifications.userId, userId), isNull(notifications.userId))!,
-  ];
-  if (opts.unreadOnly) conditions.push(isNull(notifications.readAt));
-  if (opts.type) conditions.push(eq(notifications.type, opts.type));
   const rows = await db
     .select()
     .from(notifications)
-    .where(and(...conditions))
+    .where(
+      scopedTo(
+        notifications,
+        workspaceId,
+        or(eq(notifications.userId, userId), isNull(notifications.userId)),
+        opts.unreadOnly ? isNull(notifications.readAt) : undefined,
+        opts.type ? eq(notifications.type, opts.type) : undefined
+      )
+    )
     .orderBy(desc(notifications.createdAt))
     .limit(opts.limit ?? 50);
   return rows.map(toDto);
@@ -89,11 +91,7 @@ export async function unreadCount(db: Db, workspaceId: string, userId: string): 
     .select({ id: notifications.id })
     .from(notifications)
     .where(
-      and(
-        eq(notifications.workspaceId, workspaceId),
-        or(eq(notifications.userId, userId), isNull(notifications.userId))!,
-        isNull(notifications.readAt)
-      )
+      scopedTo(notifications, workspaceId, or(eq(notifications.userId, userId), isNull(notifications.userId))!, isNull(notifications.readAt))
     );
   return rows.length;
 }
@@ -103,11 +101,7 @@ export async function markRead(db: Db, workspaceId: string, userId: string, id: 
     .update(notifications)
     .set({ readAt: new Date() })
     .where(
-      and(
-        eq(notifications.id, id),
-        eq(notifications.workspaceId, workspaceId),
-        or(eq(notifications.userId, userId), isNull(notifications.userId))!
-      )
+      scopedTo(notifications, workspaceId, eq(notifications.id, id), or(eq(notifications.userId, userId), isNull(notifications.userId))!)
     )
     .returning();
   return Boolean(row);
@@ -118,11 +112,7 @@ export async function markAllRead(db: Db, workspaceId: string, userId: string): 
     .update(notifications)
     .set({ readAt: new Date() })
     .where(
-      and(
-        eq(notifications.workspaceId, workspaceId),
-        or(eq(notifications.userId, userId), isNull(notifications.userId))!,
-        isNull(notifications.readAt)
-      )
+      scopedTo(notifications, workspaceId, or(eq(notifications.userId, userId), isNull(notifications.userId))!, isNull(notifications.readAt))
     )
     .returning();
   return rows.length;
@@ -146,7 +136,7 @@ export async function listPreferences(db: Db, workspaceId: string, userId: strin
   const rows = await db
     .select()
     .from(notificationPreferences)
-    .where(and(eq(notificationPreferences.workspaceId, workspaceId), eq(notificationPreferences.userId, userId)));
+    .where(scopedTo(notificationPreferences, workspaceId, eq(notificationPreferences.userId, userId)));
   return rows.map(prefToDto);
 }
 
@@ -162,11 +152,7 @@ export async function setPreference(
     .select()
     .from(notificationPreferences)
     .where(
-      and(
-        eq(notificationPreferences.workspaceId, workspaceId),
-        eq(notificationPreferences.userId, userId),
-        eq(notificationPreferences.type, type)
-      )
+      scopedTo(notificationPreferences, workspaceId, eq(notificationPreferences.userId, userId), eq(notificationPreferences.type, type))
     )
     .limit(1);
 
@@ -196,11 +182,7 @@ async function resolvePreference(
     .select()
     .from(notificationPreferences)
     .where(
-      and(
-        eq(notificationPreferences.workspaceId, workspaceId),
-        eq(notificationPreferences.userId, userId),
-        eq(notificationPreferences.type, type)
-      )
+      scopedTo(notificationPreferences, workspaceId, eq(notificationPreferences.userId, userId), eq(notificationPreferences.type, type))
     )
     .limit(1);
   if (specific) return { channel: specific.channel as NotificationChannel, digest: specific.digest };
@@ -209,11 +191,7 @@ async function resolvePreference(
     .select()
     .from(notificationPreferences)
     .where(
-      and(
-        eq(notificationPreferences.workspaceId, workspaceId),
-        eq(notificationPreferences.userId, userId),
-        eq(notificationPreferences.type, "*")
-      )
+      scopedTo(notificationPreferences, workspaceId, eq(notificationPreferences.userId, userId), eq(notificationPreferences.type, "*"))
     )
     .limit(1);
   if (fallback) return { channel: fallback.channel as NotificationChannel, digest: fallback.digest };

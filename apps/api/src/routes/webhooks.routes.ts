@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { WEBHOOK_EVENT_TYPES, buildWebhookService } from "../services/webhook.service.js";
+import { requireWorkspaceId } from "../utils/http.js";
 
 const eventTypeEnum = z.enum(WEBHOOK_EVENT_TYPES);
 
@@ -34,7 +35,7 @@ export async function webhookRoutes(app: FastifyInstance) {
 
   /** GET /webhooks/endpoints */
   app.get("/webhooks/endpoints", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildWebhookService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const data = await svc.listEndpoints(workspaceId);
@@ -43,7 +44,7 @@ export async function webhookRoutes(app: FastifyInstance) {
 
   /** POST /webhooks/endpoints */
   app.post("/webhooks/endpoints", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildWebhookService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const body = createEndpointSchema.parse(request.body);
@@ -54,7 +55,7 @@ export async function webhookRoutes(app: FastifyInstance) {
   /** GET /webhooks/endpoints/:id */
   app.get("/webhooks/endpoints/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildWebhookService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const endpoint = await svc.getEndpoint(id, workspaceId);
@@ -65,7 +66,7 @@ export async function webhookRoutes(app: FastifyInstance) {
   /** PATCH /webhooks/endpoints/:id */
   app.patch("/webhooks/endpoints/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildWebhookService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const body = updateEndpointSchema.parse(request.body);
@@ -77,7 +78,7 @@ export async function webhookRoutes(app: FastifyInstance) {
   /** DELETE /webhooks/endpoints/:id */
   app.delete("/webhooks/endpoints/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildWebhookService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const deleted = await svc.deleteEndpoint(id, workspaceId);
@@ -88,7 +89,7 @@ export async function webhookRoutes(app: FastifyInstance) {
   /** POST /webhooks/endpoints/:id/rotate-secret */
   app.post("/webhooks/endpoints/:id/rotate-secret", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildWebhookService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const newSecret = await svc.rotateSecret(id, workspaceId);
@@ -99,7 +100,7 @@ export async function webhookRoutes(app: FastifyInstance) {
   /** GET /webhooks/endpoints/:id/deliveries */
   app.get("/webhooks/endpoints/:id/deliveries", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const svc = buildWebhookService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
 

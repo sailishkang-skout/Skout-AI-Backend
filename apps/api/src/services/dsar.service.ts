@@ -1,6 +1,6 @@
-import { and, desc, eq, or, sql } from "drizzle-orm";
+import { desc, eq, or, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedById, scopedTo } from "@skout/db";
 import { HttpError } from "../utils/http.js";
 
 const { dataSubjectRequests, consents } = schema;
@@ -107,12 +107,12 @@ export class DsarService {
       ? await this.db
           .select()
           .from(dataSubjectRequests)
-          .where(and(eq(dataSubjectRequests.workspaceId, workspaceId), eq(dataSubjectRequests.status, status)))
+          .where(scopedTo(dataSubjectRequests, workspaceId, eq(dataSubjectRequests.status, status)))
           .orderBy(desc(dataSubjectRequests.createdAt))
       : await this.db
           .select()
           .from(dataSubjectRequests)
-          .where(eq(dataSubjectRequests.workspaceId, workspaceId))
+          .where(scopedTo(dataSubjectRequests, workspaceId))
           .orderBy(desc(dataSubjectRequests.createdAt));
     return rows.map(toDto);
   }
@@ -131,7 +131,7 @@ export class DsarService {
         completedAt: status === "completed" || status === "rejected" ? new Date() : null,
         updatedAt: new Date(),
       })
-      .where(and(eq(dataSubjectRequests.id, id), eq(dataSubjectRequests.workspaceId, workspaceId)))
+      .where(scopedById(dataSubjectRequests, workspaceId, id))
       .returning();
     if (!row) throw new HttpError("dsar_not_found", 404);
     return toDto(row);
@@ -142,7 +142,7 @@ export class DsarService {
     const [existing] = await this.db
       .select()
       .from(dataSubjectRequests)
-      .where(and(eq(dataSubjectRequests.id, id), eq(dataSubjectRequests.workspaceId, workspaceId)))
+      .where(scopedById(dataSubjectRequests, workspaceId, id))
       .limit(1);
     if (!existing) throw new HttpError("dsar_not_found", 404);
 
@@ -150,8 +150,9 @@ export class DsarService {
       .select()
       .from(consents)
       .where(
-        and(
-          eq(consents.workspaceId, workspaceId),
+        scopedTo(
+          consents,
+          workspaceId,
           or(
             eq(consents.subjectId, existing.subjectId ?? existing.subjectEmail),
             sql`lower(${consents.subjectId}) = ${existing.subjectEmail.toLowerCase()}`
@@ -188,7 +189,7 @@ export class DsarService {
         notes: existing.notes ?? "Auto-export completed under 30-day SLA policy.",
         updatedAt: new Date(),
       })
-      .where(and(eq(dataSubjectRequests.id, id), eq(dataSubjectRequests.workspaceId, workspaceId)))
+      .where(scopedById(dataSubjectRequests, workspaceId, id))
       .returning();
     if (!row) throw new HttpError("dsar_not_found", 404);
     return toDto(row);

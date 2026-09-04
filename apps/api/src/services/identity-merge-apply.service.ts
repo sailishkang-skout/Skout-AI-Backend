@@ -1,6 +1,6 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { eq, isNull } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedTo, scopedById } from "@skout/db";
 import { HttpError } from "@skout/auth";
 
 const { companies, contacts, deals, activities, tasks, meetings, calls } = schema;
@@ -59,7 +59,7 @@ async function loadCompany(db: Db, workspaceId: string, id: string): Promise<Com
   const [row] = await db
     .select()
     .from(companies)
-    .where(and(eq(companies.id, id), eq(companies.workspaceId, workspaceId), isNull(companies.deletedAt)))
+    .where(scopedTo(companies, workspaceId, eq(companies.id, id), isNull(companies.deletedAt)))
     .limit(1);
   if (!row) throw new HttpError("company_not_found", 404, { id });
   return row;
@@ -69,7 +69,7 @@ async function loadContact(db: Db, workspaceId: string, id: string): Promise<Con
   const [row] = await db
     .select()
     .from(contacts)
-    .where(and(eq(contacts.id, id), eq(contacts.workspaceId, workspaceId), isNull(contacts.deletedAt)))
+    .where(scopedTo(contacts, workspaceId, eq(contacts.id, id), isNull(contacts.deletedAt)))
     .limit(1);
   if (!row) throw new HttpError("contact_not_found", 404, { id });
   return row;
@@ -104,7 +104,7 @@ export async function applyCompanyMerge(
       .select({ id: contacts.id, companyId: contacts.companyId })
       .from(contacts)
       .where(
-        and(eq(contacts.workspaceId, workspaceId), eq(contacts.companyId, mergedId), isNull(contacts.deletedAt))
+        scopedTo(contacts, workspaceId, eq(contacts.companyId, mergedId), isNull(contacts.deletedAt))
       );
     if (contactRows.length > 0) {
       snapshot.reassigned.contacts = contactRows.map((r) => ({ id: r.id, previousCompanyId: r.companyId }));
@@ -116,7 +116,7 @@ export async function applyCompanyMerge(
     const dealRows = await tx
       .select({ id: deals.id, companyId: deals.companyId })
       .from(deals)
-      .where(and(eq(deals.workspaceId, workspaceId), eq(deals.companyId, mergedId), isNull(deals.deletedAt)));
+      .where(scopedTo(deals, workspaceId, eq(deals.companyId, mergedId), isNull(deals.deletedAt)));
     if (dealRows.length > 0) {
       snapshot.reassigned.deals = dealRows.map((r) => ({ id: r.id, previousCompanyId: r.companyId }));
       for (const row of dealRows) {
@@ -127,7 +127,7 @@ export async function applyCompanyMerge(
     const meetingRows = await tx
       .select({ id: meetings.id, companyId: meetings.companyId, contactId: meetings.contactId })
       .from(meetings)
-      .where(and(eq(meetings.workspaceId, workspaceId), eq(meetings.companyId, mergedId), isNull(meetings.deletedAt)));
+      .where(scopedTo(meetings, workspaceId, eq(meetings.companyId, mergedId), isNull(meetings.deletedAt)));
     if (meetingRows.length > 0) {
       snapshot.reassigned.meetings = meetingRows.map((r) => ({
         id: r.id,
@@ -177,11 +177,7 @@ export async function applyContactMerge(
       .select({ id: activities.id, entityId: activities.entityId })
       .from(activities)
       .where(
-        and(
-          eq(activities.workspaceId, workspaceId),
-          eq(activities.entityType, "contact"),
-          eq(activities.entityId, mergedId)
-        )
+        scopedTo(activities, workspaceId, eq(activities.entityType, "contact"), eq(activities.entityId, mergedId))
       );
     if (activityRows.length > 0) {
       snapshot.reassigned.activities = activityRows.map((r) => ({ id: r.id, previousEntityId: r.entityId }));
@@ -194,12 +190,7 @@ export async function applyContactMerge(
       .select({ id: tasks.id, relatedEntityId: tasks.relatedEntityId })
       .from(tasks)
       .where(
-        and(
-          eq(tasks.workspaceId, workspaceId),
-          eq(tasks.relatedEntityType, "contact"),
-          eq(tasks.relatedEntityId, mergedId),
-          isNull(tasks.deletedAt)
-        )
+        scopedTo(tasks, workspaceId, eq(tasks.relatedEntityType, "contact"), eq(tasks.relatedEntityId, mergedId), isNull(tasks.deletedAt))
       );
     if (taskRows.length > 0) {
       snapshot.reassigned.tasks = taskRows.map((r) => ({ id: r.id, previousRelatedEntityId: r.relatedEntityId }));
@@ -214,7 +205,7 @@ export async function applyContactMerge(
     const meetingRows = await tx
       .select({ id: meetings.id, contactId: meetings.contactId, companyId: meetings.companyId })
       .from(meetings)
-      .where(and(eq(meetings.workspaceId, workspaceId), eq(meetings.contactId, mergedId), isNull(meetings.deletedAt)));
+      .where(scopedTo(meetings, workspaceId, eq(meetings.contactId, mergedId), isNull(meetings.deletedAt)));
     if (meetingRows.length > 0) {
       snapshot.reassigned.meetings = meetingRows.map((r) => ({
         id: r.id,
@@ -229,7 +220,7 @@ export async function applyContactMerge(
     const callRows = await tx
       .select({ id: calls.id, contactId: calls.contactId })
       .from(calls)
-      .where(and(eq(calls.workspaceId, workspaceId), eq(calls.contactId, mergedId)));
+      .where(scopedTo(calls, workspaceId, eq(calls.contactId, mergedId)));
     if (callRows.length > 0) {
       snapshot.reassigned.calls = callRows.map((r) => ({ id: r.id, previousContactId: r.contactId }));
       for (const row of callRows) {
@@ -293,7 +284,7 @@ export async function restoreIdentityMerge(db: Db, workspaceId: string, raw: unk
           deletedAt: null,
           updatedAt: new Date(),
         })
-        .where(and(eq(companies.id, snapshot.primaryId), eq(companies.workspaceId, workspaceId)));
+        .where(scopedById(companies, workspaceId, snapshot.primaryId));
 
       await tx
         .update(companies)
@@ -308,7 +299,7 @@ export async function restoreIdentityMerge(db: Db, workspaceId: string, raw: unk
           deletedAt: null,
           updatedAt: new Date(),
         })
-        .where(and(eq(companies.id, snapshot.mergedId), eq(companies.workspaceId, workspaceId)));
+        .where(scopedById(companies, workspaceId, snapshot.mergedId));
 
       for (const row of snapshot.reassigned.contacts ?? []) {
         await tx
@@ -348,7 +339,7 @@ export async function restoreIdentityMerge(db: Db, workspaceId: string, raw: unk
           deletedAt: null,
           updatedAt: new Date(),
         })
-        .where(and(eq(contacts.id, snapshot.primaryId), eq(contacts.workspaceId, workspaceId)));
+        .where(scopedById(contacts, workspaceId, snapshot.primaryId));
 
       await tx
         .update(contacts)
@@ -364,7 +355,7 @@ export async function restoreIdentityMerge(db: Db, workspaceId: string, raw: unk
           deletedAt: null,
           updatedAt: new Date(),
         })
-        .where(and(eq(contacts.id, snapshot.mergedId), eq(contacts.workspaceId, workspaceId)));
+        .where(scopedById(contacts, workspaceId, snapshot.mergedId));
 
       for (const row of snapshot.reassigned.activities ?? []) {
         await tx.update(activities).set({ entityId: row.previousEntityId }).where(eq(activities.id, row.id));

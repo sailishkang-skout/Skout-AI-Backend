@@ -1,7 +1,7 @@
 import { Worker } from "bullmq";
 import { context as otelContext } from "@opentelemetry/api";
 import { and, asc, count, desc, eq, gte, inArray, isNull, ne, or, sql } from "drizzle-orm";
-import { createDb } from "@skout/db";
+import { createDb, scopedTo, scopedById } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger, extractTraceContext, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
@@ -99,8 +99,9 @@ async function detectCadenceSignal(
     .select({ id: inboxThreads.id })
     .from(inboxThreads)
     .where(
-      and(
-        eq(inboxThreads.workspaceId, workspaceId),
+      scopedTo(
+        inboxThreads,
+        workspaceId,
         eq(inboxThreads.prospectId, prospectId),
         eq(inboxThreads.status, "bounced"),
         // Bind as an ISO string cast to timestamptz — passing a raw JS Date into this
@@ -117,12 +118,7 @@ async function detectCadenceSignal(
     .from(inboxMessages)
     .innerJoin(inboxThreads, eq(inboxMessages.threadId, inboxThreads.id))
     .where(
-      and(
-        eq(inboxThreads.workspaceId, workspaceId),
-        eq(inboxThreads.prospectId, prospectId),
-        eq(inboxMessages.direction, "inbound"),
-        gte(inboxMessages.sentAt, enrolledAt)
-      )
+      scopedTo(inboxThreads, workspaceId, eq(inboxThreads.prospectId, prospectId), eq(inboxMessages.direction, "inbound"), gte(inboxMessages.sentAt, enrolledAt))
     )
     .limit(1);
   if (reply) return "replied";
@@ -228,12 +224,7 @@ async function findApprovedAiDraft(
     .select({ id: aiDrafts.id, subject: aiDrafts.subject, body: aiDrafts.body })
     .from(aiDrafts)
     .where(
-      and(
-        eq(aiDrafts.workspaceId, workspaceId),
-        eq(aiDrafts.prospectId, prospectId),
-        eq(aiDrafts.status, "approved"),
-        or(eq(aiDrafts.enrollmentStepId, enrollmentStepId), isNull(aiDrafts.enrollmentStepId))
-      )
+      scopedTo(aiDrafts, workspaceId, eq(aiDrafts.prospectId, prospectId), eq(aiDrafts.status, "approved"), or(eq(aiDrafts.enrollmentStepId, enrollmentStepId), isNull(aiDrafts.enrollmentStepId)))
     )
     .orderBy(
       sql`case when ${aiDrafts.enrollmentStepId} = ${enrollmentStepId} then 0 else 1 end`,
@@ -254,12 +245,7 @@ async function findPendingAiDraft(
     .select({ id: aiDrafts.id })
     .from(aiDrafts)
     .where(
-      and(
-        eq(aiDrafts.workspaceId, workspaceId),
-        eq(aiDrafts.prospectId, prospectId),
-        inArray(aiDrafts.status, ["pending_review", "edited"]),
-        or(eq(aiDrafts.enrollmentStepId, enrollmentStepId), isNull(aiDrafts.enrollmentStepId))
-      )
+      scopedTo(aiDrafts, workspaceId, eq(aiDrafts.prospectId, prospectId), inArray(aiDrafts.status, ["pending_review", "edited"]), or(eq(aiDrafts.enrollmentStepId, enrollmentStepId), isNull(aiDrafts.enrollmentStepId)))
     )
     .orderBy(
       sql`case when ${aiDrafts.enrollmentStepId} = ${enrollmentStepId} then 0 else 1 end`,
@@ -323,11 +309,7 @@ async function linkedinInviteState(
     })
     .from(linkedinOutreachJobs)
     .where(
-      and(
-        eq(linkedinOutreachJobs.workspaceId, workspaceId),
-        eq(linkedinOutreachJobs.enrollmentId, enrollmentId),
-        eq(linkedinOutreachJobs.action, "connect")
-      )
+      scopedTo(linkedinOutreachJobs, workspaceId, eq(linkedinOutreachJobs.enrollmentId, enrollmentId), eq(linkedinOutreachJobs.action, "connect"))
     )
     .orderBy(desc(linkedinOutreachJobs.createdAt))
     .limit(1);
@@ -372,11 +354,7 @@ async function evaluateCondition(
       .select({ id: sequenceTrackingEvents.id })
       .from(sequenceTrackingEvents)
       .where(
-        and(
-          eq(sequenceTrackingEvents.workspaceId, workspaceId),
-          eq(sequenceTrackingEvents.enrollmentId, enrollmentId),
-          eq(sequenceTrackingEvents.eventType, eventType)
-        )
+        scopedTo(sequenceTrackingEvents, workspaceId, eq(sequenceTrackingEvents.enrollmentId, enrollmentId), eq(sequenceTrackingEvents.eventType, eventType))
       )
       .limit(1);
     return Boolean(evt);
@@ -390,11 +368,7 @@ async function evaluateCondition(
       .select({ disposition: tasks.disposition })
       .from(tasks)
       .where(
-        and(
-          eq(tasks.workspaceId, workspaceId),
-          eq(tasks.sequenceEnrollmentId, enrollmentId),
-          eq(tasks.disposition, "connected")
-        )
+        scopedTo(tasks, workspaceId, eq(tasks.sequenceEnrollmentId, enrollmentId), eq(tasks.disposition, "connected"))
       )
       .limit(1);
     return Boolean(row);
@@ -425,11 +399,7 @@ export async function countTrackingEvents(
     .select({ n: count() })
     .from(sequenceTrackingEvents)
     .where(
-      and(
-        eq(sequenceTrackingEvents.workspaceId, workspaceId),
-        eq(sequenceTrackingEvents.enrollmentId, enrollmentId),
-        eq(sequenceTrackingEvents.eventType, eventType)
-      )
+      scopedTo(sequenceTrackingEvents, workspaceId, eq(sequenceTrackingEvents.enrollmentId, enrollmentId), eq(sequenceTrackingEvents.eventType, eventType))
     );
   return row?.n ?? 0;
 }
@@ -444,11 +414,7 @@ export async function hasMeetingBookedThread(
     .select({ id: inboxThreads.id })
     .from(inboxThreads)
     .where(
-      and(
-        eq(inboxThreads.workspaceId, workspaceId),
-        eq(inboxThreads.enrollmentId, enrollmentId),
-        eq(inboxThreads.status, "meeting_booked")
-      )
+      scopedTo(inboxThreads, workspaceId, eq(inboxThreads.enrollmentId, enrollmentId), eq(inboxThreads.status, "meeting_booked"))
     )
     .limit(1);
   return rows.length > 0;
@@ -471,18 +437,10 @@ async function hasPositiveReplyAtAccount(
     .from(inboxThreads)
     .innerJoin(
       prospectActivations,
-      and(
-        eq(prospectActivations.workspaceId, inboxThreads.workspaceId),
-        eq(prospectActivations.prospectId, inboxThreads.prospectId)
-      )
+      scopedTo(prospectActivations, inboxThreads.workspaceId, eq(prospectActivations.prospectId, inboxThreads.prospectId))
     )
     .where(
-      and(
-        eq(inboxThreads.workspaceId, workspaceId),
-        eq(inboxThreads.replyTag, "positive"),
-        ne(inboxThreads.prospectId, excludeProspectId),
-        sql`${prospectActivations.snapshot} ->> 'companyDomain' = ${companyDomain}`
-      )
+      scopedTo(inboxThreads, workspaceId, eq(inboxThreads.replyTag, "positive"), ne(inboxThreads.prospectId, excludeProspectId), sql`${prospectActivations.snapshot} ->> 'companyDomain' = ${companyDomain}`)
     )
     .limit(1);
   return Boolean(row);
@@ -1006,7 +964,7 @@ async function executeCallStep(
   const owners = await db
     .select({ userId: workspaceMembers.userId })
     .from(workspaceMembers)
-    .where(and(eq(workspaceMembers.workspaceId, workspaceId), or(eq(workspaceMembers.role, "owner"), eq(workspaceMembers.role, "admin"))));
+    .where(scopedTo(workspaceMembers, workspaceId, or(eq(workspaceMembers.role, "owner"), eq(workspaceMembers.role, "admin"))));
 
   for (const { userId } of owners) {
     try {
@@ -1270,7 +1228,7 @@ async function createTaskFromSequenceStep(
   const [contact] = await db
     .select({ id: contacts.id })
     .from(contacts)
-    .where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.sourceProspectId, prospectId)))
+    .where(scopedTo(contacts, workspaceId, eq(contacts.sourceProspectId, prospectId)))
     .limit(1);
 
   let title = pending.subject?.trim() || "Follow up with prospect";
@@ -1315,10 +1273,7 @@ async function advanceEnrollment(
     .select()
     .from(sequenceEnrollments)
     .where(
-      and(
-        eq(sequenceEnrollments.id, enrollmentId),
-        eq(sequenceEnrollments.workspaceId, workspaceId)
-      )
+      scopedById(sequenceEnrollments, workspaceId, enrollmentId)
     )
     .limit(1);
 

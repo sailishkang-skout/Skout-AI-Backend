@@ -38,7 +38,7 @@ export async function regionalBriefRoutes(app: FastifyInstance) {
     app.log.warn("Database not available — regional-brief routes disabled");
     return;
   }
-  const svc = createRegionalBriefService(app.db);
+  const svc = createRegionalBriefService(app.db, app.config);
   const tamSvc = createCountryIndustryTamService(app.db);
 
   function requirePlatformAdmin(request: { userEmail?: string }) {

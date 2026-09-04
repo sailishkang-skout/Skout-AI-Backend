@@ -243,6 +243,10 @@ export const prospectSummarySchema = z.object({
   companyName: z.string().optional(),
   recordType: z.enum(["person", "company"]).optional(),
   employeeCount: z.number().optional(),
+  // New score fields: fit (ICP/firmographic) and timing (signal-stacking)
+  fitScore: z.number().int().min(0).max(100).optional(),
+  timingScore: z.number().int().min(0).max(100).optional(),
+  // Legacy fields for backward compatibility
   icpScore: z.number().int().min(0).max(100).optional(),
   intentScore: z.number().int().min(0).max(100).optional(),
   painPoints: z.array(z.string()).optional(),

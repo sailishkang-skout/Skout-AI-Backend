@@ -7,7 +7,7 @@ import {
   disconnectCalendar,
   listConnectedGoogleCalendarEvents,
 } from "../services/google-calendar-oauth.service.js";
-import { HttpError } from "../utils/http.js";
+import { HttpError, requireWorkspaceId } from "../utils/http.js";
 
 const calendarEventsQuery = z.object({
   from: z.string().min(1),
@@ -23,7 +23,7 @@ export async function calendarRoutes(app: FastifyInstance) {
   // frontend calls this via an authenticated fetch, then navigates the browser to the
   // returned URL itself — same shape as the existing Unipile hosted-auth flow.
   app.get("/calendar/connect/google", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const userId = request.userId;
     if (!userId) return reply.status(401).send({ error: "unauthenticated" });
     try {
@@ -69,7 +69,7 @@ export async function calendarRoutes(app: FastifyInstance) {
     try {
       const result = await listConnectedGoogleCalendarEvents(
         db,
-        request.workspaceId ?? "unknown",
+        requireWorkspaceId(request),
         userId,
         app.config,
         { timeMin, timeMax }
@@ -87,7 +87,7 @@ export async function calendarRoutes(app: FastifyInstance) {
 
   // GET /calendar/connection — status for the current user (frontend settings page)
   app.get("/calendar/connection", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const userId = request.userId;
     if (!userId) return reply.status(401).send({ error: "unauthenticated" });
     if (!db) return reply.send({ connected: false, connectedEmail: null });
@@ -96,7 +96,7 @@ export async function calendarRoutes(app: FastifyInstance) {
 
   // DELETE /calendar/connection — disconnect the current user's Google Calendar
   app.delete("/calendar/connection", async (request, reply) => {
-    const workspaceId = request.workspaceId ?? "unknown";
+    const workspaceId = requireWorkspaceId(request);
     const userId = request.userId;
     if (!userId) return reply.status(401).send({ error: "unauthenticated" });
     if (!db) return reply.status(503).send({ error: "database_unavailable" });

@@ -2,8 +2,10 @@ import { and, desc, eq, ilike } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
+import { createEvent } from "@skout/shared";
 import { HttpError } from "../utils/http.js";
 import type { Env } from "../config/env.js";
+import { enqueueDexterEvent } from "../workers/dexter-events.queue.js";
 
 const { regions, countries, countryAliases, regionalBriefSlots, regionalBriefVersions } = schema;
 
@@ -263,7 +265,7 @@ const STANDARD_COUNTRIES: Record<string, { isoCode: string; isoAlpha3: string; n
   AUSTRALIA: { isoCode: "AU", isoAlpha3: "AUS", name: "Australia", regionCode: "ANZ", currencyCode: "AUD", aliases: ["AU", "AUS", "Australia"] },
 };
 
-export function createRegionalBriefService(db: Db) {
+export function createRegionalBriefService(db: Db, config?: Env) {
   async function resolveRegionId(regionCode: string) {
     const [region] = await db.select().from(regions).where(eq(regions.code, regionCode.toUpperCase()));
     if (region) return region;
@@ -437,7 +439,7 @@ export function createRegionalBriefService(db: Db) {
     },
 
     async approveVersion(versionId: string, reviewerId: string) {
-      return db.transaction(async (tx) => {
+      const result = await db.transaction(async (tx) => {
         const [version] = await tx.select().from(regionalBriefVersions).where(eq(regionalBriefVersions.id, versionId));
         if (!version) throw new HttpError("regional_brief_version_not_found", 404);
         if (version.status !== "draft" && version.status !== "pending_review") {
@@ -468,6 +470,27 @@ export function createRegionalBriefService(db: Db) {
         log.info("regional brief version approved", { slotId: slot.id, versionId });
         return updated!;
       });
+
+      if (config) {
+        const [slot] = await db.select().from(regionalBriefSlots).where(eq(regionalBriefSlots.id, result.slotId));
+        if (slot?.workspaceId) {
+          try {
+            await enqueueDexterEvent(
+              config,
+              createEvent({
+                type: "regional_brief.approved",
+                tenantId: slot.workspaceId,
+                aggregateId: result.slotId,
+                data: { versionId: result.id, slotId: result.slotId },
+              })
+            );
+          } catch (err) {
+            log.warn("failed to emit regional_brief.approved", { err, versionId: result.id });
+          }
+        }
+      }
+
+      return result;
     },
 
     async rejectVersion(versionId: string, reviewerId: string, reason: string) {

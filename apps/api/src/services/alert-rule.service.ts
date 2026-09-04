@@ -1,6 +1,6 @@
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
+import { schema, scopedById, scopedTo } from "@skout/db";
 import { HttpError } from "../utils/http.js";
 
 const { alertRules } = schema;
@@ -33,7 +33,7 @@ export async function listAlertRules(db: Db, workspaceId: string): Promise<Alert
   const rows = await db
     .select()
     .from(alertRules)
-    .where(eq(alertRules.workspaceId, workspaceId))
+    .where(scopedTo(alertRules, workspaceId))
     .orderBy(desc(alertRules.createdAt));
   return rows.map(toDto);
 }
@@ -72,12 +72,12 @@ export async function updateAlertRule(
       ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
       updatedAt: new Date(),
     })
-    .where(and(eq(alertRules.id, id), eq(alertRules.workspaceId, workspaceId)))
+    .where(scopedById(alertRules, workspaceId, id))
     .returning();
   if (!row) throw new HttpError("alert_rule_not_found", 404);
   return toDto(row);
 }
 
 export async function deleteAlertRule(db: Db, workspaceId: string, id: string): Promise<void> {
-  await db.delete(alertRules).where(and(eq(alertRules.id, id), eq(alertRules.workspaceId, workspaceId)));
+  await db.delete(alertRules).where(scopedById(alertRules, workspaceId, id));
 }
