@@ -3,6 +3,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { schema } from "@skout/db";
 import { errorResponse } from "../utils/http.js";
+import { getAccountEvidence } from "../services/evidence.service.js";
 
 const { companies, contacts, deals, activities, signals } = schema;
 
@@ -93,6 +94,34 @@ export async function account360Routes(app: FastifyInstance) {
           view: "account_360",
         },
       });
+    } catch {
+      return reply.code(404).send(errorResponse("Company not found", 404));
+    }
+  });
+
+  /**
+   * §8.2 SS-05 — "why this account" evidence panel. Scoped to the evidence_ledger rows already
+   * recorded against this company (see evidence.service.ts's getAccountEvidence), grouped by
+   * attribute with pre-computed confidence/freshness tiers so the Discover/Account 360 frontend
+   * can render source + confidence + freshness per fact without re-deriving thresholds itself.
+   */
+  app.get("/account-360/:companyId/evidence", async (request, reply) => {
+    if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    if (!app.db) return reply.code(404).send(errorResponse("Company not found", 404));
+
+    try {
+      const { companyId } = z.object({ companyId: z.string().uuid() }).parse(request.params);
+
+      const [company] = await app.db
+        .select({ id: companies.id })
+        .from(companies)
+        .where(and(eq(companies.id, companyId), eq(companies.workspaceId, request.workspaceId)))
+        .limit(1);
+      if (!company) return reply.code(404).send(errorResponse("Company not found", 404));
+
+      const evidence = await getAccountEvidence(app.db, request.workspaceId, companyId);
+
+      return reply.send({ data: { companyId, evidence } });
     } catch {
       return reply.code(404).send(errorResponse("Company not found", 404));
     }
