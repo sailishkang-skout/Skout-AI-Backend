@@ -5,6 +5,7 @@ import {
   jsonb,
   numeric,
   pgTable,
+  real,
   text,
   timestamp,
   unique,
@@ -12,6 +13,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { workspaces } from "./workspaces.js";
 import { users } from "./users.js";
+import { sequenceEnrollments, sequenceEnrollmentSteps, sequences } from "./sequences.js";
 
 /**
  * 8.15 — a saved subscription to the CRO rollup, delivered on a cadence with a
@@ -89,5 +91,70 @@ export const revenueForecasts = pgTable(
   (table) => [
     unique().on(table.workspaceId, table.periodLabel),
     index("revenue_forecasts_workspace_idx").on(table.workspaceId),
+  ]
+);
+
+/**
+ * §8.15 SP-10 — GTM learning cross-tab: one row per executed sequence-enrollment step
+ * ("touchpoint"), joining ICP × signal × message × channel × outcome so the reporting UI can
+ * slice by any combination without recomputing. A join-and-aggregate over 5 existing tables
+ * (sequence_enrollment_steps, signals, sequence_steps/sequence_enrollments, sequence_enrollments,
+ * inbox_threads/deals), not new instrumentation — see gtm-learning.service.ts for the query.
+ *
+ * Grain is per touchpoint, not per enrollment: channel and message variant are step-level, while
+ * icp/signal/outcome are enrollment-level context duplicated across that enrollment's rows — the
+ * same shape a marketing-attribution table uses ("of touchpoints sent via LinkedIn with variant B
+ * while a hiring signal was active, what fraction of their enrollments eventually got a reply").
+ *
+ * Idempotent: unique(workspaceId, enrollmentStepId) lets the sweep re-run safely (ON CONFLICT
+ * DO UPDATE), so a touchpoint's outcome/deal columns stay current as the enrollment progresses.
+ */
+export const gtmLearningOutcomes = pgTable(
+  "gtm_learning_outcomes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    enrollmentId: uuid("enrollment_id")
+      .notNull()
+      .references(() => sequenceEnrollments.id, { onDelete: "cascade" }),
+    enrollmentStepId: uuid("enrollment_step_id")
+      .notNull()
+      .references(() => sequenceEnrollmentSteps.id, { onDelete: "cascade" }),
+    sequenceId: uuid("sequence_id")
+      .notNull()
+      .references(() => sequences.id, { onDelete: "cascade" }),
+    prospectId: text("prospect_id").notNull(),
+    touchpointAt: timestamp("touchpoint_at", { withTimezone: true }).notNull(),
+    /** email | linkedin | whatsapp | call — from sequence_steps.step_type at touchpoint time. */
+    channel: text("channel").notNull(),
+    sequenceVersionId: uuid("sequence_version_id"),
+    /** A | B | C content variant actually sent for this step. */
+    variantKey: text("variant_key"),
+    /** Latest prospect_scores row at/before touchpointAt — the ICP dimension. */
+    icpScore: integer("icp_score"),
+    icpPriority: text("icp_priority"),
+    /** Highest-strength signal active (detected, not yet expired) at touchpointAt, on either the
+     * prospect directly or its company. Null when no signal was active. */
+    signalType: text("signal_type"),
+    signalStrength: real("signal_strength"),
+    /** Outcome dimensions, attributed at the enrollment level (duplicated across that
+     * enrollment's touchpoint rows) — "qualified pipeline and revenue as primary outcomes". */
+    replied: boolean("replied").notNull().default(false),
+    meetingBooked: boolean("meeting_booked").notNull().default(false),
+    opportunityCreated: boolean("opportunity_created").notNull().default(false),
+    /** Sum of amounts of deals linked to this prospect's company that aren't closed-lost. */
+    pipelineAmount: numeric("pipeline_amount", { precision: 14, scale: 2 }),
+    /** Sum of amounts of deals linked to this prospect's company that are closed-won. */
+    revenueAmount: numeric("revenue_amount", { precision: 14, scale: 2 }),
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("gtm_learning_outcomes_step_unique").on(table.workspaceId, table.enrollmentStepId),
+    index("gtm_learning_outcomes_workspace_channel_idx").on(table.workspaceId, table.channel),
+    index("gtm_learning_outcomes_workspace_signal_idx").on(table.workspaceId, table.signalType),
+    index("gtm_learning_outcomes_workspace_variant_idx").on(table.workspaceId, table.variantKey),
+    index("gtm_learning_outcomes_workspace_sequence_idx").on(table.workspaceId, table.sequenceId),
   ]
 );

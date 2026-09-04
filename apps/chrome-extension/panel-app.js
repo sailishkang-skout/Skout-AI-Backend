@@ -354,6 +354,30 @@ export function initPanel() {
       .join("");
   }
 
+  // SP-09: the backend's own verified-email rule (isVerifiedEmailStatus in
+  // apps/api/src/utils/verified-email.ts) treats ONLY "valid" as verified — catch_all/risky/
+  // unknown/invalid are all real PAL EmailVerdict values (packages/pal/src/types.ts) that mean
+  // "don't trust this email." Before this fix, this row rendered any non-empty email_status
+  // string with the same green checkmark, so a "risky" or "invalid" result looked identical to a
+  // verified one — a silent flag, not a clear one.
+  function renderResultCell(row, match) {
+    const apiField = row.getAttribute("data-field") === "validation" ? "email_status" : null;
+    const valueEl = row.querySelector(".enrich-result-value");
+    const iconEl = row.querySelector(".enrich-result-icon");
+    if (!match || !match.value || match.status === "not_found") {
+      if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#475569"; }
+      if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#475569"; }
+      return;
+    }
+    if (apiField === "email_status" && match.value !== "valid") {
+      if (valueEl) { valueEl.textContent = `Unverified (${match.value})`; valueEl.style.color = "#fbbf24"; }
+      if (iconEl) { iconEl.textContent = "⚠"; iconEl.style.color = "#fbbf24"; }
+      return;
+    }
+    if (valueEl) { valueEl.textContent = match.value; valueEl.style.color = "#e2e8f0"; }
+    if (iconEl) { iconEl.textContent = "✓"; iconEl.style.color = "#86efac"; }
+  }
+
   function applyEnrichResults(results) {
     if (!enrichResultsEl) return;
     for (const row of enrichResultsEl.querySelectorAll(".enrich-result-row")) {
@@ -362,15 +386,7 @@ export function initPanel() {
       const match = results.find(
         (r) => r.field === apiField && (r.isPrimary !== false || apiField === "email_status")
       );
-      const valueEl = row.querySelector(".enrich-result-value");
-      const iconEl = row.querySelector(".enrich-result-icon");
-      if (!match || !match.value || match.status === "not_found") {
-        if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#475569"; }
-        if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#475569"; }
-      } else {
-        if (valueEl) { valueEl.textContent = match.value; valueEl.style.color = "#e2e8f0"; }
-        if (iconEl) { iconEl.textContent = "✓"; iconEl.style.color = "#86efac"; }
-      }
+      renderResultCell(row, match);
     }
   }
 
@@ -384,15 +400,7 @@ export function initPanel() {
         (r) => r.field === apiField && (r.isPrimary !== false || apiField === "email_status")
       );
       if (!match) continue;
-      const valueEl = row.querySelector(".enrich-result-value");
-      const iconEl = row.querySelector(".enrich-result-icon");
-      if (!match.value || match.status === "not_found") {
-        if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#475569"; }
-        if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#475569"; }
-      } else {
-        if (valueEl) { valueEl.textContent = match.value; valueEl.style.color = "#e2e8f0"; }
-        if (iconEl) { iconEl.textContent = "✓"; iconEl.style.color = "#86efac"; }
-      }
+      renderResultCell(row, match);
     }
   }
 

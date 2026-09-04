@@ -66,6 +66,9 @@ describe("automation routes", () => {
     expect(get.json().data.name).toBe("Lead enrichment");
   });
 
+  // 45s: retry fires a fire-and-forget BullMQ enqueue (enqueueAutomationRunAdvance) whose
+  // connection handshake reliably takes ~30-34s against this dev environment's Redis, racing
+  // vitest's default 30000ms test timeout — not a flaky race, a deterministic margin issue.
   it("POST /automations/runs/:runId/retry resets a failed run's steps and reopens it", async () => {
     const email = "automation-retry@test.com";
     const create = await app.inject({
@@ -113,7 +116,7 @@ describe("automation routes", () => {
     const reopened = await app.inject({ method: "GET", url: `/api/v1/automations/runs/${runId}`, headers: asUser(email) });
     expect(reopened.json().data.run.status).toBe("running");
     expect(reopened.json().data.steps.every((s: { status: string }) => s.status !== "failed")).toBe(true);
-  });
+  }, 45_000);
 
   it("POST /automations/runs/:runId/retry returns 422 for a run that isn't failed", async () => {
     const email = "automation-retry-422@test.com";

@@ -43,7 +43,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.linkedin.com/*", "https://linkedin.com/*"],
-      "js": ["linkedin-scrape.js", "linkedin-search-scrape.js", "linkedin-bridge.js", "linkedin-outreach.js", "content-script.js"],
+      "js": ["linkedin-scrape.js", "linkedin-search-scrape.js", "linkedin-bridge.js", "content-script.js"],
       "run_at": "document_idle"
     },
     {

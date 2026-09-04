@@ -7,8 +7,9 @@ vi.mock("./policy-gateway.service.js", () => ({
   assertAllowed: vi.fn(async () => ({ mode: "approve", outcome: "allowed", decisionId: "decision-1" })),
 }));
 vi.mock("./journey-metrics.js", () => ({ incrJourneyMetric: vi.fn() }));
+const captureFeedback = vi.fn((f: Record<string, unknown>) => f);
 vi.mock("./intelligence-layer.service.js", () => ({
-  captureFeedback: vi.fn((f: unknown) => f),
+  captureFeedback: (...args: [Record<string, unknown>]) => captureFeedback(...args),
 }));
 vi.mock("./decision-workflow.service.js", () => ({
   startWorkflowRun: vi.fn(async () => ({ id: "workflow-1", steps: [] })),
@@ -18,7 +19,9 @@ vi.mock("./skout-event.service.js", () => ({
   emitSkoutEvent: (...args: unknown[]) => emitSkoutEvent(...args),
 }));
 
-const { rejectDexterPlan, approveDexterPlan, invokeDexterPlan } = await import("./dexter-journey.service.js");
+const { rejectDexterPlan, approveDexterPlan, invokeDexterPlan, recordDexterLearning } = await import(
+  "./dexter-journey.service.js"
+);
 
 const config = {} as Env;
 const WORKSPACE = "ws-1";
@@ -156,5 +159,38 @@ describe("approveDexterPlan (regression check)", () => {
     const { db } = makeFakeDb({ plan: basePlan() });
     const updated = await approveDexterPlan(db, config, WORKSPACE, PLAN_ID);
     expect(updated.status).toBe("approved");
+  });
+});
+
+/**
+ * SP-03 — the sample-size gate itself lives (and is tested at its boundary) in
+ * intelligence-layer.service.test.ts. These tests only cover the wiring: that
+ * recordDexterLearning reads sampleSize out of the caller's payload and forwards it to
+ * captureFeedback rather than dropping it, and that a bad plan id still 404s.
+ */
+describe("recordDexterLearning — SP-03 gate wiring", () => {
+  it("forwards the caller-supplied sampleSize to captureFeedback", async () => {
+    const { db } = makeFakeDb({ plan: basePlan({ status: "invoked" }) });
+
+    await recordDexterLearning(db, config, WORKSPACE, PLAN_ID, { thresholdDelta: 0.2, sampleSize: 20 });
+
+    expect(captureFeedback).toHaveBeenCalledWith(
+      expect.objectContaining({ recommendationId: PLAN_ID, thresholdDelta: 0.2, sampleSize: 20 })
+    );
+  });
+
+  it("defaults sampleSize to 0 (fail closed) when the caller omits it", async () => {
+    const { db } = makeFakeDb({ plan: basePlan({ status: "invoked" }) });
+
+    await recordDexterLearning(db, config, WORKSPACE, PLAN_ID, { thresholdDelta: 0.2 });
+
+    expect(captureFeedback).toHaveBeenCalledWith(expect.objectContaining({ sampleSize: 0 }));
+  });
+
+  it("404s when the plan does not exist", async () => {
+    const { db } = makeFakeDb({ plan: null });
+    await expect(recordDexterLearning(db, config, WORKSPACE, "missing", {})).rejects.toMatchObject({
+      statusCode: 404,
+    });
   });
 });

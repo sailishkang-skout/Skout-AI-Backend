@@ -310,6 +310,8 @@ const envSchema = z
     // key wouldn't make sense the way TWILIO_*/MEETING_BOT_* platform keys do.
     // --- Smart list auto-refresh (R10.2). ---
     SMART_LIST_REFRESH_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(15),
+    // --- GTM-learning cross-tab aggregation (§8.15 SP-10). ---
+    GTM_LEARNING_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(30),
     // --- Task/sequence/draft reminders (R17.2). ---
     REMINDER_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(15),
     /** How many hours before (task/sequence step due) or after (draft created) something is
