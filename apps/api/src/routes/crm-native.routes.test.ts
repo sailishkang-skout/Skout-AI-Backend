@@ -19,6 +19,11 @@ function json(email: string) {
   return { "x-stub-user-email": email, "content-type": "application/json" };
 }
 
+// Section 7.1 DOCUMENTED READ-MODEL EXCEPTION — seeds/reads `contacts` (apps/crm-owned) directly
+// via a real db connection to set up fixtures for the route under test, matching the exception
+// already established for this table in crm-native-entity.service.ts (see its doc comment) and
+// docs/adr/0003-read-model-exceptions.md; not itself a new exception, just test-fixture plumbing
+// for one that already exists.
 const { contacts } = schema;
 const config = loadEnv();
 const { db, sql } = createDb(config.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/skout");

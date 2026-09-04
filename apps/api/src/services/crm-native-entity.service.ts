@@ -7,6 +7,19 @@ import { queueCrmOutboundWriteIfOwned } from "./crm-outbound-sync.service.js";
 
 const { contacts, deals } = schema;
 
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md for the full audit and rationale.
+ *   - Tables touched directly: contacts, deals (owned by apps/crm) - read AND write
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: this is the manual field-edit path other apps/api CRM code (crm-hubspot-native-
+ *     sync.service.ts, identity-merge-apply.service.ts, enrichment-autofill.service.ts — all
+ *     already direct read+write exceptions on these same tables) already establishes as the
+ *     accepted pattern; a real internal-API round trip isn't warranted for a single-row PATCH
+ *     that also needs to run in the same transaction as the fieldSources/evidence-ledger writes
+ *   - Review date: revisit once apps/crm exposes a native contacts/deals write endpoint
+ */
+
 export interface ContactPatch {
   firstName?: string;
   lastName?: string;

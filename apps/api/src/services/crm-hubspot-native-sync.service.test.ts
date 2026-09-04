@@ -18,6 +18,10 @@ vi.mock("./crm-export.runner.js", () => ({
 const { syncHubSpotContactsToNativeCrm } = await import("./crm-hubspot-native-sync.service.js");
 const { recordEvidence } = await import("./evidence.service.js");
 
+// Section 7.1 DOCUMENTED READ-MODEL EXCEPTION — seeds/reads `contacts` (apps/crm-owned) directly
+// via a real db connection to verify crm-hubspot-native-sync.service.ts's own already-documented
+// exception on this table (see docs/adr/0003-read-model-exceptions.md); test-fixture plumbing for
+// an exception that already exists, not a new one.
 const { workspaces, crmConnections, crmSyncCheckpoints, crmNativeLinks, contacts } = schema;
 
 describe("syncHubSpotContactsToNativeCrm", () => {
