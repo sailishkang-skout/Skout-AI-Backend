@@ -328,6 +328,17 @@ const envSchema = z
     RISK_DECAY_SWEEP_INTERVAL_HOURS: z.coerce.number().int().positive().default(24),
     /** No opens/replies/activity for this many days -> engagement_decay signal. */
     RISK_DECAY_INACTIVITY_DAYS: z.coerce.number().int().positive().default(21),
+    // --- §8.12 CRM Intelligence retention signals (SS-02): disengagement / renewal-risk / expansion. ---
+    /** How often the retention-signals sweep re-evaluates every workspace's accounts/deals. */
+    RETENTION_SIGNALS_SWEEP_INTERVAL_HOURS: z.coerce.number().int().positive().default(24),
+    /** No activity (company + its deals + its contacts) for this many days -> disengagement flag. */
+    RETENTION_DISENGAGEMENT_INACTIVITY_DAYS: z.coerce.number().int().positive().default(30),
+    /** A won deal's contractEndDate within this many days (including already past) -> renewal-risk candidate. */
+    RETENTION_RENEWAL_WINDOW_DAYS: z.coerce.number().int().positive().default(60),
+    /** How far back a reply/meeting still counts as a "recent positive signal" for renewal risk. */
+    RETENTION_POSITIVE_SIGNAL_LOOKBACK_DAYS: z.coerce.number().int().positive().default(30),
+    /** How far back a hiring/funding-shaped signal still counts as a fresh expansion opportunity. */
+    RETENTION_EXPANSION_LOOKBACK_DAYS: z.coerce.number().int().positive().default(14),
     // --- §5.2 identity-merge candidate discovery. ---
     /** How often the discovery worker scans for probable-duplicate company/contact pairs and
      * writes identity_merge_proposals rows for a human to review — see identity-merge.service.ts.
