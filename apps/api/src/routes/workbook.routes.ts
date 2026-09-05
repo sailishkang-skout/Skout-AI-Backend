@@ -92,7 +92,7 @@ export async function workbookRoutes(app: FastifyInstance) {
     const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     try {
-      const workbook = await activateWorkbook(app.db, workspaceId, id);
+      const workbook = await activateWorkbook(app.db, app.config, workspaceId, id);
       return reply.send(workbook);
     } catch (err) {
       return handleError(err, reply);
