@@ -12,7 +12,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "lint": "echo \"lint: configure eslint\"",
-    "pretest": "pnpm --filter @skout/db build && pnpm --filter @skout/shared build && pnpm --filter @skout/auth build && pnpm --filter @skout/scraper-orchestrator build && node scripts/ensure-test-postgres.mjs && pnpm db:migrate && pnpm --filter @skout/crm-bridge build",
+    "pretest": "pnpm --filter @skout/db build && pnpm --filter @skout/shared build && pnpm --filter @skout/auth build && pnpm --filter @skout/scraper-orchestrator build && node scripts/ensure-test-postgres.mjs && pnpm --filter @skout/crm-bridge build",
     "test": "vitest run"
   },
   "dependencies": {
