@@ -80,6 +80,8 @@ export const signalTypeEnum = z.enum([
   /** R11.1 — per-tool delta vs. the prior snapshot, distinct from the always-fired aggregate "tech_adoption" above. */
   "tech_adopted",
   "tech_dropped",
+  /** §8.5 SS-07 — press/news coverage mentioning the company, from the news signal producer. */
+  "news_mention",
 ]);
 export type SignalType = z.infer<typeof signalTypeEnum>;
 
@@ -127,6 +129,24 @@ export const fundingSchema = z.object({
   investors: z.array(z.string()).optional(),
 });
 
+/** §8.5 SS-07 — a detected executive hire/departure/promotion, same shape family as `fundingSchema`. */
+export const leadershipChangeSchema = z.object({
+  role: z.string().optional(),
+  personName: z.string().optional(),
+  changeType: z.enum(["hire", "departure", "promotion"]).optional(),
+  effectiveDate: z.string().optional(),
+});
+export type LeadershipChange = z.infer<typeof leadershipChangeSchema>;
+
+/** §8.5 SS-07 — a single press/news mention of the company. */
+export const newsMentionSchema = z.object({
+  headline: z.string(),
+  url: z.string().optional(),
+  publishedAt: z.string(),
+  source: z.string().optional(),
+});
+export type NewsMention = z.infer<typeof newsMentionSchema>;
+
 // ---------------------------------------------------------------------------
 // Company + prospect candidates (cleaner output)
 // ---------------------------------------------------------------------------
@@ -153,6 +173,8 @@ export const companyCandidateSchema = z.object({
   isHiring: z.boolean().optional(),
   openJobs: z.number().int().nonnegative().optional(),
   hiringByDept: z.record(z.number().int().nonnegative()).optional(),
+  leadershipChange: leadershipChangeSchema.optional(),
+  newsMentions: z.array(newsMentionSchema).optional(),
   signals: z.array(signalSchema).optional(),
   foundedDate: z.string().optional(),
   isPublic: z.boolean().optional(),
