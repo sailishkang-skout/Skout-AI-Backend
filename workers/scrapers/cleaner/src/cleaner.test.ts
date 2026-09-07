@@ -28,4 +28,34 @@ describe("company-cleaner", () => {
     expect(result.clean.length).toBe(1);
     expect(result.clean[0].domain).toBe("acme.com");
   });
+
+  it("§8.5 SS-07 — derives leadership_change and news_mention signals from raw payload fields", () => {
+    const result = cleanCompanies([
+      {
+        source: "company-web",
+        scrapedAt: new Date().toISOString(),
+        payload: {
+          domain: "acme.com",
+          companyName: "Acme",
+          description: "B2B SaaS",
+          leadershipChange: {
+            changeType: "hire",
+            role: "CEO",
+            personName: "Jane Doe",
+            effectiveDate: "2026-08-01T00:00:00.000Z",
+          },
+          newsMentions: [
+            { headline: "Acme raises Series B", publishedAt: "2026-07-01T00:00:00.000Z", source: "techcrunch" },
+          ],
+        },
+      },
+    ]);
+
+    expect(result.quarantined).toHaveLength(0);
+    const company = result.clean[0]!;
+    expect(company.leadershipChange).toMatchObject({ role: "CEO", personName: "Jane Doe" });
+    expect(company.newsMentions).toHaveLength(1);
+    expect(company.signals?.some((s) => s.type === "leadership_change")).toBe(true);
+    expect(company.signals?.some((s) => s.type === "news_mention")).toBe(true);
+  });
 });

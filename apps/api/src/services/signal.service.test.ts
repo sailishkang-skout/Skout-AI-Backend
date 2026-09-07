@@ -333,6 +333,23 @@ describe("computeSignalStackScore", () => {
     const result = computeSignalStackScore([signal({ confidence: null })], { now: NOW });
     expect(result.contributingSignals[0]?.confidence).toBeGreaterThan(0);
   });
+
+  it("§8.5 SS-07 — leadership_change and news_mention stack like any other timing signal type, no scoring changes needed", () => {
+    const one = computeSignalStackScore([signal({ signalType: "recent_hiring" })], { now: NOW });
+    const stacked = computeSignalStackScore(
+      [
+        signal({ id: "a", signalType: "recent_hiring" }),
+        signal({ id: "b", signalType: "leadership_change" }),
+        signal({ id: "c", signalType: "news_mention" }),
+      ],
+      { now: NOW }
+    );
+    expect(stacked.distinctSignalTypes).toBe(3);
+    expect(stacked.score).toBeGreaterThan(one.score);
+    expect(stacked.contributingSignals.map((c) => c.signalType)).toEqual(
+      expect.arrayContaining(["leadership_change", "news_mention"])
+    );
+  });
 });
 
 describe("signalStackWeightsFromEnv", () => {
