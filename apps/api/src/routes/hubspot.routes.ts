@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { createCrmService } from "../services/crm.service.js";
 import { syncHubSpotNativeOrThrow } from "../services/crm-hubspot-native-sync.service.js";
+import { getCrmSyncStatus } from "../services/crm-sync-state.service.js";
 import { HttpError, errorResponse, requireWorkspaceId } from "../utils/http.js";
 
 export async function hubspotRoutes(app: FastifyInstance) {
@@ -162,6 +163,14 @@ export async function hubspotRoutes(app: FastifyInstance) {
       app.log.warn({ err }, "HubSpot webhook sync failed");
       return reply.send({ ok: true, deferred: true });
     }
+  });
+
+  /** ADI-18 (§8.12) — checkpoint health per entity type + recent push-back writes (including
+   * conflict skips), so the settings UI can show sync status without anyone checking logs. */
+  app.get("/crm/hubspot/sync-status", async (request, reply) => {
+    const workspaceId = requireWorkspaceId(request);
+    if (!app.db) return reply.status(503).send(errorResponse("Database unavailable", 503));
+    return reply.send({ data: await getCrmSyncStatus(app.db, workspaceId) });
   });
 
   app.get("/crm/export-jobs/:jobId", async (request, reply) => {
