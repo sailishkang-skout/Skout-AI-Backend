@@ -93,6 +93,34 @@ describe("sequence routes — CRUD lifecycle", () => {
     await app.close();
   });
 
+  it("GET /sequences/performance returns a 14-day, non-negative daily series for the caller's workspace", async () => {
+    const app = await buildTestApp();
+    const email = "seq-performance@test.com";
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/sequences/performance",
+      headers: asUser(email),
+    });
+
+    if (res.statusCode === 503) { await app.close(); return; }
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as {
+      workspaceId: string;
+      data: { date: string; sent: number; opens: number; replies: number; openRate: number; replyRate: number }[];
+    };
+    expect(body.workspaceId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(body.data).toHaveLength(14);
+    for (const point of body.data) {
+      expect(point.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(point.openRate).toBeGreaterThanOrEqual(0);
+      expect(point.replyRate).toBeGreaterThanOrEqual(0);
+    }
+
+    await app.close();
+  });
+
   it("GET /sequences/:id returns sequence with steps array", async () => {
     const app = await buildTestApp();
     const email = "seq-get@test.com";

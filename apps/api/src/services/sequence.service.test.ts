@@ -961,6 +961,73 @@ describe("SequenceService.getAnalytics", () => {
 });
 
 // ---------------------------------------------------------------------------
+// getWorkspacePerformance
+// ---------------------------------------------------------------------------
+
+describe("SequenceService.getWorkspacePerformance", () => {
+  function joinWhereChain(result: unknown[]) {
+    const c = {} as Record<string, ReturnType<typeof vi.fn>>;
+    c.from = vi.fn().mockReturnValue(c);
+    c.innerJoin = vi.fn().mockReturnValue(c);
+    c.where = vi.fn().mockResolvedValue(result);
+    return c;
+  }
+
+  function whereChain(result: unknown[]) {
+    const c = {} as Record<string, ReturnType<typeof vi.fn>>;
+    c.from = vi.fn().mockReturnValue(c);
+    c.where = vi.fn().mockResolvedValue(result);
+    return c;
+  }
+
+  it("computes same-day open rate and reply rate against that day's sent count", async () => {
+    const today = new Date();
+    const db = {
+      select: vi
+        .fn()
+        .mockReturnValueOnce(
+          joinWhereChain([{ executedAt: today }, { executedAt: today }, { executedAt: today }, { executedAt: today }])
+        )
+        .mockReturnValueOnce(whereChain([{ createdAt: today }, { createdAt: today }]))
+        .mockReturnValueOnce(whereChain([{ completedAt: today }])),
+    };
+    const svc = new SequenceService(db as any);
+    const result = await svc.getWorkspacePerformance("ws-1", 1);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ sent: 4, opens: 2, replies: 1, openRate: 50, replyRate: 25 });
+  });
+
+  it("returns 0% rates instead of NaN/Infinity on a day with zero sends", async () => {
+    const db = {
+      select: vi
+        .fn()
+        .mockReturnValueOnce(joinWhereChain([]))
+        .mockReturnValueOnce(whereChain([]))
+        .mockReturnValueOnce(whereChain([])),
+    };
+    const svc = new SequenceService(db as any);
+    const result = await svc.getWorkspacePerformance("ws-1", 1);
+
+    expect(result[0]).toMatchObject({ sent: 0, opens: 0, replies: 0, openRate: 0, replyRate: 0 });
+  });
+
+  it("zero-fills every day in the window even with no activity at all", async () => {
+    const db = {
+      select: vi
+        .fn()
+        .mockReturnValueOnce(joinWhereChain([]))
+        .mockReturnValueOnce(whereChain([]))
+        .mockReturnValueOnce(whereChain([])),
+    };
+    const svc = new SequenceService(db as any);
+    const result = await svc.getWorkspacePerformance("ws-1", 5);
+
+    expect(result).toHaveLength(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // buildSequenceService factory
 // ---------------------------------------------------------------------------
 
