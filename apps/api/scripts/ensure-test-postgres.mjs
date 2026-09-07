@@ -8,6 +8,8 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+
 if (process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true") {
   // In CI, the database is already running, but we still need to run migrations
   const migrate = spawnSync("pnpm", ["db:migrate"], {
@@ -30,8 +32,6 @@ if (process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true") {
   
   process.exit(applyPending.status === 0 ? 0 : applyPending.status ?? 1);
 }
-
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const DATABASE_URL = "postgresql://skout:skout@localhost:5434/skout";
 
 function dockerAvailable() {
