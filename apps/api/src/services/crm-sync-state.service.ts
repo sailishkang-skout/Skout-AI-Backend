@@ -1,9 +1,9 @@
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, scopedTo } from "@skout/db";
 import type { CrmSyncEntityType } from "@skout/shared";
 
-const { crmConnections, crmSyncCheckpoints, crmNativeLinks } = schema;
+const { crmConnections, crmSyncCheckpoints, crmNativeLinks, crmOutboundWrites } = schema;
 
 export async function getHubSpotConnectionId(db: Db, workspaceId: string): Promise<string | null> {
   const [row] = await db
@@ -134,6 +134,86 @@ export async function upsertCrmNativeLink(
       target: [crmNativeLinks.connectionId, crmNativeLinks.entityType, crmNativeLinks.entityId],
       set: { externalId, externalUpdatedAt, updatedAt: new Date() },
     });
+}
+
+export interface CrmSyncCheckpointStatus {
+  entityType: string;
+  lastRunStatus: string | null;
+  lastRunStartedAt: string | null;
+  lastRunCompletedAt: string | null;
+  lastError: string | null;
+}
+
+export interface CrmOutboundWriteStatus {
+  id: string;
+  entityType: string;
+  entityId: string;
+  status: string;
+  /** True when this write was intentionally skipped because HubSpot's own value changed more
+   * recently than the Skout edit that queued it (the reverse manual-wins rule) — not a failure,
+   * but the one case a user genuinely needs to know their edit didn't take effect on the CRM side. */
+  isConflict: boolean;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CrmSyncStatus {
+  connected: boolean;
+  checkpoints: CrmSyncCheckpointStatus[];
+  recentOutboundWrites: CrmOutboundWriteStatus[];
+}
+
+const RECENT_OUTBOUND_WRITES_LIMIT = 20;
+
+/** ADI-18 (§8.12) — read model for the sync-status UI: per-entity-type checkpoint health and
+ * the most recent outbound (push-back) writes, so a user can tell without checking logs whether
+ * sync is healthy, stalled, or silently failing. */
+export async function getCrmSyncStatus(db: Db, workspaceId: string): Promise<CrmSyncStatus> {
+  const connectionId = await getHubSpotConnectionId(db, workspaceId);
+  if (!connectionId) return { connected: false, checkpoints: [], recentOutboundWrites: [] };
+
+  const checkpointRows = await db
+    .select({
+      entityType: crmSyncCheckpoints.entityType,
+      lastRunStatus: crmSyncCheckpoints.lastRunStatus,
+      lastRunStartedAt: crmSyncCheckpoints.lastRunStartedAt,
+      lastRunCompletedAt: crmSyncCheckpoints.lastRunCompletedAt,
+      lastError: crmSyncCheckpoints.lastError,
+    })
+    .from(crmSyncCheckpoints)
+    .where(scopedTo(crmSyncCheckpoints, workspaceId, eq(crmSyncCheckpoints.connectionId, connectionId)));
+
+  const outboundRows = await db
+    .select({
+      id: crmOutboundWrites.id,
+      entityType: crmOutboundWrites.entityType,
+      entityId: crmOutboundWrites.entityId,
+      status: crmOutboundWrites.status,
+      lastError: crmOutboundWrites.lastError,
+      createdAt: crmOutboundWrites.createdAt,
+      updatedAt: crmOutboundWrites.updatedAt,
+    })
+    .from(crmOutboundWrites)
+    .where(scopedTo(crmOutboundWrites, workspaceId, eq(crmOutboundWrites.connectionId, connectionId)))
+    .orderBy(desc(crmOutboundWrites.updatedAt))
+    .limit(RECENT_OUTBOUND_WRITES_LIMIT);
+
+  return {
+    connected: true,
+    checkpoints: checkpointRows.map((r) => ({
+      ...r,
+      lastRunStartedAt: r.lastRunStartedAt?.toISOString() ?? null,
+      lastRunCompletedAt: r.lastRunCompletedAt?.toISOString() ?? null,
+    })),
+    recentOutboundWrites: outboundRows.map((r) => ({
+      ...r,
+      // Matches the sentinel crm-outbound-write.worker.ts writes on the reverse manual-wins skip.
+      isConflict: r.status === "failed" && r.lastError === "conflict_hubspot_newer",
+      createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
+    })),
+  };
 }
 
 export async function getCrmNativeLink(
