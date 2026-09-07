@@ -113,6 +113,75 @@ export const enrichmentWorkbooks = pgTable("enrichment_workbooks", {
 });
 
 /**
+ * §8.3 Task ADI-12 — a user-defined column layered on top of a workbook's fixed 4 fields.
+ * Only two `columnType`s exist for this cut: "derived" (a `{{key}}` string-template
+ * referencing another column, computed in-process) and "ai_research" (a per-row LLM call).
+ * See docs/superpowers/specs/2026-09-05-workbook-flexible-columns-design.md — this
+ * deliberately does not touch packages/pal's waterfall engine or the `fields` column above;
+ * it's a second, parallel computation pass over the same rows.
+ */
+export const workbookColumnDefinitions = pgTable(
+  "workbook_column_definitions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    workbookId: uuid("workbook_id")
+      .notNull()
+      .references(() => enrichmentWorkbooks.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    label: text("label").notNull(),
+    /** "derived" | "ai_research" */
+    columnType: text("column_type").notNull(),
+    /** derived: { template: string }. ai_research: { promptTemplate: string }. */
+    config: jsonb("config").notNull(),
+    orderIndex: integer("order_index").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [unique().on(table.workbookId, table.key)]
+);
+
+/**
+ * §8.3 Task ADI-12 — one row per (run, column, prospect): the "cell". Run-scoped rather
+ * than workbook-scoped, mirroring enrichmentResults being job-scoped — a rerun produces
+ * fresh values instead of mutating history, matching this codebase's append-only
+ * enrichment-output convention. `evidenceId` is required (non-null) whenever an
+ * "ai_research" column succeeds — see pinAiClaim in workbook-column-compute.service.ts.
+ */
+export const workbookColumnValues = pgTable(
+  "workbook_column_values",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    workbookRunId: uuid("workbook_run_id")
+      .notNull()
+      .references(() => enrichmentWorkbookRuns.id, { onDelete: "cascade" }),
+    columnDefinitionId: uuid("column_definition_id")
+      .notNull()
+      .references(() => workbookColumnDefinitions.id, { onDelete: "cascade" }),
+    prospectId: text("prospect_id").notNull(),
+    /** "pending" | "succeeded" | "failed" */
+    status: text("status").notNull().default("pending"),
+    value: text("value"),
+    evidenceId: uuid("evidence_id"),
+    error: text("error"),
+    computedAt: timestamp("computed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("workbook_column_values_run_col_prospect_uidx").on(
+      table.workbookRunId,
+      table.columnDefinitionId,
+      table.prospectId
+    ),
+  ]
+);
+
+/**
  * One execution of a workbook against a resolved set of prospects. Row-level work is
  * tracked by the existing enrichmentJobs/enrichmentBatches tables (batchId below) —
  * this table is the run-level envelope: mode, target set, budget, and pause/resume state.
