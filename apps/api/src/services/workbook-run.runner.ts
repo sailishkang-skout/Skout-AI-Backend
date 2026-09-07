@@ -2,10 +2,35 @@ import { eq } from "drizzle-orm";
 import { createLogger } from "@skout/observability";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
+import type { FieldResult } from "@skout/pal";
 import type { Env } from "../config/env.js";
 import { buildEnrichmentService, InsufficientCreditsError } from "./enrichment/index.js";
 import { getWorkbook } from "./workbook.service.js";
 import { emitSkoutEvent } from "./skout-event.service.js";
+import { listColumns } from "./workbook-column.service.js";
+import { computeColumnsForRow } from "./workbook-column-compute.service.js";
+
+/** §8.3 Task ADI-12 — flattens this row's PAL results into the `{{key}}` context flexible
+ * columns can reference (see workbook-column-compute.service.ts). `company` is special-cased
+ * since its value lives in `valueJson` (a firmographics object), not `value` (see FieldResult's
+ * doc comment in packages/pal/src/types.ts). Also seeds identity fields already on the
+ * snapshot, which don't come through the waterfall at all when unchanged. */
+function buildFieldContext(results: FieldResult[], snapshot: Record<string, unknown>): Record<string, string | undefined> {
+  const context: Record<string, string | undefined> = {
+    fullName: typeof snapshot.fullName === "string" ? snapshot.fullName : undefined,
+    title: typeof snapshot.title === "string" ? snapshot.title : undefined,
+    companyDomain: typeof snapshot.companyDomain === "string" ? snapshot.companyDomain : undefined,
+  };
+  for (const r of results) {
+    if (r.field === "company") {
+      const firm = r.valueJson as { companyName?: string } | undefined;
+      context.company = firm?.companyName ?? r.value;
+    } else {
+      context[r.field] = r.value;
+    }
+  }
+  return context;
+}
 
 const { enrichmentWorkbookRuns, enrichmentBatches } = schema;
 const log = createLogger("workbook-run.runner");
@@ -61,6 +86,10 @@ export async function runWorkbookRunJob(db: Db, config: Env, runId: string, work
     await db.update(enrichmentWorkbookRuns).set({ batchId }).where(eq(enrichmentWorkbookRuns.id, runId));
   }
 
+  // §8.3 Task ADI-12 — loaded once per run, not per row; the vast majority of workbooks have
+  // zero flexible columns, so this is a no-op read for them.
+  const columns = await listColumns(db, workspaceId, workbook.id);
+
   const enrichmentService = buildEnrichmentService(db, config);
   let processedRows = run.processedRows;
   let succeededRows = run.succeededRows;
@@ -98,6 +127,15 @@ export async function runWorkbookRunJob(db: Db, config: Env, runId: string, work
         creditsUsed += job.creditsUsed;
         if (job.status === "completed") succeededRows += 1;
         else failedRows += 1;
+
+        // §8.3 Task ADI-12 — a second, parallel pass over the fixed-field results this row just
+        // produced. Never affects succeededRows/failedRows or stoppedReason: a flexible-column
+        // failure is a per-cell concern (see computeColumnsForRow's own non-throwing contract),
+        // not a reason to mark the whole row failed the way an enrichProspect error is.
+        if (columns.length > 0 && job.status === "completed") {
+          const fieldContext = buildFieldContext(job.results, snap);
+          await computeColumnsForRow(db, config, workspaceId, runId, columns, prospectId, fieldContext);
+        }
       } catch (err) {
         if (err instanceof InsufficientCreditsError) {
           stoppedReason = "insufficient_credits";

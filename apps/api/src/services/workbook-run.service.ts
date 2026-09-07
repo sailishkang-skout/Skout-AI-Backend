@@ -5,9 +5,10 @@ import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import { buildEnrichmentService, InsufficientCreditsError } from "./enrichment/index.js";
 import { getWorkbook } from "./workbook.service.js";
+import { getColumnValuesForRun, listColumns } from "./workbook-column.service.js";
 import { enqueueWorkbookRunJob } from "../workers/workbook-run.queue.js";
 
-const { enrichmentWorkbookRuns, enrichmentJobs } = schema;
+const { enrichmentWorkbookRuns, enrichmentJobs, prospectActivations } = schema;
 
 export type RunMode = "sample" | "selected" | "changed_rows" | "scheduled";
 export type RunStatus = "pending" | "running" | "paused" | "completed" | "partial" | "failed";
@@ -329,4 +330,76 @@ export async function rerunFailedRows(
     workbook.budgetCreditsPerRun,
     run.id
   );
+}
+
+export interface RunRowColumnCell {
+  status: "pending" | "succeeded" | "failed";
+  value: string | null;
+  error: string | null;
+}
+
+export interface RunRowRecord {
+  prospectId: string;
+  fullName: string | null;
+  companyName: string | null;
+  companyDomain: string | null;
+  email: string | null;
+  phone: string | null;
+  title: string | null;
+  /** Keyed by the flexible column's `key` — see workbook-column.service.ts. */
+  columns: Record<string, RunRowColumnCell>;
+}
+
+/**
+ * §8.3 Task ADI-12 — the grid's single data source: one row per target prospect, the fixed
+ * fields read from the current activation snapshot (the same "current value" source of truth
+ * enrichProspect itself folds into — see enrichment/service.ts), plus every flexible column's
+ * computed cell for this run. Returns null (not an empty array) when the run itself isn't found,
+ * so the route can 404 instead of rendering an empty grid.
+ */
+export async function getRunRows(db: Db, workspaceId: string, runId: string): Promise<RunRowRecord[] | null> {
+  const run = await getWorkbookRun(db, workspaceId, runId);
+  if (!run) return null;
+
+  const activations =
+    run.targetProspectIds.length === 0
+      ? []
+      : await db
+          .select({ prospectId: prospectActivations.prospectId, snapshot: prospectActivations.snapshot })
+          .from(prospectActivations)
+          .where(
+            scopedTo(prospectActivations, workspaceId, inArray(prospectActivations.prospectId, run.targetProspectIds))
+          );
+  const snapshotByProspect = new Map(activations.map((a) => [a.prospectId, a.snapshot as Record<string, unknown>]));
+
+  const [columns, columnValues] = await Promise.all([
+    listColumns(db, workspaceId, run.workbookId),
+    getColumnValuesForRun(db, workspaceId, runId),
+  ]);
+  const columnKeyById = new Map(columns.map((c) => [c.id, c.key]));
+
+  const cellsByProspect = new Map<string, Record<string, RunRowColumnCell>>();
+  for (const v of columnValues) {
+    const key = columnKeyById.get(v.columnDefinitionId);
+    if (!key) continue;
+    const bucket = cellsByProspect.get(v.prospectId) ?? {};
+    bucket[key] = { status: v.status, value: v.value, error: v.error };
+    cellsByProspect.set(v.prospectId, bucket);
+  }
+
+  return run.targetProspectIds.map((prospectId) => {
+    const snap = snapshotByProspect.get(prospectId) ?? {};
+    const company = snap.company as { companyName?: string } | undefined;
+    const str = (v: unknown): string | null => (typeof v === "string" && v.length > 0 ? v : null);
+    return {
+      prospectId,
+      fullName: str(snap.fullName),
+      companyName: str(company?.companyName) ?? str(snap.companyName),
+      companyDomain: str(snap.companyDomain),
+      email: str(snap.email),
+      phone: str(snap.phone),
+      title: str(snap.title),
+      columns: cellsByProspect.get(prospectId) ?? {},
+    };
+  });
 }
