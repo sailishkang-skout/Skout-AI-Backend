@@ -319,3 +319,31 @@ describe("MeetingsService.update — event spine", () => {
     expect(emitSkoutEvent).not.toHaveBeenCalled();
   });
 });
+
+describe("MeetingsService.bookedCount", () => {
+  it("counts meetings booked (createdAt) within the trailing window, excluding soft-deleted rows", async () => {
+    const db = {
+      select: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([{ id: "m-1" }, { id: "m-2" }]),
+        }),
+      }),
+    };
+    const svc = new MeetingsService(db as any, { record: vi.fn() } as any, {} as any);
+
+    expect(await svc.bookedCount("ws-1", 30)).toBe(2);
+  });
+
+  it("returns 0 when nothing was booked in the window", async () => {
+    const db = {
+      select: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([]),
+        }),
+      }),
+    };
+    const svc = new MeetingsService(db as any, { record: vi.fn() } as any, {} as any);
+
+    expect(await svc.bookedCount("ws-1")).toBe(0);
+  });
+});

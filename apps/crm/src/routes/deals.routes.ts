@@ -30,6 +30,14 @@ export async function dealsRoutes(app: FastifyInstance) {
     return svc.summary(workspaceId);
   });
 
+  /** GTM revamp — GTM Funnel chart's "opportunities" stage: deals created in the last 30 days. */
+  app.get("/deals/created-count", async (request) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) return { workspaceId, count: 0 };
+    return { workspaceId, count: await svc.createdCount(workspaceId) };
+  });
+
   app.get("/deals", async (request) => {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();

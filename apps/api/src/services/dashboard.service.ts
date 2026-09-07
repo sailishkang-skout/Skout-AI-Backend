@@ -5,8 +5,12 @@ import { createWorkspaceService } from "./workspace.service.js";
 import { buildEnrichmentService } from "./enrichment/index.js";
 import type { Env } from "../config/env.js";
 
+function daysAgo(days: number): Date {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+}
+
 function weekAgo(): Date {
-  return new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  return daysAgo(7);
 }
 
 export function createDashboardService(db: Db | null, config: Env) {
@@ -88,6 +92,60 @@ export function createDashboardService(db: Db | null, config: Env) {
           completedAt: j.completedAt,
         })),
       };
+    },
+
+    /**
+     * GTM revamp — GTM Funnel chart data: real "discovered → enriched → in sequence → replied"
+     * counts over the trailing `days` window, plus a live (not date-windowed) count of currently
+     * active sequence enrollments for the "Active in Sequence" KPI card. The funnel's final two
+     * stages (meetings booked, opportunities created) live in apps/crm and are composed
+     * client-side — apps/api has no server-to-server path into CRM's tables (§7.1).
+     */
+    async getFunnel(workspaceId: string, days = 30) {
+      if (!db) {
+        return { discovered: 0, enriched: 0, inSequence: 0, replied: 0, activeInSequence: 0 };
+      }
+
+      const since = daysAgo(days);
+
+      const [{ discovered }] = await db
+        .select({ discovered: sql<number>`count(*)::int` })
+        .from(schema.prospectActivations)
+        .where(scopedTo(schema.prospectActivations, workspaceId, gte(schema.prospectActivations.activatedAt, since)));
+
+      const enrichedRows = await db
+        .select({ action: schema.creditTransactions.action, total: sql<number>`count(*)::int` })
+        .from(schema.creditTransactions)
+        .where(scopedTo(schema.creditTransactions, workspaceId, gte(schema.creditTransactions.createdAt, since)))
+        .groupBy(schema.creditTransactions.action);
+      let enriched = 0;
+      for (const row of enrichedRows) {
+        if (row.action === "enrichment" || row.action === "ai_score") enriched += row.total;
+      }
+
+      const [{ inSequence }] = await db
+        .select({ inSequence: sql<number>`count(*)::int` })
+        .from(schema.sequenceEnrollments)
+        .where(scopedTo(schema.sequenceEnrollments, workspaceId, gte(schema.sequenceEnrollments.enrolledAt, since)));
+
+      const [{ replied }] = await db
+        .select({ replied: sql<number>`count(*)::int` })
+        .from(schema.sequenceEnrollments)
+        .where(
+          scopedTo(
+            schema.sequenceEnrollments,
+            workspaceId,
+            eq(schema.sequenceEnrollments.status, "replied"),
+            gte(schema.sequenceEnrollments.completedAt, since)
+          )
+        );
+
+      const [{ activeInSequence }] = await db
+        .select({ activeInSequence: sql<number>`count(*)::int` })
+        .from(schema.sequenceEnrollments)
+        .where(scopedTo(schema.sequenceEnrollments, workspaceId, eq(schema.sequenceEnrollments.status, "active")));
+
+      return { discovered, enriched, inSequence, replied, activeInSequence };
     },
   };
 }

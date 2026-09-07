@@ -35,6 +35,19 @@ describe("deals routes (unit)", () => {
 
     await app.close();
   });
+
+  it("GET /deals/created-count returns a zeroed count without a database", async () => {
+    const app = await buildRouteTestApp();
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/deals/created-count",
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ count: 0 });
+
+    await app.close();
+  });
 });
 
 describe("contacts routes (unit)", () => {
@@ -166,6 +179,19 @@ describe("meetings routes (unit)", () => {
     });
 
     expect(res.statusCode).toBe(503);
+    await app.close();
+  });
+
+  it("GET /meetings/booked-count returns a zeroed count without a database", async () => {
+    const app = await buildRouteTestApp();
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/meetings/booked-count",
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ count: 0 });
+
     await app.close();
   });
 });

@@ -8,4 +8,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
     const svc = createDashboardService(app.db, app.config);
     return reply.send({ data: await svc.getSummary(workspaceId) });
   });
+
+  /** GTM revamp — GTM Funnel chart + the "Active in Sequence" KPI card. */
+  app.get("/dashboard/funnel", async (request, reply) => {
+    const workspaceId = requireWorkspaceId(request);
+    const svc = createDashboardService(app.db, app.config);
+    return reply.send({ data: await svc.getFunnel(workspaceId) });
+  });
 }

@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, gte, isNull, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, recordEvidence, getLatestEvidenceByAttribute } from "@skout/db";
 import type { DealCreateInput, DealUpdateInput } from "@skout/shared";
@@ -435,6 +435,21 @@ export class DealsService {
       series.push({ date: key, value: valueByDay.get(key) ?? 0 });
     }
     return series;
+  }
+
+  /**
+   * GTM revamp — GTM Funnel chart's "opportunities" stage: count of deals CREATED in the
+   * trailing `days` window, across every currency and status — unlike pipelineVelocity (USD-only,
+   * value-summing) or summary() (open-only), "an opportunity was created" doesn't care about
+   * currency or whether it's still open.
+   */
+  async createdCount(workspaceId: string, days = 30): Promise<number> {
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const rows = await this.db
+      .select({ id: deals.id })
+      .from(deals)
+      .where(and(eq(deals.workspaceId, workspaceId), isNull(deals.deletedAt), gte(deals.createdAt, since)));
+    return rows.length;
   }
 }
 

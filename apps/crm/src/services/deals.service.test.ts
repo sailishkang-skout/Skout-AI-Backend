@@ -72,6 +72,36 @@ describe("DealsService.pipelineVelocity", () => {
   });
 });
 
+describe("DealsService.createdCount", () => {
+  it("counts deals created within the trailing window, across currencies and statuses", async () => {
+    const db = {
+      select: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([{ id: "d-1" }, { id: "d-2" }, { id: "d-3" }]),
+        }),
+      }),
+    };
+    const svc = buildService(db);
+
+    const count = await svc.createdCount("ws-1", 30);
+
+    expect(count).toBe(3);
+  });
+
+  it("returns 0 when no deals were created in the window", async () => {
+    const db = {
+      select: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([]),
+        }),
+      }),
+    };
+    const svc = buildService(db);
+
+    expect(await svc.createdCount("ws-1")).toBe(0);
+  });
+});
+
 describe("DealsService.update — event spine", () => {
   it("emits opportunity.updated when a deal is successfully updated", async () => {
     const updatedRow = { ...EXISTING_ROW, amount: "2000" };
