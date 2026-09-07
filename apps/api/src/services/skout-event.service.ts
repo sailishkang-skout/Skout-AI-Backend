@@ -1,6 +1,5 @@
 import {
   createEvent,
-  GTM_OUTCOME_EVENT_TYPES,
   type CreateEventInput,
   type SkoutEvent,
   type SkoutEventType,
@@ -12,6 +11,17 @@ import { dispatchWebhookEvent, type WebhookEventType } from "./webhook.service.j
 import { enqueueDexterEventJob } from "../workers/dexter-event.queue.js";
 
 const log = createLogger("skout-event");
+
+// Moved from @skout/shared since it was removed but still needed here
+const GTM_OUTCOME_EVENT_TYPES = [
+  "signal.detected",
+  "enrichment.completed",
+  "sequence.approved",
+  "touchpoint.completed",
+  "reply.classified",
+  "meeting.completed",
+  "opportunity.updated",
+] as const;
 
 /**
  * §7.3 — Transport decision: BullMQ (`skout-dexter-event` queue) is the internal event bus;
