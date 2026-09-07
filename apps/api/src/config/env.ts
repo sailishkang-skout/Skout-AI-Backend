@@ -310,8 +310,6 @@ const envSchema = z
     // key wouldn't make sense the way TWILIO_*/MEETING_BOT_* platform keys do.
     // --- Smart list auto-refresh (R10.2). ---
     SMART_LIST_REFRESH_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(15),
-    // --- GTM-learning cross-tab aggregation (§8.15 SP-10). ---
-    GTM_LEARNING_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(30),
     // --- Task/sequence/draft reminders (R17.2). ---
     REMINDER_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(15),
     /** How many hours before (task/sequence step due) or after (draft created) something is
@@ -365,9 +363,6 @@ const envSchema = z
     /** Recent-vs-baseline bounce-rate delta (0-1 scale, e.g. 0.15 = 15 percentage points) that
      * crosses from "normal variance" to "spike, open an incident". */
     BOUNCE_ANOMALY_SPIKE_DELTA: z.coerce.number().min(0).max(1).default(0.15),
-    // --- §8.12 CRM sync checkpoint + push-back (ADI-10). ---
-    /** How often the outbound-write worker drains pending crm_outbound_writes rows. */
-    CRM_OUTBOUND_WRITE_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(5),
   })
   .transform((data) => {
     let next = data;
