@@ -9,7 +9,7 @@ import {
   unique,
   uuid,
 } from "drizzle-orm/pg-core";
-import { prospectActivations } from "./prospects.js";
+import { lists, prospectActivations } from "./prospects.js";
 import { asyncJobs } from "./jobs.js";
 import { workspaces } from "./workspaces.js";
 
@@ -108,6 +108,9 @@ export const enrichmentWorkbooks = pgTable("enrichment_workbooks", {
   /** "draft" | "active" — promoting to production use is an explicit step (activatedAt below), never implicit. */
   status: text("status").notNull().default("draft"),
   activatedAt: timestamp("activated_at", { withTimezone: true }),
+  /** ADI-13 (§8.3) — the static list activation materializes this workbook's successfully-enriched
+   * rows into, so "go active" is a visible, traceable hand-off rather than an internal flag flip. */
+  resultListId: uuid("result_list_id").references(() => lists.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
