@@ -102,6 +102,39 @@ describe("handleDexterEvent", () => {
     expect(rejected.status).toBe("rejected");
   });
 
+  it("SS-08: signal.high_strength is triggerable — a matching trigger proposes+auto-invokes just like regional_brief.approved", async () => {
+    await db.delete(dexterPlans).where(eq(dexterPlans.workspaceId, workspaceId));
+    await upsertActionMode(db, workspaceId, "dexter.plan_invoke", "auto");
+    const [signalTrigger] = await db
+      .insert(dexterTriggers)
+      .values({
+        workspaceId,
+        eventType: "signal.high_strength",
+        actionType: "enroll_sequence",
+        actionParams: { sequenceId, listId },
+        enabled: true,
+      })
+      .returning();
+
+    const event = createEvent({
+      type: "signal.high_strength",
+      tenantId: workspaceId,
+      aggregateId: "sig-1",
+      data: { signalId: "sig-1", signalType: "leadership_change", entityType: "company", entityId: "company-1", strength: 0.8 },
+    });
+
+    await handleDexterEvent(db, config, event);
+
+    const [plan] = await db.select().from(dexterPlans).where(eq(dexterPlans.workspaceId, workspaceId)).limit(1);
+    expect(plan!.status).toBe("invoked");
+    // The list's one member was already enrolled by an earlier test in this suite — "skipped"
+    // (already-enrolled), not "enrolled", is the correct outcome, and still proves invoke ran.
+    expect((plan!.outcome as Record<string, unknown>).total).toBe(1);
+
+    await db.delete(dexterTriggers).where(eq(dexterTriggers.id, signalTrigger!.id));
+    await db.delete(automationPolicies).where(eq(automationPolicies.workspaceId, workspaceId));
+  });
+
   it("no matching trigger: does nothing", async () => {
     await db.delete(dexterPlans).where(eq(dexterPlans.workspaceId, workspaceId));
     const event = createEvent({

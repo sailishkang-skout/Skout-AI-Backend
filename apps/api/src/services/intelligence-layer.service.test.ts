@@ -22,6 +22,7 @@ function rule(overrides: Partial<ActivationRuleDto> = {}): ActivationRuleDto {
     name: "test rule",
     scoreThreshold: 80,
     signalType: null,
+    minSignalStrength: null,
     targetAction: "add_to_list",
     targetId: "list-1",
     enabled: true,

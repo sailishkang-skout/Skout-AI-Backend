@@ -6,7 +6,7 @@ import type { Env } from "../config/env.js";
 import { buildEnrichmentService } from "../services/enrichment/index.js";
 import { createSearchCacheService } from "./search-cache.service.js";
 import { executeActivationRules } from "./activation-rules.service.js";
-import { listSignalsForEntity } from "./signal.service.js";
+import { computeSignalStackScore, listSignalsForEntity, signalStackWeightsFromEnv, signalStrengthByType } from "./signal.service.js";
 
 const { asyncJobs } = schema;
 const log = createLogger("list-score.runner");
@@ -72,13 +72,17 @@ export async function runListScoreJob(
         // this replaced on `executeActivationRules`'s `activeSignalTypes` default).
         const signalRecords = await listSignalsForEntity(db, r.prospectId, { entityType: "prospect" });
         const activeSignalTypes = [...new Set(signalRecords.map((s) => s.signalType))];
+        // SS-08 — lets a rule additionally require its matching signal to actually be strong/fresh
+        // (not just present) via `minSignalStrength`; rules that don't set it are unaffected.
+        const stackScore = computeSignalStackScore(signalRecords, { weights: signalStackWeightsFromEnv(config) });
         const outcome = await executeActivationRules(
           db,
           config,
           workspaceId,
           r.prospectId,
           r.icpScore,
-          activeSignalTypes
+          activeSignalTypes,
+          signalStrengthByType(stackScore)
         );
         if (outcome.executed > 0 || outcome.failed > 0) {
           log.info("activation rules fired for scored prospect", {

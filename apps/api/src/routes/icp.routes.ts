@@ -8,6 +8,7 @@ import {
 } from "../services/icp.service.js";
 import { startWorkspaceRescoreIfEnabled } from "../services/workspace-rescore.service.js";
 import { cancelAsyncJob, getAsyncJob } from "../services/async-job.service.js";
+import { applyOnboardingAutonomyMode } from "../services/policy-gateway.service.js";
 import { HttpError, errorResponse } from "../utils/http.js";
 
 export const onboardingSchema = z.object({
@@ -157,6 +158,17 @@ export async function icpRoutes(app: FastifyInstance) {
     const row = await setWorkspaceIcp(app.db, workspaceId, body);
     const version = row?.version ?? 1;
     const savedConfig = (row?.config as typeof body | undefined) ?? body;
+
+    // SS-09 — the onboarding "autonomy" answer previously never reached the Policy Gateway
+    // (automation_policies), so it had no server-side effect. Apply it once, when onboarding
+    // actually finishes, not on every incremental wizard-step save.
+    if (app.db && body.onboarding?.completedAt && body.onboarding?.autonomyMode) {
+      try {
+        await applyOnboardingAutonomyMode(app.db, workspaceId, body.onboarding.autonomyMode, request.userId);
+      } catch (err) {
+        request.log.warn({ err, workspaceId }, "applying onboarding autonomy mode failed");
+      }
+    }
 
     let rescoreJob = null;
     if (isIcpConfigured(savedConfig) && version > previousVersion) {

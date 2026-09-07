@@ -66,6 +66,9 @@ export const DEXTER_EVENT_TYPES = [
   "dexter.outcome.captured",
   "dexter.learning.recommended",
   "dexter.learning.approved",
+  /** SS-08 — a signal whose own stack-weight (confidence * strength * recency) cleared
+   * DEXTER_SIGNAL_TRIGGER_MIN_STRENGTH; see signal-activation-sweep.worker.ts. */
+  "signal.high_strength",
 ] as const;
 
 /** Outreach & sequence events (§8.6). */

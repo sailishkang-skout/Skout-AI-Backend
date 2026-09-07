@@ -23,8 +23,20 @@ const log = createLogger("dexter-orchestrator.worker");
  * orchestrator feed itself: propose → emit → match → propose → ... . Extend this
  * allowlist only with other non-`dexter.*` source-of-truth events, never with
  * anything the orchestrator itself emits.
+ *
+ * `signal.high_strength` (SS-08) is emitted by signal-activation-sweep.worker.ts — a source of
+ * truth outside the orchestrator, same as the other three. A matching `dexter_triggers` row
+ * today can only use `actionType: "enroll_sequence"` (the only implemented action in
+ * dexter-journey.service.ts's `invokeDexterPlan`), so this is workspace-level ("a high-strength
+ * signal happened somewhere in this workspace") rather than targeted at the specific
+ * signal/prospect — the same granularity the other three triggerable events already have.
  */
-const TRIGGERABLE_EVENT_TYPES = new Set(["regional_brief.approved", "icp.approved", "tam.approved"]);
+const TRIGGERABLE_EVENT_TYPES = new Set([
+  "regional_brief.approved",
+  "icp.approved",
+  "tam.approved",
+  "signal.high_strength",
+]);
 
 export async function handleDexterEvent(
   db: Db,

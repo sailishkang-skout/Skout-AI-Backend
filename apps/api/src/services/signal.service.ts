@@ -50,6 +50,13 @@ function serialize(row: typeof signals.$inferSelect): SignalRecord {
   };
 }
 
+/** Public wrapper around `serialize` — for callers outside this module (e.g. the SS-08
+ * activation-sweep worker) that already have a raw `signals` row in hand and need it as a
+ * `SignalRecord` to fold into `computeSignalStackScore` alongside rows from `listSignalsForEntity`. */
+export function toSignalRecord(row: typeof signals.$inferSelect): SignalRecord {
+  return serialize(row);
+}
+
 /** A signal past its expiry no longer describes current, actionable timing. */
 export function isSignalExpired(signal: Pick<SignalRecord, "expiresAt">, now: Date = new Date()): boolean {
   if (!signal.expiresAt) return false;
@@ -288,6 +295,21 @@ export function computeSignalStackScore(
         weight: Math.round(w.weight * 1000) / 1000,
       })),
   };
+}
+
+/**
+ * SS-08 — the strongest (confidence * strength * recency) contribution per signal type, derived
+ * from an already-computed `SignalStackScore`. Doesn't touch `computeSignalStackScore` itself —
+ * this only reads its output — so activation-rules.service.ts's `minSignalStrength` gate can
+ * require a genuinely strong/fresh signal of a type, not just any signal of that type ever
+ * recorded, without changing the stacking math itself.
+ */
+export function signalStrengthByType(score: Pick<SignalStackScore, "contributingSignals">): Record<string, number> {
+  const map: Record<string, number> = {};
+  for (const c of score.contributingSignals) {
+    map[c.signalType] = Math.max(map[c.signalType] ?? 0, c.weight);
+  }
+  return map;
 }
 
 export interface RecordSignalInput {
