@@ -9,7 +9,26 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 if (process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true") {
-  process.exit(0);
+  // In CI, the database is already running, but we still need to run migrations
+  const migrate = spawnSync("pnpm", ["db:migrate"], {
+    cwd: repoRoot,
+    stdio: "inherit",
+    shell: true,
+    env: { ...process.env },
+  });
+  
+  if (migrate.status !== 0) {
+    process.exit(migrate.status ?? 1);
+  }
+  
+  const applyPending = spawnSync("pnpm", ["--filter", "@skout/db", "exec", "tsx", "src/apply-pending.ts"], {
+    cwd: repoRoot,
+    stdio: "inherit",
+    shell: true,
+    env: { ...process.env },
+  });
+  
+  process.exit(applyPending.status === 0 ? 0 : applyPending.status ?? 1);
 }
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
