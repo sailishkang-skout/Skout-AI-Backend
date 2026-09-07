@@ -93,3 +93,16 @@ describe("DashboardService.missingStakeholders", () => {
     expect(flags).toHaveLength(0);
   });
 });
+
+describe("DashboardService.pipelineVelocity", () => {
+  it("delegates to DealsService.pipelineVelocity with the workspace and day count", async () => {
+    const series = [{ date: "2026-09-01", value: 500 }];
+    const dealsService = { pipelineVelocity: vi.fn().mockResolvedValue(series) };
+    const svc = new DashboardService({} as any, dealsService as any, {} as any, {} as any, null);
+
+    const result = await svc.pipelineVelocity("ws-1", 14);
+
+    expect(dealsService.pipelineVelocity).toHaveBeenCalledWith("ws-1", 14);
+    expect(result).toBe(series);
+  });
+});

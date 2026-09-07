@@ -43,6 +43,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         contacts: 0,
         openDeals: 0,
         valueByCurrency: [],
+        stages: [],
         openTasks: 0,
         overdueTasks: 0,
         dueTodayTasks: 0,
@@ -71,6 +72,15 @@ export async function dashboardRoutes(app: FastifyInstance) {
     if (!svc) return { workspaceId, missingStakeholders: [], generatedAt: new Date().toISOString() };
     const missingStakeholders = await svc.missingStakeholders(workspaceId);
     return { workspaceId, missingStakeholders, generatedAt: new Date().toISOString() };
+  });
+
+  /** GTM revamp — Pipeline Velocity chart. Open to every workspace member, same as overview. */
+  app.get("/dashboard/pipeline-velocity", async (request) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) return { workspaceId, series: [] };
+    const series = await svc.pipelineVelocity(workspaceId);
+    return { workspaceId, series };
   });
 
   /** R14.3 — internal-only "switching cost" metric. Owner/admin only; not for reps or customers. */

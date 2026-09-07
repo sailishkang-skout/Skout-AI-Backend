@@ -26,6 +26,9 @@ export interface DashboardOverviewDto {
   contacts: number;
   openDeals: number;
   valueByCurrency: CurrencyValue[];
+  /** GTM revamp — Deal Distribution Donut. Already computed by DealsService.summary(); just
+   * threaded through here instead of leaving it unused. */
+  stages: { stageId: string; name: string; count: number; valueByCurrency: CurrencyValue[] }[];
   openTasks: number;
   overdueTasks: number;
   dueTodayTasks: number;
@@ -159,6 +162,7 @@ export class DashboardService {
       contacts: contactRows.length,
       openDeals: dealsSummary.openDeals,
       valueByCurrency: dealsSummary.valueByCurrency,
+      stages: dealsSummary.stages,
       openTasks: taskCounts.open,
       overdueTasks: taskCounts.overdue,
       dueTodayTasks: taskCounts.dueToday,
@@ -373,6 +377,12 @@ export class DashboardService {
       }
     }
     return flags;
+  }
+
+  /** GTM revamp — Pipeline Velocity chart data. See DealsService.pipelineVelocity for why this
+   * is "new pipeline created per day" rather than a historical open-value snapshot. */
+  async pipelineVelocity(workspaceId: string, days = 30): Promise<{ date: string; value: number }[]> {
+    return this.dealsService.pipelineVelocity(workspaceId, days);
   }
 
   /** R19.1 — admin-gated exec rollup combining overview + switching-cost + real risk-adjacent

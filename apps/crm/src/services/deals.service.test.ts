@@ -50,6 +50,28 @@ function buildService(db: unknown, config?: unknown) {
   return new DealsService(db as any, {} as any, {} as any, activitiesService as any, auditService as any, config as any);
 }
 
+describe("DealsService.pipelineVelocity", () => {
+  it("zero-fills days with no new pipeline and places real values on the right date", async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const db = {
+      select: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            groupBy: vi.fn().mockResolvedValue([{ day: today, value: "1500.00" }]),
+          }),
+        }),
+      }),
+    };
+    const svc = buildService(db);
+
+    const series = await svc.pipelineVelocity("ws-1", 7);
+
+    expect(series).toHaveLength(7);
+    expect(series[series.length - 1]).toEqual({ date: today, value: 1500 });
+    expect(series.slice(0, -1).every((d) => d.value === 0)).toBe(true);
+  });
+});
+
 describe("DealsService.update — event spine", () => {
   it("emits opportunity.updated when a deal is successfully updated", async () => {
     const updatedRow = { ...EXISTING_ROW, amount: "2000" };
