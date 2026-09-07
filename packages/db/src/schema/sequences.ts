@@ -5,27 +5,35 @@ import { linkedinAccounts } from "./linkedin-accounts.js";
 import { lists } from "./prospects.js";
 import { users } from "./users.js";
 import { workspaces } from "./workspaces.js";
+import { dexterPlans } from "./dexter-platform.js";
 
-export const sequences = pgTable("sequences", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  workspaceId: uuid("workspace_id")
-    .notNull()
-    .references(() => workspaces.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  status: text("status").notNull().default("draft"),
-  /** manual | template | dexter */
-  source: text("source").notNull().default("manual"),
-  templateKey: text("template_key"),
-  /** A default | B variant | C god mode — same engine, different surface */
-  mode: text("mode").notNull().default("A"),
-  /** Latest published version number (0 = never published). */
-  currentVersion: integer("current_version").notNull().default(0),
-  /** Set once a human explicitly approves a Mode C sequence — required before draft->active (spec §4-6). */
-  modeCApprovedAt: timestamp("mode_c_approved_at", { withTimezone: true }),
-  modeCApprovedBy: uuid("mode_c_approved_by").references(() => users.id, { onDelete: "set null" }),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const sequences = pgTable(
+  "sequences",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    status: text("status").notNull().default("draft"),
+    /** manual | template | dexter */
+    source: text("source").notNull().default("manual"),
+    templateKey: text("template_key"),
+    /** A default | B variant | C god mode — same engine, different surface */
+    mode: text("mode").notNull().default("A"),
+    /** Latest published version number (0 = never published). */
+    currentVersion: integer("current_version").notNull().default(0),
+    /** Set once a human explicitly approves a Mode C sequence — required before draft->active (spec §4-6). */
+    modeCApprovedAt: timestamp("mode_c_approved_at", { withTimezone: true }),
+    modeCApprovedBy: uuid("mode_c_approved_by").references(() => users.id, { onDelete: "set null" }),
+    /** §7.3 Evaluation Loop — set when a Dexter plan's invoke() names this sequence as the
+     * action that carries it out, so reply/meeting rate can be attributed back to the plan. */
+    dexterPlanId: uuid("dexter_plan_id").references(() => dexterPlans.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("sequences_dexter_plan_idx").on(table.dexterPlanId)]
+);
 
 export const sequenceSteps = pgTable(
   "sequence_steps",

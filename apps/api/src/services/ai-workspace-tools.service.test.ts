@@ -299,6 +299,293 @@ describe("createWorkspaceToolRunner — get_workspace_overview evidence wiring",
   });
 });
 
+describe("createWorkspaceToolRunner — start_enrichment_run (SP-05)", () => {
+  function makeListCountDb(memberCount: number | null) {
+    return {
+      select: vi.fn(() => ({
+        from: vi.fn((table: unknown) => {
+          if (table === listMembers) {
+            return {
+              innerJoin: vi.fn().mockReturnValue({
+                where: vi.fn().mockResolvedValue(memberCount === null ? [] : [{ count: memberCount }]),
+              }),
+            };
+          }
+          return { where: vi.fn().mockResolvedValue([]) };
+        }),
+      })),
+    } as unknown as Db;
+  }
+
+  it("returns a preview with the real list count and workbook credit budget, without starting a run", async () => {
+    const workbookModule = await import("./workbook.service.js");
+    const getWorkbookSpy = vi
+      .spyOn(workbookModule, "getWorkbook")
+      .mockResolvedValue({ budgetCreditsPerRun: 50 } as never);
+    const db = makeListCountDb(5);
+    // Each test uses its own workspaceId — createWorkspaceToolRunner's pending-preview cache is a
+    // module-level Map keyed by (workspaceId, toolName), shared across every runner instance in
+    // this process, so reusing "ws-1" across tests with different args would leak a stale cached
+    // preview from one test into another's confirmed-execution call.
+    const runner = createWorkspaceToolRunner(db, CONFIG, "ws-ser-1", false, "skout");
+    const raw = await runner.run("start_enrichment_run", { workbookId: "wb-1", listId: "list-1", mode: "scheduled" });
+    const parsed = JSON.parse(raw as string);
+
+    expect(parsed.preview).toBeDefined();
+    expect(parsed.preview.toolName).toBe("start_enrichment_run");
+    expect(parsed.preview.affectedRecordCount).toBe(5);
+    expect(parsed.preview.creditCost).toBe(50);
+    expect(parsed.requiresConfirmation).toBe(true);
+
+    getWorkbookSpy.mockRestore();
+  });
+
+  it("flags 'sample' mode's preview count as not the actual run size", async () => {
+    const workbookModule = await import("./workbook.service.js");
+    const getWorkbookSpy = vi
+      .spyOn(workbookModule, "getWorkbook")
+      .mockResolvedValue({ budgetCreditsPerRun: null } as never);
+    const db = makeListCountDb(200);
+    const runner = createWorkspaceToolRunner(db, CONFIG, "ws-ser-2", false, "skout");
+    const raw = await runner.run("start_enrichment_run", { workbookId: "wb-1", listId: "list-1", mode: "sample" });
+    const parsed = JSON.parse(raw as string);
+
+    expect(parsed.preview.assumptions.join(" ")).toContain("sample");
+
+    getWorkbookSpy.mockRestore();
+  });
+
+  it("calls the real startWorkbookRun with the confirmed args once confirmed", async () => {
+    const workbookRunModule = await import("./workbook-run.service.js");
+    const startSpy = vi.spyOn(workbookRunModule, "startWorkbookRun").mockResolvedValue({
+      id: "run-1",
+      status: "pending",
+      totalRows: 5,
+    } as never);
+    const db = {} as Db;
+    const runner = createWorkspaceToolRunner(db, CONFIG, "ws-ser-3", false, "skout");
+
+    const raw = await runner.run("start_enrichment_run", {
+      workbookId: "wb-1",
+      listId: "list-1",
+      mode: "scheduled",
+      confirmed: true,
+    });
+    const parsed = JSON.parse(raw as string);
+
+    expect(startSpy).toHaveBeenCalledWith(db, CONFIG, "ws-ser-3", "wb-1", {
+      listId: "list-1",
+      mode: "scheduled",
+      selectedProspectIds: undefined,
+    });
+    expect(parsed).toMatchObject({ success: true, runId: "run-1", status: "pending", totalRows: 5 });
+
+    startSpy.mockRestore();
+  });
+
+  it("surfaces a thrown InsufficientCredits-style error as a serialized error, not a crash", async () => {
+    const workbookRunModule = await import("./workbook-run.service.js");
+    const startSpy = vi.spyOn(workbookRunModule, "startWorkbookRun").mockRejectedValue(new Error("insufficient_credits"));
+    const db = {} as Db;
+    const runner = createWorkspaceToolRunner(db, CONFIG, "ws-ser-4", false, "skout");
+
+    const raw = await runner.run("start_enrichment_run", {
+      workbookId: "wb-1",
+      listId: "list-1",
+      mode: "scheduled",
+      confirmed: true,
+    });
+    expect(JSON.parse(raw as string)).toEqual({ error: "insufficient_credits" });
+
+    startSpy.mockRestore();
+  });
+});
+
+describe("createWorkspaceToolRunner — draft_content (SP-05)", () => {
+  it("returns a zero-cost preview describing the draft without generating anything", async () => {
+    const runner = createWorkspaceToolRunner(null, CONFIG, "ws-dc-1", false, "skout");
+    const raw = await runner.run("draft_content", { prospectId: "p-1", prompt: "Follow up on our demo" });
+    const parsed = JSON.parse(raw as string);
+
+    expect(parsed.preview.toolName).toBe("draft_content");
+    expect(parsed.preview.scope).toContain("p-1");
+    expect(parsed.requiresConfirmation).toBe(true);
+  });
+
+  it("generates content and persists it as a pending-review AI draft once confirmed", async () => {
+    const aiServiceModule = await import("./ai.service.js");
+    const generateSpy = vi
+      .spyOn(aiServiceModule.aiService, "generateEmail")
+      .mockResolvedValue({ subject: "Quick follow-up", html: "<p>Hi Ada</p>" });
+
+    const aiDraftModule = await import("./ai-draft.service.js");
+    const createDraft = vi.fn().mockResolvedValue({ id: "draft-1", subject: "Quick follow-up", status: "pending_review" });
+    vi.spyOn(aiDraftModule, "buildAiDraftService").mockReturnValue({ create: createDraft } as unknown as ReturnType<
+      typeof aiDraftModule.buildAiDraftService
+    >);
+
+    const fakeDb = {} as Db;
+    const runner = createWorkspaceToolRunner(fakeDb, CONFIG, "ws-dc-2", false, "skout");
+    const raw = await runner.run("draft_content", {
+      prospectId: "p-1",
+      prompt: "Follow up on our demo",
+      confirmed: true,
+    });
+    const parsed = JSON.parse(raw as string);
+
+    expect(generateSpy).toHaveBeenCalledWith("Follow up on our demo", CONFIG.OPENROUTER_API_KEY);
+    expect(createDraft).toHaveBeenCalledWith(
+      "ws-dc-2",
+      expect.objectContaining({ prospectId: "p-1", subject: "Quick follow-up", body: "<p>Hi Ada</p>" })
+    );
+    expect(parsed).toMatchObject({ success: true, draftId: "draft-1", status: "pending_review" });
+
+    generateSpy.mockRestore();
+  });
+});
+
+describe("createWorkspaceToolRunner — explain_score (SP-05)", () => {
+  it("returns the ICP dimension breakdown, config version, and signal-stack contributions — not just a final score", async () => {
+    vi.mocked(recordEvidence).mockResolvedValue({ id: "ev-explain-1" } as never);
+
+    const searchModule = await import("./search.service.js");
+    vi.spyOn(searchModule, "createSearchService").mockReturnValue({
+      getProspectById: vi.fn().mockResolvedValue({
+        prospectId: "p-1",
+        fullName: "Ada Lovelace",
+        title: "VP Engineering",
+        seniority: "vp",
+        industry: "saas",
+        country: "US",
+        employeeCount: 500,
+        companyDomain: "acme.com",
+        signals: [{ type: "recent_funding", observedAt: "2026-01-01T00:00:00Z" }],
+      }),
+    } as unknown as ReturnType<typeof searchModule.createSearchService>);
+
+    const icpModule = await import("./icp.service.js");
+    vi.spyOn(icpModule, "getWorkspaceIcp").mockResolvedValue({ industries: ["saas"], seniorities: ["vp"] });
+    vi.spyOn(icpModule, "getWorkspaceIcpVersion").mockResolvedValue(7);
+
+    const signalModule = await import("./signal.service.js");
+    const now = new Date();
+    vi.spyOn(signalModule, "listSignalsForEntity").mockResolvedValue([
+      {
+        id: "sig-1",
+        entityType: "prospect",
+        entityId: "p-1",
+        signalType: "recent_funding",
+        value: {},
+        confidence: 0.9,
+        strength: 1,
+        evidenceId: null,
+        observedAt: now.toISOString(),
+        detectedAt: now.toISOString(),
+        source: "test",
+        provenance: {},
+        createdAt: now.toISOString(),
+        expiresAt: null,
+        activationPaths: [],
+      },
+    ]);
+
+    const fakeDb = {} as Db;
+    const runner = createWorkspaceToolRunner(fakeDb, CONFIG, "ws-1", false, "skout");
+    const raw = await runner.run("explain_score", { prospectId: "p-1" });
+    const parsed = JSON.parse(raw as string);
+
+    expect(parsed.value.icp.version).toBe(7);
+    expect(parsed.value.icp.dimensions).toBeDefined();
+    expect(parsed.value.icp.dimensions.industry.matched).toBe(true);
+    expect(parsed.value.icp.dimensions.seniority.matched).toBe(true);
+    expect(typeof parsed.value.icp.score).toBe("number");
+    expect(parsed.value.signalStack.contributingSignals).toHaveLength(1);
+    expect(parsed.value.signalStack.contributingSignals[0]).toMatchObject({ signalType: "recent_funding" });
+    expect(parsed.value.signalStack.weights).toBeDefined();
+    expect(parsed.evidenceId).toBe("ev-explain-1");
+  });
+
+  it("returns prospect_not_found when the prospect doesn't exist, without touching ICP/signal scoring", async () => {
+    const searchModule = await import("./search.service.js");
+    vi.spyOn(searchModule, "createSearchService").mockReturnValue({
+      getProspectById: vi.fn().mockResolvedValue(null),
+    } as unknown as ReturnType<typeof searchModule.createSearchService>);
+
+    const fakeDb = {} as Db;
+    const runner = createWorkspaceToolRunner(fakeDb, CONFIG, "ws-1", false, "skout");
+    const raw = await runner.run("explain_score", { prospectId: "missing" });
+    expect(JSON.parse(raw as string)).toEqual({ error: "prospect_not_found" });
+  });
+
+  it("does not gate behind a confirmation preview — it's read-only", async () => {
+    const runner = createWorkspaceToolRunner(null, CONFIG, "ws-1", false, "skout");
+    const raw = await runner.run("explain_score", { prospectId: "p-1" });
+    const parsed = JSON.parse(raw as string);
+    expect(parsed.preview).toBeUndefined();
+    expect(parsed.requiresConfirmation).toBeUndefined();
+  });
+});
+
+describe("createWorkspaceToolRunner — persona tool restriction (SP-06)", () => {
+  it("narrows the offered tool list to the crm_data persona's allowlist", () => {
+    const runner = createWorkspaceToolRunner(null, CONFIG, "ws-1", false, "skout", undefined, false, "crm_data");
+    const toolNames = runner.tools.map((t) => (t.type === "function" ? t.function.name : ""));
+    expect(toolNames).toEqual(expect.arrayContaining(["get_prospect", "explain_score"]));
+    expect(toolNames).not.toContain("create_outbound_sequence");
+    expect(toolNames).not.toContain("start_enrichment_run");
+  });
+
+  it("does not restrict the tool list when no persona is given (unchanged from before SP-06)", () => {
+    const runner = createWorkspaceToolRunner(null, CONFIG, "ws-1", false, "skout");
+    const toolNames = runner.tools.map((t) => (t.type === "function" ? t.function.name : ""));
+    expect(toolNames).toContain("create_outbound_sequence");
+  });
+
+  it("does not restrict the tool list for a persona that declares no allowlist (e.g. sales)", () => {
+    const runner = createWorkspaceToolRunner(null, CONFIG, "ws-1", false, "skout", undefined, false, "sales");
+    const toolNames = runner.tools.map((t) => (t.type === "function" ? t.function.name : ""));
+    expect(toolNames).toContain("create_outbound_sequence");
+  });
+
+  it("rejects dispatching a tool outside the persona's allowlist, even if the model tries to call it directly", async () => {
+    const runner = createWorkspaceToolRunner(null, CONFIG, "ws-1", false, "skout", undefined, false, "crm_data");
+    const raw = await runner.run("create_outbound_sequence", { name: "x", steps: [] });
+    expect(JSON.parse(raw as string)).toEqual({ error: "tool_not_available_for_persona:create_outbound_sequence" });
+  });
+
+  // Proves personas don't introduce a second evidence/policy code path: a tool that's reachable
+  // under a persona restriction (get_workspace_overview is in crm_data's allowlist) still goes
+  // through the exact same evidenceClaim/recordEvidence call every other tool uses, regardless
+  // of persona — there is nothing persona-specific in the evidence path to audit separately.
+  it("a tool reachable under a persona restriction still records evidence exactly as it would with no persona set", async () => {
+    vi.mocked(recordEvidence).mockResolvedValue({ id: "ev-persona-1" } as never);
+    const summaryFixture = { prospectCount: 7 };
+    const dashboardModule = await import("./dashboard.service.js");
+    vi.spyOn(dashboardModule, "createDashboardService").mockReturnValue({
+      getSummary: vi.fn().mockResolvedValue(summaryFixture),
+    } as unknown as ReturnType<typeof dashboardModule.createDashboardService>);
+
+    const fakeDb = {} as Db;
+    const runner = createWorkspaceToolRunner(fakeDb, CONFIG, "ws-1", false, "skout", undefined, false, "crm_data");
+    const raw = await runner.run("get_workspace_overview", {});
+    const parsed = JSON.parse(raw as string);
+
+    expect(recordEvidence).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({
+        workspaceId: "ws-1",
+        entityType: "workspace",
+        entityId: "ws-1",
+        attribute: "get_workspace_overview",
+        source: "ai-workspace-tools:get_workspace_overview",
+        confidence: 100,
+      })
+    );
+    expect(parsed.evidenceId).toBe("ev-persona-1");
+    expect(parsed.value).toEqual(summaryFixture);
+  });
+});
+
 describe("assertEvidenced regression guard", () => {
   it("throws UnevidencedClaimError when a claim has neither evidenceId nor unverified set", async () => {
     const { assertEvidenced, UnevidencedClaimError } = await import("@skout/shared");

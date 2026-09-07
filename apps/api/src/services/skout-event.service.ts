@@ -1,4 +1,10 @@
-import { createEvent, type CreateEventInput, type SkoutEvent, type SkoutEventType } from "@skout/shared";
+import {
+  createEvent,
+  GTM_OUTCOME_EVENT_TYPES,
+  type CreateEventInput,
+  type SkoutEvent,
+  type SkoutEventType,
+} from "@skout/shared";
 import { createLogger } from "@skout/observability";
 import type { Db } from "@skout/db";
 import type { Env } from "../config/env.js";
@@ -49,6 +55,7 @@ export function isDexterSpineEvent(type: string): type is SkoutEventType {
     type.startsWith("icp.") ||
     type.startsWith("tam.") ||
     type.startsWith("regional_brief.") ||
-    type.startsWith("dexter.")
+    type.startsWith("dexter.") ||
+    (GTM_OUTCOME_EVENT_TYPES as readonly string[]).includes(type)
   );
 }

@@ -30,9 +30,12 @@ const ROW = {
   budgetCreditsPerRun: 500,
   status: "draft",
   activatedAt: null,
+  resultListId: null,
   createdAt: new Date("2026-01-01T00:00:00Z"),
   updatedAt: new Date("2026-01-01T00:00:00Z"),
 };
+
+const FAKE_CONFIG = {} as never;
 
 describe("createWorkbook", () => {
   it("creates a draft workbook and serializes numeric/date fields", async () => {
@@ -90,24 +93,40 @@ describe("updateWorkbook", () => {
 describe("activateWorkbook", () => {
   it("throws 404 when the workbook doesn't exist", async () => {
     const db = { select: vi.fn().mockReturnValue(selectChain([])) };
-    await expect(activateWorkbook(db as never, WORKSPACE, WORKBOOK_ID)).rejects.toThrow(HttpError);
+    await expect(activateWorkbook(db as never, FAKE_CONFIG, WORKSPACE, WORKBOOK_ID)).rejects.toThrow(HttpError);
   });
 
   it("throws 409 when already active", async () => {
     const db = { select: vi.fn().mockReturnValue(selectChain([{ ...ROW, status: "active" }])) };
-    await expect(activateWorkbook(db as never, WORKSPACE, WORKBOOK_ID)).rejects.toMatchObject({
+    await expect(
+      activateWorkbook(db as never, FAKE_CONFIG, WORKSPACE, WORKBOOK_ID)
+    ).rejects.toMatchObject({
       statusCode: 409,
     });
   });
 
-  it("flips a draft workbook to active and stamps activatedAt", async () => {
-    const activated = { ...ROW, status: "active", activatedAt: new Date("2026-02-01T00:00:00Z") };
+  it("flips a draft workbook to active, stamps activatedAt, and links a new results list", async () => {
+    const activated = {
+      ...ROW,
+      status: "active",
+      activatedAt: new Date("2026-02-01T00:00:00Z"),
+      resultListId: "list-1",
+    };
+    const resultListRow = {
+      id: "list-1",
+      workspaceId: WORKSPACE,
+      name: "Default outreach enrichment — Results",
+      sourceFilters: null,
+      createdAt: new Date("2026-02-01T00:00:00Z"),
+    };
     const db = {
       select: vi.fn().mockReturnValue(selectChain([ROW])),
+      insert: vi.fn().mockReturnValue(insertReturning([resultListRow])),
       update: vi.fn().mockReturnValue(updateReturning([activated])),
     };
-    const result = await activateWorkbook(db as never, WORKSPACE, WORKBOOK_ID);
+    const result = await activateWorkbook(db as never, FAKE_CONFIG, WORKSPACE, WORKBOOK_ID);
     expect(result.status).toBe("active");
     expect(result.activatedAt).toBe("2026-02-01T00:00:00.000Z");
+    expect(result.resultListId).toBe("list-1");
   });
 });

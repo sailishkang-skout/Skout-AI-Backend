@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { captureException, createLogger } from "@skout/observability";
 import type { WorkspaceToolRunner } from "./ai-workspace-tools.service.js";
+import { composeSystemPrompt, type CopilotPersona } from "./ai-copilot-personas.service.js";
 
 const log = createLogger("ai.service");
 
@@ -551,6 +552,10 @@ export class AiService {
       toolRunner?: WorkspaceToolRunner | null;
       /** "dexter" = voice-first agent persona with ui_action emphasis. "cro" = admin-only exec rollup (R19.2). */
       agent?: "skout" | "dexter" | "cro";
+      /** §8.13 SP-06 — orthogonal to `agent`: a role framing (Sales/CRM Data/Meeting-Call/GTM
+       * Strategy) composed on top of the agent's own system prompt. See
+       * ai-copilot-personas.service.ts's doc comment for the persona-model decision. */
+      persona?: CopilotPersona;
     },
     apiKey: string | undefined
   ): Promise<{ reply: string; action: ChatAction }> {
@@ -591,8 +596,9 @@ export class AiService {
     }
     if (input.insights?.trim()) contextLines.push(`What works for this workspace:\n${input.insights.trim()}`);
 
-    const systemPrompt =
+    const baseSystemPrompt =
       input.agent === "dexter" ? DEXTER_SYSTEM_PROMPT : input.agent === "cro" ? CRO_SYSTEM_PROMPT : CHAT_SYSTEM_PROMPT;
+    const systemPrompt = composeSystemPrompt(baseSystemPrompt, input.persona);
 
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
       { role: "system", content: systemPrompt },

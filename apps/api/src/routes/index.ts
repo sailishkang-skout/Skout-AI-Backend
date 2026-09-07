@@ -3,6 +3,8 @@ import { dashboardRoutes } from "./dashboard.routes.js";
 import { analyticsRoutes } from "./analytics.routes.js";
 import { aiRoutes } from "./ai.routes.js";
 import { hubspotRoutes } from "./hubspot.routes.js";
+import { crmNativeRoutes } from "./crm-native.routes.js";
+import { workbookColumnRoutes } from "./workbook-column.routes.js";
 import { webhookRoutes } from "./webhooks.routes.js";
 import { enrichmentRoutes } from "./enrichment.routes.js";
 import { icpRoutes } from "./icp.routes.js";
@@ -87,6 +89,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(inboxRoutes);
     await v1.register(aiRoutes);
     await v1.register(hubspotRoutes);
+    await v1.register(crmNativeRoutes);
     await v1.register(webhookRoutes);
     await v1.register(integrationRoutes);
     await v1.register(trackingRoutes);
@@ -104,6 +107,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(tamRoutes);
     await v1.register(importAdapterRoutes);
     await v1.register(workbookRoutes);
+    await v1.register(workbookColumnRoutes);
     await v1.register(reportRoutes);
     await v1.register(modelPerformanceRoutes);
     await v1.register(evidenceRoutes);

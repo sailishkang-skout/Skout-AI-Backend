@@ -3,8 +3,10 @@ import type { Db } from "@skout/db";
 import { schema, scopedTo, scopedById } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import { claimNext, recordResult, buildIdempotencyKey } from "@skout/shared";
+import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import { findStartNodes, type AutomationGraph } from "./automation-graph.js";
+import { listAutomationSecretValues, maskAutomationSecrets } from "./automation-secrets.service.js";
 
 const { automationRuns, automationRunSteps } = schema;
 const log = createLogger("automation-run.service");
@@ -125,14 +127,28 @@ export async function retryFailedSteps(db: Db, workspaceId: string, runId: strin
   return updatedRun!;
 }
 
-export async function getRun(db: Db, workspaceId: string, runId: string) {
+/**
+ * §8.14 — steps' input/output are masked here, at the service layer, before returning: this is
+ * the one place both the run-detail route and any other future caller (e.g. an export) get their
+ * data from, so masking here protects the API response regardless of what a node handler puts in
+ * a step's input/output. A UI-only mask would still leak via a direct API call.
+ */
+export async function getRun(db: Db, config: Env, workspaceId: string, runId: string) {
   const [run] = await db
     .select()
     .from(automationRuns)
     .where(scopedById(automationRuns, workspaceId, runId))
     .limit(1);
   if (!run) throw new HttpError("automation_run_not_found", 404);
-  const steps = await db.select().from(automationRunSteps).where(eq(automationRunSteps.automationRunId, runId)).orderBy(asc(automationRunSteps.createdAt));
+  const rawSteps = await db.select().from(automationRunSteps).where(eq(automationRunSteps.automationRunId, runId)).orderBy(asc(automationRunSteps.createdAt));
+
+  const secretValues = await listAutomationSecretValues(db, config, workspaceId);
+  const steps = rawSteps.map((step) => ({
+    ...step,
+    input: maskAutomationSecrets(step.input, secretValues),
+    output: maskAutomationSecrets(step.output, secretValues),
+  }));
+
   return { run, steps };
 }
 

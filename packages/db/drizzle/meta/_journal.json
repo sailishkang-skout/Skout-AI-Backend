@@ -594,14 +594,35 @@
       "idx": 84,
       "version": "7",
       "when": 1791700000000,
-      "tag": "0083_signal_activation_checked_at",
+      "tag": "0083_crm_sync_checkpoints",
       "breakpoints": true
     },
     {
       "idx": 85,
       "version": "7",
       "when": 1791800000000,
-      "tag": "0084_activation_rules_min_signal_strength",
+      "tag": "0084_dexter_evaluation_loop",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1791900000000,
+      "tag": "0085_gtm_learning_outcomes",
+      "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1792000000000,
+      "tag": "0086_workbook_flexible_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1792200000000,
+      "tag": "0087_workbook_result_list",
       "breakpoints": true
     }
   ]

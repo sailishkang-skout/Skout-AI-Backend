@@ -9,6 +9,7 @@ import {
   updateWorkbook,
 } from "../services/workbook.service.js";
 import {
+  getRunRows,
   getWorkbookRun,
   listWorkbookRuns,
   pauseWorkbookRun,
@@ -92,7 +93,7 @@ export async function workbookRoutes(app: FastifyInstance) {
     const workspaceId = requireWorkspaceId(request);
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     try {
-      const workbook = await activateWorkbook(app.db, workspaceId, id);
+      const workbook = await activateWorkbook(app.db, app.config, workspaceId, id);
       return reply.send(workbook);
     } catch (err) {
       return handleError(err, reply);
@@ -127,6 +128,17 @@ export async function workbookRoutes(app: FastifyInstance) {
     const run = await getWorkbookRun(app.db, workspaceId, runId);
     if (!run) return reply.status(404).send({ error: "run_not_found" });
     return reply.send(run);
+  });
+
+  /** §8.3 Task ADI-12 — the grid's data source: one row per target prospect, fixed-field
+   * values plus every flexible column's computed cell for this run. */
+  app.get("/workbooks/:id/runs/:runId/rows", async (request, reply) => {
+    const { runId } = request.params as { id: string; runId: string };
+    const workspaceId = requireWorkspaceId(request);
+    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
+    const rows = await getRunRows(app.db, workspaceId, runId);
+    if (!rows) return reply.status(404).send({ error: "run_not_found" });
+    return reply.send({ data: rows, total: rows.length });
   });
 
   app.post("/workbooks/:id/runs/:runId/pause", async (request, reply) => {

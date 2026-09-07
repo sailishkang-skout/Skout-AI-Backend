@@ -25,6 +25,7 @@
     "@skout/db": "workspace:*",
     "@skout/observability": "workspace:*",
     "@skout/shared": "workspace:*",
+    "bullmq": "^5.40.0",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.44.2",
     "fastify": "^5.1.0",

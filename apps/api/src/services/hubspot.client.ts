@@ -21,7 +21,7 @@ export function buildHubSpotAuthorizeUrl(params: {
   url.searchParams.set("redirect_uri", params.redirectUri);
   url.searchParams.set(
     "scope",
-    "oauth crm.objects.contacts.read crm.objects.contacts.write crm.objects.deals.read crm.lists.read"
+    "oauth crm.objects.contacts.read crm.objects.contacts.write crm.objects.deals.read crm.objects.deals.write crm.lists.read"
   );
   url.searchParams.set("state", params.state);
   return url.toString();
@@ -267,6 +267,7 @@ const CONTACT_PROPERTIES = [
   "jobtitle",
   "company",
   "phone",
+  "hs_lastmodifieddate",
 ] as const;
 
 export interface HubSpotContactProperties {
@@ -276,6 +277,9 @@ export interface HubSpotContactProperties {
   jobtitle?: string;
   company?: string;
   phone?: string;
+  /** §8.12 Task ADI-10 — provider-side last-modified timestamp, used as the incremental-sync
+   * cursor and as the conflict-detection signal for outbound push-back. */
+  hs_lastmodifieddate?: string;
 }
 
 export interface HubSpotContactRecord {
@@ -441,10 +445,12 @@ export interface HubSpotDealRecord {
     closedate?: string;
     dealstage?: string;
     pipeline?: string;
+    /** §8.12 Task ADI-10 — see HubSpotContactProperties.hs_lastmodifieddate. */
+    hs_lastmodifieddate?: string;
   };
 }
 
-const DEAL_PROPERTIES = ["dealname", "amount", "closedate", "dealstage", "pipeline"] as const;
+const DEAL_PROPERTIES = ["dealname", "amount", "closedate", "dealstage", "pipeline", "hs_lastmodifieddate"] as const;
 
 export async function fetchAllHubSpotDeals(
   accessToken: string,
@@ -487,6 +493,104 @@ export async function fetchHubSpotDeal(
   } catch {
     return null;
   }
+}
+
+/**
+ * §8.12 Task ADI-10 — incremental pull via HubSpot's search API, filtered on
+ * `hs_lastmodifieddate >= sinceIso` and sorted ascending so the last page's timestamp is a safe
+ * next cursor. Unlike `fetchAllHubSpotContacts`/`fetchAllHubSpotDeals` (plain list, no filter),
+ * this only returns records that changed since the caller's checkpoint.
+ */
+async function searchHubSpotModifiedSince<T>(
+  accessToken: string,
+  objectType: "contacts" | "deals",
+  properties: readonly string[],
+  sinceIso: string,
+  max: number
+): Promise<T[]> {
+  const results: T[] = [];
+  let after: string | undefined;
+
+  while (results.length < max) {
+    const data = await hubspotBatchRequest<{
+      results?: T[];
+      paging?: { next?: { after?: string } };
+    }>(accessToken, `/crm/v3/objects/${objectType}/search`, {
+      filterGroups: [
+        { filters: [{ propertyName: "hs_lastmodifieddate", operator: "GTE", value: sinceIso }] },
+      ],
+      sorts: [{ propertyName: "hs_lastmodifieddate", direction: "ASCENDING" }],
+      properties,
+      limit: 100,
+      ...(after ? { after } : {}),
+    });
+
+    results.push(...(data.results ?? []));
+    if (results.length >= max) break;
+    after = data.paging?.next?.after;
+    if (!after || !(data.results?.length)) break;
+  }
+
+  return results.slice(0, max);
+}
+
+export async function searchHubSpotContactsModifiedSince(
+  accessToken: string,
+  sinceIso: string,
+  maxContacts = 500
+): Promise<HubSpotContactRecord[]> {
+  return searchHubSpotModifiedSince<HubSpotContactRecord>(
+    accessToken,
+    "contacts",
+    CONTACT_PROPERTIES,
+    sinceIso,
+    maxContacts
+  );
+}
+
+export async function searchHubSpotDealsModifiedSince(
+  accessToken: string,
+  sinceIso: string,
+  maxDeals = 500
+): Promise<HubSpotDealRecord[]> {
+  return searchHubSpotModifiedSince<HubSpotDealRecord>(accessToken, "deals", DEAL_PROPERTIES, sinceIso, maxDeals);
+}
+
+/** §8.12 Task ADI-10 — single-record push-back write, used once a HubSpot object id is already
+ * known (via crm_native_links) so there's no ambiguity about which record to update. */
+export async function updateHubSpotContact(
+  accessToken: string,
+  hubspotContactId: string,
+  properties: Record<string, string>
+): Promise<void> {
+  await hubspotFetch(accessToken, `/crm/v3/objects/contacts/${encodeURIComponent(hubspotContactId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ properties }),
+  });
+}
+
+export async function updateHubSpotDeal(
+  accessToken: string,
+  hubspotDealId: string,
+  properties: Record<string, string>
+): Promise<void> {
+  await hubspotFetch(accessToken, `/crm/v3/objects/deals/${encodeURIComponent(hubspotDealId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ properties }),
+  });
+}
+
+/** §8.12 Task ADI-10 — 429 (rate limit) and 5xx are worth retrying via the outbound-write
+ * worker's lease-expiry/reclaim cycle; anything else (4xx validation, auth, missing scope) is
+ * not going to succeed on a bare retry. Matches the existing heuristic-on-error-message style
+ * of `isHubSpotMissingScopeError` above — `hubspotFetch`/`hubspotBatchRequest` only throw a
+ * generic `Error`, there's no typed HTTP-status error class to inspect instead. */
+export function isHubSpotRetryableError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  const match = msg.match(/failed: (\d{3})/);
+  if (!match) return false;
+  const status = Number(match[1]);
+  return status === 429 || status >= 500;
 }
 
 /** HubSpot webhook v1 signature: sha256(clientSecret + body). */

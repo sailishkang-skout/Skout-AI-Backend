@@ -20,6 +20,7 @@ import { computeOutcomeInsights, insightsToPrompt } from "../services/outcome-in
 import { buildChatGrounding } from "../services/ai-chat-context.service.js";
 import { createWorkspaceToolRunner } from "../services/ai-workspace-tools.service.js";
 import { MUTATING_TOOL_NAMES } from "../services/intelligence-layer.service.js";
+import { COPILOT_PERSONAS } from "../services/ai-copilot-personas.service.js";
 import { readAiExport } from "../services/ai-export.service.js";
 import { buildSequenceService, enrollListWithSideEffects } from "../services/sequence.service.js";
 import { HttpError, requireWorkspaceId } from "../utils/http.js";
@@ -53,6 +54,9 @@ const chatSchema = z.object({
   stageForReview: z.boolean().optional().default(false),
   /** "dexter" = voice-first agent. "cro" = R19.2 admin-only exec rollup — 403s for non-admins. */
   agent: z.enum(["skout", "dexter", "cro"]).optional().default("skout"),
+  /** §8.13 SP-06 — orthogonal role framing composed on top of `agent`'s system prompt; see
+   * ai-copilot-personas.service.ts for the persona-model decision and registry. */
+  persona: z.enum(COPILOT_PERSONAS).optional(),
   context: z
     .object({
       subject: z.string().max(500).optional(),
@@ -352,7 +356,8 @@ export async function aiRoutes(app: FastifyInstance) {
         isAdmin,
         body.agent,
         request.userId,
-        body.mode === "auto"
+        body.mode === "auto",
+        body.persona
       );
 
       const result = await aiService.chat(
@@ -364,6 +369,7 @@ export async function aiRoutes(app: FastifyInstance) {
           appGuides: grounding.appGuides,
           toolRunner,
           agent: body.agent,
+          persona: body.persona,
         },
         app.config.OPENROUTER_API_KEY
       );

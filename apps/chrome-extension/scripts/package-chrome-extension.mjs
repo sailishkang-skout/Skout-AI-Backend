@@ -30,7 +30,7 @@ const VITE_ENTRIES = new Set([
 ]);
 
 /** Loaded as plain scripts alongside bundled entries. */
-const RAW_CONTENT_SCRIPTS = ["linkedin-search-scrape.js", "linkedin-outreach.js"];
+const RAW_CONTENT_SCRIPTS = ["linkedin-search-scrape.js"];
 
 /** Side panel + shared modules copied to store root. */
 const ROOT_MODULES = [

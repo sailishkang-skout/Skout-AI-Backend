@@ -51,7 +51,7 @@ export async function meetingsRoutes(app: FastifyInstance) {
     const companiesService = buildCompaniesService(db, auditService);
     const pipelinesService = buildPipelinesService(db, auditService);
     const activitiesService = buildActivitiesService(db);
-    return buildDealsService(db, companiesService, pipelinesService, activitiesService, auditService);
+    return buildDealsService(db, companiesService, pipelinesService, activitiesService, auditService, app.config);
   };
 
   // GET /meetings/bot-config — lets the frontend know whether to show "Schedule bot" at all.

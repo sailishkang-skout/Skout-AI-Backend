@@ -89,6 +89,10 @@ vi.mock("../services/webhook.service.js", () => ({
   WEBHOOK_EVENT_TYPES: ["prospect.enrolled", "sequence.step.completed", "reply.received"],
 }));
 
+vi.mock("../services/skout-event.service.js", () => ({
+  emitSkoutEvent: vi.fn(async (_db: unknown, _config: unknown, input: unknown) => ({ id: "evt-1", ...(input as object) })),
+}));
+
 vi.mock("../lib/redis.js", () => ({
   isRedisAvailable: vi.fn().mockResolvedValue(true),
   redisBullMqConnection: vi.fn().mockReturnValue({
@@ -182,6 +186,7 @@ import { UnipileError } from "../services/unipile.client.js";
 import { claimNext, reclaimExpiredLeases, recordResult, withLeaseHeartbeat } from "@skout/shared";
 import { resolveNotificationsForEntity } from "../services/notifications.service.js";
 import { isRedisAvailable } from "../lib/redis.js";
+import { emitSkoutEvent } from "../services/skout-event.service.js";
 
 const BASE_CONFIG = {
   DATABASE_URL: "postgresql://user:pass@localhost:5432/test",
@@ -626,6 +631,14 @@ describe("sequence-enrollment worker — email step execution", () => {
     expect(recordSequenceEvent).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ eventType: "action_sent" })
+    );
+    expect(emitSkoutEvent).toHaveBeenCalledWith(
+      db,
+      expect.anything(),
+      expect.objectContaining({
+        type: "touchpoint.completed",
+        data: expect.objectContaining({ channel: "email", stepType: EMAIL_STEP_ROW.stepType }),
+      })
     );
   });
 

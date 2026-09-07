@@ -1,6 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
+
+const emittedEvents: Array<{ type: string; tenantId: string; aggregateId: string; data: unknown }> = [];
+vi.mock("../services/skout-event.service.js", async () => {
+  const actual = await vi.importActual<typeof import("../services/skout-event.service.js")>(
+    "../services/skout-event.service.js"
+  );
+  return {
+    ...actual,
+    emitSkoutEvent: vi.fn(async (_db: unknown, _config: unknown, input: any) => {
+      emittedEvents.push(input);
+      return { id: "evt-test", ...input };
+    }),
+  };
+});
 
 async function buildTestApp() {
   const config = loadEnv();
@@ -193,6 +207,14 @@ describe("sequence routes — CRUD lifecycle", () => {
     });
     expect(res.statusCode).toBe(200);
     expect((res.json() as { status: string }).status).toBe("active");
+
+    expect(emittedEvents).toContainEqual(
+      expect.objectContaining({
+        type: "sequence.approved",
+        aggregateId: id,
+        data: expect.objectContaining({ sequenceId: id, mode: "C" }),
+      })
+    );
 
     await app.close();
   });

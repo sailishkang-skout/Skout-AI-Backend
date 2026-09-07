@@ -6,6 +6,7 @@ import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
 import { recordSignal } from "../services/signal.service.js";
+import { emitSkoutEvent } from "../services/skout-event.service.js";
 
 const log = createLogger("risk-decay-sweep.worker");
 
@@ -70,7 +71,8 @@ function formatReason(daysInactive: number, lastActivityAt: Date | null, eventCo
 export async function sweepWorkspaceForDecay(
   db: Db,
   workspaceId: string,
-  inactivityDays: number
+  inactivityDays: number,
+  config?: Env
 ): Promise<number> {
   const { prospectActivations, signals } = schema;
   const now = new Date();
@@ -112,7 +114,7 @@ export async function sweepWorkspaceForDecay(
       : LOOKBACK_DAYS;
     const score = Math.min(1, daysInactive / (inactivityDays * 3));
 
-    await recordSignal(db, {
+    const signal = await recordSignal(db, {
       entityType: "prospect",
       entityId: activation.prospectId,
       signalType: "engagement_decay",
@@ -120,6 +122,14 @@ export async function sweepWorkspaceForDecay(
       score,
       source: "risk-decay-sweep",
     });
+    if (config) {
+      await emitSkoutEvent(db, config, {
+        type: "signal.detected",
+        tenantId: workspaceId,
+        aggregateId: activation.prospectId,
+        data: { workspaceId, signalId: signal.id, entityType: signal.entityType, entityId: signal.entityId, signalType: signal.signalType },
+      }).catch((err: unknown) => log.warn("risk-decay-sweep: failed to emit signal.detected", { err }));
+    }
     flagged++;
   }
 
@@ -159,7 +169,7 @@ export async function startRiskDecaySweepWorker(config: Env) {
         let totalFlagged = 0;
         for (const ws of allWorkspaces) {
           try {
-            totalFlagged += await sweepWorkspaceForDecay(db, ws.id, config.RISK_DECAY_INACTIVITY_DAYS);
+            totalFlagged += await sweepWorkspaceForDecay(db, ws.id, config.RISK_DECAY_INACTIVITY_DAYS, config);
           } catch (err) {
             log.error(`Risk decay sweep failed for workspace ${ws.id}`, { workspaceId: ws.id, err });
           }
