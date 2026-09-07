@@ -2,8 +2,10 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { signalRoutes } from "./signal.routes.js";
 
 const recordSignal = vi.fn();
+const getSignalDensity = vi.fn();
 vi.mock("../services/signal.service.js", () => ({
   computeSignalStackScore: vi.fn(() => ({ score: 0, band: "none" })),
+  getSignalDensity: (...args: unknown[]) => getSignalDensity(...args),
   listSignalsForEntity: vi.fn(async () => []),
   listWorkspaceAccountSignals: vi.fn(async () => []),
   recordSignal: (...args: unknown[]) => recordSignal(...args),
@@ -118,5 +120,39 @@ describe("POST /signals", () => {
     );
 
     expect(reply.statusCode).toBe(201);
+  });
+});
+
+describe("GET /signals/density", () => {
+  it("returns an all-zero envelope without touching getSignalDensity when there's no database", async () => {
+    const handlers = await registerRoutes(null);
+    const reply = makeReply();
+
+    await handlers.get("GET /signals/density")!({ workspaceId: "ws-1" }, reply);
+
+    expect(reply.body).toEqual({ byType: [], totalThisPeriod: 0, totalPreviousPeriod: 0, changePct: null });
+    expect(getSignalDensity).not.toHaveBeenCalled();
+  });
+
+  it("returns getSignalDensity's result scoped to the caller's workspace", async () => {
+    const db = {};
+    getSignalDensity.mockResolvedValue({
+      byType: [{ signalType: "recent_hiring", count: 3 }],
+      totalThisPeriod: 3,
+      totalPreviousPeriod: 2,
+      changePct: 50,
+    });
+    const handlers = await registerRoutes(db);
+    const reply = makeReply();
+
+    await handlers.get("GET /signals/density")!({ workspaceId: "ws-1" }, reply);
+
+    expect(getSignalDensity).toHaveBeenCalledWith(db, "ws-1");
+    expect(reply.body).toEqual({
+      byType: [{ signalType: "recent_hiring", count: 3 }],
+      totalThisPeriod: 3,
+      totalPreviousPeriod: 2,
+      changePct: 50,
+    });
   });
 });

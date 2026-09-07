@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, scopedTo } from "@skout/db";
 import type { Env } from "../config/env.js";
@@ -410,6 +410,74 @@ export async function listWorkspaceAccountSignals(
     .sort((a, b) => b.stackScore.score - a.stackScore.score);
 
   return opts.limit ? summaries.slice(0, opts.limit) : summaries;
+}
+
+export interface SignalDensityBucket {
+  signalType: string;
+  count: number;
+}
+
+export interface SignalDensityResult {
+  byType: SignalDensityBucket[];
+  totalThisPeriod: number;
+  totalPreviousPeriod: number;
+  /** null when the previous period had zero signals — a percentage change would be undefined. */
+  changePct: number | null;
+}
+
+/**
+ * GTM revamp — "Signal Density" chart data: real per-type signal volume for the workspace's
+ * activated companies over the trailing `days` window, plus a week-over-week comparison against
+ * the immediately preceding window of the same length (replaces the frontend's hardcoded
+ * "Signal volume is up 24%" claim). Mirrors listWorkspaceAccountSignals' workspace-scoping
+ * approach since `signals` itself carries no workspaceId.
+ */
+export async function getSignalDensity(db: Db, workspaceId: string, days = 7): Promise<SignalDensityResult> {
+  const activations = await db
+    .select({ companyId: prospectActivations.companyId })
+    .from(prospectActivations)
+    .where(scopedTo(prospectActivations, workspaceId));
+
+  const companyIds = [...new Set(activations.map((a) => a.companyId))];
+  if (companyIds.length === 0) {
+    return { byType: [], totalThisPeriod: 0, totalPreviousPeriod: 0, changePct: null };
+  }
+
+  const currentWindow = sql`now() - interval '${sql.raw(String(days))} days'`;
+  const previousWindowStart = sql`now() - interval '${sql.raw(String(days * 2))} days'`;
+
+  const rows = await db
+    .select({
+      signalType: signals.signalType,
+      isCurrent: sql<boolean>`${signals.detectedAt} >= ${currentWindow}`,
+      count: sql<string>`count(*)`,
+    })
+    .from(signals)
+    .where(and(inArray(signals.entityId, companyIds), sql`${signals.detectedAt} >= ${previousWindowStart}`))
+    .groupBy(signals.signalType, sql`${signals.detectedAt} >= ${currentWindow}`);
+
+  const byType = new Map<string, number>();
+  let totalThisPeriod = 0;
+  let totalPreviousPeriod = 0;
+  for (const row of rows) {
+    const count = Number(row.count);
+    if (row.isCurrent) {
+      byType.set(row.signalType, (byType.get(row.signalType) ?? 0) + count);
+      totalThisPeriod += count;
+    } else {
+      totalPreviousPeriod += count;
+    }
+  }
+
+  const changePct =
+    totalPreviousPeriod > 0 ? ((totalThisPeriod - totalPreviousPeriod) / totalPreviousPeriod) * 100 : null;
+
+  return {
+    byType: [...byType.entries()].map(([signalType, count]) => ({ signalType, count })),
+    totalThisPeriod,
+    totalPreviousPeriod,
+    changePct,
+  };
 }
 
 export async function recordSignal(db: Db, input: RecordSignalInput): Promise<SignalRecord> {
