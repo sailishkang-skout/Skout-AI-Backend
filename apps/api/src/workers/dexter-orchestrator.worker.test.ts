@@ -1,11 +1,20 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createDb, schema } from "@skout/db";
 import { eq } from "drizzle-orm";
 import { createEvent } from "@skout/shared";
 import { loadEnv } from "../config/env.js";
 import { upsertActionMode } from "../services/policy-gateway.service.js";
 import { rejectDexterPlan } from "../services/dexter-journey.service.js";
-import { handleDexterEvent } from "./dexter-orchestrator.worker.js";
+
+// Real behavior by default (resolves immediately, like emitSkoutEvent normally does once
+// enqueued). The one test below that needs to control timing overrides this for a single call
+// via mockImplementationOnce, instead of relying on Redis being unreachable to create a delay.
+const enqueueDexterEventJob = vi.fn().mockResolvedValue(undefined);
+vi.mock("./dexter-event.queue.js", () => ({
+  enqueueDexterEventJob: (...args: unknown[]) => enqueueDexterEventJob(...args),
+}));
+
+const { handleDexterEvent } = await import("./dexter-orchestrator.worker.js");
 
 const { dexterPlans, dexterTriggers, workspaces, sequences, sequenceSteps, lists, listMembers, automationPolicies } = schema;
 
@@ -199,17 +208,28 @@ describe("handleDexterEvent", () => {
       data: { versionId: "v-4", slotId: "slot-4" },
     });
 
-    // Kick off event handling without awaiting yet. proposeDexterPlan's emit onto the
-    // (unavailable-in-tests) event queue blocks for ~2s before approve/invoke run, which
-    // gives this concurrent update time to land and flip the workspace's autonomy mode
-    // out from under the in-flight plan(s) — reproducing the propose-time-vs-invoke-time
-    // policy race described in the finding: assertAllowed re-classifies at invoke time
-    // and denies once mode is no longer "auto". Because the mode flips to "ask" and
-    // stays there, trigger 2 also won't get auto-invoked (its propose sees mode "ask"),
-    // but it must still be *processed* (a plan proposed) rather than skipped because
-    // trigger 1 threw.
+    // Deterministically reproduce the propose-time-vs-invoke-time policy race instead of
+    // relying on Redis being unreachable (which used to make proposeDexterPlan's event-queue
+    // emit block for ~2s incidentally, giving the concurrent mode flip below time to land —
+    // that stopped working once Redis became reachable in dev, since the emit then resolves
+    // near-instantly and the race window disappears). Here we hold trigger 1's very first
+    // emitted event open until the mode flip has actually landed in the DB, then release it,
+    // so assertAllowed's invoke-time re-classification is guaranteed to see "ask", not "auto" —
+    // reproducing the finding: assertAllowed re-classifies at invoke time and denies once mode
+    // is no longer "auto". Because the mode flips to "ask" and stays there, trigger 2 also won't
+    // get auto-invoked (its propose sees mode "ask"), but it must still be *processed* (a plan
+    // proposed) rather than skipped because trigger 1 threw.
+    let releaseFirstEmit!: () => void;
+    const firstEmitHeld = new Promise<void>((resolve) => {
+      releaseFirstEmit = resolve;
+    });
+    enqueueDexterEventJob.mockImplementationOnce(async () => {
+      await firstEmitHeld;
+    });
+
     const handlePromise = handleDexterEvent(db, config, event);
     await upsertActionMode(db, workspaceId, "dexter.plan_invoke", "ask");
+    releaseFirstEmit();
     await handlePromise;
 
     await db.delete(dexterTriggers).where(eq(dexterTriggers.id, secondTrigger!.id));
