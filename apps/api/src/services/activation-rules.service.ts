@@ -28,6 +28,8 @@ export interface ActivationRuleDto {
   name: string;
   scoreThreshold: number;
   signalType: string | null;
+  /** SS-08 — 0-1 floor on the matching signal's own stack-weight; null = presence-only match. */
+  minSignalStrength: number | null;
   targetAction: TargetAction;
   targetId: string | null;
   enabled: boolean;
@@ -40,6 +42,8 @@ export interface ActivationRuleCreateInput {
   name: string;
   scoreThreshold: number;
   signalType?: string;
+  /** SS-08 — only meaningful alongside `signalType`; ignored otherwise. */
+  minSignalStrength?: number;
   targetAction: TargetAction;
   targetId?: string;
 }
@@ -51,6 +55,7 @@ function toDto(row: typeof activationRules.$inferSelect): ActivationRuleDto {
     name: row.name,
     scoreThreshold: row.scoreThreshold,
     signalType: row.signalType,
+    minSignalStrength: row.minSignalStrength,
     targetAction: row.targetAction as TargetAction,
     targetId: row.targetId,
     enabled: row.enabled,
@@ -98,6 +103,7 @@ export async function createActivationRule(
       name: input.name,
       scoreThreshold: input.scoreThreshold,
       signalType: input.signalType,
+      minSignalStrength: input.minSignalStrength,
       targetAction: input.targetAction,
       targetId: input.targetId,
       createdBy,
@@ -155,10 +161,11 @@ export async function matchActivationRules(
   db: Db,
   workspaceId: string,
   prospectScore: number,
-  activeSignalTypes: string[]
+  activeSignalTypes: string[],
+  signalStrengthByType: Record<string, number> = {}
 ): Promise<ActivationRuleDto[]> {
   const rules = await listActivationRules(db, workspaceId);
-  return applyPolicy(rules, prospectScore, activeSignalTypes);
+  return applyPolicy(rules, prospectScore, activeSignalTypes, signalStrengthByType);
 }
 
 /** Log a rule firing (R13.4 AC: "every auto-action a rule takes is logged and reversible"). */
@@ -351,6 +358,11 @@ async function executeRuleAction(
  * which calls `listSignalsForEntity` before this) — rules with a `signalType` match against
  * whatever's currently active for the prospect; score-only rules are unaffected either way.
  *
+ * `signalStrengthByType` (SS-08, optional) lets a rule additionally require its matching signal
+ * clear a `minSignalStrength` floor (confidence * strength * recency), not just be present —
+ * see signal.service.ts's `signalStrengthByType`. Omitted entirely by callers that don't compute
+ * it, in which case every rule behaves exactly as it did before this existed.
+ *
  * One rule's failure never blocks another's — each is caught and counted independently so a
  * single misconfigured target (e.g. a deleted list) can't silently swallow the rest.
  */
@@ -360,9 +372,10 @@ export async function executeActivationRules(
   workspaceId: string,
   prospectId: string,
   prospectScore: number,
-  activeSignalTypes: string[] = []
+  activeSignalTypes: string[] = [],
+  signalStrengthByType: Record<string, number> = {}
 ): Promise<{ matched: number; executed: number; failed: number }> {
-  const matches = await matchActivationRules(db, workspaceId, prospectScore, activeSignalTypes);
+  const matches = await matchActivationRules(db, workspaceId, prospectScore, activeSignalTypes, signalStrengthByType);
   let executed = 0;
   let failed = 0;
   for (const rule of matches) {

@@ -90,6 +90,10 @@ export const signals = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     /** R17.3 — set once the alert-sweep worker has matched this row against alert_rules, so the sweep is resumable/idempotent instead of re-scanning the whole table. */
     alertedAt: timestamp("alerted_at", { withTimezone: true }),
+    /** SS-08 — set once the activation-sweep worker has matched this row against activation_rules
+     * (see signal-activation-sweep.worker.ts), independent of `alertedAt` above (notification vs.
+     * automated next-step are separate consumers, each idempotent/resumable on its own column). */
+    activationCheckedAt: timestamp("activation_checked_at", { withTimezone: true }),
     /** Null = never expires. A stale signal (e.g. hiring-freeze-lifted) stops counting after this. */
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     /**
@@ -103,6 +107,7 @@ export const signals = pgTable(
     index("signals_entity_idx").on(table.entityType, table.entityId, table.detectedAt),
     index("signals_type_idx").on(table.signalType),
     index("signals_unalerted_idx").on(table.alertedAt, table.createdAt),
+    index("signals_unactivation_checked_idx").on(table.activationCheckedAt, table.createdAt),
   ]
 );
 

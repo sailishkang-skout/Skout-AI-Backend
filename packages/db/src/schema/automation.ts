@@ -18,6 +18,11 @@ export const activationRules = pgTable(
     scoreThreshold: integer("score_threshold").notNull(),
     /** e.g. "hiring", "funding", "tech_adopted" — matched against the R11 signal store once it exists. Optional. */
     signalType: text("signal_type"),
+    /** SS-08 — 0-1 floor on the matching signal's own stack-weight (confidence * strength *
+     * recency), from signal.service.ts's `signalStrengthByType`. Null = match on signal-type
+     * presence alone (original R13.4 behavior, unchanged for every existing rule). Only
+     * meaningful alongside `signalType` — ignored when that's unset. */
+    minSignalStrength: real("min_signal_strength"),
     /** "activate" | "add_to_list" | "enroll_sequence" */
     targetAction: text("target_action").notNull(),
     /** listId or sequenceId, depending on targetAction. Null for "activate". */

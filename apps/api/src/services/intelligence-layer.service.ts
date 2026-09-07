@@ -131,15 +131,26 @@ export function parseNextBestActionResponse(raw: string, validActionTypes: reado
 
 // ── Step 7: apply policy ─────────────────────────────────────────────────────
 
+/**
+ * `signalStrengthByType` (SS-08) is the strongest confidence*strength*recency weight seen for
+ * each signal type, from signal.service.ts's `signalStrengthByType(computeSignalStackScore(...))`.
+ * Optional and additive: a rule with no `minSignalStrength` set matches on type presence alone,
+ * exactly as before — this only tightens matching for rules that opt in.
+ */
 export function applyPolicy(
   rules: ActivationRuleDto[],
   prospectScore: number,
-  activeSignalTypes: string[]
+  activeSignalTypes: string[],
+  signalStrengthByType: Record<string, number> = {}
 ): ActivationRuleDto[] {
   return rules.filter((rule) => {
     if (!rule.enabled) return false;
     if (prospectScore < rule.scoreThreshold) return false;
     if (rule.signalType && !activeSignalTypes.includes(rule.signalType)) return false;
+    if (rule.signalType && rule.minSignalStrength != null) {
+      const strength = signalStrengthByType[rule.signalType] ?? 0;
+      if (strength < rule.minSignalStrength) return false;
+    }
     return true;
   });
 }
