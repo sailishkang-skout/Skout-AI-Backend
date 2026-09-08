@@ -34,6 +34,7 @@ import {
 } from "../services/dexter-journey.service.js";
 import { getDexterCommandCenter, listDexterPlans } from "../services/dexter-command-center.service.js";
 import { getRegionalTamGate, seedDemoWinLossDeals } from "../services/regional-tam-gate.service.js";
+import { listSkoutEvents } from "../services/skout-event.service.js";
 
 
 /**
@@ -407,5 +408,21 @@ export async function dexterPlatformRoutes(app: FastifyInstance) {
     }
     const n = await seedDemoWinLossDeals(app.db, request.workspaceId, request.userId);
     return reply.code(201).send({ data: await getRegionalTamGate(app.db, request.workspaceId), seededTo: n });
+  });
+
+  // §7.3 SP-11 — reverse-chronological event-spine feed for the Dexter command center's
+  // event timeline. Tenant-scoped, filterable by type, keyset-paginated via `before`.
+  app.get("/dexter/events", async (request, reply) => {
+    if (!request.workspaceId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    const query = z
+      .object({
+        type: z.string().max(100).optional(),
+        before: z.string().datetime().optional(),
+        limit: z.coerce.number().int().min(1).max(200).optional(),
+      })
+      .safeParse(request.query ?? {});
+    if (!query.success) return reply.code(400).send(errorResponse("Invalid query", 400, query.error.flatten()));
+    const data = await listSkoutEvents(app.db, request.workspaceId, query.data);
+    return reply.send({ data, total: data.length });
   });
 }
