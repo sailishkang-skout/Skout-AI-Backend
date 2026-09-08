@@ -1,0 +1,5 @@
+{
+  "version": "0.2",
+  "words": ["sesv2", "opensearch", "bullmq", "exceljs", "imapflow"],
+  "ignorePaths": ["**/node_modules/**", "**/dist/**"]
+}

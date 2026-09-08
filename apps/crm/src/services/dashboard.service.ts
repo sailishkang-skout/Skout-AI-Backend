@@ -18,6 +18,8 @@ const {
   creditTransactions,
   buyingCommittees,
   buyingCommitteeMembers,
+  signals,
+  evidenceLedger,
 } = schema;
 
 export interface DashboardOverviewDto {
@@ -87,6 +89,43 @@ export interface MissingStakeholderFlag {
   computedAt: string;
 }
 
+/** §SS-10 CRM Intelligence — disengagement risk flag for companies with no recent activity. */
+export interface DisengagementFlag {
+  id: string;
+  companyId: string;
+  companyName: string;
+  daysSinceActivity: number;
+  lastActivityAt: string | null;
+  rule: string;
+  computedAt: string;
+}
+
+/** §SS-10 CRM Intelligence — renewal risk flag for deals approaching their contract end date. */
+export interface RenewalRiskFlag {
+  id: string;
+  dealId: string;
+  dealName: string;
+  companyId: string;
+  companyName: string;
+  contractEndDate: string;
+  daysUntilExpiry: number;
+  rule: string;
+  computedAt: string;
+  amount: number | null;
+  currency: string;
+}
+
+/** §SS-10 CRM Intelligence — expansion signal flag for companies showing growth signals. */
+export interface ExpansionSignalFlag {
+  id: string;
+  companyId: string;
+  companyName: string;
+  signalType: string;
+  detectedAt: string;
+  rule: string;
+  computedAt: string;
+}
+
 /** R19.1 — admin-only exec rollup. Deliberately omits a "risk score" — R18 (risk detection)
  * doesn't exist yet, so "stale deals" (no update in 14+ days) stands in as an honest, real
  * signal rather than a fabricated one. See docs/tickets for the R18 dependency note. */
@@ -104,6 +143,17 @@ const STALE_DEALS_LIMIT = 10;
 const MISSING_STAKEHOLDER_DEALS_LIMIT = 200;
 const MISSING_STAKEHOLDER_RULE = "decision_maker_not_linked_to_deal";
 const DECISION_MAKER_ROLE = "Decision Maker";
+// SS-10 CRM Intelligence retention flags constants
+const DISENGAGEMENT_INACTIVITY_DAYS = 30;
+const DISENGAGEMENT_FLAGS_LIMIT = 50;
+const DISENGAGEMENT_RULE = "company_inactivity_exceeds_threshold";
+const RENEWAL_WINDOW_DAYS = 60;
+const RENEWAL_RISK_FLAGS_LIMIT = 50;
+const RENEWAL_RISK_RULE = "contract_expiring_within_renewal_window";
+const EXPANSION_LOOKBACK_DAYS = 14;
+const EXPANSION_FLAGS_LIMIT = 50;
+const EXPANSION_SIGNAL_RULE = "growth_signal_detected_recently";
+const EXPANSION_SIGNAL_TYPES = new Set(["headcount_growth", "recent_hiring", "recent_funding", "funding_round"]);
 
 /** Mirrors account-360.routes.ts's inline "Buying Committee Influence Map" title heuristic
  * (apps/api/src/routes/account-360.routes.ts) so this account-role signal doesn't require a
@@ -383,6 +433,185 @@ export class DashboardService {
    * is "new pipeline created per day" rather than a historical open-value snapshot. */
   async pipelineVelocity(workspaceId: string, days = 30): Promise<{ date: string; value: number }[]> {
     return this.dealsService.pipelineVelocity(workspaceId, days);
+  }
+
+  /** §SS-10 CRM Intelligence — disengagement risk flags for companies with no recent activity.
+   * Not role-gated, same as staleDeals() and missingStakeholders(). */
+  async disengagementFlags(workspaceId: string): Promise<DisengagementFlag[]> {
+    // Get all active customer companies
+    const customerCompanies = await this.db
+      .select({
+        id: companies.id,
+        name: companies.name,
+      })
+      .from(companies)
+      .where(and(eq(companies.workspaceId, workspaceId), isNull(companies.deletedAt)))
+      .limit(DISENGAGEMENT_FLAGS_LIMIT);
+
+    if (customerCompanies.length === 0) return [];
+
+    const companyIds = customerCompanies.map(c => c.id);
+    
+    // Get last activity for each company (activities uses entityId and entityType='company')
+    const lastActivities = await this.db
+      .select({
+        entityId: activities.entityId,
+        lastActivityAt: sql<Date>`max(${activities.occurredAt})`
+      })
+      .from(activities)
+      .where(and(
+        eq(activities.workspaceId, workspaceId), 
+        inArray(activities.entityId, companyIds),
+        eq(activities.entityType, 'company')
+      ))
+      .groupBy(activities.entityId);
+
+    const lastActivityByCompany = new Map<string, Date>();
+    for (const row of lastActivities) {
+      if (row.entityId) {
+        lastActivityByCompany.set(row.entityId, row.lastActivityAt);
+      }
+    }
+
+    const computedAt = new Date().toISOString();
+    const now = Date.now();
+    const flags: DisengagementFlag[] = [];
+
+    for (const company of customerCompanies) {
+      const lastActivity = lastActivityByCompany.get(company.id);
+      const daysSinceActivity = lastActivity 
+        ? Math.floor((now - lastActivity.getTime()) / (1000 * 60 * 60 * 24))
+        : Infinity;
+
+      if (daysSinceActivity >= DISENGAGEMENT_INACTIVITY_DAYS) {
+        flags.push({
+          id: `disengagement-${company.id}`,
+          companyId: company.id,
+          companyName: company.name,
+          daysSinceActivity: isFinite(daysSinceActivity) ? daysSinceActivity : 999,
+          lastActivityAt: lastActivity?.toISOString() ?? null,
+          rule: DISENGAGEMENT_RULE,
+          computedAt,
+        });
+      }
+    }
+
+    return flags;
+  }
+
+  /** §SS-10 CRM Intelligence — renewal risk flags for deals approaching their contract end date.
+   * Not role-gated, same as other CRM Intelligence flags. */
+  async renewalRiskFlags(workspaceId: string): Promise<RenewalRiskFlag[]> {
+    // Get won deals with contract end dates
+    const expiringDeals = await this.db
+      .select({
+        id: deals.id,
+        name: deals.name,
+        companyId: deals.companyId,
+        contractEndDate: deals.contractEndDate,
+        amount: deals.amount,
+        currency: deals.currency,
+      })
+      .from(deals)
+      .where(
+        and(
+          eq(deals.workspaceId, workspaceId),
+          eq(deals.status, "won"),
+          isNull(deals.deletedAt),
+          sql`${deals.contractEndDate} is not null`
+        )
+      )
+      .limit(RENEWAL_RISK_FLAGS_LIMIT);
+
+    if (expiringDeals.length === 0) return [];
+
+    const companyIds = expiringDeals.filter(d => d.companyId).map(d => d.companyId as string);
+    const companyList = await this.db
+      .select({ id: companies.id, name: companies.name })
+      .from(companies)
+      .where(and(eq(companies.workspaceId, workspaceId), inArray(companies.id, companyIds)));
+
+    const companyMap = new Map<string, string>();
+    for (const company of companyList) {
+      companyMap.set(company.id, company.name);
+    }
+
+    const computedAt = new Date().toISOString();
+    const now = Date.now();
+    const flags: RenewalRiskFlag[] = [];
+
+    for (const deal of expiringDeals) {
+      if (!deal.contractEndDate) continue;
+      
+      const contractEnd = new Date(deal.contractEndDate);
+      const daysUntilExpiry = Math.ceil((contractEnd.getTime() - now) / (1000 * 60 * 60 * 24));
+
+      if (daysUntilExpiry <= RENEWAL_WINDOW_DAYS) {
+        flags.push({
+          id: `renewal-risk-${deal.id}`,
+          dealId: deal.id,
+          dealName: deal.name,
+          companyId: deal.companyId!,
+          companyName: companyMap.get(deal.companyId!) || "Unknown Company",
+          contractEndDate: contractEnd.toISOString(),
+          daysUntilExpiry,
+          rule: RENEWAL_RISK_RULE,
+          computedAt,
+          amount: deal.amount === null ? null : Number(deal.amount),
+          currency: deal.currency,
+        });
+      }
+    }
+
+    return flags;
+  }
+
+  /** §SS-10 CRM Intelligence — expansion signal flags for companies showing recent growth signals.
+   * Not role-gated, same as other CRM Intelligence flags. */
+  async expansionSignalFlags(workspaceId: string): Promise<ExpansionSignalFlag[]> {
+    // Get recent expansion signals joined with evidenceLedger for workspace-scoping
+    const recentSignals = await this.db
+      .select({
+        id: signals.id,
+        entityId: signals.entityId,
+        signalType: signals.signalType,
+        detectedAt: signals.detectedAt,
+        companyId: companies.id,
+        companyName: companies.name,
+      })
+      .from(signals)
+      .leftJoin(evidenceLedger, eq(signals.evidenceId, evidenceLedger.id))
+      .leftJoin(companies, and(
+        eq(companies.workspaceId, workspaceId),
+        eq(companies.id, signals.entityId)
+      ))
+      .where(
+        and(
+          eq(evidenceLedger.workspaceId, workspaceId),
+          inArray(signals.signalType, Array.from(EXPANSION_SIGNAL_TYPES)),
+          sql`${signals.detectedAt} >= now() - interval '${sql.raw(String(EXPANSION_LOOKBACK_DAYS))} days'`
+        )
+      )
+      .limit(EXPANSION_FLAGS_LIMIT);
+
+    if (recentSignals.length === 0) return [];
+
+    const computedAt = new Date().toISOString();
+    const flags: ExpansionSignalFlag[] = [];
+
+    for (const signal of recentSignals) {
+      flags.push({
+        id: `expansion-${signal.id}`,
+        companyId: signal.entityId,
+        companyName: signal.companyName || "Unknown Company",
+        signalType: signal.signalType,
+        detectedAt: signal.detectedAt.toISOString(),
+        rule: EXPANSION_SIGNAL_RULE,
+        computedAt,
+      });
+    }
+
+    return flags;
   }
 
   /** R19.1 — admin-gated exec rollup combining overview + switching-cost + real risk-adjacent
