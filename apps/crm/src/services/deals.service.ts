@@ -1,4 +1,4 @@
-import { and, eq, gte, isNull, sql } from "drizzle-orm";
+import { and, eq, gte, ilike, isNull, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, recordEvidence, getLatestEvidenceByAttribute } from "@skout/db";
 import type { DealCreateInput, DealUpdateInput } from "@skout/shared";
@@ -92,12 +92,13 @@ export class DealsService {
 
   async list(
     workspaceId: string,
-    options: { limit: number; offset: number; stageId?: string; status?: string; ownerId?: string }
+    options: { limit: number; offset: number; stageId?: string; status?: string; ownerId?: string; search?: string }
   ): Promise<{ data: DealDto[]; total: number }> {
     const conditions = [eq(deals.workspaceId, workspaceId), isNull(deals.deletedAt)];
     if (options.stageId) conditions.push(eq(deals.stageId, options.stageId));
     if (options.status) conditions.push(eq(deals.status, options.status));
     if (options.ownerId) conditions.push(eq(deals.ownerId, options.ownerId));
+    if (options.search) conditions.push(ilike(deals.name, `%${options.search}%`));
 
     const rows = await this.db
       .select()
