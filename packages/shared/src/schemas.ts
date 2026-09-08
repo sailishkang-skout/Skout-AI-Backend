@@ -415,16 +415,19 @@ export const paginationQuerySchema = z.object({
 
 export const companyListQuerySchema = paginationQuerySchema.extend({
   ownerId: z.string().uuid().optional(),
+  search: z.string().min(1).max(200).optional(),
 });
 
 export const contactListQuerySchema = paginationQuerySchema.extend({
   companyId: z.string().uuid().optional(),
+  search: z.string().min(1).max(200).optional(),
 });
 
 export const dealListQuerySchema = paginationQuerySchema.extend({
   stageId: z.string().uuid().optional(),
   status: z.enum(["open", "won", "lost"]).optional(),
   ownerId: z.string().uuid().optional(),
+  search: z.string().min(1).max(200).optional(),
 });
 
 export const taskListQuerySchema = paginationQuerySchema.extend({

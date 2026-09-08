@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, ilike, isNull, or } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, recordEvidence, getLatestEvidenceByAttribute } from "@skout/db";
 import type { ContactCreateInput, ContactUpdateInput } from "@skout/shared";
@@ -80,10 +80,16 @@ export class ContactsService {
 
   async list(
     workspaceId: string,
-    options: { limit: number; offset: number; companyId?: string }
+    options: { limit: number; offset: number; companyId?: string; search?: string }
   ): Promise<{ data: ContactDto[]; total: number }> {
     const conditions = [eq(contacts.workspaceId, workspaceId), isNull(contacts.deletedAt)];
     if (options.companyId) conditions.push(eq(contacts.companyId, options.companyId));
+    if (options.search) {
+      const term = `%${options.search}%`;
+      conditions.push(
+        or(ilike(contacts.firstName, term), ilike(contacts.lastName, term), ilike(contacts.email, term))!
+      );
+    }
 
     const rows = await this.db
       .select()
