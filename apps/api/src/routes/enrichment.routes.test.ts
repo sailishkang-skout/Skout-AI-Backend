@@ -340,4 +340,21 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
       expect(primaryEmail).toBeUndefined();
     }
   });
+
+  it("GET /enrichment/efficiency returns a 7-day, non-negative daily series for the caller's workspace", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/enrichment/efficiency",
+      headers: { "x-workspace-id": WORKSPACE },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { workspaceId: string; data: { date: string; spent: number; found: number }[] };
+    expect(typeof body.workspaceId).toBe("string");
+    expect(body.data).toHaveLength(7);
+    for (const point of body.data) {
+      expect(point.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(point.spent).toBeGreaterThanOrEqual(0);
+      expect(point.found).toBeGreaterThanOrEqual(0);
+    }
+  });
 });

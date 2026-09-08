@@ -174,3 +174,68 @@ export function createAnalyticsService(db: Db | null, config: Env) {
 }
 
 export type AnalyticsReport = Awaited<ReturnType<ReturnType<typeof createAnalyticsService>["getReport"]>>;
+
+export interface EnrichmentEfficiencyPoint {
+  date: string;
+  spent: number;
+  found: number;
+}
+
+/**
+ * GTM revamp — "Enrichment Efficiency" chart data: credits spent specifically on enrichment
+ * (action = "enrichment", excluding search/ai_score/export spend that getReport's credits.daily
+ * lumps together) vs. valid emails found, both bucketed per day over the trailing `days` window.
+ * "Valid email found" reuses the codebase's existing verified-email convention — an enrichment
+ * result row for field "email" marked isPrimary, the same gate isVerifiedEmailStatus/the pal
+ * engine's waterfall use to decide an email is real (see utils/verified-email.ts).
+ */
+export async function getEnrichmentEfficiency(
+  db: Db | null,
+  workspaceId: string,
+  days = 7
+): Promise<EnrichmentEfficiencyPoint[]> {
+  const dailyMap = new Map(buildDailySeries(days).map((date) => [date, { spent: 0, found: 0 }]));
+  if (!db) return [...dailyMap.entries()].map(([date, v]) => ({ date, ...v }));
+
+  const since = new Date();
+  since.setHours(0, 0, 0, 0);
+  since.setDate(since.getDate() - (days - 1));
+
+  const spendRows = await db
+    .select({ amount: schema.creditTransactions.amount, createdAt: schema.creditTransactions.createdAt })
+    .from(schema.creditTransactions)
+    .where(
+      scopedTo(
+        schema.creditTransactions,
+        workspaceId,
+        eq(schema.creditTransactions.action, "enrichment"),
+        gte(schema.creditTransactions.createdAt, since)
+      )
+    );
+
+  for (const row of spendRows) {
+    if (row.amount >= 0) continue;
+    const bucket = dailyMap.get(dayKey(new Date(row.createdAt)));
+    if (bucket) bucket.spent += Math.abs(row.amount);
+  }
+
+  const foundRows = await db
+    .select({ createdAt: schema.enrichmentResults.createdAt })
+    .from(schema.enrichmentResults)
+    .where(
+      scopedTo(
+        schema.enrichmentResults,
+        workspaceId,
+        eq(schema.enrichmentResults.fieldName, "email"),
+        eq(schema.enrichmentResults.isPrimary, true),
+        gte(schema.enrichmentResults.createdAt, since)
+      )
+    );
+
+  for (const row of foundRows) {
+    const bucket = dailyMap.get(dayKey(new Date(row.createdAt)));
+    if (bucket) bucket.found += 1;
+  }
+
+  return [...dailyMap.entries()].map(([date, v]) => ({ date, ...v }));
+}

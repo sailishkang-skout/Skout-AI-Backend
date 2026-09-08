@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, scopedTo, scopedById } from "@skout/db";
 import { createLogger } from "@skout/observability";
@@ -958,6 +958,83 @@ export class SequenceService {
     });
 
     return { id: seq.id, name: seq.name, status: seq.status, enrollments: enrollmentSummary, steps: stepsOut };
+  }
+
+  /**
+   * GTM revamp — Global Sequence Performance chart: real per-day open rate and reply rate across
+   * every sequence in the workspace, over the trailing `days` window. Denominator for both rates
+   * is that day's "sent" (executed email steps), reusing getAnalytics' openRate convention.
+   * Reply timestamps land on sequenceEnrollments.completedAt (see inbound-reply.service.ts,
+   * which overwrites it the moment a human reply is classified) and can lag the send by days —
+   * so this is a same-day engagement-rate approximation, not a true cohort conversion rate; the
+   * workspace has no per-cohort reply attribution today.
+   */
+  async getWorkspacePerformance(workspaceId: string, days = 14) {
+    const since = new Date();
+    since.setHours(0, 0, 0, 0);
+    since.setDate(since.getDate() - (days - 1));
+
+    const dailyMap = new Map<string, { sent: number; opens: number; replies: number }>();
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      dailyMap.set(d.toISOString().slice(0, 10), { sent: 0, opens: 0, replies: 0 });
+    }
+
+    const sentRows = await this.db
+      .select({ executedAt: sequenceEnrollmentSteps.executedAt })
+      .from(sequenceEnrollmentSteps)
+      .innerJoin(sequenceEnrollments, eq(sequenceEnrollmentSteps.enrollmentId, sequenceEnrollments.id))
+      .where(
+        scopedTo(
+          sequenceEnrollments,
+          workspaceId,
+          eq(sequenceEnrollmentSteps.status, "executed"),
+          gte(sequenceEnrollmentSteps.executedAt, since)
+        )
+      );
+    for (const row of sentRows) {
+      if (!row.executedAt) continue;
+      const bucket = dailyMap.get(new Date(row.executedAt).toISOString().slice(0, 10));
+      if (bucket) bucket.sent++;
+    }
+
+    const openRows = await this.db
+      .select({ createdAt: sequenceTrackingEvents.createdAt })
+      .from(sequenceTrackingEvents)
+      .where(
+        scopedTo(
+          sequenceTrackingEvents,
+          workspaceId,
+          eq(sequenceTrackingEvents.eventType, "open"),
+          gte(sequenceTrackingEvents.createdAt, since)
+        )
+      );
+    for (const row of openRows) {
+      const bucket = dailyMap.get(new Date(row.createdAt).toISOString().slice(0, 10));
+      if (bucket) bucket.opens++;
+    }
+
+    const replyRows = await this.db
+      .select({ completedAt: sequenceEnrollments.completedAt })
+      .from(sequenceEnrollments)
+      .where(
+        scopedTo(sequenceEnrollments, workspaceId, eq(sequenceEnrollments.status, "replied"), gte(sequenceEnrollments.completedAt, since))
+      );
+    for (const row of replyRows) {
+      if (!row.completedAt) continue;
+      const bucket = dailyMap.get(new Date(row.completedAt).toISOString().slice(0, 10));
+      if (bucket) bucket.replies++;
+    }
+
+    return [...dailyMap.entries()].map(([date, v]) => ({
+      date,
+      sent: v.sent,
+      opens: v.opens,
+      replies: v.replies,
+      openRate: v.sent > 0 ? Math.round((v.opens / v.sent) * 100) : 0,
+      replyRate: v.sent > 0 ? Math.round((v.replies / v.sent) * 100) : 0,
+    }));
   }
 
   /** Cancel an active enrollment — marks it cancelled and stops future steps. */

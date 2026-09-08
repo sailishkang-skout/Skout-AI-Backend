@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { searchFiltersSchema } from "@skout/shared";
 import { buildEnrichmentService, InsufficientCreditsError, SCORE_CREDIT_COST } from "../services/enrichment/index.js";
+import { getEnrichmentEfficiency } from "../services/analytics.service.js";
 import { getWorkspaceIcp } from "../services/icp.service.js";
 import { getAsyncJob } from "../services/async-job.service.js";
 import { personalizeProspect } from "../services/personalize.service.js";
@@ -43,6 +44,13 @@ export async function enrichmentRoutes(app: FastifyInstance) {
     const workspaceId = requireWorkspaceId(request);
     const svc = buildEnrichmentService(app.db, app.config);
     return reply.send({ workspaceId, balance: await svc.getCredits(workspaceId) });
+  });
+
+  /** GTM revamp — Enrichment Efficiency chart: real daily credits-spent vs. valid-emails-found. */
+  app.get("/enrichment/efficiency", async (request, reply) => {
+    const workspaceId = requireWorkspaceId(request);
+    const data = await getEnrichmentEfficiency(app.db, workspaceId);
+    return reply.send({ workspaceId, data });
   });
 
   app.get("/enrichment/jobs", async (request, reply) => {

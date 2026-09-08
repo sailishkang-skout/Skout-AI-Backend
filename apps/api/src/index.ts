@@ -18,6 +18,7 @@ import { startSmartListRefreshWorker } from "./workers/smart-list-refresh.worker
 import { startSmartListRefreshSweepWorker } from "./workers/smart-list-refresh-sweep.worker.js";
 import { startReminderSweepWorker } from "./workers/reminder-sweep.worker.js";
 import { startSignalAlertSweepWorker } from "./workers/signal-alert-sweep.worker.js";
+import { startSignalActivationSweepWorker } from "./workers/signal-activation-sweep.worker.js";
 import { startAlertDigestSweepWorker } from "./workers/alert-digest-sweep.worker.js";
 import { startRiskDecaySweepWorker } from "./workers/risk-decay-sweep.worker.js";
 import { startRetentionSignalsSweepWorker } from "./workers/retention-signals-sweep.worker.js";
@@ -64,6 +65,7 @@ async function main() {
   const stopSmartListRefreshSweepWorker = await startSmartListRefreshSweepWorker(config);
   const stopReminderSweepWorker = await startReminderSweepWorker(config);
   const stopSignalAlertSweepWorker = await startSignalAlertSweepWorker(config);
+  const stopSignalActivationSweepWorker = await startSignalActivationSweepWorker(config);
   const stopAlertDigestSweepWorker = await startAlertDigestSweepWorker(config);
   const stopRiskDecaySweepWorker = await startRiskDecaySweepWorker(config);
   const stopRetentionSignalsSweepWorker = await startRetentionSignalsSweepWorker(config);
@@ -100,6 +102,7 @@ async function main() {
     await stopRetentionSignalsSweepWorker();
     await stopRiskDecaySweepWorker();
     await stopAlertDigestSweepWorker();
+    await stopSignalActivationSweepWorker();
     await stopSignalAlertSweepWorker();
     await stopReminderSweepWorker();
     await stopSmartListRefreshSweepWorker();

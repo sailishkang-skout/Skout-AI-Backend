@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, scopedTo } from "@skout/db";
 import { HttpError } from "../utils/http.js";
@@ -61,6 +61,54 @@ export async function upsertActionMode(
     })
     .returning();
   return row!;
+}
+
+/** §8.1 onboarding "autonomy" step's three choices, matching the frontend wizard's copy. */
+export const ONBOARDING_AUTONOMY_MODES = ["manual", "assisted", "autonomous"] as const;
+export type OnboardingAutonomyMode = (typeof ONBOARDING_AUTONOMY_MODES)[number];
+
+/**
+ * SS-09 — the onboarding "autonomy" question was captured and stored on `workspace_icp.config`
+ * but never actually reached the Policy Gateway that gates real automated actions
+ * (`automation_policies` / `assertAllowed`), so the choice had no server-side effect. This turns
+ * it into real `automation_policies` rows across every known action key:
+ *
+ *  - "manual" ("you approve every send and action") — only overrides the one action key whose
+ *    system default is already "auto" (`sequence.enroll`), forcing it to "ask" too. Every other
+ *    key's default is already ask/draft/approve (review required), so it's left alone rather
+ *    than flattened — no reason to make an approve-gated action merely ask-gated.
+ *  - "assisted" ("drafts and acts on routine steps, flags anything new") — this is exactly what
+ *    DEFAULT_ACTION_MODES already encodes (routine sequence.enroll auto, riskier actions
+ *    ask/approve/draft), so it clears any prior override back to those system defaults rather
+ *    than writing anything.
+ *  - "autonomous" ("sends and acts... without a per-item review") — forces every action key to
+ *    "auto", including the ones that otherwise require approval.
+ *
+ * Called once, when onboarding actually completes (`onboarding.completedAt` set) — not on every
+ * incremental wizard-step save.
+ */
+export async function applyOnboardingAutonomyMode(
+  db: Db,
+  workspaceId: string,
+  autonomyMode: OnboardingAutonomyMode,
+  userId?: string
+): Promise<void> {
+  const actionKeys = Object.keys(DEFAULT_ACTION_MODES);
+
+  // Reset first, every time — switching autonomy levels must be able to revert a previous
+  // level's override (e.g. autonomous's "auto" on dexter.plan_invoke), not just layer a new
+  // one on top of whatever rows already exist.
+  await db
+    .delete(automationPolicies)
+    .where(and(eq(automationPolicies.workspaceId, workspaceId), inArray(automationPolicies.actionKey, actionKeys)));
+
+  if (autonomyMode === "assisted") return; // system defaults, no override rows needed
+
+  const targetMode: AutomationMode = autonomyMode === "autonomous" ? "auto" : "ask";
+  for (const actionKey of actionKeys) {
+    if (autonomyMode === "manual" && DEFAULT_ACTION_MODES[actionKey] !== "auto") continue;
+    await upsertActionMode(db, workspaceId, actionKey, targetMode, userId);
+  }
 }
 
 export async function listPolicies(db: Db, workspaceId: string) {

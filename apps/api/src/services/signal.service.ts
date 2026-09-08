@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, scopedTo } from "@skout/db";
 import type { Env } from "../config/env.js";
@@ -48,6 +48,13 @@ function serialize(row: typeof signals.$inferSelect): SignalRecord {
     expiresAt: row.expiresAt?.toISOString() ?? null,
     activationPaths: (row.activationPaths as TargetAction[] | null) ?? [],
   };
+}
+
+/** Public wrapper around `serialize` — for callers outside this module (e.g. the SS-08
+ * activation-sweep worker) that already have a raw `signals` row in hand and need it as a
+ * `SignalRecord` to fold into `computeSignalStackScore` alongside rows from `listSignalsForEntity`. */
+export function toSignalRecord(row: typeof signals.$inferSelect): SignalRecord {
+  return serialize(row);
 }
 
 /** A signal past its expiry no longer describes current, actionable timing. */
@@ -290,6 +297,21 @@ export function computeSignalStackScore(
   };
 }
 
+/**
+ * SS-08 — the strongest (confidence * strength * recency) contribution per signal type, derived
+ * from an already-computed `SignalStackScore`. Doesn't touch `computeSignalStackScore` itself —
+ * this only reads its output — so activation-rules.service.ts's `minSignalStrength` gate can
+ * require a genuinely strong/fresh signal of a type, not just any signal of that type ever
+ * recorded, without changing the stacking math itself.
+ */
+export function signalStrengthByType(score: Pick<SignalStackScore, "contributingSignals">): Record<string, number> {
+  const map: Record<string, number> = {};
+  for (const c of score.contributingSignals) {
+    map[c.signalType] = Math.max(map[c.signalType] ?? 0, c.weight);
+  }
+  return map;
+}
+
 export interface RecordSignalInput {
   entityType?: string;
   entityId: string;
@@ -388,6 +410,74 @@ export async function listWorkspaceAccountSignals(
     .sort((a, b) => b.stackScore.score - a.stackScore.score);
 
   return opts.limit ? summaries.slice(0, opts.limit) : summaries;
+}
+
+export interface SignalDensityBucket {
+  signalType: string;
+  count: number;
+}
+
+export interface SignalDensityResult {
+  byType: SignalDensityBucket[];
+  totalThisPeriod: number;
+  totalPreviousPeriod: number;
+  /** null when the previous period had zero signals — a percentage change would be undefined. */
+  changePct: number | null;
+}
+
+/**
+ * GTM revamp — "Signal Density" chart data: real per-type signal volume for the workspace's
+ * activated companies over the trailing `days` window, plus a week-over-week comparison against
+ * the immediately preceding window of the same length (replaces the frontend's hardcoded
+ * "Signal volume is up 24%" claim). Mirrors listWorkspaceAccountSignals' workspace-scoping
+ * approach since `signals` itself carries no workspaceId.
+ */
+export async function getSignalDensity(db: Db, workspaceId: string, days = 7): Promise<SignalDensityResult> {
+  const activations = await db
+    .select({ companyId: prospectActivations.companyId })
+    .from(prospectActivations)
+    .where(scopedTo(prospectActivations, workspaceId));
+
+  const companyIds = [...new Set(activations.map((a) => a.companyId))];
+  if (companyIds.length === 0) {
+    return { byType: [], totalThisPeriod: 0, totalPreviousPeriod: 0, changePct: null };
+  }
+
+  const currentWindow = sql`now() - interval '${sql.raw(String(days))} days'`;
+  const previousWindowStart = sql`now() - interval '${sql.raw(String(days * 2))} days'`;
+
+  const rows = await db
+    .select({
+      signalType: signals.signalType,
+      isCurrent: sql<boolean>`${signals.detectedAt} >= ${currentWindow}`,
+      count: sql<string>`count(*)`,
+    })
+    .from(signals)
+    .where(and(inArray(signals.entityId, companyIds), sql`${signals.detectedAt} >= ${previousWindowStart}`))
+    .groupBy(signals.signalType, sql`${signals.detectedAt} >= ${currentWindow}`);
+
+  const byType = new Map<string, number>();
+  let totalThisPeriod = 0;
+  let totalPreviousPeriod = 0;
+  for (const row of rows) {
+    const count = Number(row.count);
+    if (row.isCurrent) {
+      byType.set(row.signalType, (byType.get(row.signalType) ?? 0) + count);
+      totalThisPeriod += count;
+    } else {
+      totalPreviousPeriod += count;
+    }
+  }
+
+  const changePct =
+    totalPreviousPeriod > 0 ? ((totalThisPeriod - totalPreviousPeriod) / totalPreviousPeriod) * 100 : null;
+
+  return {
+    byType: [...byType.entries()].map(([signalType, count]) => ({ signalType, count })),
+    totalThisPeriod,
+    totalPreviousPeriod,
+    changePct,
+  };
 }
 
 export async function recordSignal(db: Db, input: RecordSignalInput): Promise<SignalRecord> {

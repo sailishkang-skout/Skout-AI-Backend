@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { schema } from "@skout/db";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
 import { buildRouteTestApp } from "../test/build-route-test-app.js";
@@ -32,6 +33,19 @@ describe("deals routes (unit)", () => {
       openDeals: 0,
       valueByCurrency: [],
     });
+
+    await app.close();
+  });
+
+  it("GET /deals/created-count returns a zeroed count without a database", async () => {
+    const app = await buildRouteTestApp();
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/deals/created-count",
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ count: 0 });
 
     await app.close();
   });
@@ -168,6 +182,19 @@ describe("meetings routes (unit)", () => {
     expect(res.statusCode).toBe(503);
     await app.close();
   });
+
+  it("GET /meetings/booked-count returns a zeroed count without a database", async () => {
+    const app = await buildRouteTestApp();
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/meetings/booked-count",
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ count: 0 });
+
+    await app.close();
+  });
 });
 
 describe("dashboard routes (unit)", () => {
@@ -223,6 +250,34 @@ describe.skipIf(!hasDatabase)("CRM routes (integration)", () => {
     expect(res.statusCode).toBe(200);
     const body = res.json() as { workspaceId: string };
     expect(body.workspaceId).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("GET /companies?search matches by name, case-insensitively, and excludes non-matches", async () => {
+    const email = "crm-companies-search@test.com";
+    const provision = await app.inject({
+      method: "GET",
+      url: "/api/v1/companies",
+      headers: asUser(email),
+    });
+    const { workspaceId } = provision.json() as { workspaceId: string };
+
+    // Inserted directly (not via POST /companies) to test the search filter in isolation from
+    // RBAC — this workspace's stub owner isn't the point of this test.
+    await app.db!.insert(schema.companies).values([
+      { workspaceId, name: "Quicksilver Robotics Inc" },
+      { workspaceId, name: "Totally Unrelated Co" },
+    ]);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/companies?search=quicksilver",
+      headers: asUser(email),
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { data: { name: string }[] };
+    expect(body.data.some((c) => c.name === "Quicksilver Robotics Inc")).toBe(true);
+    expect(body.data.some((c) => c.name === "Totally Unrelated Co")).toBe(false);
   });
 
   it("GET /deals/summary shares workspace with companies for same stub user", async () => {

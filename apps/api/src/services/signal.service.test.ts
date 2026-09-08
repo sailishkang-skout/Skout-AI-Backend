@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   computeSignalStackScore,
+  getSignalDensity,
   isSignalExpired,
   listSignalsForEntities,
   listSignalsForEntity,
@@ -333,6 +334,23 @@ describe("computeSignalStackScore", () => {
     const result = computeSignalStackScore([signal({ confidence: null })], { now: NOW });
     expect(result.contributingSignals[0]?.confidence).toBeGreaterThan(0);
   });
+
+  it("§8.5 SS-07 — leadership_change and news_mention stack like any other timing signal type, no scoring changes needed", () => {
+    const one = computeSignalStackScore([signal({ signalType: "recent_hiring" })], { now: NOW });
+    const stacked = computeSignalStackScore(
+      [
+        signal({ id: "a", signalType: "recent_hiring" }),
+        signal({ id: "b", signalType: "leadership_change" }),
+        signal({ id: "c", signalType: "news_mention" }),
+      ],
+      { now: NOW }
+    );
+    expect(stacked.distinctSignalTypes).toBe(3);
+    expect(stacked.score).toBeGreaterThan(one.score);
+    expect(stacked.contributingSignals.map((c) => c.signalType)).toEqual(
+      expect.arrayContaining(["leadership_change", "news_mention"])
+    );
+  });
 });
 
 describe("signalStackWeightsFromEnv", () => {
@@ -554,5 +572,69 @@ describe("listWorkspaceAccountSignals", () => {
 
     const result = await listWorkspaceAccountSignals(db as never, config, "ws-1", { limit: 1 });
     expect(result).toHaveLength(1);
+  });
+});
+
+describe("getSignalDensity", () => {
+  function activationsChain(rows: unknown[]) {
+    const c: Record<string, unknown> = {};
+    c.from = vi.fn().mockReturnValue(c);
+    c.where = vi.fn().mockResolvedValue(rows);
+    return c;
+  }
+
+  function groupByChain(rows: unknown[]) {
+    const c: Record<string, unknown> = {};
+    c.from = vi.fn().mockReturnValue(c);
+    c.where = vi.fn().mockReturnValue(c);
+    c.groupBy = vi.fn().mockResolvedValue(rows);
+    return c;
+  }
+
+  it("returns all-zero result with no signals query when the workspace has no activated companies", async () => {
+    const db = { select: vi.fn().mockReturnValue(activationsChain([])) };
+    const result = await getSignalDensity(db as never, "ws-1");
+    expect(result).toEqual({ byType: [], totalThisPeriod: 0, totalPreviousPeriod: 0, changePct: null });
+    expect(db.select).toHaveBeenCalledTimes(1);
+  });
+
+  it("aggregates per-type counts for the current period and totals for both periods", async () => {
+    const db = {
+      select: vi
+        .fn()
+        .mockReturnValueOnce(activationsChain([{ companyId: "c1" }, { companyId: "c2" }]))
+        .mockReturnValueOnce(
+          groupByChain([
+            { signalType: "recent_hiring", isCurrent: true, count: "3" },
+            { signalType: "recent_funding", isCurrent: true, count: "1" },
+            { signalType: "recent_hiring", isCurrent: false, count: "2" },
+          ])
+        ),
+    };
+
+    const result = await getSignalDensity(db as never, "ws-1");
+
+    expect(result.byType).toEqual(
+      expect.arrayContaining([
+        { signalType: "recent_hiring", count: 3 },
+        { signalType: "recent_funding", count: 1 },
+      ])
+    );
+    expect(result.totalThisPeriod).toBe(4);
+    expect(result.totalPreviousPeriod).toBe(2);
+    expect(result.changePct).toBe(100); // (4 - 2) / 2 * 100
+  });
+
+  it("changePct is null when the previous period had zero signals — avoids a div-by-zero claim", async () => {
+    const db = {
+      select: vi
+        .fn()
+        .mockReturnValueOnce(activationsChain([{ companyId: "c1" }]))
+        .mockReturnValueOnce(groupByChain([{ signalType: "recent_hiring", isCurrent: true, count: "5" }])),
+    };
+
+    const result = await getSignalDensity(db as never, "ws-1");
+    expect(result.totalPreviousPeriod).toBe(0);
+    expect(result.changePct).toBeNull();
   });
 });

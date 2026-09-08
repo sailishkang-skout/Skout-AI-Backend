@@ -125,6 +125,10 @@ export function rawToCompanyCandidate(raw: {
       : undefined;
   const annualRevenue =
     typeof p.annualRevenue === "number" ? p.annualRevenue : secFields.annualRevenue;
+  const leadershipChange = p.leadershipChange as CompanyCandidate["leadershipChange"];
+  const newsMentions = Array.isArray(p.newsMentions)
+    ? (p.newsMentions as CompanyCandidate["newsMentions"])
+    : undefined;
 
   const candidate: CompanyCandidate = {
     source: raw.source as CompanyCandidate["source"],
@@ -146,6 +150,8 @@ export function rawToCompanyCandidate(raw: {
     isHiring,
     openJobs,
     hiringByDept,
+    leadershipChange,
+    newsMentions,
     foundedDate: foundedYear ? `${foundedYear}-01-01` : (p.foundedDate as string | undefined),
     scrapedAt,
     rawS3Key: raw.rawS3Key,
@@ -161,6 +167,8 @@ export function rawToCompanyCandidate(raw: {
         ["annualRevenue", annualRevenue],
         ["isHiring", isHiring],
         ["openJobs", openJobs],
+        ["leadershipChange", leadershipChange],
+        ["newsMentions", newsMentions?.length ? newsMentions : undefined],
         ["techStack", techStack.length ? techStack : undefined],
       ],
       raw.source,
@@ -184,6 +192,8 @@ function companyQualityScore(c: CompanyCandidate): number {
   if (c.techStack?.length) score += 10;
   if (c.signals?.length) score += 10;
   if (c.isHiring) score += 5;
+  if (c.leadershipChange) score += 5;
+  if (c.newsMentions?.length) score += 5;
   return Math.min(100, score);
 }
 

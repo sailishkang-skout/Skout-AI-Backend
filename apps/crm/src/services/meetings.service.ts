@@ -497,6 +497,21 @@ export class MeetingsService {
       .where(and(eq(meetings.workspaceId, workspaceId), isNull(meetings.deletedAt), gt(meetings.scheduledAt, new Date())));
     return rows.length;
   }
+
+  /**
+   * GTM revamp — GTM Funnel chart: count of meetings BOOKED (createdAt) in the trailing `days`
+   * window, not meetings scheduled to occur in that window — a meeting booked today for next
+   * month should count as booked today, matching how the funnel's other stages (e.g. new
+   * sequence enrollments) count the action, not a future occurrence.
+   */
+  async bookedCount(workspaceId: string, days = 30): Promise<number> {
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const rows = await this.db
+      .select({ id: meetings.id })
+      .from(meetings)
+      .where(and(eq(meetings.workspaceId, workspaceId), isNull(meetings.deletedAt), gte(meetings.createdAt, since)));
+    return rows.length;
+  }
 }
 
 export function buildMeetingsService(

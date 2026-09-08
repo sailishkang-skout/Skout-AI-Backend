@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, gte, ilike, isNull, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, recordEvidence, getLatestEvidenceByAttribute } from "@skout/db";
 import type { DealCreateInput, DealUpdateInput } from "@skout/shared";
@@ -92,12 +92,13 @@ export class DealsService {
 
   async list(
     workspaceId: string,
-    options: { limit: number; offset: number; stageId?: string; status?: string; ownerId?: string }
+    options: { limit: number; offset: number; stageId?: string; status?: string; ownerId?: string; search?: string }
   ): Promise<{ data: DealDto[]; total: number }> {
     const conditions = [eq(deals.workspaceId, workspaceId), isNull(deals.deletedAt)];
     if (options.stageId) conditions.push(eq(deals.stageId, options.stageId));
     if (options.status) conditions.push(eq(deals.status, options.status));
     if (options.ownerId) conditions.push(eq(deals.ownerId, options.ownerId));
+    if (options.search) conditions.push(ilike(deals.name, `%${options.search}%`));
 
     const rows = await this.db
       .select()
@@ -398,6 +399,58 @@ export class DealsService {
     const valueByCurrency = Array.from(totalByCurrency, ([currency, value]) => ({ currency, value }));
 
     return { workspaceId, openDeals, valueByCurrency, stages };
+  }
+
+  /**
+   * GTM revamp — Pipeline Velocity chart. There's no daily snapshot of "open pipeline value on
+   * that day" (deals change stage/status without a history table), so a true historical running
+   * total can't be reconstructed honestly. This reports new pipeline created per day instead —
+   * a real, exactly-computable "velocity" reading (how much pipeline the team is generating),
+   * not a fabricated or misleading stand-in for a snapshot that doesn't exist. Limited to USD:
+   * amounts are never summed across currencies elsewhere in this service either (see
+   * DealsSummaryDto.valueByCurrency), and a single-line chart can't sensibly show several.
+   */
+  async pipelineVelocity(workspaceId: string, days = 30): Promise<{ date: string; value: number }[]> {
+    const rows = await this.db
+      .select({
+        day: sql<string>`to_char(${deals.createdAt}, 'YYYY-MM-DD')`,
+        value: sql<string>`coalesce(sum(${deals.amount}), 0)`,
+      })
+      .from(deals)
+      .where(
+        and(
+          eq(deals.workspaceId, workspaceId),
+          eq(deals.currency, "USD"),
+          isNull(deals.deletedAt),
+          sql`${deals.createdAt} >= now() - interval '${sql.raw(String(days))} days'`
+        )
+      )
+      .groupBy(sql`to_char(${deals.createdAt}, 'YYYY-MM-DD')`);
+
+    const valueByDay = new Map(rows.map((r) => [r.day, Number(r.value)]));
+    const series: { date: string; value: number }[] = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const key = d.toISOString().slice(0, 10);
+      series.push({ date: key, value: valueByDay.get(key) ?? 0 });
+    }
+    return series;
+  }
+
+  /**
+   * GTM revamp — GTM Funnel chart's "opportunities" stage: count of deals CREATED in the
+   * trailing `days` window, across every currency and status — unlike pipelineVelocity (USD-only,
+   * value-summing) or summary() (open-only), "an opportunity was created" doesn't care about
+   * currency or whether it's still open.
+   */
+  async createdCount(workspaceId: string, days = 30): Promise<number> {
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const rows = await this.db
+      .select({ id: deals.id })
+      .from(deals)
+      .where(and(eq(deals.workspaceId, workspaceId), isNull(deals.deletedAt), gte(deals.createdAt, since)));
+    return rows.length;
   }
 }
 

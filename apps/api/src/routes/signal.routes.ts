@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
   computeSignalStackScore,
+  getSignalDensity,
   listSignalsForEntity,
   listWorkspaceAccountSignals,
   recordSignal,
@@ -50,6 +51,16 @@ export async function signalRoutes(app: FastifyInstance) {
 
     const data = await listWorkspaceAccountSignals(app.db, app.config, workspaceId, { limit: parsed.data.limit });
     return reply.send({ data, total: data.length });
+  });
+
+  /** GTM revamp — Signal Density chart + the week-over-week volume comparison shown next to it.
+   * Must also be registered before /signals/:something-shaped routes, same reasoning as above. */
+  app.get("/signals/density", async (request, reply) => {
+    const workspaceId = requireWorkspaceId(request);
+    if (!app.db) return reply.send({ byType: [], totalThisPeriod: 0, totalPreviousPeriod: 0, changePct: null });
+
+    const result = await getSignalDensity(app.db, workspaceId);
+    return reply.send(result);
   });
 
   app.get("/signals", async (request, reply) => {

@@ -594,11 +594,7 @@
       "idx": 84,
       "version": "7",
       "when": 1791700000000,
-<<<<<<< HEAD
-      "tag": "0083_dexter_evaluation_loop",
-=======
       "tag": "0083_crm_sync_checkpoints",
->>>>>>> origin/develop
       "breakpoints": true
     },
     {
@@ -625,15 +621,29 @@
     {
       "idx": 88,
       "version": "7",
-      "when": 1792200000000,
+      "when": 1792100000000,
       "tag": "0087_workbook_result_list",
       "breakpoints": true
     },
     {
       "idx": 89,
       "version": "7",
+      "when": 1792200000000,
+      "tag": "0088_signal_activation_checked_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
       "when": 1792300000000,
-      "tag": "0088_skout_events",
+      "tag": "0089_activation_rules_min_signal_strength",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1792400000000,
+      "tag": "0090_skout_events",
       "breakpoints": true
     }
   ]

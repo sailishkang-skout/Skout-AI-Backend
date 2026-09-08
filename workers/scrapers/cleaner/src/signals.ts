@@ -37,6 +37,25 @@ export function collectSignals(company: Partial<CompanyCandidate>): Signal[] {
       source: "sec-edgar",
     });
   }
+  if (company.leadershipChange?.personName || company.leadershipChange?.role) {
+    const { changeType, role, personName, effectiveDate } = company.leadershipChange;
+    signals.push({
+      type: "leadership_change",
+      observedAt: effectiveDate ?? now,
+      detail: [changeType, role, personName].filter(Boolean).join(" ") || "leadership change detected",
+      source: company.source,
+    });
+  }
+  if (company.newsMentions?.length) {
+    for (const mention of company.newsMentions) {
+      signals.push({
+        type: "news_mention",
+        observedAt: mention.publishedAt,
+        detail: mention.headline,
+        source: mention.source ?? company.source,
+      });
+    }
+  }
 
   return [...(company.signals ?? []), ...signals];
 }

@@ -59,6 +59,14 @@ export async function meetingsRoutes(app: FastifyInstance) {
     return { enabled: isMeetingBotConfigured(app.config) };
   });
 
+  /** GTM revamp — GTM Funnel chart's "meetings" stage: meetings booked in the last 30 days. */
+  app.get("/meetings/booked-count", async (request) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) return { workspaceId, count: 0 };
+    return { workspaceId, count: await svc.bookedCount(workspaceId) };
+  });
+
   app.get("/meetings", async (request) => {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();

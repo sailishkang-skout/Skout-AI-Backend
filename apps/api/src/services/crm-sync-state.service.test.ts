@@ -4,12 +4,13 @@ import { and, eq } from "drizzle-orm";
 import { loadEnv } from "../config/env.js";
 import {
   getCrmNativeLink,
+  getCrmSyncStatus,
   getHubSpotConnectionId,
   upsertCrmNativeLink,
   withSyncCheckpoint,
 } from "./crm-sync-state.service.js";
 
-const { workspaces, crmConnections, crmSyncCheckpoints, crmNativeLinks } = schema;
+const { workspaces, crmConnections, crmSyncCheckpoints, crmNativeLinks, crmOutboundWrites } = schema;
 
 describe("crm-sync-state.service", () => {
   const config = loadEnv();
@@ -32,6 +33,7 @@ describe("crm-sync-state.service", () => {
   });
 
   afterAll(async () => {
+    await db.delete(crmOutboundWrites).where(eq(crmOutboundWrites.workspaceId, workspaceId));
     await db.delete(crmNativeLinks).where(eq(crmNativeLinks.workspaceId, workspaceId));
     await db.delete(crmSyncCheckpoints).where(eq(crmSyncCheckpoints.workspaceId, workspaceId));
     await db.delete(crmConnections).where(eq(crmConnections.workspaceId, workspaceId));
@@ -121,5 +123,60 @@ describe("crm-sync-state.service", () => {
   it("getCrmNativeLink returns null when no link exists", async () => {
     const link = await getCrmNativeLink(db, workspaceId, connectionId, "contact", "22222222-2222-2222-2222-222222222222");
     expect(link).toBeNull();
+  });
+
+  describe("getCrmSyncStatus", () => {
+    it("reports not connected for a workspace with no HubSpot connection", async () => {
+      const [ws] = await db
+        .insert(workspaces)
+        .values({ name: `No CRM Sync Status WS ${Date.now()}`, slug: `no-crm-sync-status-${Date.now()}` })
+        .returning();
+      const status = await getCrmSyncStatus(db, ws!.id);
+      expect(status).toEqual({ connected: false, checkpoints: [], recentOutboundWrites: [] });
+      await db.delete(workspaces).where(eq(workspaces.id, ws!.id));
+    });
+
+    it("reports checkpoint status per entity type once runs have happened", async () => {
+      const status = await getCrmSyncStatus(db, workspaceId);
+      expect(status.connected).toBe(true);
+      const contactCheckpoint = status.checkpoints.find((c) => c.entityType === "contact");
+      expect(contactCheckpoint?.lastRunStatus).toBe("succeeded");
+      const dealCheckpoint = status.checkpoints.find((c) => c.entityType === "deal");
+      expect(dealCheckpoint?.lastRunStatus).toBe("succeeded");
+      expect(dealCheckpoint?.lastError).toBeNull();
+    });
+
+    it("flags a conflict-skipped outbound write distinctly from a genuine failure", async () => {
+      await db.insert(crmOutboundWrites).values([
+        {
+          workspaceId,
+          connectionId,
+          entityType: "contact",
+          entityId: "33333333-3333-3333-3333-333333333333",
+          patch: { firstName: "Ada" },
+          skoutChangedAt: new Date("2026-04-01T00:00:00.000Z"),
+          idempotencyKey: `conflict-${Date.now()}`,
+          status: "failed",
+          lastError: "conflict_hubspot_newer",
+        },
+        {
+          workspaceId,
+          connectionId,
+          entityType: "contact",
+          entityId: "44444444-4444-4444-4444-444444444444",
+          patch: { firstName: "Grace" },
+          skoutChangedAt: new Date("2026-04-01T00:00:00.000Z"),
+          idempotencyKey: `real-failure-${Date.now()}`,
+          status: "failed",
+          lastError: "hubspot_500",
+        },
+      ]);
+
+      const status = await getCrmSyncStatus(db, workspaceId);
+      const conflictWrite = status.recentOutboundWrites.find((w) => w.lastError === "conflict_hubspot_newer");
+      const realFailure = status.recentOutboundWrites.find((w) => w.lastError === "hubspot_500");
+      expect(conflictWrite?.isConflict).toBe(true);
+      expect(realFailure?.isConflict).toBe(false);
+    });
   });
 });

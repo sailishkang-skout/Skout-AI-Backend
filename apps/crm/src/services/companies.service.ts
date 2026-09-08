@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, ilike, isNull, or } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, recordEvidence, getLatestEvidenceByAttribute } from "@skout/db";
 import type { CompanyCreateInput, CompanyUpdateInput } from "@skout/shared";
@@ -98,10 +98,14 @@ export class CompaniesService {
 
   async list(
     workspaceId: string,
-    options: { limit: number; offset: number; ownerId?: string }
+    options: { limit: number; offset: number; ownerId?: string; search?: string }
   ): Promise<{ data: CompanyDto[]; total: number }> {
     const conditions = [eq(companies.workspaceId, workspaceId), isNull(companies.deletedAt)];
     if (options.ownerId) conditions.push(eq(companies.ownerId, options.ownerId));
+    if (options.search) {
+      const term = `%${options.search}%`;
+      conditions.push(or(ilike(companies.name, term), ilike(companies.domain, term))!);
+    }
 
     const rows = await this.db
       .select()

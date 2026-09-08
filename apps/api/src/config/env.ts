@@ -320,6 +320,15 @@ const envSchema = z
     // --- R17.3 signal-triggered SDR alerts. ---
     /** How often the alert-sweep worker matches newly-recorded signals against alert_rules. */
     ALERT_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(5),
+    // --- SS-08 signal -> activation-rule automated trigger. ---
+    /** How often the activation-sweep worker matches newly-recorded signals against activation_rules
+     * (enroll_sequence / add_to_list / activate) — the real-time counterpart to the manual
+     * "score list" path that previously was the only thing that fired activation_rules. */
+    SIGNAL_ACTIVATION_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(5),
+    /** 0-1 floor on a signal's own stack-weight (confidence * strength * recency) before the
+     * activation-sweep worker emits a `signal.high_strength` Dexter event for it. Separate from
+     * any activation_rules.min_signal_strength — this gates plan proposals, not enrollments. */
+    DEXTER_SIGNAL_TRIGGER_MIN_STRENGTH: z.coerce.number().min(0).max(1).default(0.6),
     /** How often the digest worker batches pending digest-preference notifications into one email. */
     ALERT_DIGEST_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(1440),
     // --- 8.15 scheduled report delivery. ---

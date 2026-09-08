@@ -14,6 +14,8 @@ const createSchema = z.object({
   name: z.string().min(1).max(255),
   scoreThreshold: z.number().int().min(0).max(100),
   signalType: z.string().max(100).optional(),
+  /** SS-08 — only meaningful alongside signalType; ignored otherwise. */
+  minSignalStrength: z.number().min(0).max(1).optional(),
   targetAction: z.enum(["activate", "add_to_list", "enroll_sequence"]),
   targetId: z.string().min(1).max(255).optional(),
 });

@@ -130,6 +130,16 @@ export async function sequenceRoutes(app: FastifyInstance) {
     return reply.send({ workspaceId, data, total: data.length });
   });
 
+  /** GTM revamp — Global Sequence Performance chart: real open/reply rate across every sequence
+   * in the workspace, bucketed per day. Registered before /sequences/:id-shaped routes. */
+  app.get("/sequences/performance", async (request, reply) => {
+    const workspaceId = requireWorkspaceId(request);
+    const svc = buildSequenceService(app.db);
+    if (!svc) return reply.send({ workspaceId, data: [] });
+    const data = await svc.getWorkspacePerformance(workspaceId);
+    return reply.send({ workspaceId, data });
+  });
+
   // POST /sequences — create a new draft sequence
   app.post("/sequences", async (request, reply) => {
     const workspaceId = requireWorkspaceId(request);
