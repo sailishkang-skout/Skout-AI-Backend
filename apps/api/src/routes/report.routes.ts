@@ -39,6 +39,7 @@ const gtmLearningQuerySchema = z.object({
   sequenceId: z.string().uuid().optional(),
   icpPriority: z.string().max(50).optional(),
   limit: z.coerce.number().int().min(1).max(1000).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
 });
 
 const createScheduleSchema = z.object({
@@ -249,11 +250,15 @@ export async function reportRoutes(app: FastifyInstance) {
   // read-only.
   app.get("/gtm-learning-outcomes", async (request, reply) => {
     const workspaceId = requireWorkspaceId(request);
-    if (!app.db) return reply.send({ data: [], total: 0 });
+    if (!app.db) return reply.send({ data: [], total: 0, hasMore: false });
     const query = gtmLearningQuerySchema.parse(request.query ?? {});
-    const { limit, ...filters } = query;
-    const data = await queryGtmLearningOutcomes(app.db, workspaceId, filters, limit);
-    return reply.send({ data, total: data.length });
+    const { limit, offset, ...filters } = query;
+    const effectiveLimit = limit ?? 500;
+    const data = await queryGtmLearningOutcomes(app.db, workspaceId, filters, effectiveLimit, offset);
+    // A full page might mean there's more, or might exactly exhaust the table — the caller
+    // (paginating for a client-side total) just keeps requesting the next page until it gets
+    // back fewer rows than it asked for, same as any offset-pagination cursor.
+    return reply.send({ data, total: data.length, hasMore: data.length === effectiveLimit });
   });
 
   // On-demand refresh — useful right after a backfill/test-data seed, without waiting for the
