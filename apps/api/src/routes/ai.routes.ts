@@ -456,6 +456,7 @@ export async function aiRoutes(app: FastifyInstance) {
         draftId,
         exports: toolRunner.getCreatedExports(),
         toolPreview: toolRunner.getPendingToolPreview(),
+        scoreBreakdown: result.scoreBreakdown,
         mode: body.mode,
         segregated: Boolean(draftId),
         evidenceId,

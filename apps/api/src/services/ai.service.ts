@@ -136,6 +136,35 @@ export type ChatAction =
       confirm?: boolean;
     };
 
+/** §8.13 SP-13 — mirrors explain_score's tool-response shape verbatim (ai-workspace-tools.
+ * service.ts's explain_score handler) so the chat UI can render a structured breakdown card
+ * instead of only the model's prose summary of it. */
+export interface ScoreBreakdown {
+  prospectId: string;
+  icp: {
+    score: number;
+    band: string;
+    version: string | null;
+    source: "llm" | "heuristic";
+    dimensions: Record<string, { score: number; matched: boolean; explanation: string }>;
+    reasoning: string;
+  };
+  signalStack: {
+    score: number;
+    band: string;
+    distinctSignalTypes: number;
+    reachableDecisionMaker: boolean;
+    contributingSignals: Array<{
+      id: string;
+      signalType: string;
+      confidence: number;
+      detectedAt: string;
+      weight: number;
+    }>;
+    weights: Record<string, unknown>;
+  };
+}
+
 const CRO_SYSTEM_PROMPT = `You are CRO Copilot — an admin-only executive assistant inside Skout for
 revenue leaders (CRO, VP Sales, founder). You are NOT the general SDR assistant — you focus on
 team-level and pipeline-level exec questions: pipeline health, coverage, stale deals, rep
@@ -558,7 +587,7 @@ export class AiService {
       persona?: CopilotPersona;
     },
     apiKey: string | undefined
-  ): Promise<{ reply: string; action: ChatAction }> {
+  ): Promise<{ reply: string; action: ChatAction; scoreBreakdown?: ScoreBreakdown }> {
     if (!apiKey) {
       throw Object.assign(new Error("OpenRouter API key is not configured on this workspace"), {
         statusCode: 503,
@@ -615,6 +644,12 @@ export class AiService {
 
     let raw = "{}";
     let toolsEnabled = Boolean(toolRunner);
+    // §8.13 SP-13 — explain_score is read-only and never goes through the preview/confirm gate,
+    // so its structured result would otherwise only reach the UI via the model's own prose
+    // summary of it. Capture the last call's parsed output here so the route can pass the real
+    // breakdown through alongside the reply. Last call wins if the model calls it more than once
+    // in a turn (e.g. re-checking a different prospect) — a real, if rare, case.
+    let scoreBreakdown: ScoreBreakdown | undefined;
 
     const formatChatErr = (err: unknown): string => {
       if (err instanceof Error) {
@@ -683,6 +718,16 @@ export class AiService {
               args = {};
             }
             const output = await toolRunner!.run(call.function.name, args);
+            if (call.function.name === "explain_score") {
+              try {
+                const parsedOutput = JSON.parse(output) as { value?: ScoreBreakdown; error?: string };
+                if (parsedOutput?.value?.icp && parsedOutput.value.signalStack) {
+                  scoreBreakdown = parsedOutput.value;
+                }
+              } catch {
+                // Malformed tool output — fall through with no breakdown rather than throw.
+              }
+            }
             messages.push({ role: "tool", tool_call_id: call.id, content: output });
           }
           continue;
@@ -702,12 +747,12 @@ export class AiService {
     try {
       parsed = JSON.parse(raw) as Record<string, unknown>;
     } catch {
-      return { reply: raw.slice(0, 2000), action: { type: "none" } };
+      return { reply: raw.slice(0, 2000), action: { type: "none" }, scoreBreakdown };
     }
 
     const reply = typeof parsed.reply === "string" ? parsed.reply : "";
     const action = coerceChatAction(parsed.action);
-    return { reply, action };
+    return { reply, action, scoreBreakdown };
   }
 
   /** Generates a multi-step outreach cadence from a goal + audience/style context. */
