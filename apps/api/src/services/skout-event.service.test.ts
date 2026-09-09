@@ -14,10 +14,17 @@ vi.mock("./webhook.service.js", () => ({
 const { emitSkoutEvent, isDexterSpineEvent } = await import("./skout-event.service.js");
 
 const config = {} as Env;
-const fakeDb = {} as never;
+
+const insertValues = vi.fn(() => Promise.resolve());
+function makeFakeDb() {
+  return { insert: vi.fn(() => ({ values: insertValues })) } as never;
+}
+let fakeDb = makeFakeDb();
 
 beforeEach(() => {
   vi.clearAllMocks();
+  insertValues.mockImplementation(() => Promise.resolve());
+  fakeDb = makeFakeDb();
 });
 
 describe("emitSkoutEvent", () => {
@@ -97,6 +104,53 @@ describe("emitSkoutEvent", () => {
     });
 
     expect(event.type).toBe("sequence.approved");
+  });
+
+  it("persists the event to the durable log when a db is provided", async () => {
+    const event = await emitSkoutEvent(fakeDb, config, {
+      type: "signal.detected",
+      tenantId: "ws-1",
+      aggregateId: "sig-1",
+      data: { foo: "bar" },
+    });
+
+    expect(insertValues).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: event.id,
+        workspaceId: "ws-1",
+        type: "signal.detected",
+        aggregateId: "sig-1",
+        correlationId: event.correlationId,
+        data: { foo: "bar" },
+        occurredAt: expect.any(Date),
+      })
+    );
+  });
+
+  it("skips persistence entirely when db is null", async () => {
+    await emitSkoutEvent(null, config, {
+      type: "meeting.completed",
+      tenantId: "ws-1",
+      aggregateId: "m-1",
+      data: {},
+    });
+
+    expect(insertValues).not.toHaveBeenCalled();
+  });
+
+  it("still returns the event and does not throw when persisting to the event log rejects", async () => {
+    insertValues.mockRejectedValueOnce(new Error("db unreachable"));
+
+    const event = await emitSkoutEvent(fakeDb, config, {
+      type: "touchpoint.completed",
+      tenantId: "ws-1",
+      aggregateId: "tp-1",
+      data: {},
+    });
+
+    expect(event.type).toBe("touchpoint.completed");
+    expect(enqueueDexterEventJob).toHaveBeenCalled();
+    expect(dispatchWebhookEvent).toHaveBeenCalled();
   });
 });
 

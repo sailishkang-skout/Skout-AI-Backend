@@ -37,3 +37,4 @@ export * from "./dexter-platform.js";
 export * from "./automations.js";
 export * from "./number-requests.js";
 export * from "./crm-sync.js";
+export * from "./events.js";

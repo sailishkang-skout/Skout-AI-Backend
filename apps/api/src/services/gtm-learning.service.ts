@@ -136,7 +136,8 @@ export async function queryGtmLearningOutcomes(
   db: Db,
   workspaceId: string,
   filters: GtmLearningOutcomeFilters = {},
-  limit = 500
+  limit = 500,
+  offset = 0
 ) {
   const conditions: SQL[] = [eq(gtmLearningOutcomes.workspaceId, workspaceId)];
   if (filters.channel) conditions.push(eq(gtmLearningOutcomes.channel, filters.channel));
@@ -149,6 +150,7 @@ export async function queryGtmLearningOutcomes(
     .select()
     .from(gtmLearningOutcomes)
     .where(and(...conditions))
-    .orderBy(desc(gtmLearningOutcomes.touchpointAt))
-    .limit(Math.min(Math.max(limit, 1), 1000));
+    .orderBy(desc(gtmLearningOutcomes.touchpointAt), desc(gtmLearningOutcomes.id))
+    .limit(Math.min(Math.max(limit, 1), 1000))
+    .offset(Math.max(offset, 0));
 }

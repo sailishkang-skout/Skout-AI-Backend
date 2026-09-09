@@ -330,3 +330,64 @@ describe("ai routes — POST /ai/chat persona threading (§8.13 SP-06)", () => {
     expect(res.statusCode).toBe(400);
   });
 });
+
+/** §8.13 SP-13 — explain_score is read-only and never goes through the preview/confirm gate, so
+ * its structured breakdown has to ride along in the chat response itself for the UI to render a
+ * real card instead of only the model's prose summary. */
+describe("ai routes — POST /ai/chat scoreBreakdown passthrough (§8.13 SP-13)", () => {
+  let app: FastifyInstance;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockToolRunner.run.mockResolvedValue(JSON.stringify({ ok: true }));
+    app = await buildTestApp();
+  });
+
+  const scoreBreakdown = {
+    prospectId: "p-1",
+    icp: {
+      score: 72,
+      band: "medium",
+      version: "v3",
+      source: "heuristic" as const,
+      dimensions: { industry: { score: 80, matched: true, explanation: "SaaS is in target industries" } },
+      reasoning: "Strong industry fit, mid seniority.",
+    },
+    signalStack: {
+      score: 41,
+      band: "warm",
+      distinctSignalTypes: 2,
+      reachableDecisionMaker: true,
+      contributingSignals: [
+        { id: "sig-1", signalType: "recent_funding", confidence: 0.8, detectedAt: "2026-01-01T00:00:00Z", weight: 1.2 },
+      ],
+      weights: { defaultConfidence: 0.6 },
+    },
+  };
+
+  it("echoes aiService.chat's scoreBreakdown through to the response", async () => {
+    mockChat.mockResolvedValue({ reply: "Here's the breakdown.", action: { type: "none" }, scoreBreakdown });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/ai/chat",
+      payload: { messages: [{ role: "user", content: "why does this prospect score 72" }] },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().scoreBreakdown).toEqual(scoreBreakdown);
+  });
+
+  it("omits scoreBreakdown (undefined, not a fabricated empty shape) when the turn never called explain_score", async () => {
+    mockChat.mockResolvedValue({ reply: "Sure, done.", action: { type: "none" } });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/ai/chat",
+      payload: { messages: [{ role: "user", content: "hi" }] },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().scoreBreakdown).toBeUndefined();
+  });
+});

@@ -1,7 +1,7 @@
 import { Worker } from "bullmq";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
-import { redisBullMqConnection } from "../lib/redis.js";
+import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
 import { DEXTER_EVENT_QUEUE, type DexterEventJobPayload } from "./dexter-event.queue.js";
 import { incrJourneyMetric } from "../services/journey-metrics.js";
 
@@ -34,8 +34,8 @@ async function handleDexterEvent(event: DexterEventJobPayload["event"]): Promise
 }
 
 export async function startDexterEventWorker(config: Env): Promise<() => Promise<void>> {
-  if (!config.REDIS_URL) {
-    log.warn("REDIS_URL unset — dexter event worker not started");
+  if (!config.REDIS_URL || !(await isRedisAvailable(config))) {
+    log.warn("REDIS_URL unset or unavailable — dexter event worker not started");
     return async () => {};
   }
 

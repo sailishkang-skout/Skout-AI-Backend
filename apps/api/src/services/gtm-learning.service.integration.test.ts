@@ -227,4 +227,23 @@ describe("gtm-learning.service — cross-tab aggregation (SP-10)", () => {
     const noMatch = await queryGtmLearningOutcomes(db, workspaceId, { channel: "email" });
     expect(noMatch.some((r) => r.enrollmentStepId === enrollmentStepId)).toBe(false);
   });
+
+  /** §8.15 SP-16 — the frontend paginates through every row (not just the first 1000) so its
+   * pipeline/revenue totals are exact, not a capped sample. That only works if offset advances
+   * through a stable order — verify paging by 1 reconstructs the same set as one unpaginated
+   * call, with no row skipped or repeated. */
+  it("paginates via limit+offset without skipping or duplicating rows", async () => {
+    await runGtmLearningAggregation(db, workspaceId);
+
+    const all = await queryGtmLearningOutcomes(db, workspaceId, {}, 1000, 0);
+    expect(all.length).toBeGreaterThan(0);
+
+    const paged: typeof all = [];
+    for (let offset = 0; offset < all.length; offset += 1) {
+      const page = await queryGtmLearningOutcomes(db, workspaceId, {}, 1, offset);
+      paged.push(...page);
+    }
+
+    expect(paged.map((r) => r.id)).toEqual(all.map((r) => r.id));
+  });
 });

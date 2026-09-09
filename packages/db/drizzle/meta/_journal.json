@@ -638,6 +638,13 @@
       "when": 1792300000000,
       "tag": "0089_activation_rules_min_signal_strength",
       "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1792400000000,
+      "tag": "0090_skout_events",
+      "breakpoints": true
     }
   ]
 }
