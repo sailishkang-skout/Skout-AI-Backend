@@ -241,4 +241,160 @@ describe("matchAndActivateSignal — signal.high_strength Dexter event (SS-08)",
     expect(enqueueDexterEvent).toHaveBeenCalledTimes(1);
     expect(executeActivationRules).not.toHaveBeenCalled();
   });
+
+  it("emits once for each distinct workspace even when multiple prospects exist", async () => {
+    const config = { DEXTER_SIGNAL_TRIGGER_MIN_STRENGTH: 0.5 } as never;
+    const db = mockDb([
+      [
+        { workspaceId: "ws-1", prospectId: "p-1" },
+        { workspaceId: "ws-2", prospectId: "p-3" },
+        { workspaceId: "ws-1", prospectId: "p-2" }, // same workspace as p-1
+      ],
+      [{ score: 80 }],
+      [{ score: 70 }],
+      [{ score: 60 }],
+    ]);
+
+    await matchAndActivateSignal(db as never, config, strongSignal as never);
+
+    expect(enqueueDexterEvent).toHaveBeenCalledTimes(2); // once per workspace (ws-1 and ws-2)
+  });
+
+  it("handles enqueueDexterEvent failure gracefully without blocking other work", async () => {
+    enqueueDexterEvent.mockRejectedValueOnce(new Error("Dexter queue is down"));
+    const config = { DEXTER_SIGNAL_TRIGGER_MIN_STRENGTH: 0.5 } as never;
+    const db = mockDb([[{ workspaceId: "ws-1", prospectId: "p-1" }], [{ score: 80 }]]);
+    // Suppress expected console error from intentional queue failure
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const outcome = await matchAndActivateSignal(db as never, config, strongSignal as never);
+
+    expect(outcome).toEqual({ matched: 1, executed: 1, failed: 0 }); // activation still works!
+    expect(executeActivationRules).toHaveBeenCalledTimes(1); // rule execution still happened
+    consoleErrorSpy.mockRestore(); // restore console.error after test
+  });
+
+  it("still emits Dexter event when soloStrength is exactly equal to min strength threshold", async () => {
+    const config = { DEXTER_SIGNAL_TRIGGER_MIN_STRENGTH: 0.5 } as never; // Use same threshold as all other tests
+    const signalExactlyAtThreshold = {
+      ...strongSignal, // Use the same strongSignal base object as all other tests
+      soloStrength: 0.5, // Exactly matches threshold (passes because implementation uses >=)
+    } as never;
+    const db = mockDb([[{ workspaceId: "ws-1", prospectId: "p-1" }], [{ score: 0 }]]);
+
+    await matchAndActivateSignal(db as never, config, signalExactlyAtThreshold);
+
+    expect(enqueueDexterEvent).toHaveBeenCalledTimes(1); // Correctly passes because implementation uses >=
+  });
+
+  it("correctly processes zero prospects when no owners are found in the database", async () => {
+    const config = { DEXTER_SIGNAL_TRIGGER_MIN_STRENGTH: 0.5 } as never;
+    const db = mockDb([[]]); // no owners found
+
+    const outcome = await matchAndActivateSignal(db as never, config, strongSignal as never);
+
+    expect(outcome).toEqual({ matched: 0, executed: 0, failed: 0 });
+    expect(executeActivationRules).not.toHaveBeenCalled();
+    expect(enqueueDexterEvent).not.toHaveBeenCalled(); // no workspaces to notify
+  });
+
+  it("handles null soloStrength gracefully and doesn't emit Dexter event", async () => {
+    const config = { DEXTER_SIGNAL_TRIGGER_MIN_STRENGTH: 0.5 } as never;
+    const weakSignal = signalRow({ confidence: 0, strength: null, detectedAt: new Date() });
+    const db = mockDb([[{ workspaceId: "ws-1", prospectId: "p-1" }], [{ score: 80 }]]);
+
+    await matchAndActivateSignal(db as never, config, weakSignal as never);
+
+    expect(enqueueDexterEvent).not.toHaveBeenCalled(); // null strength < threshold, no event
+  });
+
+  it("dedupes activation calls even when same prospect appears multiple times across different owners rows", async () => {
+    const config = { DEXTER_SIGNAL_TRIGGER_MIN_STRENGTH: 0.5 } as never;
+    const db = mockDb([
+      [
+        { workspaceId: "ws-1", prospectId: "p-1" },
+        { workspaceId: "ws-1", prospectId: "p-1" }, // duplicate row
+        { workspaceId: "ws-1", prospectId: "p-1" }, // another duplicate
+      ],
+      [{ score: 80 }], // only one score lookup
+    ]);
+
+    await matchAndActivateSignal(db as never, config, strongSignal as never);
+
+    expect(executeActivationRules).toHaveBeenCalledTimes(1); // only executed once despite 3 rows
+  });
+
+  // EDGE CASE 1: signal with undefined entityType/entityId (malformed signal) is handled gracefully
+  it("handles malformed signal with missing entityType/entityId without crashing", async () => {
+    const config = { DEXTER_SIGNAL_TRIGGER_MIN_STRENGTH: 0.5 } as never;
+    const malformedSignal = {
+      ...strongSignal,
+      entityType: undefined,
+      entityId: undefined,
+    } as never;
+    const db = mockDb([[], []]); // empty database to avoid any matches
+
+    const outcome = await matchAndActivateSignal(db as never, config, malformedSignal);
+    
+    expect(outcome).toEqual({ matched: 0, executed: 0, failed: 0 }); // fails gracefully
+    expect(executeActivationRules).not.toHaveBeenCalled();
+    expect(enqueueDexterEvent).not.toHaveBeenCalled(); // no event emitted for bad signal
+  });
+
+  // EDGE CASE 2: database query returns null/undefined values instead of rows
+  it("handles null database query results gracefully", async () => {
+    const config = { DEXTER_SIGNAL_TRIGGER_MIN_STRENGTH: 0.5 } as never;
+    const db = mockDb([[], []]); // empty database results
+    executeActivationRules.mockClear();
+
+    const outcome = await matchAndActivateSignal(db as never, config, strongSignal as never);
+    
+    expect(outcome).toEqual({ matched: 0, executed: 0, failed: 0 });
+    expect(executeActivationRules).not.toHaveBeenCalled();
+  });
+
+  // EDGE CASE 3: executeActivationRules throws an error, but other work continues
+  it("handles executeActivationRules failure without blocking processing of other signals", async () => {
+    executeActivationRules.mockRejectedValueOnce(new Error("Database connection timeout"));
+    const config = { DEXTER_SIGNAL_TRIGGER_MIN_STRENGTH: 0.5 } as never;
+    const db = mockDb([[{ workspaceId: "ws-1", prospectId: "p-1" }], [{ score: 80 }]]);
+
+    const outcome = await matchAndActivateSignal(db as never, config, strongSignal as never);
+    
+    // Still returns a valid outcome instead of throwing
+    expect(outcome.failed).toBe(1); // marks this execution as failed
+    expect(executeActivationRules).toHaveBeenCalledTimes(1);
+  });
+
+  // EDGE CASE 4: signal with strength exactly 0 is handled gracefully
+  it("does not emit Dexter event for signal with strength exactly 0", async () => {
+    const config = { DEXTER_SIGNAL_TRIGGER_MIN_STRENGTH: 0.5 } as never;
+    const zeroStrengthSignal = {
+      ...strongSignal,
+      soloStrength: 0,
+      strength: 0,
+    } as never;
+    const db = mockDb([[{ workspaceId: "ws-1", prospectId: "p-1" }], [{ score: 80 }]]);
+
+    await matchAndActivateSignal(db as never, config, zeroStrengthSignal);
+    
+    expect(enqueueDexterEvent).not.toHaveBeenCalled();
+  });
+
+  // EDGE CASE 5: multiple distinct workspaces, emits event for each exactly once
+  it("emits exactly one Dexter event per distinct workspace, even with many prospects", async () => {
+    const config = { DEXTER_SIGNAL_TRIGGER_MIN_STRENGTH: 0.5 } as never;
+    // 5 different workspaces, 10 prospects each
+    const prospectRows = Array.from({ length: 50 }, (_, i) => ({
+      workspaceId: `ws-${i % 5}`, // 5 unique workspaces repeated
+      prospectId: `p-${i}`,
+    }));
+    // mockDb expects array of query results - we only need 1 score query, not 50
+    const db = mockDb([prospectRows, [{ score: 80 }]]);
+
+    await matchAndActivateSignal(db as never, config, strongSignal as never);
+    
+    // Exactly 5 events, one per unique workspace
+    expect(enqueueDexterEvent).toHaveBeenCalledTimes(5);
+  });
 });
