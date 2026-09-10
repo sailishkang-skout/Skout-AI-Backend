@@ -83,6 +83,36 @@ export async function dashboardRoutes(app: FastifyInstance) {
     return { workspaceId, series };
   });
 
+  /** §SS-10 CRM Intelligence — disengagement risk flags. Open to every workspace member,
+   *  same as other CRM Intelligence flags (not an org-internal exec metric). */
+  app.get("/dashboard/disengagement-flags", async (request) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) return { workspaceId, disengagementFlags: [], generatedAt: new Date().toISOString() };
+    const disengagementFlags = await svc.disengagementFlags(workspaceId);
+    return { workspaceId, disengagementFlags, generatedAt: new Date().toISOString() };
+  });
+
+  /** §SS-10 CRM Intelligence — renewal risk flags. Open to every workspace member,
+   *  same as other CRM Intelligence flags (not an org-internal exec metric). */
+  app.get("/dashboard/renewal-risk-flags", async (request) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) return { workspaceId, renewalRiskFlags: [], generatedAt: new Date().toISOString() };
+    const renewalRiskFlags = await svc.renewalRiskFlags(workspaceId);
+    return { workspaceId, renewalRiskFlags, generatedAt: new Date().toISOString() };
+  });
+
+  /** §SS-10 CRM Intelligence — expansion signal flags. Open to every workspace member,
+   *  same as other CRM Intelligence flags (not an org-internal exec metric). */
+  app.get("/dashboard/expansion-signal-flags", async (request) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) return { workspaceId, expansionSignalFlags: [], generatedAt: new Date().toISOString() };
+    const expansionSignalFlags = await svc.expansionSignalFlags(workspaceId);
+    return { workspaceId, expansionSignalFlags, generatedAt: new Date().toISOString() };
+  });
+
   /** R14.3 — internal-only "switching cost" metric. Owner/admin only; not for reps or customers. */
   app.get("/dashboard/switching-cost", async (request) => {
     requireRole(request, ["owner", "admin"]);

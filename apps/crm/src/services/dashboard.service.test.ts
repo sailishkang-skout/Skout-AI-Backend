@@ -7,11 +7,15 @@ import { DashboardService } from "./dashboard.service.js";
 // terminal method, matching how far dashboard.service.ts's queries actually chain.
 function chain(result: unknown[], terminal: "limit" | "where") {
   const c: Record<string, unknown> = {};
-  c.from = vi.fn().mockReturnValue(c);
-  c.innerJoin = vi.fn().mockReturnValue(c);
-  c.orderBy = vi.fn().mockReturnValue(c);
-  c.where = terminal === "where" ? vi.fn().mockResolvedValue(result) : vi.fn().mockReturnValue(c);
-  c.limit = terminal === "limit" ? vi.fn().mockResolvedValue(result) : vi.fn().mockReturnValue(c);
+  // All chain methods always return the chain object except the terminal method which resolves
+  const alwaysReturnChain = vi.fn().mockReturnValue(c);
+  c.from = alwaysReturnChain;
+  c.innerJoin = alwaysReturnChain;
+  c.leftJoin = alwaysReturnChain;
+  c.orderBy = alwaysReturnChain;
+  c.groupBy = alwaysReturnChain;
+  c.where = terminal === "where" ? vi.fn().mockResolvedValue(result) : alwaysReturnChain;
+  c.limit = terminal === "limit" ? vi.fn().mockResolvedValue(result) : alwaysReturnChain;
   return c;
 }
 
@@ -104,5 +108,140 @@ describe("DashboardService.pipelineVelocity", () => {
 
     expect(dealsService.pipelineVelocity).toHaveBeenCalledWith("ws-1", 14);
     expect(result).toBe(series);
+  });
+});
+
+// New tests for SS-10 retention workflow flags
+describe("DashboardService.disengagementFlags", () => {
+  function buildDisengagementService(companiesRows: unknown[], activitiesRows: unknown[]) {
+    const db = { select: vi.fn() };
+    // First call: get companies, second call: get activities (query ends with groupBy, so use that as terminal)
+    db.select.mockReturnValueOnce(chain(companiesRows, "limit"));
+    // Create a chain where groupBy is the terminal method that resolves with activitiesRows
+    const c: Record<string, unknown> = {};
+    const alwaysReturnChain = vi.fn().mockReturnValue(c);
+    c.from = alwaysReturnChain;
+    c.innerJoin = alwaysReturnChain;
+    c.leftJoin = alwaysReturnChain;
+    c.orderBy = alwaysReturnChain;
+    c.where = alwaysReturnChain;
+    c.limit = alwaysReturnChain;
+    c.groupBy = vi.fn().mockResolvedValue(activitiesRows);
+    db.select.mockReturnValueOnce(c);
+    return new DashboardService(db as any, {} as any, {} as any, {} as any, null);
+  }
+
+  const COMPANY = { id: "company-1", name: "Acme Corp" };
+  const OLD_ACTIVITY = { entityId: "company-1", lastActivityAt: new Date(Date.now() - 40 * 24 * 60 * 60 * 1000) }; // 40 days ago (Date object)
+
+  it("flags a company with no recent activity (>30 days)", async () => {
+    const svc = buildDisengagementService([COMPANY], [OLD_ACTIVITY]);
+
+    const flags = await svc.disengagementFlags("ws-1");
+
+    expect(flags).toHaveLength(1);
+    expect(flags[0]).toMatchObject({
+      companyId: "company-1",
+      companyName: "Acme Corp",
+      daysSinceActivity: 40,
+      rule: "company_inactivity_exceeds_threshold",
+    });
+    expect(typeof flags[0]!.computedAt).toBe("string");
+  });
+
+  it("returns no flags when there are no companies", async () => {
+    const svc = buildDisengagementService([], []);
+
+    const flags = await svc.disengagementFlags("ws-1");
+
+    expect(flags).toHaveLength(0);
+  });
+});
+
+describe("DashboardService.renewalRiskFlags", () => {
+  function buildRenewalService(dealsRows: unknown[], companiesRows: unknown[]) {
+    const db = { select: vi.fn() };
+    // First call: get expiring deals, second call: get companies
+    db.select.mockReturnValueOnce(chain(dealsRows, "limit"));
+    db.select.mockReturnValueOnce(chain(companiesRows, "where"));
+    return new DashboardService(db as any, {} as any, {} as any, {} as any, null);
+  }
+
+  const WON_DEAL = { 
+    id: "deal-1", 
+    name: "Acme Renewal", 
+    companyId: "company-1", 
+    contractEndDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // Expires in 30 days
+    status: "won",
+    amount: "50000",
+    currency: "USD"
+  };
+  const COMPANY = { id: "company-1", name: "Acme Corp" };
+
+  it("flags a deal expiring within 90 days", async () => {
+    const svc = buildRenewalService([WON_DEAL], [COMPANY]);
+
+    const flags = await svc.renewalRiskFlags("ws-1");
+
+    expect(flags).toHaveLength(1);
+    expect(flags[0]).toMatchObject({
+      dealId: "deal-1",
+      dealName: "Acme Renewal",
+      companyId: "company-1",
+      companyName: "Acme Corp",
+      daysUntilExpiry: 30,
+      rule: "contract_expiring_within_renewal_window",
+      amount: 50000,
+      currency: "USD",
+    });
+    expect(typeof flags[0]!.computedAt).toBe("string");
+  });
+
+  it("returns no flags when there are no expiring deals", async () => {
+    const svc = buildRenewalService([], []);
+
+    const flags = await svc.renewalRiskFlags("ws-1");
+
+    expect(flags).toHaveLength(0);
+  });
+});
+
+describe("DashboardService.expansionSignalFlags", () => {
+  function buildExpansionService(signalRows: unknown[]) {
+    const db = { select: vi.fn() };
+    // One call with chained joins, returns signal rows directly
+    db.select.mockReturnValueOnce(chain(signalRows, "limit"));
+    return new DashboardService(db as any, {} as any, {} as any, {} as any, null);
+  }
+
+  const SIGNAL = {
+    id: "signal-1",
+    entityId: "company-1",
+    signalType: "website_traffic_spike",
+    detectedAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // 7 days ago (Date object, not ISO string)
+    companyName: "Acme Corp",
+  };
+
+  it("flags a company with recent expansion signals", async () => {
+    const svc = buildExpansionService([SIGNAL]);
+
+    const flags = await svc.expansionSignalFlags("ws-1");
+
+    expect(flags).toHaveLength(1);
+    expect(flags[0]).toMatchObject({
+      companyId: "company-1",
+      companyName: "Acme Corp",
+      signalType: "website_traffic_spike",
+      rule: "growth_signal_detected_recently",
+    });
+    expect(typeof flags[0]!.computedAt).toBe("string");
+  });
+
+  it("returns no flags when there are no recent signals", async () => {
+    const svc = buildExpansionService([]);
+
+    const flags = await svc.expansionSignalFlags("ws-1");
+
+    expect(flags).toHaveLength(0);
   });
 });

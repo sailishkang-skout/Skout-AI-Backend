@@ -34,7 +34,12 @@
     "infra:deploy:uat": "pnpm --filter @skout/infra deploy:uat",
     "infra:deploy:prod": "pnpm --filter @skout/infra deploy:prod",
     "infra:synth:uat": "pnpm --filter @skout/infra synth:uat",
-    "test:observability": "bash scripts/test-observability.sh"
+    "test:observability": "bash scripts/test-observability.sh",
+    "test:tickets": "cd /Users/Apple/Desktop/Task/Skout-AI-Backend && pnpm test:ss07 && pnpm test:ss08 && pnpm test:ss09",
+    "test:ss07": "cd workers/scrapers/cleaner && npx vitest run src/signals.test.ts --reporter verbose",
+    "test:ss08": "cd apps/api && npx vitest run src/workers/signal-activation-sweep.worker.test.ts src/routes/dexter-lifecycle.e2e.test.ts --reporter verbose",
+    "test:ss09": "cd apps/api && npx vitest run src/routes/onboarding-autonomy.e2e.test.ts --reporter verbose",
+    "local:tickets": "pnpm docker:up && sleep 10 && pnpm docker:seed && pnpm scrapers:dev & pnpm dev & pnpm dev:crm"
   },
   "engines": {
     "node": ">=20"
