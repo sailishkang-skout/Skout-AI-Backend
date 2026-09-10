@@ -813,6 +813,20 @@ async function executeLinkedinStep(
 
   if (job.status === "succeeded") {
     await markStepTerminal(db, pending.enrollmentStepId, "executed", null, now);
+    emitSkoutEvent(db, config, {
+      type: "touchpoint.completed",
+      tenantId: workspaceId,
+      aggregateId: pending.enrollmentStepId,
+      data: {
+        workspaceId,
+        enrollmentId,
+        sequenceId: payload.sequenceId,
+        prospectId,
+        stepId: pending.stepId,
+        stepType: pending.stepType,
+        channel: "linkedin",
+      },
+    }).catch((err: unknown) => log.warn("failed to emit touchpoint.completed", { err, channel: "linkedin" }));
     return "done";
   }
   if (job.status === "failed" || job.status === "outcome_unknown") {
@@ -1013,6 +1027,7 @@ async function findAwaitingCallStep(db: DbClient, enrollmentId: string): Promise
  */
 async function resolveCallDisposition(
   db: DbClient,
+  config: Env,
   payload: SeqAdvanceJobPayload,
   enrollmentStepId: string,
   now: Date
@@ -1046,6 +1061,12 @@ async function resolveCallDisposition(
     return "stopped";
   }
 
+  const [stepRow] = await db
+    .select({ stepId: sequenceEnrollmentSteps.stepId })
+    .from(sequenceEnrollmentSteps)
+    .where(eq(sequenceEnrollmentSteps.id, enrollmentStepId))
+    .limit(1);
+
   await db
     .update(sequenceEnrollmentSteps)
     .set({
@@ -1059,6 +1080,22 @@ async function resolveCallDisposition(
     enrollmentStepId,
     disposition: task.disposition,
   });
+
+  emitSkoutEvent(db, config, {
+    type: "touchpoint.completed",
+    tenantId: payload.workspaceId,
+    aggregateId: enrollmentStepId,
+    data: {
+      workspaceId: payload.workspaceId,
+      enrollmentId: payload.enrollmentId,
+      sequenceId: payload.sequenceId,
+      prospectId: payload.prospectId,
+      stepId: stepRow?.stepId,
+      channel: "call",
+      disposition: task.disposition,
+    },
+  }).catch((err: unknown) => log.warn("failed to emit touchpoint.completed", { err, channel: "call" }));
+
   return "resolved";
 }
 
@@ -1131,6 +1168,20 @@ async function executeWhatsappStep(
 
   if (job.status === "succeeded") {
     await markStepTerminal(db, pending.enrollmentStepId, "executed", null, now);
+    emitSkoutEvent(db, config, {
+      type: "touchpoint.completed",
+      tenantId: workspaceId,
+      aggregateId: pending.enrollmentStepId,
+      data: {
+        workspaceId,
+        enrollmentId,
+        sequenceId: payload.sequenceId,
+        prospectId,
+        stepId: pending.stepId,
+        stepType: pending.stepType,
+        channel: "whatsapp",
+      },
+    }).catch((err: unknown) => log.warn("failed to emit touchpoint.completed", { err, channel: "whatsapp" }));
     return "done";
   }
   if (job.status === "failed" || job.status === "outcome_unknown") {
@@ -1321,7 +1372,7 @@ async function advanceEnrollment(
   // deliberately won't show up in that query and must not be mistaken for "nothing left to do".
   const awaitingCall = await findAwaitingCallStep(db, enrollmentId);
   if (awaitingCall) {
-    const outcome = await resolveCallDisposition(db, payload, awaitingCall.enrollmentStepId, new Date());
+    const outcome = await resolveCallDisposition(db, config, payload, awaitingCall.enrollmentStepId, new Date());
     if (outcome === "stopped") return;
     if (outcome === "waiting") {
       await enqueueSequenceAdvanceJob(config, payload, CALL_DISPOSITION_POLL_MS, false);

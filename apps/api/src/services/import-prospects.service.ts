@@ -11,6 +11,7 @@ import type { Db } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { buildEnrichmentService } from "./enrichment/index.js";
 import { buildListService } from "./list.service.js";
+import { emitSkoutEvent } from "./skout-event.service.js";
 import { createLogger } from "@skout/observability";
 
 const log = createLogger("import-prospects");
@@ -820,10 +821,18 @@ export async function commitImport(opts: {
   if (opts.autoEnrich) {
     for (const snap of snapshots.slice(0, 50)) {
       try {
-        await enrichment.enrichProspect(workspaceId, snap, {
+        const job = await enrichment.enrichProspect(workspaceId, snap, {
           fields: ["company", "email", "validation"],
           trigger: "manual",
         });
+        if (job.status === "completed") {
+          await emitSkoutEvent(db, config, {
+            type: "enrichment.completed",
+            tenantId: workspaceId,
+            aggregateId: snap.prospectId ?? job.id,
+            data: { workspaceId, prospectId: snap.prospectId, jobId: job.id, status: job.status, creditsUsed: job.creditsUsed, trigger: "csv_import" },
+          }).catch((err: unknown) => log.warn("failed to emit enrichment.completed", { prospectId: snap.prospectId, err }));
+        }
       } catch {
         skipped += 1;
       }

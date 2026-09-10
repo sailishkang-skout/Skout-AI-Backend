@@ -12,6 +12,11 @@ const QueueCtor = vi.fn().mockImplementation((name: string, opts: unknown) => ({
 vi.mock("bullmq", () => ({ Queue: QueueCtor }));
 
 const { emitSkoutEvent } = await import("./skout-event.service.js");
+const db = {
+  insert: vi.fn(() => ({
+    values: vi.fn(async () => undefined),
+  })),
+} as never;
 
 beforeEach(() => {
   queueAdd.mockClear();
@@ -25,7 +30,7 @@ describe("emitSkoutEvent (apps/crm)", () => {
   it("skips enqueueing and still returns a well-formed event when REDIS_URL is unset", async () => {
     const config = {} as Env;
 
-    const event = await emitSkoutEvent(config, {
+    const event = await emitSkoutEvent(db, config, {
       type: "meeting.completed",
       tenantId: "ws-1",
       aggregateId: "meeting-1",
@@ -41,7 +46,7 @@ describe("emitSkoutEvent (apps/crm)", () => {
   it("enqueues onto the shared skout-dexter-event queue when REDIS_URL is set", async () => {
     const config = { REDIS_URL: "redis://localhost:6379" } as Env;
 
-    const event = await emitSkoutEvent(config, {
+    const event = await emitSkoutEvent(db, config, {
       type: "opportunity.updated",
       tenantId: "ws-1",
       aggregateId: "deal-1",
@@ -56,7 +61,7 @@ describe("emitSkoutEvent (apps/crm)", () => {
     queueAdd.mockRejectedValueOnce(new Error("redis connection refused"));
     const config = { REDIS_URL: "redis://localhost:6379" } as Env;
 
-    const event = await emitSkoutEvent(config, {
+    const event = await emitSkoutEvent(db, config, {
       type: "opportunity.updated",
       tenantId: "ws-1",
       aggregateId: "deal-2",

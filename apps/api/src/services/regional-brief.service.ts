@@ -2,10 +2,8 @@ import { and, desc, eq, ilike } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
-import { createEvent } from "@skout/shared";
 import { HttpError } from "../utils/http.js";
 import type { Env } from "../config/env.js";
-import { enqueueDexterEvent } from "../workers/dexter-events.queue.js";
 
 const { regions, countries, countryAliases, regionalBriefSlots, regionalBriefVersions } = schema;
 
@@ -471,24 +469,10 @@ export function createRegionalBriefService(db: Db, config?: Env) {
         return updated!;
       });
 
-      if (config) {
-        const [slot] = await db.select().from(regionalBriefSlots).where(eq(regionalBriefSlots.id, result.slotId));
-        if (slot?.workspaceId) {
-          try {
-            await enqueueDexterEvent(
-              config,
-              createEvent({
-                type: "regional_brief.approved",
-                tenantId: slot.workspaceId,
-                aggregateId: result.slotId,
-                data: { versionId: result.id, slotId: result.slotId },
-              })
-            );
-          } catch (err) {
-            log.warn("failed to emit regional_brief.approved", { err, versionId: result.id });
-          }
-        }
-      }
+      // regional_brief.approved is emitted by the route (POST /regional-brief/versions/:id/approve)
+      // via the full emitSkoutEvent (persist + queue + webhooks) — emitting it again here via the
+      // plain BullMQ enqueue duplicated the event on every approval (dexter-events.queue.ts has no
+      // dedup logic), so it was removed from this service-level call.
 
       return result;
     },

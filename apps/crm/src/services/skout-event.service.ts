@@ -1,5 +1,6 @@
 import { Queue } from "bullmq";
 import { createEvent, type CreateEventInput, type SkoutEvent } from "@skout/shared";
+import { schema, type Db } from "@skout/db";
 import { serviceLog } from "../lib/obs.js";
 import type { Env } from "../config/env.js";
 import { redisBullMqConnection } from "../lib/redis.js";
@@ -38,10 +39,29 @@ function getQueue(config: Env): Queue<{ event: SkoutEvent }> | null {
 }
 
 export async function emitSkoutEvent<T extends Record<string, unknown>>(
+  db: Db,
   config: Env,
   input: CreateEventInput<T>
 ): Promise<SkoutEvent<T>> {
   const event = createEvent(input);
+  await db
+    .insert(schema.skoutEvents)
+    .values({
+      id: event.id,
+      workspaceId: event.tenantId,
+      type: event.type,
+      aggregateId: event.aggregateId,
+      correlationId: event.correlationId,
+      data: event.data,
+      occurredAt: new Date(event.occurredAt),
+    })
+    .catch((err: unknown) => {
+      log.warn("failed to persist skout event to the event log", {
+        type: event.type,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    });
+
   const q = getQueue(config);
   if (!q) {
     log.warn("REDIS_URL unset — skipping event-spine emission", { type: event.type });

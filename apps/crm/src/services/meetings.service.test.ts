@@ -4,7 +4,10 @@ vi.mock("./meeting-invite-mail.service.js", () => ({
   sendMeetingInviteEmail: vi.fn().mockResolvedValue({ messageId: "msg-1" }),
 }));
 vi.mock("./skout-event.service.js", () => ({
-  emitSkoutEvent: vi.fn(async (_config: unknown, input: unknown) => ({ id: "evt-1", ...(input as object) })),
+  emitSkoutEvent: vi.fn(async (_db: unknown, _config: unknown, input: unknown) => ({
+    id: "evt-1",
+    ...(input as object),
+  })),
 }));
 
 import { sendMeetingInviteEmail } from "./meeting-invite-mail.service.js";
@@ -299,6 +302,7 @@ describe("MeetingsService.update — event spine", () => {
     await svc.update("ws-1", "meeting-1", { outcome: "held" } as any);
 
     expect(emitSkoutEvent).toHaveBeenCalledWith(
+      expect.anything(),
       expect.anything(),
       expect.objectContaining({
         type: "meeting.completed",

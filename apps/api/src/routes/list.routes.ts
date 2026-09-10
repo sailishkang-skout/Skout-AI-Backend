@@ -17,6 +17,10 @@ import { listSignalsForEntities, overlaySignalsForMember, type OverlaySignal } f
 import type { Env } from "../config/env.js";
 import { importListToCrm } from "@skout/crm-bridge";
 import type { ProspectListMember } from "../services/enrichment/types.js";
+import { emitSkoutEvent } from "../services/skout-event.service.js";
+import { createLogger } from "@skout/observability";
+
+const log = createLogger("list.routes");
 
 async function withOverlaySignals(
   db: Db | null | undefined,
@@ -215,6 +219,14 @@ export async function listRoutes(app: FastifyInstance) {
     const body = enrichListSchema.parse(request.body ?? {});
     const svc = buildEnrichmentService(app.db, app.config);
     const batch = await svc.enrichList(workspaceId, id, { fields: body.fields });
+    if (batch.status === "completed") {
+      await emitSkoutEvent(app.db, app.config, {
+        type: "enrichment.completed",
+        tenantId: workspaceId,
+        aggregateId: batch.id,
+        data: { workspaceId, listId: id, batchId: batch.id, status: batch.status, total: batch.total, trigger: "list_enrich" },
+      }).catch((err: unknown) => log.warn("failed to emit enrichment.completed", { batchId: batch.id, err }));
+    }
     return reply.status(202).send({ batchId: batch.id, status: batch.status, total: batch.total });
   });
 

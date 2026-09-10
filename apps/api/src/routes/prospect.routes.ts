@@ -9,6 +9,10 @@ import {
 import { buildEnrichmentService, InsufficientCreditsError } from "../services/enrichment/index.js";
 import type { Env } from "../config/env.js";
 import { requireWorkspaceId } from "../utils/http.js";
+import { emitSkoutEvent } from "../services/skout-event.service.js";
+import { createLogger } from "@skout/observability";
+
+const log = createLogger("prospect.routes");
 
 function osConfig(env: Env): OpenSearchConfig | null {
   if (!env.OPENSEARCH_URL) return null;
@@ -180,6 +184,14 @@ export async function prospectRoutes(app: FastifyInstance) {
           fields: body.enrichFields ?? ["company", "email", "validation"],
           trigger: "manual",
         });
+        if (job.status === "completed") {
+          await emitSkoutEvent(app.db, app.config, {
+            type: "enrichment.completed",
+            tenantId: workspaceId,
+            aggregateId: prospectId,
+            data: { workspaceId, prospectId, companyId, jobId: job.id, status: job.status, creditsUsed: job.creditsUsed, trigger: "activate_auto_enrich" },
+          }).catch((err: unknown) => log.warn("failed to emit enrichment.completed", { prospectId, err }));
+        }
       } catch (err) {
         if (err instanceof InsufficientCreditsError) {
           return reply.status(402).send({
@@ -247,6 +259,14 @@ export async function prospectRoutes(app: FastifyInstance) {
         { ...body.prospect, prospectId: body.prospect.prospectId ?? id },
         { fields: body.fields, trigger: "manual" }
       );
+      if (job.status === "completed") {
+        await emitSkoutEvent(app.db, app.config, {
+          type: "enrichment.completed",
+          tenantId: workspaceId,
+          aggregateId: body.prospect.prospectId ?? id,
+          data: { workspaceId, prospectId: body.prospect.prospectId ?? id, jobId: job.id, status: job.status, creditsUsed: job.creditsUsed, trigger: "manual_enrich" },
+        }).catch((err: unknown) => log.warn("failed to emit enrichment.completed", { prospectId: id, err }));
+      }
       return reply.status(202).send({
         jobId: job.id,
         status: job.status,

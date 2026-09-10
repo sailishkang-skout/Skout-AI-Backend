@@ -351,7 +351,7 @@ export class MeetingsService {
     // §7.3 — event-spine trigger: a meeting outcome being recorded is what "meeting.completed"
     // means here, not any other field on the meeting changing.
     if (dto && this.config && input.outcome !== undefined) {
-      await emitSkoutEvent(this.config, {
+      await emitSkoutEvent(this.db, this.config, {
         type: "meeting.completed",
         tenantId: workspaceId,
         aggregateId: id,
