@@ -1,7 +1,11 @@
 import type { EnrichField } from "@skout/pal";
 import { buildEnrichmentService, InsufficientCreditsError, type ProspectSnapshot } from "../enrichment/index.js";
 import { HttpError } from "../../utils/http.js";
+import { emitSkoutEvent } from "../skout-event.service.js";
+import { createLogger } from "@skout/observability";
 import type { NodeHandler } from "./types.js";
+
+const log = createLogger("action-enrichment.node");
 
 /**
  * §8.14 SP-08 — wraps the same enrichment-waterfall engine (packages/pal/src/engine.ts, via
@@ -29,6 +33,15 @@ export const enrichmentActionNodeHandler: NodeHandler = async (ctx) => {
       fields,
       trigger: "workflow",
     });
+    if (job.status === "completed") {
+      await emitSkoutEvent(ctx.db, ctx.config, {
+        type: "enrichment.completed",
+        tenantId: ctx.workspaceId,
+        aggregateId: snapshot.prospectId ?? job.id,
+        correlationId: ctx.runId,
+        data: { workspaceId: ctx.workspaceId, runId: ctx.runId, jobId: job.id, status: job.status, creditsUsed: job.creditsUsed, trigger: "workflow" },
+      }).catch((err: unknown) => log.warn("failed to emit enrichment.completed", { runId: ctx.runId, err }));
+    }
     return {
       output: {
         jobId: job.id,

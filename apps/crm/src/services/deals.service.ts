@@ -187,6 +187,24 @@ export class DealsService {
       }
     }
 
+    if (this.config) {
+      await emitSkoutEvent(this.db, this.config, {
+        type: "opportunity.updated",
+        tenantId: workspaceId,
+        aggregateId: id,
+        data: {
+          workspaceId,
+          dealId: id,
+          stageId: dto.stageId,
+          status: dto.status,
+          amount: dto.amount,
+          currency: dto.currency,
+          updatedBy: null,
+          trigger: "auto_fill",
+        },
+      }).catch((err: unknown) => log.warn("failed to emit opportunity.updated", { err, workspaceId, dealId: id }));
+    }
+
     return { deal: dto, applied: appliedFields, skipped };
   }
 
@@ -223,6 +241,25 @@ export class DealsService {
     const dto = toDto(row);
     await this.auditService.record(workspaceId, ownerId, "create", "deal", dto.id, null, dto);
     log.info("deal created", { workspaceId, dealId: row.id });
+
+    if (this.config) {
+      await emitSkoutEvent(this.db, this.config, {
+        type: "opportunity.updated",
+        tenantId: workspaceId,
+        aggregateId: dto.id,
+        data: {
+          workspaceId,
+          dealId: dto.id,
+          stageId: dto.stageId,
+          status: dto.status,
+          amount: dto.amount,
+          currency: dto.currency,
+          updatedBy: ownerId ?? null,
+          trigger: "created",
+        },
+      }).catch((err: unknown) => log.warn("failed to emit opportunity.updated", { err, workspaceId, dealId: dto.id }));
+    }
+
     return dto;
   }
 
@@ -323,7 +360,7 @@ export class DealsService {
     if (row) log.info("deal updated", { workspaceId, dealId: id });
 
     if (dto && this.config) {
-      await emitSkoutEvent(this.config, {
+      await emitSkoutEvent(this.db, this.config, {
         type: "opportunity.updated",
         tenantId: workspaceId,
         aggregateId: id,
@@ -357,6 +394,21 @@ export class DealsService {
       await this.auditService.record(workspaceId, actorId, "delete", "deal", id, existing, dto);
     }
     log.info("deal soft-deleted", { workspaceId, dealId: id });
+
+    if (dto && this.config) {
+      await emitSkoutEvent(this.db, this.config, {
+        type: "opportunity.updated",
+        tenantId: workspaceId,
+        aggregateId: id,
+        data: {
+          workspaceId,
+          dealId: id,
+          status: "deleted",
+          deletedBy: actorId ?? null,
+        },
+      }).catch((err: unknown) => log.warn("failed to emit opportunity.updated", { err, workspaceId, dealId: id }));
+    }
+
     return true;
   }
 

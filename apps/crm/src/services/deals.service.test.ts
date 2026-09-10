@@ -1,7 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 vi.mock("./skout-event.service.js", () => ({
-  emitSkoutEvent: vi.fn(async (_config: unknown, input: unknown) => ({ id: "evt-1", ...(input as object) })),
+  emitSkoutEvent: vi.fn(async (_db: unknown, _config: unknown, input: unknown) => ({
+    id: "evt-1",
+    ...(input as object),
+  })),
 }));
 vi.mock("@skout/db", async () => {
   const actual = await vi.importActual<typeof import("@skout/db")>("@skout/db");
@@ -111,6 +114,7 @@ describe("DealsService.update — event spine", () => {
     await svc.update("ws-1", "deal-1", { amount: 2000 } as any, "user-1");
 
     expect(emitSkoutEvent).toHaveBeenCalledWith(
+      expect.anything(),
       expect.anything(),
       expect.objectContaining({
         type: "opportunity.updated",

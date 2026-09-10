@@ -184,6 +184,18 @@ export async function icpRoutes(app: FastifyInstance) {
       } catch (err) {
         request.log.warn({ err, workspaceId }, "ICP rescore enqueue failed");
       }
+
+      const { emitSkoutEvent } = await import("../services/skout-event.service.js");
+      await emitSkoutEvent(app.db, app.config, {
+        type: "icp.approved",
+        tenantId: workspaceId,
+        aggregateId: workspaceId,
+        data: {
+          workspaceId,
+          version,
+          approvedBy: request.userId ?? null,
+        },
+      }).catch((err: unknown) => request.log.warn({ err, workspaceId }, "failed to emit icp.approved"));
     }
 
     return reply.send({
