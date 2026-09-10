@@ -61,6 +61,7 @@ export const DEXTER_EVENT_TYPES = [
   "dexter.plan.approved",
   "dexter.plan.rejected",
   "dexter.plan.blocked",
+  "dexter.plan.invoked",
   "dexter.action.executed",
   "dexter.action.failed",
   "dexter.outcome.captured",
