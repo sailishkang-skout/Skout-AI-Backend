@@ -1,0 +1,3052 @@
+{
+  "AFG": {
+    "name": "Afghanistan",
+    "isoAlpha3": "AFG",
+    "isoCode": "AF",
+    "region": "APAC",
+    "subRegion": "ASEAN",
+    "salesTeam": "Sales Other Asean",
+    "tier": "3",
+    "aliases": [
+      "AF"
+    ]
+  },
+  "ALA": {
+    "name": "Aland Islands",
+    "isoAlpha3": "ALA",
+    "isoCode": "AX",
+    "region": "EMEA",
+    "subRegion": "NORDICS",
+    "salesTeam": "NORDICS",
+    "tier": "1",
+    "aliases": [
+      "Åland Islands",
+      "AX"
+    ]
+  },
+  "ALB": {
+    "name": "Albania",
+    "isoAlpha3": "ALB",
+    "isoCode": "AL",
+    "region": "EMEA",
+    "subRegion": "CEE & BALTICS",
+    "salesTeam": "Sales CEE & Baltics",
+    "tier": "2",
+    "aliases": [
+      "AL"
+    ]
+  },
+  "DZA": {
+    "name": "Algeria",
+    "isoAlpha3": "DZA",
+    "isoCode": "DZ",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "DZ"
+    ]
+  },
+  "ASM": {
+    "name": "American Samoa",
+    "isoAlpha3": "ASM",
+    "isoCode": "AS",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "AS"
+    ]
+  },
+  "AND": {
+    "name": "Andorra",
+    "isoAlpha3": "AND",
+    "isoCode": "AD",
+    "region": "EMEA",
+    "subRegion": "SOUTH EUROPE",
+    "salesTeam": "Sales South Europe excl France",
+    "tier": "2",
+    "aliases": [
+      "AD"
+    ]
+  },
+  "AGO": {
+    "name": "Angola",
+    "isoAlpha3": "AGO",
+    "isoCode": "AO",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "AO"
+    ]
+  },
+  "AIA": {
+    "name": "Anguilla",
+    "isoAlpha3": "AIA",
+    "isoCode": "AI",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "AI"
+    ]
+  },
+  "ATA": {
+    "name": "Antartica",
+    "isoAlpha3": "ATA",
+    "isoCode": "AQ",
+    "region": "LATAM",
+    "subRegion": "SOUTH LATAM",
+    "salesTeam": "Sales South Latam",
+    "tier": "3",
+    "aliases": [
+      "AQ"
+    ]
+  },
+  "ATG": {
+    "name": "Antigua and Barbuda",
+    "isoAlpha3": "ATG",
+    "isoCode": "AG",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "AG"
+    ]
+  },
+  "ARG": {
+    "name": "Argentina",
+    "isoAlpha3": "ARG",
+    "isoCode": "AR",
+    "region": "LATAM",
+    "subRegion": "SOUTH LATAM",
+    "salesTeam": "Sales South Latam",
+    "tier": "3",
+    "aliases": [
+      "AR"
+    ]
+  },
+  "ARM": {
+    "name": "Armenia",
+    "isoAlpha3": "ARM",
+    "isoCode": "AM",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "AM"
+    ]
+  },
+  "ABW": {
+    "name": "Aruba",
+    "isoAlpha3": "ABW",
+    "isoCode": "AW",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "AW"
+    ]
+  },
+  "AUS": {
+    "name": "Australia",
+    "isoAlpha3": "AUS",
+    "isoCode": "AU",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "AU"
+    ]
+  },
+  "AUT": {
+    "name": "Austria",
+    "isoAlpha3": "AUT",
+    "isoCode": "AT",
+    "region": "EMEA",
+    "subRegion": "DACH",
+    "salesTeam": "Sales Dach",
+    "tier": "1",
+    "aliases": [
+      "AT"
+    ]
+  },
+  "AZE": {
+    "name": "Azerbaijan",
+    "isoAlpha3": "AZE",
+    "isoCode": "AZ",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "AZ"
+    ]
+  },
+  "BHS": {
+    "name": "Bahamas",
+    "isoAlpha3": "BHS",
+    "isoCode": "BS",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "BS"
+    ]
+  },
+  "BHR": {
+    "name": "Bahrain",
+    "isoAlpha3": "BHR",
+    "isoCode": "BH",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "BH"
+    ]
+  },
+  "BGD": {
+    "name": "Bangladesh",
+    "isoAlpha3": "BGD",
+    "isoCode": "BD",
+    "region": "APAC",
+    "subRegion": "ASEAN",
+    "salesTeam": "Sales Other Asean",
+    "tier": "3",
+    "aliases": [
+      "BD"
+    ]
+  },
+  "BRB": {
+    "name": "Barbados",
+    "isoAlpha3": "BRB",
+    "isoCode": "BB",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "BB"
+    ]
+  },
+  "BLR": {
+    "name": "Belarus",
+    "isoAlpha3": "BLR",
+    "isoCode": "BY",
+    "region": "EMEA",
+    "subRegion": "CEE & BALTICS",
+    "salesTeam": "Sales CEE & Baltics",
+    "tier": "2",
+    "aliases": [
+      "BY"
+    ]
+  },
+  "BEL": {
+    "name": "Belgium",
+    "isoAlpha3": "BEL",
+    "isoCode": "BE",
+    "region": "EMEA",
+    "subRegion": "BENELUX",
+    "salesTeam": "Sales Benelux",
+    "tier": "1",
+    "aliases": [
+      "BE"
+    ]
+  },
+  "BLZ": {
+    "name": "Belize",
+    "isoAlpha3": "BLZ",
+    "isoCode": "BZ",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "BZ"
+    ]
+  },
+  "BEN": {
+    "name": "Benin",
+    "isoAlpha3": "BEN",
+    "isoCode": "BJ",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "BJ"
+    ]
+  },
+  "BMU": {
+    "name": "Bermuda",
+    "isoAlpha3": "BMU",
+    "isoCode": "BM",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "BM"
+    ]
+  },
+  "BTN": {
+    "name": "Bhutan",
+    "isoAlpha3": "BTN",
+    "isoCode": "BT",
+    "region": "APAC",
+    "subRegion": "ASEAN",
+    "salesTeam": "Sales Other Asean",
+    "tier": "3",
+    "aliases": [
+      "BT"
+    ]
+  },
+  "BOL": {
+    "name": "Boliva",
+    "isoAlpha3": "BOL",
+    "isoCode": "BO",
+    "region": "LATAM",
+    "subRegion": "SOUTH LATAM",
+    "salesTeam": "Sales South Latam",
+    "tier": "3",
+    "aliases": [
+      "BO"
+    ]
+  },
+  "BES": {
+    "name": "Bonaire, Sint Eustatius and Saba",
+    "isoAlpha3": "BES",
+    "isoCode": "BQ",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "Caribbean Netherlands",
+      "BQ"
+    ]
+  },
+  "BIH": {
+    "name": "Bosnia and Herzegovina",
+    "isoAlpha3": "BIH",
+    "isoCode": "BA",
+    "region": "EMEA",
+    "subRegion": "CEE & BALTICS",
+    "salesTeam": "Sales CEE & Baltics",
+    "tier": "2",
+    "aliases": [
+      "BA"
+    ]
+  },
+  "BWA": {
+    "name": "Botswana",
+    "isoAlpha3": "BWA",
+    "isoCode": "BW",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "BW"
+    ]
+  },
+  "BVT": {
+    "name": "Bouvet Island",
+    "isoAlpha3": "BVT",
+    "isoCode": "BV",
+    "region": "EMEA",
+    "subRegion": "NORDICS",
+    "salesTeam": "NORDICS",
+    "tier": "1",
+    "aliases": [
+      "BV"
+    ]
+  },
+  "BRA": {
+    "name": "Brazil",
+    "isoAlpha3": "BRA",
+    "isoCode": "BR",
+    "region": "LATAM",
+    "subRegion": "BRAZIL",
+    "salesTeam": "Sales Brazil",
+    "tier": "2",
+    "aliases": [
+      "BR"
+    ]
+  },
+  "IOT": {
+    "name": "British Indian Ocean Territory",
+    "isoAlpha3": "IOT",
+    "isoCode": "IO",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "IO"
+    ]
+  },
+  "BRN": {
+    "name": "Brunei",
+    "isoAlpha3": "BRN",
+    "isoCode": "BN",
+    "region": "APAC",
+    "subRegion": "ASEAN",
+    "salesTeam": "Sales Other Asean",
+    "tier": "3",
+    "aliases": [
+      "BN",
+      "Brunei Darussalam"
+    ]
+  },
+  "BGR": {
+    "name": "Bulgaria",
+    "isoAlpha3": "BGR",
+    "isoCode": "BG",
+    "region": "EMEA",
+    "subRegion": "CEE & BALTICS",
+    "salesTeam": "Sales CEE & Baltics",
+    "tier": "2",
+    "aliases": [
+      "BG"
+    ]
+  },
+  "BFA": {
+    "name": "Burkina Faso",
+    "isoAlpha3": "BFA",
+    "isoCode": "BF",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "BF"
+    ]
+  },
+  "BDI": {
+    "name": "Burundi",
+    "isoAlpha3": "BDI",
+    "isoCode": "BI",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "BI"
+    ]
+  },
+  "KHM": {
+    "name": "Cambodia",
+    "isoAlpha3": "KHM",
+    "isoCode": "KH",
+    "region": "APAC",
+    "subRegion": "ASEAN",
+    "salesTeam": "Sales Other Asean",
+    "tier": "3",
+    "aliases": [
+      "KH"
+    ]
+  },
+  "CMR": {
+    "name": "Cameroon",
+    "isoAlpha3": "CMR",
+    "isoCode": "CM",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "CM"
+    ]
+  },
+  "CAN": {
+    "name": "Canada",
+    "isoAlpha3": "CAN",
+    "isoCode": "CA",
+    "region": "NAM",
+    "subRegion": "NAM",
+    "salesTeam": "Sales Nam",
+    "tier": "1",
+    "aliases": [
+      "CA"
+    ]
+  },
+  "CPV": {
+    "name": "Cape Verde",
+    "isoAlpha3": "CPV",
+    "isoCode": "CV",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "CV",
+      "Cabo Verde"
+    ]
+  },
+  "CYM": {
+    "name": "Cayman Islands",
+    "isoAlpha3": "CYM",
+    "isoCode": "KY",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "KY"
+    ]
+  },
+  "CAF": {
+    "name": "Central African Republic",
+    "isoAlpha3": "CAF",
+    "isoCode": "CF",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "CF"
+    ]
+  },
+  "TCD": {
+    "name": "Chad",
+    "isoAlpha3": "TCD",
+    "isoCode": "TD",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "TD"
+    ]
+  },
+  "CHL": {
+    "name": "Chile",
+    "isoAlpha3": "CHL",
+    "isoCode": "CL",
+    "region": "LATAM",
+    "subRegion": "SOUTH LATAM",
+    "salesTeam": "Sales South Latam",
+    "tier": "3",
+    "aliases": [
+      "CL"
+    ]
+  },
+  "CHN": {
+    "name": "China",
+    "isoAlpha3": "CHN",
+    "isoCode": "CN",
+    "region": "APAC",
+    "subRegion": "NASIA",
+    "salesTeam": "Sales China",
+    "tier": "2",
+    "aliases": [
+      "CN"
+    ]
+  },
+  "CXR": {
+    "name": "Christmas Island",
+    "isoAlpha3": "CXR",
+    "isoCode": "CX",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "CX"
+    ]
+  },
+  "CCK": {
+    "name": "Cocos (Keeling) Islands",
+    "isoAlpha3": "CCK",
+    "isoCode": "CC",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "CC"
+    ]
+  },
+  "COL": {
+    "name": "Colombia",
+    "isoAlpha3": "COL",
+    "isoCode": "CO",
+    "region": "LATAM",
+    "subRegion": "SOUTH LATAM",
+    "salesTeam": "Sales South Latam",
+    "tier": "3",
+    "aliases": [
+      "CO"
+    ]
+  },
+  "COM": {
+    "name": "Comoros",
+    "isoAlpha3": "COM",
+    "isoCode": "KM",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "KM"
+    ]
+  },
+  "COG": {
+    "name": "Congo",
+    "isoAlpha3": "COG",
+    "isoCode": "CG",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "Congo Democratic Republic of The",
+      "CG"
+    ]
+  },
+  "COK": {
+    "name": "Cook Islands",
+    "isoAlpha3": "COK",
+    "isoCode": "CK",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "CK"
+    ]
+  },
+  "CRI": {
+    "name": "Costa Rica",
+    "isoAlpha3": "CRI",
+    "isoCode": "CR",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "CR"
+    ]
+  },
+  "CIV": {
+    "name": "Côte d'Ivoire",
+    "isoAlpha3": "CIV",
+    "isoCode": "CI",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "Cote d'Ivoire",
+      "CI",
+      "Ivory Coast"
+    ]
+  },
+  "HRV": {
+    "name": "Croatia",
+    "isoAlpha3": "HRV",
+    "isoCode": "HR",
+    "region": "EMEA",
+    "subRegion": "CEE & BALTICS",
+    "salesTeam": "Sales CEE & Baltics",
+    "tier": "2",
+    "aliases": [
+      "HR"
+    ]
+  },
+  "CUB": {
+    "name": "Cuba",
+    "isoAlpha3": "CUB",
+    "isoCode": "CU",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "CU"
+    ]
+  },
+  "CUW": {
+    "name": "Curaçao",
+    "isoAlpha3": "CUW",
+    "isoCode": "CW",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "CW"
+    ]
+  },
+  "CYP": {
+    "name": "Cyprus",
+    "isoAlpha3": "CYP",
+    "isoCode": "CY",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "CY"
+    ]
+  },
+  "CZE": {
+    "name": "Czech Republic",
+    "isoAlpha3": "CZE",
+    "isoCode": "CZ",
+    "region": "EMEA",
+    "subRegion": "CEE & BALTICS",
+    "salesTeam": "Sales CEE & Baltics",
+    "tier": "2",
+    "aliases": [
+      "CZ",
+      "Czechia"
+    ]
+  },
+  "COD": {
+    "name": "Democratic Republic of the Congo",
+    "isoAlpha3": "COD",
+    "isoCode": "CD",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "Congo, Democratic Republic of the",
+      "CD"
+    ]
+  },
+  "DNK": {
+    "name": "Denmark",
+    "isoAlpha3": "DNK",
+    "isoCode": "DK",
+    "region": "EMEA",
+    "subRegion": "NORDICS",
+    "salesTeam": "Sales Denmark",
+    "tier": "1",
+    "aliases": [
+      "DK"
+    ]
+  },
+  "DJI": {
+    "name": "Djibouti",
+    "isoAlpha3": "DJI",
+    "isoCode": "DJ",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "DJ"
+    ]
+  },
+  "DMA": {
+    "name": "Dominica",
+    "isoAlpha3": "DMA",
+    "isoCode": "DM",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "DM"
+    ]
+  },
+  "DOM": {
+    "name": "Dominican Republic",
+    "isoAlpha3": "DOM",
+    "isoCode": "DO",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "DO"
+    ]
+  },
+  "ECU": {
+    "name": "Ecuador",
+    "isoAlpha3": "ECU",
+    "isoCode": "EC",
+    "region": "LATAM",
+    "subRegion": "SOUTH LATAM",
+    "salesTeam": "Sales South Latam",
+    "tier": "3",
+    "aliases": [
+      "EC"
+    ]
+  },
+  "EGY": {
+    "name": "Egypt",
+    "isoAlpha3": "EGY",
+    "isoCode": "EG",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "EG"
+    ]
+  },
+  "SLV": {
+    "name": "El Salvador",
+    "isoAlpha3": "SLV",
+    "isoCode": "SV",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "SV"
+    ]
+  },
+  "GNQ": {
+    "name": "Equatorial Guinea",
+    "isoAlpha3": "GNQ",
+    "isoCode": "GQ",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "GQ"
+    ]
+  },
+  "ERI": {
+    "name": "Eritrea",
+    "isoAlpha3": "ERI",
+    "isoCode": "ER",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "ER"
+    ]
+  },
+  "EST": {
+    "name": "Estonia",
+    "isoAlpha3": "EST",
+    "isoCode": "EE",
+    "region": "EMEA",
+    "subRegion": "NORDICS",
+    "salesTeam": "NORDICS",
+    "tier": "1",
+    "aliases": [
+      "EE"
+    ]
+  },
+  "SWZ": {
+    "name": "Eswatini",
+    "isoAlpha3": "SWZ",
+    "isoCode": "SZ",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "SZ"
+    ]
+  },
+  "ETH": {
+    "name": "Ethiopia",
+    "isoAlpha3": "ETH",
+    "isoCode": "ET",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "ET"
+    ]
+  },
+  "FLK": {
+    "name": "Falkland Islands (Malvinas)",
+    "isoAlpha3": "FLK",
+    "isoCode": "FK",
+    "region": "LATAM",
+    "subRegion": "SOUTH LATAM",
+    "salesTeam": "Sales South Latam",
+    "tier": "3",
+    "aliases": [
+      "FK"
+    ]
+  },
+  "FRO": {
+    "name": "Faroe Islands",
+    "isoAlpha3": "FRO",
+    "isoCode": "FO",
+    "region": "EMEA",
+    "subRegion": "NORDICS",
+    "salesTeam": "NORDICS",
+    "tier": "1",
+    "aliases": [
+      "FO"
+    ]
+  },
+  "FJI": {
+    "name": "Fiji",
+    "isoAlpha3": "FJI",
+    "isoCode": "FJ",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "FJ"
+    ]
+  },
+  "FIN": {
+    "name": "Finland",
+    "isoAlpha3": "FIN",
+    "isoCode": "FI",
+    "region": "EMEA",
+    "subRegion": "NORDICS",
+    "salesTeam": "Sales Finland",
+    "tier": "1",
+    "aliases": [
+      "FI"
+    ]
+  },
+  "FRA": {
+    "name": "France",
+    "isoAlpha3": "FRA",
+    "isoCode": "FR",
+    "region": "EMEA",
+    "subRegion": "SOUTH EUROPE",
+    "salesTeam": "Sales France",
+    "tier": "1",
+    "aliases": [
+      "FR"
+    ]
+  },
+  "GUF": {
+    "name": "French Guiana",
+    "isoAlpha3": "GUF",
+    "isoCode": "GF",
+    "region": "LATAM",
+    "subRegion": "SOUTH LATAM",
+    "salesTeam": "Sales South Latam",
+    "tier": "3",
+    "aliases": [
+      "GF"
+    ]
+  },
+  "PYF": {
+    "name": "French Polynesia",
+    "isoAlpha3": "PYF",
+    "isoCode": "PF",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "PF"
+    ]
+  },
+  "ATF": {
+    "name": "French Southern and Antarctic Lands",
+    "isoAlpha3": "ATF",
+    "isoCode": "TF",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "French Southern Territories",
+      "TF"
+    ]
+  },
+  "GAB": {
+    "name": "Gabon",
+    "isoAlpha3": "GAB",
+    "isoCode": "GA",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "GA"
+    ]
+  },
+  "GMB": {
+    "name": "Gambia",
+    "isoAlpha3": "GMB",
+    "isoCode": "GM",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "GM"
+    ]
+  },
+  "GEO": {
+    "name": "Georgia",
+    "isoAlpha3": "GEO",
+    "isoCode": "GE",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "GE"
+    ]
+  },
+  "DEU": {
+    "name": "Germany",
+    "isoAlpha3": "DEU",
+    "isoCode": "DE",
+    "region": "EMEA",
+    "subRegion": "DACH",
+    "salesTeam": "Sales Dach",
+    "tier": "1",
+    "aliases": [
+      "DE"
+    ]
+  },
+  "GHA": {
+    "name": "Ghana",
+    "isoAlpha3": "GHA",
+    "isoCode": "GH",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "GH"
+    ]
+  },
+  "GIB": {
+    "name": "Gibraltar",
+    "isoAlpha3": "GIB",
+    "isoCode": "GI",
+    "region": "EMEA",
+    "subRegion": "UKI",
+    "salesTeam": "Sales UKI",
+    "tier": "1",
+    "aliases": [
+      "GI"
+    ]
+  },
+  "GRC": {
+    "name": "Greece",
+    "isoAlpha3": "GRC",
+    "isoCode": "GR",
+    "region": "EMEA",
+    "subRegion": "SOUTH EUROPE",
+    "salesTeam": "Sales South Europe excl France",
+    "tier": "2",
+    "aliases": [
+      "GR"
+    ]
+  },
+  "GRL": {
+    "name": "Greenland",
+    "isoAlpha3": "GRL",
+    "isoCode": "GL",
+    "region": "EMEA",
+    "subRegion": "NORDICS",
+    "salesTeam": "NORDICS",
+    "tier": "1",
+    "aliases": [
+      "GL"
+    ]
+  },
+  "GRD": {
+    "name": "Grenada",
+    "isoAlpha3": "GRD",
+    "isoCode": "GD",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "GD"
+    ]
+  },
+  "GLP": {
+    "name": "Guadeloupe",
+    "isoAlpha3": "GLP",
+    "isoCode": "GP",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "GP"
+    ]
+  },
+  "GUM": {
+    "name": "Guam",
+    "isoAlpha3": "GUM",
+    "isoCode": "GU",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "GU"
+    ]
+  },
+  "GTM": {
+    "name": "Guatemala",
+    "isoAlpha3": "GTM",
+    "isoCode": "GT",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "GT"
+    ]
+  },
+  "GGY": {
+    "name": "Guernsey",
+    "isoAlpha3": "GGY",
+    "isoCode": "GG",
+    "region": "EMEA",
+    "subRegion": "UKI",
+    "salesTeam": "Sales UKI",
+    "tier": "1",
+    "aliases": [
+      "GG"
+    ]
+  },
+  "GIN": {
+    "name": "Guinea",
+    "isoAlpha3": "GIN",
+    "isoCode": "GN",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "GN"
+    ]
+  },
+  "GNB": {
+    "name": "Guinea-Bissau",
+    "isoAlpha3": "GNB",
+    "isoCode": "GW",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "GW"
+    ]
+  },
+  "GUY": {
+    "name": "Guyana",
+    "isoAlpha3": "GUY",
+    "isoCode": "GY",
+    "region": "LATAM",
+    "subRegion": "SOUTH LATAM",
+    "salesTeam": "Sales South Latam",
+    "tier": "3",
+    "aliases": [
+      "GY"
+    ]
+  },
+  "HTI": {
+    "name": "Haiti",
+    "isoAlpha3": "HTI",
+    "isoCode": "HT",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "HT"
+    ]
+  },
+  "HMD": {
+    "name": "Heard Island and McDonald Islands",
+    "isoAlpha3": "HMD",
+    "isoCode": "HM",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "HM"
+    ]
+  },
+  "HND": {
+    "name": "Honduras",
+    "isoAlpha3": "HND",
+    "isoCode": "HN",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "HN"
+    ]
+  },
+  "HKG": {
+    "name": "Hong Kong",
+    "isoAlpha3": "HKG",
+    "isoCode": "HK",
+    "region": "APAC",
+    "subRegion": "ASEAN",
+    "salesTeam": "Sales Other Asean",
+    "tier": "3",
+    "aliases": [
+      "HK"
+    ]
+  },
+  "HUN": {
+    "name": "Hungary",
+    "isoAlpha3": "HUN",
+    "isoCode": "HU",
+    "region": "EMEA",
+    "subRegion": "CEE & BALTICS",
+    "salesTeam": "Sales CEE & Baltics",
+    "tier": "2",
+    "aliases": [
+      "HU"
+    ]
+  },
+  "ISL": {
+    "name": "Iceland",
+    "isoAlpha3": "ISL",
+    "isoCode": "IS",
+    "region": "EMEA",
+    "subRegion": "NORDICS",
+    "salesTeam": "NORDICS",
+    "tier": "1",
+    "aliases": [
+      "IS"
+    ]
+  },
+  "IND": {
+    "name": "India",
+    "isoAlpha3": "IND",
+    "isoCode": "IN",
+    "region": "APAC",
+    "subRegion": "INDIA",
+    "salesTeam": "Sales India",
+    "tier": "3",
+    "aliases": [
+      "IN"
+    ]
+  },
+  "IDN": {
+    "name": "Indonesia",
+    "isoAlpha3": "IDN",
+    "isoCode": "ID",
+    "region": "APAC",
+    "subRegion": "ASEAN",
+    "salesTeam": "Sales Other Asean",
+    "tier": "3",
+    "aliases": [
+      "ID"
+    ]
+  },
+  "IRN": {
+    "name": "Iran",
+    "isoAlpha3": "IRN",
+    "isoCode": "IR",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "Iran (Islamic Republic of)",
+      "IR"
+    ]
+  },
+  "IRQ": {
+    "name": "Iraq",
+    "isoAlpha3": "IRQ",
+    "isoCode": "IQ",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "IQ"
+    ]
+  },
+  "IRL": {
+    "name": "Ireland",
+    "isoAlpha3": "IRL",
+    "isoCode": "IE",
+    "region": "EMEA",
+    "subRegion": "UKI",
+    "salesTeam": "Sales UKI",
+    "tier": "1",
+    "aliases": [
+      "IE"
+    ]
+  },
+  "IMN": {
+    "name": "Isle of Man",
+    "isoAlpha3": "IMN",
+    "isoCode": "IM",
+    "region": "EMEA",
+    "subRegion": "UKI",
+    "salesTeam": "Sales UKI",
+    "tier": "1",
+    "aliases": [
+      "IM"
+    ]
+  },
+  "ISR": {
+    "name": "Israel",
+    "isoAlpha3": "ISR",
+    "isoCode": "IL",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Israel",
+    "tier": "1",
+    "aliases": [
+      "IL"
+    ]
+  },
+  "ITA": {
+    "name": "Italy",
+    "isoAlpha3": "ITA",
+    "isoCode": "IT",
+    "region": "EMEA",
+    "subRegion": "SOUTH EUROPE",
+    "salesTeam": "Sales South Europe excl France",
+    "tier": "2",
+    "aliases": [
+      "IT"
+    ]
+  },
+  "JAM": {
+    "name": "Jamaica",
+    "isoAlpha3": "JAM",
+    "isoCode": "JM",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "JM"
+    ]
+  },
+  "JPN": {
+    "name": "Japan",
+    "isoAlpha3": "JPN",
+    "isoCode": "JP",
+    "region": "APAC",
+    "subRegion": "NASIA",
+    "salesTeam": "Sales JAPAN",
+    "tier": "2",
+    "aliases": [
+      "JP"
+    ]
+  },
+  "JEY": {
+    "name": "Jersey",
+    "isoAlpha3": "JEY",
+    "isoCode": "JE",
+    "region": "EMEA",
+    "subRegion": "UKI",
+    "salesTeam": "Sales UKI",
+    "tier": "1",
+    "aliases": [
+      "JE"
+    ]
+  },
+  "JOR": {
+    "name": "Jordan",
+    "isoAlpha3": "JOR",
+    "isoCode": "JO",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "JO"
+    ]
+  },
+  "KAZ": {
+    "name": "Kazakhstan",
+    "isoAlpha3": "KAZ",
+    "isoCode": "KZ",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "KZ"
+    ]
+  },
+  "KEN": {
+    "name": "Kenya",
+    "isoAlpha3": "KEN",
+    "isoCode": "KE",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "KE"
+    ]
+  },
+  "KIR": {
+    "name": "Kiribati",
+    "isoAlpha3": "KIR",
+    "isoCode": "KI",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "KI"
+    ]
+  },
+  "XXK": {
+    "name": "Kosovo",
+    "isoAlpha3": "XXK",
+    "isoCode": "Xk",
+    "region": "EMEA",
+    "subRegion": "CEE & BALTICS",
+    "salesTeam": "Sales CEE & Baltics",
+    "tier": "2",
+    "aliases": [
+      "Xk"
+    ]
+  },
+  "KWT": {
+    "name": "Kuwait",
+    "isoAlpha3": "KWT",
+    "isoCode": "KW",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "KW"
+    ]
+  },
+  "KGZ": {
+    "name": "Kyrgyzstan",
+    "isoAlpha3": "KGZ",
+    "isoCode": "KG",
+    "region": "EMEA",
+    "subRegion": "CEE & BALTICS",
+    "salesTeam": "Sales CEE & Baltics",
+    "tier": "2",
+    "aliases": [
+      "KG"
+    ]
+  },
+  "LAO": {
+    "name": "Lao",
+    "isoAlpha3": "LAO",
+    "isoCode": "LA",
+    "region": "APAC",
+    "subRegion": "ASEAN",
+    "salesTeam": "Sales Other Asean",
+    "tier": "3",
+    "aliases": [
+      "Lao People's Democratic Republic",
+      "Lao Peopleâ€™s Democratic Republic",
+      "Lao People’s Democratic Republic",
+      "LA"
+    ]
+  },
+  "LVA": {
+    "name": "Latvia",
+    "isoAlpha3": "LVA",
+    "isoCode": "LV",
+    "region": "EMEA",
+    "subRegion": "NORDICS",
+    "salesTeam": "NORDICS",
+    "tier": "1",
+    "aliases": [
+      "LV"
+    ]
+  },
+  "LBN": {
+    "name": "Lebanon",
+    "isoAlpha3": "LBN",
+    "isoCode": "LB",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "LB"
+    ]
+  },
+  "LSO": {
+    "name": "Lesotho",
+    "isoAlpha3": "LSO",
+    "isoCode": "LS",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "LS"
+    ]
+  },
+  "LBR": {
+    "name": "Liberia",
+    "isoAlpha3": "LBR",
+    "isoCode": "LR",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "LR"
+    ]
+  },
+  "LBY": {
+    "name": "Libya",
+    "isoAlpha3": "LBY",
+    "isoCode": "LY",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "LY"
+    ]
+  },
+  "LIE": {
+    "name": "Liechtenstein",
+    "isoAlpha3": "LIE",
+    "isoCode": "LI",
+    "region": "EMEA",
+    "subRegion": "DACH",
+    "salesTeam": "Sales Dach",
+    "tier": "1",
+    "aliases": [
+      "LI"
+    ]
+  },
+  "LTU": {
+    "name": "Lithuania",
+    "isoAlpha3": "LTU",
+    "isoCode": "LT",
+    "region": "EMEA",
+    "subRegion": "NORDICS",
+    "salesTeam": "NORDICS",
+    "tier": "1",
+    "aliases": [
+      "LT"
+    ]
+  },
+  "LUX": {
+    "name": "Luxembourg",
+    "isoAlpha3": "LUX",
+    "isoCode": "LU",
+    "region": "EMEA",
+    "subRegion": "BENELUX",
+    "salesTeam": "Sales Benelux",
+    "tier": "1",
+    "aliases": [
+      "LU"
+    ]
+  },
+  "MAC": {
+    "name": "Macao",
+    "isoAlpha3": "MAC",
+    "isoCode": "MO",
+    "region": "APAC",
+    "subRegion": "ASEAN",
+    "salesTeam": "Sales Other Asean",
+    "tier": "3",
+    "aliases": [
+      "MO",
+      "Macau"
+    ]
+  },
+  "MDG": {
+    "name": "Madagascar",
+    "isoAlpha3": "MDG",
+    "isoCode": "MG",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "MG"
+    ]
+  },
+  "MWI": {
+    "name": "Malawi",
+    "isoAlpha3": "MWI",
+    "isoCode": "MW",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "MW"
+    ]
+  },
+  "MYS": {
+    "name": "Malaysia",
+    "isoAlpha3": "MYS",
+    "isoCode": "MY",
+    "region": "APAC",
+    "subRegion": "ASEAN",
+    "salesTeam": "Sales Other Asean",
+    "tier": "3",
+    "aliases": [
+      "MY"
+    ]
+  },
+  "MDV": {
+    "name": "Maldives",
+    "isoAlpha3": "MDV",
+    "isoCode": "MV",
+    "region": "APAC",
+    "subRegion": "ASEAN",
+    "salesTeam": "Sales Other Asean",
+    "tier": "3",
+    "aliases": [
+      "MV"
+    ]
+  },
+  "MLI": {
+    "name": "Mali",
+    "isoAlpha3": "MLI",
+    "isoCode": "ML",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "ML"
+    ]
+  },
+  "MLT": {
+    "name": "Malta",
+    "isoAlpha3": "MLT",
+    "isoCode": "MT",
+    "region": "EMEA",
+    "subRegion": "SOUTH EUROPE",
+    "salesTeam": "Sales South Europe excl France",
+    "tier": "2",
+    "aliases": [
+      "MT"
+    ]
+  },
+  "MHL": {
+    "name": "Marshall Islands",
+    "isoAlpha3": "MHL",
+    "isoCode": "MH",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "MH"
+    ]
+  },
+  "MTQ": {
+    "name": "Martinique",
+    "isoAlpha3": "MTQ",
+    "isoCode": "MQ",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "MQ"
+    ]
+  },
+  "MRT": {
+    "name": "Mauritania",
+    "isoAlpha3": "MRT",
+    "isoCode": "MR",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "MR"
+    ]
+  },
+  "MUS": {
+    "name": "Mauritius",
+    "isoAlpha3": "MUS",
+    "isoCode": "MU",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "MU"
+    ]
+  },
+  "MYT": {
+    "name": "Mayotte",
+    "isoAlpha3": "MYT",
+    "isoCode": "YT",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "YT"
+    ]
+  },
+  "MEX": {
+    "name": "Mexico",
+    "isoAlpha3": "MEX",
+    "isoCode": "MX",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "MX"
+    ]
+  },
+  "FSM": {
+    "name": "Micronesia",
+    "isoAlpha3": "FSM",
+    "isoCode": "FM",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "Micronesia (Federated States of)",
+      "FM"
+    ]
+  },
+  "MDA": {
+    "name": "Moldova",
+    "isoAlpha3": "MDA",
+    "isoCode": "MD",
+    "region": "EMEA",
+    "subRegion": "CEE & BALTICS",
+    "salesTeam": "Sales CEE & Baltics",
+    "tier": "2",
+    "aliases": [
+      "Moldova, Republic of",
+      "MD"
+    ]
+  },
+  "MCO": {
+    "name": "Monaco",
+    "isoAlpha3": "MCO",
+    "isoCode": "MC",
+    "region": "EMEA",
+    "subRegion": "SOUTH EUROPE",
+    "salesTeam": "Sales South Europe excl France",
+    "tier": "2",
+    "aliases": [
+      "MC"
+    ]
+  },
+  "MNG": {
+    "name": "Mongolia",
+    "isoAlpha3": "MNG",
+    "isoCode": "MN",
+    "region": "APAC",
+    "subRegion": "ASEAN",
+    "salesTeam": "Sales Other Asean",
+    "tier": "3",
+    "aliases": [
+      "MN"
+    ]
+  },
+  "MNE": {
+    "name": "Montenegro",
+    "isoAlpha3": "MNE",
+    "isoCode": "ME",
+    "region": "EMEA",
+    "subRegion": "CEE & BALTICS",
+    "salesTeam": "Sales CEE & Baltics",
+    "tier": "2",
+    "aliases": [
+      "ME"
+    ]
+  },
+  "MSR": {
+    "name": "Montserrat",
+    "isoAlpha3": "MSR",
+    "isoCode": "MS",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "MS"
+    ]
+  },
+  "MAR": {
+    "name": "Morocco",
+    "isoAlpha3": "MAR",
+    "isoCode": "MA",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "MA"
+    ]
+  },
+  "MOZ": {
+    "name": "Mozambique",
+    "isoAlpha3": "MOZ",
+    "isoCode": "MZ",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "MZ"
+    ]
+  },
+  "MMR": {
+    "name": "Myanmar",
+    "isoAlpha3": "MMR",
+    "isoCode": "MM",
+    "region": "APAC",
+    "subRegion": "ASEAN",
+    "salesTeam": "Sales Other Asean",
+    "tier": "3",
+    "aliases": [
+      "Myanmar (Burma)",
+      "MM"
+    ]
+  },
+  "NAM": {
+    "name": "Namibia",
+    "isoAlpha3": "NAM",
+    "isoCode": "NA",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "NA"
+    ]
+  },
+  "NRU": {
+    "name": "Nauru",
+    "isoAlpha3": "NRU",
+    "isoCode": "NR",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "NR"
+    ]
+  },
+  "NPL": {
+    "name": "Nepal",
+    "isoAlpha3": "NPL",
+    "isoCode": "NP",
+    "region": "APAC",
+    "subRegion": "ASEAN",
+    "salesTeam": "Sales Other Asean",
+    "tier": "3",
+    "aliases": [
+      "NP"
+    ]
+  },
+  "NLD": {
+    "name": "Netherlands",
+    "isoAlpha3": "NLD",
+    "isoCode": "NL",
+    "region": "EMEA",
+    "subRegion": "BENELUX",
+    "salesTeam": "Sales Benelux",
+    "tier": "1",
+    "aliases": [
+      "NL",
+      "Netherland Antilles"
+    ]
+  },
+  "NCL": {
+    "name": "New Caledonia",
+    "isoAlpha3": "NCL",
+    "isoCode": "NC",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "NC"
+    ]
+  },
+  "NZL": {
+    "name": "New Zealand",
+    "isoAlpha3": "NZL",
+    "isoCode": "NZ",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "NZ"
+    ]
+  },
+  "NIC": {
+    "name": "Nicaragua",
+    "isoAlpha3": "NIC",
+    "isoCode": "NI",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "NI"
+    ]
+  },
+  "NER": {
+    "name": "Niger",
+    "isoAlpha3": "NER",
+    "isoCode": "NE",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "NE"
+    ]
+  },
+  "NGA": {
+    "name": "Nigeria",
+    "isoAlpha3": "NGA",
+    "isoCode": "NG",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "NG"
+    ]
+  },
+  "NIU": {
+    "name": "Niue",
+    "isoAlpha3": "NIU",
+    "isoCode": "NU",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "NU"
+    ]
+  },
+  "NFK": {
+    "name": "Norfolk Island",
+    "isoAlpha3": "NFK",
+    "isoCode": "NF",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "NF"
+    ]
+  },
+  "PRK": {
+    "name": "North Korea",
+    "isoAlpha3": "PRK",
+    "isoCode": "KP",
+    "region": "APAC",
+    "subRegion": "NASIA",
+    "salesTeam": "Sales KOREA",
+    "tier": "2",
+    "aliases": [
+      "KP",
+      "Korea (Democratic People's Republic of)"
+    ]
+  },
+  "MKD": {
+    "name": "North Macedonia",
+    "isoAlpha3": "MKD",
+    "isoCode": "MK",
+    "region": "EMEA",
+    "subRegion": "CEE & BALTICS",
+    "salesTeam": "Sales CEE & Baltics",
+    "tier": "2",
+    "aliases": [
+      "Macedonia (FYROM)",
+      "MK",
+      "Republic of Macedonia",
+      "Macedonia"
+    ]
+  },
+  "MNP": {
+    "name": "Northern Mariana Islands",
+    "isoAlpha3": "MNP",
+    "isoCode": "MP",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "MP"
+    ]
+  },
+  "NOR": {
+    "name": "Norway",
+    "isoAlpha3": "NOR",
+    "isoCode": "NO",
+    "region": "EMEA",
+    "subRegion": "NORDICS",
+    "salesTeam": "Sales Norway",
+    "tier": "1",
+    "aliases": [
+      "NO"
+    ]
+  },
+  "OMN": {
+    "name": "Oman",
+    "isoAlpha3": "OMN",
+    "isoCode": "OM",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "OM"
+    ]
+  },
+  "PAK": {
+    "name": "Pakistan",
+    "isoAlpha3": "PAK",
+    "isoCode": "PK",
+    "region": "APAC",
+    "subRegion": "ASEAN",
+    "salesTeam": "Sales Other Asean",
+    "tier": "3",
+    "aliases": [
+      "PK"
+    ]
+  },
+  "PLW": {
+    "name": "Palau",
+    "isoAlpha3": "PLW",
+    "isoCode": "PW",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "PW"
+    ]
+  },
+  "PSE": {
+    "name": "Palestine",
+    "isoAlpha3": "PSE",
+    "isoCode": "PS",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "Palestinian Territory, Occupied",
+      "Palestine, State of",
+      "PS"
+    ]
+  },
+  "PAN": {
+    "name": "Panama",
+    "isoAlpha3": "PAN",
+    "isoCode": "PA",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "PA"
+    ]
+  },
+  "PNG": {
+    "name": "Papua New Guinea",
+    "isoAlpha3": "PNG",
+    "isoCode": "PG",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "PG"
+    ]
+  },
+  "PRY": {
+    "name": "Paraguay",
+    "isoAlpha3": "PRY",
+    "isoCode": "PY",
+    "region": "LATAM",
+    "subRegion": "SOUTH LATAM",
+    "salesTeam": "Sales South Latam",
+    "tier": "3",
+    "aliases": [
+      "PY"
+    ]
+  },
+  "PER": {
+    "name": "Peru",
+    "isoAlpha3": "PER",
+    "isoCode": "PE",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "PE"
+    ]
+  },
+  "PHL": {
+    "name": "Philippines",
+    "isoAlpha3": "PHL",
+    "isoCode": "PH",
+    "region": "APAC",
+    "subRegion": "ASEAN",
+    "salesTeam": "Sales Other Asean",
+    "tier": "3",
+    "aliases": [
+      "PH"
+    ]
+  },
+  "PCN": {
+    "name": "Pitcairn",
+    "isoAlpha3": "PCN",
+    "isoCode": "PN",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "PN"
+    ]
+  },
+  "POL": {
+    "name": "Poland",
+    "isoAlpha3": "POL",
+    "isoCode": "PL",
+    "region": "EMEA",
+    "subRegion": "CEE & BALTICS",
+    "salesTeam": "Sales CEE & Baltics",
+    "tier": "2",
+    "aliases": [
+      "PL"
+    ]
+  },
+  "PRT": {
+    "name": "Portugal",
+    "isoAlpha3": "PRT",
+    "isoCode": "PT",
+    "region": "EMEA",
+    "subRegion": "SOUTH EUROPE",
+    "salesTeam": "Sales South Europe excl France",
+    "tier": "2",
+    "aliases": [
+      "PT"
+    ]
+  },
+  "PRI": {
+    "name": "Puerto Rico",
+    "isoAlpha3": "PRI",
+    "isoCode": "PR",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "PR"
+    ]
+  },
+  "QAT": {
+    "name": "Qatar",
+    "isoAlpha3": "QAT",
+    "isoCode": "QA",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "QA"
+    ]
+  },
+  "REU": {
+    "name": "Reunion",
+    "isoAlpha3": "REU",
+    "isoCode": "RE",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "Reunion (France)",
+      "Réunion",
+      "RE"
+    ]
+  },
+  "ROU": {
+    "name": "Romania",
+    "isoAlpha3": "ROU",
+    "isoCode": "RO",
+    "region": "EMEA",
+    "subRegion": "CEE & BALTICS",
+    "salesTeam": "Sales CEE & Baltics",
+    "tier": "2",
+    "aliases": [
+      "RO"
+    ]
+  },
+  "RUS": {
+    "name": "Russia",
+    "isoAlpha3": "RUS",
+    "isoCode": "RU",
+    "region": "EMEA",
+    "subRegion": "CEE & BALTICS",
+    "salesTeam": "Sales CEE & Baltics",
+    "tier": "2",
+    "aliases": [
+      "Russian Federation",
+      "RU"
+    ]
+  },
+  "RWA": {
+    "name": "Rwanda",
+    "isoAlpha3": "RWA",
+    "isoCode": "RW",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "RW"
+    ]
+  },
+  "BLM": {
+    "name": "Saint Barthélemy",
+    "isoAlpha3": "BLM",
+    "isoCode": "BL",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "Saint BarthÃ©lemy",
+      "BL"
+    ]
+  },
+  "SHN": {
+    "name": "Saint Helena, Ascension and Tristan da Cunha",
+    "isoAlpha3": "SHN",
+    "isoCode": "SH",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "Saint Helena",
+      "SH",
+      "Ascension and Tristan da Cunha"
+    ]
+  },
+  "KNA": {
+    "name": "Saint Kitts and Nevis",
+    "isoAlpha3": "KNA",
+    "isoCode": "KN",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "KN"
+    ]
+  },
+  "LCA": {
+    "name": "Saint Lucia",
+    "isoAlpha3": "LCA",
+    "isoCode": "LC",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "LC"
+    ]
+  },
+  "MAF": {
+    "name": "Saint Martin",
+    "isoAlpha3": "MAF",
+    "isoCode": "MF",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "Saint Martin (French part)",
+      "MF"
+    ]
+  },
+  "SPM": {
+    "name": "Saint Pierre and Miquelon",
+    "isoAlpha3": "SPM",
+    "isoCode": "PM",
+    "region": "NAM",
+    "subRegion": "NAM",
+    "salesTeam": "Sales Nam",
+    "tier": "1",
+    "aliases": [
+      "PM"
+    ]
+  },
+  "VCT": {
+    "name": "Saint Vincent and the Grenadines",
+    "isoAlpha3": "VCT",
+    "isoCode": "VC",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "VC"
+    ]
+  },
+  "WSM": {
+    "name": "Samoa",
+    "isoAlpha3": "WSM",
+    "isoCode": "WS",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "WS"
+    ]
+  },
+  "SMR": {
+    "name": "San Marino",
+    "isoAlpha3": "SMR",
+    "isoCode": "SM",
+    "region": "EMEA",
+    "subRegion": "SOUTH EUROPE",
+    "salesTeam": "Sales South Europe excl France",
+    "tier": "2",
+    "aliases": [
+      "SM"
+    ]
+  },
+  "STP": {
+    "name": "Sao Tome and Principe",
+    "isoAlpha3": "STP",
+    "isoCode": "ST",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "ST"
+    ]
+  },
+  "SAU": {
+    "name": "Saudi Arabia",
+    "isoAlpha3": "SAU",
+    "isoCode": "SA",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "SA"
+    ]
+  },
+  "SEN": {
+    "name": "Senegal",
+    "isoAlpha3": "SEN",
+    "isoCode": "SN",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "SN"
+    ]
+  },
+  "SRB": {
+    "name": "Serbia",
+    "isoAlpha3": "SRB",
+    "isoCode": "RS",
+    "region": "EMEA",
+    "subRegion": "CEE & BALTICS",
+    "salesTeam": "Sales CEE & Baltics",
+    "tier": "2",
+    "aliases": [
+      "RS"
+    ]
+  },
+  "SYC": {
+    "name": "Seychelles",
+    "isoAlpha3": "SYC",
+    "isoCode": "SC",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "SC"
+    ]
+  },
+  "SLE": {
+    "name": "Sierra Leone",
+    "isoAlpha3": "SLE",
+    "isoCode": "SL",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "SL"
+    ]
+  },
+  "SGP": {
+    "name": "Singapore",
+    "isoAlpha3": "SGP",
+    "isoCode": "SG",
+    "region": "APAC",
+    "subRegion": "ASEAN",
+    "salesTeam": "Sales Singapore",
+    "tier": "1",
+    "aliases": [
+      "SG"
+    ]
+  },
+  "SXM": {
+    "name": "Sint Maarten",
+    "isoAlpha3": "SXM",
+    "isoCode": "SX",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "Sint Maarten (Dutch part)",
+      "SX"
+    ]
+  },
+  "SVK": {
+    "name": "Slovakia",
+    "isoAlpha3": "SVK",
+    "isoCode": "SK",
+    "region": "EMEA",
+    "subRegion": "CEE & BALTICS",
+    "salesTeam": "Sales CEE & Baltics",
+    "tier": "2",
+    "aliases": [
+      "SK"
+    ]
+  },
+  "SVN": {
+    "name": "Slovenia",
+    "isoAlpha3": "SVN",
+    "isoCode": "SI",
+    "region": "EMEA",
+    "subRegion": "CEE & BALTICS",
+    "salesTeam": "Sales CEE & Baltics",
+    "tier": "2",
+    "aliases": [
+      "SI"
+    ]
+  },
+  "SLB": {
+    "name": "Solomon Islands",
+    "isoAlpha3": "SLB",
+    "isoCode": "SB",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "SB"
+    ]
+  },
+  "SOM": {
+    "name": "Somalia",
+    "isoAlpha3": "SOM",
+    "isoCode": "SO",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "SO"
+    ]
+  },
+  "ZAF": {
+    "name": "South Africa",
+    "isoAlpha3": "ZAF",
+    "isoCode": "ZA",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "ZA"
+    ]
+  },
+  "SGS": {
+    "name": "South Georgia and the South Sandwich Islands",
+    "isoAlpha3": "SGS",
+    "isoCode": "GS",
+    "region": "EMEA",
+    "subRegion": "UKI",
+    "salesTeam": "Sales UKI",
+    "tier": "1",
+    "aliases": [
+      "South Sandwhich Islands",
+      "GS",
+      "South Georgia"
+    ]
+  },
+  "KOR": {
+    "name": "South Korea",
+    "isoAlpha3": "KOR",
+    "isoCode": "KR",
+    "region": "APAC",
+    "subRegion": "NASIA",
+    "salesTeam": "Sales KOREA",
+    "tier": "2",
+    "aliases": [
+      "KR",
+      "Korea, Republic of"
+    ]
+  },
+  "SSD": {
+    "name": "South Sudan",
+    "isoAlpha3": "SSD",
+    "isoCode": "SS",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "SS"
+    ]
+  },
+  "ESP": {
+    "name": "Spain",
+    "isoAlpha3": "ESP",
+    "isoCode": "ES",
+    "region": "EMEA",
+    "subRegion": "SOUTH EUROPE",
+    "salesTeam": "Sales South Europe excl France",
+    "tier": "2",
+    "aliases": [
+      "ES"
+    ]
+  },
+  "LKA": {
+    "name": "Sri Lanka",
+    "isoAlpha3": "LKA",
+    "isoCode": "LK",
+    "region": "APAC",
+    "subRegion": "ASEAN",
+    "salesTeam": "Sales Other Asean",
+    "tier": "3",
+    "aliases": [
+      "LK"
+    ]
+  },
+  "SDN": {
+    "name": "Sudan",
+    "isoAlpha3": "SDN",
+    "isoCode": "SD",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "SD"
+    ]
+  },
+  "SUR": {
+    "name": "Suriname",
+    "isoAlpha3": "SUR",
+    "isoCode": "SR",
+    "region": "LATAM",
+    "subRegion": "SOUTH LATAM",
+    "salesTeam": "Sales South Latam",
+    "tier": "3",
+    "aliases": [
+      "SR"
+    ]
+  },
+  "SJM": {
+    "name": "Svalbard and Jan Mayen",
+    "isoAlpha3": "SJM",
+    "isoCode": "SJ",
+    "region": "EMEA",
+    "subRegion": "NORDICS",
+    "salesTeam": "NORDICS",
+    "tier": "1",
+    "aliases": [
+      "SJ"
+    ]
+  },
+  "SWE": {
+    "name": "Sweden",
+    "isoAlpha3": "SWE",
+    "isoCode": "SE",
+    "region": "EMEA",
+    "subRegion": "NORDICS",
+    "salesTeam": "Sales Sweden",
+    "tier": "1",
+    "aliases": [
+      "SE"
+    ]
+  },
+  "CHE": {
+    "name": "Switzerland",
+    "isoAlpha3": "CHE",
+    "isoCode": "CH",
+    "region": "EMEA",
+    "subRegion": "DACH",
+    "salesTeam": "Sales Dach",
+    "tier": "1",
+    "aliases": [
+      "CH"
+    ]
+  },
+  "SYR": {
+    "name": "Syria",
+    "isoAlpha3": "SYR",
+    "isoCode": "SY",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "Syrian Arab Republic",
+      "SY"
+    ]
+  },
+  "TWN": {
+    "name": "Taiwan",
+    "isoAlpha3": "TWN",
+    "isoCode": "TW",
+    "region": "APAC",
+    "subRegion": "NASIA",
+    "salesTeam": "Sales China",
+    "tier": "2",
+    "aliases": [
+      "TW",
+      "Taiwan, Province of China"
+    ]
+  },
+  "TJK": {
+    "name": "Tajikistan",
+    "isoAlpha3": "TJK",
+    "isoCode": "TJ",
+    "region": "EMEA",
+    "subRegion": "CEE & BALTICS",
+    "salesTeam": "Sales CEE & Baltics",
+    "tier": "2",
+    "aliases": [
+      "TJ"
+    ]
+  },
+  "TZA": {
+    "name": "Tanzania",
+    "isoAlpha3": "TZA",
+    "isoCode": "TZ",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "TZ",
+      "Tanzania, United Republic of"
+    ]
+  },
+  "THA": {
+    "name": "Thailand",
+    "isoAlpha3": "THA",
+    "isoCode": "TH",
+    "region": "APAC",
+    "subRegion": "ASEAN",
+    "salesTeam": "Sales Other Asean",
+    "tier": "3",
+    "aliases": [
+      "TH"
+    ]
+  },
+  "TLS": {
+    "name": "Timor-Leste",
+    "isoAlpha3": "TLS",
+    "isoCode": "TL",
+    "region": "APAC",
+    "subRegion": "ASEAN",
+    "salesTeam": "Sales Other Asean",
+    "tier": "3",
+    "aliases": [
+      "East Timor",
+      "TL"
+    ]
+  },
+  "TGO": {
+    "name": "Togo",
+    "isoAlpha3": "TGO",
+    "isoCode": "TG",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "TG"
+    ]
+  },
+  "TKL": {
+    "name": "Tokelau",
+    "isoAlpha3": "TKL",
+    "isoCode": "TK",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "TK"
+    ]
+  },
+  "TON": {
+    "name": "Tonga",
+    "isoAlpha3": "TON",
+    "isoCode": "TO",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "TO"
+    ]
+  },
+  "TTO": {
+    "name": "Trinidad and Tobago",
+    "isoAlpha3": "TTO",
+    "isoCode": "TT",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "TT"
+    ]
+  },
+  "TUN": {
+    "name": "Tunisia",
+    "isoAlpha3": "TUN",
+    "isoCode": "TN",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "TN"
+    ]
+  },
+  "TUR": {
+    "name": "Turkey",
+    "isoAlpha3": "TUR",
+    "isoCode": "TR",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "TR"
+    ]
+  },
+  "TKM": {
+    "name": "Turkmenistan",
+    "isoAlpha3": "TKM",
+    "isoCode": "TM",
+    "region": "EMEA",
+    "subRegion": "CEE & BALTICS",
+    "salesTeam": "Sales CEE & Baltics",
+    "tier": "2",
+    "aliases": [
+      "TM"
+    ]
+  },
+  "TCA": {
+    "name": "Turks and Caicos Islands",
+    "isoAlpha3": "TCA",
+    "isoCode": "TC",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "TC"
+    ]
+  },
+  "TUV": {
+    "name": "Tuvalu",
+    "isoAlpha3": "TUV",
+    "isoCode": "TV",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "TV"
+    ]
+  },
+  "UGA": {
+    "name": "Uganda",
+    "isoAlpha3": "UGA",
+    "isoCode": "UG",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "UG"
+    ]
+  },
+  "UKR": {
+    "name": "Ukraine",
+    "isoAlpha3": "UKR",
+    "isoCode": "UA",
+    "region": "EMEA",
+    "subRegion": "CEE & BALTICS",
+    "salesTeam": "Sales CEE & Baltics",
+    "tier": "2",
+    "aliases": [
+      "UA"
+    ]
+  },
+  "ARE": {
+    "name": "United Arab Emirates",
+    "isoAlpha3": "ARE",
+    "isoCode": "AE",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "AE"
+    ]
+  },
+  "GBR": {
+    "name": "United Kingdom",
+    "isoAlpha3": "GBR",
+    "isoCode": "GB",
+    "region": "EMEA",
+    "subRegion": "UKI",
+    "salesTeam": "Sales UKI",
+    "tier": "1",
+    "aliases": [
+      "United Kingdom of Great Britain and Northern Ireland",
+      "GB"
+    ]
+  },
+  "USA": {
+    "name": "United States",
+    "isoAlpha3": "USA",
+    "isoCode": "US",
+    "region": "NAM",
+    "subRegion": "NAM",
+    "salesTeam": "Sales Nam",
+    "tier": "1",
+    "aliases": [
+      "The United States",
+      "The United States of America",
+      "United States of America",
+      "US"
+    ]
+  },
+  "UMI": {
+    "name": "United States Minor Outlying Islands",
+    "isoAlpha3": "UMI",
+    "isoCode": "UM",
+    "region": "NAM",
+    "subRegion": "NAM",
+    "salesTeam": "Sales Nam",
+    "tier": "1",
+    "aliases": [
+      "UM"
+    ]
+  },
+  "URY": {
+    "name": "Uruguay",
+    "isoAlpha3": "URY",
+    "isoCode": "UY",
+    "region": "LATAM",
+    "subRegion": "SOUTH LATAM",
+    "salesTeam": "Sales South Latam",
+    "tier": "3",
+    "aliases": [
+      "UY"
+    ]
+  },
+  "UZB": {
+    "name": "Uzbekistan",
+    "isoAlpha3": "UZB",
+    "isoCode": "UZ",
+    "region": "EMEA",
+    "subRegion": "CEE & BALTICS",
+    "salesTeam": "Sales CEE & Baltics",
+    "tier": "2",
+    "aliases": [
+      "UZ"
+    ]
+  },
+  "VUT": {
+    "name": "Vanuatu",
+    "isoAlpha3": "VUT",
+    "isoCode": "VU",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "VU"
+    ]
+  },
+  "VAT": {
+    "name": "Vatican City",
+    "isoAlpha3": "VAT",
+    "isoCode": "VA",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "VA",
+      "Holy See (Vatican City State)",
+      "Holy See"
+    ]
+  },
+  "VEN": {
+    "name": "Venezuela (Bolivarian Republic of)",
+    "isoAlpha3": "VEN",
+    "isoCode": "VE",
+    "region": "LATAM",
+    "subRegion": "SOUTH LATAM",
+    "salesTeam": "Sales South Latam",
+    "tier": "3",
+    "aliases": [
+      "Venezuela",
+      "VE"
+    ]
+  },
+  "VNM": {
+    "name": "Vietnam",
+    "isoAlpha3": "VNM",
+    "isoCode": "VN",
+    "region": "APAC",
+    "subRegion": "ASEAN",
+    "salesTeam": "Sales Other Asean",
+    "tier": "3",
+    "aliases": [
+      "VN",
+      "Viet Nam"
+    ]
+  },
+  "VGB": {
+    "name": "Virgin Islands (British)",
+    "isoAlpha3": "VGB",
+    "isoCode": "VG",
+    "region": "LATAM",
+    "subRegion": "NORTH LATAM",
+    "salesTeam": "Sales North Latam",
+    "tier": "3",
+    "aliases": [
+      "British Virgin Islands",
+      "VG"
+    ]
+  },
+  "VIR": {
+    "name": "Virgin Islands (U.S.)",
+    "isoAlpha3": "VIR",
+    "isoCode": "VI",
+    "region": "NAM",
+    "subRegion": "NAM",
+    "salesTeam": "Sales Nam",
+    "tier": "1",
+    "aliases": [
+      "VI",
+      "U.S. Virgin Islands"
+    ]
+  },
+  "WLF": {
+    "name": "Wallis and Futuna",
+    "isoAlpha3": "WLF",
+    "isoCode": "WF",
+    "region": "APAC",
+    "subRegion": "ANZ",
+    "salesTeam": "Sales ANZ",
+    "tier": "1",
+    "aliases": [
+      "WF"
+    ]
+  },
+  "ESH": {
+    "name": "Western Sahara",
+    "isoAlpha3": "ESH",
+    "isoCode": "EH",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "EH"
+    ]
+  },
+  "YEM": {
+    "name": "Yemen",
+    "isoAlpha3": "YEM",
+    "isoCode": "YE",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "YE"
+    ]
+  },
+  "ZMB": {
+    "name": "Zambia",
+    "isoAlpha3": "ZMB",
+    "isoCode": "ZM",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "ZM"
+    ]
+  },
+  "ZWE": {
+    "name": "Zimbabwe",
+    "isoAlpha3": "ZWE",
+    "isoCode": "ZW",
+    "region": "EMEA",
+    "subRegion": "MEA",
+    "salesTeam": "Sales Rest of ME & Africa",
+    "tier": "2",
+    "aliases": [
+      "ZW"
+    ]
+  }
+}

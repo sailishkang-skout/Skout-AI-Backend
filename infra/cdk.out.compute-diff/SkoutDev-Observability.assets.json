@@ -1,0 +1,21 @@
+{
+  "version": "54.0.0",
+  "files": {
+    "8c1b530a243e1e88833a1dc7120392022fe5b2e8f76be8ded0f49b0b84631861": {
+      "displayName": "SkoutDev-Observability Template",
+      "source": {
+        "path": "SkoutDev-Observability.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "119408973331-us-east-1-f5dca993": {
+          "bucketName": "cdk-hnb659fds-assets-119408973331-us-east-1",
+          "objectKey": "8c1b530a243e1e88833a1dc7120392022fe5b2e8f76be8ded0f49b0b84631861.json",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::119408973331:role/cdk-hnb659fds-file-publishing-role-119408973331-us-east-1"
+        }
+      }
+    }
+  },
+  "dockerImages": {}
+}

@@ -1,0 +1,83 @@
+flowchart TB
+    subgraph TRIGGERS["Triggers"]
+        CRON[Cron / backfill]
+        API[Admin API]
+        SEED[Seed URL lists]
+    end
+
+    subgraph ORCH["Orchestrator — Node + BullMQ"]
+        SCH[scrape:schedule]
+        RL[Rate limiter Redis]
+        ACC[Account / proxy pool]
+    end
+
+    subgraph BOTS["Scraper bots — Python ECS"]
+        LI[linkedin bot]
+        WEB[company-web bot]
+        CB[crunchbase bot]
+        OTHER[future bots…]
+    end
+
+    subgraph S3["S3 skout-env-scrape"]
+        RAW[(raw/ source / date / job_id)]
+        CLEAN[(clean/ validated JSONL)]
+        QUAR[(quarantine/ failed rows)]
+        MAN[(manifests/ lineage)]
+    end
+
+    subgraph CLEAN["Cleaner — Node"]
+        PARSE[Parse bot output]
+        VAL[Validate schema]
+        NORM[Normalize ADR 0001]
+        DED[Dedupe prospect_id]
+        QS[Quality score]
+    end
+
+    subgraph INGEST["Ingestor — Node"]
+        HASH[prospect_id hash]
+        BULK[OpenSearch bulk upsert]
+        CH[(ClickHouse stats optional)]
+    end
+
+    subgraph SEARCH["Search corpus"]
+        OS[(OpenSearch prospects index)]
+    end
+
+    subgraph OLTP["Workspace OLTP — on user action only"]
+        ACT[prospect_activations]
+    end
+
+    CRON --> SCH
+    API --> SCH
+    SEED --> SCH
+
+    SCH --> RL --> ACC
+    ACC --> LI & WEB & CB & OTHER
+
+    LI & WEB & CB & OTHER --> RAW
+
+    RAW --> PARSE --> VAL --> NORM --> DED --> QS
+    QS -->|pass| CLEAN
+    QS -->|fail| QUAR
+
+    CLEAN --> HASH --> BULK --> OS
+    BULK -.-> CH
+    HASH --> MAN
+
+    OS -.->|user activates| ACT
+
+    subgraph DEPLOY["AWS deployment"]
+        ECS_O[ECS scraper-orchestrator]
+        ECS_B[ECS scraper-bot-*]
+        ECS_C[ECS scraper-cleaner]
+        ECS_I[ECS scraper-ingestor]
+        SM[Secrets Manager accounts proxy]
+        REDIS[(ElastiCache Redis)]
+    end
+
+    SCH --- ECS_O
+    BOTS --- ECS_B
+    CLEAN --- ECS_C
+    INGEST --- ECS_I
+    ACC --- SM
+    ORCH --- REDIS

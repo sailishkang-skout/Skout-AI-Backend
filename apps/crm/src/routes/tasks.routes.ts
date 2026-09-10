@@ -1,0 +1,88 @@
+import type { FastifyInstance } from "fastify";
+import { taskCreateSchema, taskListQuerySchema, taskUpdateSchema } from "@skout/shared";
+import { HttpError, enforcePermission } from "@skout/auth";
+import { parseIdParam } from "../utils/http.js";
+import { requireRole } from "../utils/require-role.js";
+import { buildAuditService } from "../services/audit.service.js";
+import { buildTasksService } from "../services/tasks.service.js";
+
+export async function tasksRoutes(app: FastifyInstance) {
+  const service = () => {
+    const db = app.db ?? null;
+    const auditService = buildAuditService(db);
+    return buildTasksService(db, auditService, app.config?.REMINDER_LEAD_HOURS ?? 24);
+  };
+
+  app.get("/tasks", async (request) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) throw new HttpError("database_unavailable", 503);
+
+    const query = taskListQuerySchema.parse(request.query);
+    const result = await svc.list(workspaceId, query);
+    return { ...result, workspaceId };
+  });
+
+  app.post("/tasks", async (request, reply) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) throw new HttpError("database_unavailable", 503);
+
+    const input = taskCreateSchema.parse(request.body);
+    const task = await svc.create(workspaceId, request.userId, input);
+    return reply.code(201).send(task);
+  });
+
+  app.patch("/tasks/:id", async (request, reply) => {
+    const id = parseIdParam(request);
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) throw new HttpError("database_unavailable", 503);
+
+    const input = taskUpdateSchema.parse(request.body);
+    const task = await svc.update(workspaceId, id, request.userId, input);
+    if (!task) throw new HttpError("task_not_found", 404);
+    return reply.send(task);
+  });
+
+  app.post("/tasks/:id/complete", async (request, reply) => {
+    const id = parseIdParam(request);
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) throw new HttpError("database_unavailable", 503);
+
+    const task = await svc.complete(workspaceId, id);
+    if (!task) throw new HttpError("task_not_found", 404);
+    return reply.send(task);
+  });
+
+  app.post("/tasks/:id/skip", async (request, reply) => {
+    const id = parseIdParam(request);
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) throw new HttpError("database_unavailable", 503);
+
+    const task = await svc.skip(workspaceId, id);
+    if (!task) throw new HttpError("task_not_found", 404);
+    return reply.send(task);
+  });
+
+  app.delete("/tasks/:id", async (request, reply) => {
+    const id = parseIdParam(request);
+    const workspaceId = request.workspaceId ?? "unknown";
+    requireRole(request, ["owner", "admin"]);
+    if (app.db && request.userId) {
+      await enforcePermission(app.db, workspaceId, request.userId, "crm:manage", {
+        enforce: app.config.RBAC_ENFORCEMENT_ENABLED,
+        onShadowDeny: (info) =>
+          app.log.warn(info, "RBAC shadow-mode: crm:manage would have been denied (delete task)"),
+      });
+    }
+    const svc = service();
+    if (!svc) throw new HttpError("database_unavailable", 503);
+
+    const deleted = await svc.softDelete(workspaceId, id, request.userId);
+    if (!deleted) throw new HttpError("task_not_found", 404);
+    return reply.code(204).send();
+  });
+}

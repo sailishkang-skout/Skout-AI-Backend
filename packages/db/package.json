@@ -1,0 +1,46 @@
+{
+  "name": "@skout/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./schema": {
+      "types": "./dist/schema/index.d.ts",
+      "import": "./dist/schema/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "generate": "drizzle-kit generate",
+    "migrate": "tsx src/migrate.ts",
+    "apply-pending": "tsx src/apply-pending.ts",
+    "seed": "tsx src/seed.ts",
+    "seed-regional-brief": "tsx src/seed-regional-brief.ts",
+    "seed-regional-brief-reference-data": "tsx src/seed-regional-brief-reference-data.ts",
+    "seed-regional-brief-tam": "tsx src/seed-regional-brief-tam.ts",
+    "seed-model-versions": "tsx src/seed-model-versions.ts",
+    "backfill-rbac": "tsx src/backfill-rbac.ts",
+    "rotate-integration-encryption-key": "tsx src/rotate-integration-encryption-key.ts",
+    "push": "drizzle-kit push",
+    "studio": "drizzle-kit studio",
+    "truncate": "tsx src/truncate.ts"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.44.2",
+    "postgres": "^3.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "dotenv": "^16.4.7",
+    "drizzle-kit": "^0.31.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

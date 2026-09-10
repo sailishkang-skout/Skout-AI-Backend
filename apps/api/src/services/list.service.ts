@@ -1,17 +1,293 @@
+import { and, count, desc, eq, sql } from "drizzle-orm";
+import type { Db } from "@skout/db";
+import { schema, scopedTo, scopedById } from "@skout/db";
+import { createLogger } from "@skout/observability";
+import { getProspectById, type OpenSearchConfig, type ProspectDocument, type SearchFilters } from "@skout/opensearch";
+import type { ProspectList, ProspectListMember } from "./enrichment/types.js";
+import { snapshotFromCorpusDoc } from "../utils/verified-email.js";
+
+const log = createLogger("list.service");
+const { lists, listMembers, prospectActivations } = schema;
+
+export interface AddMemberInput {
+  prospectId: string;
+  snapshot?: Record<string, unknown>;
+}
+
+const DISPLAY_FIELDS = [
+  "fullName",
+  "title",
+  "email",
+  "companyName",
+  "companyDomain",
+  "linkedinUrl",
+] as const;
+
+function snapshotHasDisplayFields(snapshot: Record<string, unknown>): boolean {
+  return DISPLAY_FIELDS.some((key) => {
+    const value = snapshot[key];
+    return typeof value === "string" && value.trim().length > 0;
+  });
+}
+
+function mergeSnapshots(
+  base: Record<string, unknown>,
+  patch: Record<string, unknown>
+): Record<string, unknown> {
+  const merged = { ...base };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined || value === null || value === "") continue;
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed) merged[key] = trimmed;
+      continue;
+    }
+    merged[key] = value;
+  }
+  return merged;
+}
+
+function osDocToSnapshot(doc: ProspectDocument): Record<string, unknown> {
+  return snapshotFromCorpusDoc(doc) as unknown as Record<string, unknown>;
+}
+
 export class ListService {
-  async list(workspaceId: string) {
-    return { workspaceId, data: [], total: 0 };
+  constructor(
+    private readonly db: Db,
+    private readonly osCfg: OpenSearchConfig | null
+  ) {}
+
+  async createList(workspaceId: string, name: string): Promise<ProspectList> {
+    const [row] = await this.db
+      .insert(lists)
+      .values({ workspaceId, name })
+      .returning();
+    log.info("list created", { workspaceId, listId: row.id, name: row.name });
+    return {
+      id: row.id,
+      workspaceId,
+      name: row.name,
+      prospectCount: 0,
+      createdAt: row.createdAt.toISOString(),
+    };
   }
 
-  async create(workspaceId: string, name: string, prospectIds?: string[]) {
+  async getLists(workspaceId: string): Promise<ProspectList[]> {
+    const rows = await this.db
+      .select({
+        id: lists.id,
+        workspaceId: lists.workspaceId,
+        name: lists.name,
+        sourceFilters: lists.sourceFilters,
+        createdAt: lists.createdAt,
+        memberCount: count(listMembers.prospectId),
+      })
+      .from(lists)
+      .leftJoin(listMembers, eq(listMembers.listId, lists.id))
+      .where(scopedTo(lists, workspaceId))
+      .groupBy(lists.id, lists.workspaceId, lists.name, lists.sourceFilters, lists.createdAt)
+      .orderBy(desc(lists.createdAt));
+
+    return rows.map((r) => ({
+      id: r.id,
+      workspaceId: r.workspaceId,
+      name: r.name,
+      sourceFilters: (r.sourceFilters as SearchFilters | null) ?? null,
+      prospectCount: Number(r.memberCount),
+      createdAt: r.createdAt.toISOString(),
+    }));
+  }
+
+  async getListById(workspaceId: string, listId: string): Promise<ProspectList | null> {
+    const rows = await this.db
+      .select({
+        id: lists.id,
+        workspaceId: lists.workspaceId,
+        name: lists.name,
+        sourceFilters: lists.sourceFilters,
+        createdAt: lists.createdAt,
+        memberCount: count(listMembers.prospectId),
+      })
+      .from(lists)
+      .leftJoin(listMembers, eq(listMembers.listId, lists.id))
+      .where(scopedById(lists, workspaceId, listId))
+      .groupBy(lists.id, lists.workspaceId, lists.name, lists.sourceFilters, lists.createdAt);
+
+    const row = rows[0];
+    if (!row) return null;
     return {
-      id: crypto.randomUUID(),
-      workspaceId,
-      name,
-      prospectCount: prospectIds?.length ?? 0,
-      createdAt: new Date().toISOString(),
+      id: row.id,
+      workspaceId: row.workspaceId,
+      name: row.name,
+      sourceFilters: (row.sourceFilters as SearchFilters | null) ?? null,
+      prospectCount: Number(row.memberCount),
+      createdAt: row.createdAt.toISOString(),
     };
+  }
+
+  /** Records the SearchFilters a list was built from (R10.3) — set only when a smart list is
+   * activated into a brand-new static list, enabling the "convert back to smart list" action. */
+  async setSourceFilters(workspaceId: string, listId: string, filters: SearchFilters): Promise<void> {
+    await this.db
+      .update(lists)
+      .set({ sourceFilters: filters })
+      .where(scopedById(lists, workspaceId, listId));
+  }
+
+  async addMembers(
+    workspaceId: string,
+    listId: string,
+    members: AddMemberInput[]
+  ): Promise<ProspectList | null> {
+    const list = await this.getListById(workspaceId, listId);
+    if (!list) return null;
+    if (members.length === 0) return list;
+
+    for (const member of members) {
+      const { prospectId, snapshot: providedSnapshot } = member;
+      let snapshot: Record<string, unknown> = { prospectId };
+      let companyId = prospectId;
+      let osFound = false;
+
+      if (this.osCfg) {
+        const doc = await getProspectById(this.osCfg, prospectId).catch(() => null);
+        if (doc) {
+          osFound = true;
+          snapshot = osDocToSnapshot(doc);
+          companyId = doc.companyId;
+        }
+      }
+
+      if (providedSnapshot) {
+        snapshot = mergeSnapshots(snapshot, providedSnapshot);
+        companyId = String(providedSnapshot.companyId ?? companyId);
+      }
+
+      const [existing] = await this.db
+        .select()
+        .from(prospectActivations)
+        .where(
+          scopedTo(prospectActivations, workspaceId, eq(prospectActivations.prospectId, prospectId))
+        )
+        .limit(1);
+
+      const existingSnapshot =
+        existing?.snapshot && typeof existing.snapshot === "object"
+          ? (existing.snapshot as Record<string, unknown>)
+          : null;
+
+      if (existingSnapshot) {
+        snapshot = mergeSnapshots(existingSnapshot, snapshot);
+        companyId = existing?.companyId ?? companyId;
+      }
+
+      const hasProvided = Boolean(providedSnapshot && snapshotHasDisplayFields(providedSnapshot));
+      const shouldUpsert = existingSnapshot
+        ? osFound || hasProvided
+        : snapshotHasDisplayFields(snapshot);
+
+      if (shouldUpsert) {
+        const patch = JSON.stringify(snapshot);
+        await this.db
+          .insert(prospectActivations)
+          .values({ workspaceId, prospectId, companyId, snapshot })
+          .onConflictDoUpdate({
+            target: [prospectActivations.workspaceId, prospectActivations.prospectId],
+            set: {
+              snapshot: sql`coalesce(${prospectActivations.snapshot}, '{}'::jsonb) || ${patch}::jsonb`,
+              companyId,
+              updatedAt: new Date(),
+            },
+          });
+      }
+    }
+
+    await this.db
+      .insert(listMembers)
+      .values(members.map((member) => ({ listId, prospectId: member.prospectId })))
+      .onConflictDoNothing();
+
+    log.info("list members added", {
+      workspaceId,
+      listId,
+      requested: members.length,
+    });
+
+    return this.getListByIdWithMembers(workspaceId, listId);
+  }
+
+  /**
+   * R13.4 — undo half of `addMembers`, used by `reverseRuleRun` to actually remove a prospect an
+   * `add_to_list` rule added (previously that "reverse" only marked the audit row, never touched
+   * membership). Returns false if the list doesn't belong to this workspace or the prospect
+   * wasn't a member — both are legitimate "nothing to reverse" outcomes, not errors.
+   */
+  async removeMember(workspaceId: string, listId: string, prospectId: string): Promise<boolean> {
+    const list = await this.getListById(workspaceId, listId);
+    if (!list) return false;
+    const deleted = await this.db
+      .delete(listMembers)
+      .where(and(eq(listMembers.listId, listId), eq(listMembers.prospectId, prospectId)))
+      .returning({ prospectId: listMembers.prospectId });
+    return deleted.length > 0;
+  }
+
+  async getMembers(workspaceId: string, listId: string): Promise<ProspectListMember[] | null> {
+    const list = await this.getListById(workspaceId, listId);
+    if (!list) return null;
+
+    const memberRows = await this.db
+      .select({
+        prospectId: listMembers.prospectId,
+        addedAt: listMembers.addedAt,
+        companyId: prospectActivations.companyId,
+        snapshot: prospectActivations.snapshot,
+      })
+      .from(listMembers)
+      .leftJoin(
+        prospectActivations,
+        scopedTo(prospectActivations, workspaceId, eq(prospectActivations.prospectId, listMembers.prospectId))
+      )
+      .where(eq(listMembers.listId, listId));
+
+    return memberRows.map((r) => ({
+      prospectId: r.prospectId,
+      companyId: r.companyId ?? r.prospectId,
+      snapshot: (r.snapshot as Record<string, unknown>) ?? {},
+      addedAt: r.addedAt.toISOString(),
+    }));
+  }
+
+  private async getListByIdWithMembers(workspaceId: string, listId: string): Promise<ProspectList | null> {
+    const base = await this.getListById(workspaceId, listId);
+    if (!base) return null;
+
+    const memberRows = await this.db
+      .select({
+        prospectId: listMembers.prospectId,
+        addedAt: listMembers.addedAt,
+        companyId: prospectActivations.companyId,
+        snapshot: prospectActivations.snapshot,
+      })
+      .from(listMembers)
+      .leftJoin(
+        prospectActivations,
+        scopedTo(prospectActivations, workspaceId, eq(prospectActivations.prospectId, listMembers.prospectId))
+      )
+      .where(eq(listMembers.listId, listId));
+
+    const members: ProspectListMember[] = memberRows.map((r) => ({
+      prospectId: r.prospectId,
+      companyId: r.companyId ?? r.prospectId,
+      snapshot: (r.snapshot as Record<string, unknown>) ?? {},
+      addedAt: r.addedAt.toISOString(),
+    }));
+
+    return { ...base, members };
   }
 }
 
-export const listService = new ListService();
+export function buildListService(db: Db | null, osCfg: OpenSearchConfig | null): ListService | null {
+  if (!db) return null;
+  return new ListService(db, osCfg);
+}

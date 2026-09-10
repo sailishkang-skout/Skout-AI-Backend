@@ -1,0 +1,32 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "skout-frontend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd '/Users/novostack/Desktop/Skout AI/Skout Ai Frontend' && E2E_AUTH_BYPASS=true pnpm dev"
+      ],
+      "port": 3000
+    },
+    {
+      "name": "skout-frontend-manual",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd '/Users/novostack/Desktop/Skout AI/Skout Ai Frontend' && pnpm dev"
+      ],
+      "port": 3000
+    },
+    {
+      "name": "skout-api",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd '/Users/novostack/Desktop/Skout AI/Skout AI Backend' && pnpm --filter @skout/api dev"
+      ],
+      "port": 3001
+    }
+  ]
+}

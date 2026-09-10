@@ -1,0 +1,867 @@
+{
+  "/SkoutDev-Compute": [
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    },
+    {
+      "type": "aws:cdk:stack-tags",
+      "data": [
+        {
+          "key": "skout:environment",
+          "value": "dev"
+        }
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/ApiToDbIngress": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ApiToDbIngress"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:233:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/ApiToRedisIngress": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ApiToRedisIngress"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:241:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/LoadBalancerDns": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "LoadBalancerDns"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:252:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/ApiUrl": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ApiUrl"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:257:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/WebUrl": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WebUrl"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:262:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/BootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BootstrapVersion"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/CheckBootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CheckBootstrapVersion"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/Cluster/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ClusterEB0386A7"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Cluster2 in .pnpm...",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:58:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/Alb/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "Alb16C2F182"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new ApplicationLoadBalancer2 in .pnpm...",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:63:25)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/ServiceDiscovery/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ServiceDiscovery76C640CC"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new PrivateDnsNamespace2 in .pnpm...",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:69:23)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/ApiService/ServiceSg": [
+    {
+      "type": "aws:cdk:warning",
+      "data": "Ignoring Egress rule since 'allowAllOutbound' is set to true; To add customized rules, set allowAllOutbound=false on the SecurityGroup [ack: @aws-cdk/aws-ec2:ipv4IgnoreEgressRule]",
+      "trace": [
+        "Annotations.addMessage (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/core/lib/annotations.js:1:3441)",
+        "Annotations.addWarningV2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/core/lib/annotations.js:1:2129)",
+        "WrappedClass.addEgressRule (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/aws-ec2/lib/security-group.js:1:12648)",
+        "WrappedClass.<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/core/lib/metadata-resource.js:1:2059)",
+        "/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/aws-ec2/lib/connections.js:1:2127",
+        "ReactiveList.forEachAndForever (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/aws-ec2/lib/connections.js:1:6485)",
+        "/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/aws-ec2/lib/connections.js:1:2088",
+        "ReactiveList.forEachAndForever (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/aws-ec2/lib/connections.js:1:6485)",
+        "Connections.allowTo (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/aws-ec2/lib/connections.js:1:2016)",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:197:32)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "Object.<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "Module._compile (node:internal/modules/cjs/loader:1760:14)",
+        "Object.transformer (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-BOkp8V6j.cjs:9:3176)",
+        "Module.load (node:internal/modules/cjs/loader:1480:32)",
+        "Module._load (node:internal/modules/cjs/loader:1299:12)",
+        "TracingChannel.traceSync (node:diagnostics_channel:328:14)",
+        "wrapModuleLoad (node:internal/modules/cjs/loader:244:24)",
+        "cjsLoader (node:internal/modules/esm/translators:342:5)",
+        "ModuleWrap.<anonymous> (node:internal/modules/esm/translators:234:7)",
+        "ModuleJob.run (node:internal/modules/esm/module_job:377:25)",
+        "async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:691:26)",
+        "async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/ApiService/Service": [
+    {
+      "type": "aws:cdk:warning",
+      "data": "minHealthyPercent has not been configured so the default value of 50% is used. The number of running tasks will decrease below the desired count during deployments etc. See https://github.com/aws/aws-cdk/issues/31705 [ack: @aws-cdk/aws-ecs:minHealthyPercent]",
+      "trace": [
+        "Annotations.addMessage (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/core/lib/annotations.js:1:3441)",
+        "Annotations.addWarningV2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/core/lib/annotations.js:1:2129)",
+        "new BaseService2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/aws-ecs/lib/base/base-service.js:1:15586)",
+        "new BaseService2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/core/lib/no-box-stack-traces.js:1:345)",
+        "new FargateService2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/aws-ecs/lib/fargate/fargate-service.js:1:7829)",
+        "new FargateService2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/core/lib/prop-injectable.js:1:855)",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:87:20)",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:91:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "Object.<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "Module._compile (node:internal/modules/cjs/loader:1760:14)",
+        "Object.transformer (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-BOkp8V6j.cjs:9:3176)",
+        "Module.load (node:internal/modules/cjs/loader:1480:32)",
+        "Module._load (node:internal/modules/cjs/loader:1299:12)",
+        "TracingChannel.traceSync (node:diagnostics_channel:328:14)",
+        "wrapModuleLoad (node:internal/modules/cjs/loader:244:24)",
+        "cjsLoader (node:internal/modules/esm/translators:342:5)",
+        "ModuleWrap.<anonymous> (node:internal/modules/esm/translators:234:7)",
+        "ModuleJob.run (node:internal/modules/esm/module_job:377:25)",
+        "async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:691:26)",
+        "async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/AiService/Service": [
+    {
+      "type": "aws:cdk:warning",
+      "data": "minHealthyPercent has not been configured so the default value of 50% is used. The number of running tasks will decrease below the desired count during deployments etc. See https://github.com/aws/aws-cdk/issues/31705 [ack: @aws-cdk/aws-ecs:minHealthyPercent]",
+      "trace": [
+        "Annotations.addMessage (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/core/lib/annotations.js:1:3441)",
+        "Annotations.addWarningV2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/core/lib/annotations.js:1:2129)",
+        "new BaseService2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/aws-ecs/lib/base/base-service.js:1:15586)",
+        "new BaseService2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/core/lib/no-box-stack-traces.js:1:345)",
+        "new FargateService2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/aws-ecs/lib/fargate/fargate-service.js:1:7829)",
+        "new FargateService2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/core/lib/prop-injectable.js:1:855)",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:87:20)",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:172:23)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "Object.<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "Module._compile (node:internal/modules/cjs/loader:1760:14)",
+        "Object.transformer (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-BOkp8V6j.cjs:9:3176)",
+        "Module.load (node:internal/modules/cjs/loader:1480:32)",
+        "Module._load (node:internal/modules/cjs/loader:1299:12)",
+        "TracingChannel.traceSync (node:diagnostics_channel:328:14)",
+        "wrapModuleLoad (node:internal/modules/cjs/loader:244:24)",
+        "cjsLoader (node:internal/modules/esm/translators:342:5)",
+        "ModuleWrap.<anonymous> (node:internal/modules/esm/translators:234:7)",
+        "ModuleJob.run (node:internal/modules/esm/module_job:377:25)",
+        "async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:691:26)",
+        "async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/WebService/Service": [
+    {
+      "type": "aws:cdk:warning",
+      "data": "minHealthyPercent has not been configured so the default value of 50% is used. The number of running tasks will decrease below the desired count during deployments etc. See https://github.com/aws/aws-cdk/issues/31705 [ack: @aws-cdk/aws-ecs:minHealthyPercent]",
+      "trace": [
+        "Annotations.addMessage (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/core/lib/annotations.js:1:3441)",
+        "Annotations.addWarningV2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/core/lib/annotations.js:1:2129)",
+        "new BaseService2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/aws-ecs/lib/base/base-service.js:1:15586)",
+        "new BaseService2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/core/lib/no-box-stack-traces.js:1:345)",
+        "new FargateService2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/aws-ecs/lib/fargate/fargate-service.js:1:7829)",
+        "new FargateService2 (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/aws-cdk-lib@2.258.0_constructs@10.6.0/node_modules/aws-cdk-lib/core/lib/prop-injectable.js:1:855)",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:87:20)",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:207:24)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "Object.<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "Module._compile (node:internal/modules/cjs/loader:1760:14)",
+        "Object.transformer (/Users/novostack/Desktop/Skout AI/Skout AI Backend/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-BOkp8V6j.cjs:9:3176)",
+        "Module.load (node:internal/modules/cjs/loader:1480:32)",
+        "Module._load (node:internal/modules/cjs/loader:1299:12)",
+        "TracingChannel.traceSync (node:diagnostics_channel:328:14)",
+        "wrapModuleLoad (node:internal/modules/cjs/loader:244:24)",
+        "cjsLoader (node:internal/modules/esm/translators:342:5)",
+        "ModuleWrap.<anonymous> (node:internal/modules/esm/translators:234:7)",
+        "ModuleJob.run (node:internal/modules/esm/module_job:377:25)",
+        "async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:691:26)",
+        "async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/CDKMetadata/Default": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CDKMetadata"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/Exports/Output{\"Fn::GetAtt\":[\"Alb16C2F182\",\"LoadBalancerFullName\"]}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputFnGetAttAlb16C2F182LoadBalancerFullName73BA17C5"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/Exports/Output{\"Ref\":\"ClusterEB0386A7\"}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputRefClusterEB0386A796A0E3FE"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/Exports/Output{\"Fn::GetAtt\":[\"ApiService199661B5\",\"Name\"]}": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ExportsOutputFnGetAttApiService199661B5Name6719CF36"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/Alb/SecurityGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AlbSecurityGroup580F65A6"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new ApplicationLoadBalancer2 in .pnpm...",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:63:25)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/Alb/SecurityGroup/to SkoutDevComputeApiServiceServiceSg768FA6CC:3001": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AlbSecurityGrouptoSkoutDevComputeApiServiceServiceSg768FA6CC3001BFE267EE"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/Alb/SecurityGroup/to SkoutDevComputeWebServiceServiceSg9DD4266B:3000": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AlbSecurityGrouptoSkoutDevComputeWebServiceServiceSg9DD4266B30005163D3D1"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/Alb/HttpListener/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AlbHttpListener00C8B33E"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...WrappedClass.<anonymous> in .pnpm...",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:75:40)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/ApiService/TaskDef/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ApiServiceTaskDefDF3191FB"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:46:27)",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:91:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/ApiService/LogGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ApiServiceLogGroup313E31FA"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new LogGroup2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:52:22)",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:91:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/ApiService/ServiceSg/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ApiServiceServiceSg66545185"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new SecurityGroup2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:78:16)",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:91:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/ApiService/ServiceSg/from SkoutDevComputeAlbSecurityGroup1B1F1E1A:3001": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ApiServiceServiceSgfromSkoutDevComputeAlbSecurityGroup1B1F1E1A30015A1FD0C4"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/ApiService/Service/Service": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ApiService199661B5"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateService2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:87:20)",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:91:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/ApiService/TargetGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ApiServiceTargetGroup8E12D5BC"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new ApplicationTargetGroup2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:100:26)",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:91:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/AiService/TaskDef/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AiServiceTaskDef31FCEA8E"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:46:27)",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:172:23)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/AiService/LogGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AiServiceLogGroupF7EC7410"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new LogGroup2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:52:22)",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:172:23)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/AiService/ServiceSg/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AiServiceServiceSg75DF0652"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new SecurityGroup2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:78:16)",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:172:23)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/AiService/ServiceSg/from SkoutDevComputeApiServiceServiceSg768FA6CC:8000": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AiServiceServiceSgfromSkoutDevComputeApiServiceServiceSg768FA6CC8000CEB2D277"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...Connections.allowTo in .pnpm...",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:197:32)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/AiService/Service/Service": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AiServiceAAA95A7F"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateService2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:87:20)",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:172:23)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/WebService/TaskDef/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WebServiceTaskDef0DAE0F9A"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:46:27)",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:207:24)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/WebService/LogGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WebServiceLogGroup6F16EA2A"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new LogGroup2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:52:22)",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:207:24)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/WebService/ServiceSg/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WebServiceServiceSg5326922F"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new SecurityGroup2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:78:16)",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:207:24)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/WebService/ServiceSg/from SkoutDevComputeAlbSecurityGroup1B1F1E1A:3000": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WebServiceServiceSgfromSkoutDevComputeAlbSecurityGroup1B1F1E1A3000EAB86FBB"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/WebService/Service/Service": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WebService5EA589E6"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateService2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:87:20)",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:207:24)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/WebService/TargetGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WebServiceTargetGroup21394FFE"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new ApplicationTargetGroup2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:100:26)",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:207:24)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/Alb/HttpListener/apiRule/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AlbHttpListenerapiRule0FE71457"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...WrappedClass.<anonymous> in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:114:22)",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:91:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/Alb/HttpListener/webRule/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AlbHttpListenerwebRule667A8A25"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...WrappedClass.<anonymous> in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:114:22)",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:207:24)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/ApiService/TaskDef/TaskRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ApiServiceTaskDefTaskRole1014CB34"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:46:27)",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:91:20)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/ApiService/TaskDef/ExecutionRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ApiServiceTaskDefExecutionRole43B90DD6"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/AiService/TaskDef/TaskRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AiServiceTaskDefTaskRoleC105A1A9"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:46:27)",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:172:23)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/AiService/TaskDef/ExecutionRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AiServiceTaskDefExecutionRole626A1B8B"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/AiService/Service/CloudmapService/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AiServiceCloudmapService14FACED7"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...WrappedClass.enableCloudMap in .pnpm...",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:199:23)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/WebService/TaskDef/TaskRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WebServiceTaskDefTaskRole39B734D2"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutEcsService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-ecs-service.ts:46:27)",
+        "new ComputeStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/compute-stack.ts:207:24)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:50:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:87:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/WebService/TaskDef/ExecutionRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WebServiceTaskDefExecutionRole9E63B6B2"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/ApiService/TaskDef/TaskRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ApiServiceTaskDefTaskRoleDefaultPolicy63C68204"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/ApiService/TaskDef/ExecutionRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ApiServiceTaskDefExecutionRoleDefaultPolicyDCB48050"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/AiService/TaskDef/ExecutionRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "AiServiceTaskDefExecutionRoleDefaultPolicyC398D548"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Compute/WebService/TaskDef/ExecutionRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WebServiceTaskDefExecutionRoleDefaultPolicyF65F7670"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ]
+}

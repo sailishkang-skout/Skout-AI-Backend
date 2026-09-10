@@ -1,0 +1,6 @@
+Prospect Import List
+Name | Email | Company Domain | Company | Title | Country
+Neeraj Singh | neeraj190499@gmail.com | gmail.com | Skout Test | Founder | India
+Priya Sharma | priya.sharma@acme.io | acme.io | Acme Labs | VP Sales | United States
+James Chen | james.chen@northwind.co | northwind.co | Northwind Analytics | Head of Growth | United Kingdom
+Aisha Khan | aisha@brightpath.ai | brightpath.ai | BrightPath AI | CEO | United Arab Emirates

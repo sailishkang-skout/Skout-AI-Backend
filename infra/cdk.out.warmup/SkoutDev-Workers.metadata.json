@@ -1,0 +1,644 @@
+{
+  "/SkoutDev-Workers": [
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    },
+    {
+      "type": "aws:cdk:stack-tags",
+      "data": [
+        {
+          "key": "skout:environment",
+          "value": "dev"
+        }
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/WorkersToDbOrchestrator": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WorkersToDbOrchestrator"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:192:7)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/WorkersToRedisOrchestrator": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WorkersToRedisOrchestrator"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:200:7)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/WorkersToDbCleaner": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WorkersToDbCleaner"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:192:7)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/WorkersToRedisCleaner": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WorkersToRedisCleaner"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:200:7)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/WorkersToDbIngestor": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WorkersToDbIngestor"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:192:7)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/WorkersToRedisIngestor": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "WorkersToRedisIngestor"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:200:7)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScrapeScheduleQueueUrl": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScrapeScheduleQueueUrl"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:230:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/BootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BootstrapVersion"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/CheckBootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CheckBootstrapVersion"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScrapeScheduleDlq/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScrapeScheduleDlq9E8DD742"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Queue2 in .pnpm...",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:68:17)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScrapeScheduleQueue/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScrapeScheduleQueueEEE93AD2"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Queue2 in .pnpm...",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:73:32)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/DailyScrapeSchedule/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "DailyScrapeScheduleE5AB1C9D"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Rule2 in .pnpm...",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:79:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/CDKMetadata/Default": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CDKMetadata"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in .pnpm...",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:5)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScrapeScheduleQueue/Policy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScrapeScheduleQueuePolicy32D7B875"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperOrchestrator/TaskDef/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperOrchestratorTaskDef570C9ABC"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:38:27)",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:118:26)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperOrchestrator/LogGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperOrchestratorLogGroup860716B1"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new LogGroup2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:43:22)",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:118:26)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperOrchestrator/ServiceSg/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperOrchestratorServiceSg1D3AFCE9"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new SecurityGroup2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:64:26)",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:118:26)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperOrchestrator/Service/Service": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperOrchestratorService663A7AEE"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateService2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:70:20)",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:118:26)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperCleaner/TaskDef/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperCleanerTaskDef7B45B308"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:38:27)",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:144:21)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperCleaner/LogGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperCleanerLogGroup0C1E2AB3"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new LogGroup2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:43:22)",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:144:21)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperCleaner/ServiceSg/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperCleanerServiceSg442FC5AA"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new SecurityGroup2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:64:26)",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:144:21)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperCleaner/Service/Service": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperCleanerService659AF985"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateService2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:70:20)",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:144:21)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperIngestor/TaskDef/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperIngestorTaskDefD6D609CA"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:38:27)",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:160:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperIngestor/LogGroup/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperIngestorLogGroup8392E917"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new LogGroup2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:43:22)",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:160:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperIngestor/ServiceSg/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperIngestorServiceSg0E54BC7C"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new SecurityGroup2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:64:26)",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:160:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperIngestor/Service/Service": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperIngestorService4E2A3190"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateService2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:70:20)",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:160:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)",
+        "...node internals, .pnpm..."
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperOrchestrator/TaskDef/TaskRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperOrchestratorTaskDefTaskRole5AD138C9"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:38:27)",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:118:26)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperOrchestrator/TaskDef/ExecutionRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperOrchestratorTaskDefExecutionRole35334C0C"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperCleaner/TaskDef/TaskRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperCleanerTaskDefTaskRole37067242"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:38:27)",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:144:21)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperCleaner/TaskDef/ExecutionRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperCleanerTaskDefExecutionRoleF34B61B8"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperIngestor/TaskDef/TaskRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperIngestorTaskDefTaskRole3A0657E0"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new FargateTaskDefinition2 in .pnpm...",
+        "new SkoutWorkerService (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-worker-service.ts:38:27)",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:160:22)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperIngestor/TaskDef/ExecutionRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperIngestorTaskDefExecutionRole5F6F23C7"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperOrchestrator/TaskDef/TaskRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperOrchestratorTaskDefTaskRoleDefaultPolicy1231C1BB"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperOrchestrator/TaskDef/ExecutionRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperOrchestratorTaskDefExecutionRoleDefaultPolicyA205E94A"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperOrchestrator/Service/TaskCount/Target/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperOrchestratorServiceTaskCountTarget09C2BE5B"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...WrappedClass.autoScaleTaskCount in .pnpm...",
+        "applyBusinessHoursSchedule (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-dev-schedule.ts:11:28)",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:225:7)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperCleaner/TaskDef/TaskRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperCleanerTaskDefTaskRoleDefaultPolicy1D50B9F0"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperCleaner/TaskDef/ExecutionRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperCleanerTaskDefExecutionRoleDefaultPolicyF80B8B39"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperCleaner/Service/TaskCount/Target/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperCleanerServiceTaskCountTarget35D9ADB5"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...WrappedClass.autoScaleTaskCount in .pnpm...",
+        "applyBusinessHoursSchedule (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-dev-schedule.ts:11:28)",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:226:7)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)"
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperIngestor/TaskDef/TaskRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperIngestorTaskDefTaskRoleDefaultPolicy06FD21DA"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperIngestor/TaskDef/ExecutionRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperIngestorTaskDefExecutionRoleDefaultPolicyB1AC0D80"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "....pnpm...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/SkoutDev-Workers/ScraperIngestor/Service/TaskCount/Target/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "ScraperIngestorServiceTaskCountTargetCB9FDD1C"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...WrappedClass.autoScaleTaskCount in .pnpm...",
+        "applyBusinessHoursSchedule (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/constructs/skout-dev-schedule.ts:11:28)",
+        "new WorkersStack (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/lib/stacks/workers-stack.ts:227:7)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:85:19)",
+        "<anonymous> (/Users/novostack/Desktop/Skout AI/Skout AI Backend/infra/bin/app.ts:149:11)"
+      ]
+    }
+  ]
+}

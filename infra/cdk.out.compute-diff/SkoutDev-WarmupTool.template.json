@@ -1,0 +1,2722 @@
+{
+ "Description": "Skout AI dev Email Warm-Up Tool (api + workers)",
+ "Resources": {
+  "WarmupToolApiServiceTaskDefTaskRoleE90167EC": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolApiService/TaskDef/TaskRole/Resource"
+   }
+  },
+  "WarmupToolApiServiceTaskDef7EAEFAFE": {
+   "Type": "AWS::ECS::TaskDefinition",
+   "Properties": {
+    "ContainerDefinitions": [
+     {
+      "Environment": [
+       {
+        "Name": "NODE_ENV",
+        "Value": "production"
+       },
+       {
+        "Name": "DATABASE_HOST",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointAddress8AB85320"
+        }
+       },
+       {
+        "Name": "DATABASE_PORT",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointPortEA4FF89A"
+        }
+       },
+       {
+        "Name": "DATABASE_NAME",
+        "Value": "email_warmup"
+       },
+       {
+        "Name": "DATABASE_USER",
+        "Value": "skout"
+       },
+       {
+        "Name": "DATABASE_SSL",
+        "Value": "true"
+       },
+       {
+        "Name": "REDIS_URL",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "redis://",
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttRedis04B3B4F3RedisEndpointAddress8458D51B"
+           },
+           ":6379"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "SERVICE_NAME",
+        "Value": "skout-email-warmup-service"
+       },
+       {
+        "Name": "LOG_LEVEL",
+        "Value": "info"
+       },
+       {
+        "Name": "WARMUP_OAUTH_GOOGLE_CALLBACK",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "https://",
+           {
+            "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputRefHttpsApiE9D87588B0514C1E"
+           },
+           ".execute-api.us-east-1.",
+           {
+            "Ref": "AWS::URLSuffix"
+           },
+           "/api/v1/warmup-tool/oauth/google/callback"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "WARMUP_OAUTH_MICROSOFT_CALLBACK",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "https://",
+           {
+            "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputRefHttpsApiE9D87588B0514C1E"
+           },
+           ".execute-api.us-east-1.",
+           {
+            "Ref": "AWS::URLSuffix"
+           },
+           "/api/v1/warmup-tool/oauth/microsoft/callback"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "PORT",
+        "Value": "3010"
+       },
+       {
+        "Name": "HTTP_PORT",
+        "Value": "3010"
+       },
+       {
+        "Name": "HTTP_HOST",
+        "Value": "0.0.0.0"
+       }
+      ],
+      "Essential": true,
+      "HealthCheck": {
+       "Command": [
+        "CMD-SHELL",
+        "node -e \"fetch('http://127.0.0.1:3010/health').then((r)=>process.exit(r.status<400?0:1)).catch(()=>process.exit(1))\""
+       ],
+       "Interval": 30,
+       "Retries": 3,
+       "StartPeriod": 60,
+       "Timeout": 5
+      },
+      "Image": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::Select": [
+           4,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttWarmupToolRepoE54CCF7DArnFC39C98C"
+             }
+            ]
+           }
+          ]
+         },
+         ".dkr.ecr.",
+         {
+          "Fn::Select": [
+           3,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttWarmupToolRepoE54CCF7DArnFC39C98C"
+             }
+            ]
+           }
+          ]
+         },
+         ".",
+         {
+          "Ref": "AWS::URLSuffix"
+         },
+         "/",
+         {
+          "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputRefWarmupToolRepoE54CCF7DDD8F8057"
+         },
+         ":latest"
+        ]
+       ]
+      },
+      "LogConfiguration": {
+       "LogDriver": "awslogs",
+       "Options": {
+        "awslogs-group": {
+         "Ref": "WarmupToolApiServiceLogGroup171D93B1"
+        },
+        "awslogs-stream-prefix": "warmup-tool-api",
+        "awslogs-region": "us-east-1"
+       }
+      },
+      "Name": "Container",
+      "PortMappings": [
+       {
+        "ContainerPort": 3010,
+        "Protocol": "tcp"
+       }
+      ],
+      "Secrets": [
+       {
+        "Name": "DATABASE_PASSWORD",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+           },
+           ":password::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "ENCRYPTION_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsWarmupTool18E50856C853C469"
+           },
+           ":ENCRYPTION_KEY::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "API_KEY_PEPPER",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsWarmupTool18E50856C853C469"
+           },
+           ":API_KEY_PEPPER::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "PLATFORM_PROVISIONING_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsWarmupTool18E50856C853C469"
+           },
+           ":PLATFORM_PROVISIONING_KEY::"
+          ]
+         ]
+        }
+       }
+      ]
+     }
+    ],
+    "Cpu": "256",
+    "ExecutionRoleArn": {
+     "Fn::GetAtt": [
+      "WarmupToolApiServiceTaskDefExecutionRole63AA2562",
+      "Arn"
+     ]
+    },
+    "Family": "SkoutDevWarmupToolWarmupToolApiServiceTaskDefE6938930",
+    "Memory": "512",
+    "NetworkMode": "awsvpc",
+    "RequiresCompatibilities": [
+     "FARGATE"
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskRoleArn": {
+     "Fn::GetAtt": [
+      "WarmupToolApiServiceTaskDefTaskRoleE90167EC",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolApiService/TaskDef/Resource"
+   }
+  },
+  "WarmupToolApiServiceTaskDefExecutionRole63AA2562": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolApiService/TaskDef/ExecutionRole/Resource"
+   }
+  },
+  "WarmupToolApiServiceTaskDefExecutionRoleDefaultPolicy7F90D0DA": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttWarmupToolRepoE54CCF7DArnFC39C98C"
+       }
+      },
+      {
+       "Action": "ecr:GetAuthorizationToken",
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "WarmupToolApiServiceLogGroup171D93B1",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsWarmupTool18E50856C853C469"
+        },
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "WarmupToolApiServiceTaskDefExecutionRoleDefaultPolicy7F90D0DA",
+    "Roles": [
+     {
+      "Ref": "WarmupToolApiServiceTaskDefExecutionRole63AA2562"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolApiService/TaskDef/ExecutionRole/DefaultPolicy/Resource"
+   }
+  },
+  "WarmupToolApiServiceLogGroup171D93B1": {
+   "Type": "AWS::Logs::LogGroup",
+   "Properties": {
+    "LogGroupName": "/skout/dev/warmup-tool-api",
+    "RetentionInDays": 30,
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolApiService/LogGroup/Resource"
+   }
+  },
+  "WarmupToolApiServiceServiceSg45CBE660": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Skout warmup-tool-api ECS",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolApiService/ServiceSg/Resource"
+   }
+  },
+  "WarmupToolApiServiceServiceSgfromSkoutDevComputeApiServiceServiceSg768FA6CC3010AE5DFEC7": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "Description": "from SkoutDevComputeApiServiceServiceSg768FA6CC:3010",
+    "FromPort": 3010,
+    "GroupId": {
+     "Fn::GetAtt": [
+      "WarmupToolApiServiceServiceSg45CBE660",
+      "GroupId"
+     ]
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputFnGetAttApiServiceServiceSg66545185GroupId39AF0CB0"
+    },
+    "ToPort": 3010
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolApiService/ServiceSg/from SkoutDevComputeApiServiceServiceSg768FA6CC:3010"
+   }
+  },
+  "WarmupToolApiServiceDC1A9BCC": {
+   "Type": "AWS::ECS::Service",
+   "Properties": {
+    "Cluster": {
+     "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputRefClusterEB0386A796A0E3FE"
+    },
+    "DeploymentConfiguration": {
+     "Alarms": {
+      "AlarmNames": [],
+      "Enable": false,
+      "Rollback": false
+     },
+     "DeploymentCircuitBreaker": {
+      "Enable": true,
+      "Rollback": true
+     },
+     "MaximumPercent": 200,
+     "MinimumHealthyPercent": 50
+    },
+    "DeploymentController": {
+     "Type": "ECS"
+    },
+    "DesiredCount": 1,
+    "EnableECSManagedTags": false,
+    "LaunchType": "FARGATE",
+    "NetworkConfiguration": {
+     "AwsvpcConfiguration": {
+      "AssignPublicIp": "DISABLED",
+      "SecurityGroups": [
+       {
+        "Fn::GetAtt": [
+         "WarmupToolApiServiceServiceSg45CBE660",
+         "GroupId"
+        ]
+       }
+      ],
+      "Subnets": [
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet1Subnet536B997AFD4CC940"
+       },
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet2Subnet3788AAA1380949A3"
+       }
+      ]
+     }
+    },
+    "ServiceName": "warmup-tool-api",
+    "ServiceRegistries": [
+     {
+      "RegistryArn": {
+       "Fn::GetAtt": [
+        "WarmupToolApiServiceCloudmapServiceE26B78C1",
+        "Arn"
+       ]
+      }
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskDefinition": {
+     "Ref": "WarmupToolApiServiceTaskDef7EAEFAFE"
+    }
+   },
+   "DependsOn": [
+    "WarmupToolApiServiceTaskDefTaskRoleE90167EC"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolApiService/Service/Service"
+   }
+  },
+  "WarmupToolApiServiceCloudmapServiceE26B78C1": {
+   "Type": "AWS::ServiceDiscovery::Service",
+   "Properties": {
+    "DnsConfig": {
+     "DnsRecords": [
+      {
+       "TTL": 60,
+       "Type": "A"
+      }
+     ],
+     "NamespaceId": {
+      "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputFnGetAttServiceDiscovery76C640CCId30FFAD02"
+     },
+     "RoutingPolicy": "MULTIVALUE"
+    },
+    "HealthCheckCustomConfig": {
+     "FailureThreshold": 1
+    },
+    "Name": "warmup-tool",
+    "NamespaceId": {
+     "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputFnGetAttServiceDiscovery76C640CCId30FFAD02"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "DependsOn": [
+    "WarmupToolApiServiceTaskDefTaskRoleE90167EC"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolApiService/Service/CloudmapService/Resource"
+   }
+  },
+  "WarmupToolExecutionWorkerTaskDefTaskRoleA407C62C": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolExecutionWorker/TaskDef/TaskRole/Resource"
+   }
+  },
+  "WarmupToolExecutionWorkerTaskDefC29661CE": {
+   "Type": "AWS::ECS::TaskDefinition",
+   "Properties": {
+    "ContainerDefinitions": [
+     {
+      "Command": [
+       "node",
+       "dist/workers/execution-worker-process.js"
+      ],
+      "Environment": [
+       {
+        "Name": "NODE_ENV",
+        "Value": "production"
+       },
+       {
+        "Name": "DATABASE_HOST",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointAddress8AB85320"
+        }
+       },
+       {
+        "Name": "DATABASE_PORT",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointPortEA4FF89A"
+        }
+       },
+       {
+        "Name": "DATABASE_NAME",
+        "Value": "email_warmup"
+       },
+       {
+        "Name": "DATABASE_USER",
+        "Value": "skout"
+       },
+       {
+        "Name": "DATABASE_SSL",
+        "Value": "true"
+       },
+       {
+        "Name": "REDIS_URL",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "redis://",
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttRedis04B3B4F3RedisEndpointAddress8458D51B"
+           },
+           ":6379"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "SERVICE_NAME",
+        "Value": "skout-email-warmup-service"
+       },
+       {
+        "Name": "LOG_LEVEL",
+        "Value": "info"
+       },
+       {
+        "Name": "WARMUP_OAUTH_GOOGLE_CALLBACK",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "https://",
+           {
+            "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputRefHttpsApiE9D87588B0514C1E"
+           },
+           ".execute-api.us-east-1.",
+           {
+            "Ref": "AWS::URLSuffix"
+           },
+           "/api/v1/warmup-tool/oauth/google/callback"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "WARMUP_OAUTH_MICROSOFT_CALLBACK",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "https://",
+           {
+            "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputRefHttpsApiE9D87588B0514C1E"
+           },
+           ".execute-api.us-east-1.",
+           {
+            "Ref": "AWS::URLSuffix"
+           },
+           "/api/v1/warmup-tool/oauth/microsoft/callback"
+          ]
+         ]
+        }
+       }
+      ],
+      "Essential": true,
+      "HealthCheck": {
+       "Command": [
+        "CMD-SHELL",
+        "node -e \"process.exit(0)\""
+       ],
+       "Interval": 30,
+       "Retries": 3,
+       "StartPeriod": 120,
+       "Timeout": 5
+      },
+      "Image": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::Select": [
+           4,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttWarmupToolRepoE54CCF7DArnFC39C98C"
+             }
+            ]
+           }
+          ]
+         },
+         ".dkr.ecr.",
+         {
+          "Fn::Select": [
+           3,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttWarmupToolRepoE54CCF7DArnFC39C98C"
+             }
+            ]
+           }
+          ]
+         },
+         ".",
+         {
+          "Ref": "AWS::URLSuffix"
+         },
+         "/",
+         {
+          "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputRefWarmupToolRepoE54CCF7DDD8F8057"
+         },
+         ":latest"
+        ]
+       ]
+      },
+      "LogConfiguration": {
+       "LogDriver": "awslogs",
+       "Options": {
+        "awslogs-group": {
+         "Ref": "WarmupToolExecutionWorkerLogGroup82DCE432"
+        },
+        "awslogs-stream-prefix": "warmup-tool-worker",
+        "awslogs-region": "us-east-1"
+       }
+      },
+      "Name": "Container",
+      "Secrets": [
+       {
+        "Name": "DATABASE_PASSWORD",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+           },
+           ":password::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "ENCRYPTION_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsWarmupTool18E50856C853C469"
+           },
+           ":ENCRYPTION_KEY::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "API_KEY_PEPPER",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsWarmupTool18E50856C853C469"
+           },
+           ":API_KEY_PEPPER::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "PLATFORM_PROVISIONING_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsWarmupTool18E50856C853C469"
+           },
+           ":PLATFORM_PROVISIONING_KEY::"
+          ]
+         ]
+        }
+       }
+      ]
+     }
+    ],
+    "Cpu": "256",
+    "ExecutionRoleArn": {
+     "Fn::GetAtt": [
+      "WarmupToolExecutionWorkerTaskDefExecutionRole1C421364",
+      "Arn"
+     ]
+    },
+    "Family": "SkoutDevWarmupToolWarmupToolExecutionWorkerTaskDefD484EA43",
+    "Memory": "512",
+    "NetworkMode": "awsvpc",
+    "RequiresCompatibilities": [
+     "FARGATE"
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskRoleArn": {
+     "Fn::GetAtt": [
+      "WarmupToolExecutionWorkerTaskDefTaskRoleA407C62C",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolExecutionWorker/TaskDef/Resource"
+   }
+  },
+  "WarmupToolExecutionWorkerTaskDefExecutionRole1C421364": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolExecutionWorker/TaskDef/ExecutionRole/Resource"
+   }
+  },
+  "WarmupToolExecutionWorkerTaskDefExecutionRoleDefaultPolicy7B63CB9D": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttWarmupToolRepoE54CCF7DArnFC39C98C"
+       }
+      },
+      {
+       "Action": "ecr:GetAuthorizationToken",
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "WarmupToolExecutionWorkerLogGroup82DCE432",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsWarmupTool18E50856C853C469"
+        },
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "WarmupToolExecutionWorkerTaskDefExecutionRoleDefaultPolicy7B63CB9D",
+    "Roles": [
+     {
+      "Ref": "WarmupToolExecutionWorkerTaskDefExecutionRole1C421364"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolExecutionWorker/TaskDef/ExecutionRole/DefaultPolicy/Resource"
+   }
+  },
+  "WarmupToolExecutionWorkerLogGroup82DCE432": {
+   "Type": "AWS::Logs::LogGroup",
+   "Properties": {
+    "LogGroupName": "/skout/dev/warmup-tool-worker",
+    "RetentionInDays": 30,
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolExecutionWorker/LogGroup/Resource"
+   }
+  },
+  "WarmupToolExecutionWorkerServiceSg7968D77D": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Skout warmup-tool-worker worker",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolExecutionWorker/ServiceSg/Resource"
+   }
+  },
+  "WarmupToolExecutionWorkerServiceE1C42066": {
+   "Type": "AWS::ECS::Service",
+   "Properties": {
+    "Cluster": {
+     "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputRefClusterEB0386A796A0E3FE"
+    },
+    "DeploymentConfiguration": {
+     "Alarms": {
+      "AlarmNames": [],
+      "Enable": false,
+      "Rollback": false
+     },
+     "DeploymentCircuitBreaker": {
+      "Enable": true,
+      "Rollback": false
+     },
+     "MaximumPercent": 200,
+     "MinimumHealthyPercent": 0
+    },
+    "DeploymentController": {
+     "Type": "ECS"
+    },
+    "DesiredCount": 1,
+    "EnableECSManagedTags": false,
+    "LaunchType": "FARGATE",
+    "NetworkConfiguration": {
+     "AwsvpcConfiguration": {
+      "AssignPublicIp": "DISABLED",
+      "SecurityGroups": [
+       {
+        "Fn::GetAtt": [
+         "WarmupToolExecutionWorkerServiceSg7968D77D",
+         "GroupId"
+        ]
+       }
+      ],
+      "Subnets": [
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet1Subnet536B997AFD4CC940"
+       },
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet2Subnet3788AAA1380949A3"
+       }
+      ]
+     }
+    },
+    "ServiceName": "warmup-tool-worker",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskDefinition": {
+     "Ref": "WarmupToolExecutionWorkerTaskDefC29661CE"
+    }
+   },
+   "DependsOn": [
+    "WarmupToolExecutionWorkerTaskDefTaskRoleA407C62C"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolExecutionWorker/Service/Service"
+   }
+  },
+  "WarmupToolInboundWorkerTaskDefTaskRoleBA5DB8E9": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolInboundWorker/TaskDef/TaskRole/Resource"
+   }
+  },
+  "WarmupToolInboundWorkerTaskDefE4AEE999": {
+   "Type": "AWS::ECS::TaskDefinition",
+   "Properties": {
+    "ContainerDefinitions": [
+     {
+      "Command": [
+       "node",
+       "dist/workers/inbound-poller-process.js"
+      ],
+      "Environment": [
+       {
+        "Name": "NODE_ENV",
+        "Value": "production"
+       },
+       {
+        "Name": "DATABASE_HOST",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointAddress8AB85320"
+        }
+       },
+       {
+        "Name": "DATABASE_PORT",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointPortEA4FF89A"
+        }
+       },
+       {
+        "Name": "DATABASE_NAME",
+        "Value": "email_warmup"
+       },
+       {
+        "Name": "DATABASE_USER",
+        "Value": "skout"
+       },
+       {
+        "Name": "DATABASE_SSL",
+        "Value": "true"
+       },
+       {
+        "Name": "REDIS_URL",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "redis://",
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttRedis04B3B4F3RedisEndpointAddress8458D51B"
+           },
+           ":6379"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "SERVICE_NAME",
+        "Value": "skout-email-warmup-service"
+       },
+       {
+        "Name": "LOG_LEVEL",
+        "Value": "info"
+       },
+       {
+        "Name": "WARMUP_OAUTH_GOOGLE_CALLBACK",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "https://",
+           {
+            "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputRefHttpsApiE9D87588B0514C1E"
+           },
+           ".execute-api.us-east-1.",
+           {
+            "Ref": "AWS::URLSuffix"
+           },
+           "/api/v1/warmup-tool/oauth/google/callback"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "WARMUP_OAUTH_MICROSOFT_CALLBACK",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "https://",
+           {
+            "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputRefHttpsApiE9D87588B0514C1E"
+           },
+           ".execute-api.us-east-1.",
+           {
+            "Ref": "AWS::URLSuffix"
+           },
+           "/api/v1/warmup-tool/oauth/microsoft/callback"
+          ]
+         ]
+        }
+       }
+      ],
+      "Essential": true,
+      "HealthCheck": {
+       "Command": [
+        "CMD-SHELL",
+        "node -e \"process.exit(0)\""
+       ],
+       "Interval": 30,
+       "Retries": 3,
+       "StartPeriod": 120,
+       "Timeout": 5
+      },
+      "Image": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::Select": [
+           4,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttWarmupToolRepoE54CCF7DArnFC39C98C"
+             }
+            ]
+           }
+          ]
+         },
+         ".dkr.ecr.",
+         {
+          "Fn::Select": [
+           3,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttWarmupToolRepoE54CCF7DArnFC39C98C"
+             }
+            ]
+           }
+          ]
+         },
+         ".",
+         {
+          "Ref": "AWS::URLSuffix"
+         },
+         "/",
+         {
+          "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputRefWarmupToolRepoE54CCF7DDD8F8057"
+         },
+         ":latest"
+        ]
+       ]
+      },
+      "LogConfiguration": {
+       "LogDriver": "awslogs",
+       "Options": {
+        "awslogs-group": {
+         "Ref": "WarmupToolInboundWorkerLogGroup262DD0E0"
+        },
+        "awslogs-stream-prefix": "warmup-tool-inbound",
+        "awslogs-region": "us-east-1"
+       }
+      },
+      "Name": "Container",
+      "Secrets": [
+       {
+        "Name": "DATABASE_PASSWORD",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+           },
+           ":password::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "ENCRYPTION_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsWarmupTool18E50856C853C469"
+           },
+           ":ENCRYPTION_KEY::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "API_KEY_PEPPER",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsWarmupTool18E50856C853C469"
+           },
+           ":API_KEY_PEPPER::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "PLATFORM_PROVISIONING_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsWarmupTool18E50856C853C469"
+           },
+           ":PLATFORM_PROVISIONING_KEY::"
+          ]
+         ]
+        }
+       }
+      ]
+     }
+    ],
+    "Cpu": "256",
+    "ExecutionRoleArn": {
+     "Fn::GetAtt": [
+      "WarmupToolInboundWorkerTaskDefExecutionRole5880E1F8",
+      "Arn"
+     ]
+    },
+    "Family": "SkoutDevWarmupToolWarmupToolInboundWorkerTaskDef071DCD6D",
+    "Memory": "512",
+    "NetworkMode": "awsvpc",
+    "RequiresCompatibilities": [
+     "FARGATE"
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskRoleArn": {
+     "Fn::GetAtt": [
+      "WarmupToolInboundWorkerTaskDefTaskRoleBA5DB8E9",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolInboundWorker/TaskDef/Resource"
+   }
+  },
+  "WarmupToolInboundWorkerTaskDefExecutionRole5880E1F8": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolInboundWorker/TaskDef/ExecutionRole/Resource"
+   }
+  },
+  "WarmupToolInboundWorkerTaskDefExecutionRoleDefaultPolicy52AE594F": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttWarmupToolRepoE54CCF7DArnFC39C98C"
+       }
+      },
+      {
+       "Action": "ecr:GetAuthorizationToken",
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "WarmupToolInboundWorkerLogGroup262DD0E0",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsWarmupTool18E50856C853C469"
+        },
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "WarmupToolInboundWorkerTaskDefExecutionRoleDefaultPolicy52AE594F",
+    "Roles": [
+     {
+      "Ref": "WarmupToolInboundWorkerTaskDefExecutionRole5880E1F8"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolInboundWorker/TaskDef/ExecutionRole/DefaultPolicy/Resource"
+   }
+  },
+  "WarmupToolInboundWorkerLogGroup262DD0E0": {
+   "Type": "AWS::Logs::LogGroup",
+   "Properties": {
+    "LogGroupName": "/skout/dev/warmup-tool-inbound",
+    "RetentionInDays": 30,
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolInboundWorker/LogGroup/Resource"
+   }
+  },
+  "WarmupToolInboundWorkerServiceSgB5015438": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Skout warmup-tool-inbound worker",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolInboundWorker/ServiceSg/Resource"
+   }
+  },
+  "WarmupToolInboundWorkerService341028D5": {
+   "Type": "AWS::ECS::Service",
+   "Properties": {
+    "Cluster": {
+     "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputRefClusterEB0386A796A0E3FE"
+    },
+    "DeploymentConfiguration": {
+     "Alarms": {
+      "AlarmNames": [],
+      "Enable": false,
+      "Rollback": false
+     },
+     "DeploymentCircuitBreaker": {
+      "Enable": true,
+      "Rollback": false
+     },
+     "MaximumPercent": 200,
+     "MinimumHealthyPercent": 0
+    },
+    "DeploymentController": {
+     "Type": "ECS"
+    },
+    "DesiredCount": 1,
+    "EnableECSManagedTags": false,
+    "LaunchType": "FARGATE",
+    "NetworkConfiguration": {
+     "AwsvpcConfiguration": {
+      "AssignPublicIp": "DISABLED",
+      "SecurityGroups": [
+       {
+        "Fn::GetAtt": [
+         "WarmupToolInboundWorkerServiceSgB5015438",
+         "GroupId"
+        ]
+       }
+      ],
+      "Subnets": [
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet1Subnet536B997AFD4CC940"
+       },
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet2Subnet3788AAA1380949A3"
+       }
+      ]
+     }
+    },
+    "ServiceName": "warmup-tool-inbound",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskDefinition": {
+     "Ref": "WarmupToolInboundWorkerTaskDefE4AEE999"
+    }
+   },
+   "DependsOn": [
+    "WarmupToolInboundWorkerTaskDefTaskRoleBA5DB8E9"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolInboundWorker/Service/Service"
+   }
+  },
+  "WarmupToolClassificationWorkerTaskDefTaskRole737C0125": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolClassificationWorker/TaskDef/TaskRole/Resource"
+   }
+  },
+  "WarmupToolClassificationWorkerTaskDef01AFAA8C": {
+   "Type": "AWS::ECS::TaskDefinition",
+   "Properties": {
+    "ContainerDefinitions": [
+     {
+      "Command": [
+       "node",
+       "dist/workers/conversation-classification-process.js"
+      ],
+      "Environment": [
+       {
+        "Name": "NODE_ENV",
+        "Value": "production"
+       },
+       {
+        "Name": "DATABASE_HOST",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointAddress8AB85320"
+        }
+       },
+       {
+        "Name": "DATABASE_PORT",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointPortEA4FF89A"
+        }
+       },
+       {
+        "Name": "DATABASE_NAME",
+        "Value": "email_warmup"
+       },
+       {
+        "Name": "DATABASE_USER",
+        "Value": "skout"
+       },
+       {
+        "Name": "DATABASE_SSL",
+        "Value": "true"
+       },
+       {
+        "Name": "REDIS_URL",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "redis://",
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttRedis04B3B4F3RedisEndpointAddress8458D51B"
+           },
+           ":6379"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "SERVICE_NAME",
+        "Value": "skout-email-warmup-service"
+       },
+       {
+        "Name": "LOG_LEVEL",
+        "Value": "info"
+       },
+       {
+        "Name": "WARMUP_OAUTH_GOOGLE_CALLBACK",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "https://",
+           {
+            "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputRefHttpsApiE9D87588B0514C1E"
+           },
+           ".execute-api.us-east-1.",
+           {
+            "Ref": "AWS::URLSuffix"
+           },
+           "/api/v1/warmup-tool/oauth/google/callback"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "WARMUP_OAUTH_MICROSOFT_CALLBACK",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "https://",
+           {
+            "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputRefHttpsApiE9D87588B0514C1E"
+           },
+           ".execute-api.us-east-1.",
+           {
+            "Ref": "AWS::URLSuffix"
+           },
+           "/api/v1/warmup-tool/oauth/microsoft/callback"
+          ]
+         ]
+        }
+       }
+      ],
+      "Essential": true,
+      "HealthCheck": {
+       "Command": [
+        "CMD-SHELL",
+        "node -e \"process.exit(0)\""
+       ],
+       "Interval": 30,
+       "Retries": 3,
+       "StartPeriod": 120,
+       "Timeout": 5
+      },
+      "Image": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::Select": [
+           4,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttWarmupToolRepoE54CCF7DArnFC39C98C"
+             }
+            ]
+           }
+          ]
+         },
+         ".dkr.ecr.",
+         {
+          "Fn::Select": [
+           3,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttWarmupToolRepoE54CCF7DArnFC39C98C"
+             }
+            ]
+           }
+          ]
+         },
+         ".",
+         {
+          "Ref": "AWS::URLSuffix"
+         },
+         "/",
+         {
+          "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputRefWarmupToolRepoE54CCF7DDD8F8057"
+         },
+         ":latest"
+        ]
+       ]
+      },
+      "LogConfiguration": {
+       "LogDriver": "awslogs",
+       "Options": {
+        "awslogs-group": {
+         "Ref": "WarmupToolClassificationWorkerLogGroup48586ED6"
+        },
+        "awslogs-stream-prefix": "warmup-tool-classification",
+        "awslogs-region": "us-east-1"
+       }
+      },
+      "Name": "Container",
+      "Secrets": [
+       {
+        "Name": "DATABASE_PASSWORD",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+           },
+           ":password::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "ENCRYPTION_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsWarmupTool18E50856C853C469"
+           },
+           ":ENCRYPTION_KEY::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "API_KEY_PEPPER",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsWarmupTool18E50856C853C469"
+           },
+           ":API_KEY_PEPPER::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "PLATFORM_PROVISIONING_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsWarmupTool18E50856C853C469"
+           },
+           ":PLATFORM_PROVISIONING_KEY::"
+          ]
+         ]
+        }
+       }
+      ]
+     }
+    ],
+    "Cpu": "256",
+    "ExecutionRoleArn": {
+     "Fn::GetAtt": [
+      "WarmupToolClassificationWorkerTaskDefExecutionRole563A892C",
+      "Arn"
+     ]
+    },
+    "Family": "SkoutDevWarmupToolWarmupToolClassificationWorkerTaskDefC61BC778",
+    "Memory": "512",
+    "NetworkMode": "awsvpc",
+    "RequiresCompatibilities": [
+     "FARGATE"
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskRoleArn": {
+     "Fn::GetAtt": [
+      "WarmupToolClassificationWorkerTaskDefTaskRole737C0125",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolClassificationWorker/TaskDef/Resource"
+   }
+  },
+  "WarmupToolClassificationWorkerTaskDefExecutionRole563A892C": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolClassificationWorker/TaskDef/ExecutionRole/Resource"
+   }
+  },
+  "WarmupToolClassificationWorkerTaskDefExecutionRoleDefaultPolicy448E8F36": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttWarmupToolRepoE54CCF7DArnFC39C98C"
+       }
+      },
+      {
+       "Action": "ecr:GetAuthorizationToken",
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "WarmupToolClassificationWorkerLogGroup48586ED6",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsWarmupTool18E50856C853C469"
+        },
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "WarmupToolClassificationWorkerTaskDefExecutionRoleDefaultPolicy448E8F36",
+    "Roles": [
+     {
+      "Ref": "WarmupToolClassificationWorkerTaskDefExecutionRole563A892C"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolClassificationWorker/TaskDef/ExecutionRole/DefaultPolicy/Resource"
+   }
+  },
+  "WarmupToolClassificationWorkerLogGroup48586ED6": {
+   "Type": "AWS::Logs::LogGroup",
+   "Properties": {
+    "LogGroupName": "/skout/dev/warmup-tool-classification",
+    "RetentionInDays": 30,
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolClassificationWorker/LogGroup/Resource"
+   }
+  },
+  "WarmupToolClassificationWorkerServiceSgDBF3E7AF": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Skout warmup-tool-classification worker",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolClassificationWorker/ServiceSg/Resource"
+   }
+  },
+  "WarmupToolClassificationWorkerService28237941": {
+   "Type": "AWS::ECS::Service",
+   "Properties": {
+    "Cluster": {
+     "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputRefClusterEB0386A796A0E3FE"
+    },
+    "DeploymentConfiguration": {
+     "Alarms": {
+      "AlarmNames": [],
+      "Enable": false,
+      "Rollback": false
+     },
+     "DeploymentCircuitBreaker": {
+      "Enable": true,
+      "Rollback": false
+     },
+     "MaximumPercent": 200,
+     "MinimumHealthyPercent": 0
+    },
+    "DeploymentController": {
+     "Type": "ECS"
+    },
+    "DesiredCount": 1,
+    "EnableECSManagedTags": false,
+    "LaunchType": "FARGATE",
+    "NetworkConfiguration": {
+     "AwsvpcConfiguration": {
+      "AssignPublicIp": "DISABLED",
+      "SecurityGroups": [
+       {
+        "Fn::GetAtt": [
+         "WarmupToolClassificationWorkerServiceSgDBF3E7AF",
+         "GroupId"
+        ]
+       }
+      ],
+      "Subnets": [
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet1Subnet536B997AFD4CC940"
+       },
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet2Subnet3788AAA1380949A3"
+       }
+      ]
+     }
+    },
+    "ServiceName": "warmup-tool-classification",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskDefinition": {
+     "Ref": "WarmupToolClassificationWorkerTaskDef01AFAA8C"
+    }
+   },
+   "DependsOn": [
+    "WarmupToolClassificationWorkerTaskDefTaskRole737C0125"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolClassificationWorker/Service/Service"
+   }
+  },
+  "WarmupToolPolicyWorkerTaskDefTaskRole07647E93": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolPolicyWorker/TaskDef/TaskRole/Resource"
+   }
+  },
+  "WarmupToolPolicyWorkerTaskDef82CBCBEC": {
+   "Type": "AWS::ECS::TaskDefinition",
+   "Properties": {
+    "ContainerDefinitions": [
+     {
+      "Command": [
+       "node",
+       "dist/workers/conversation-policy-process.js"
+      ],
+      "Environment": [
+       {
+        "Name": "NODE_ENV",
+        "Value": "production"
+       },
+       {
+        "Name": "DATABASE_HOST",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointAddress8AB85320"
+        }
+       },
+       {
+        "Name": "DATABASE_PORT",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointPortEA4FF89A"
+        }
+       },
+       {
+        "Name": "DATABASE_NAME",
+        "Value": "email_warmup"
+       },
+       {
+        "Name": "DATABASE_USER",
+        "Value": "skout"
+       },
+       {
+        "Name": "DATABASE_SSL",
+        "Value": "true"
+       },
+       {
+        "Name": "REDIS_URL",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "redis://",
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttRedis04B3B4F3RedisEndpointAddress8458D51B"
+           },
+           ":6379"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "SERVICE_NAME",
+        "Value": "skout-email-warmup-service"
+       },
+       {
+        "Name": "LOG_LEVEL",
+        "Value": "info"
+       },
+       {
+        "Name": "WARMUP_OAUTH_GOOGLE_CALLBACK",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "https://",
+           {
+            "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputRefHttpsApiE9D87588B0514C1E"
+           },
+           ".execute-api.us-east-1.",
+           {
+            "Ref": "AWS::URLSuffix"
+           },
+           "/api/v1/warmup-tool/oauth/google/callback"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "WARMUP_OAUTH_MICROSOFT_CALLBACK",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "https://",
+           {
+            "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputRefHttpsApiE9D87588B0514C1E"
+           },
+           ".execute-api.us-east-1.",
+           {
+            "Ref": "AWS::URLSuffix"
+           },
+           "/api/v1/warmup-tool/oauth/microsoft/callback"
+          ]
+         ]
+        }
+       }
+      ],
+      "Essential": true,
+      "HealthCheck": {
+       "Command": [
+        "CMD-SHELL",
+        "node -e \"process.exit(0)\""
+       ],
+       "Interval": 30,
+       "Retries": 3,
+       "StartPeriod": 120,
+       "Timeout": 5
+      },
+      "Image": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::Select": [
+           4,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttWarmupToolRepoE54CCF7DArnFC39C98C"
+             }
+            ]
+           }
+          ]
+         },
+         ".dkr.ecr.",
+         {
+          "Fn::Select": [
+           3,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttWarmupToolRepoE54CCF7DArnFC39C98C"
+             }
+            ]
+           }
+          ]
+         },
+         ".",
+         {
+          "Ref": "AWS::URLSuffix"
+         },
+         "/",
+         {
+          "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputRefWarmupToolRepoE54CCF7DDD8F8057"
+         },
+         ":latest"
+        ]
+       ]
+      },
+      "LogConfiguration": {
+       "LogDriver": "awslogs",
+       "Options": {
+        "awslogs-group": {
+         "Ref": "WarmupToolPolicyWorkerLogGroup194800BA"
+        },
+        "awslogs-stream-prefix": "warmup-tool-policy",
+        "awslogs-region": "us-east-1"
+       }
+      },
+      "Name": "Container",
+      "Secrets": [
+       {
+        "Name": "DATABASE_PASSWORD",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+           },
+           ":password::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "ENCRYPTION_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsWarmupTool18E50856C853C469"
+           },
+           ":ENCRYPTION_KEY::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "API_KEY_PEPPER",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsWarmupTool18E50856C853C469"
+           },
+           ":API_KEY_PEPPER::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "PLATFORM_PROVISIONING_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsWarmupTool18E50856C853C469"
+           },
+           ":PLATFORM_PROVISIONING_KEY::"
+          ]
+         ]
+        }
+       }
+      ]
+     }
+    ],
+    "Cpu": "256",
+    "ExecutionRoleArn": {
+     "Fn::GetAtt": [
+      "WarmupToolPolicyWorkerTaskDefExecutionRole75EF549F",
+      "Arn"
+     ]
+    },
+    "Family": "SkoutDevWarmupToolWarmupToolPolicyWorkerTaskDef08040137",
+    "Memory": "512",
+    "NetworkMode": "awsvpc",
+    "RequiresCompatibilities": [
+     "FARGATE"
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskRoleArn": {
+     "Fn::GetAtt": [
+      "WarmupToolPolicyWorkerTaskDefTaskRole07647E93",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolPolicyWorker/TaskDef/Resource"
+   }
+  },
+  "WarmupToolPolicyWorkerTaskDefExecutionRole75EF549F": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolPolicyWorker/TaskDef/ExecutionRole/Resource"
+   }
+  },
+  "WarmupToolPolicyWorkerTaskDefExecutionRoleDefaultPolicy6D17D8B7": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttWarmupToolRepoE54CCF7DArnFC39C98C"
+       }
+      },
+      {
+       "Action": "ecr:GetAuthorizationToken",
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "WarmupToolPolicyWorkerLogGroup194800BA",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsWarmupTool18E50856C853C469"
+        },
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "WarmupToolPolicyWorkerTaskDefExecutionRoleDefaultPolicy6D17D8B7",
+    "Roles": [
+     {
+      "Ref": "WarmupToolPolicyWorkerTaskDefExecutionRole75EF549F"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolPolicyWorker/TaskDef/ExecutionRole/DefaultPolicy/Resource"
+   }
+  },
+  "WarmupToolPolicyWorkerLogGroup194800BA": {
+   "Type": "AWS::Logs::LogGroup",
+   "Properties": {
+    "LogGroupName": "/skout/dev/warmup-tool-policy",
+    "RetentionInDays": 30,
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolPolicyWorker/LogGroup/Resource"
+   }
+  },
+  "WarmupToolPolicyWorkerServiceSg0E3B2B77": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Skout warmup-tool-policy worker",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolPolicyWorker/ServiceSg/Resource"
+   }
+  },
+  "WarmupToolPolicyWorkerServiceD517E024": {
+   "Type": "AWS::ECS::Service",
+   "Properties": {
+    "Cluster": {
+     "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputRefClusterEB0386A796A0E3FE"
+    },
+    "DeploymentConfiguration": {
+     "Alarms": {
+      "AlarmNames": [],
+      "Enable": false,
+      "Rollback": false
+     },
+     "DeploymentCircuitBreaker": {
+      "Enable": true,
+      "Rollback": false
+     },
+     "MaximumPercent": 200,
+     "MinimumHealthyPercent": 0
+    },
+    "DeploymentController": {
+     "Type": "ECS"
+    },
+    "DesiredCount": 1,
+    "EnableECSManagedTags": false,
+    "LaunchType": "FARGATE",
+    "NetworkConfiguration": {
+     "AwsvpcConfiguration": {
+      "AssignPublicIp": "DISABLED",
+      "SecurityGroups": [
+       {
+        "Fn::GetAtt": [
+         "WarmupToolPolicyWorkerServiceSg0E3B2B77",
+         "GroupId"
+        ]
+       }
+      ],
+      "Subnets": [
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet1Subnet536B997AFD4CC940"
+       },
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet2Subnet3788AAA1380949A3"
+       }
+      ]
+     }
+    },
+    "ServiceName": "warmup-tool-policy",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskDefinition": {
+     "Ref": "WarmupToolPolicyWorkerTaskDef82CBCBEC"
+    }
+   },
+   "DependsOn": [
+    "WarmupToolPolicyWorkerTaskDefTaskRole07647E93"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolPolicyWorker/Service/Service"
+   }
+  },
+  "WarmupToolToDbApi": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 5432,
+    "GroupId": {
+     "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabaseDbSg4E409684GroupIdD2249FED"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "WarmupToolApiServiceServiceSg45CBE660",
+      "GroupId"
+     ]
+    },
+    "ToPort": 5432
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolToDbApi"
+   }
+  },
+  "WarmupToolToRedisApi": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 6379,
+    "GroupId": {
+     "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttRedisRedisSg2F12D8B8GroupId19AE2A5D"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "WarmupToolApiServiceServiceSg45CBE660",
+      "GroupId"
+     ]
+    },
+    "ToPort": 6379
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolToRedisApi"
+   }
+  },
+  "WarmupToolToDbwarmuptoolworker": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 5432,
+    "GroupId": {
+     "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabaseDbSg4E409684GroupIdD2249FED"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "WarmupToolExecutionWorkerServiceSg7968D77D",
+      "GroupId"
+     ]
+    },
+    "ToPort": 5432
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolToDbwarmuptoolworker"
+   }
+  },
+  "WarmupToolToRediswarmuptoolworker": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 6379,
+    "GroupId": {
+     "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttRedisRedisSg2F12D8B8GroupId19AE2A5D"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "WarmupToolExecutionWorkerServiceSg7968D77D",
+      "GroupId"
+     ]
+    },
+    "ToPort": 6379
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolToRediswarmuptoolworker"
+   }
+  },
+  "WarmupToolToDbwarmuptoolinbound": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 5432,
+    "GroupId": {
+     "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabaseDbSg4E409684GroupIdD2249FED"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "WarmupToolInboundWorkerServiceSgB5015438",
+      "GroupId"
+     ]
+    },
+    "ToPort": 5432
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolToDbwarmuptoolinbound"
+   }
+  },
+  "WarmupToolToRediswarmuptoolinbound": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 6379,
+    "GroupId": {
+     "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttRedisRedisSg2F12D8B8GroupId19AE2A5D"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "WarmupToolInboundWorkerServiceSgB5015438",
+      "GroupId"
+     ]
+    },
+    "ToPort": 6379
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolToRediswarmuptoolinbound"
+   }
+  },
+  "WarmupToolToDbwarmuptoolclassification": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 5432,
+    "GroupId": {
+     "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabaseDbSg4E409684GroupIdD2249FED"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "WarmupToolClassificationWorkerServiceSgDBF3E7AF",
+      "GroupId"
+     ]
+    },
+    "ToPort": 5432
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolToDbwarmuptoolclassification"
+   }
+  },
+  "WarmupToolToRediswarmuptoolclassification": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 6379,
+    "GroupId": {
+     "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttRedisRedisSg2F12D8B8GroupId19AE2A5D"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "WarmupToolClassificationWorkerServiceSgDBF3E7AF",
+      "GroupId"
+     ]
+    },
+    "ToPort": 6379
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolToRediswarmuptoolclassification"
+   }
+  },
+  "WarmupToolToDbwarmuptoolpolicy": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 5432,
+    "GroupId": {
+     "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabaseDbSg4E409684GroupIdD2249FED"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "WarmupToolPolicyWorkerServiceSg0E3B2B77",
+      "GroupId"
+     ]
+    },
+    "ToPort": 5432
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolToDbwarmuptoolpolicy"
+   }
+  },
+  "WarmupToolToRediswarmuptoolpolicy": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 6379,
+    "GroupId": {
+     "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttRedisRedisSg2F12D8B8GroupId19AE2A5D"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "WarmupToolPolicyWorkerServiceSg0E3B2B77",
+      "GroupId"
+     ]
+    },
+    "ToPort": 6379
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/WarmupToolToRediswarmuptoolpolicy"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/32OUWsCMRCEf4vvuVWPFnyvKIWC4vW9xNx6rHdmJZucHCH/XeJZEQt92plvmGVKKN8XMJvoixSmbouO9hArr02r9EV+IhqBuNKu0R6/tbRLPJAlT2zVx8G+ErZek0X3xO7dCl1PBnPpLpMifYK44+5Gb3fLHZkh21El1XEjEL+4WTsO55z86qTQlBArNMGRHx75/+DTNg5FkpJxRU1iuEc35E9/JqZsNsGfg0/Kco1wlGlfvsF8DrPJUYgKF6ynE8JuvFd+julhUAEAAA=="
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-WarmupTool/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "WarmupToolServiceDns": {
+   "Value": "warmup-tool.skoutdev.local:3010",
+   "Export": {
+    "Name": "SkoutDev-WarmupToolServiceDns"
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}

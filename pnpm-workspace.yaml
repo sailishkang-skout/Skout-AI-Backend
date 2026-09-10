@@ -1,3 +1,7 @@
 packages:
   - "apps/*"
   - "packages/*"
+  - "infra"
+  - "workers/scrapers/orchestrator"
+  - "workers/scrapers/cleaner"
+  - "workers/scrapers/ingestor"

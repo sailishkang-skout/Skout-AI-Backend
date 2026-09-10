@@ -1,0 +1,1953 @@
+{
+ "Description": "Skout AI dev corpus workers (orchestrator, cleaner, ingestor)",
+ "Resources": {
+  "ScrapeScheduleDlq9E8DD742": {
+   "Type": "AWS::SQS::Queue",
+   "Properties": {
+    "MessageRetentionPeriod": 1209600,
+    "QueueName": "SkoutDev-scrape-schedule-dlq",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScrapeScheduleDlq/Resource"
+   }
+  },
+  "ScrapeScheduleQueueEEE93AD2": {
+   "Type": "AWS::SQS::Queue",
+   "Properties": {
+    "QueueName": "SkoutDev-scrape-schedule",
+    "RedrivePolicy": {
+     "deadLetterTargetArn": {
+      "Fn::GetAtt": [
+       "ScrapeScheduleDlq9E8DD742",
+       "Arn"
+      ]
+     },
+     "maxReceiveCount": 3
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "VisibilityTimeout": 900
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScrapeScheduleQueue/Resource"
+   }
+  },
+  "ScrapeScheduleQueuePolicy32D7B875": {
+   "Type": "AWS::SQS::QueuePolicy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+        "sqs:SendMessage"
+       ],
+       "Condition": {
+        "ArnEquals": {
+         "aws:SourceArn": {
+          "Fn::GetAtt": [
+           "DailyScrapeScheduleE5AB1C9D",
+           "Arn"
+          ]
+         }
+        }
+       },
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "events.amazonaws.com"
+       },
+       "Resource": {
+        "Fn::GetAtt": [
+         "ScrapeScheduleQueueEEE93AD2",
+         "Arn"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Queues": [
+     {
+      "Ref": "ScrapeScheduleQueueEEE93AD2"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScrapeScheduleQueue/Policy/Resource"
+   }
+  },
+  "DailyScrapeScheduleE5AB1C9D": {
+   "Type": "AWS::Events::Rule",
+   "Properties": {
+    "Description": "Triggers daily corpus scrape jobs (orchestrator consumes SQS)",
+    "Name": "SkoutDev-daily-scrape",
+    "ScheduleExpression": "cron(0 3 ? * MON-FRI *)",
+    "State": "ENABLED",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "Targets": [
+     {
+      "Arn": {
+       "Fn::GetAtt": [
+        "ScrapeScheduleQueueEEE93AD2",
+        "Arn"
+       ]
+      },
+      "Id": "Target0",
+      "Input": "{\"source\":\"eventbridge\",\"action\":\"schedule_daily_scrape\",\"environment\":\"dev\"}"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/DailyScrapeSchedule/Resource"
+   }
+  },
+  "ScraperOrchestratorTaskDefTaskRole5AD138C9": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperOrchestrator/TaskDef/TaskRole/Resource"
+   }
+  },
+  "ScraperOrchestratorTaskDefTaskRoleDefaultPolicy1231C1BB": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "s3:Abort*",
+        "s3:DeleteObject*",
+        "s3:GetBucket*",
+        "s3:GetObject*",
+        "s3:List*",
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttStorageScrapeBucketE2932C76ArnD85224CB"
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttStorageScrapeBucketE2932C76ArnD85224CB"
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      },
+      {
+       "Action": [
+        "sqs:ChangeMessageVisibility",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+        "sqs:ReceiveMessage"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "ScrapeScheduleQueueEEE93AD2",
+         "Arn"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "ScraperOrchestratorTaskDefTaskRoleDefaultPolicy1231C1BB",
+    "Roles": [
+     {
+      "Ref": "ScraperOrchestratorTaskDefTaskRole5AD138C9"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperOrchestrator/TaskDef/TaskRole/DefaultPolicy/Resource"
+   }
+  },
+  "ScraperOrchestratorTaskDef570C9ABC": {
+   "Type": "AWS::ECS::TaskDefinition",
+   "Properties": {
+    "ContainerDefinitions": [
+     {
+      "Environment": [
+       {
+        "Name": "NODE_ENV",
+        "Value": "production"
+       },
+       {
+        "Name": "REDIS_URL",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "redis://",
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttRedis04B3B4F3RedisEndpointAddress8458D51B"
+           },
+           ":6379"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "SCRAPE_BUCKET",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefStorageScrapeBucketE2932C763773BB9C"
+        }
+       },
+       {
+        "Name": "AWS_REGION",
+        "Value": "us-east-1"
+       },
+       {
+        "Name": "DATABASE_HOST",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointAddress8AB85320"
+        }
+       },
+       {
+        "Name": "DATABASE_PORT",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointPortEA4FF89A"
+        }
+       },
+       {
+        "Name": "DATABASE_NAME",
+        "Value": "skout"
+       },
+       {
+        "Name": "DATABASE_USER",
+        "Value": "skout"
+       },
+       {
+        "Name": "REDIS_MAXMEMORY_POLICY",
+        "Value": "noeviction"
+       },
+       {
+        "Name": "SCRAPE_SCHEDULE_QUEUE_URL",
+        "Value": {
+         "Ref": "ScrapeScheduleQueueEEE93AD2"
+        }
+       }
+      ],
+      "Essential": true,
+      "HealthCheck": {
+       "Command": [
+        "CMD-SHELL",
+        "node -e \"import('ioredis').then(async ({Redis})=>{const c=new Redis(process.env.REDIS_URL,{lazyConnect:true,maxRetriesPerRequest:1,connectTimeout:3000});await c.connect();const p=await c.ping();await c.quit();process.exit(p==='PONG'?0:1)}).catch(()=>process.exit(1))\""
+       ],
+       "Interval": 30,
+       "Retries": 3,
+       "StartPeriod": 120,
+       "Timeout": 5
+      },
+      "Image": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::Select": [
+           4,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttScraperOrchestratorRepo3DB2D377Arn51498C04"
+             }
+            ]
+           }
+          ]
+         },
+         ".dkr.ecr.",
+         {
+          "Fn::Select": [
+           3,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttScraperOrchestratorRepo3DB2D377Arn51498C04"
+             }
+            ]
+           }
+          ]
+         },
+         ".",
+         {
+          "Ref": "AWS::URLSuffix"
+         },
+         "/",
+         {
+          "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputRefScraperOrchestratorRepo3DB2D3777FA45119"
+         },
+         ":latest"
+        ]
+       ]
+      },
+      "LogConfiguration": {
+       "LogDriver": "awslogs",
+       "Options": {
+        "awslogs-group": {
+         "Ref": "ScraperOrchestratorLogGroup860716B1"
+        },
+        "awslogs-stream-prefix": "scraper-orchestrator",
+        "awslogs-region": "us-east-1"
+       }
+      },
+      "Name": "Container",
+      "Secrets": [
+       {
+        "Name": "DATABASE_PASSWORD",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+           },
+           ":password::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "PROXY_URL",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsScraperProxy2EE20DE802BFA7C9"
+           },
+           ":PROXY_URL::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "PROXY_USERNAME",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsScraperProxy2EE20DE802BFA7C9"
+           },
+           ":PROXY_USERNAME::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "PROXY_PASSWORD",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsScraperProxy2EE20DE802BFA7C9"
+           },
+           ":PROXY_PASSWORD::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "LINKEDIN_ACCOUNTS_JSON",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsScraperLinkedin8B484B29E5AD6316"
+           },
+           ":accounts::"
+          ]
+         ]
+        }
+       }
+      ]
+     }
+    ],
+    "Cpu": "256",
+    "ExecutionRoleArn": {
+     "Fn::GetAtt": [
+      "ScraperOrchestratorTaskDefExecutionRole35334C0C",
+      "Arn"
+     ]
+    },
+    "Family": "SkoutDevWorkersScraperOrchestratorTaskDefC6E8E2B2",
+    "Memory": "512",
+    "NetworkMode": "awsvpc",
+    "RequiresCompatibilities": [
+     "FARGATE"
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskRoleArn": {
+     "Fn::GetAtt": [
+      "ScraperOrchestratorTaskDefTaskRole5AD138C9",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperOrchestrator/TaskDef/Resource"
+   }
+  },
+  "ScraperOrchestratorTaskDefExecutionRole35334C0C": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperOrchestrator/TaskDef/ExecutionRole/Resource"
+   }
+  },
+  "ScraperOrchestratorTaskDefExecutionRoleDefaultPolicyA205E94A": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttScraperOrchestratorRepo3DB2D377Arn51498C04"
+       }
+      },
+      {
+       "Action": "ecr:GetAuthorizationToken",
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "ScraperOrchestratorLogGroup860716B1",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsScraperLinkedin8B484B29E5AD6316"
+        },
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsScraperProxy2EE20DE802BFA7C9"
+        },
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "ScraperOrchestratorTaskDefExecutionRoleDefaultPolicyA205E94A",
+    "Roles": [
+     {
+      "Ref": "ScraperOrchestratorTaskDefExecutionRole35334C0C"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperOrchestrator/TaskDef/ExecutionRole/DefaultPolicy/Resource"
+   }
+  },
+  "ScraperOrchestratorLogGroup860716B1": {
+   "Type": "AWS::Logs::LogGroup",
+   "Properties": {
+    "LogGroupName": "/skout/dev/scraper-orchestrator",
+    "RetentionInDays": 30,
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperOrchestrator/LogGroup/Resource"
+   }
+  },
+  "ScraperOrchestratorServiceSg1D3AFCE9": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Skout scraper-orchestrator worker",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperOrchestrator/ServiceSg/Resource"
+   }
+  },
+  "ScraperOrchestratorService663A7AEE": {
+   "Type": "AWS::ECS::Service",
+   "Properties": {
+    "CapacityProviderStrategy": [
+     {
+      "CapacityProvider": "FARGATE_SPOT",
+      "Weight": 1
+     }
+    ],
+    "Cluster": {
+     "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputRefClusterEB0386A796A0E3FE"
+    },
+    "DeploymentConfiguration": {
+     "Alarms": {
+      "AlarmNames": [],
+      "Enable": false,
+      "Rollback": false
+     },
+     "DeploymentCircuitBreaker": {
+      "Enable": true,
+      "Rollback": false
+     },
+     "MaximumPercent": 200,
+     "MinimumHealthyPercent": 0
+    },
+    "DeploymentController": {
+     "Type": "ECS"
+    },
+    "DesiredCount": 1,
+    "EnableECSManagedTags": false,
+    "NetworkConfiguration": {
+     "AwsvpcConfiguration": {
+      "AssignPublicIp": "DISABLED",
+      "SecurityGroups": [
+       {
+        "Fn::GetAtt": [
+         "ScraperOrchestratorServiceSg1D3AFCE9",
+         "GroupId"
+        ]
+       }
+      ],
+      "Subnets": [
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet1Subnet536B997AFD4CC940"
+       },
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet2Subnet3788AAA1380949A3"
+       }
+      ]
+     }
+    },
+    "ServiceName": "scraper-orchestrator",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskDefinition": {
+     "Ref": "ScraperOrchestratorTaskDef570C9ABC"
+    }
+   },
+   "DependsOn": [
+    "ScraperOrchestratorTaskDefTaskRoleDefaultPolicy1231C1BB",
+    "ScraperOrchestratorTaskDefTaskRole5AD138C9"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperOrchestrator/Service/Service"
+   }
+  },
+  "ScraperOrchestratorServiceTaskCountTarget09C2BE5B": {
+   "Type": "AWS::ApplicationAutoScaling::ScalableTarget",
+   "Properties": {
+    "MaxCapacity": 1,
+    "MinCapacity": 0,
+    "ResourceId": {
+     "Fn::Join": [
+      "",
+      [
+       "service/",
+       {
+        "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputRefClusterEB0386A796A0E3FE"
+       },
+       "/",
+       {
+        "Fn::GetAtt": [
+         "ScraperOrchestratorService663A7AEE",
+         "Name"
+        ]
+       }
+      ]
+     ]
+    },
+    "RoleARN": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:",
+       {
+        "Ref": "AWS::Partition"
+       },
+       ":iam::119408973331:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService"
+      ]
+     ]
+    },
+    "ScalableDimension": "ecs:service:DesiredCount",
+    "ScheduledActions": [
+     {
+      "ScalableTargetAction": {
+       "MaxCapacity": 0,
+       "MinCapacity": 0
+      },
+      "Schedule": "cron(30 16 * * ? *)",
+      "ScheduledActionName": "ScaleDownOffHours"
+     },
+     {
+      "ScalableTargetAction": {
+       "MaxCapacity": 1,
+       "MinCapacity": 1
+      },
+      "Schedule": "cron(30 5 ? * MON-FRI *)",
+      "ScheduledActionName": "ScaleUpBusinessHours"
+     }
+    ],
+    "ServiceNamespace": "ecs"
+   },
+   "DependsOn": [
+    "ScraperOrchestratorTaskDefTaskRoleDefaultPolicy1231C1BB",
+    "ScraperOrchestratorTaskDefTaskRole5AD138C9"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperOrchestrator/Service/TaskCount/Target/Resource"
+   }
+  },
+  "ScraperCleanerTaskDefTaskRole37067242": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperCleaner/TaskDef/TaskRole/Resource"
+   }
+  },
+  "ScraperCleanerTaskDefTaskRoleDefaultPolicy1D50B9F0": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "s3:Abort*",
+        "s3:DeleteObject*",
+        "s3:GetBucket*",
+        "s3:GetObject*",
+        "s3:List*",
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttStorageScrapeBucketE2932C76ArnD85224CB"
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttStorageScrapeBucketE2932C76ArnD85224CB"
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "ScraperCleanerTaskDefTaskRoleDefaultPolicy1D50B9F0",
+    "Roles": [
+     {
+      "Ref": "ScraperCleanerTaskDefTaskRole37067242"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperCleaner/TaskDef/TaskRole/DefaultPolicy/Resource"
+   }
+  },
+  "ScraperCleanerTaskDef7B45B308": {
+   "Type": "AWS::ECS::TaskDefinition",
+   "Properties": {
+    "ContainerDefinitions": [
+     {
+      "Environment": [
+       {
+        "Name": "NODE_ENV",
+        "Value": "production"
+       },
+       {
+        "Name": "REDIS_URL",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "redis://",
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttRedis04B3B4F3RedisEndpointAddress8458D51B"
+           },
+           ":6379"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "SCRAPE_BUCKET",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefStorageScrapeBucketE2932C763773BB9C"
+        }
+       },
+       {
+        "Name": "AWS_REGION",
+        "Value": "us-east-1"
+       },
+       {
+        "Name": "DATABASE_HOST",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointAddress8AB85320"
+        }
+       },
+       {
+        "Name": "DATABASE_PORT",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointPortEA4FF89A"
+        }
+       },
+       {
+        "Name": "DATABASE_NAME",
+        "Value": "skout"
+       },
+       {
+        "Name": "DATABASE_USER",
+        "Value": "skout"
+       }
+      ],
+      "Essential": true,
+      "HealthCheck": {
+       "Command": [
+        "CMD-SHELL",
+        "node -e \"import('ioredis').then(async ({Redis})=>{const c=new Redis(process.env.REDIS_URL,{lazyConnect:true,maxRetriesPerRequest:1,connectTimeout:3000});await c.connect();const p=await c.ping();await c.quit();process.exit(p==='PONG'?0:1)}).catch(()=>process.exit(1))\""
+       ],
+       "Interval": 30,
+       "Retries": 3,
+       "StartPeriod": 120,
+       "Timeout": 5
+      },
+      "Image": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::Select": [
+           4,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttScraperCleanerRepo500E6EEBArn51BEB1F3"
+             }
+            ]
+           }
+          ]
+         },
+         ".dkr.ecr.",
+         {
+          "Fn::Select": [
+           3,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttScraperCleanerRepo500E6EEBArn51BEB1F3"
+             }
+            ]
+           }
+          ]
+         },
+         ".",
+         {
+          "Ref": "AWS::URLSuffix"
+         },
+         "/",
+         {
+          "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputRefScraperCleanerRepo500E6EEB161B3D6D"
+         },
+         ":latest"
+        ]
+       ]
+      },
+      "LogConfiguration": {
+       "LogDriver": "awslogs",
+       "Options": {
+        "awslogs-group": {
+         "Ref": "ScraperCleanerLogGroup0C1E2AB3"
+        },
+        "awslogs-stream-prefix": "scraper-cleaner",
+        "awslogs-region": "us-east-1"
+       }
+      },
+      "Name": "Container",
+      "Secrets": [
+       {
+        "Name": "DATABASE_PASSWORD",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+           },
+           ":password::"
+          ]
+         ]
+        }
+       }
+      ]
+     }
+    ],
+    "Cpu": "256",
+    "ExecutionRoleArn": {
+     "Fn::GetAtt": [
+      "ScraperCleanerTaskDefExecutionRoleF34B61B8",
+      "Arn"
+     ]
+    },
+    "Family": "SkoutDevWorkersScraperCleanerTaskDef23097706",
+    "Memory": "512",
+    "NetworkMode": "awsvpc",
+    "RequiresCompatibilities": [
+     "FARGATE"
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskRoleArn": {
+     "Fn::GetAtt": [
+      "ScraperCleanerTaskDefTaskRole37067242",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperCleaner/TaskDef/Resource"
+   }
+  },
+  "ScraperCleanerTaskDefExecutionRoleF34B61B8": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperCleaner/TaskDef/ExecutionRole/Resource"
+   }
+  },
+  "ScraperCleanerTaskDefExecutionRoleDefaultPolicyF80B8B39": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttScraperCleanerRepo500E6EEBArn51BEB1F3"
+       }
+      },
+      {
+       "Action": "ecr:GetAuthorizationToken",
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "ScraperCleanerLogGroup0C1E2AB3",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "ScraperCleanerTaskDefExecutionRoleDefaultPolicyF80B8B39",
+    "Roles": [
+     {
+      "Ref": "ScraperCleanerTaskDefExecutionRoleF34B61B8"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperCleaner/TaskDef/ExecutionRole/DefaultPolicy/Resource"
+   }
+  },
+  "ScraperCleanerLogGroup0C1E2AB3": {
+   "Type": "AWS::Logs::LogGroup",
+   "Properties": {
+    "LogGroupName": "/skout/dev/scraper-cleaner",
+    "RetentionInDays": 30,
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperCleaner/LogGroup/Resource"
+   }
+  },
+  "ScraperCleanerServiceSg442FC5AA": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Skout scraper-cleaner worker",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperCleaner/ServiceSg/Resource"
+   }
+  },
+  "ScraperCleanerService659AF985": {
+   "Type": "AWS::ECS::Service",
+   "Properties": {
+    "CapacityProviderStrategy": [
+     {
+      "CapacityProvider": "FARGATE_SPOT",
+      "Weight": 1
+     }
+    ],
+    "Cluster": {
+     "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputRefClusterEB0386A796A0E3FE"
+    },
+    "DeploymentConfiguration": {
+     "Alarms": {
+      "AlarmNames": [],
+      "Enable": false,
+      "Rollback": false
+     },
+     "DeploymentCircuitBreaker": {
+      "Enable": true,
+      "Rollback": false
+     },
+     "MaximumPercent": 200,
+     "MinimumHealthyPercent": 0
+    },
+    "DeploymentController": {
+     "Type": "ECS"
+    },
+    "DesiredCount": 1,
+    "EnableECSManagedTags": false,
+    "NetworkConfiguration": {
+     "AwsvpcConfiguration": {
+      "AssignPublicIp": "DISABLED",
+      "SecurityGroups": [
+       {
+        "Fn::GetAtt": [
+         "ScraperCleanerServiceSg442FC5AA",
+         "GroupId"
+        ]
+       }
+      ],
+      "Subnets": [
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet1Subnet536B997AFD4CC940"
+       },
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet2Subnet3788AAA1380949A3"
+       }
+      ]
+     }
+    },
+    "ServiceName": "scraper-cleaner",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskDefinition": {
+     "Ref": "ScraperCleanerTaskDef7B45B308"
+    }
+   },
+   "DependsOn": [
+    "ScraperCleanerTaskDefTaskRoleDefaultPolicy1D50B9F0",
+    "ScraperCleanerTaskDefTaskRole37067242"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperCleaner/Service/Service"
+   }
+  },
+  "ScraperCleanerServiceTaskCountTarget35D9ADB5": {
+   "Type": "AWS::ApplicationAutoScaling::ScalableTarget",
+   "Properties": {
+    "MaxCapacity": 1,
+    "MinCapacity": 0,
+    "ResourceId": {
+     "Fn::Join": [
+      "",
+      [
+       "service/",
+       {
+        "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputRefClusterEB0386A796A0E3FE"
+       },
+       "/",
+       {
+        "Fn::GetAtt": [
+         "ScraperCleanerService659AF985",
+         "Name"
+        ]
+       }
+      ]
+     ]
+    },
+    "RoleARN": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:",
+       {
+        "Ref": "AWS::Partition"
+       },
+       ":iam::119408973331:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService"
+      ]
+     ]
+    },
+    "ScalableDimension": "ecs:service:DesiredCount",
+    "ScheduledActions": [
+     {
+      "ScalableTargetAction": {
+       "MaxCapacity": 0,
+       "MinCapacity": 0
+      },
+      "Schedule": "cron(30 16 * * ? *)",
+      "ScheduledActionName": "ScaleDownOffHours"
+     },
+     {
+      "ScalableTargetAction": {
+       "MaxCapacity": 1,
+       "MinCapacity": 1
+      },
+      "Schedule": "cron(30 5 ? * MON-FRI *)",
+      "ScheduledActionName": "ScaleUpBusinessHours"
+     }
+    ],
+    "ServiceNamespace": "ecs"
+   },
+   "DependsOn": [
+    "ScraperCleanerTaskDefTaskRoleDefaultPolicy1D50B9F0",
+    "ScraperCleanerTaskDefTaskRole37067242"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperCleaner/Service/TaskCount/Target/Resource"
+   }
+  },
+  "ScraperIngestorTaskDefTaskRole3A0657E0": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperIngestor/TaskDef/TaskRole/Resource"
+   }
+  },
+  "ScraperIngestorTaskDefTaskRoleDefaultPolicy06FD21DA": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "s3:Abort*",
+        "s3:DeleteObject*",
+        "s3:GetBucket*",
+        "s3:GetObject*",
+        "s3:List*",
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttStorageScrapeBucketE2932C76ArnD85224CB"
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttStorageScrapeBucketE2932C76ArnD85224CB"
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "ScraperIngestorTaskDefTaskRoleDefaultPolicy06FD21DA",
+    "Roles": [
+     {
+      "Ref": "ScraperIngestorTaskDefTaskRole3A0657E0"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperIngestor/TaskDef/TaskRole/DefaultPolicy/Resource"
+   }
+  },
+  "ScraperIngestorTaskDefD6D609CA": {
+   "Type": "AWS::ECS::TaskDefinition",
+   "Properties": {
+    "ContainerDefinitions": [
+     {
+      "Environment": [
+       {
+        "Name": "NODE_ENV",
+        "Value": "production"
+       },
+       {
+        "Name": "REDIS_URL",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "redis://",
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttRedis04B3B4F3RedisEndpointAddress8458D51B"
+           },
+           ":6379"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "SCRAPE_BUCKET",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefStorageScrapeBucketE2932C763773BB9C"
+        }
+       },
+       {
+        "Name": "AWS_REGION",
+        "Value": "us-east-1"
+       },
+       {
+        "Name": "DATABASE_HOST",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointAddress8AB85320"
+        }
+       },
+       {
+        "Name": "DATABASE_PORT",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointPortEA4FF89A"
+        }
+       },
+       {
+        "Name": "DATABASE_NAME",
+        "Value": "skout"
+       },
+       {
+        "Name": "DATABASE_USER",
+        "Value": "skout"
+       }
+      ],
+      "Essential": true,
+      "HealthCheck": {
+       "Command": [
+        "CMD-SHELL",
+        "node -e \"import('ioredis').then(async ({Redis})=>{const c=new Redis(process.env.REDIS_URL,{lazyConnect:true,maxRetriesPerRequest:1,connectTimeout:3000});await c.connect();const p=await c.ping();await c.quit();process.exit(p==='PONG'?0:1)}).catch(()=>process.exit(1))\""
+       ],
+       "Interval": 30,
+       "Retries": 3,
+       "StartPeriod": 120,
+       "Timeout": 5
+      },
+      "Image": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::Select": [
+           4,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttScraperIngestorRepoBEBF94AEArn6937C9FF"
+             }
+            ]
+           }
+          ]
+         },
+         ".dkr.ecr.",
+         {
+          "Fn::Select": [
+           3,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttScraperIngestorRepoBEBF94AEArn6937C9FF"
+             }
+            ]
+           }
+          ]
+         },
+         ".",
+         {
+          "Ref": "AWS::URLSuffix"
+         },
+         "/",
+         {
+          "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputRefScraperIngestorRepoBEBF94AEF69552B5"
+         },
+         ":latest"
+        ]
+       ]
+      },
+      "LogConfiguration": {
+       "LogDriver": "awslogs",
+       "Options": {
+        "awslogs-group": {
+         "Ref": "ScraperIngestorLogGroup8392E917"
+        },
+        "awslogs-stream-prefix": "scraper-ingestor",
+        "awslogs-region": "us-east-1"
+       }
+      },
+      "Name": "Container",
+      "Secrets": [
+       {
+        "Name": "DATABASE_PASSWORD",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+           },
+           ":password::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "OPENSEARCH_URL",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsOpenSearchDD0A1CE054DE5BE5"
+           },
+           ":OPENSEARCH_URL::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "OPENSEARCH_USERNAME",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsOpenSearchDD0A1CE054DE5BE5"
+           },
+           ":OPENSEARCH_USERNAME::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "OPENSEARCH_PASSWORD",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsOpenSearchDD0A1CE054DE5BE5"
+           },
+           ":OPENSEARCH_PASSWORD::"
+          ]
+         ]
+        }
+       }
+      ]
+     }
+    ],
+    "Cpu": "256",
+    "ExecutionRoleArn": {
+     "Fn::GetAtt": [
+      "ScraperIngestorTaskDefExecutionRole5F6F23C7",
+      "Arn"
+     ]
+    },
+    "Family": "SkoutDevWorkersScraperIngestorTaskDef8CF77E72",
+    "Memory": "512",
+    "NetworkMode": "awsvpc",
+    "RequiresCompatibilities": [
+     "FARGATE"
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskRoleArn": {
+     "Fn::GetAtt": [
+      "ScraperIngestorTaskDefTaskRole3A0657E0",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperIngestor/TaskDef/Resource"
+   }
+  },
+  "ScraperIngestorTaskDefExecutionRole5F6F23C7": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperIngestor/TaskDef/ExecutionRole/Resource"
+   }
+  },
+  "ScraperIngestorTaskDefExecutionRoleDefaultPolicyB1AC0D80": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttScraperIngestorRepoBEBF94AEArn6937C9FF"
+       }
+      },
+      {
+       "Action": "ecr:GetAuthorizationToken",
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "ScraperIngestorLogGroup8392E917",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsOpenSearchDD0A1CE054DE5BE5"
+        },
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "ScraperIngestorTaskDefExecutionRoleDefaultPolicyB1AC0D80",
+    "Roles": [
+     {
+      "Ref": "ScraperIngestorTaskDefExecutionRole5F6F23C7"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperIngestor/TaskDef/ExecutionRole/DefaultPolicy/Resource"
+   }
+  },
+  "ScraperIngestorLogGroup8392E917": {
+   "Type": "AWS::Logs::LogGroup",
+   "Properties": {
+    "LogGroupName": "/skout/dev/scraper-ingestor",
+    "RetentionInDays": 30,
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperIngestor/LogGroup/Resource"
+   }
+  },
+  "ScraperIngestorServiceSg0E54BC7C": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Skout scraper-ingestor worker",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperIngestor/ServiceSg/Resource"
+   }
+  },
+  "ScraperIngestorService4E2A3190": {
+   "Type": "AWS::ECS::Service",
+   "Properties": {
+    "CapacityProviderStrategy": [
+     {
+      "CapacityProvider": "FARGATE_SPOT",
+      "Weight": 1
+     }
+    ],
+    "Cluster": {
+     "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputRefClusterEB0386A796A0E3FE"
+    },
+    "DeploymentConfiguration": {
+     "Alarms": {
+      "AlarmNames": [],
+      "Enable": false,
+      "Rollback": false
+     },
+     "DeploymentCircuitBreaker": {
+      "Enable": true,
+      "Rollback": false
+     },
+     "MaximumPercent": 200,
+     "MinimumHealthyPercent": 0
+    },
+    "DeploymentController": {
+     "Type": "ECS"
+    },
+    "DesiredCount": 1,
+    "EnableECSManagedTags": false,
+    "NetworkConfiguration": {
+     "AwsvpcConfiguration": {
+      "AssignPublicIp": "DISABLED",
+      "SecurityGroups": [
+       {
+        "Fn::GetAtt": [
+         "ScraperIngestorServiceSg0E54BC7C",
+         "GroupId"
+        ]
+       }
+      ],
+      "Subnets": [
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet1Subnet536B997AFD4CC940"
+       },
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet2Subnet3788AAA1380949A3"
+       }
+      ]
+     }
+    },
+    "ServiceName": "scraper-ingestor",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskDefinition": {
+     "Ref": "ScraperIngestorTaskDefD6D609CA"
+    }
+   },
+   "DependsOn": [
+    "ScraperIngestorTaskDefTaskRoleDefaultPolicy06FD21DA",
+    "ScraperIngestorTaskDefTaskRole3A0657E0"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperIngestor/Service/Service"
+   }
+  },
+  "ScraperIngestorServiceTaskCountTargetCB9FDD1C": {
+   "Type": "AWS::ApplicationAutoScaling::ScalableTarget",
+   "Properties": {
+    "MaxCapacity": 1,
+    "MinCapacity": 0,
+    "ResourceId": {
+     "Fn::Join": [
+      "",
+      [
+       "service/",
+       {
+        "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputRefClusterEB0386A796A0E3FE"
+       },
+       "/",
+       {
+        "Fn::GetAtt": [
+         "ScraperIngestorService4E2A3190",
+         "Name"
+        ]
+       }
+      ]
+     ]
+    },
+    "RoleARN": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:",
+       {
+        "Ref": "AWS::Partition"
+       },
+       ":iam::119408973331:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService"
+      ]
+     ]
+    },
+    "ScalableDimension": "ecs:service:DesiredCount",
+    "ScheduledActions": [
+     {
+      "ScalableTargetAction": {
+       "MaxCapacity": 0,
+       "MinCapacity": 0
+      },
+      "Schedule": "cron(30 16 * * ? *)",
+      "ScheduledActionName": "ScaleDownOffHours"
+     },
+     {
+      "ScalableTargetAction": {
+       "MaxCapacity": 1,
+       "MinCapacity": 1
+      },
+      "Schedule": "cron(30 5 ? * MON-FRI *)",
+      "ScheduledActionName": "ScaleUpBusinessHours"
+     }
+    ],
+    "ServiceNamespace": "ecs"
+   },
+   "DependsOn": [
+    "ScraperIngestorTaskDefTaskRoleDefaultPolicy06FD21DA",
+    "ScraperIngestorTaskDefTaskRole3A0657E0"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/ScraperIngestor/Service/TaskCount/Target/Resource"
+   }
+  },
+  "WorkersToDbOrchestrator": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 5432,
+    "GroupId": {
+     "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabaseDbSg4E409684GroupIdD2249FED"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "ScraperOrchestratorServiceSg1D3AFCE9",
+      "GroupId"
+     ]
+    },
+    "ToPort": 5432
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/WorkersToDbOrchestrator"
+   }
+  },
+  "WorkersToRedisOrchestrator": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 6379,
+    "GroupId": {
+     "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttRedisRedisSg2F12D8B8GroupId19AE2A5D"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "ScraperOrchestratorServiceSg1D3AFCE9",
+      "GroupId"
+     ]
+    },
+    "ToPort": 6379
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/WorkersToRedisOrchestrator"
+   }
+  },
+  "WorkersToDbCleaner": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 5432,
+    "GroupId": {
+     "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabaseDbSg4E409684GroupIdD2249FED"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "ScraperCleanerServiceSg442FC5AA",
+      "GroupId"
+     ]
+    },
+    "ToPort": 5432
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/WorkersToDbCleaner"
+   }
+  },
+  "WorkersToRedisCleaner": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 6379,
+    "GroupId": {
+     "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttRedisRedisSg2F12D8B8GroupId19AE2A5D"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "ScraperCleanerServiceSg442FC5AA",
+      "GroupId"
+     ]
+    },
+    "ToPort": 6379
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/WorkersToRedisCleaner"
+   }
+  },
+  "WorkersToDbIngestor": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 5432,
+    "GroupId": {
+     "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabaseDbSg4E409684GroupIdD2249FED"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "ScraperIngestorServiceSg0E54BC7C",
+      "GroupId"
+     ]
+    },
+    "ToPort": 5432
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/WorkersToDbIngestor"
+   }
+  },
+  "WorkersToRedisIngestor": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 6379,
+    "GroupId": {
+     "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttRedisRedisSg2F12D8B8GroupId19AE2A5D"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "ScraperIngestorServiceSg0E54BC7C",
+      "GroupId"
+     ]
+    },
+    "ToPort": 6379
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/WorkersToRedisIngestor"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/32PwU7DMBBEv6V3Z2kjkLgXgZCQgIQ72rrbaBvXDl47VWX531GSpgUOXDzjWc/quYTy7h6WCzxKobdtYXgDqQ6oW4VH+UzyJZDeI0VS652dzHi+OcP6dAmna1bUkw0CqYpmbAyaFWmB9Ii+wUAfKO0D7dhyYGeHN38TZwOyJf8jO3dr8j3rcfFsa40GN2Zcu3bRhqwYD5AqdwYY9Ao7cxrXCKQX1zx5F7thMvuBtoRUk46ew+ky/z94to0nkayw6wxrHKgxBicaDdsG0pXTNxTG/q8kZ1WRuOin773G0MWQlXVbgr3c9OUtrFawXOyFufDRBj4QVJN+A5bdG5LFAQAA"
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Workers/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "ScrapeScheduleQueueUrl": {
+   "Value": {
+    "Ref": "ScrapeScheduleQueueEEE93AD2"
+   },
+   "Export": {
+    "Name": "SkoutDev-ScrapeScheduleQueue"
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}

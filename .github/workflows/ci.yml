@@ -2,24 +2,145 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, uat]
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, uat]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
+  architecture-gates:
+    # Enterprise Completion Plan §1/§5/§7.1 — automated enforcement for the "does this fork
+    # state" PR gate and the read-model-exception allowlist. Runs on every PR only (both
+    # scripts no-op on a push event, no GITHUB_BASE_REF). Pure Node + git, no pnpm install
+    # needed, so this stays fast and independent of the main build/test job.
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          fetch-depth: 0
+
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
+
+      - name: "§1 Architecture gate (new tables must answer the fork-state question)"
+        env:
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: node scripts/check-architecture-gate.mjs
+
+      - name: "§7.1 Read-model exceptions (no undocumented cross-service table reads)"
+        run: node scripts/check-read-model-exceptions.mjs
+
+  test-and-build:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: skout
+          POSTGRES_PASSWORD: skout
+          POSTGRES_DB: skout
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://skout:skout@localhost:5432/skout
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
           cache: pnpm
-      - run: pnpm install --frozen-lockfile || pnpm install
-      - run: pnpm --filter @skout/shared build
-      - run: pnpm test
-      - run: pnpm typecheck
-      - run: pnpm --filter @skout/api build
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile || pnpm install
+
+      - name: Build workspace packages (API + CRM dependencies)
+        run: pnpm --filter @skout/api^... build && pnpm --filter @skout/crm^... build
+
+      - name: Run database migrations
+        run: pnpm db:migrate
+
+      - name: Seed model versions (required by §10 journey E2E AI-pin assertions)
+        run: pnpm --filter @skout/db seed-model-versions
+
+      - name: Test
+        run: pnpm test
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build API and CRM
+        run: pnpm --filter @skout/api build && pnpm --filter @skout/crm build
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: test-and-build
+    strategy:
+      matrix:
+        include:
+          - service: api
+            dockerfile: apps/api/Dockerfile
+            context: .
+            build_args: ""
+          - service: crm
+            dockerfile: apps/crm/Dockerfile
+            context: .
+            build_args: ""
+          - service: ai
+            dockerfile: apps/ai/Dockerfile
+            context: apps/ai
+            build_args: ""
+          - service: scraper-orchestrator
+            dockerfile: workers/scrapers/Dockerfile
+            context: .
+            build_args: "--build-arg WORKER_SUBPATH=orchestrator --build-arg WORKER_PACKAGE=@skout/scraper-orchestrator"
+          - service: scraper-cleaner
+            dockerfile: workers/scrapers/Dockerfile
+            context: .
+            build_args: "--build-arg WORKER_SUBPATH=cleaner --build-arg WORKER_PACKAGE=@skout/scraper-cleaner"
+          - service: scraper-ingestor
+            dockerfile: workers/scrapers/Dockerfile
+            context: .
+            build_args: "--build-arg WORKER_SUBPATH=ingestor --build-arg WORKER_PACKAGE=@skout/scraper-ingestor"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ${{ matrix.service }} image
+        run: |
+          docker build --platform linux/amd64 -f ${{ matrix.dockerfile }} ${{ matrix.build_args }} -t skout-${{ matrix.service }}:ci ${{ matrix.context }}
+
+  cdk-synth:
+    runs-on: ubuntu-latest
+    needs: test-and-build
+    strategy:
+      matrix:
+        env: [local, dev, uat, prod]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install infra dependencies
+        working-directory: infra
+        run: pnpm install --frozen-lockfile || pnpm install
+
+      - name: CDK synth (${{ matrix.env }})
+        working-directory: infra
+        run: pnpm synth:${{ matrix.env }}

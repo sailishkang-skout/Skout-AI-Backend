@@ -9,6 +9,8 @@ import {
 describe("identity", () => {
   it("normalizes company domains", () => {
     expect(normalizeDomain("  WWW.Example.COM/  ")).toBe("example.com");
+    expect(normalizeDomain("https://www.stripe.com/about")).toBe("stripe.com");
+    expect(normalizeDomain("http://openai.com/path?q=1")).toBe("openai.com");
   });
 
   it("hashes emails deterministically", () => {

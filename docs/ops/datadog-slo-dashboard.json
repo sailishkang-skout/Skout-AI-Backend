@@ -1,0 +1,34 @@
+{
+  "title": "Skout API SLO — starter",
+  "description": "Import into Datadog Dashboards. Pair with scrape of GET /api/v1/metrics or OTLP spans. Targets: docs/slo-targets.md",
+  "layout_type": "ordered",
+  "widgets": [
+    {
+      "definition": {
+        "type": "query_value",
+        "title": "API up",
+        "requests": [{ "q": "avg:skout_api_up{*}" }]
+      }
+    },
+    {
+      "definition": {
+        "type": "timeseries",
+        "title": "Health hits",
+        "requests": [{ "q": "sum:skout_api_health_hits_total{*}.as_count()" }]
+      }
+    },
+    {
+      "definition": {
+        "type": "timeseries",
+        "title": "HTTP p95 (trace)",
+        "requests": [{ "q": "p95:trace.fastapi.request{service:skout-api}" }]
+      }
+    },
+    {
+      "definition": {
+        "type": "note",
+        "content": "Page when health p95 > 100ms burn or availability < 99.9% (monthly). See docs/slo-targets.md"
+      }
+    }
+  ]
+}

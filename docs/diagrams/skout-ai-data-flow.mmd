@@ -1,0 +1,65 @@
+flowchart TB
+    subgraph EXTERNAL["External stores"]
+        OS[(OpenSearch prospects index)]
+        REDIS[(Redis search cache)]
+        BULL[(BullMQ)]
+        PAL[("PAL providers")]
+        LLM[("FastAPI LLM")]
+        HS[("HubSpot API")]
+    end
+
+    subgraph PG["PostgreSQL 25 tables"]
+        subgraph TENANT["Tenancy"]
+            WS[workspaces]
+            USR[users workspace_members]
+            ICP[workspace_icp]
+            CR[credit_balances credit_transactions]
+        end
+
+        subgraph LEADS["Leads"]
+            ACT[prospect_activations]
+            LST[lists list_members]
+            SCR[prospect_scores]
+        end
+
+        subgraph ENRICH["Enrichment"]
+            EJ[enrichment_jobs]
+            EA[enrichment_attempts]
+            ER[enrichment_results]
+            AJ[async_jobs]
+        end
+
+        subgraph P1["Phase 1 outreach"]
+            SEQ[sequences enrollments]
+            MAIL[sending_domains inboxes]
+            THR[inbox_threads messages]
+            AI[ai_drafts]
+            CRM[crm_connections]
+            WH[webhooks]
+        end
+    end
+
+    USER([User API])
+
+    USER -->|search| REDIS
+    REDIS -->|miss| OS
+    OS --> USER
+
+    USER -->|add to list| LST
+    LST --> ACT
+    OS -.-> ACT
+
+    USER -->|enrich| EJ
+    EJ --> AJ --> BULL
+    BULL --> EA --> PAL
+    EA --> ER --> ACT
+
+    ICP --> LLM --> SCR
+    ACT --> SCR
+
+    LST --> ACT
+    LST --> SCR
+    USER -->|export| HS
+    CRM --> HS
+
+    SEQ --> MAIL --> THR --> AI

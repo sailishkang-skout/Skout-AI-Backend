@@ -1,0 +1,1122 @@
+{
+ "Description": "Skout AI dev Email Intelligence service (api + worker)",
+ "Resources": {
+  "EmailIntelApiServiceTaskDefTaskRole4038B1C2": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-EmailIntel/EmailIntelApiService/TaskDef/TaskRole/Resource"
+   }
+  },
+  "EmailIntelApiServiceTaskDefTaskRoleDefaultPolicyD669145A": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "s3:Abort*",
+        "s3:DeleteObject*",
+        "s3:GetBucket*",
+        "s3:GetObject*",
+        "s3:List*",
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttStorageEmailIntelBucket5203470BArn64DE9B75"
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttStorageEmailIntelBucket5203470BArn64DE9B75"
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "EmailIntelApiServiceTaskDefTaskRoleDefaultPolicyD669145A",
+    "Roles": [
+     {
+      "Ref": "EmailIntelApiServiceTaskDefTaskRole4038B1C2"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-EmailIntel/EmailIntelApiService/TaskDef/TaskRole/DefaultPolicy/Resource"
+   }
+  },
+  "EmailIntelApiServiceTaskDef61E0DF9F": {
+   "Type": "AWS::ECS::TaskDefinition",
+   "Properties": {
+    "ContainerDefinitions": [
+     {
+      "Environment": [
+       {
+        "Name": "NODE_ENV",
+        "Value": "production"
+       },
+       {
+        "Name": "DATABASE_HOST",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointAddress8AB85320"
+        }
+       },
+       {
+        "Name": "DATABASE_PORT",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointPortEA4FF89A"
+        }
+       },
+       {
+        "Name": "DATABASE_NAME",
+        "Value": "email_intelligence"
+       },
+       {
+        "Name": "DATABASE_USER",
+        "Value": "skout"
+       },
+       {
+        "Name": "DATABASE_SSL",
+        "Value": "true"
+       },
+       {
+        "Name": "REDIS_URL",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "redis://",
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttRedis04B3B4F3RedisEndpointAddress8458D51B"
+           },
+           ":6379"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "STORAGE_BUCKET",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefStorageEmailIntelBucket5203470BEF798283"
+        }
+       },
+       {
+        "Name": "STORAGE_REGION",
+        "Value": "us-east-1"
+       },
+       {
+        "Name": "STORAGE_FORCE_PATH_STYLE",
+        "Value": "false"
+       },
+       {
+        "Name": "OTEL_SERVICE_NAME",
+        "Value": "email-intelligence-service"
+       },
+       {
+        "Name": "PORT",
+        "Value": "3001"
+       },
+       {
+        "Name": "HOST",
+        "Value": "0.0.0.0"
+       }
+      ],
+      "Essential": true,
+      "HealthCheck": {
+       "Command": [
+        "CMD-SHELL",
+        "node -e \"fetch('http://127.0.0.1:3001/liveness').then((r)=>process.exit(r.status<400?0:1)).catch(()=>process.exit(1))\""
+       ],
+       "Interval": 30,
+       "Retries": 3,
+       "StartPeriod": 60,
+       "Timeout": 5
+      },
+      "Image": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::Select": [
+           4,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttEmailIntelRepoBD2FA6CAArn632AC839"
+             }
+            ]
+           }
+          ]
+         },
+         ".dkr.ecr.",
+         {
+          "Fn::Select": [
+           3,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttEmailIntelRepoBD2FA6CAArn632AC839"
+             }
+            ]
+           }
+          ]
+         },
+         ".",
+         {
+          "Ref": "AWS::URLSuffix"
+         },
+         "/",
+         {
+          "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputRefEmailIntelRepoBD2FA6CA71BC215B"
+         },
+         ":latest"
+        ]
+       ]
+      },
+      "LogConfiguration": {
+       "LogDriver": "awslogs",
+       "Options": {
+        "awslogs-group": {
+         "Ref": "EmailIntelApiServiceLogGroup18EC74F4"
+        },
+        "awslogs-stream-prefix": "email-intel-api",
+        "awslogs-region": "us-east-1"
+       }
+      },
+      "Name": "Container",
+      "PortMappings": [
+       {
+        "ContainerPort": 3001,
+        "Protocol": "tcp"
+       }
+      ],
+      "Secrets": [
+       {
+        "Name": "DATABASE_PASSWORD",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+           },
+           ":password::"
+          ]
+         ]
+        }
+       }
+      ]
+     }
+    ],
+    "Cpu": "256",
+    "ExecutionRoleArn": {
+     "Fn::GetAtt": [
+      "EmailIntelApiServiceTaskDefExecutionRoleAFDA24CC",
+      "Arn"
+     ]
+    },
+    "Family": "SkoutDevEmailIntelEmailIntelApiServiceTaskDef4C4C8A03",
+    "Memory": "512",
+    "NetworkMode": "awsvpc",
+    "RequiresCompatibilities": [
+     "FARGATE"
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskRoleArn": {
+     "Fn::GetAtt": [
+      "EmailIntelApiServiceTaskDefTaskRole4038B1C2",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-EmailIntel/EmailIntelApiService/TaskDef/Resource"
+   }
+  },
+  "EmailIntelApiServiceTaskDefExecutionRoleAFDA24CC": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-EmailIntel/EmailIntelApiService/TaskDef/ExecutionRole/Resource"
+   }
+  },
+  "EmailIntelApiServiceTaskDefExecutionRoleDefaultPolicy85722AF6": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttEmailIntelRepoBD2FA6CAArn632AC839"
+       }
+      },
+      {
+       "Action": "ecr:GetAuthorizationToken",
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "EmailIntelApiServiceLogGroup18EC74F4",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "EmailIntelApiServiceTaskDefExecutionRoleDefaultPolicy85722AF6",
+    "Roles": [
+     {
+      "Ref": "EmailIntelApiServiceTaskDefExecutionRoleAFDA24CC"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-EmailIntel/EmailIntelApiService/TaskDef/ExecutionRole/DefaultPolicy/Resource"
+   }
+  },
+  "EmailIntelApiServiceLogGroup18EC74F4": {
+   "Type": "AWS::Logs::LogGroup",
+   "Properties": {
+    "LogGroupName": "/skout/dev/email-intel-api",
+    "RetentionInDays": 30,
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-EmailIntel/EmailIntelApiService/LogGroup/Resource"
+   }
+  },
+  "EmailIntelApiServiceServiceSgDFD253B0": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Skout email-intel-api ECS",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-EmailIntel/EmailIntelApiService/ServiceSg/Resource"
+   }
+  },
+  "EmailIntelApiServiceServiceSgfromSkoutDevComputeApiServiceServiceSg768FA6CC300190727A25": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "Description": "from SkoutDevComputeApiServiceServiceSg768FA6CC:3001",
+    "FromPort": 3001,
+    "GroupId": {
+     "Fn::GetAtt": [
+      "EmailIntelApiServiceServiceSgDFD253B0",
+      "GroupId"
+     ]
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputFnGetAttApiServiceServiceSg66545185GroupId39AF0CB0"
+    },
+    "ToPort": 3001
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-EmailIntel/EmailIntelApiService/ServiceSg/from SkoutDevComputeApiServiceServiceSg768FA6CC:3001"
+   }
+  },
+  "EmailIntelApiService4520B771": {
+   "Type": "AWS::ECS::Service",
+   "Properties": {
+    "Cluster": {
+     "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputRefClusterEB0386A796A0E3FE"
+    },
+    "DeploymentConfiguration": {
+     "Alarms": {
+      "AlarmNames": [],
+      "Enable": false,
+      "Rollback": false
+     },
+     "DeploymentCircuitBreaker": {
+      "Enable": true,
+      "Rollback": true
+     },
+     "MaximumPercent": 200,
+     "MinimumHealthyPercent": 50
+    },
+    "DeploymentController": {
+     "Type": "ECS"
+    },
+    "DesiredCount": 1,
+    "EnableECSManagedTags": false,
+    "LaunchType": "FARGATE",
+    "NetworkConfiguration": {
+     "AwsvpcConfiguration": {
+      "AssignPublicIp": "DISABLED",
+      "SecurityGroups": [
+       {
+        "Fn::GetAtt": [
+         "EmailIntelApiServiceServiceSgDFD253B0",
+         "GroupId"
+        ]
+       }
+      ],
+      "Subnets": [
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet1Subnet536B997AFD4CC940"
+       },
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet2Subnet3788AAA1380949A3"
+       }
+      ]
+     }
+    },
+    "ServiceName": "email-intel-api",
+    "ServiceRegistries": [
+     {
+      "RegistryArn": {
+       "Fn::GetAtt": [
+        "EmailIntelApiServiceCloudmapService1F5E5DB8",
+        "Arn"
+       ]
+      }
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskDefinition": {
+     "Ref": "EmailIntelApiServiceTaskDef61E0DF9F"
+    }
+   },
+   "DependsOn": [
+    "EmailIntelApiServiceTaskDefTaskRoleDefaultPolicyD669145A",
+    "EmailIntelApiServiceTaskDefTaskRole4038B1C2"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-EmailIntel/EmailIntelApiService/Service/Service"
+   }
+  },
+  "EmailIntelApiServiceCloudmapService1F5E5DB8": {
+   "Type": "AWS::ServiceDiscovery::Service",
+   "Properties": {
+    "DnsConfig": {
+     "DnsRecords": [
+      {
+       "TTL": 60,
+       "Type": "A"
+      }
+     ],
+     "NamespaceId": {
+      "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputFnGetAttServiceDiscovery76C640CCId30FFAD02"
+     },
+     "RoutingPolicy": "MULTIVALUE"
+    },
+    "HealthCheckCustomConfig": {
+     "FailureThreshold": 1
+    },
+    "Name": "email-intel",
+    "NamespaceId": {
+     "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputFnGetAttServiceDiscovery76C640CCId30FFAD02"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "DependsOn": [
+    "EmailIntelApiServiceTaskDefTaskRoleDefaultPolicyD669145A",
+    "EmailIntelApiServiceTaskDefTaskRole4038B1C2"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-EmailIntel/EmailIntelApiService/Service/CloudmapService/Resource"
+   }
+  },
+  "EmailIntelWorkerServiceTaskDefTaskRole744983DF": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-EmailIntel/EmailIntelWorkerService/TaskDef/TaskRole/Resource"
+   }
+  },
+  "EmailIntelWorkerServiceTaskDefTaskRoleDefaultPolicy637131D0": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "s3:Abort*",
+        "s3:DeleteObject*",
+        "s3:GetBucket*",
+        "s3:GetObject*",
+        "s3:List*",
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttStorageEmailIntelBucket5203470BArn64DE9B75"
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttStorageEmailIntelBucket5203470BArn64DE9B75"
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "EmailIntelWorkerServiceTaskDefTaskRoleDefaultPolicy637131D0",
+    "Roles": [
+     {
+      "Ref": "EmailIntelWorkerServiceTaskDefTaskRole744983DF"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-EmailIntel/EmailIntelWorkerService/TaskDef/TaskRole/DefaultPolicy/Resource"
+   }
+  },
+  "EmailIntelWorkerServiceTaskDef2F82A138": {
+   "Type": "AWS::ECS::TaskDefinition",
+   "Properties": {
+    "ContainerDefinitions": [
+     {
+      "Command": [
+       "node",
+       "dist/worker.js"
+      ],
+      "Environment": [
+       {
+        "Name": "NODE_ENV",
+        "Value": "production"
+       },
+       {
+        "Name": "DATABASE_HOST",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointAddress8AB85320"
+        }
+       },
+       {
+        "Name": "DATABASE_PORT",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointPortEA4FF89A"
+        }
+       },
+       {
+        "Name": "DATABASE_NAME",
+        "Value": "email_intelligence"
+       },
+       {
+        "Name": "DATABASE_USER",
+        "Value": "skout"
+       },
+       {
+        "Name": "DATABASE_SSL",
+        "Value": "true"
+       },
+       {
+        "Name": "REDIS_URL",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "redis://",
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttRedis04B3B4F3RedisEndpointAddress8458D51B"
+           },
+           ":6379"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "STORAGE_BUCKET",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefStorageEmailIntelBucket5203470BEF798283"
+        }
+       },
+       {
+        "Name": "STORAGE_REGION",
+        "Value": "us-east-1"
+       },
+       {
+        "Name": "STORAGE_FORCE_PATH_STYLE",
+        "Value": "false"
+       },
+       {
+        "Name": "OTEL_SERVICE_NAME",
+        "Value": "email-intelligence-service"
+       }
+      ],
+      "Essential": true,
+      "HealthCheck": {
+       "Command": [
+        "CMD",
+        "node",
+        "-e",
+        "const fs=require('fs');try{const s=fs.statSync('/tmp/worker-health/ready');process.exit((Date.now()-s.mtimeMs)<20000?0:1)}catch(e){process.exit(1)}"
+       ],
+       "Interval": 30,
+       "Retries": 3,
+       "StartPeriod": 120,
+       "Timeout": 5
+      },
+      "Image": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::Select": [
+           4,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttEmailIntelRepoBD2FA6CAArn632AC839"
+             }
+            ]
+           }
+          ]
+         },
+         ".dkr.ecr.",
+         {
+          "Fn::Select": [
+           3,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttEmailIntelRepoBD2FA6CAArn632AC839"
+             }
+            ]
+           }
+          ]
+         },
+         ".",
+         {
+          "Ref": "AWS::URLSuffix"
+         },
+         "/",
+         {
+          "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputRefEmailIntelRepoBD2FA6CA71BC215B"
+         },
+         ":latest"
+        ]
+       ]
+      },
+      "LogConfiguration": {
+       "LogDriver": "awslogs",
+       "Options": {
+        "awslogs-group": {
+         "Ref": "EmailIntelWorkerServiceLogGroup9D156289"
+        },
+        "awslogs-stream-prefix": "email-intel-worker",
+        "awslogs-region": "us-east-1"
+       }
+      },
+      "Name": "Container",
+      "Secrets": [
+       {
+        "Name": "DATABASE_PASSWORD",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+           },
+           ":password::"
+          ]
+         ]
+        }
+       }
+      ]
+     }
+    ],
+    "Cpu": "256",
+    "ExecutionRoleArn": {
+     "Fn::GetAtt": [
+      "EmailIntelWorkerServiceTaskDefExecutionRoleD5BAAE80",
+      "Arn"
+     ]
+    },
+    "Family": "SkoutDevEmailIntelEmailIntelWorkerServiceTaskDef9B7A7F8B",
+    "Memory": "512",
+    "NetworkMode": "awsvpc",
+    "RequiresCompatibilities": [
+     "FARGATE"
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskRoleArn": {
+     "Fn::GetAtt": [
+      "EmailIntelWorkerServiceTaskDefTaskRole744983DF",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-EmailIntel/EmailIntelWorkerService/TaskDef/Resource"
+   }
+  },
+  "EmailIntelWorkerServiceTaskDefExecutionRoleD5BAAE80": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-EmailIntel/EmailIntelWorkerService/TaskDef/ExecutionRole/Resource"
+   }
+  },
+  "EmailIntelWorkerServiceTaskDefExecutionRoleDefaultPolicy27C4510E": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttEmailIntelRepoBD2FA6CAArn632AC839"
+       }
+      },
+      {
+       "Action": "ecr:GetAuthorizationToken",
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "EmailIntelWorkerServiceLogGroup9D156289",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "EmailIntelWorkerServiceTaskDefExecutionRoleDefaultPolicy27C4510E",
+    "Roles": [
+     {
+      "Ref": "EmailIntelWorkerServiceTaskDefExecutionRoleD5BAAE80"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-EmailIntel/EmailIntelWorkerService/TaskDef/ExecutionRole/DefaultPolicy/Resource"
+   }
+  },
+  "EmailIntelWorkerServiceLogGroup9D156289": {
+   "Type": "AWS::Logs::LogGroup",
+   "Properties": {
+    "LogGroupName": "/skout/dev/email-intel-worker",
+    "RetentionInDays": 30,
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-EmailIntel/EmailIntelWorkerService/LogGroup/Resource"
+   }
+  },
+  "EmailIntelWorkerServiceServiceSgADB7D03A": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Skout email-intel-worker worker",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-EmailIntel/EmailIntelWorkerService/ServiceSg/Resource"
+   }
+  },
+  "EmailIntelWorkerServiceA63834FA": {
+   "Type": "AWS::ECS::Service",
+   "Properties": {
+    "Cluster": {
+     "Fn::ImportValue": "SkoutDev-Compute:ExportsOutputRefClusterEB0386A796A0E3FE"
+    },
+    "DeploymentConfiguration": {
+     "Alarms": {
+      "AlarmNames": [],
+      "Enable": false,
+      "Rollback": false
+     },
+     "DeploymentCircuitBreaker": {
+      "Enable": true,
+      "Rollback": false
+     },
+     "MaximumPercent": 200,
+     "MinimumHealthyPercent": 0
+    },
+    "DeploymentController": {
+     "Type": "ECS"
+    },
+    "DesiredCount": 1,
+    "EnableECSManagedTags": false,
+    "LaunchType": "FARGATE",
+    "NetworkConfiguration": {
+     "AwsvpcConfiguration": {
+      "AssignPublicIp": "DISABLED",
+      "SecurityGroups": [
+       {
+        "Fn::GetAtt": [
+         "EmailIntelWorkerServiceServiceSgADB7D03A",
+         "GroupId"
+        ]
+       }
+      ],
+      "Subnets": [
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet1Subnet536B997AFD4CC940"
+       },
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet2Subnet3788AAA1380949A3"
+       }
+      ]
+     }
+    },
+    "ServiceName": "email-intel-worker",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskDefinition": {
+     "Ref": "EmailIntelWorkerServiceTaskDef2F82A138"
+    }
+   },
+   "DependsOn": [
+    "EmailIntelWorkerServiceTaskDefTaskRoleDefaultPolicy637131D0",
+    "EmailIntelWorkerServiceTaskDefTaskRole744983DF"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-EmailIntel/EmailIntelWorkerService/Service/Service"
+   }
+  },
+  "EmailIntelToDbApi": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 5432,
+    "GroupId": {
+     "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabaseDbSg4E409684GroupIdD2249FED"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "EmailIntelApiServiceServiceSgDFD253B0",
+      "GroupId"
+     ]
+    },
+    "ToPort": 5432
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-EmailIntel/EmailIntelToDbApi"
+   }
+  },
+  "EmailIntelToRedisApi": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 6379,
+    "GroupId": {
+     "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttRedisRedisSg2F12D8B8GroupId19AE2A5D"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "EmailIntelApiServiceServiceSgDFD253B0",
+      "GroupId"
+     ]
+    },
+    "ToPort": 6379
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-EmailIntel/EmailIntelToRedisApi"
+   }
+  },
+  "EmailIntelToDbWorker": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 5432,
+    "GroupId": {
+     "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabaseDbSg4E409684GroupIdD2249FED"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "EmailIntelWorkerServiceServiceSgADB7D03A",
+      "GroupId"
+     ]
+    },
+    "ToPort": 5432
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-EmailIntel/EmailIntelToDbWorker"
+   }
+  },
+  "EmailIntelToRedisWorker": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 6379,
+    "GroupId": {
+     "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttRedisRedisSg2F12D8B8GroupId19AE2A5D"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "EmailIntelWorkerServiceServiceSgADB7D03A",
+      "GroupId"
+     ]
+    },
+    "ToPort": 6379
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-EmailIntel/EmailIntelToRedisWorker"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/32OUWsCMRCEf4vvuVWPFnyvKIWC4vW9xNx6rHdmJZucHCH/XeJZEQt92plvmGVKKN8XMJvoixSmbouO9hArr02r9EV+IhqBuNKu0R6/tbRLPJAlT2zVx8G+ErZek0X3xO7dCl1PBnPpLpMifYK44+5Gb3fLHZkh21El1XEjEL+4WTsO55z86qTQlBArNMGRHx75/+DTNg5FkpJxRU1iuEc35E9/JqZsNsGfg0/Kco1wlGlfvsF8DrPJUYgKF6ynE8JuvFd+julhUAEAAA=="
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-EmailIntel/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "EmailIntelServiceDns": {
+   "Value": "email-intel.skoutdev.local:3001",
+   "Export": {
+    "Name": "SkoutDev-EmailIntelServiceDns"
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}

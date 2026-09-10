@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="420" viewBox="0 0 900 420">
+  <rect width="900" height="420" fill="#ffffff"/>
+  <text x="24" y="36" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="bold" fill="#0f172a">Prospect import sample (OCR)</text>
+  <text x="24" y="70" font-family="monospace" font-size="13" fill="#334155">Name, Email, Company Domain, Company, Title, Country</text>
+  <text x="24" y="110" font-family="monospace" font-size="14" fill="#0f172a">Neeraj Singh, neeraj190499@gmail.com, gmail.com, Skout Test, Founder, India</text>
+  <text x="24" y="150" font-family="monospace" font-size="14" fill="#0f172a">Priya Sharma, priya.sharma@acme.io, acme.io, Acme Labs, VP Sales, United States</text>
+  <text x="24" y="190" font-family="monospace" font-size="14" fill="#0f172a">James Chen, james.chen@northwind.co, northwind.co, Northwind Analytics, Head of Growth, United Kingdom</text>
+  <text x="24" y="230" font-family="monospace" font-size="14" fill="#0f172a">Aisha Khan, aisha@brightpath.ai, brightpath.ai, BrightPath AI, CEO, United Arab Emirates</text>
+</svg>

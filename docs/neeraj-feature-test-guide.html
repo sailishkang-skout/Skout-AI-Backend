@@ -1,0 +1,268 @@
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Skout AI — User testing guide</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         font-size: 11pt; line-height: 1.45; color: #111; }
+  h1 { font-size: 20pt; margin: 0 0 8px; }
+  h2 { font-size: 14pt; margin: 22px 0 8px; border-bottom: 1px solid #ccc; padding-bottom: 4px;
+       page-break-after: avoid; }
+  p, li { margin: 4px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0 14px; font-size: 10pt;
+          page-break-inside: avoid; }
+  th, td { border: 1px solid #bbb; padding: 6px 8px; vertical-align: top; text-align: left; }
+  th { background: #f3f3f3; }
+  td:last-child, th:last-child { width: 36px; text-align: center; }
+  .meta { background: #f7f7f7; padding: 10px 12px; border: 1px solid #ddd; margin-bottom: 16px; }
+  strong { font-weight: 600; }
+  hr { border: none; border-top: 1px solid #ddd; margin: 18px 0; }
+  .footer { margin-top: 24px; font-size: 9pt; color: #555; }
+</style></head><body>
+
+<h1>Skout AI — User testing guide (Neeraj completed features)</h1>
+
+<p><strong>How to use this document:</strong> Sign in to Skout as a normal user (owner/admin preferred). Follow each section in order. For every step, mark <strong>Pass</strong> or <strong>Fail</strong> in the checkbox column (print this PDF and tick by hand, or copy into a sheet).</p>
+
+<p>| <strong>App</strong> | https://www.skoutai.io/app |</p>
+<p>| <strong>API / gateway</strong> | https://ckoy6iywm0.execute-api.us-east-1.amazonaws.com |</p>
+<p>| <strong>Who should test</strong> | Product / QA / founder with a real workspace |</p>
+<p>| <strong>Date</strong> | ________________ |</p>
+<p>| <strong>Tester name</strong> | ________________ |</p>
+
+<hr>
+
+<h2>Before you start</h2>
+
+<li>1. Open the app in Chrome.</li>
+<li>2. Sign in with your Skout account (Clerk).</li>
+<li>3. Confirm you land on the dashboard (no blank error page).</li>
+<li>4. Keep this PDF open and tick each step as you go.</li>
+
+<p><strong>Pass criteria for the whole guide:</strong> Every *user* step in sections 1–15 is Pass (or marked N/A with a reason). External leftovers at the end are optional.</p>
+
+<hr>
+
+<h2>1. Sign-in &amp; home (smoke)</h2>
+
+<table>
+<tr><th>#</th><th>What you do</th><th>What you should see</th><th>☐</th></tr>
+<tr><td>1.1</td><td>Go to the app URL and sign in</td><td>Dashboard / home loads</td><td></td></tr>
+<tr><td>1.2</td><td>Click your profile / workspace name in the sidebar</td><td>Your workspace is shown</td><td></td></tr>
+<tr><td>1.3</td><td>Refresh the page</td><td>You stay signed in</td><td></td></tr>
+</table>
+
+<hr>
+
+<h2>2. Onboarding (§8.1)</h2>
+
+<table>
+<tr><th>#</th><th>What you do</th><th>What you should see</th><th>☐</th></tr>
+<tr><td>2.1</td><td>Open <strong>Onboarding</strong> from the sidebar (or `/onboarding`)</td><td>Setup wizard / ICP questions appear</td><td></td></tr>
+<tr><td>2.2</td><td>Fill company / ICP basics and continue</td><td>Progress saves; you can finish or skip to the app</td><td></td></tr>
+<tr><td>2.3</td><td>After finishing, open Discover or TAM</td><td>App works with your workspace settings</td><td></td></tr>
+</table>
+
+<hr>
+
+<h2>3. Discover / TAM / search (§8.2)</h2>
+
+<table>
+<tr><th>#</th><th>What you do</th><th>What you should see</th><th>☐</th></tr>
+<tr><td>3.1</td><td>Open <strong>TAM</strong> or <strong>Prospect search</strong></td><td>Search page loads (results or empty state OK)</td><td></td></tr>
+<tr><td>3.2</td><td>Enter a company / title / filter and search</td><td>Results list appears, or a clear “no results”</td><td></td></tr>
+<tr><td>3.3</td><td>Add one prospect to a list</td><td>Prospect shows in that list</td><td></td></tr>
+</table>
+
+<hr>
+
+<h2>4. Enrichment workbooks (§8.3)</h2>
+
+<table>
+<tr><th>#</th><th>What you do</th><th>What you should see</th><th>☐</th></tr>
+<tr><td>4.1</td><td>Open <strong>Enrichment → Workbooks</strong></td><td>Workbook list page</td><td></td></tr>
+<tr><td>4.2</td><td>Create a new workbook and save</td><td>It appears in the list</td><td></td></tr>
+<tr><td>4.3</td><td>Activate it and start a run</td><td>Run status moves (queued → running → done/failed)</td><td></td></tr>
+<tr><td>4.4</td><td>Open the run</td><td>You can see rows / progress / errors</td><td></td></tr>
+</table>
+
+<hr>
+
+<h2>5. Account &amp; Person 360 (§8.4)</h2>
+
+<table>
+<tr><th>#</th><th>What you do</th><th>What you should see</th><th>☐</th></tr>
+<tr><td>5.1</td><td>Open <strong>CRM</strong> and pick any company (or copy its ID)</td><td>Company detail exists</td><td></td></tr>
+<tr><td>5.2</td><td>Open <strong>Account 360</strong> (`/crm/360`) and load that company</td><td>One screen with deals, activity, signals (or empty sections)</td><td></td></tr>
+<tr><td>5.3</td><td>Switch to <strong>Person</strong> mode and load a contact</td><td>Person 360 shows contact-centric view</td><td></td></tr>
+</table>
+
+<hr>
+
+<h2>6. Signals (§8.5)</h2>
+
+<table>
+<tr><th>#</th><th>What you do</th><th>What you should see</th><th>☐</th></tr>
+<tr><td>6.1</td><td>Open <strong>Signals</strong></td><td>Feed or empty state (no crash)</td><td></td></tr>
+<tr><td>6.2</td><td>Open one signal if any exist</td><td>Detail view opens</td><td></td></tr>
+</table>
+
+<hr>
+
+<h2>7. Sequences (§8.6)</h2>
+
+<table>
+<tr><th>#</th><th>What you do</th><th>What you should see</th><th>☐</th></tr>
+<tr><td>7.1</td><td>Open <strong>Sequences</strong></td><td>Sequence list</td><td></td></tr>
+<tr><td>7.2</td><td>Create a sequence with at least one email/step</td><td>Sequence saves</td><td></td></tr>
+<tr><td>7.3</td><td>Enroll a contact/prospect</td><td>Enrollment shows as active / pending</td><td></td></tr>
+<tr><td>7.4</td><td>Check sequence analytics or enrollments</td><td>Counts update</td><td></td></tr>
+</table>
+
+<hr>
+
+<h2>8. Dexter &amp; Policy Gateway (§8.7)</h2>
+
+<table>
+<tr><th>#</th><th>What you do</th><th>What you should see</th><th>☐</th></tr>
+<tr><td>8.1</td><td>Open <strong>Settings → Automation policy</strong> (Policy Gateway)</td><td>Modes like ask / auto / draft / approve</td><td></td></tr>
+<tr><td>8.2</td><td>Change one action’s mode and save</td><td>Setting sticks after refresh</td><td></td></tr>
+<tr><td>8.3</td><td>Open <strong>Dexter</strong> (`/dexter`)</td><td>Orchestrator page loads</td><td></td></tr>
+<tr><td>8.4</td><td>Propose / create a GTM plan</td><td>Plan appears as pending approval</td><td></td></tr>
+<tr><td>8.5</td><td>Approve the plan, then invoke</td><td>Invoke works after approve (blocked before)</td><td></td></tr>
+<tr><td>8.6</td><td>Record a learning / outcome if shown</td><td>Outcome saved on the plan</td><td></td></tr>
+<tr><td>8.7</td><td>Open the floating <strong>AI chat</strong> button</td><td>Chat opens; ask “What should I do next?” and get a reply</td><td></td></tr>
+</table>
+
+<hr>
+
+<h2>9. Decisions (§10)</h2>
+
+<table>
+<tr><th>#</th><th>What you do</th><th>What you should see</th><th>☐</th></tr>
+<tr><td>9.1</td><td>Open <strong>Decisions</strong> (`/decisions`)</td><td>Decision queue page</td><td></td></tr>
+<tr><td>9.2</td><td>Create a decision from next-best-action (or UI create)</td><td>New item in the queue</td><td></td></tr>
+<tr><td>9.3</td><td>Choose an option or dismiss</td><td>Status updates; item leaves open queue</td><td></td></tr>
+</table>
+
+<hr>
+
+<h2>10. Workflows (§8.14)</h2>
+
+<table>
+<tr><th>#</th><th>What you do</th><th>What you should see</th><th>☐</th></tr>
+<tr><td>10.1</td><td>Open <strong>Workflows</strong> (`/workflows`)</td><td>Workflow Studio / runs list</td><td></td></tr>
+<tr><td>10.2</td><td>Start a run (enrich/score style if available)</td><td>Run appears as running</td><td></td></tr>
+<tr><td>10.3</td><td>Wait until complete (or mark complete if UI allows)</td><td>Run shows completed</td><td></td></tr>
+</table>
+
+<hr>
+
+<h2>11. LinkedIn (§8.8)</h2>
+
+<table>
+<tr><th>#</th><th>What you do</th><th>What you should see</th><th>☐</th></tr>
+<tr><td>11.1</td><td>Open Deliverability / <strong>LinkedIn</strong> connect</td><td>Connect screen or account list</td><td></td></tr>
+<tr><td>11.2</td><td>Connect a LinkedIn account (Unipile) if prompted</td><td>Account shows as connected / active</td><td></td></tr>
+<tr><td>11.3</td><td>Add a LinkedIn step to a sequence and enroll someone</td><td>Job queued/sent, or a clear “not configured” message</td><td></td></tr>
+</table>
+
+<hr>
+
+<h2>12. Chrome extension (§8.9)</h2>
+
+<table>
+<tr><th>#</th><th>What you do</th><th>What you should see</th><th>☐</th></tr>
+<tr><td>12.1</td><td>Install the Skout extension (unpacked `store-build` or zip from the team)</td><td>Extension appears in Chrome</td><td></td></tr>
+<tr><td>12.2</td><td>Sign in to Skout in the same browser → open side panel → Connect</td><td>Shows you as signed in</td><td></td></tr>
+<tr><td>12.3</td><td>Open a LinkedIn profile → <strong>Add to list</strong></td><td>Contact appears in your Skout list</td><td></td></tr>
+</table>
+
+<hr>
+
+<h2>13. Email intelligence &amp; Warm-Up (§8.10)</h2>
+
+<table>
+<tr><th>#</th><th>What you do</th><th>What you should see</th><th>☐</th></tr>
+<tr><td>13.1</td><td>Open <strong>Intelligence → Email</strong></td><td>Verify / discover UI</td><td></td></tr>
+<tr><td>13.2</td><td>Verify a real email address</td><td>Result with status (valid / risky / etc.)</td><td></td></tr>
+<tr><td>13.3</td><td>Open <strong>Warm-Up</strong></td><td>Page loads (Google/Microsoft connect may still be blocked until OAuth apps are ready)</td><td></td></tr>
+</table>
+
+<hr>
+
+<h2>14. Calling (§8.11)</h2>
+
+<table>
+<tr><th>#</th><th>What you do</th><th>What you should see</th><th>☐</th></tr>
+<tr><td>14.1</td><td>Open <strong>Settings → Calling</strong></td><td>Calling settings page</td><td></td></tr>
+<tr><td>14.2</td><td>Open a contact with a phone number → click <strong>Call</strong></td><td>Call starts <strong>or</strong> a clear “calling not configured” message</td><td></td></tr>
+</table>
+
+<hr>
+
+<h2>15. CRM Intelligence &amp; HubSpot (§8.12)</h2>
+
+<table>
+<tr><th>#</th><th>What you do</th><th>What you should see</th><th>☐</th></tr>
+<tr><td>15.1</td><td>Open <strong>CRM → Intelligence</strong></td><td>Intelligence views load</td><td></td></tr>
+<tr><td>15.2</td><td>Connect HubSpot if your workspace uses it</td><td>Connection shows as linked</td><td></td></tr>
+<tr><td>15.3</td><td>Run sync / import if the button exists</td><td>Progress or success summary</td><td></td></tr>
+</table>
+
+<hr>
+
+<h2>16. CRO / reporting (§8.15 / §8.13)</h2>
+
+<table>
+<tr><th>#</th><th>What you do</th><th>What you should see</th><th>☐</th></tr>
+<tr><td>16.1</td><td>Open <strong>Admin → CRO</strong> (or reporting)</td><td>Charts / forecasts or empty states</td><td></td></tr>
+<tr><td>16.2</td><td>Ask Dexter chat something about pipeline</td><td>Sensible reply (not a blank error)</td><td></td></tr>
+</table>
+
+<hr>
+
+<h2>17. Competitive win/loss (§2) — for GTM</h2>
+
+<table>
+<tr><th>#</th><th>What you do</th><th>What you should see</th><th>☐</th></tr>
+<tr><td>17.1</td><td>Open competitive / win-loss entry (CRM or API-backed UI)</td><td>Form or list to add deals</td><td></td></tr>
+<tr><td>17.2</td><td>Add a won or lost deal (competitor, reason, region)</td><td>Deal saves and appears in the list</td><td></td></tr>
+<tr><td>17.3</td><td>Add until you have <strong>4+ real deals</strong> (GTM goal)</td><td>Regional TAM unlocks when gate is met</td><td></td></tr>
+</table>
+
+<hr>
+
+<h2>18. Team &amp; security (as a user) (§11.1)</h2>
+
+<table>
+<tr><th>#</th><th>What you do</th><th>What you should see</th><th>☐</th></tr>
+<tr><td>18.1</td><td>As <strong>owner</strong>, open Team / invites and invite a teammate</td><td>Invite sends / shows as pending</td><td></td></tr>
+<tr><td>18.2</td><td>As a <strong>member</strong> (or second account), try an admin-only action</td><td>Access denied / blocked — not a server crash</td><td></td></tr>
+<tr><td>18.3</td><td>Confirm you only see <strong>your workspace’s</strong> data</td><td>No other company’s contacts</td><td></td></tr>
+</table>
+
+<hr>
+
+<h2>Optional / external (do not block Pass)</h2>
+
+<table>
+<tr><th>Item</th><th>Notes</th><th>☐</th></tr>
+<tr><td>Warm-Up Google / Microsoft connect</td><td>Needs Sailesh OAuth apps</td><td></td></tr>
+<tr><td>Chrome Web Store public listing</td><td>Package ready; publisher submit optional</td><td></td></tr>
+<tr><td>Customer SSO (Okta etc.)</td><td>Done in Clerk at deal time</td><td></td></tr>
+<tr><td>Telnyx number buy / KYC</td><td>Done in Telnyx Mission Control, not in Skout</td><td></td></tr>
+</table>
+
+<hr>
+
+<h2>Sign-off</h2>
+
+<p>| Overall result | ☐ Pass ☐ Fail ☐ Partial |</p>
+<p>| Tester | ________________ |</p>
+<p>| Date | ________________ |</p>
+<p>| Notes | ________________ |</p>
+
+<hr>
+
+<p class="footer"><em>Skout AI · Neeraj completed features · User testing guide · 2026-08-26</em></p>
+</body></html>

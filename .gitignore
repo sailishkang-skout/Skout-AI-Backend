@@ -6,9 +6,26 @@ node_modules
 dist
 *.tsbuildinfo
 
+# stray tsc output emitted next to worker sources (should live in dist/)
+workers/scrapers/**/src/**/*.js
+workers/scrapers/**/src/**/*.d.ts
+workers/scrapers/shared/**/*.js
+workers/scrapers/shared/**/*.d.ts
+
 # env
 .env
+.crm-secrets/
 .env.local
+.env.dev
+.env.uat
+.env.prod
+.env.local.generated
+**/.env.local.generated
+apps/ai/.env
+
+# cdk
+infra/cdk.out
+infra/dist
 
 # logs
 *.log
@@ -18,10 +35,13 @@ dist
 
 # docker
 postgres-data
+.scrape-data/
+minio-data/
 
 # python
 __pycache__
 .venv
 *.pyc
 
-docs/mvp
+# Large MVP planning exports (keep docs/*.md tracked)
+docs/mvp/

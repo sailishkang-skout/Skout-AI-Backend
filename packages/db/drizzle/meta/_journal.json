@@ -1,0 +1,651 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1781002626633,
+      "tag": "0000_yielding_dorian_gray",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1781174328471,
+      "tag": "0001_brown_annihilus",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781178323556,
+      "tag": "0002_fantastic_crusher_hogan",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1781539064621,
+      "tag": "0003_lyrical_bulldozer",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1781700000000,
+      "tag": "0004_workspace_integrations",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1781800000000,
+      "tag": "0005_crm_prospect_mappings",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1781900000000,
+      "tag": "0006_payment_orders",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1782000000000,
+      "tag": "0007_company_snapshots",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1782853347938,
+      "tag": "0008_clean_agent_brand",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1782860000000,
+      "tag": "0009_lucky_master_chief",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1782870000000,
+      "tag": "0010_inbound_email_threads",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1782880000000,
+      "tag": "0011_conversation_state_machine",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1782890000000,
+      "tag": "0012_repair_inbox_inbound_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1783900000000,
+      "tag": "0013_inbox_oauth_tokens",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1783464000000,
+      "tag": "0014_domain_warmup_blacklist",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1784000000000,
+      "tag": "0015_repair_inbox_domain_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1784100000000,
+      "tag": "0016_outbound_webhooks",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1784200000000,
+      "tag": "0017_sequence_delay_unit",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1784300000000,
+      "tag": "0018_linkedin_outreach_and_enrollment_history",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1784400000000,
+      "tag": "0019_linkedin_accounts",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1784500000000,
+      "tag": "0020_workspace_invites",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1784600000000,
+      "tag": "0021_email_verifications",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1784700000000,
+      "tag": "0022_crm_entities",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1784800000000,
+      "tag": "0023_meetings",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1784900000000,
+      "tag": "0024_pain_points",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1785000000000,
+      "tag": "0025_invite_auth",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1785100000000,
+      "tag": "0026_audit_logs",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1785920000000,
+      "tag": "0028_signals",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1786000000000,
+      "tag": "0029_smart_list_auto_refresh",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1786200000000,
+      "tag": "0028_crm_field_sources",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1786300000000,
+      "tag": "0029_activation_rules",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1786400000000,
+      "tag": "0030_notifications",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1786500000000,
+      "tag": "0031_user_phone",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1786600000000,
+      "tag": "0032_meeting_bot",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1786700000000,
+      "tag": "0033_calls",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1786800000000,
+      "tag": "0034_task_call_disposition",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1786900000000,
+      "tag": "0035_meeting_auto_join",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1787000000000,
+      "tag": "0036_deal_field_sources",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1787100000000,
+      "tag": "0037_next_best_action_suggestions",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1787200000000,
+      "tag": "0038_call_notes",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1787300000000,
+      "tag": "0039_notification_broadcast_and_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1787400000000,
+      "tag": "0040_task_type_completed_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1787500000000,
+      "tag": "0041_google_calendar",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1787600000000,
+      "tag": "0042_r13_r17_r18_r12_r11_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1787700000000,
+      "tag": "0043_sequence_abc_conditions",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1787800000000,
+      "tag": "0044_sequence_versions_events_experiments",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1787900000000,
+      "tag": "0045_sequence_retry_and_linkedin_connections",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1788000000000,
+      "tag": "0046_manual_review_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1788100000000,
+      "tag": "0047_promotion_candidates",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1788200000000,
+      "tag": "0048_pipelines_default_unique",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1788300000000,
+      "tag": "0049_meeting_ics",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1788400000000,
+      "tag": "0050_canonical_operating_model_and_evidence_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1788500000000,
+      "tag": "0051_crm_intelligence",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1788600000000,
+      "tag": "0052_incidents_and_model_versions",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1788700000000,
+      "tag": "0053_activities_retention_classification",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1788800000000,
+      "tag": "0054_contacts_companies_retention_classification",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1788900000000,
+      "tag": "0055_entitlements_unique",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1789000000000,
+      "tag": "0056_data_subject_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1789100000000,
+      "tag": "0057_dsar_fulfillment_mode",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1789200000000,
+      "tag": "0058_list_source_filters",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1789300000000,
+      "tag": "0059_signal_expiry_activation_paths",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1789400000000,
+      "tag": "0060_signal_observed_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1789500000000,
+      "tag": "0061_enrichment_workbooks",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1789600000000,
+      "tag": "0062_reporting",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1789700000000,
+      "tag": "0063_tam_data_source",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1789800000000,
+      "tag": "0064_model_decision_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1789900000000,
+      "tag": "0065_async_job_progress",
+      "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1790000000000,
+      "tag": "0066_signal_strength_evidence",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1790100000000,
+      "tag": "0067_mode_c_approval",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1790200000000,
+      "tag": "0068_competitive_win_loss",
+      "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1790300000000,
+      "tag": "0069_dexter_policy_decision_workflow",
+      "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1790400000000,
+      "tag": "0070_workspace_sso_configs",
+      "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1790500000000,
+      "tag": "0071_regional_brief",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1790600000000,
+      "tag": "0072_regional_brief_aliases_and_tam",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1790700000000,
+      "tag": "0073_automations",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1790800000000,
+      "tag": "0074_number_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1790900000000,
+      "tag": "0075_number_request_requirement_group",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1791000000000,
+      "tag": "0076_linkedin_voice_handoff",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1791100000000,
+      "tag": "0077_automation_run_steps_execution_intent",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1791200000000,
+      "tag": "0078_linkedin_outreach_jobs_execution_intent",
+      "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1791300000000,
+      "tag": "0079_whatsapp_outreach_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1791400000000,
+      "tag": "0080_whatsapp_outreach_jobs_pending_idx",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1791500000000,
+      "tag": "0081_dexter_triggers",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1791600000000,
+      "tag": "0082_deals_contract_end_date",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1791700000000,
+      "tag": "0083_crm_sync_checkpoints",
+      "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1791800000000,
+      "tag": "0084_dexter_evaluation_loop",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1791900000000,
+      "tag": "0085_gtm_learning_outcomes",
+      "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1792000000000,
+      "tag": "0086_workbook_flexible_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1792100000000,
+      "tag": "0087_workbook_result_list",
+      "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1792200000000,
+      "tag": "0088_signal_activation_checked_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1792300000000,
+      "tag": "0089_activation_rules_min_signal_strength",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1792400000000,
+      "tag": "0090_skout_events",
+      "breakpoints": true
+    }
+  ]
+}
+

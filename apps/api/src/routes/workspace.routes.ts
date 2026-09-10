@@ -1,19 +1,239 @@
 import type { FastifyInstance } from "fastify";
-import { workspaceService } from "../services/workspace.service.js";
+import { enforcePermission } from "@skout/auth";
+import { createWorkspaceService } from "../services/workspace.service.js";
+import { getWorkspaceIcpVersion, isIcpConfigured } from "../services/icp.service.js";
+import { startWorkspaceRescoreIfEnabled } from "../services/workspace-rescore.service.js";
+import { isRazorpayEnabled } from "../services/billing.service.js";
+import type { IcpConfig } from "../services/enrichment/ai-client.js";
+import { getSetupChecklist } from "../services/workspace-setup.service.js";
+import { seedDemoData } from "../services/demo-seed.service.js";
+import { HttpError, errorResponse } from "../utils/http.js";
 
 export async function workspaceRoutes(app: FastifyInstance) {
-  app.get("/workspaces", async (_request, reply) => {
-    const workspaces = await workspaceService.listWorkspaces();
-    return reply.send({ data: workspaces });
+  if (!app.db) {
+    app.log.warn("Database not available — workspace routes disabled");
+    return;
+  }
+
+  const svc = createWorkspaceService(app.db);
+
+  async function shadowWorkspaceManage(workspaceId: string, userId: string | undefined, action: string) {
+    if (!userId) return;
+    await enforcePermission(app.db!, workspaceId, userId, "workspace:manage", {
+      enforce: app.config.RBAC_ENFORCEMENT_ENABLED,
+      onShadowDeny: (info) =>
+        app.log.warn(info, `RBAC shadow-mode: workspace:manage would have been denied (${action})`),
+    });
+  }
+
+  // GET /api/v1/workspaces/current
+  app.get("/workspaces/current", async (request, reply) => {
+    if (!request.workspaceId) {
+      return reply.code(401).send(errorResponse("Not authenticated", 401));
+    }
+    const workspace = await svc.getWorkspaceWithCredits(request.workspaceId);
+    if (!workspace) {
+      return reply.code(404).send(errorResponse("Workspace not found", 404));
+    }
+    return reply.send({ data: workspace });
   });
 
-  app.get("/workspaces/:id", async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const workspaces = await workspaceService.listWorkspaces();
-    const workspace = workspaces.find((w) => w.id === id);
-    if (!workspace) {
-      return reply.status(404).send({ error: "Workspace not found" });
+  // PATCH /api/v1/workspaces/current — rename workspace
+  app.patch("/workspaces/current", async (request, reply) => {
+    if (!request.workspaceId) {
+      return reply.code(401).send(errorResponse("Not authenticated", 401));
     }
-    return reply.send(workspace);
+    const { name } = request.body as { name?: string };
+    if (!name || typeof name !== "string" || name.trim().length === 0 || name.length > 100) {
+      return reply.code(400).send(errorResponse("Name is required (1-100 characters)", 400));
+    }
+    const updated = await svc.renameWorkspace(request.workspaceId, name.trim());
+    if (!updated) {
+      return reply.code(404).send(errorResponse("Workspace not found", 404));
+    }
+    return reply.send({ data: updated });
+  });
+
+  // PUT /api/v1/workspaces/current/slack-webhook — R17.4 Slack delivery channel (owner/admin only)
+  app.put("/workspaces/current/slack-webhook", async (request, reply) => {
+    if (!request.workspaceId) {
+      return reply.code(401).send(errorResponse("Not authenticated", 401));
+    }
+    if (!request.role || !["owner", "admin"].includes(request.role)) {
+      return reply.code(403).send(errorResponse("Requires role: owner or admin", 403));
+    }
+    await shadowWorkspaceManage(request.workspaceId, request.userId, "slack-webhook");
+    const { url } = (request.body ?? {}) as { url?: string | null };
+    if (url) {
+      let parsed: URL;
+      try {
+        parsed = new URL(url);
+      } catch {
+        return reply.code(400).send(errorResponse("Invalid URL", 400));
+      }
+      if (parsed.protocol !== "https:") {
+        return reply.code(400).send(errorResponse("Slack webhook URL must be https", 400));
+      }
+    }
+    const updated = await svc.setSlackWebhook(request.workspaceId, url && url.trim() ? url.trim() : null);
+    if (!updated) return reply.code(404).send(errorResponse("Workspace not found", 404));
+    return reply.send({ data: updated });
+  });
+
+  // PUT /api/v1/workspaces/current/meeting-bot-auto-join — R16.2 opt-in auto-join default
+  // (owner/admin only). New meetings inherit this unless a per-meeting override is set.
+  app.put("/workspaces/current/meeting-bot-auto-join", async (request, reply) => {
+    if (!request.workspaceId) {
+      return reply.code(401).send(errorResponse("Not authenticated", 401));
+    }
+    if (!request.role || !["owner", "admin"].includes(request.role)) {
+      return reply.code(403).send(errorResponse("Requires role: owner or admin", 403));
+    }
+    await shadowWorkspaceManage(request.workspaceId, request.userId, "meeting-bot-auto-join");
+    const { enabled } = (request.body ?? {}) as { enabled?: boolean };
+    if (typeof enabled !== "boolean") {
+      return reply.code(400).send(errorResponse("enabled (boolean) is required", 400));
+    }
+    const updated = await svc.setMeetingBotAutoJoinDefault(request.workspaceId, enabled);
+    if (!updated) return reply.code(404).send(errorResponse("Workspace not found", 404));
+    return reply.send({ data: updated });
+  });
+
+  // PUT /api/v1/workspaces/current/deal-promotion-threshold — score threshold for the
+  // "Hot Prospects" promotion flag (owner/admin only).
+  app.put("/workspaces/current/deal-promotion-threshold", async (request, reply) => {
+    if (!request.workspaceId) {
+      return reply.code(401).send(errorResponse("Not authenticated", 401));
+    }
+    if (!request.role || !["owner", "admin"].includes(request.role)) {
+      return reply.code(403).send(errorResponse("Requires role: owner or admin", 403));
+    }
+    await shadowWorkspaceManage(request.workspaceId, request.userId, "deal-promotion-threshold");
+    const { threshold } = (request.body ?? {}) as { threshold?: number };
+    if (typeof threshold !== "number" || !Number.isInteger(threshold) || threshold < 0 || threshold > 100) {
+      return reply.code(400).send(errorResponse("threshold must be an integer between 0 and 100", 400));
+    }
+    const updated = await svc.setDealPromotionThreshold(request.workspaceId, threshold);
+    if (!updated) return reply.code(404).send(errorResponse("Workspace not found", 404));
+    return reply.send({ data: updated });
+  });
+
+  // GET /api/v1/credits/balance
+  app.get("/credits/balance", async (request, reply) => {
+    if (!request.workspaceId) {
+      return reply.code(401).send(errorResponse("Not authenticated", 401));
+    }
+    const balance = await svc.getCreditBalance(request.workspaceId);
+    return reply.send({ data: balance });
+  });
+
+  // GET /api/v1/credits/transactions
+  app.get("/credits/transactions", async (request, reply) => {
+    if (!request.workspaceId) {
+      return reply.code(401).send(errorResponse("Not authenticated", 401));
+    }
+    const query = request.query as { limit?: string; offset?: string };
+    const limit = Math.min(parseInt(query.limit ?? "50", 10) || 50, 100);
+    const offset = parseInt(query.offset ?? "0", 10) || 0;
+    const result = await svc.getCreditTransactions(request.workspaceId, limit, offset);
+    return reply.send(result);
+  });
+
+  // POST /api/v1/credits/topup — local/dev fallback when Razorpay is not the billing path
+  app.post("/credits/topup", async (request, reply) => {
+    if (!request.workspaceId) {
+      return reply.code(401).send(errorResponse("Not authenticated", 401));
+    }
+    if (!request.role || !["owner", "admin"].includes(request.role)) {
+      return reply
+        .code(403)
+        .send(errorResponse("Only workspace owners or admins can top up credits", 403));
+    }
+    await shadowWorkspaceManage(request.workspaceId, request.userId, "credits-topup");
+    if (app.config.NODE_ENV === "production" && isRazorpayEnabled(app.config)) {
+      return reply
+        .code(403)
+        .send(errorResponse("Manual top-up is disabled; buy credits via Razorpay", 403));
+    }
+    const body = (request.body ?? {}) as { amount?: number };
+    const maxAmount = app.config.NODE_ENV === "production" ? 500 : 10_000;
+    const amount = Math.min(Math.max(Number(body.amount) || 100, 1), maxAmount);
+    const balance = await svc.addCredits(request.workspaceId, amount, "admin_topup");
+    return reply.send({ data: { balance, amount } });
+  });
+
+  // GET /api/v1/workspaces/current/setup-checklist — R8.1
+  app.get("/workspaces/current/setup-checklist", async (request, reply) => {
+    if (!request.workspaceId) {
+      return reply.code(401).send(errorResponse("Not authenticated", 401));
+    }
+    const checklist = await getSetupChecklist(app.db, request.workspaceId);
+    return reply.send({ data: checklist });
+  });
+
+  // POST /api/v1/workspaces/current/seed-demo-data — R8.1, opt-in only
+  app.post("/workspaces/current/seed-demo-data", async (request, reply) => {
+    if (!request.workspaceId) {
+      return reply.code(401).send(errorResponse("Not authenticated", 401));
+    }
+    try {
+      const result = await seedDemoData(app.db, app.config, request.workspaceId);
+      return reply.send({ data: result });
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return reply.code(err.statusCode).send(errorResponse(err.message, err.statusCode));
+      }
+      throw err;
+    }
+  });
+
+  // GET /api/v1/icp
+  app.get("/icp", async (request, reply) => {
+    if (!request.workspaceId) {
+      return reply.code(401).send(errorResponse("Not authenticated", 401));
+    }
+    const icp = await svc.getIcp(request.workspaceId);
+    return reply.send({ data: icp ?? null });
+  });
+
+  // PUT /api/v1/icp
+  app.put("/icp", async (request, reply) => {
+    if (!request.workspaceId) {
+      return reply.code(401).send(errorResponse("Not authenticated", 401));
+    }
+    const config = request.body as IcpConfig;
+    const previousVersion = await getWorkspaceIcpVersion(app.db, request.workspaceId);
+    const icp = await svc.upsertIcp(request.workspaceId, config as Record<string, unknown>);
+    const version = icp?.version ?? 1;
+
+    let rescoreJob = null;
+    if (isIcpConfigured(config) && version > previousVersion) {
+      try {
+        rescoreJob = await startWorkspaceRescoreIfEnabled(
+          app.db,
+          app.config,
+          request.workspaceId,
+          config,
+          version,
+          previousVersion
+        );
+      } catch (err) {
+        request.log.warn({ err, workspaceId: request.workspaceId }, "ICP rescore enqueue failed");
+      }
+
+      const { emitSkoutEvent } = await import("../services/skout-event.service.js");
+      await emitSkoutEvent(app.db, app.config, {
+        type: "icp.approved",
+        tenantId: request.workspaceId,
+        aggregateId: request.workspaceId,
+        data: {
+          workspaceId: request.workspaceId,
+          version,
+          approvedBy: request.userId ?? null,
+        },
+      });
+    }
+
+    return reply.send({ data: icp, rescoreJob });
   });
 }

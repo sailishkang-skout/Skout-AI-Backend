@@ -1,0 +1,21 @@
+/** Pino redact paths — secrets never appear in CloudWatch / log forwarders. */
+export const LOG_REDACT_PATHS = [
+  "authorization",
+  "req.headers.authorization",
+  "headers.authorization",
+  "*.password",
+  "*.secret",
+  "*.apiKey",
+  "*.api_key",
+  "*.token",
+  "*.accessToken",
+  "*.refreshToken",
+  "*.clientSecret",
+  "*.encryptionKey",
+  "INTEGRATION_ENCRYPTION_KEY",
+  "HUBSPOT_CLIENT_SECRET",
+  "CLERK_SECRET_KEY",
+  "OPENAI_API_KEY",
+  "DATABASE_PASSWORD",
+  "DATABASE_URL",
+] as const;

@@ -1,0 +1,2135 @@
+{
+ "Description": "Skout AI dev ECS services (API, AI, Web)",
+ "Resources": {
+  "ClusterEB0386A7": {
+   "Type": "AWS::ECS::Cluster",
+   "Properties": {
+    "ClusterName": "SkoutDev-cluster",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/Cluster/Resource"
+   }
+  },
+  "Alb16C2F182": {
+   "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+   "Properties": {
+    "LoadBalancerAttributes": [
+     {
+      "Key": "deletion_protection.enabled",
+      "Value": "false"
+     }
+    ],
+    "Name": "SkoutDev-alb",
+    "Scheme": "internet-facing",
+    "SecurityGroups": [
+     {
+      "Fn::GetAtt": [
+       "AlbSecurityGroup580F65A6",
+       "GroupId"
+      ]
+     }
+    ],
+    "Subnets": [
+     {
+      "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPublicSubnet1Subnet5C2D37C4FFA2B456"
+     },
+     {
+      "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPublicSubnet2Subnet691E08A351552740"
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "Type": "application"
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/Alb/Resource"
+   }
+  },
+  "AlbSecurityGroup580F65A6": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Automatically created Security Group for ELB SkoutDevComputeAlbF7D37577",
+    "SecurityGroupIngress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow from anyone on port 80",
+      "FromPort": 80,
+      "IpProtocol": "tcp",
+      "ToPort": 80
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/Alb/SecurityGroup/Resource"
+   }
+  },
+  "AlbSecurityGrouptoSkoutDevComputeApiServiceServiceSg768FA6CC3001BFE267EE": {
+   "Type": "AWS::EC2::SecurityGroupEgress",
+   "Properties": {
+    "Description": "Load balancer to target",
+    "DestinationSecurityGroupId": {
+     "Fn::GetAtt": [
+      "ApiServiceServiceSg66545185",
+      "GroupId"
+     ]
+    },
+    "FromPort": 3001,
+    "GroupId": {
+     "Fn::GetAtt": [
+      "AlbSecurityGroup580F65A6",
+      "GroupId"
+     ]
+    },
+    "IpProtocol": "tcp",
+    "ToPort": 3001
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/Alb/SecurityGroup/to SkoutDevComputeApiServiceServiceSg768FA6CC:3001"
+   }
+  },
+  "AlbSecurityGrouptoSkoutDevComputeWebServiceServiceSg9DD4266B30005163D3D1": {
+   "Type": "AWS::EC2::SecurityGroupEgress",
+   "Properties": {
+    "Description": "Load balancer to target",
+    "DestinationSecurityGroupId": {
+     "Fn::GetAtt": [
+      "WebServiceServiceSg5326922F",
+      "GroupId"
+     ]
+    },
+    "FromPort": 3000,
+    "GroupId": {
+     "Fn::GetAtt": [
+      "AlbSecurityGroup580F65A6",
+      "GroupId"
+     ]
+    },
+    "IpProtocol": "tcp",
+    "ToPort": 3000
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/Alb/SecurityGroup/to SkoutDevComputeWebServiceServiceSg9DD4266B:3000"
+   }
+  },
+  "AlbHttpListener00C8B33E": {
+   "Type": "AWS::ElasticLoadBalancingV2::Listener",
+   "Properties": {
+    "DefaultActions": [
+     {
+      "FixedResponseConfig": {
+       "ContentType": "text/plain",
+       "MessageBody": "Not Found",
+       "StatusCode": "404"
+      },
+      "Type": "fixed-response"
+     }
+    ],
+    "LoadBalancerArn": {
+     "Ref": "Alb16C2F182"
+    },
+    "Port": 80,
+    "Protocol": "HTTP"
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/Alb/HttpListener/Resource"
+   }
+  },
+  "AlbHttpListenerapiRule0FE71457": {
+   "Type": "AWS::ElasticLoadBalancingV2::ListenerRule",
+   "Properties": {
+    "Actions": [
+     {
+      "TargetGroupArn": {
+       "Ref": "ApiServiceTargetGroup8E12D5BC"
+      },
+      "Type": "forward"
+     }
+    ],
+    "Conditions": [
+     {
+      "Field": "path-pattern",
+      "PathPatternConfig": {
+       "Values": [
+        "/api/*"
+       ]
+      }
+     }
+    ],
+    "ListenerArn": {
+     "Ref": "AlbHttpListener00C8B33E"
+    },
+    "Priority": 10
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/Alb/HttpListener/apiRule/Resource"
+   }
+  },
+  "AlbHttpListenerwebRule667A8A25": {
+   "Type": "AWS::ElasticLoadBalancingV2::ListenerRule",
+   "Properties": {
+    "Actions": [
+     {
+      "TargetGroupArn": {
+       "Ref": "WebServiceTargetGroup21394FFE"
+      },
+      "Type": "forward"
+     }
+    ],
+    "Conditions": [
+     {
+      "Field": "path-pattern",
+      "PathPatternConfig": {
+       "Values": [
+        "/*"
+       ]
+      }
+     }
+    ],
+    "ListenerArn": {
+     "Ref": "AlbHttpListener00C8B33E"
+    },
+    "Priority": 100
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/Alb/HttpListener/webRule/Resource"
+   }
+  },
+  "ServiceDiscovery76C640CC": {
+   "Type": "AWS::ServiceDiscovery::PrivateDnsNamespace",
+   "Properties": {
+    "Description": "Skout dev internal service discovery",
+    "Name": "skoutdev.local",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "Vpc": {
+     "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/ServiceDiscovery/Resource"
+   }
+  },
+  "ApiServiceTaskDefTaskRole1014CB34": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/ApiService/TaskDef/TaskRole/Resource"
+   }
+  },
+  "ApiServiceTaskDefTaskRoleDefaultPolicy63C68204": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "s3:Abort*",
+        "s3:DeleteObject*",
+        "s3:GetBucket*",
+        "s3:GetObject*",
+        "s3:List*",
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttStorageExportsBucket1F25C8FCArn8054303F"
+        },
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttStorageScrapeBucketE2932C76ArnD85224CB"
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttStorageExportsBucket1F25C8FCArn8054303F"
+           },
+           "/*"
+          ]
+         ]
+        },
+        {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttStorageScrapeBucketE2932C76ArnD85224CB"
+           },
+           "/*"
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "ApiServiceTaskDefTaskRoleDefaultPolicy63C68204",
+    "Roles": [
+     {
+      "Ref": "ApiServiceTaskDefTaskRole1014CB34"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/ApiService/TaskDef/TaskRole/DefaultPolicy/Resource"
+   }
+  },
+  "ApiServiceTaskDefDF3191FB": {
+   "Type": "AWS::ECS::TaskDefinition",
+   "Properties": {
+    "ContainerDefinitions": [
+     {
+      "Environment": [
+       {
+        "Name": "NODE_ENV",
+        "Value": "production"
+       },
+       {
+        "Name": "PORT",
+        "Value": "3001"
+       },
+       {
+        "Name": "HOST",
+        "Value": "0.0.0.0"
+       },
+       {
+        "Name": "CORS_ORIGIN",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "http://",
+           {
+            "Fn::GetAtt": [
+             "Alb16C2F182",
+             "DNSName"
+            ]
+           }
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "REDIS_URL",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "redis://",
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttRedis04B3B4F3RedisEndpointAddress8458D51B"
+           },
+           ":6379"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "EXPORTS_BUCKET",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefStorageExportsBucket1F25C8FC33F30C42"
+        }
+       },
+       {
+        "Name": "SCRAPE_BUCKET",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefStorageScrapeBucketE2932C763773BB9C"
+        }
+       },
+       {
+        "Name": "AI_SERVICE_URL",
+        "Value": "http://ai.skoutdev.local:8000"
+       },
+       {
+        "Name": "DATABASE_HOST",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointAddress8AB85320"
+        }
+       },
+       {
+        "Name": "DATABASE_PORT",
+        "Value": {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabasePostgres277EF4CBEndpointPortEA4FF89A"
+        }
+       },
+       {
+        "Name": "DATABASE_NAME",
+        "Value": "skout"
+       },
+       {
+        "Name": "DATABASE_USER",
+        "Value": "skout"
+       }
+      ],
+      "Essential": true,
+      "HealthCheck": {
+       "Command": [
+        "CMD-SHELL",
+        "node -e \"fetch('http://127.0.0.1:3001/api/v1/health').then((r)=>process.exit(r.status<400?0:1)).catch(()=>process.exit(1))\""
+       ],
+       "Interval": 30,
+       "Retries": 3,
+       "StartPeriod": 60,
+       "Timeout": 5
+      },
+      "Image": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::Select": [
+           4,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttApiRepoEFA7BA97ArnACFF43BA"
+             }
+            ]
+           }
+          ]
+         },
+         ".dkr.ecr.",
+         {
+          "Fn::Select": [
+           3,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttApiRepoEFA7BA97ArnACFF43BA"
+             }
+            ]
+           }
+          ]
+         },
+         ".",
+         {
+          "Ref": "AWS::URLSuffix"
+         },
+         "/",
+         {
+          "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputRefApiRepoEFA7BA97FC7F6607"
+         },
+         ":dev-cors-74571dd"
+        ]
+       ]
+      },
+      "LogConfiguration": {
+       "LogDriver": "awslogs",
+       "Options": {
+        "awslogs-group": {
+         "Ref": "ApiServiceLogGroup313E31FA"
+        },
+        "awslogs-stream-prefix": "api",
+        "awslogs-region": "us-east-1"
+       }
+      },
+      "Name": "Container",
+      "PortMappings": [
+       {
+        "ContainerPort": 3001,
+        "Protocol": "tcp"
+       }
+      ],
+      "Secrets": [
+       {
+        "Name": "DATABASE_PASSWORD",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+           },
+           ":password::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "CLERK_SECRET_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsClerk3C7EB3C545E9142A"
+           },
+           ":CLERK_SECRET_KEY::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "APOLLO_API_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsApolloE41F3509642E2E3E"
+           },
+           ":APOLLO_API_KEY::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "HUNTER_API_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsHunterC714CAE0B0117957"
+           },
+           ":HUNTER_API_KEY::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "MILLIONVERIFIER_API_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsEnrichmentProviders3B50D3583F71B8A2"
+           },
+           ":MILLIONVERIFIER_API_KEY::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "ZEROBOUNCE_API_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsEnrichmentProviders3B50D3583F71B8A2"
+           },
+           ":ZEROBOUNCE_API_KEY::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "NEVERBOUNCE_API_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsEnrichmentProviders3B50D3583F71B8A2"
+           },
+           ":NEVERBOUNCE_API_KEY::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "PDL_API_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsEnrichmentProviders3B50D3583F71B8A2"
+           },
+           ":PDL_API_KEY::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "REVENUEBASE_API_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsEnrichmentProviders3B50D3583F71B8A2"
+           },
+           ":REVENUEBASE_API_KEY::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "EXPLORIUM_API_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsEnrichmentProviders3B50D3583F71B8A2"
+           },
+           ":EXPLORIUM_API_KEY::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "CORESIGNAL_API_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsEnrichmentProviders3B50D3583F71B8A2"
+           },
+           ":CORESIGNAL_API_KEY::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "DATAGMA_API_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsEnrichmentProviders3B50D3583F71B8A2"
+           },
+           ":DATAGMA_API_KEY::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "CONTACTOUT_API_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsEnrichmentProviders3B50D3583F71B8A2"
+           },
+           ":CONTACTOUT_API_KEY::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "COGNISM_API_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsEnrichmentProviders3B50D3583F71B8A2"
+           },
+           ":COGNISM_API_KEY::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "OPENCORPORATES_API_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsEnrichmentProviders3B50D3583F71B8A2"
+           },
+           ":OPENCORPORATES_API_KEY::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "HUBSPOT_CLIENT_ID",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsHubspotE761A87435D0539B"
+           },
+           ":HUBSPOT_CLIENT_ID::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "HUBSPOT_CLIENT_SECRET",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsHubspotE761A87435D0539B"
+           },
+           ":HUBSPOT_CLIENT_SECRET::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "OPENSEARCH_URL",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsOpenSearchDD0A1CE054DE5BE5"
+           },
+           ":OPENSEARCH_URL::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "OPENSEARCH_USERNAME",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsOpenSearchDD0A1CE054DE5BE5"
+           },
+           ":OPENSEARCH_USERNAME::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "OPENSEARCH_PASSWORD",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsOpenSearchDD0A1CE054DE5BE5"
+           },
+           ":OPENSEARCH_PASSWORD::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "CLICKHOUSE_URL",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsClickHouseB10ADD14C051B586"
+           },
+           ":CLICKHOUSE_URL::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "SENTRY_DSN",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsSentryCB7AAD9CC86ED58F"
+           },
+           ":SENTRY_DSN::"
+          ]
+         ]
+        }
+       },
+       {
+        "Name": "POSTHOG_API_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsPostHog2FD42F1B81AA1FB8"
+           },
+           ":POSTHOG_API_KEY::"
+          ]
+         ]
+        }
+       }
+      ]
+     }
+    ],
+    "Cpu": "256",
+    "ExecutionRoleArn": {
+     "Fn::GetAtt": [
+      "ApiServiceTaskDefExecutionRole43B90DD6",
+      "Arn"
+     ]
+    },
+    "Family": "SkoutDevComputeApiServiceTaskDef7E77EE3D",
+    "Memory": "512",
+    "NetworkMode": "awsvpc",
+    "RequiresCompatibilities": [
+     "FARGATE"
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskRoleArn": {
+     "Fn::GetAtt": [
+      "ApiServiceTaskDefTaskRole1014CB34",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/ApiService/TaskDef/Resource"
+   }
+  },
+  "ApiServiceTaskDefExecutionRole43B90DD6": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/ApiService/TaskDef/ExecutionRole/Resource"
+   }
+  },
+  "ApiServiceTaskDefExecutionRoleDefaultPolicyDCB48050": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttApiRepoEFA7BA97ArnACFF43BA"
+       }
+      },
+      {
+       "Action": "ecr:GetAuthorizationToken",
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "ApiServiceLogGroup313E31FA",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue"
+       ],
+       "Effect": "Allow",
+       "Resource": [
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsApolloE41F3509642E2E3E"
+        },
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsClerk3C7EB3C545E9142A"
+        },
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsClickHouseB10ADD14C051B586"
+        },
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsEnrichmentProviders3B50D3583F71B8A2"
+        },
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsHubspotE761A87435D0539B"
+        },
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsHunterC714CAE0B0117957"
+        },
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsOpenSearchDD0A1CE054DE5BE5"
+        },
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsPostHog2FD42F1B81AA1FB8"
+        },
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsSentryCB7AAD9CC86ED58F"
+        },
+        {
+         "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefDatabaseDbSecret1098DC6EA322F1E6"
+        }
+       ]
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "ApiServiceTaskDefExecutionRoleDefaultPolicyDCB48050",
+    "Roles": [
+     {
+      "Ref": "ApiServiceTaskDefExecutionRole43B90DD6"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/ApiService/TaskDef/ExecutionRole/DefaultPolicy/Resource"
+   }
+  },
+  "ApiServiceLogGroup313E31FA": {
+   "Type": "AWS::Logs::LogGroup",
+   "Properties": {
+    "LogGroupName": "/skout/dev/api",
+    "RetentionInDays": 30,
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/ApiService/LogGroup/Resource"
+   }
+  },
+  "ApiServiceServiceSg66545185": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Skout api ECS",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/ApiService/ServiceSg/Resource"
+   }
+  },
+  "ApiServiceServiceSgfromSkoutDevComputeAlbSecurityGroup1B1F1E1A30015A1FD0C4": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "Description": "Load balancer to target",
+    "FromPort": 3001,
+    "GroupId": {
+     "Fn::GetAtt": [
+      "ApiServiceServiceSg66545185",
+      "GroupId"
+     ]
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "AlbSecurityGroup580F65A6",
+      "GroupId"
+     ]
+    },
+    "ToPort": 3001
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/ApiService/ServiceSg/from SkoutDevComputeAlbSecurityGroup1B1F1E1A:3001"
+   }
+  },
+  "ApiService199661B5": {
+   "Type": "AWS::ECS::Service",
+   "Properties": {
+    "Cluster": {
+     "Ref": "ClusterEB0386A7"
+    },
+    "DeploymentConfiguration": {
+     "Alarms": {
+      "AlarmNames": [],
+      "Enable": false,
+      "Rollback": false
+     },
+     "DeploymentCircuitBreaker": {
+      "Enable": true,
+      "Rollback": true
+     },
+     "MaximumPercent": 200,
+     "MinimumHealthyPercent": 50
+    },
+    "DeploymentController": {
+     "Type": "ECS"
+    },
+    "DesiredCount": 1,
+    "EnableECSManagedTags": false,
+    "HealthCheckGracePeriodSeconds": 120,
+    "LaunchType": "FARGATE",
+    "LoadBalancers": [
+     {
+      "ContainerName": "Container",
+      "ContainerPort": 3001,
+      "TargetGroupArn": {
+       "Ref": "ApiServiceTargetGroup8E12D5BC"
+      }
+     }
+    ],
+    "NetworkConfiguration": {
+     "AwsvpcConfiguration": {
+      "AssignPublicIp": "DISABLED",
+      "SecurityGroups": [
+       {
+        "Fn::GetAtt": [
+         "ApiServiceServiceSg66545185",
+         "GroupId"
+        ]
+       }
+      ],
+      "Subnets": [
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet1Subnet536B997AFD4CC940"
+       },
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet2Subnet3788AAA1380949A3"
+       }
+      ]
+     }
+    },
+    "ServiceName": "api",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskDefinition": {
+     "Ref": "ApiServiceTaskDefDF3191FB"
+    }
+   },
+   "DependsOn": [
+    "AlbHttpListenerapiRule0FE71457",
+    "ApiServiceTaskDefTaskRoleDefaultPolicy63C68204",
+    "ApiServiceTaskDefTaskRole1014CB34"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/ApiService/Service/Service"
+   }
+  },
+  "ApiServiceTargetGroup8E12D5BC": {
+   "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+   "Properties": {
+    "HealthCheckIntervalSeconds": 30,
+    "HealthCheckPath": "/api/v1/health",
+    "Matcher": {
+     "HttpCode": "200"
+    },
+    "Port": 3001,
+    "Protocol": "HTTP",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TargetGroupAttributes": [
+     {
+      "Key": "stickiness.enabled",
+      "Value": "false"
+     }
+    ],
+    "TargetType": "ip",
+    "VpcId": {
+     "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/ApiService/TargetGroup/Resource"
+   }
+  },
+  "AiServiceTaskDefTaskRoleC105A1A9": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/AiService/TaskDef/TaskRole/Resource"
+   }
+  },
+  "AiServiceTaskDef31FCEA8E": {
+   "Type": "AWS::ECS::TaskDefinition",
+   "Properties": {
+    "ContainerDefinitions": [
+     {
+      "Environment": [
+       {
+        "Name": "NODE_ENV",
+        "Value": "production"
+       }
+      ],
+      "Essential": true,
+      "HealthCheck": {
+       "Command": [
+        "CMD-SHELL",
+        "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\""
+       ],
+       "Interval": 30,
+       "Retries": 3,
+       "StartPeriod": 60,
+       "Timeout": 5
+      },
+      "Image": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::Select": [
+           4,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttAiRepo11BD4F80Arn125D0A5B"
+             }
+            ]
+           }
+          ]
+         },
+         ".dkr.ecr.",
+         {
+          "Fn::Select": [
+           3,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttAiRepo11BD4F80Arn125D0A5B"
+             }
+            ]
+           }
+          ]
+         },
+         ".",
+         {
+          "Ref": "AWS::URLSuffix"
+         },
+         "/",
+         {
+          "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputRefAiRepo11BD4F80E7A57D44"
+         },
+         ":dev-cors-74571dd"
+        ]
+       ]
+      },
+      "LogConfiguration": {
+       "LogDriver": "awslogs",
+       "Options": {
+        "awslogs-group": {
+         "Ref": "AiServiceLogGroupF7EC7410"
+        },
+        "awslogs-stream-prefix": "ai",
+        "awslogs-region": "us-east-1"
+       }
+      },
+      "Name": "Container",
+      "PortMappings": [
+       {
+        "ContainerPort": 8000,
+        "Protocol": "tcp"
+       }
+      ],
+      "Secrets": [
+       {
+        "Name": "OPENAI_API_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsOpenAi9C721DDEFB4634E2"
+           },
+           ":OPENAI_API_KEY::"
+          ]
+         ]
+        }
+       }
+      ]
+     }
+    ],
+    "Cpu": "256",
+    "ExecutionRoleArn": {
+     "Fn::GetAtt": [
+      "AiServiceTaskDefExecutionRole626A1B8B",
+      "Arn"
+     ]
+    },
+    "Family": "SkoutDevComputeAiServiceTaskDef53A76ED4",
+    "Memory": "512",
+    "NetworkMode": "awsvpc",
+    "RequiresCompatibilities": [
+     "FARGATE"
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskRoleArn": {
+     "Fn::GetAtt": [
+      "AiServiceTaskDefTaskRoleC105A1A9",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/AiService/TaskDef/Resource"
+   }
+  },
+  "AiServiceTaskDefExecutionRole626A1B8B": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/AiService/TaskDef/ExecutionRole/Resource"
+   }
+  },
+  "AiServiceTaskDefExecutionRoleDefaultPolicyC398D548": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttAiRepo11BD4F80Arn125D0A5B"
+       }
+      },
+      {
+       "Action": "ecr:GetAuthorizationToken",
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "AiServiceLogGroupF7EC7410",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsOpenAi9C721DDEFB4634E2"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "AiServiceTaskDefExecutionRoleDefaultPolicyC398D548",
+    "Roles": [
+     {
+      "Ref": "AiServiceTaskDefExecutionRole626A1B8B"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/AiService/TaskDef/ExecutionRole/DefaultPolicy/Resource"
+   }
+  },
+  "AiServiceLogGroupF7EC7410": {
+   "Type": "AWS::Logs::LogGroup",
+   "Properties": {
+    "LogGroupName": "/skout/dev/ai",
+    "RetentionInDays": 30,
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/AiService/LogGroup/Resource"
+   }
+  },
+  "AiServiceServiceSg75DF0652": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Skout ai ECS",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/AiService/ServiceSg/Resource"
+   }
+  },
+  "AiServiceServiceSgfromSkoutDevComputeApiServiceServiceSg768FA6CC8000CEB2D277": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "Description": "from SkoutDevComputeApiServiceServiceSg768FA6CC:8000",
+    "FromPort": 8000,
+    "GroupId": {
+     "Fn::GetAtt": [
+      "AiServiceServiceSg75DF0652",
+      "GroupId"
+     ]
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "ApiServiceServiceSg66545185",
+      "GroupId"
+     ]
+    },
+    "ToPort": 8000
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/AiService/ServiceSg/from SkoutDevComputeApiServiceServiceSg768FA6CC:8000"
+   }
+  },
+  "AiServiceAAA95A7F": {
+   "Type": "AWS::ECS::Service",
+   "Properties": {
+    "Cluster": {
+     "Ref": "ClusterEB0386A7"
+    },
+    "DeploymentConfiguration": {
+     "Alarms": {
+      "AlarmNames": [],
+      "Enable": false,
+      "Rollback": false
+     },
+     "DeploymentCircuitBreaker": {
+      "Enable": true,
+      "Rollback": true
+     },
+     "MaximumPercent": 200,
+     "MinimumHealthyPercent": 50
+    },
+    "DeploymentController": {
+     "Type": "ECS"
+    },
+    "DesiredCount": 1,
+    "EnableECSManagedTags": false,
+    "LaunchType": "FARGATE",
+    "NetworkConfiguration": {
+     "AwsvpcConfiguration": {
+      "AssignPublicIp": "DISABLED",
+      "SecurityGroups": [
+       {
+        "Fn::GetAtt": [
+         "AiServiceServiceSg75DF0652",
+         "GroupId"
+        ]
+       }
+      ],
+      "Subnets": [
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet1Subnet536B997AFD4CC940"
+       },
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet2Subnet3788AAA1380949A3"
+       }
+      ]
+     }
+    },
+    "ServiceName": "ai",
+    "ServiceRegistries": [
+     {
+      "RegistryArn": {
+       "Fn::GetAtt": [
+        "AiServiceCloudmapService14FACED7",
+        "Arn"
+       ]
+      }
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskDefinition": {
+     "Ref": "AiServiceTaskDef31FCEA8E"
+    }
+   },
+   "DependsOn": [
+    "AiServiceTaskDefTaskRoleC105A1A9"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/AiService/Service/Service"
+   }
+  },
+  "AiServiceCloudmapService14FACED7": {
+   "Type": "AWS::ServiceDiscovery::Service",
+   "Properties": {
+    "DnsConfig": {
+     "DnsRecords": [
+      {
+       "TTL": 60,
+       "Type": "A"
+      }
+     ],
+     "NamespaceId": {
+      "Fn::GetAtt": [
+       "ServiceDiscovery76C640CC",
+       "Id"
+      ]
+     },
+     "RoutingPolicy": "MULTIVALUE"
+    },
+    "HealthCheckCustomConfig": {
+     "FailureThreshold": 1
+    },
+    "Name": "ai",
+    "NamespaceId": {
+     "Fn::GetAtt": [
+      "ServiceDiscovery76C640CC",
+      "Id"
+     ]
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "DependsOn": [
+    "AiServiceTaskDefTaskRoleC105A1A9"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/AiService/Service/CloudmapService/Resource"
+   }
+  },
+  "WebServiceTaskDefTaskRole39B734D2": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/WebService/TaskDef/TaskRole/Resource"
+   }
+  },
+  "WebServiceTaskDef0DAE0F9A": {
+   "Type": "AWS::ECS::TaskDefinition",
+   "Properties": {
+    "ContainerDefinitions": [
+     {
+      "Environment": [
+       {
+        "Name": "NODE_ENV",
+        "Value": "production"
+       },
+       {
+        "Name": "NEXT_PUBLIC_API_URL",
+        "Value": {
+         "Fn::Join": [
+          "",
+          [
+           "http://",
+           {
+            "Fn::GetAtt": [
+             "Alb16C2F182",
+             "DNSName"
+            ]
+           }
+          ]
+         ]
+        }
+       }
+      ],
+      "Essential": true,
+      "Image": {
+       "Fn::Join": [
+        "",
+        [
+         {
+          "Fn::Select": [
+           4,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttWebRepo9D56C0A3ArnD23AE5E7"
+             }
+            ]
+           }
+          ]
+         },
+         ".dkr.ecr.",
+         {
+          "Fn::Select": [
+           3,
+           {
+            "Fn::Split": [
+             ":",
+             {
+              "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttWebRepo9D56C0A3ArnD23AE5E7"
+             }
+            ]
+           }
+          ]
+         },
+         ".",
+         {
+          "Ref": "AWS::URLSuffix"
+         },
+         "/",
+         {
+          "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputRefWebRepo9D56C0A3B9D0FCB6"
+         },
+         ":dev-cors-74571dd"
+        ]
+       ]
+      },
+      "LogConfiguration": {
+       "LogDriver": "awslogs",
+       "Options": {
+        "awslogs-group": {
+         "Ref": "WebServiceLogGroup6F16EA2A"
+        },
+        "awslogs-stream-prefix": "web",
+        "awslogs-region": "us-east-1"
+       }
+      },
+      "Name": "Container",
+      "PortMappings": [
+       {
+        "ContainerPort": 3000,
+        "Protocol": "tcp"
+       }
+      ],
+      "Secrets": [
+       {
+        "Name": "CLERK_PUBLISHABLE_KEY",
+        "ValueFrom": {
+         "Fn::Join": [
+          "",
+          [
+           {
+            "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsClerk3C7EB3C545E9142A"
+           },
+           ":CLERK_PUBLISHABLE_KEY::"
+          ]
+         ]
+        }
+       }
+      ]
+     }
+    ],
+    "Cpu": "256",
+    "ExecutionRoleArn": {
+     "Fn::GetAtt": [
+      "WebServiceTaskDefExecutionRole9E63B6B2",
+      "Arn"
+     ]
+    },
+    "Family": "SkoutDevComputeWebServiceTaskDef05EB0C81",
+    "Memory": "512",
+    "NetworkMode": "awsvpc",
+    "RequiresCompatibilities": [
+     "FARGATE"
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskRoleArn": {
+     "Fn::GetAtt": [
+      "WebServiceTaskDefTaskRole39B734D2",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/WebService/TaskDef/Resource"
+   }
+  },
+  "WebServiceTaskDefExecutionRole9E63B6B2": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/WebService/TaskDef/ExecutionRole/Resource"
+   }
+  },
+  "WebServiceTaskDefExecutionRoleDefaultPolicyF65F7670": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "SkoutDev-Registry:ExportsOutputFnGetAttWebRepo9D56C0A3ArnD23AE5E7"
+       }
+      },
+      {
+       "Action": "ecr:GetAuthorizationToken",
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "WebServiceLogGroup6F16EA2A",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::ImportValue": "SkoutDev-Data:ExportsOutputRefAppSecretsClerk3C7EB3C545E9142A"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "WebServiceTaskDefExecutionRoleDefaultPolicyF65F7670",
+    "Roles": [
+     {
+      "Ref": "WebServiceTaskDefExecutionRole9E63B6B2"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/WebService/TaskDef/ExecutionRole/DefaultPolicy/Resource"
+   }
+  },
+  "WebServiceLogGroup6F16EA2A": {
+   "Type": "AWS::Logs::LogGroup",
+   "Properties": {
+    "LogGroupName": "/skout/dev/web",
+    "RetentionInDays": 30,
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ]
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/WebService/LogGroup/Resource"
+   }
+  },
+  "WebServiceServiceSg5326922F": {
+   "Type": "AWS::EC2::SecurityGroup",
+   "Properties": {
+    "GroupDescription": "Skout web ECS",
+    "SecurityGroupEgress": [
+     {
+      "CidrIp": "0.0.0.0/0",
+      "Description": "Allow all outbound traffic by default",
+      "IpProtocol": "-1"
+     }
+    ],
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "VpcId": {
+     "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/WebService/ServiceSg/Resource"
+   }
+  },
+  "WebServiceServiceSgfromSkoutDevComputeAlbSecurityGroup1B1F1E1A3000EAB86FBB": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "Description": "Load balancer to target",
+    "FromPort": 3000,
+    "GroupId": {
+     "Fn::GetAtt": [
+      "WebServiceServiceSg5326922F",
+      "GroupId"
+     ]
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "AlbSecurityGroup580F65A6",
+      "GroupId"
+     ]
+    },
+    "ToPort": 3000
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/WebService/ServiceSg/from SkoutDevComputeAlbSecurityGroup1B1F1E1A:3000"
+   }
+  },
+  "WebService5EA589E6": {
+   "Type": "AWS::ECS::Service",
+   "Properties": {
+    "Cluster": {
+     "Ref": "ClusterEB0386A7"
+    },
+    "DeploymentConfiguration": {
+     "Alarms": {
+      "AlarmNames": [],
+      "Enable": false,
+      "Rollback": false
+     },
+     "DeploymentCircuitBreaker": {
+      "Enable": true,
+      "Rollback": true
+     },
+     "MaximumPercent": 200,
+     "MinimumHealthyPercent": 50
+    },
+    "DeploymentController": {
+     "Type": "ECS"
+    },
+    "DesiredCount": 1,
+    "EnableECSManagedTags": false,
+    "HealthCheckGracePeriodSeconds": 120,
+    "LaunchType": "FARGATE",
+    "LoadBalancers": [
+     {
+      "ContainerName": "Container",
+      "ContainerPort": 3000,
+      "TargetGroupArn": {
+       "Ref": "WebServiceTargetGroup21394FFE"
+      }
+     }
+    ],
+    "NetworkConfiguration": {
+     "AwsvpcConfiguration": {
+      "AssignPublicIp": "DISABLED",
+      "SecurityGroups": [
+       {
+        "Fn::GetAtt": [
+         "WebServiceServiceSg5326922F",
+         "GroupId"
+        ]
+       }
+      ],
+      "Subnets": [
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet1Subnet536B997AFD4CC940"
+       },
+       {
+        "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpcPrivateSubnet2Subnet3788AAA1380949A3"
+       }
+      ]
+     }
+    },
+    "ServiceName": "web",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TaskDefinition": {
+     "Ref": "WebServiceTaskDef0DAE0F9A"
+    }
+   },
+   "DependsOn": [
+    "AlbHttpListenerwebRule667A8A25",
+    "WebServiceTaskDefTaskRole39B734D2"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/WebService/Service/Service"
+   }
+  },
+  "WebServiceTargetGroup21394FFE": {
+   "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+   "Properties": {
+    "HealthCheckIntervalSeconds": 30,
+    "HealthCheckPath": "/",
+    "Matcher": {
+     "HttpCode": "200-399"
+    },
+    "Port": 3000,
+    "Protocol": "HTTP",
+    "Tags": [
+     {
+      "Key": "skout:environment",
+      "Value": "dev"
+     }
+    ],
+    "TargetGroupAttributes": [
+     {
+      "Key": "stickiness.enabled",
+      "Value": "false"
+     }
+    ],
+    "TargetType": "ip",
+    "VpcId": {
+     "Fn::ImportValue": "SkoutDev-Network:ExportsOutputRefVpc8378EB38272D6E3A"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/WebService/TargetGroup/Resource"
+   }
+  },
+  "ApiToDbIngress": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 5432,
+    "GroupId": {
+     "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttDatabaseDbSg4E409684GroupIdD2249FED"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "ApiServiceServiceSg66545185",
+      "GroupId"
+     ]
+    },
+    "ToPort": 5432
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/ApiToDbIngress"
+   }
+  },
+  "ApiToRedisIngress": {
+   "Type": "AWS::EC2::SecurityGroupIngress",
+   "Properties": {
+    "FromPort": 6379,
+    "GroupId": {
+     "Fn::ImportValue": "SkoutDev-Data:ExportsOutputFnGetAttRedisRedisSg2F12D8B8GroupId19AE2A5D"
+    },
+    "IpProtocol": "tcp",
+    "SourceSecurityGroupId": {
+     "Fn::GetAtt": [
+      "ApiServiceServiceSg66545185",
+      "GroupId"
+     ]
+    },
+    "ToPort": 6379
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/ApiToRedisIngress"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/31QXW/CMAz8LbynGVSbtNcNtmkS2hDwPpnUVIaQVHFShKL896kfVN2G9uS789myL5f5w6OcTuDMmSqOmaadjBsP6ijgzF8RFcs414E9OjHfmyt8BVeCxy3wcYF7MuTJmsbwW7HGAxl0I62f3aCrSWEz1MMkUAN7UtpCsQMNRpEp61zGp6rSpKAZX1oontted9EPPvYRezS954pv9NdB49jT8pFvC65E/+ZsqLr/BpoEqlzGDargyF8Gy//CS+mQ+Y/8blo9Ce6yKIiVrdFdZFw5qsHjwvAHnJAr6EK7Jd/KlOAk49p2X7Z1ZTWpS7ujRUloW7KMS1sON19xSg37DL4KPgljC5QHvqvzezmbyenkwESZC8bTCeW6q98XqL7SVAIAAA=="
+   },
+   "Metadata": {
+    "aws:cdk:path": "SkoutDev-Compute/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "LoadBalancerDns": {
+   "Value": {
+    "Fn::GetAtt": [
+     "Alb16C2F182",
+     "DNSName"
+    ]
+   },
+   "Export": {
+    "Name": "SkoutDev-AlbDns"
+   }
+  },
+  "ApiUrl": {
+   "Value": {
+    "Fn::Join": [
+     "",
+     [
+      "http://",
+      {
+       "Fn::GetAtt": [
+        "Alb16C2F182",
+        "DNSName"
+       ]
+      },
+      "/api/v1"
+     ]
+    ]
+   },
+   "Export": {
+    "Name": "SkoutDev-ApiUrl"
+   }
+  },
+  "WebUrl": {
+   "Value": {
+    "Fn::Join": [
+     "",
+     [
+      "http://",
+      {
+       "Fn::GetAtt": [
+        "Alb16C2F182",
+        "DNSName"
+       ]
+      }
+     ]
+    ]
+   },
+   "Export": {
+    "Name": "SkoutDev-WebUrl"
+   }
+  },
+  "ExportsOutputFnGetAttAlb16C2F182LoadBalancerFullName73BA17C5": {
+   "Value": {
+    "Fn::GetAtt": [
+     "Alb16C2F182",
+     "LoadBalancerFullName"
+    ]
+   },
+   "Export": {
+    "Name": "SkoutDev-Compute:ExportsOutputFnGetAttAlb16C2F182LoadBalancerFullName73BA17C5"
+   }
+  },
+  "ExportsOutputRefClusterEB0386A796A0E3FE": {
+   "Value": {
+    "Ref": "ClusterEB0386A7"
+   },
+   "Export": {
+    "Name": "SkoutDev-Compute:ExportsOutputRefClusterEB0386A796A0E3FE"
+   }
+  },
+  "ExportsOutputFnGetAttApiService199661B5Name6719CF36": {
+   "Value": {
+    "Fn::GetAtt": [
+     "ApiService199661B5",
+     "Name"
+    ]
+   },
+   "Export": {
+    "Name": "SkoutDev-Compute:ExportsOutputFnGetAttApiService199661B5Name6719CF36"
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}

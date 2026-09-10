@@ -1,0 +1,330 @@
+erDiagram
+    opensearch_prospects_index {
+        string prospect_id PK
+        string company_id
+        string fullName
+        string title
+        string seniority
+        string country
+        string industry
+        string companyDomain
+        int employeeCount
+        string keywords
+    }
+
+    workspaces {
+        uuid id PK
+        string name
+        string slug UK
+        datetime created_at
+        datetime updated_at
+    }
+
+    users {
+        uuid id PK
+        string email UK
+        string full_name
+        datetime created_at
+        datetime updated_at
+    }
+
+    workspace_members {
+        uuid workspace_id PK
+        uuid user_id PK
+        string role
+        datetime joined_at
+    }
+
+    credit_balances {
+        uuid workspace_id PK
+        int balance
+        datetime updated_at
+    }
+
+    credit_transactions {
+        uuid id PK
+        uuid workspace_id FK
+        int amount
+        string action
+        string reference_id
+        datetime created_at
+    }
+
+    workspace_icp {
+        uuid workspace_id PK
+        string config
+        int version
+        datetime updated_at
+    }
+
+    prospect_activations {
+        uuid id PK
+        uuid workspace_id FK
+        string prospect_id
+        string company_id
+        string snapshot
+        int record_version
+        datetime activated_at
+        datetime updated_at
+    }
+
+    lists {
+        uuid id PK
+        uuid workspace_id FK
+        string name
+        datetime created_at
+        datetime updated_at
+    }
+
+    list_members {
+        uuid list_id PK
+        string prospect_id PK
+        datetime added_at
+    }
+
+    prospect_scores {
+        uuid workspace_id PK
+        string prospect_id PK
+        int score
+        string reasoning
+        string priority
+        datetime scored_at
+    }
+
+    enrichment_jobs {
+        uuid id PK
+        uuid workspace_id FK
+        uuid activation_id FK
+        uuid async_job_id FK
+        string prospect_id
+        string status
+        string trigger
+        string fields_requested
+        string error_message
+        datetime queued_at
+        datetime started_at
+        datetime completed_at
+    }
+
+    enrichment_attempts {
+        uuid id PK
+        uuid enrichment_job_id FK
+        int attempt_order
+        string provider
+        string operation
+        string status
+        string request_input
+        string response_output
+        int latency_ms
+        datetime attempted_at
+        datetime completed_at
+    }
+
+    enrichment_results {
+        uuid id PK
+        uuid enrichment_job_id FK
+        uuid workspace_id FK
+        string prospect_id
+        string field_name
+        string field_value
+        string field_value_json
+        string source_provider
+        float confidence
+        string validation_status
+        bool is_primary
+        datetime created_at
+    }
+
+    async_jobs {
+        uuid id PK
+        uuid workspace_id FK
+        string job_type
+        string status
+        string entity_type
+        string entity_id
+        string payload
+        string result
+        string error_message
+        string bullmq_job_id
+        datetime queued_at
+        datetime started_at
+        datetime completed_at
+    }
+
+    sequences {
+        uuid id PK
+        uuid workspace_id FK
+        string name
+        string status
+        datetime created_at
+        datetime updated_at
+    }
+
+    sequence_steps {
+        uuid id PK
+        uuid sequence_id FK
+        int step_order
+        string step_type
+        int delay_days
+        string subject
+        string body_template
+        datetime created_at
+    }
+
+    sequence_enrollments {
+        uuid id PK
+        uuid workspace_id FK
+        uuid sequence_id FK
+        string prospect_id
+        uuid list_id FK
+        string status
+        datetime enrolled_at
+        datetime completed_at
+    }
+
+    sequence_enrollment_steps {
+        uuid id PK
+        uuid enrollment_id FK
+        uuid step_id FK
+        string status
+        datetime scheduled_at
+        datetime executed_at
+    }
+
+    sending_domains {
+        uuid id PK
+        uuid workspace_id FK
+        string domain
+        string status
+        string dns_records
+        datetime verified_at
+        datetime created_at
+        datetime updated_at
+    }
+
+    inboxes {
+        uuid id PK
+        uuid workspace_id FK
+        uuid sending_domain_id FK
+        string email_address
+        string display_name
+        string provider
+        string warmup_status
+        int daily_send_limit
+        string status
+        datetime created_at
+        datetime updated_at
+    }
+
+    inbox_threads {
+        uuid id PK
+        uuid workspace_id FK
+        uuid inbox_id FK
+        string prospect_id
+        string subject
+        string status
+        datetime last_message_at
+        datetime created_at
+        datetime updated_at
+    }
+
+    inbox_messages {
+        uuid id PK
+        uuid thread_id FK
+        string direction
+        string from_address
+        string to_address
+        string subject
+        string body_text
+        string body_html
+        string external_id
+        datetime sent_at
+    }
+
+    ai_drafts {
+        uuid id PK
+        uuid workspace_id FK
+        string prospect_id
+        uuid thread_id FK
+        uuid enrollment_step_id FK
+        string subject
+        string body
+        string status
+        string model
+        float confidence_score
+        datetime created_at
+        datetime reviewed_at
+        uuid reviewed_by FK
+    }
+
+    crm_connections {
+        uuid id PK
+        uuid workspace_id FK
+        string provider
+        string status
+        string external_account_id
+        string settings
+        string credentials_ref
+        datetime token_expires_at
+        datetime connected_at
+        datetime updated_at
+    }
+
+    webhook_endpoints {
+        uuid id PK
+        uuid workspace_id FK
+        string url
+        string secret_hash
+        string events
+        string status
+        datetime created_at
+        datetime updated_at
+    }
+
+    webhook_deliveries {
+        uuid id PK
+        uuid endpoint_id FK
+        string event_type
+        string payload
+        string status
+        int attempts
+        int response_status
+        datetime last_attempt_at
+        datetime created_at
+    }
+
+    workspaces ||--o{ workspace_members : has
+    users ||--o{ workspace_members : belongs_to
+    workspaces ||--|| credit_balances : has
+    workspaces ||--o{ credit_transactions : logs
+    workspaces ||--|| workspace_icp : defines
+    workspaces ||--o{ prospect_activations : activates
+    workspaces ||--o{ lists : owns
+    lists ||--o{ list_members : contains
+    workspaces ||--o{ prospect_scores : scores
+    prospect_activations ||..o| opensearch_prospects_index : prospect_id
+    list_members ||..o| opensearch_prospects_index : prospect_id
+    prospect_activations ||--o{ enrichment_jobs : enriches
+    workspaces ||--o{ enrichment_jobs : owns
+    async_jobs ||--o| enrichment_jobs : queues
+    enrichment_jobs ||--o{ enrichment_attempts : waterfall
+    enrichment_jobs ||--o{ enrichment_results : produces
+    workspaces ||--o{ async_jobs : queues
+    workspaces ||--o{ sequences : owns
+    sequences ||--o{ sequence_steps : has
+    sequences ||--o{ sequence_enrollments : enrolls
+    lists ||--o{ sequence_enrollments : source
+    sequence_enrollments ||--o{ sequence_enrollment_steps : tracks
+    sequence_steps ||--o{ sequence_enrollment_steps : executes
+    workspaces ||--o{ sending_domains : owns
+    workspaces ||--o{ inboxes : owns
+    sending_domains ||--o{ inboxes : sends_from
+    inboxes ||--o{ inbox_threads : has
+    inbox_threads ||--o{ inbox_messages : contains
+    workspaces ||--o{ ai_drafts : queues
+    inbox_threads ||--o{ ai_drafts : reply_context
+    sequence_enrollment_steps ||--o{ ai_drafts : step_context
+    users ||--o{ ai_drafts : reviews
+    workspaces ||--o{ crm_connections : integrates
+    workspaces ||--o{ webhook_endpoints : subscribes
+    webhook_endpoints ||--o{ webhook_deliveries : delivers

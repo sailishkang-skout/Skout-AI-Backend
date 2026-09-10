@@ -1,0 +1,21 @@
+{
+  "version": "54.0.0",
+  "files": {
+    "ec9bb77c33c19ecf2a1f709ed4bb914c39067913f89f5e88bfad8e1881cbf39d": {
+      "displayName": "SkoutDev-WarmupTool Template",
+      "source": {
+        "path": "SkoutDev-WarmupTool.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "119408973331-us-east-1-047ba364": {
+          "bucketName": "cdk-hnb659fds-assets-119408973331-us-east-1",
+          "objectKey": "ec9bb77c33c19ecf2a1f709ed4bb914c39067913f89f5e88bfad8e1881cbf39d.json",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::119408973331:role/cdk-hnb659fds-file-publishing-role-119408973331-us-east-1"
+        }
+      }
+    }
+  },
+  "dockerImages": {}
+}

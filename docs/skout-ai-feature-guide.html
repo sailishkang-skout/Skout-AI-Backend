@@ -1,0 +1,831 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Skout AI — Complete Feature, UI &amp; Architecture Guide</title>
+<style>
+  :root {
+    --blue: #2563eb;
+    --ink: #0f172a;
+    --muted: #475569;
+    --line: #e2e8f0;
+    --bg-soft: #f8fafc;
+    --green: #16a34a;
+    --amber: #d97706;
+    --red: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    line-height: 1.62;
+    margin: 0;
+    background: #fff;
+  }
+  .page {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 56px 40px 90px;
+  }
+  header.cover {
+    border-bottom: 3px solid var(--blue);
+    padding-bottom: 24px;
+    margin-bottom: 36px;
+  }
+  header.cover .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: .12em;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--blue);
+  }
+  header.cover h1 {
+    font-size: 33px;
+    margin: 8px 0 6px;
+    line-height: 1.2;
+  }
+  header.cover p.sub { color: var(--muted); margin: 0; font-size: 15px; }
+  header.cover .meta { margin-top: 14px; font-size: 13px; color: var(--muted); }
+  h2 {
+    font-size: 23px;
+    margin: 50px 0 14px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--line);
+    scroll-margin-top: 20px;
+  }
+  h3 { font-size: 18px; margin: 30px 0 10px; color: #1e293b; scroll-margin-top: 20px; }
+  h4 { font-size: 13px; margin: 18px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  p { margin: 10px 0; }
+  a { color: var(--blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 12.5px;
+    color: #b91c1c;
+  }
+  pre {
+    background: #0b1220;
+    color: #e2e8f0;
+    border-radius: 10px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-size: 12.5px;
+    line-height: 1.5;
+    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  pre code { background: none; border: none; color: inherit; padding: 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 14px 0;
+    font-size: 13px;
+  }
+  th, td {
+    border: 1px solid var(--line);
+    padding: 7px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: var(--bg-soft); font-weight: 700; }
+  tbody tr:nth-child(even) { background: #fcfdfe; }
+  blockquote {
+    border-left: 4px solid var(--blue);
+    background: var(--bg-soft);
+    margin: 16px 0;
+    padding: 10px 16px;
+    color: var(--muted);
+    border-radius: 0 8px 8px 0;
+  }
+  ol, ul { padding-left: 22px; }
+  li { margin: 4px 0; }
+  .toc {
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px 26px;
+    columns: 2;
+    column-gap: 40px;
+  }
+  .toc ol { margin: 6px 0; }
+  .toc a { color: var(--ink); }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+  .done { background: #dcfce7; color: var(--green); }
+  .partial { background: #fef3c7; color: var(--amber); }
+  .planned { background: #fee2e2; color: var(--red); }
+  .tag { display:inline-block; font-size:11px; font-weight:700; padding:1px 7px; border-radius:6px; border:1px solid var(--line); background:#fff; color:var(--muted); margin-right:4px; }
+  .tag.free { color: var(--green); border-color:#bbf7d0; background:#f0fdf4; }
+  .tag.paid { color: var(--red); border-color:#fecaca; background:#fef2f2; }
+  .callout {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px 20px;
+    background: var(--bg-soft);
+    margin: 16px 0;
+  }
+  .feature {
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 6px 24px 18px;
+    margin: 22px 0;
+    background:#fff;
+  }
+  .feature h3 { border-bottom: 1px dashed var(--line); padding-bottom: 8px; }
+  hr { border: none; border-top: 1px solid var(--line); margin: 40px 0; }
+  .small { font-size: 12.5px; color: var(--muted); }
+  .saved { font-size:12.5px; color:var(--muted); background:#f0f9ff; border:1px solid #bae6fd; border-radius:8px; padding:8px 12px; margin-top:10px; }
+  @media print {
+    .page { padding: 0; max-width: none; }
+    .toc { columns: 2; }
+    h2, h3 { page-break-after: avoid; }
+    table, pre, blockquote, .feature { page-break-inside: avoid; }
+    a { color: var(--ink); }
+  }
+  @media (max-width: 700px) { .toc { columns: 1; } }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="cover">
+  <div class="eyebrow">Product · UI · Engineering Reference</div>
+  <h1>Skout AI — Complete Feature, UI &amp; Architecture Guide</h1>
+  <p class="sub">Every feature explained twice: how it works <strong>from the UI</strong> (what the user sees and clicks) and how it works <strong>on the backend</strong> (logic, enrichment waterfall, third-party providers, and how settings cascade).</p>
+  <div class="meta">Audience: product, sales/demo, onboarding, engineering &nbsp;·&nbsp; Last updated: 2026-06-29</div>
+</header>
+
+<nav class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#s1">What Skout AI is</a></li>
+    <li><a href="#s2">Architecture &amp; the two-tier data model</a></li>
+    <li><a href="#s3">How to read this guide</a></li>
+    <li><a href="#s4">Feature catalog (UI + backend)</a>
+      <ol>
+        <li><a href="#f-auth">Sign-in &amp; onboarding</a></li>
+        <li><a href="#f-icp">ICP profile</a></li>
+        <li><a href="#f-dash">Dashboard</a></li>
+        <li><a href="#f-search">Prospect search</a></li>
+        <li><a href="#f-manual">Add prospect (manual)</a></li>
+        <li><a href="#f-activate">Activation</a></li>
+        <li><a href="#f-enrich">Contact enrichment (PAL)</a></li>
+        <li><a href="#f-score">AI lead scoring</a></li>
+        <li><a href="#f-lists">Lists</a></li>
+        <li><a href="#f-smart">Smart lists</a></li>
+        <li><a href="#f-crm">HubSpot CRM</a></li>
+        <li><a href="#f-byok">BYOK integrations</a></li>
+        <li><a href="#f-billing">Credits &amp; billing</a></li>
+        <li><a href="#f-personalize">AI personalization</a></li>
+        <li><a href="#f-scrape">Corpus scrape pipeline</a></li>
+        <li><a href="#f-analytics">Analytics</a></li>
+      </ol>
+    </li>
+    <li><a href="#s5">The enrichment waterfall in depth</a></li>
+    <li><a href="#s6">Third-party provider reference</a></li>
+    <li><a href="#s7">How settings cascade</a></li>
+    <li><a href="#s8">Credit economics</a></li>
+    <li><a href="#s9">End-to-end user journey</a></li>
+    <li><a href="#s10">Future plan / roadmap</a></li>
+    <li><a href="#s11">Appendix: data &amp; env reference</a></li>
+  </ol>
+</nav>
+
+<h2 id="s1">1. What Skout AI is</h2>
+<p>Skout AI is a <strong>GTM (go-to-market) operating system</strong>. In one workflow a user can: find prospects in a large corpus, qualify them with AI against their Ideal Customer Profile (ICP), enrich contact data (email, firmographics, phone) on demand, organize prospects into lists, and push them to a CRM.</p>
+<p>The core thesis: <strong>company data is a commodity; the value is the intelligence layer.</strong> Skout builds a cheap, broad prospect corpus itself (the scrape pipeline) and only spends money on paid third-party APIs when a user shows intent (clicks "enrich") or a lead scores high enough to deserve the most expensive data (phone numbers are gated behind a high lead score).</p>
+
+<h4>Tech stack</h4>
+<table>
+  <thead><tr><th>Layer</th><th>Technology</th><th>Where</th></tr></thead>
+  <tbody>
+    <tr><td>Frontend</td><td>Next.js 14 (App Router), React Query, Clerk, Tailwind</td><td><code>Skout Ai Frontend</code></td></tr>
+    <tr><td>API</td><td>Fastify (Node), Drizzle ORM, Zod</td><td><code>apps/api</code></td></tr>
+    <tr><td>AI service</td><td>Python FastAPI, LiteLLM &rarr; OpenAI (<code>gpt-4o-mini</code>)</td><td><code>apps/ai</code></td></tr>
+    <tr><td>Enrichment engine</td><td>The "PAL" waterfall package</td><td><code>packages/pal</code></td></tr>
+    <tr><td>Search</td><td>OpenSearch (index <code>prospects</code>)</td><td><code>packages/opensearch</code></td></tr>
+    <tr><td>Database</td><td>PostgreSQL</td><td><code>packages/db</code></td></tr>
+    <tr><td>Cache / queues</td><td>Redis + BullMQ</td><td>—</td></tr>
+    <tr><td>Object storage</td><td>S3 (scraper raw/clean/quarantine artifacts)</td><td><code>workers/scrapers</code></td></tr>
+    <tr><td>Auth</td><td>Clerk (Google SSO)</td><td>—</td></tr>
+    <tr><td>CRM</td><td>HubSpot OAuth</td><td>—</td></tr>
+    <tr><td>Billing</td><td>Razorpay (INR)</td><td>—</td></tr>
+  </tbody>
+</table>
+
+<h2 id="s2">2. Architecture &amp; the two-tier data model</h2>
+<p>Everything in Skout flows through two tiers. Understanding this one picture explains every feature, every credit charge, and every setting.</p>
+<pre><code>TIER 1 — CORPUS (global, cheap, read-only)   TIER 2 — WORKSPACE (per-tenant, owned, paid)
+┌─────────────────────────────┐              ┌──────────────────────────────────┐
+│ OpenSearch "prospects" index │   activate   │ PostgreSQL (scoped by workspace)  │
+│  • scraped records           │  ─────────▶  │  • prospect_activations (snapshot)│
+│  • manual entries            │   (free)     │  • lists / list_members           │
+│  • shared by ALL workspaces  │              │  • enrichment_jobs/results/attempts│
+│  • powers SEARCH             │              │  • prospect_scores                │
+│  ~5,300 demo rows if no OS   │              │  • icp / credits / crm / byok     │
+└─────────────────────────────┘              └──────────────────────────────────┘</code></pre>
+<table>
+  <thead><tr><th>Concept</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Corpus</strong></td><td>Global pool of prospects in OpenSearch. Read-only via search. No single workspace owns it. If <code>OPENSEARCH_URL</code> is unset, a ~5,300-row in-memory <em>demo corpus</em> is used instead.</td></tr>
+    <tr><td><strong>Activation</strong></td><td>The moment a prospect is copied into a workspace (<code>prospect_activations</code>). <strong>Free, no external spend.</strong> Creates a JSON <code>snapshot</code> the workspace owns and can enrich/score.</td></tr>
+    <tr><td><strong>Enrichment</strong></td><td>On-demand <strong>paid</strong> API calls (the PAL waterfall) that fill in email / firmographics / phone on an activated prospect.</td></tr>
+    <tr><td><strong>Scoring</strong></td><td>AI qualification of a prospect against the workspace ICP (0–100), with a band and outreach-readiness label.</td></tr>
+  </tbody>
+</table>
+<blockquote>Rule of thumb: <strong>search reads the global corpus; everything you "own" lives in Postgres as an activation.</strong> Paid actions only happen on activated prospects in your workspace.</blockquote>
+
+<h2 id="s3">3. How to read this guide</h2>
+<p>Section 4 is the heart of the doc. Each feature is documented from two angles:</p>
+<ul>
+  <li><strong>From the UI</strong> — the page route, what the user sees, the buttons they click, and the loading/empty/error states.</li>
+  <li><strong>Backend logic</strong> — the endpoint, the step-by-step flow, the third parties involved, and where the result is saved.</li>
+</ul>
+<p>Cost markers: <span class="tag free">FREE</span> no credits &nbsp; <span class="tag paid">PAID</span> consumes credits. Roadmap markers: <span class="pill done">done</span> <span class="pill partial">partial</span> <span class="pill planned">planned</span>.</p>
+
+<h2 id="s4">4. Feature catalog (UI + backend)</h2>
+
+<!-- ============ AUTH ============ -->
+<div class="feature" id="f-auth">
+<h3>4.1 Sign-in &amp; onboarding <span class="tag free">FREE</span></h3>
+<h4>From the UI</h4>
+<ul>
+  <li><strong>Sign in</strong> at <code>/sign-in</code> with Google (Clerk). Already-signed-in users skip straight to the app.</li>
+  <li>After login the app lands on <code>/auth/callback</code>, which checks your ICP: <strong>no ICP &rarr; the 3-step ICP wizard</strong> (<code>/onboarding/icp</code>); ICP already set &rarr; <code>/dashboard</code>.</li>
+  <li>The <strong>ICP wizard</strong> has a progress bar and 3 steps: (1) Industries, (2) Geo &amp; seniority, (3) Company size. Buttons: <em>Back</em>, <em>Next</em>, and <em>Save &amp; go to dashboard</em>.</li>
+</ul>
+<h4>Backend logic</h4>
+<ol>
+  <li>Clerk issues a JWT; the Fastify auth plugin verifies it on every request.</li>
+  <li><code>resolveOrProvisionUser()</code> resolves the user by <code>clerk_user_id</code> (fast path) or email (back-fill).</li>
+  <li><strong>First-ever login</strong> provisions, in one transaction: a <code>workspaces</code> row, a <code>workspace_members</code> row (role <code>owner</code>), a <code>credit_balances</code> row seeded with <strong>500 starter credits</strong>, and a <code>credit_transactions</code> ledger row (action <code>provision</code>, +500).</li>
+</ol>
+<table>
+  <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>clerk_user_id</code></td><td>SSO identity from Clerk</td></tr>
+    <tr><td><code>workspace_id</code></td><td>Tenant boundary — every other table is scoped by it</td></tr>
+    <tr><td><code>role</code></td><td><code>owner</code> / <code>admin</code> / <code>member</code> (first user = <code>owner</code>); gates the scrape admin pages</td></tr>
+  </tbody>
+</table>
+<div class="saved"><strong>Saved in:</strong> Postgres — <code>users</code>, <code>workspaces</code>, <code>workspace_members</code>, <code>credit_balances</code>, <code>credit_transactions</code>.</div>
+</div>
+
+<!-- ============ ICP ============ -->
+<div class="feature" id="f-icp">
+<h3>4.2 ICP — Ideal Customer Profile <span class="tag free">FREE</span></h3>
+<h4>From the UI</h4>
+<ul>
+  <li>Set up via the <strong>wizard</strong> (<code>/onboarding/icp</code>, stepped) or edit any time at <strong>ICP settings</strong> (<code>/settings/icp</code>, all fields on one page).</li>
+  <li>Wizard fields: Industries (chips), Countries + Seniority (chips), Min/Max employees (number inputs).</li>
+  <li>If you try a credit action (enrich) without an ICP, the app redirects you to <code>/settings/icp?return=…</code> with a "configure your ICP first" message. Search and Score show inline warnings instead of redirecting.</li>
+</ul>
+<h4>Backend logic</h4>
+<p><code>GET /workspace/icp</code> reads the config; <code>PUT /workspace/icp</code> upserts the config JSON and bumps a <code>version</code> integer (first save = 1, each update = +1).</p>
+<table>
+  <thead><tr><th>Field</th><th>Type</th><th>What it drives in scoring</th></tr></thead>
+  <tbody>
+    <tr><td><code>industries[]</code></td><td>string[]</td><td>Industry match (+20 / −10)</td></tr>
+    <tr><td><code>countries[]</code></td><td>string[]</td><td>Geo match (+10 / −5)</td></tr>
+    <tr><td><code>seniorities[]</code></td><td>string[]</td><td>Seniority match (+15)</td></tr>
+    <tr><td><code>titles[]</code></td><td>string[]</td><td>Title keyword fit (+10, LLM/Python path)</td></tr>
+    <tr><td><code>keywords[]</code></td><td>string[]</td><td>Keyword in title (+5, LLM/Python path)</td></tr>
+    <tr><td><code>minEmployees</code> / <code>maxEmployees</code></td><td>number</td><td>Company-size fit (+10 if in range)</td></tr>
+  </tbody>
+</table>
+<p class="small"><strong>Implementation note:</strong> the <code>PUT</code> validation currently accepts only industries, countries, seniorities, min/max employees. <code>titles</code> and <code>keywords</code> are <em>read</em> and <em>used in scoring</em> but can only be set via the per-request override on the score endpoint, not the settings form yet.</p>
+<blockquote><strong>ICP is the single most cross-cutting setting in the product.</strong> It is read by single scoring, list "Score all", smart-list scoring, the enrichment phone gate, and the dashboard "ICP configured" flag. See <a href="#s7">section 7</a>.</blockquote>
+<div class="saved"><strong>Saved in:</strong> Postgres — <code>workspace_icp</code> (<code>config</code> JSONB + <code>version</code>).</div>
+</div>
+
+<!-- ============ DASHBOARD ============ -->
+<div class="feature" id="f-dash">
+<h3>4.3 Dashboard <span class="tag free">FREE</span></h3>
+<h4>From the UI</h4>
+<ul>
+  <li>At <code>/dashboard</code>: an amber <em>"Complete ICP setup"</em> banner if no ICP, then four stat cards — <strong>Credits remaining</strong>, <strong>Lists</strong>, <strong>Prospects in lists</strong>, <strong>Recent jobs</strong> — each linking to the relevant page.</li>
+  <li>A <em>Quick actions</em> card (Search / Lists / Enrichment) and a <em>Recent enrichment</em> card listing the last few jobs (click a row to open it). Skeleton loaders while loading; dismissible error alert with retry.</li>
+</ul>
+<h4>Backend logic</h4>
+<p><code>GET /dashboard/summary</code> aggregates from Postgres: workspace name, credit balance, list count, prospects-in-lists, <code>icpConfigured</code> flag, this-week counts (searches, enriched, exports from the credit ledger), and the last 5 enrichment jobs.</p>
+<div class="saved"><strong>Reads from:</strong> Postgres — <code>credit_balances</code>, <code>lists</code>, <code>workspace_icp</code>, <code>credit_transactions</code>, <code>enrichment_jobs</code>.</div>
+</div>
+
+<!-- ============ SEARCH ============ -->
+<div class="feature" id="f-search">
+<h3>4.4 Prospect search <span class="tag paid">PAID — 1 credit / live page</span></h3>
+<h4>From the UI</h4>
+<ul>
+  <li>At <code>/prospects/search</code>: a search box (placeholder <em>"e.g. VP Sales, fintech, Series B…"</em>, 400ms debounced) plus a left <strong>filter sidebar with ~24 collapsible sections</strong> (person, company, title, location, contact-details, intent, funding, tech, headcount, hiring, etc.). On mobile, filters open in a bottom sheet via a <em>Filters (n)</em> button.</li>
+  <li><strong>Results card</strong>: header shows <em>"Showing X–Y of Z · cached|live"</em>; rows-per-page 10/25/50; <em>Select all / Clear all</em>. Each row has a checkbox, a clickable name (opens a detail side-sheet), badges, and per-row actions.</li>
+  <li><strong>Per-row actions:</strong> <em>Details</em> (slide-over), <em>Score</em> (2 credits, disabled until ICP set; turns into a score badge with reasoning tooltip), <em>Enrich</em> (1 credit; shows spinner, then email + status inline, or a <em>Retry</em> on failure).</li>
+  <li><strong>Bulk add:</strong> selecting rows reveals a bar — pick a list from a dropdown and click <em>Add to list</em>.</li>
+  <li>States: 5 skeleton rows while loading; <em>"No prospects found"</em> empty; dismissible <em>"Search unavailable"</em> error with retry.</li>
+</ul>
+<h4>Backend logic</h4>
+<ol>
+  <li><code>POST /search/prospects</code> builds a cache key: <code>search:{workspaceId}:{sha256}</code> where the hash covers a <strong>stably-serialized</strong> <code>{query, filters, page, pageSize}</code> (filter key order doesn't matter).</li>
+  <li><strong>Cache hit (Redis):</strong> returns instantly with <code>cached: true</code>, <code>creditsUsed: 0</code>. TTL = <code>SEARCH_CACHE_TTL_SECONDS</code> (default 300s). Falls back to an in-process map if Redis is down.</li>
+  <li><strong>Cache miss:</strong> deduct <code>SEARCH_CREDIT_COST</code> (default 1) &rarr; build an OpenSearch <code>bool</code> query (free-text <code>multi_match</code> on name/title/company/industry in <code>must</code>; all structured filters in <code>filter</code>; sort by <code>updatedAt desc</code>) &rarr; cache the page.</li>
+  <li>If <code>OPENSEARCH_URL</code> is unset or OpenSearch errors, it transparently falls back to the <strong>demo corpus</strong>.</li>
+</ol>
+<p><strong>Dedupe &amp; pagination:</strong> <code>excludeDuplicates</code> and <code>maxPerCompany</code> are <em>post-processing</em> filters. When either is on, search scans OpenSearch in batches (up to ~20,000 docs), applies dedupe, <em>then</em> paginates — so totals and pages stay correct after de-duplication.</p>
+<table>
+  <thead><tr><th>Response field</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>results[]</code></td><td>Page of prospect summaries</td></tr>
+    <tr><td><code>total</code></td><td>Match count (after dedupe when applicable)</td></tr>
+    <tr><td><code>cached</code></td><td><code>true</code> = served free from Redis</td></tr>
+    <tr><td><code>creditsUsed</code></td><td>0 (cached) or 1 (live)</td></tr>
+  </tbody>
+</table>
+<p class="small"><strong>Filter inventory (40+ across groups):</strong> <em>Person</em> — fullName, jobTitle, department, seniority, jobFunction, email/phone/linkedIn availability. <em>Experience</em> — years at company / in role / total, previousCompany, founded-year range, headcount growth, email provider, min intent score. <em>Company</em> — name, domain, keyword, industry, sub-industry, country/state/city, employee range, stage, funding round, revenue range. <em>Signals</em> — contactSignals[] and companySignals[] (OR-matched nested), single signal, tech stack. <em>Hiring</em> — currentlyHiring, hiringDepartments[]. <em>Dedupe</em> — excludeDuplicates, maxPerCompany (1–10).</p>
+<div class="saved"><strong>Saved in:</strong> nothing persisted except the credit deduction (ledger) and the Redis cache entry. Search is read-only over the corpus.</div>
+</div>
+
+<!-- ============ MANUAL ============ -->
+<div class="feature" id="f-manual">
+<h3>4.5 Add prospect (manual) <span class="tag free">FREE</span></h3>
+<h4>From the UI</h4>
+<ul>
+  <li>At <code>/prospects/add</code>: a multi-card form (Contact, Company, Revenue &amp; funding, Hiring &amp; technology). <strong>Only Full name is required.</strong> Success screen offers <em>Enrich this prospect</em> and <em>Add another</em>.</li>
+</ul>
+<h4>Backend logic</h4>
+<p><code>POST /prospects/manual</code> normalizes the domain (lowercase, strip scheme/www/path/port), generates <strong>deterministic IDs</strong> (<code>generateProspectId</code> = sha256 of domain + hashed email; <code>generateCompanyId</code> = sha256 of domain), and upserts <strong>directly into OpenSearch</strong> (bulk index with <code>_id = prospectId</code>). It becomes searchable immediately but is not workspace-owned until activated. Returns 503 if OpenSearch isn't configured.</p>
+<div class="saved"><strong>Saved in:</strong> OpenSearch only (no Postgres write until activation).</div>
+</div>
+
+<!-- ============ ACTIVATION ============ -->
+<div class="feature" id="f-activate">
+<h3>4.6 Activation <span class="tag free">FREE</span></h3>
+<h4>From the UI</h4>
+<p>There's no dedicated "activate" button — it happens implicitly whenever you <strong>add prospects to a list</strong> (from search, or by activating a smart list). The prospect is now "owned" by your workspace and can be scored/enriched.</p>
+<h4>Backend logic</h4>
+<p><code>EnrichmentService.activate()</code> upserts one <code>prospect_activations</code> row per prospect — <strong>no external API spend</strong>. The <code>snapshot</code> JSONB holds identity fields and is later <em>merged</em> (JSONB <code>||</code>) with enrichment output, so re-enriching never wipes prior data.</p>
+<div class="saved"><strong>Saved in:</strong> Postgres — <code>prospect_activations</code> (<code>snapshot</code> JSONB).</div>
+</div>
+
+<!-- ============ ENRICHMENT ============ -->
+<div class="feature" id="f-enrich">
+<h3>4.7 Contact enrichment — the PAL waterfall <span class="tag paid">PAID — ~1 credit / successful step</span> · flagship</h3>
+<h4>From the UI</h4>
+<ul>
+  <li>At <code>/enrichment</code>: an <strong>enrich form</strong> — Company domain (required), Full name, Job title, Known email, LinkedIn URL — plus <strong>field toggles</strong>: <em>Firmographics</em>, <em>Email finder</em>, <em>Email verify</em>, <em>Phone (score gate)</em>. Default selected: company + email + validation. The hint reads <em>"Add a LinkedIn URL for better phone match rates."</em></li>
+  <li>Click <strong>Run enrichment</strong> &rarr; <em>Running…</em> &rarr; <em>Run again</em>. An inline result panel shows status, credits used, a <em>View job</em> link, and Email/Phone rows with a verification-source line (e.g. <em>"Verified via MillionVerifier"</em>).</li>
+  <li><strong>Recent jobs</strong> (right column) auto-refreshes every 2s while jobs are running; failed jobs show a <em>Retry</em> button.</li>
+  <li>The <strong>Job detail sheet</strong> shows: status + trigger + credits, a credits breakdown, a <strong>timeline</strong> (Queued / Started / Completed), per-field <strong>Results</strong> (provider badge, confidence %, verification source, "providers tried"), and a per-step <strong>Provider attempts</strong> log (provider, operation, status, latency).</li>
+  <li>Enrichment requires an ICP — without one the page redirects to <code>/settings/icp?return=/enrichment</code> first.</li>
+</ul>
+<h4>Backend logic (<code>enrichProspect</code>)</h4>
+<p>Runs <strong>synchronously inside the HTTP request</strong> (the job is already <code>completed</code>/<code>failed</code> by the time the API returns 202):</p>
+<ol>
+  <li>Ensure the prospect is activated (free).</li>
+  <li>Credit pre-check (balance must be &ge; 1).</li>
+  <li>Create the job (<code>queued</code>) then immediately mark <code>running</code> with a distinct <code>startedAt</code>.</li>
+  <li>Resolve the <strong>lead score</strong> for the phone gate: use the stored <code>prospect_scores.score</code> if present, otherwise score now (which costs 2 credits and requires an ICP).</li>
+  <li>Build the per-workspace PAL engine (BYOK keys first, then platform keys).</li>
+  <li>Run the waterfall (see <a href="#s5">section 5</a>), deduct credits for successful paid steps, merge results into the activation snapshot, persist results + attempts, mark <code>completed</code>.</li>
+</ol>
+<p>The four stages, in order:</p>
+<pre><code>Step 0  internal_graph   FREE   reuse cached company/email from the activation snapshot
+Step 1  firmographics    PAID   PDL → RevenueBase → Explorium → Coresignal
+Step 2  email find       PAID   Hunter; else pattern-gen (firstname.lastname@domain, conf 0.4 — free)
+Step 3  email validation PAID   MillionVerifier → ZeroBounce → NeverBounce (→ Hunter-verify fallback)
+                                 email becomes "primary" ONLY if status === valid
+Step 4  phone            PAID   GATED: lead score must be &gt; 80 (ENRICHMENT_PHONE_SCORE_GATE)
+                                 Datagma → Kaspr → Lusha → ContactOut → Cognism</code></pre>
+<table>
+  <thead><tr><th>Result field</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>field</code></td><td><code>company</code>, <code>email</code>, <code>email_status</code>, <code>phone</code></td></tr>
+    <tr><td><code>value</code> / <code>valueJson</code></td><td>String value / structured payload (CompanyData, EmailVerification, PhoneData)</td></tr>
+    <tr><td><code>provider</code></td><td>Vendor name, or <code>internal_graph</code> / <code>pattern-gen</code> / <code>phone-gate</code></td></tr>
+    <tr><td><code>confidence</code></td><td>0–1 (email finders; pattern-gen = 0.4)</td></tr>
+    <tr><td><code>validationStatus</code></td><td><code>valid</code> / <code>invalid</code> / <code>catch_all</code> / <code>risky</code> / <code>unknown</code> / <code>skipped</code> / <code>error</code></td></tr>
+    <tr><td><code>isPrimary</code></td><td><code>true</code> = canonical value written to the activation snapshot</td></tr>
+    <tr><td><code>billingSource</code></td><td><code>workspace</code> (BYOK, 25% cheaper) or <code>platform</code></td></tr>
+  </tbody>
+</table>
+<p class="small"><strong>Credit billing:</strong> each successful <em>paid</em> step adds "quarters" (workspace BYOK = 3, platform = 4); total credits = <code>ceil(quarters / 4)</code>. Free steps (internal_graph, pattern-gen, gate skips, misses/errors) cost nothing. So four platform steps = 4 credits; four BYOK steps = 3 credits.</p>
+<p class="small"><strong>Bulk enrich</strong> (from a list): <code>POST /lists/:id/enrich</code> creates an <code>enrichment_batches</code> row and enriches each member sequentially (<code>trigger = bulk</code>); the UI polls <code>GET /enrichment/batches/:id</code> for done/failed counts.</p>
+<div class="saved"><strong>Saved in:</strong> Postgres — <code>enrichment_jobs</code> (status, timestamps, creditsUsed, fieldsRequested, trigger), <code>enrichment_results</code> (one row/field), <code>enrichment_attempts</code> (one row/provider call), <code>prospect_activations.snapshot</code> (merged primary email/phone/company), <code>credit_transactions</code> (action <code>enrichment</code>).</div>
+</div>
+
+<!-- ============ SCORING ============ -->
+<div class="feature" id="f-score">
+<h3>4.8 AI lead scoring <span class="tag paid">PAID — 2 credits / prospect</span></h3>
+<h4>From the UI</h4>
+<ul>
+  <li><strong>Score</strong> a single prospect from a search row (button becomes a colored score badge, e.g. <em>"72 · High"</em>, with the reasoning as a tooltip).</li>
+  <li><strong>Score all</strong> on a list detail page (costs 2 × member count) — shows progress <em>"Scoring prospects against your ICP…"</em> and a final summary with skipped count.</li>
+  <li>Scoring is disabled / warns if no ICP is configured.</li>
+</ul>
+<h4>Backend logic</h4>
+<p>Flow: load ICP (reject with <code>400 ICP_NOT_CONFIGURED</code> if empty) &rarr; deduct 2 credits (<code>ai_score</code>) &rarr; call the Python AI service <code>POST /v1/score</code> &rarr; persist to <code>prospect_scores</code>.</p>
+<p><strong>LLM path</strong> (when <code>OPENAI_API_KEY</code> is set on the Python service): it always computes a heuristic baseline, then asks the model (<code>gpt-4o-mini</code> via LiteLLM, JSON response) to refine it using the full prospect + ICP + intent-signal map. Any error falls back to the baseline.</p>
+<p><strong>Heuristic path</strong> (no OpenAI key, or AI service unreachable): deterministic math.</p>
+<table>
+  <thead><tr><th>Rule</th><th>Delta</th></tr></thead>
+  <tbody>
+    <tr><td>Base</td><td>40</td></tr>
+    <tr><td>Industry match (set &amp; matches / set &amp; no match)</td><td>+20 / −10</td></tr>
+    <tr><td>Seniority in list</td><td>+15</td></tr>
+    <tr><td>Country match / set &amp; no match</td><td>+10 / −5</td></tr>
+    <tr><td>Employee count within [min, max]</td><td>+10</td></tr>
+    <tr><td>Title substring fit (Python path)</td><td>+10</td></tr>
+    <tr><td>Keyword in title (Python path)</td><td>+5</td></tr>
+    <tr><td>Intent</td><td><code>min(100, signals × 25)</code></td></tr>
+  </tbody>
+</table>
+<table>
+  <thead><tr><th>Output field</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>icpScore</code></td><td>0–100 fit (clamped)</td></tr>
+    <tr><td><code>icpBand</code></td><td><code>strong</code> (&ge;75) / <code>medium</code> (&ge;45) / <code>weak</code> (&lt;45)</td></tr>
+    <tr><td><code>intentScore</code></td><td>0–100 from buying-signal count</td></tr>
+    <tr><td><code>outreachReadiness</code></td><td><code>ready</code> (icp&ge;75 &amp; intent&ge;60) / <code>warm</code> (icp&ge;60) / <code>nurture</code> (icp&ge;40) / <code>not_qualified</code></td></tr>
+    <tr><td><code>painPoints[]</code></td><td>LLM/Python: mapped from signals (e.g. recent_funding &rarr; "Scaling Sales Team")</td></tr>
+    <tr><td><code>reasoning</code></td><td>Human-readable explanation</td></tr>
+    <tr><td><code>source</code></td><td><code>llm</code> or <code>heuristic</code></td></tr>
+  </tbody>
+</table>
+<p class="small"><strong>Batch modes:</strong> List "Score all" (<code>POST /lists/:id/score</code>) runs async via BullMQ queue <code>skout-list-score</code> when Redis is up (poll <code>GET /enrichment/score-jobs/:jobId</code>), or synchronously otherwise. Smart-list corpus score (<code>POST /smart-lists/:id/score</code>) always runs synchronously. The <code>prospect_scores</code> row stores <code>score</code> (=icpScore), <code>priority</code> (=outreachReadiness) and <code>reasoning</code>; if OpenSearch is configured, the corpus doc is also patched with the score.</p>
+<div class="saved"><strong>Saved in:</strong> Postgres — <code>prospect_scores</code>; optional OpenSearch writeback; <code>credit_transactions</code> (action <code>ai_score</code>).</div>
+</div>
+
+<!-- ============ LISTS ============ -->
+<div class="feature" id="f-lists">
+<h3>4.9 Lists <span class="tag free">FREE</span> (actions on them cost)</h3>
+<h4>From the UI</h4>
+<ul>
+  <li>At <code>/lists</code>: summary cards (Lists / Total prospects / Ready), a <em>Create a list</em> input, and a grid of list cards. Each card has rename/delete, a prospect-count badge, <em>Open list</em>, and <strong>Bulk enrich</strong> (with a live progress bar showing done/total/failed).</li>
+  <li>At <code>/lists/[id]</code>: editable name, a members table (checkbox, name &rarr; detail sheet, score badge, email), and action buttons <strong>Export CSV</strong>, <strong>Score all</strong>, <strong>Export to HubSpot</strong>. Bulk-select members to remove them.</li>
+</ul>
+<h4>Backend logic</h4>
+<p>Standard CRUD on <code>lists</code>; members in <code>list_members</code>. <code>getListDetail()</code> joins each member's activation snapshot with its score. Adding members activates them first.</p>
+<div class="saved"><strong>Saved in:</strong> Postgres — <code>lists</code>, <code>list_members</code> (+ <code>prospect_activations</code> on add).</div>
+</div>
+
+<!-- ============ SMART LISTS ============ -->
+<div class="feature" id="f-smart">
+<h3>4.10 Smart lists <span class="tag free">FREE</span> to run/preview</h3>
+<h4>From the UI</h4>
+<ul>
+  <li>At <code>/smart-lists</code>: create a saved filter set (name + fields: Query, Industry, Country, Seniority, Min/Max employees, Technology, Signal).</li>
+  <li><strong>Run</strong> previews matches live (up to 10 shown, with total and a <em>"+N more"</em> note); a <em>Demo data</em> badge appears if OpenSearch isn't connected.</li>
+  <li><strong>Activate</strong> turns matches into a real list — choose <em>New list</em> (default name "{smart list} — {date}") or <em>Existing list</em> — then <em>Create list (N)</em> / <em>Add to list (N)</em>.</li>
+</ul>
+<h4>Backend logic</h4>
+<p>Filters saved as JSON in <code>smart_lists</code>. <strong>Run</strong> (<code>POST /smart-lists/:id/run</code>) executes the filters against OpenSearch (read-only, limit 1000) or the demo corpus, and updates <code>last_run_count</code>. <strong>Activate</strong> (<code>POST /smart-lists/:id/activate</code>) runs the filters, activates every match, and creates or extends a static list.</p>
+<div class="saved"><strong>Saved in:</strong> Postgres — <code>smart_lists</code> (filter JSON). Activation writes <code>prospect_activations</code> + <code>lists</code> + <code>list_members</code>.</div>
+</div>
+
+<!-- ============ CRM ============ -->
+<div class="feature" id="f-crm">
+<h3>4.11 HubSpot CRM sync <span class="tag paid">PAID — export 1 credit / contact</span></h3>
+<h4>From the UI</h4>
+<ul>
+  <li>At <code>/settings/crm</code>: connection status, a <strong>Connect HubSpot</strong> button (OAuth redirect), then <em>Disconnect</em> / <em>Open HubSpot</em>. <code>?hubspot=connected</code> shows a success banner.</li>
+  <li><strong>Import</strong> (when connected): choose source (All contacts, max 500, or a specific HubSpot list) and destination (new or existing list) &rarr; <em>Import contacts</em>.</li>
+  <li><strong>Export</strong>: from a list detail page, <em>Export to HubSpot</em> (warns if not connected, showing the credit cost = member count).</li>
+</ul>
+<h4>Backend logic</h4>
+<p><strong>Connect:</strong> <code>POST /crm/hubspot/connect</code> builds an OAuth URL with an HMAC-signed <code>state</code>; the callback exchanges the code and stores encrypted tokens (Secrets Manager / local file), referenced by <code>crm_connections.credentials_ref</code>. <strong>Import:</strong> pull contacts &rarr; map to snapshots &rarr; activate &rarr; add to a list &rarr; record <code>crm_prospect_mappings</code>. <strong>Export:</strong> deduct 1 credit/contact (<code>export_hubspot</code>) &rarr; enqueue BullMQ <code>skout-crm-export</code> &rarr; the worker upserts contacts to HubSpot, idempotent via mappings; poll <code>GET /crm/export-jobs/:jobId</code>.</p>
+<div class="saved"><strong>Saved in:</strong> Postgres — <code>crm_connections</code>, <code>crm_prospect_mappings</code>, <code>async_jobs</code>; tokens in Secrets Manager.</div>
+</div>
+
+<!-- ============ BYOK ============ -->
+<div class="feature" id="f-byok">
+<h3>4.12 BYOK integrations <span class="tag free">FREE to set · saves 25% on enrichment</span></h3>
+<h4>From the UI</h4>
+<ul>
+  <li>At <code>/settings/integrations</code>: a card per supported provider with a Connected/Not-connected badge, a "25% Skout credit discount" note, a masked <strong>API key</strong> field (show/hide + copy), and <em>Save key</em> / <em>Test connection</em> / <em>Remove</em> / <em>Get API key</em>.</li>
+</ul>
+<h4>Backend logic</h4>
+<p><code>PUT /integrations/:provider</code> encrypts your key with <strong>AES-256-GCM</strong> (<code>iv:tag:ciphertext</code>) into <code>workspace_integrations</code>. On enrichment, <code>resolveEngine()</code> loads your keys; if any are present it builds an engine where <strong>your adapters are tried before the platform's</strong>, and those steps bill at <strong>75%</strong> (3 quarters vs 4). Supported slugs (9): <code>hunter</code>, <code>millionverifier</code>, <code>zerobounce</code>, <code>neverbounce</code>, <code>pdl</code>, <code>datagma</code>, <code>kaspr</code>, <code>lusha</code>, <code>contactout</code>.</p>
+<div class="saved"><strong>Saved in:</strong> Postgres — <code>workspace_integrations</code> (encrypted key + key hint).</div>
+</div>
+
+<!-- ============ BILLING ============ -->
+<div class="feature" id="f-billing">
+<h3>4.13 Credits &amp; billing (Razorpay) <span class="tag free">FREE to buy</span></h3>
+<h4>From the UI</h4>
+<ul>
+  <li>At <code>/settings/workspace</code>: a big credit balance, a <strong>Buy credits</strong> grid of Razorpay packs (label, credit count, ₹ price). Clicking a pack opens Razorpay Checkout (<em>"Opening checkout…"</em>); on success <em>"Payment received — N credits will appear shortly."</em></li>
+  <li><strong>Usage history</strong>: paginated ledger (action, date, +/- amount).</li>
+  <li>Anywhere a credit action can't be afforded, the <strong>Insufficient credits modal</strong> appears: <em>"This action needs X credits, but you only have Y"</em> with <em>Buy credits</em> &rarr; workspace settings.</li>
+</ul>
+<h4>Backend logic</h4>
+<table>
+  <thead><tr><th>action</th><th>Trigger</th><th>Delta</th></tr></thead>
+  <tbody>
+    <tr><td><code>provision</code></td><td>First login</td><td>+500</td></tr>
+    <tr><td><code>search</code></td><td>Live (cache-miss) search</td><td>−1</td></tr>
+    <tr><td><code>ai_score</code></td><td>Score</td><td>−2</td></tr>
+    <tr><td><code>enrichment</code></td><td>PAL waterfall</td><td>−N by steps</td></tr>
+    <tr><td><code>export_hubspot</code></td><td>CRM export</td><td>−1 / contact</td></tr>
+    <tr><td><code>admin_topup</code></td><td>Beta top-up endpoint</td><td>+amount</td></tr>
+    <tr><td><code>razorpay_purchase</code></td><td>Paid pack (webhook)</td><td>+pack</td></tr>
+  </tbody>
+</table>
+<p class="small"><strong>Razorpay:</strong> <code>POST /billing/razorpay/order</code> creates an order (and a <code>payment_orders</code> row, status <code>created</code>); the webhook <code>POST /billing/webhooks/razorpay</code> verifies the signature, and on <code>payment.captured</code> credits the workspace (idempotently) and marks the order <code>paid</code>. Checkout activates only when <strong>both</strong> <code>RAZORPAY_KEY_ID</code> and <code>RAZORPAY_KEY_SECRET</code> are set. Default packs: Starter 500/₹499, Growth 2,000/₹1,499, Scale 10,000/₹4,999 (override via <code>RAZORPAY_CREDIT_PACKS_JSON</code>).</p>
+<div class="saved"><strong>Saved in:</strong> Postgres — <code>credit_balances</code>, <code>credit_transactions</code>, <code>payment_orders</code>.</div>
+</div>
+
+<!-- ============ PERSONALIZATION ============ -->
+<div class="feature" id="f-personalize">
+<h3>4.14 AI personalization <span class="pill partial">partial</span></h3>
+<p><code>POST /enrichment/personalize</code> &rarr; Python <code>/v1/personalize</code> (or heuristic) generates an opener + talking points and saves them to <code>ai_drafts</code>. The drafts <em>list</em> endpoint (<code>GET /ai/drafts</code>) is still a stub, so there's no dedicated UI surface yet — this is the seam the planned Outreach engine will build on.</p>
+<div class="saved"><strong>Saved in:</strong> Postgres — <code>ai_drafts</code>.</div>
+</div>
+
+<!-- ============ SCRAPE ============ -->
+<div class="feature" id="f-scrape">
+<h3>4.15 Corpus scrape pipeline (admin) <span class="pill partial">partial</span></h3>
+<h4>From the UI</h4>
+<p>At <code>/settings/corpus</code> (owner/admin only): queue and monitor scrape jobs. Members get 403.</p>
+<h4>Backend logic</h4>
+<p>An owner/admin queues a job (<code>POST /scrape/jobs</code>) &rarr; BullMQ <code>scrape-schedule</code> &rarr; <strong>orchestrator &rarr; bot (writes raw to S3) &rarr; cleaner (clean + quarantine to S3) &rarr; ingestor (bulk upsert to OpenSearch + manifest)</strong>. Sources: company-web, linkedin, linkedin-jobs, crunchbase, opencorporates, sec-edgar.</p>
+<table>
+  <thead><tr><th>Count</th><th>Set by</th></tr></thead>
+  <tbody>
+    <tr><td><code>rawCount</code></td><td>Bot</td></tr>
+    <tr><td><code>cleanCount</code> / <code>quarantinedCount</code></td><td>Cleaner</td></tr>
+    <tr><td><code>ingestedCount</code> / <code>skippedDuplicateCount</code></td><td>Ingestor</td></tr>
+  </tbody>
+</table>
+<div class="saved"><strong>Saved in:</strong> Postgres — <code>scrape_jobs</code>; S3 — raw/clean/quarantine/manifests; OpenSearch — ingested docs.</div>
+</div>
+
+<!-- ============ ANALYTICS ============ -->
+<div class="feature" id="f-analytics">
+<h3>4.16 Analytics <span class="tag free">FREE</span></h3>
+<h4>From the UI</h4>
+<p>At <code>/analytics</code>: daily credit usage, enrichment success rate, credits by action, and recent transactions over a selectable window.</p>
+<h4>Backend logic</h4>
+<p><code>GET /analytics/report?days=N</code> (clamped 7–90, default 30) aggregates from Postgres: credit spent/added/net, byAction and daily buckets, enrichment job counts + success rate, list counts, and the last 25 transactions.</p>
+<div class="saved"><strong>Reads from:</strong> Postgres — <code>credit_transactions</code>, <code>enrichment_jobs</code>, <code>lists</code>.</div>
+</div>
+
+<h2 id="s5">5. The enrichment waterfall in depth</h2>
+<p>This is the most important backend mechanism. Each stage tries providers <strong>in order</strong> and stops at the first usable result. For every provider type, your <strong>workspace (BYOK) key is tried before the platform key</strong>.</p>
+
+<h3>5.1 Step 0 — internal graph (free cache reuse)</h3>
+<p>Before any paid call, the engine reuses data already on the activation snapshot:</p>
+<ul>
+  <li><strong>Company cache:</strong> if the snapshot already has company data, it's used directly (provider <code>internal_graph</code>, <code>isPrimary</code>) and the entire firmographics loop is skipped.</li>
+  <li><strong>Email cache:</strong> a cached email is reused <em>only if its stored status is <code>valid</code></em> (provider <code>internal_graph</code>, confidence 1), skipping the paid finder.</li>
+  <li>A user-supplied "Known email" likewise skips the finder (validation still runs if requested).</li>
+</ul>
+
+<h3>5.2 Step 1 — Firmographics</h3>
+<p>Order: <strong>PeopleDataLabs &rarr; RevenueBase &rarr; Explorium &rarr; Coresignal</strong> (each: workspace key, then platform key). First non-null wins. If no live keys, a stub returns nothing.</p>
+<table>
+  <thead><tr><th>Provider</th><th>API</th><th>Returns</th></tr></thead>
+  <tbody>
+    <tr><td>PeopleDataLabs</td><td><code>GET /company/enrich?website=&amp;name=</code> (header <code>X-Api-Key</code>)</td><td>name, industry, employeeCount, HQ country/city, founded</td></tr>
+    <tr><td>RevenueBase</td><td><code>POST /v2/organization/resolve</code> (header <code>x-key</code>)</td><td>name, HQ country/city</td></tr>
+    <tr><td>Explorium</td><td>two-step <code>POST /businesses/match</code> then <code>/firmographics/enrich</code></td><td>name, industry, employeeCount (range-parsed), HQ</td></tr>
+    <tr><td>Coresignal</td><td><code>GET /company_multi_source/enrich?website=</code> (Bearer)</td><td>name, industry, employeeCount, HQ, founded</td></tr>
+  </tbody>
+</table>
+
+<h3>5.3 Step 2 — Email find</h3>
+<p>Provider: <strong>Hunter</strong> (<code>GET /v2/email-finder</code>; returns email + confidence = score/100; has special handling for synthetic LinkedIn-capture domains). If Hunter misses and a full name is present (and the domain isn't synthetic), a <strong>pattern guess</strong> is generated — the first of a ranked list (e.g. <code>firstname.lastname@domain</code>) with a fixed <strong>confidence 0.4</strong>. Pattern-gen is <strong>free</strong> (not billed).</p>
+
+<h3>5.4 Step 3 — Email validation</h3>
+<p>Order: <strong>MillionVerifier &rarr; ZeroBounce &rarr; NeverBounce</strong> (workspace then platform each). If none of those keys exist, a <strong>Hunter email-verifier</strong> fallback is used. Each maps vendor statuses to a canonical verdict: <code>valid / invalid / catch_all / risky / unknown</code>.</p>
+<blockquote><strong>The "primary" rule:</strong> the found email is promoted to <code>isPrimary</code> (and written to the snapshot) <strong>only when the verdict is exactly <code>valid</code></strong>. Anything else is recorded but not treated as the canonical email. Cache reuse later also only trusts <code>valid</code>.</blockquote>
+
+<h3>5.5 Step 4 — Phone (gated)</h3>
+<p>Phone is the most expensive data, so it's <strong>locked behind the lead score</strong>:</p>
+<ul>
+  <li><strong>Gate:</strong> phone runs only if <code>score &gt; ENRICHMENT_PHONE_SCORE_GATE</code> (default 80, i.e. score must be 81+). If <code>score &le; gate</code>, a <code>phone-gate</code> / <code>score-gate</code> attempt is logged as <code>skipped</code> with a reason, and no provider is called.</li>
+  <li><strong>Re-scoring:</strong> if firmographics added industry/country/employee-count, the engine can re-score before the gate, so newly-discovered data can unlock phone within the same job.</li>
+  <li><strong>Name gate:</strong> even if the score passes, no full name &rarr; skipped.</li>
+  <li><strong>Order:</strong> <strong>Datagma &rarr; Kaspr &rarr; Lusha &rarr; ContactOut &rarr; Cognism</strong> (workspace then platform each).</li>
+</ul>
+
+<h3>5.6 Attempts, status &amp; job lifecycle</h3>
+<p>Every provider call appends an <strong>attempt</strong> with: <code>order</code>, <code>provider</code>, <code>operation</code>, <code>status</code> (<code>ok</code> / <code>miss</code> / <code>error</code> / <code>skipped</code>), <code>latencyMs</code>, and an optional <code>detail</code>. This powers the per-step timeline in the job detail sheet. Job states move <code>queued &rarr; running &rarr; completed | failed</code>, each with its own timestamp (<code>queuedAt</code>, <code>startedAt</code>, <code>completedAt</code>).</p>
+
+<h2 id="s6">6. Third-party provider reference</h2>
+<p>A consolidated view of every external vendor the product can call, by capability. Each is tried with your BYOK key first (where supported) then the platform key; a stub stands in when no key is configured.</p>
+<table>
+  <thead><tr><th>Capability</th><th>Providers (in order)</th><th>BYOK?</th><th>What it gives</th></tr></thead>
+  <tbody>
+    <tr><td>Firmographics</td><td>PeopleDataLabs, RevenueBase, Explorium, Coresignal</td><td>PDL only (in UI list)</td><td>Company name, industry, size, HQ, founded</td></tr>
+    <tr><td>Email find</td><td>Hunter (+ free pattern-gen)</td><td>Hunter</td><td>Best-guess work email + confidence</td></tr>
+    <tr><td>Email verify</td><td>MillionVerifier, ZeroBounce, NeverBounce (+ Hunter-verify)</td><td>all three</td><td>Deliverability verdict</td></tr>
+    <tr><td>Phone</td><td>Datagma, Kaspr, Lusha, ContactOut, Cognism</td><td>Datagma, Kaspr, Lusha, ContactOut</td><td>Mobile / direct dial</td></tr>
+    <tr><td>AI scoring &amp; personalization</td><td>OpenAI (<code>gpt-4o-mini</code> via LiteLLM)</td><td>platform only</td><td>ICP score, reasoning, pain points, openers</td></tr>
+    <tr><td>Auth</td><td>Clerk</td><td>—</td><td>Google SSO, JWTs</td></tr>
+    <tr><td>CRM</td><td>HubSpot (OAuth)</td><td>per-workspace OAuth</td><td>Contact import/export</td></tr>
+    <tr><td>Payments</td><td>Razorpay</td><td>—</td><td>Credit pack purchases</td></tr>
+  </tbody>
+</table>
+
+<h2 id="s7">7. How settings cascade</h2>
+<p>Settings are not isolated — they ripple across features. This is the system view.</p>
+
+<h3>7.1 ICP — the master switch</h3>
+<pre><code>                    ┌──────────────────────────┐
+                    │      Workspace ICP        │
+                    │ industries, geo, titles,  │
+                    │ seniority, size range     │
+                    └────────────┬─────────────┘
+                                 │ read by
+   ┌──────────────┬──────────────┼───────────────┬───────────────┐
+   ▼              ▼              ▼               ▼               ▼
+Single score   List "Score    Smart-list      Enrichment      Dashboard
+(search row)   all" (batch)   score (corpus)  PHONE GATE      "ICP set?" flag</code></pre>
+<table>
+  <thead><tr><th>Feature</th><th>ICP set</th><th>ICP empty</th></tr></thead>
+  <tbody>
+    <tr><td>Score a prospect</td><td>Returns icpScore / band / readiness</td><td><code>400 ICP_NOT_CONFIGURED</code></td></tr>
+    <tr><td>List "Score all"</td><td>Batch scores members</td><td>Blocked (400)</td></tr>
+    <tr><td>Smart-list score</td><td>Scores corpus matches</td><td>Blocked (400)</td></tr>
+    <tr><td><strong>Enrichment phone step</strong></td><td>Lead score gates phone (&gt;80)</td><td>If no stored score, the internal score call fails &rarr; job <code>failed</code></td></tr>
+    <tr><td>Enrichment (email/company)</td><td>Works; computes the score for the gate</td><td>UI redirects to ICP setup first</td></tr>
+    <tr><td>Dashboard</td><td><code>icpConfigured = true</code></td><td>Warning banner + setup prompt</td></tr>
+  </tbody>
+</table>
+<blockquote><strong>Key cascade:</strong> enrichment internally scores the prospect to evaluate the phone gate, and can re-score after firmographics arrive (industry/size may push the score over the gate). So editing your ICP changes which prospects qualify for phone enrichment and how every future score lands. Changing the ICP does <strong>not</strong> retroactively re-score existing prospects — re-run "Score all" to refresh.</blockquote>
+
+<h3>7.2 BYOK integration keys</h3>
+<table>
+  <thead><tr><th>You set</th><th>Effect on enrichment</th></tr></thead>
+  <tbody>
+    <tr><td>A workspace key (e.g. Hunter)</td><td>Tried <strong>before</strong> the platform's; that step bills at <strong>75%</strong> (3 quarters vs 4)</td></tr>
+    <tr><td>No workspace key</td><td>Platform key at full rate, or a stub if none exists</td></tr>
+  </tbody>
+</table>
+<p class="small">BYOK affects the enrichment waterfall only. AI scoring/personalization always use the platform OpenAI key.</p>
+
+<h3>7.3 CRM (HubSpot) connection</h3>
+<table>
+  <thead><tr><th>State</th><th>Effect</th></tr></thead>
+  <tbody>
+    <tr><td>Connected</td><td>List detail shows "Export to HubSpot"; import is available</td></tr>
+    <tr><td>Not connected</td><td>Export warns; import is disabled</td></tr>
+  </tbody>
+</table>
+<p class="small">Imported contacts are activated, so they immediately behave like any workspace prospect (scorable, enrichable).</p>
+
+<h3>7.4 Credits balance</h3>
+<p>Credits gate every paid action. The UI is <strong>proactive</strong>: before spending, it checks the cached balance and, if short, opens the buy-credits modal without calling the API. The backend is the safety net — insufficient balance returns <code>402 insufficient_credits</code> with <code>required</code> / <code>available</code>. Batch operations pre-check the total cost and fail fast before spending anything.</p>
+
+<h3>7.5 Workspace role</h3>
+<table>
+  <thead><tr><th>Role</th><th>Extra access</th></tr></thead>
+  <tbody>
+    <tr><td><code>owner</code> / <code>admin</code></td><td>Corpus scrape pipeline (<code>/scrape/jobs</code>, <code>/settings/corpus</code>)</td></tr>
+    <tr><td><code>member</code></td><td>Everything except scrape admin (403 on scrape routes)</td></tr>
+  </tbody>
+</table>
+
+<h3>7.6 Environment-level toggles (ops)</h3>
+<table>
+  <thead><tr><th>Setting</th><th>Effect</th></tr></thead>
+  <tbody>
+    <tr><td><code>OPENSEARCH_URL</code> unset</td><td>Search &amp; smart lists fall back to the ~5,300-row demo corpus</td></tr>
+    <tr><td><code>REDIS_URL</code> unset / down</td><td>In-memory search cache; list scoring runs sync; queues degrade gracefully</td></tr>
+    <tr><td><code>AI_SERVICE_URL</code> / <code>OPENAI_API_KEY</code> unset</td><td>Scoring &amp; personalization use the heuristic fallback</td></tr>
+    <tr><td><code>ENRICHMENT_PHONE_SCORE_GATE</code> (default 80)</td><td>The score a lead must exceed for phone lookup</td></tr>
+    <tr><td><code>SEARCH_CREDIT_COST</code> (1) / <code>SEARCH_CACHE_TTL_SECONDS</code> (300)</td><td>Search price and cache lifetime</td></tr>
+    <tr><td>provider API keys</td><td>Each present key flips that capability from stub &rarr; live</td></tr>
+  </tbody>
+</table>
+
+<h2 id="s8">8. Credit economics</h2>
+<pre><code>Free:    activation, internal-graph cache hits, pattern-gen email guess,
+         cached search, phone-gate skips, all failed/missed provider calls
+Paid:    search (1 / live page), score (2), each successful enrichment step (~1),
+         HubSpot export (1 / contact)
+Cheaper: BYOK steps bill at 75% of platform rate (3 quarters vs 4)</code></pre>
+<p>The model is deliberately <strong>"build cheap, spend on intent"</strong>: the corpus is free to search broadly; money is only spent when the user activates and enriches a specific prospect, and phone — the most expensive data — is locked behind a high lead score.</p>
+
+<h2 id="s9">9. End-to-end user journey</h2>
+<pre><code>Sign in (Google SSO)
+   → auto-provision workspace + 500 credits
+   → ICP wizard (if first time)
+   → Dashboard
+   → Prospect search + filters
+        → Score against ICP (2)
+        → Enrich email/company (~1–3)
+        → Add winners to a list (free)
+   → Bulk enrich list → Score all members
+        → Export CSV  /  Push to HubSpot (1/contact)
+   → Smart list: save filters → run → activate → list
+   → Buy credits (Razorpay) when low
+   → Analytics: usage + success rate</code></pre>
+
+<h2 id="s10">10. Future plan / roadmap</h2>
+<p class="small">Status: <span class="pill done">done</span> &nbsp; <span class="pill partial">partial</span> &nbsp; <span class="pill planned">planned</span></p>
+
+<h3>10.1 Outreach engine (next major area — nav already scaffolded with "Soon" badges)</h3>
+<table>
+  <thead><tr><th>Feature</th><th>Today</th><th>Plan</th></tr></thead>
+  <tbody>
+    <tr><td>Sequences</td><td><span class="pill planned">stub</span></td><td>Multi-step email/LinkedIn cadences with delays and branching; durable scheduling.</td></tr>
+    <tr><td>Unified inbox</td><td><span class="pill planned">stub</span></td><td>Reply tracking, thread view, conversation state across sequences.</td></tr>
+    <tr><td>Deliverability</td><td><span class="pill planned">stub</span></td><td>Sending-domain warmup, inbox rotation, bounce/spam monitoring.</td></tr>
+    <tr><td>AI review queue</td><td><span class="pill planned">stub</span></td><td>Human approval of AI drafts (drafts already persist; only the list endpoint/UI is missing).</td></tr>
+  </tbody>
+</table>
+
+<h3>10.2 AI layer deepening</h3>
+<table>
+  <thead><tr><th>Item</th><th>Today</th><th>Plan</th></tr></thead>
+  <tbody>
+    <tr><td>ICP scoring</td><td><span class="pill partial">heuristic + opt LLM</span></td><td>LLM scoring as default with explainable reasoning; set <code>titles</code>/<code>keywords</code> from the settings form.</td></tr>
+    <tr><td>Intent classification</td><td><span class="pill planned">stub</span></td><td>Real intent model; carry signals into smart-list corpus scoring.</td></tr>
+    <tr><td>Pain-point detection</td><td><span class="pill partial">LLM in personalize</span></td><td>First-class pain-point surfacing on the prospect detail sheet.</td></tr>
+    <tr><td>Auto re-scoring</td><td><span class="pill planned">planned</span></td><td>Re-score stored prospects when ICP changes.</td></tr>
+  </tbody>
+</table>
+
+<h3>10.3 Corpus pipeline maturation (Tier 1)</h3>
+<table>
+  <thead><tr><th>Item</th><th>Today</th><th>Plan</th></tr></thead>
+  <tbody>
+    <tr><td>Scraper bots</td><td><span class="pill partial">Node + BullMQ</span></td><td>Broaden sources (LinkedIn, Crunchbase, job boards, Google Business).</td></tr>
+    <tr><td>Cleaner enrichment</td><td><span class="pill partial">normalize + tech</span></td><td>AI industry classification, headcount-growth and funding signals.</td></tr>
+    <tr><td>Scraper ECS</td><td><span class="pill planned">not deployed</span></td><td>Deploy orchestrator/cleaner/ingestor as ECS services.</td></tr>
+  </tbody>
+</table>
+
+<h3>10.4 Analytics, billing &amp; platform</h3>
+<table>
+  <thead><tr><th>Item</th><th>Today</th><th>Plan</th></tr></thead>
+  <tbody>
+    <tr><td>Analytics</td><td><span class="pill partial">Postgres aggregates</span></td><td>Move heavy analytics to ClickHouse; outbound event webhooks.</td></tr>
+    <tr><td>HTTPS edge</td><td><span class="pill partial">API Gateway → ALB</span></td><td>Move to CloudFront once the AWS account is verified.</td></tr>
+    <tr><td>Billing</td><td><span class="pill partial">Razorpay (INR)</span></td><td>Add Stripe for global/USD.</td></tr>
+    <tr><td>Multi-seat</td><td><span class="pill partial">roles exist</span></td><td>Team management UI, invites, per-seat permissions.</td></tr>
+  </tbody>
+</table>
+
+<h3>10.5 Suggested sequencing</h3>
+<ol>
+  <li><strong>AI review queue</strong> — smallest gap (drafts already persist); unlocks the outreach story.</li>
+  <li><strong>Sequences + deliverability</strong> — biggest value-add and the natural next surface.</li>
+  <li><strong>LLM scoring by default + auto re-score</strong> — strengthens the core differentiator.</li>
+  <li><strong>Scraper ECS deploy + source coverage</strong> — grows the corpus moat.</li>
+  <li><strong>ClickHouse analytics + Stripe + CloudFront</strong> — scale/ops hardening.</li>
+</ol>
+
+<h2 id="s11">11. Appendix: data &amp; env reference</h2>
+
+<h3>11.1 Data store map</h3>
+<table>
+  <thead><tr><th>Feature</th><th>PostgreSQL</th><th>OpenSearch</th><th>Redis</th><th>S3</th></tr></thead>
+  <tbody>
+    <tr><td>Auth / provisioning</td><td>users, workspaces, members, credits</td><td>—</td><td>—</td><td>—</td></tr>
+    <tr><td>ICP</td><td>workspace_icp</td><td>—</td><td>—</td><td>—</td></tr>
+    <tr><td>Search</td><td>credit txn only</td><td>corpus (read)</td><td>result cache</td><td>—</td></tr>
+    <tr><td>Manual prospect</td><td>—</td><td>upsert</td><td>—</td><td>—</td></tr>
+    <tr><td>Activation</td><td>prospect_activations</td><td>—</td><td>—</td><td>—</td></tr>
+    <tr><td>Enrichment</td><td>jobs, results, attempts</td><td>—</td><td>bulk via worker</td><td>—</td></tr>
+    <tr><td>Scoring</td><td>prospect_scores</td><td>optional writeback</td><td>list-score queue</td><td>—</td></tr>
+    <tr><td>Lists</td><td>lists, list_members</td><td>—</td><td>—</td><td>—</td></tr>
+    <tr><td>Smart lists</td><td>smart_lists</td><td>query on run</td><td>—</td><td>—</td></tr>
+    <tr><td>HubSpot</td><td>crm_connections, crm_prospect_mappings, async_jobs</td><td>—</td><td>crm-export queue</td><td>—</td></tr>
+    <tr><td>BYOK</td><td>workspace_integrations (encrypted)</td><td>—</td><td>—</td><td>—</td></tr>
+    <tr><td>Credits / billing</td><td>credit_balances, credit_transactions, payment_orders</td><td>—</td><td>—</td><td>—</td></tr>
+    <tr><td>AI draft</td><td>ai_drafts</td><td>—</td><td>—</td><td>—</td></tr>
+    <tr><td>Scrape</td><td>scrape_jobs</td><td>ingest</td><td>scrape queues</td><td>raw/clean/quarantine/manifests</td></tr>
+  </tbody>
+</table>
+
+<h3>11.2 Key environment variables</h3>
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>OPENSEARCH_URL</code> / <code>OPENSEARCH_INDEX</code></td><td>— / <code>prospects</code></td><td>Search index; unset &rarr; demo corpus</td></tr>
+    <tr><td><code>SEARCH_CREDIT_COST</code></td><td>1</td><td>Credits per live search page</td></tr>
+    <tr><td><code>SEARCH_CACHE_TTL_SECONDS</code></td><td>300</td><td>Search cache lifetime</td></tr>
+    <tr><td><code>DEMO_CORPUS_SIZE</code></td><td>5300</td><td>Synthetic corpus rows when no OpenSearch</td></tr>
+    <tr><td><code>ENRICHMENT_PHONE_SCORE_GATE</code></td><td>80</td><td>Lead score a prospect must exceed for phone</td></tr>
+    <tr><td><code>ENRICHMENT_REQUEST_TIMEOUT_MS</code></td><td>8000</td><td>Per-provider HTTP timeout</td></tr>
+    <tr><td><code>ENRICHMENT_AI_TIMEOUT_MS</code></td><td>15000</td><td>Timeout to the AI scoring service</td></tr>
+    <tr><td><code>AI_SERVICE_URL</code> / <code>OPENAI_API_KEY</code> / <code>AI_MODEL</code></td><td>— / — / <code>gpt-4o-mini</code></td><td>AI scoring &amp; personalization</td></tr>
+    <tr><td><code>REDIS_URL</code></td><td><code>redis://localhost:6379</code></td><td>Cache + BullMQ queues</td></tr>
+    <tr><td><code>INTEGRATION_ENCRYPTION_KEY</code></td><td>fallback to Clerk secret</td><td>AES-256-GCM key for BYOK secrets</td></tr>
+    <tr><td><code>RAZORPAY_KEY_ID</code> / <code>RAZORPAY_KEY_SECRET</code></td><td>—</td><td>Billing (checkout needs both)</td></tr>
+    <tr><td><code>RAZORPAY_CREDIT_PACKS_JSON</code></td><td>3 default packs</td><td>Override credit packs</td></tr>
+    <tr><td><code>HUBSPOT_CLIENT_ID</code> / <code>HUBSPOT_CLIENT_SECRET</code></td><td>—</td><td>HubSpot OAuth</td></tr>
+    <tr><td>Provider keys</td><td>—</td><td><code>HUNTER_API_KEY</code>, <code>MILLIONVERIFIER_API_KEY</code>, <code>ZEROBOUNCE_API_KEY</code>, <code>NEVERBOUNCE_API_KEY</code>, <code>PDL_API_KEY</code>, <code>REVENUEBASE_API_KEY</code>, <code>EXPLORIUM_API_KEY</code>, <code>CORESIGNAL_API_KEY</code>, <code>DATAGMA_API_KEY</code>, <code>KASPR_API_KEY</code>, <code>LUSHA_API_KEY</code>, <code>CONTACTOUT_API_KEY</code>, <code>COGNISM_API_KEY</code></td></tr>
+  </tbody>
+</table>
+
+<hr />
+<p class="small">Living reference — update alongside the codebase as features ship. To export: open in a browser &rarr; Print &rarr; Save as PDF (or open this file in Word).</p>
+
+</div>
+</body>
+</html>
