@@ -542,6 +542,7 @@ export class ComputeStack extends Stack {
             "/api/v1/dashboard/overview*",
             "/api/v1/dashboard/switching-cost*",
             "/api/v1/dashboard/cro-summary*",
+            "/api/v1/dashboard/pipeline-velocity*",
           ]),
           ...albExtraConditions,
         ],
@@ -554,6 +555,17 @@ export class ComputeStack extends Stack {
         priority: 8,
         conditions: [
           elbv2.ListenerCondition.pathPatterns(["/api/v1/audit-logs*"]),
+          ...albExtraConditions,
+        ],
+      });
+      // apps/crm registers GET/POST /api/v1/promotion-candidates (see routes/promotion.routes.ts).
+      // Same issue as crm-audit above — this path was never added to any CRM ALB rule, so it fell
+      // through to the api-service catch-all and 404'd despite the CRM service having the route.
+      listener.addTargetGroups("crm-promotion", {
+        targetGroups: [crmEcs.targetGroup],
+        priority: 9,
+        conditions: [
+          elbv2.ListenerCondition.pathPatterns(["/api/v1/promotion-candidates*"]),
           ...albExtraConditions,
         ],
       });
