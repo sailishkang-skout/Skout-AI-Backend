@@ -569,6 +569,41 @@ export class ComputeStack extends Stack {
           ...albExtraConditions,
         ],
       });
+      // Audit (2026-09-11): every apps/crm route path was cross-checked against these ALB rules —
+      // these 4 dashboard/:flag routes (routes/dashboard.routes.ts) were the same class of gap as
+      // crm-audit/crm-promotion above, just never hit in testing until CRM Intelligence was loaded.
+      listener.addTargetGroups("crm-dashboard-2", {
+        targetGroups: [crmEcs.targetGroup],
+        priority: 11,
+        conditions: [
+          elbv2.ListenerCondition.pathPatterns([
+            "/api/v1/dashboard/stale-deals*",
+            "/api/v1/dashboard/missing-stakeholders*",
+            "/api/v1/dashboard/disengagement-flags*",
+            "/api/v1/dashboard/renewal-risk-flags*",
+          ]),
+          ...albExtraConditions,
+        ],
+      });
+      // Same audit: routes/dashboard.routes.ts's expansion-signal-flags, plus two entirely
+      // separate CRM route files (retention-rules.routes.ts, and buying-committee.routes.ts's
+      // standalone DELETE /buying-committee/members/:id — its other routes are nested under
+      // /deals/:id/... and /companies/:id/... and already covered by the crm-service rule above).
+      // NOTE: routes/meeting-rsvp-webhook.routes.ts's /webhooks/meeting-rsvp is a separate,
+      // deliberately unaddressed gap — external providers can't send the origin-verify header
+      // every rule here requires, so it needs its own reviewed rule, not a copy-paste of this one.
+      listener.addTargetGroups("crm-dashboard-3", {
+        targetGroups: [crmEcs.targetGroup],
+        priority: 12,
+        conditions: [
+          elbv2.ListenerCondition.pathPatterns([
+            "/api/v1/dashboard/expansion-signal-flags*",
+            "/api/v1/retention-rules*",
+            "/api/v1/buying-committee*",
+          ]),
+          ...albExtraConditions,
+        ],
+      });
     }
 
     if (config.clickhouse?.enabled) {
