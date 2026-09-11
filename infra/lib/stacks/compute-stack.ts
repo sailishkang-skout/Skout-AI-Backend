@@ -574,7 +574,7 @@ export class ComputeStack extends Stack {
       // crm-audit/crm-promotion above, just never hit in testing until CRM Intelligence was loaded.
       listener.addTargetGroups("crm-dashboard-2", {
         targetGroups: [crmEcs.targetGroup],
-        priority: 11,
+        priority: 1,
         conditions: [
           elbv2.ListenerCondition.pathPatterns([
             "/api/v1/dashboard/stale-deals*",
@@ -594,7 +594,7 @@ export class ComputeStack extends Stack {
       // every rule here requires, so it needs its own reviewed rule, not a copy-paste of this one.
       listener.addTargetGroups("crm-dashboard-3", {
         targetGroups: [crmEcs.targetGroup],
-        priority: 12,
+        priority: 2,
         conditions: [
           elbv2.ListenerCondition.pathPatterns([
             "/api/v1/dashboard/expansion-signal-flags*",
