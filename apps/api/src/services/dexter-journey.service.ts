@@ -212,6 +212,14 @@ export async function invokeDexterPlan(
       incrJourneyMetric("dexterPlanInvoke");
 
       await emitSkoutEvent(db, config, {
+        type: "dexter.plan.invoked",
+        tenantId: workspaceId,
+        aggregateId: planId,
+        correlationId: planId,
+        data: { planId, actionType, outcome },
+      });
+
+      await emitSkoutEvent(db, config, {
         type: "dexter.action.executed",
         tenantId: workspaceId,
         aggregateId: planId,
@@ -287,6 +295,14 @@ export async function invokeDexterPlan(
   if (opts?.sequenceId) {
     await db.update(sequences).set({ dexterPlanId: planId }).where(eq(sequences.id, opts.sequenceId));
   }
+
+  await emitSkoutEvent(db, config, {
+    type: "dexter.plan.invoked",
+    tenantId: workspaceId,
+    aggregateId: planId,
+    correlationId: planId,
+    data: { planId, workflowRunId: workflow.id, brief: plan.brief },
+  });
 
   await emitSkoutEvent(db, config, {
     type: "dexter.action.executed",

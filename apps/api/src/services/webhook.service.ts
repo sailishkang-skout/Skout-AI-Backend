@@ -30,6 +30,7 @@ export const WEBHOOK_EVENT_TYPES = [
   "dexter.plan.approved",
   "dexter.plan.rejected",
   "dexter.plan.blocked",
+  "dexter.plan.invoked",
   "dexter.action.executed",
   "dexter.outcome.captured",
   "dexter.learning.recommended",
@@ -250,4 +251,3 @@ function toEndpointRow(row: typeof webhookEndpoints.$inferSelect): WebhookEndpoi
     updatedAt: row.updatedAt,
   };
 }
-

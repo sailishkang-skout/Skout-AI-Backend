@@ -23,6 +23,7 @@ async function handleDexterEvent(event: DexterEventJobPayload["event"]): Promise
       break;
     case "dexter.plan.proposed":
     case "dexter.plan.approved":
+    case "dexter.plan.invoked":
     case "dexter.action.executed":
     case "dexter.learning.approved":
       incrJourneyMetric("dexterPlanInvoke");

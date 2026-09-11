@@ -129,6 +129,16 @@ describe("invokeDexterPlan", () => {
 
     expect(result.plan.status).toBe("invoked");
     expect(sequenceUpdateSet).not.toHaveBeenCalled();
+    expect(emitSkoutEvent).toHaveBeenCalledWith(
+      db,
+      config,
+      expect.objectContaining({
+        type: "dexter.plan.invoked",
+        tenantId: WORKSPACE,
+        aggregateId: PLAN_ID,
+        correlationId: PLAN_ID,
+      })
+    );
   });
 
   it("links the named sequence to the plan when sequenceId is provided", async () => {
