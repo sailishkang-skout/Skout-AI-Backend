@@ -28,12 +28,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
     if (!app.db || !request.userId || !workspaceId) return;
     await enforcePermission(app.db, workspaceId, request.userId, "workspace:manage", {
       enforce: app.config.RBAC_ENFORCEMENT_ENABLED,
-      onShadowDeny: (info) =>
+      onShadowDeny: (info: any) =>
         app.log.warn(info, `RBAC shadow-mode: workspace:manage would have been denied (${action})`),
     });
   }
 
-  app.get("/dashboard/overview", async (request) => {
+  app.get("/dashboard/overview", async (request: any) => {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
     if (!svc) {
@@ -56,7 +56,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
   /** CRM Intelligence page — open to every workspace member (unlike switching-cost/cro-summary
    *  below, this isn't an org-internal exec metric, just "which deals need attention"). */
-  app.get("/dashboard/stale-deals", async (request) => {
+  app.get("/dashboard/stale-deals", async (request: any) => {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
     if (!svc) return { workspaceId, staleDeals: [], generatedAt: new Date().toISOString() };
@@ -66,16 +66,25 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
   /** §8.12 CRM Intelligence — missing-stakeholder pipeline-risk flag. Open to every workspace
    *  member, same as stale-deals above (not an org-internal exec metric). */
-  app.get("/dashboard/missing-stakeholders", async (request) => {
+  app.get("/dashboard/missing-stakeholder-deals", async (request: any) => {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
-    if (!svc) return { workspaceId, missingStakeholders: [], generatedAt: new Date().toISOString() };
-    const missingStakeholders = await svc.missingStakeholders(workspaceId);
-    return { workspaceId, missingStakeholders, generatedAt: new Date().toISOString() };
+    if (!svc) return { workspaceId, missingStakeholderDeals: [], generatedAt: new Date().toISOString() };
+    const missingStakeholderDeals = await svc.missingStakeholders(workspaceId);
+    return { workspaceId, missingStakeholderDeals, generatedAt: new Date().toISOString() };
+  });
+
+  // Backward compatibility alias for old clients
+  app.get("/dashboard/missing-stakeholders", async (request: any) => {
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) return { workspaceId, missingStakeholderDeals: [], generatedAt: new Date().toISOString() };
+    const missingStakeholderDeals = await svc.missingStakeholders(workspaceId);
+    return { workspaceId, missingStakeholderDeals, generatedAt: new Date().toISOString() };
   });
 
   /** GTM revamp — Pipeline Velocity chart. Open to every workspace member, same as overview. */
-  app.get("/dashboard/pipeline-velocity", async (request) => {
+  app.get("/dashboard/pipeline-velocity", async (request: any) => {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
     if (!svc) return { workspaceId, series: [] };
@@ -85,7 +94,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
   /** §SS-10 CRM Intelligence — disengagement risk flags. Open to every workspace member,
    *  same as other CRM Intelligence flags (not an org-internal exec metric). */
-  app.get("/dashboard/disengagement-flags", async (request) => {
+  app.get("/dashboard/disengagement-flags", async (request: any) => {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
     if (!svc) return { workspaceId, disengagementFlags: [], generatedAt: new Date().toISOString() };
@@ -95,7 +104,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
   /** §SS-10 CRM Intelligence — renewal risk flags. Open to every workspace member,
    *  same as other CRM Intelligence flags (not an org-internal exec metric). */
-  app.get("/dashboard/renewal-risk-flags", async (request) => {
+  app.get("/dashboard/renewal-risk-flags", async (request: any) => {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
     if (!svc) return { workspaceId, renewalRiskFlags: [], generatedAt: new Date().toISOString() };
@@ -105,7 +114,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
   /** §SS-10 CRM Intelligence — expansion signal flags. Open to every workspace member,
    *  same as other CRM Intelligence flags (not an org-internal exec metric). */
-  app.get("/dashboard/expansion-signal-flags", async (request) => {
+  app.get("/dashboard/expansion-signal-flags", async (request: any) => {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
     if (!svc) return { workspaceId, expansionSignalFlags: [], generatedAt: new Date().toISOString() };
@@ -114,7 +123,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
   });
 
   /** R14.3 — internal-only "switching cost" metric. Owner/admin only; not for reps or customers. */
-  app.get("/dashboard/switching-cost", async (request) => {
+  app.get("/dashboard/switching-cost", async (request: any) => {
     requireRole(request, ["owner", "admin"]);
     await shadowWorkspaceManage(request, "switching-cost");
     const workspaceId = request.workspaceId ?? "unknown";
