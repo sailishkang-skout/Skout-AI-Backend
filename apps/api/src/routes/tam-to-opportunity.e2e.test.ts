@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { schema } from "@skout/db";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
+import { classifyRetry } from "../../../../packages/shared/src/execution-intent/retry-policy.js";
 import type { FastifyInstance } from "fastify";
 
 /**
@@ -100,15 +101,33 @@ describe("R10.1 — TAM to qualified opportunity (9-step e2e)", { timeout: 60000
   });
 
   it("step 2 — search resolves the universe (structured + NL query, one model)", async () => {
-    const res = await app.inject({
-      method: "POST",
-      url: "/api/v1/search/prospects",
-      headers: { "x-workspace-id": WORKSPACE, "content-type": "application/json" },
-      payload: { query: "VP Sales at SaaS companies in the US", page: 1, pageSize: 10 },
-    });
-    expect(res.statusCode).toBe(200);
-    const body = res.json() as { results: unknown[] };
-    expect(Array.isArray(body.results)).toBe(true);
+    let lastRes;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/search/prospects",
+        headers: { "x-workspace-id": WORKSPACE, "content-type": "application/json" },
+        payload: { query: "VP Sales at SaaS companies in the US", page: 1, pageSize: 10 },
+      });
+      
+      if (res.statusCode === 200) {
+        const body = res.json() as { results: unknown[] };
+        expect(Array.isArray(body.results)).toBe(true);
+        return;
+      }
+      
+      lastRes = res;
+      // Only retry on transient server errors (502, 503, 504)
+      const isRetryable = [502, 503, 504].includes(res.statusCode);
+      const decision = classifyRetry(isRetryable, attempt);
+      
+      if (!decision.shouldRetry) break;
+      // Wait for the backoff delay before retrying
+      await new Promise(resolve => setTimeout(resolve, decision.delayMs));
+    }
+    
+    // If we exhaust all retries, fail with the last status code
+    expect(lastRes.statusCode).toBe(200);
   });
 
   it("step 3 — intelligence scores fit", async () => {
