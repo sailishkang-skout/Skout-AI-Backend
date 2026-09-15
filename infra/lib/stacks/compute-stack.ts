@@ -579,6 +579,7 @@ export class ComputeStack extends Stack {
           elbv2.ListenerCondition.pathPatterns([
             "/api/v1/dashboard/stale-deals*",
             "/api/v1/dashboard/missing-stakeholders*",
+            "/api/v1/dashboard/missing-stakeholder-deals*",
             "/api/v1/dashboard/disengagement-flags*",
             "/api/v1/dashboard/renewal-risk-flags*",
           ]),
