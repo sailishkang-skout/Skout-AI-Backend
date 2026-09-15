@@ -376,7 +376,7 @@ export const createSequenceStepSchema = z.object({
   stepType: z.enum(SEQUENCE_STEP_TYPES),
   delayDays: z.number().int().min(0).default(0),
   delayUnit: z.enum(SEQUENCE_DELAY_UNITS).default("days"),
-  linkedinAction: z.enum(["connect", "message", "inmail", "like", "follow"]).optional(),
+  linkedinAction: z.enum(["connect", "message", "inmail", "like", "follow", "voice"]).optional(),
   subject: z.string().max(500).optional(),
   bodyTemplate: z.string().optional(),
 });
@@ -386,7 +386,7 @@ export const updateSequenceStepSchema = z
     stepType: z.enum(SEQUENCE_STEP_TYPES).optional(),
     delayDays: z.number().int().min(0).optional(),
     delayUnit: z.enum(SEQUENCE_DELAY_UNITS).optional(),
-    linkedinAction: z.enum(["connect", "message", "inmail", "like", "follow"]).nullable().optional(),
+    linkedinAction: z.enum(["connect", "message", "inmail", "like", "follow", "voice"]).nullable().optional(),
     subject: z.string().max(500).nullable().optional(),
     bodyTemplate: z.string().nullable().optional(),
   })
