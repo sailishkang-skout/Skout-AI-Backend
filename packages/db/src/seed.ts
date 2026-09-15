@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { createDb } from "./client.js";
 import { resolveDatabaseUrl } from "./database-url.js";
 import { creditBalances } from "./schema/credits.js";
+import { companies, contacts } from "./schema/crm.js";
 import { workspaceIcp } from "./schema/icp.js";
 import { lists } from "./schema/prospects.js";
 import { workspaces } from "./schema/workspaces.js";
@@ -90,6 +91,48 @@ try {
     });
     console.log("Created demo list");
   }
+
+  // IDM-01 Test Data
+  const [companyA] = await db
+    .insert(companies)
+    .values({
+      workspaceId: DEMO_WORKSPACE_ID,
+      name: "Global Tech Inc.",
+      domain: "globaltech.com",
+    })
+    .returning();
+
+  const [companyB] = await db
+    .insert(companies)
+    .values({
+      workspaceId: DEMO_WORKSPACE_ID,
+      name: "Global Tech",
+      domain: "globaltech.com",
+    })
+    .returning();
+
+  await db.insert(contacts).values([
+    {
+      workspaceId: DEMO_WORKSPACE_ID,
+      companyId: companyA.id,
+      firstName: "John",
+      lastName: "Smith",
+      title: "CEO",
+      email: "john.smith@globaltech.com",
+    },
+    {
+      workspaceId: DEMO_WORKSPACE_ID,
+      companyId: companyB.id,
+      firstName: "Jon",
+      lastName: "Smith",
+      title: "Chief Executive Officer",
+      email: "jon.smith@globaltech.com",
+    },
+  ]);
+
+  console.log("Seeded IDM-01 test data");
+
+
 
   console.log("Seed complete");
 } finally {
