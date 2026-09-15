@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { schema } from "@skout/db";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
-import { classifyRetry } from "../../../../packages/shared/src/execution-intent/retry-policy.js";
+
 import type { FastifyInstance } from "fastify";
 
 /**
@@ -33,6 +33,7 @@ const BASE_OVERRIDES = {
   COGNISM_API_KEY: undefined as unknown as string,
   KASPR_API_KEY: undefined as unknown as string,
   LUSHA_API_KEY: undefined as unknown as string,
+  OPENSEARCH_URL: undefined as unknown as string,
 };
 
 let app: FastifyInstance;
@@ -101,7 +102,8 @@ describe("R10.1 — TAM to qualified opportunity (9-step e2e)", { timeout: 60000
   });
 
   it("step 2 — search resolves the universe (structured + NL query, one model)", async () => {
-    let lastRes;
+    let lastRes: Awaited<ReturnType<typeof app.inject>> | undefined;
+    // Retry up to 5 times for transient 5xx errors
     for (let attempt = 0; attempt < 5; attempt++) {
       const res = await app.inject({
         method: "POST",
@@ -119,15 +121,15 @@ describe("R10.1 — TAM to qualified opportunity (9-step e2e)", { timeout: 60000
       lastRes = res;
       // Only retry on transient server errors (502, 503, 504)
       const isRetryable = [502, 503, 504].includes(res.statusCode);
-      const decision = classifyRetry(isRetryable, attempt);
+      if (!isRetryable) break;
       
-      if (!decision.shouldRetry) break;
-      // Wait for the backoff delay before retrying
-      await new Promise(resolve => setTimeout(resolve, decision.delayMs));
+      // Exponential backoff with jitter: 1s, 2s, 4s, 8s, 16s max
+      const delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 1000, 16000);
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
     
     // If we exhaust all retries, fail with the last status code
-    expect(lastRes.statusCode).toBe(200);
+    expect(lastRes?.statusCode).toBe(200);
   });
 
   it("step 3 — intelligence scores fit", async () => {
