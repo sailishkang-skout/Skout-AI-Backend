@@ -578,8 +578,11 @@ export class ComputeStack extends Stack {
         conditions: [
           elbv2.ListenerCondition.pathPatterns([
             "/api/v1/dashboard/stale-deals*",
-            "/api/v1/dashboard/missing-stakeholders*",
-            "/api/v1/dashboard/missing-stakeholder-deals*",
+            // Covers both /missing-stakeholders (back-compat alias) and the renamed
+            // /missing-stakeholder-deals — one pattern keeps this rule at 5 total
+            // condition values (4 patterns + the origin-verify header) instead of 6,
+            // which AWS ALB rejects (max 5 condition values per rule).
+            "/api/v1/dashboard/missing-stakeholder*",
             "/api/v1/dashboard/disengagement-flags*",
             "/api/v1/dashboard/renewal-risk-flags*",
           ]),
