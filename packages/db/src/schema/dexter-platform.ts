@@ -1,6 +1,8 @@
+import { sql } from "drizzle-orm";
 import { boolean, index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { users } from "./users.js";
 import { workspaces } from "./workspaces.js";
+import { sequenceEnrollments, sequenceEnrollmentSteps } from "./sequences.js";
 
 /**
  * §1.2 / D7 — Dexter Policy Gateway: workspace defaults + per-action overrides.
@@ -173,10 +175,18 @@ export const linkedinVoiceHandoffs = pgTable(
     activityId: uuid("activity_id"),
     createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    /** LVH-01 — set when this handoff was created for a "voice" sequence step, so the
+     * enrollment can park on it and resume once confirmed (or expire it with the rest of the
+     * cadence's normal failure handling) instead of only existing as a disconnected ad-hoc wizard. */
+    enrollmentId: uuid("enrollment_id").references(() => sequenceEnrollments.id, { onDelete: "set null" }),
+    enrollmentStepId: uuid("enrollment_step_id").references(() => sequenceEnrollmentSteps.id, { onDelete: "set null" }),
   },
   (table) => [
     uniqueIndex("linkedin_voice_handoffs_token_uidx").on(table.handoffToken),
     index("linkedin_voice_handoffs_workspace_idx").on(table.workspaceId),
     index("linkedin_voice_handoffs_workspace_status_idx").on(table.workspaceId, table.status),
+    uniqueIndex("linkedin_voice_handoffs_enrollment_step_uidx")
+      .on(table.enrollmentStepId)
+      .where(sql`${table.enrollmentStepId} IS NOT NULL`),
   ]
 );

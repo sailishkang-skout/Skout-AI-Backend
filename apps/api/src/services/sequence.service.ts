@@ -61,7 +61,7 @@ export type ConditionType = (typeof CONDITION_TYPES)[number];
 export const VARIANT_KEYS = ["A", "B", "C"] as const;
 export type VariantKey = (typeof VARIANT_KEYS)[number];
 
-export const LINKEDIN_ACTIONS = ["connect", "message", "inmail", "like", "follow"] as const;
+export const LINKEDIN_ACTIONS = ["connect", "message", "inmail", "like", "follow", "voice"] as const;
 
 export const SEQUENCE_STATUSES = ["draft", "active", "paused", "archived"] as const;
 export type SequenceStatus = (typeof SEQUENCE_STATUSES)[number];

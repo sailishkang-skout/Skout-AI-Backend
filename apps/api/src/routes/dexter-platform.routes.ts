@@ -378,7 +378,7 @@ export async function dexterPlatformRoutes(app: FastifyInstance) {
       .safeParse(request.body ?? {});
     if (!body.success) return reply.code(400).send(errorResponse("Invalid confirm payload", 400));
     try {
-      const row = await confirmLinkedinVoiceSent(app.db, {
+      const row = await confirmLinkedinVoiceSent(app.db, app.config, {
         workspaceId: request.workspaceId,
         handoffToken: body.data.handoffToken,
         outcomeNote: body.data.outcomeNote,

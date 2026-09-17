@@ -372,6 +372,10 @@ export async function createLinkedinVoiceHandoff(
     language?: string;
     linkedinUrl?: string;
     userId?: string;
+    /** LVH-01 — set when this handoff is created for a "voice" sequence step, so
+     * confirmLinkedinVoiceSent can resume the enrollment's cadence once the rep confirms. */
+    enrollmentId?: string;
+    enrollmentStepId?: string;
   }
 ): Promise<LinkedinVoiceHandoffResult> {
   const eligibility = await checkLinkedinVoiceEligibility(db, config, {
@@ -436,6 +440,8 @@ export async function createLinkedinVoiceHandoff(
       handoffToken: token,
       expiresAt: new Date(Date.now() + HANDOFF_TTL_MS),
       createdBy: opts.userId,
+      enrollmentId: opts.enrollmentId,
+      enrollmentStepId: opts.enrollmentStepId,
     })
     .returning();
 
@@ -459,6 +465,7 @@ async function resolveTimelineContactId(
 
 export async function confirmLinkedinVoiceSent(
   db: Db,
+  config: Env,
   opts: { workspaceId: string; handoffToken: string; userId?: string; outcomeNote?: string }
 ) {
   const [handoff] = await db
@@ -540,6 +547,36 @@ export async function confirmLinkedinVoiceSent(
     .returning();
 
   incrJourneyMetric("linkedinVoiceConfirm");
+
+  // LVH-01 — a handoff created for a "voice" sequence step parks the enrollment until this
+  // confirms; wake the worker immediately instead of waiting for its next poll so the cadence
+  // resumes right away rather than sitting idle for up to CALL_DISPOSITION_POLL_MS.
+  if (updated?.enrollmentId) {
+    try {
+      const [enrollment] = await db
+        .select({ sequenceId: schema.sequenceEnrollments.sequenceId, prospectId: schema.sequenceEnrollments.prospectId })
+        .from(schema.sequenceEnrollments)
+        .where(eq(schema.sequenceEnrollments.id, updated.enrollmentId))
+        .limit(1);
+      if (enrollment) {
+        const { enqueueSequenceAdvanceJob } = await import("../workers/sequence-enrollment.queue.js");
+        await enqueueSequenceAdvanceJob(
+          config,
+          {
+            enrollmentId: updated.enrollmentId,
+            workspaceId: opts.workspaceId,
+            prospectId: enrollment.prospectId,
+            sequenceId: enrollment.sequenceId,
+          },
+          0,
+          false
+        );
+      }
+    } catch (err) {
+      log.warn("linkedin-voice: failed to wake sequence enrollment after confirm", { err, enrollmentId: updated.enrollmentId });
+    }
+  }
+
   return updated!;
 }
 
