@@ -228,6 +228,21 @@ export async function account360Routes(app: FastifyInstance) {
         signals: signalRows,
       };
 
+      // §6.2 — regional intelligence for Person 360: use contact's company's location if available
+      let regionalIntelligence = null;
+      if (company?.location) {
+        try {
+          const regionalBriefSvc = createRegionalBriefService(app.db, app.config);
+          regionalIntelligence = await regionalBriefSvc.resolveRegionalBrief({
+            countryIso: company.location,
+            workspaceId: request.workspaceId,
+          });
+        } catch (err) {
+          if (!(err instanceof HttpError)) throw err;
+          regionalIntelligence = null;
+        }
+      }
+
       return reply.send({
         data: {
           contact,
@@ -236,6 +251,7 @@ export async function account360Routes(app: FastifyInstance) {
           inferredContext,
           timeline,
           signals: signalRows,
+          regionalIntelligence,
           view: "person_360",
         },
       });

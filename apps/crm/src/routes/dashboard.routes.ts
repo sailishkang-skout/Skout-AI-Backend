@@ -74,7 +74,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
     return { workspaceId, missingStakeholderDeals, generatedAt: new Date().toISOString() };
   });
 
-  // Backward compatibility alias for old clients
+  // Backward compatibility alias for older clients
   app.get("/dashboard/missing-stakeholders", async (request: any) => {
     const workspaceId = request.workspaceId ?? "unknown";
     const svc = service();
