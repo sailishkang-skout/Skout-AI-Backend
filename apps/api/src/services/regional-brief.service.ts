@@ -203,6 +203,9 @@ export interface ResolvedBriefEntry {
   content: { summary: string; details: string[] };
   resolvedFromLayer: RegionalBriefLayerType;
   source: string;
+  /** 0-1, matching every other confidence field in the API (evidence ledger, signals, …) —
+   * NOT the same scale as `regional_brief_versions.confidence`, which is authored/stored as a
+   * 0-100 integer. Normalized at the resolve boundary below so callers never have to know that. */
   confidence: number;
   effectiveDate: string;
   evidence: string;
@@ -554,7 +557,7 @@ export function createRegionalBriefService(db: Db, config?: Env) {
             content: version.content,
             resolvedFromLayer: layerType,
             source: version.source,
-            confidence: version.confidence,
+            confidence: version.confidence / 100,
             effectiveDate: version.effectiveDate.toISOString(),
             evidence: version.evidence,
             isStale: version.expiryDate ? version.expiryDate.getTime() < Date.now() : false,
