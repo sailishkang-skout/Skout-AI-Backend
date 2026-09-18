@@ -530,7 +530,7 @@ export class NumberRequestService {
         status: to,
         updatedAt: new Date(),
       })
-      .where(eq(numberRequests.id, row.id))
+      .where(scopedById(numberRequests, row.workspaceId, row.id))
       .returning();
     if (!updated) throw new HttpError("Failed to update number request", 500);
     await this.recordEvent(updated, from, to, userId, reason);
@@ -541,7 +541,7 @@ export class NumberRequestService {
     const [updated] = await this.db
       .update(numberRequests)
       .set({ ...extra, updatedAt: new Date() })
-      .where(eq(numberRequests.id, row.id))
+      .where(scopedById(numberRequests, row.workspaceId, row.id))
       .returning();
     return updated ?? row;
   }

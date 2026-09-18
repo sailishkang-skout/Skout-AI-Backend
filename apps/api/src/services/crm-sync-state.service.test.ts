@@ -178,5 +178,26 @@ describe("crm-sync-state.service", () => {
       expect(conflictWrite?.isConflict).toBe(true);
       expect(realFailure?.isConflict).toBe(false);
     });
+
+    it("flags a missing-OAuth-scope outbound write distinctly from a conflict or a generic failure", async () => {
+      await db.insert(crmOutboundWrites).values({
+        workspaceId,
+        connectionId,
+        entityType: "deal",
+        entityId: "55555555-5555-5555-5555-555555555555",
+        patch: { amount: "500" },
+        skoutChangedAt: new Date("2026-04-01T00:00:00.000Z"),
+        idempotencyKey: `scope-error-${Date.now()}`,
+        status: "failed",
+        lastError: "missing_scope_crm_write",
+      });
+
+      const status = await getCrmSyncStatus(db, workspaceId);
+      const scopeErrorWrite = status.recentOutboundWrites.find((w) => w.lastError === "missing_scope_crm_write");
+      const conflictWrite = status.recentOutboundWrites.find((w) => w.lastError === "conflict_hubspot_newer");
+      expect(scopeErrorWrite?.isScopeError).toBe(true);
+      expect(scopeErrorWrite?.isConflict).toBe(false);
+      expect(conflictWrite?.isScopeError).toBe(false);
+    });
   });
 });

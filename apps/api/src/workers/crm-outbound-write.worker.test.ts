@@ -6,10 +6,18 @@ import { loadEnv } from "../config/env.js";
 const updateHubSpotContact = vi.fn().mockResolvedValue(undefined);
 const updateHubSpotDeal = vi.fn().mockResolvedValue(undefined);
 const isHubSpotRetryableError = vi.fn().mockReturnValue(false);
+// Real implementation (not a bare mock) so the worker's own scope-detection logic is exercised,
+// matching apps/api/src/services/hubspot.client.ts's actual matching rule.
+const isHubSpotMissingScopeError = vi.fn((...args: unknown[]) => {
+  const err = args[0];
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes("MISSING_SCOPES") || msg.includes("crm.lists.read");
+});
 vi.mock("../services/hubspot.client.js", () => ({
   updateHubSpotContact: (...args: unknown[]) => updateHubSpotContact(...args),
   updateHubSpotDeal: (...args: unknown[]) => updateHubSpotDeal(...args),
   isHubSpotRetryableError: (...args: unknown[]) => isHubSpotRetryableError(...args),
+  isHubSpotMissingScopeError: (...args: unknown[]) => isHubSpotMissingScopeError(...args),
 }));
 
 const ensureFreshTokens = vi.fn().mockResolvedValue({ accessToken: "token", refreshToken: "r", expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
@@ -240,6 +248,46 @@ describe("processNextCrmOutboundWrite", () => {
     const [row] = await db.select().from(crmOutboundWrites).where(eq(crmOutboundWrites.id, queued!.id));
     expect(row?.status).toBe("failed");
     expect(row?.lastError).toContain("403");
+  });
+
+  it("records a stable sentinel (not the raw HubSpot text) when the deal write fails on a missing OAuth scope", async () => {
+    const entityId = "88888888-8888-8888-8888-888888888888";
+    await db.insert(crmNativeLinks).values({
+      workspaceId,
+      connectionId,
+      entityType: "deal",
+      entityId,
+      externalId: "hs-deal-scope",
+      externalUpdatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    const [queued] = await db
+      .insert(crmOutboundWrites)
+      .values({
+        workspaceId,
+        connectionId,
+        entityType: "deal",
+        entityId,
+        patch: { amount: "500" },
+        skoutChangedAt: new Date("2026-03-01T00:00:00.000Z"),
+        idempotencyKey: `test-8-${Date.now()}`,
+      })
+      .returning();
+
+    updateHubSpotDeal.mockRejectedValueOnce(
+      new Error(
+        'HubSpot API /crm/v3/objects/deals/hs-deal-scope failed: 403 {"category":"MISSING_SCOPES","message":"This app hasn\'t been granted all required scopes"}'
+      )
+    );
+    isHubSpotRetryableError.mockReturnValue(false);
+
+    const outcome = await processNextCrmOutboundWrite(db, config);
+
+    expect(outcome).toBe("pushed");
+    const [row] = await db.select().from(crmOutboundWrites).where(eq(crmOutboundWrites.id, queued!.id));
+    expect(row?.status).toBe("failed");
+    // Sentinel, not the raw HubSpot error text — the sync-status API keys off this exact string
+    // to surface an actionable "reconnect HubSpot" message (see crm-sync-state.service.ts).
+    expect(row?.lastError).toBe("missing_scope_crm_write");
   });
 
   it("maps deal fields to HubSpot deal property names", async () => {

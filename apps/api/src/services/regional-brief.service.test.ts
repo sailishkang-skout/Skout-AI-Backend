@@ -279,6 +279,25 @@ describe("resolveRegionalBrief", () => {
     expect(entry?.content.summary).toBe("UK business practice via alpha-2");
   });
 
+  it("normalizes stored 0-100 integer confidence to a 0-1 float, matching every other confidence field in the API", async () => {
+    const config = loadEnv();
+    const { db } = createDb(config.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/skout");
+    const svc = createRegionalBriefService(db);
+    const [reviewer] = await db.insert(schema.users).values({ email: `conf-rev-${Date.now()}@test.com`, fullName: "R" }).returning();
+    const [author] = await db.insert(schema.users).values({ email: `conf-auth-${Date.now()}@test.com`, fullName: "A" }).returning();
+
+    const slot = await svc.findOrCreateSlot({ layerType: "country", countryIso: "US", fieldCategory: "data_compliance" });
+    const v = await svc.createDraftVersion(slot.id, {
+      content: { summary: "Confidence normalization check", details: [] },
+      source: "test", effectiveDate: new Date(), confidence: 82, evidence: "test", createdBy: author!.id,
+    });
+    await svc.approveVersion(v.id, reviewer!.id);
+
+    const resolved = await svc.resolveRegionalBrief({ countryIso: "US" });
+    const entry = resolved.entries.find((e) => e.fieldCategory === "data_compliance" && e.content.summary === "Confidence normalization check");
+    expect(entry?.confidence).toBe(0.82);
+  });
+
   it("resolves by canonical country alias ('United Kingdom')", async () => {
     const config = loadEnv();
     const { db } = createDb(config.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/skout");

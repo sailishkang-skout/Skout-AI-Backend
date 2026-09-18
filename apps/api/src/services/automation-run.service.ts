@@ -122,7 +122,7 @@ export async function retryFailedSteps(db: Db, workspaceId: string, runId: strin
   const [updatedRun] = await db
     .update(automationRuns)
     .set({ status: "running", finishedAt: null })
-    .where(eq(automationRuns.id, runId))
+    .where(scopedById(automationRuns, workspaceId, runId))
     .returning();
   return updatedRun!;
 }

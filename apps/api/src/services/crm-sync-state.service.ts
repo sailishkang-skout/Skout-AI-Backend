@@ -153,6 +153,10 @@ export interface CrmOutboundWriteStatus {
    * recently than the Skout edit that queued it (the reverse manual-wins rule) — not a failure,
    * but the one case a user genuinely needs to know their edit didn't take effect on the CRM side. */
   isConflict: boolean;
+  /** True when this write failed because the connected HubSpot app is missing a required OAuth
+   * scope (e.g. crm.objects.deals.write) — not retryable, and the user needs to reconnect
+   * HubSpot rather than see a raw/generic error. */
+  isScopeError: boolean;
   lastError: string | null;
   createdAt: string;
   updatedAt: string;
@@ -210,6 +214,8 @@ export async function getCrmSyncStatus(db: Db, workspaceId: string): Promise<Crm
       ...r,
       // Matches the sentinel crm-outbound-write.worker.ts writes on the reverse manual-wins skip.
       isConflict: r.status === "failed" && r.lastError === "conflict_hubspot_newer",
+      // Matches the sentinel crm-outbound-write.worker.ts writes on a missing-OAuth-scope failure.
+      isScopeError: r.status === "failed" && r.lastError === "missing_scope_crm_write",
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     })),
