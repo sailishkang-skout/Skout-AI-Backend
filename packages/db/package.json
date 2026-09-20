@@ -16,7 +16,7 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"require('fs').cpSync('src/data','dist/data',{recursive:true})\"",
     "typecheck": "tsc --noEmit",
     "generate": "drizzle-kit generate",
     "migrate": "tsx src/migrate.ts",
