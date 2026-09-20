@@ -42,7 +42,14 @@ vi.mock("@skout/db", () => ({
     whatsappOutreachJobs: "whatsappOutreachJobs",
     sequenceVersions: "sequenceVersions",
     sequenceEvents: "sequenceEvents",
+    linkedinVoiceHandoffs: { id: "id", status: "status", expiresAt: "expires_at", enrollmentStepId: "enrollment_step_id" },
+    workspaceMembers: { userId: "user_id", role: "role" },
   },
+}));
+
+vi.mock("../services/linkedin-voice.service.js", () => ({
+  draftLinkedinVoiceScript: vi.fn().mockResolvedValue({ scriptText: "Hi there", regionalBriefPreview: "", language: "en" }),
+  createLinkedinVoiceHandoff: vi.fn().mockResolvedValue({ id: "handoff-1" }),
 }));
 
 vi.mock("./sequence-enrollment.queue.js", () => ({
@@ -185,6 +192,7 @@ import { sendLinkedinOutreach, sendWhatsappOutreach } from "../services/linkedin
 import { UnipileError } from "../services/unipile.client.js";
 import { claimNext, reclaimExpiredLeases, recordResult, withLeaseHeartbeat } from "@skout/shared";
 import { resolveNotificationsForEntity } from "../services/notifications.service.js";
+import { createLinkedinVoiceHandoff } from "../services/linkedin-voice.service.js";
 import { isRedisAvailable } from "../lib/redis.js";
 import { emitSkoutEvent } from "../services/skout-event.service.js";
 
@@ -527,6 +535,15 @@ function selectChain(result: unknown[]) {
   return c;
 }
 
+/** For a select chain with no trailing .limit() (e.g. the "notify every owner/admin" queries in
+ * executeCallStep/executeLinkedinVoiceStep) — .where() itself must resolve the array. */
+function selectChainNoLimit(result: unknown[]) {
+  const c = {} as Record<string, ReturnType<typeof vi.fn>>;
+  c.from = vi.fn().mockReturnValue(c);
+  c.where = vi.fn().mockResolvedValue(result);
+  return c;
+}
+
 const PAST_DATE = new Date("2020-01-01T00:00:00Z");
 const ENROLLMENT_ROW = { id: "enr-1", workspaceId: "ws-1", status: "active", enrolledAt: PAST_DATE };
 const EMAIL_STEP_ROW = {
@@ -549,6 +566,7 @@ function makeWorkerDb(opts: {
   select.mockReturnValueOnce(selectChain([])); // bounced check
   select.mockReturnValueOnce(selectChain([])); // reply check
   select.mockReturnValueOnce(selectChain([])); // awaiting call disposition (none)
+  select.mockReturnValueOnce(selectChain([])); // awaiting voice-handoff check (none)
   select.mockReturnValueOnce(selectChain(opts.pendingStep ? [opts.pendingStep] : [])); // pending step
   select.mockReturnValueOnce(selectChain([])); // A/B/C variants (none → use step template)
   // approved-draft lookup (executeEmailStep) — only reached once the step actually sends
@@ -748,6 +766,7 @@ describe("sequence-enrollment worker — email step execution", () => {
     select.mockReturnValueOnce(selectChain([])); // bounced check
     select.mockReturnValueOnce(selectChain([])); // reply check
     select.mockReturnValueOnce(selectChain([])); // awaiting call disposition (none)
+  select.mockReturnValueOnce(selectChain([])); // awaiting voice-handoff check (none)
     select.mockReturnValueOnce(selectChain([EMAIL_STEP_ROW])); // pending step
     select.mockReturnValueOnce(selectChain([])); // A/B/C variants (none)
     select.mockReturnValueOnce(selectChain([{ id: "thread-other-contact" }])); // hasPositiveReplyAtAccount: found
@@ -963,6 +982,7 @@ function makeLinkedinWorkerDb(stepOverrides: Record<string, unknown> = {}) {
   select.mockReturnValueOnce(selectChain([])); // bounced check
   select.mockReturnValueOnce(selectChain([])); // reply check
   select.mockReturnValueOnce(selectChain([])); // awaiting call disposition (none)
+  select.mockReturnValueOnce(selectChain([])); // awaiting voice-handoff check (none)
   select.mockReturnValueOnce(selectChain([{ ...LINKEDIN_STEP_ROW, ...stepOverrides }])); // pending step
   select.mockReturnValueOnce(selectChain([])); // A/B/C variants (none)
 
@@ -1146,6 +1166,7 @@ function makeWhatsappWorkerDb(stepOverrides: Record<string, unknown> = {}) {
   select.mockReturnValueOnce(selectChain([])); // bounced check
   select.mockReturnValueOnce(selectChain([])); // reply check
   select.mockReturnValueOnce(selectChain([])); // awaiting call disposition (none)
+  select.mockReturnValueOnce(selectChain([])); // awaiting voice-handoff check (none)
   select.mockReturnValueOnce(selectChain([{ ...WHATSAPP_STEP_ROW, ...stepOverrides }])); // pending step
   // Note: unlike the "linkedin" branch, advanceEnrollment does not call applyStepVariant
   // for "whatsapp" steps, so there is no A/B/C variants select to reserve here.
@@ -1154,6 +1175,159 @@ function makeWhatsappWorkerDb(stepOverrides: Record<string, unknown> = {}) {
   const update = vi.fn().mockReturnValue({ set: updateSet });
   return { select, update, updateSet };
 }
+
+const VOICE_STEP_ROW = {
+  enrollmentStepId: "estep-voice-1",
+  stepId: "step-voice-1",
+  scheduledAt: PAST_DATE,
+  stepOrder: 1,
+  stepType: "linkedin",
+  linkedinAction: "voice",
+  subject: null,
+  bodyTemplate: null,
+};
+
+// LVH-01 — "voice" linkedinAction parks the step on a manual LinkedinVoiceHandoff instead of
+// sending directly (LinkedIn's API has no send-voice-note endpoint), mirroring the "call" step's
+// awaiting_disposition park-and-poll shape.
+describe("sequence-enrollment worker — LinkedIn voice sequence step (LVH-01)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(Worker).mockImplementation((() => ({
+      on: vi.fn(),
+      close: vi.fn().mockResolvedValue(undefined),
+    })) as any);
+    vi.mocked(isBusinessHour).mockReturnValue(true);
+    vi.mocked(resolveProspectFields).mockResolvedValue({
+      prospectId: "p-1",
+      fullName: "Ada Lovelace",
+      linkedinUrl: "https://linkedin.com/in/ada",
+    } as any);
+    vi.mocked(isSuppressed).mockResolvedValue(false);
+  });
+
+  it("creates a voice handoff and parks the step instead of sending directly", async () => {
+    const select = vi.fn();
+    select.mockReturnValueOnce(selectChain([ENROLLMENT_ROW])); // load enrollment
+    select.mockReturnValueOnce(selectChain([])); // bounced check
+    select.mockReturnValueOnce(selectChain([])); // reply check
+    select.mockReturnValueOnce(selectChain([])); // awaiting call disposition (none)
+    select.mockReturnValueOnce(selectChain([])); // awaiting voice-handoff check (none)
+    select.mockReturnValueOnce(selectChain([VOICE_STEP_ROW])); // pending step
+    select.mockReturnValueOnce(selectChainNoLimit([])); // workspace owners to notify
+
+    const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+    const update = vi.fn().mockReturnValue({ set: updateSet });
+    const db = { select, update, transaction: vi.fn() };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(sendLinkedinOutreach).not.toHaveBeenCalled();
+    expect(vi.mocked(createLinkedinVoiceHandoff)).toHaveBeenCalledWith(
+      db,
+      expect.anything(),
+      expect.objectContaining({ enrollmentId: "enr-1", enrollmentStepId: "estep-voice-1", linkedinUrl: "https://linkedin.com/in/ada" })
+    );
+    expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({ status: "awaiting_voice_handoff" }));
+  });
+
+  it("fails the step when the prospect has no LinkedIn URL, without creating a handoff", async () => {
+    vi.mocked(resolveProspectFields).mockResolvedValue({ prospectId: "p-1", fullName: "Ada" } as any);
+
+    const select = vi.fn();
+    select.mockReturnValueOnce(selectChain([ENROLLMENT_ROW]));
+    select.mockReturnValueOnce(selectChain([]));
+    select.mockReturnValueOnce(selectChain([]));
+    select.mockReturnValueOnce(selectChain([]));
+    select.mockReturnValueOnce(selectChain([]));
+    select.mockReturnValueOnce(selectChain([VOICE_STEP_ROW]));
+    select.mockReturnValueOnce(selectChain([])); // next pending step (none → completed)
+
+    const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+    const update = vi.fn().mockReturnValue({ set: updateSet });
+    const db = { select, update, transaction: vi.fn() };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(vi.mocked(createLinkedinVoiceHandoff)).not.toHaveBeenCalled();
+    expect(updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "failed", failureReason: "prospect_linkedin_url_not_found" })
+    );
+  });
+
+  it("resolves a parked step to executed once the handoff is confirmed", async () => {
+    const select = vi.fn();
+    select.mockReturnValueOnce(selectChain([ENROLLMENT_ROW])); // load enrollment
+    select.mockReturnValueOnce(selectChain([])); // bounced check
+    select.mockReturnValueOnce(selectChain([])); // reply check
+    select.mockReturnValueOnce(selectChain([])); // awaiting call disposition (none)
+    select.mockReturnValueOnce(selectChain([{ enrollmentStepId: "estep-voice-1" }])); // awaiting voice-handoff check (found)
+    select.mockReturnValueOnce(selectChain([{ id: "handoff-1", status: "confirmed", expiresAt: null }])); // handoff lookup
+    select.mockReturnValueOnce(selectChain([{ stepId: "step-voice-1" }])); // stepId lookup for the event
+    select.mockReturnValueOnce(selectChain([])); // next pending step (none → completed)
+
+    const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+    const update = vi.fn().mockReturnValue({ set: updateSet });
+    const db = { select, update, transaction: vi.fn() };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({ status: "executed" }));
+    expect(enqueueSequenceAdvanceJob).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      60 * 60 * 1000,
+      false
+    );
+  });
+
+  it("fails a parked step once its handoff expires unconfirmed, and re-polls otherwise", async () => {
+    const select = vi.fn();
+    select.mockReturnValueOnce(selectChain([ENROLLMENT_ROW]));
+    select.mockReturnValueOnce(selectChain([]));
+    select.mockReturnValueOnce(selectChain([]));
+    select.mockReturnValueOnce(selectChain([]));
+    select.mockReturnValueOnce(selectChain([{ enrollmentStepId: "estep-voice-1" }])); // awaiting voice-handoff check (found)
+    select.mockReturnValueOnce(
+      selectChain([{ id: "handoff-1", status: "handed_off", expiresAt: new Date("2020-01-01T00:00:00Z") }])
+    ); // handoff lookup — expired
+    select.mockReturnValueOnce(selectChain([])); // next pending step (none → completed)
+
+    const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+    const update = vi.fn().mockReturnValue({ set: updateSet });
+    const db = { select, update, transaction: vi.fn() };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "failed", failureReason: "voice_handoff_expired" })
+    );
+  });
+
+  it("re-polls without resolving while the handoff is still pending confirmation", async () => {
+    const select = vi.fn();
+    select.mockReturnValueOnce(selectChain([ENROLLMENT_ROW]));
+    select.mockReturnValueOnce(selectChain([]));
+    select.mockReturnValueOnce(selectChain([]));
+    select.mockReturnValueOnce(selectChain([]));
+    select.mockReturnValueOnce(selectChain([{ enrollmentStepId: "estep-voice-1" }])); // awaiting voice-handoff check (found)
+    select.mockReturnValueOnce(selectChain([{ id: "handoff-1", status: "handed_off", expiresAt: null }])); // still pending
+
+    const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+    const update = vi.fn().mockReturnValue({ set: updateSet });
+    const db = { select, update, transaction: vi.fn() };
+
+    const processor = await getProcessor(db);
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(updateSet).not.toHaveBeenCalled();
+    expect(enqueueSequenceAdvanceJob).toHaveBeenCalledWith(expect.anything(), JOB_PAYLOAD, 60 * 60 * 1000, false);
+  });
+});
 
 describe("sequence-enrollment worker — WhatsApp step claimNext race guard", () => {
   beforeEach(() => {
@@ -1332,6 +1506,7 @@ describe("sequence-enrollment worker — manual task step execution", () => {
     select.mockReturnValueOnce(selectChain([])); // bounced check
     select.mockReturnValueOnce(selectChain([])); // reply check
     select.mockReturnValueOnce(selectChain([])); // awaiting-call-disposition check
+    select.mockReturnValueOnce(selectChain([])); // awaiting-voice-handoff check
     select.mockReturnValueOnce(selectChain([TASK_STEP_ROW])); // pending step
     select.mockReturnValueOnce(selectChain(opts.matchedContact ? [opts.matchedContact] : [])); // contact lookup
     select.mockReturnValueOnce(selectChain([])); // next pending step (none → completed)
@@ -1404,6 +1579,7 @@ describe("sequence-enrollment worker — manual task step execution", () => {
     select.mockReturnValueOnce(selectChain([]));
     select.mockReturnValueOnce(selectChain([]));
     select.mockReturnValueOnce(selectChain([])); // awaiting-call-disposition check
+    select.mockReturnValueOnce(selectChain([])); // awaiting-voice-handoff check
     select.mockReturnValueOnce(selectChain([stepWithNoSubject]));
     select.mockReturnValueOnce(selectChain([]));
     select.mockReturnValueOnce(selectChain([]));

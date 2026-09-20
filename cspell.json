@@ -1,5 +1,5 @@
 {
   "version": "0.2",
-  "words": ["sesv2", "opensearch", "bullmq", "exceljs", "imapflow"],
+  "words": ["sesv2", "opensearch", "bullmq", "exceljs", "imapflow", "MILLIONVERIFIER", "ZEROBOUNCE", "NEVERBOUNCE", "REVENUEBASE", "EXPLORIUM", "CORESIGNAL", "DATAGMA", "CONTACTOUT", "COGNISM", "KASPR", "LUSHA"],
   "ignorePaths": ["**/node_modules/**", "**/dist/**"]
 }

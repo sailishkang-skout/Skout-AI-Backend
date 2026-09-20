@@ -41,7 +41,7 @@ export class AutomationService {
     const [row] = await this.db
       .update(automations)
       .set({ ...patch, updatedAt: new Date() })
-      .where(eq(automations.id, automationId))
+      .where(scopedById(automations, workspaceId, automationId))
       .returning();
     return row!;
   }
@@ -95,7 +95,7 @@ export class AutomationService {
     await this.db
       .update(automations)
       .set({ currentVersion: nextVersion, status: "active", updatedAt: new Date() })
-      .where(eq(automations.id, automationId));
+      .where(scopedById(automations, workspaceId, automationId));
 
     return version!;
   }

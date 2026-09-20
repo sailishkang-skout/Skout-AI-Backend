@@ -28,6 +28,8 @@ import { UnipileError } from "../services/unipile.client.js";
 import { LinkedinOutreachService } from "../services/linkedin-outreach.service.js";
 import { WhatsappOutreachService } from "../services/whatsapp-outreach.service.js";
 import { checkLinkedinConnectionStatus } from "../services/linkedin-connection.service.js";
+import { draftLinkedinVoiceScript, createLinkedinVoiceHandoff } from "../services/linkedin-voice.service.js";
+import { HttpError } from "../utils/http.js";
 import { createNotification, resolveNotificationsForEntity } from "../services/notifications.service.js";
 import { getIcpScore } from "../services/draft-auto-approve.service.js";
 import {
@@ -933,6 +935,178 @@ async function executeLinkedinStep(
 }
 
 /**
+ * LVH-01 — "voice" linkedinAction. LinkedIn's API (via Unipile) has no endpoint to send a voice
+ * note, so this can't send directly like the other linkedinActions. Instead it drafts a script,
+ * creates a LinkedinVoiceHandoff linked back to this enrollment step, and parks the step
+ * `awaiting_voice_handoff` until the rep confirms they sent it from their phone (or the 7-day
+ * handoff TTL expires) — the same "park and poll" shape as executeCallStep's awaiting_disposition.
+ */
+async function executeLinkedinVoiceStep(
+  db: DbClient,
+  config: Env,
+  payload: SeqAdvanceJobPayload,
+  pending: PendingStep,
+  now: Date
+): Promise<"waiting" | "done"> {
+  const { enrollmentId, workspaceId, prospectId } = payload;
+  const { workspaceMembers } = schema;
+
+  const prospect = await resolveProspectFields(config, db, workspaceId, prospectId);
+  const linkedinUrl = prospect?.linkedinUrl;
+  if (!linkedinUrl) {
+    await markStepTerminal(db, pending.enrollmentStepId, "failed", "prospect_linkedin_url_not_found", now);
+    log.warn("LinkedIn voice step failed — no profile URL", { enrollmentId, prospectId });
+    return "done";
+  }
+
+  if (prospect?.email && (await isSuppressed(db, workspaceId, prospect.email))) {
+    await markStepTerminal(db, pending.enrollmentStepId, "skipped", "suppressed", now);
+    log.info("LinkedIn voice step skipped — suppressed", { enrollmentId, email: prospect.email });
+    return "done";
+  }
+
+  if (
+    prospect?.companyDomain &&
+    (await hasPositiveReplyAtAccount(db, workspaceId, prospect.companyDomain, prospectId))
+  ) {
+    await markStepTerminal(db, pending.enrollmentStepId, "skipped", "account_already_engaged", now);
+    log.info("LinkedIn voice step skipped — another contact at this account already replied positively", {
+      enrollmentId,
+      companyDomain: prospect.companyDomain,
+    });
+    return "done";
+  }
+
+  let handoffId: string;
+  try {
+    const draft = await draftLinkedinVoiceScript(db, config, { workspaceId, prospectId });
+    const handoff = await createLinkedinVoiceHandoff(db, config, {
+      workspaceId,
+      prospectId,
+      scriptText: pending.bodyTemplate?.trim() || draft.scriptText,
+      regionalBriefPreview: draft.regionalBriefPreview,
+      language: draft.language,
+      linkedinUrl,
+      enrollmentId,
+      enrollmentStepId: pending.enrollmentStepId,
+    });
+    handoffId = handoff.id;
+  } catch (err) {
+    const reason = err instanceof HttpError ? err.message : "voice_handoff_create_failed";
+    await markStepTerminal(db, pending.enrollmentStepId, "failed", reason, now);
+    log.warn("LinkedIn voice step failed — could not create handoff", { enrollmentId, err });
+    return "done";
+  }
+
+  const owners = await db
+    .select({ userId: workspaceMembers.userId })
+    .from(workspaceMembers)
+    .where(scopedTo(workspaceMembers, workspaceId, or(eq(workspaceMembers.role, "owner"), eq(workspaceMembers.role, "admin"))));
+  for (const { userId } of owners) {
+    try {
+      await createNotification(db, config, {
+        workspaceId,
+        userId,
+        type: "reminder",
+        title: `Voice note ready to send: ${prospect?.fullName ?? prospectId}`,
+        body: "Dexter drafted a LinkedIn voice-note script. Open the mobile handoff, record it in the LinkedIn app, then confirm to resume this sequence.",
+        entityType: "prospect",
+        entityId: prospectId,
+      });
+    } catch (err) {
+      log.warn("Failed to notify owner of pending voice handoff", { err, workspaceId, userId, enrollmentId });
+    }
+  }
+
+  await db
+    .update(sequenceEnrollmentSteps)
+    .set({ status: "awaiting_voice_handoff", executedAt: null, failureReason: null })
+    .where(eq(sequenceEnrollmentSteps.id, pending.enrollmentStepId));
+  log.info("LinkedIn voice step created handoff — awaiting confirmation", { enrollmentId, prospectId, handoffId });
+  return "waiting";
+}
+
+const VOICE_HANDOFF_POLL_MS = 60 * 60 * 1000;
+
+/**
+ * Finds an in-flight "voice" step for this enrollment that's parked waiting on the rep to
+ * confirm they sent the LinkedIn voice note (or for the handoff to expire).
+ */
+async function findAwaitingVoiceHandoffStep(db: DbClient, enrollmentId: string): Promise<{ enrollmentStepId: string } | null> {
+  const [row] = await db
+    .select({ enrollmentStepId: sequenceEnrollmentSteps.id })
+    .from(sequenceEnrollmentSteps)
+    .where(and(eq(sequenceEnrollmentSteps.enrollmentId, enrollmentId), eq(sequenceEnrollmentSteps.status, "awaiting_voice_handoff")))
+    .limit(1);
+  return row ?? null;
+}
+
+/** Resolves a parked voice step once its handoff is confirmed, expired, or cancelled. */
+async function resolveVoiceHandoffOutcome(
+  db: DbClient,
+  config: Env,
+  payload: SeqAdvanceJobPayload,
+  enrollmentStepId: string,
+  now: Date
+): Promise<"resolved" | "waiting"> {
+  const { linkedinVoiceHandoffs } = schema;
+  const [handoff] = await db
+    .select({ id: linkedinVoiceHandoffs.id, status: linkedinVoiceHandoffs.status, expiresAt: linkedinVoiceHandoffs.expiresAt })
+    .from(linkedinVoiceHandoffs)
+    .where(eq(linkedinVoiceHandoffs.enrollmentStepId, enrollmentStepId))
+    .limit(1);
+
+  if (!handoff) return "waiting";
+
+  if (handoff.status === "confirmed") {
+    const [stepRow] = await db
+      .select({ stepId: sequenceEnrollmentSteps.stepId })
+      .from(sequenceEnrollmentSteps)
+      .where(eq(sequenceEnrollmentSteps.id, enrollmentStepId))
+      .limit(1);
+    await db
+      .update(sequenceEnrollmentSteps)
+      .set({ status: "executed", executedAt: now, failureReason: null })
+      .where(eq(sequenceEnrollmentSteps.id, enrollmentStepId));
+    emitSkoutEvent(db, config, {
+      type: "touchpoint.completed",
+      tenantId: payload.workspaceId,
+      aggregateId: enrollmentStepId,
+      data: {
+        workspaceId: payload.workspaceId,
+        enrollmentId: payload.enrollmentId,
+        sequenceId: payload.sequenceId,
+        prospectId: payload.prospectId,
+        stepId: stepRow?.stepId,
+        channel: "linkedin_voice",
+      },
+    }).catch((err: unknown) => log.warn("failed to emit touchpoint.completed", { err, channel: "linkedin_voice" }));
+    log.info("Voice step resolved — handoff confirmed", { enrollmentId: payload.enrollmentId, enrollmentStepId });
+    return "resolved";
+  }
+
+  const expired = handoff.status === "expired" || (handoff.expiresAt !== null && handoff.expiresAt.getTime() < now.getTime());
+  if (expired) {
+    await db
+      .update(sequenceEnrollmentSteps)
+      .set({ status: "failed", failureReason: "voice_handoff_expired" })
+      .where(eq(sequenceEnrollmentSteps.id, enrollmentStepId));
+    log.info("Voice step resolved — handoff expired unconfirmed", { enrollmentId: payload.enrollmentId, enrollmentStepId });
+    return "resolved";
+  }
+
+  if (handoff.status === "cancelled") {
+    await db
+      .update(sequenceEnrollmentSteps)
+      .set({ status: "failed", failureReason: "voice_handoff_cancelled" })
+      .where(eq(sequenceEnrollmentSteps.id, enrollmentStepId));
+    return "resolved";
+  }
+
+  return "waiting";
+}
+
+/**
  * R20.4 — "call" step. Twilio click-to-call (R20.2) isn't wired into automatic dialing — a
  * cold outbound dial with no human on the line is bad practice regardless. Instead this step
  * creates a CRM task ("Call <prospect>", due now) and an R17.1 notification to every
@@ -1053,7 +1227,7 @@ async function resolveCallDisposition(
         .where(
           and(
             eq(sequenceEnrollmentSteps.enrollmentId, payload.enrollmentId),
-            inArray(sequenceEnrollmentSteps.status, ["scheduled", "awaiting_disposition"])
+            inArray(sequenceEnrollmentSteps.status, ["scheduled", "awaiting_disposition", "awaiting_voice_handoff"])
           )
         );
     });
@@ -1381,6 +1555,18 @@ async function advanceEnrollment(
     // "resolved" — fall through and continue the cadence below in this same tick.
   }
 
+  // LVH-01 — same "park and poll" shape as the call-disposition check above, for a "voice"
+  // linkedin step parked waiting on the rep to confirm they sent the handoff (or for it to expire).
+  const awaitingVoice = await findAwaitingVoiceHandoffStep(db, enrollmentId);
+  if (awaitingVoice) {
+    const outcome = await resolveVoiceHandoffOutcome(db, config, payload, awaitingVoice.enrollmentStepId, new Date());
+    if (outcome === "waiting") {
+      await enqueueSequenceAdvanceJob(config, payload, VOICE_HANDOFF_POLL_MS, false);
+      return;
+    }
+    // "resolved" — fall through and continue the cadence below in this same tick.
+  }
+
   // Find the next scheduled step in order
   const [pending] = await db
     .select({
@@ -1589,6 +1775,12 @@ async function advanceEnrollment(
     }
     if (result.status === "deferred") {
       await enqueueSequenceAdvanceJob(config, payload, 60 * 60 * 1000, false);
+      return;
+    }
+  } else if (step.stepType === "linkedin" && pending.linkedinAction === "voice") {
+    const result = await executeLinkedinVoiceStep(db, config, payload, pending, now);
+    if (result === "waiting") {
+      // Handoff created — awaiting the rep's confirmation (or expiry), polled from advanceEnrollment.
       return;
     }
   } else if (step.stepType === "linkedin") {

@@ -31,6 +31,10 @@ vi.mock("./journey-metrics.js", () => ({
   incrJourneyMetric: vi.fn(),
 }));
 
+vi.mock("../workers/sequence-enrollment.queue.js", () => ({
+  enqueueSequenceAdvanceJob: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { checkLinkedinConnectionStatus } from "./linkedin-connection.service.js";
 import { LinkedinAccountService } from "./linkedin-account.service.js";
 import { resolveProspectFields } from "./prospect-resolver.service.js";
@@ -262,6 +266,30 @@ describe("createLinkedinVoiceHandoff", () => {
     expect(result.linkedinUrl).toContain("linkedin.com/in/ada-lovelace");
     expect(db.insert).toHaveBeenCalled();
   });
+
+  // LVH-01 — a "voice" sequence step must be able to link the handoff it creates back to the
+  // enrollment step so the worker can park on it and resume once confirmed.
+  it("persists enrollmentId/enrollmentStepId when created for a sequence voice step", async () => {
+    vi.mocked(resolveProspectFields).mockResolvedValue(prospect);
+    vi.mocked(LinkedinAccountService).mockImplementation(
+      () => ({ list: vi.fn().mockResolvedValue([{ id: "acct-1", status: "active" }]) }) as any
+    );
+    vi.mocked(checkLinkedinConnectionStatus).mockResolvedValue("accepted");
+    const db = makeDb({});
+
+    await createLinkedinVoiceHandoff(db, config, {
+      workspaceId: WORKSPACE_ID,
+      prospectId: "p-1",
+      scriptText: "Hi Ada, sharing a 30-second idea.",
+      enrollmentId: "enr-1",
+      enrollmentStepId: "estep-1",
+    });
+
+    const valuesFn = db.insert.mock.results[0]?.value.values as ReturnType<typeof vi.fn>;
+    expect(valuesFn).toHaveBeenCalledWith(
+      expect.objectContaining({ enrollmentId: "enr-1", enrollmentStepId: "estep-1" })
+    );
+  });
 });
 
 describe("confirmLinkedinVoiceSent", () => {
@@ -287,7 +315,7 @@ describe("confirmLinkedinVoiceSent", () => {
       },
     });
 
-    const row = await confirmLinkedinVoiceSent(db, {
+    const row = await confirmLinkedinVoiceSent(db, config, {
       workspaceId: WORKSPACE_ID,
       handoffToken: TOKEN,
       userId: "user-1",
@@ -316,7 +344,7 @@ describe("confirmLinkedinVoiceSent", () => {
       workspaceId: WORKSPACE_ID,
     };
     const db = makeDb({ handoff: existing });
-    const row = await confirmLinkedinVoiceSent(db, {
+    const row = await confirmLinkedinVoiceSent(db, config, {
       workspaceId: WORKSPACE_ID,
       handoffToken: TOKEN,
     });
@@ -327,7 +355,58 @@ describe("confirmLinkedinVoiceSent", () => {
   it("404s when the token is unknown", async () => {
     const db = makeDb({ handoff: null });
     await expect(
-      confirmLinkedinVoiceSent(db, { workspaceId: WORKSPACE_ID, handoffToken: TOKEN })
+      confirmLinkedinVoiceSent(db, config, { workspaceId: WORKSPACE_ID, handoffToken: TOKEN })
     ).rejects.toBeInstanceOf(HttpError);
+  });
+
+  // LVH-01 — confirming a handoff created for a sequence voice step must wake the parked
+  // enrollment immediately rather than leaving it to sit until the worker's next poll.
+  it("wakes the sequence enrollment immediately when the handoff is linked to one", async () => {
+    const selectCalls: number[] = [];
+    const selectChain = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockImplementation(async () => {
+        selectCalls.push(selectCalls.length);
+        if (selectCalls.length === 1) {
+          return [
+            {
+              id: HANDOFF_ID,
+              workspaceId: WORKSPACE_ID,
+              prospectId: "p-1",
+              scriptText: "Hi Ada",
+              status: "handed_off",
+              handoffToken: TOKEN,
+              enrollmentId: "enr-1",
+            },
+          ];
+        }
+        if (selectCalls.length === 2) return []; // no matching CRM contact
+        return [{ sequenceId: "seq-1", prospectId: "p-1" }]; // enrollment lookup
+      }),
+    };
+    const db = {
+      select: vi.fn().mockReturnValue(selectChain),
+      insert: vi.fn(),
+      update: vi.fn().mockReturnValue({
+        set: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            returning: vi.fn().mockResolvedValue([
+              { id: HANDOFF_ID, status: "confirmed", confirmedAt: new Date(), enrollmentId: "enr-1" },
+            ]),
+          }),
+        }),
+      }),
+    } as any;
+
+    await confirmLinkedinVoiceSent(db, config, { workspaceId: WORKSPACE_ID, handoffToken: TOKEN });
+
+    const queueModule = await import("../workers/sequence-enrollment.queue.js");
+    expect(vi.mocked(queueModule.enqueueSequenceAdvanceJob)).toHaveBeenCalledWith(
+      config,
+      expect.objectContaining({ enrollmentId: "enr-1", sequenceId: "seq-1", prospectId: "p-1", workspaceId: WORKSPACE_ID }),
+      0,
+      false
+    );
   });
 });

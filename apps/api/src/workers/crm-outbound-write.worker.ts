@@ -7,7 +7,12 @@ import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
 import { ensureFreshTokens, createDefaultCredentialsStore } from "../services/crm-export.runner.js";
-import { isHubSpotRetryableError, updateHubSpotContact, updateHubSpotDeal } from "../services/hubspot.client.js";
+import {
+  isHubSpotMissingScopeError,
+  isHubSpotRetryableError,
+  updateHubSpotContact,
+  updateHubSpotDeal,
+} from "../services/hubspot.client.js";
 
 const log = createLogger("crm-outbound-write.worker");
 
@@ -110,9 +115,16 @@ export async function processNextCrmOutboundWrite(db: Db, config: Env): Promise<
       });
       return "pushed";
     }
+    // A missing OAuth scope (e.g. crm.objects.deals.write) is never going to succeed on retry —
+    // record a stable sentinel instead of HubSpot's raw error text so the sync-status API can
+    // surface an actionable "reconnect HubSpot" message rather than a generic failure.
     await recordResult(db, crmOutboundWrites, claimed.id, WORKER_ID, {
       status: "failed",
-      lastError: err instanceof Error ? err.message : String(err),
+      lastError: isHubSpotMissingScopeError(err)
+        ? "missing_scope_crm_write"
+        : err instanceof Error
+          ? err.message
+          : String(err),
     }).catch(() => {
       /* lease may already be lost; nothing more to do */
     });

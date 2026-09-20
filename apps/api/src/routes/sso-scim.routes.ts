@@ -1,10 +1,92 @@
 import type { FastifyInstance } from "fastify";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { schema, scopedTo } from "@skout/db";
+import type { Db } from "@skout/db";
 import { errorResponse } from "../utils/http.js";
 
-const { workspaceSsoConfigs } = schema;
+const { workspaceSsoConfigs, users, workspaceMembers } = schema;
+
+interface PlannedScimMember {
+  email: string;
+  clerkUserId: string;
+  role: string;
+}
+
+/**
+ * Applies the real (non-dry-run) half of a SCIM sync: upserts each planned member into Skout's
+ * own `users`/`workspace_members` tables — the exact tables `backfill-rbac` reads (per this
+ * route's own "next" hint) — so membership/role actually changes, not just gets logged. Additive
+ * only, matching backfill-rbac's own "purely additive" precedent (packages/db/src/backfill-rbac.ts):
+ * a member dropped from the IdP group is not removed here, to avoid an accidental lockout from a
+ * malformed/partial SCIM payload. Clerk organization membership itself is intentionally left
+ * alone — there is no existing code path in this repo that creates/updates it, and guessing at
+ * Clerk role slugs for a live org would risk a bad write to an external system.
+ */
+async function applyScimMembers(
+  db: Db,
+  workspaceId: string,
+  planned: PlannedScimMember[]
+): Promise<{ created: number; updated: number }> {
+  let created = 0;
+  let updated = 0;
+
+  for (const member of planned) {
+    const userId = await db.transaction(async (tx) => {
+      const [byClerk] = await tx
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.clerkUserId, member.clerkUserId))
+        .limit(1);
+      if (byClerk) return byClerk.id;
+
+      const [byEmail] = await tx.select({ id: users.id }).from(users).where(eq(users.email, member.email)).limit(1);
+      if (byEmail) {
+        await tx
+          .update(users)
+          .set({ clerkUserId: member.clerkUserId, updatedAt: new Date() })
+          .where(eq(users.id, byEmail.id));
+        return byEmail.id;
+      }
+
+      const [inserted] = await tx
+        .insert(users)
+        .values({
+          email: member.email,
+          clerkUserId: member.clerkUserId,
+          fullName: member.email.split("@")[0],
+          status: "active",
+        })
+        .onConflictDoUpdate({
+          target: users.email,
+          set: { clerkUserId: member.clerkUserId, updatedAt: new Date() },
+        })
+        .returning({ id: users.id });
+      return inserted!.id;
+    });
+
+    const [existingMembership] = await db
+      .select({ role: workspaceMembers.role })
+      .from(workspaceMembers)
+      .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)))
+      .limit(1);
+
+    if (existingMembership) {
+      if (existingMembership.role !== member.role) {
+        await db
+          .update(workspaceMembers)
+          .set({ role: member.role })
+          .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)));
+      }
+      updated++;
+    } else {
+      await db.insert(workspaceMembers).values({ workspaceId, userId, role: member.role });
+      created++;
+    }
+  }
+
+  return { created, updated };
+}
 
 /**
  * §11.1 Stage-6 — per-customer SSO/SCIM IdP binding + Clerk membership sync.
@@ -209,14 +291,18 @@ export async function ssoScimRoutes(app: FastifyInstance) {
       });
     }
 
+    const { created, updated } = await applyScimMembers(app.db, request.workspaceId, planned);
+
     app.log.info(
       {
         workspaceId: request.workspaceId,
         clerkOrgId: parsed.data.clerkOrgId,
         count: planned.length,
+        created,
+        updated,
         ssoStatus: cfg?.status,
       },
-      "SCIM member sync accepted"
+      "SCIM member sync applied"
     );
 
     return reply.code(202).send({
@@ -225,8 +311,9 @@ export async function ssoScimRoutes(app: FastifyInstance) {
         clerkOrgId: parsed.data.clerkOrgId,
         workspaceId: request.workspaceId,
         planned,
+        applied: { created, updated },
         ssoStatus: cfg?.status ?? "unconfigured",
-        next: "Members continue via Clerk org membership; run backfill-rbac after first SCIM sync.",
+        next: "Membership applied to workspace_members. Run backfill-rbac to grant RBAC permission rows for any newly-created members.",
       },
     });
   });

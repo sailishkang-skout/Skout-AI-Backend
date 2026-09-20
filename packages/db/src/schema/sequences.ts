@@ -47,7 +47,9 @@ export const sequenceSteps = pgTable(
     delayDays: integer("delay_days").notNull().default(0),
     /** minutes | hours | days | weeks — delayDays is the numeric value for this unit */
     delayUnit: text("delay_unit").notNull().default("days"),
-    /** connect | message | inmail | like | follow — only meaningful when stepType is linkedin */
+    /** connect | message | inmail | like | follow | voice — only meaningful when stepType is
+     * linkedin. "voice" (LVH-01) parks the step on a manual LinkedinVoiceHandoff instead of
+     * sending directly — LinkedIn's API has no send-voice-note endpoint. */
     linkedinAction: text("linkedin_action"),
     subject: text("subject"),
     bodyTemplate: text("body_template"),

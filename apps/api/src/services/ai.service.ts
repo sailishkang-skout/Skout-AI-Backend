@@ -515,6 +515,9 @@ export class AiService {
       apiKey,
       baseURL: "https://openrouter.ai/api/v1",
       defaultHeaders: { "HTTP-Referer": "https://skoutai.io", "X-Title": "Skout AI" },
+      // Without this, the SDK's 10-minute default means a stalled OpenRouter connection hangs
+      // the whole request (and the chat UI's "thinking…" spinner) with no user-facing recovery.
+      timeout: 60_000,
     });
 
     let raw: string;
@@ -598,6 +601,9 @@ export class AiService {
       apiKey,
       baseURL: "https://openrouter.ai/api/v1",
       defaultHeaders: { "HTTP-Referer": "https://skoutai.io", "X-Title": "Skout AI" },
+      // See the ai-draft client above — a stalled provider connection must not hang the
+      // request indefinitely (this call is also the one that runs the tool-calling loop below).
+      timeout: 60_000,
     });
 
     const contextLines: string[] = [];
@@ -776,6 +782,7 @@ export class AiService {
       apiKey,
       baseURL: "https://openrouter.ai/api/v1",
       defaultHeaders: { "HTTP-Referer": "https://skoutai.io", "X-Title": "Skout AI" },
+      timeout: 60_000,
     });
 
     const channels = input.channels?.length ? input.channels : ["email"];

@@ -1,4 +1,3 @@
-import { eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, scopedById } from "@skout/db";
 import { asFieldSourcesMap, markManualSources, type CrmSyncEntityType } from "@skout/shared";
@@ -64,7 +63,7 @@ export async function applyManualEntityPatch(
   const [updated] = await db
     .update(table)
     .set({ ...patch, fieldSources: nextFieldSources, updatedAt: new Date() })
-    .where(eq(table.id, id))
+    .where(scopedById(table, workspaceId, id))
     .returning();
 
   const changedAt = new Date();

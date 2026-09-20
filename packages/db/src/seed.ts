@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { createDb } from "./client.js";
 import { resolveDatabaseUrl } from "./database-url.js";
 import { creditBalances } from "./schema/credits.js";
+import { companies, contacts } from "./schema/crm.js";
 import { workspaceIcp } from "./schema/icp.js";
 import { lists } from "./schema/prospects.js";
 import { workspaces } from "./schema/workspaces.js";
@@ -90,6 +91,10 @@ try {
     });
     console.log("Created demo list");
   }
+
+
+
+
 
   console.log("Seed complete");
 } finally {
