@@ -11,6 +11,7 @@ import {
   LINKEDIN_ACTIONS,
 } from "../services/sequence.service.js";
 import { generateSequenceForWorkspace } from "../services/sequence-generate.service.js";
+import { suggestStepForSequence } from "../services/sequence-step-suggest.service.js";
 import { SEQUENCE_TEMPLATES, getSequenceTemplate } from "../services/sequence-templates.js";
 import { conditionExpressionSchema } from "../services/sequence-condition.js";
 import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.js";
@@ -113,6 +114,18 @@ const updateStepSchema = z
   })
   .refine((d) => Object.values(d).some((v) => v !== undefined), {
     message: "At least one field is required",
+  });
+
+const suggestStepSchema = z
+  .object({
+    stepType: z.enum(["email", "linkedin"]),
+    linkedinAction: z.enum(["connect", "message", "inmail"]).optional(),
+    stepId: z.string().uuid().optional(),
+    excludeAngles: z.array(z.string().max(60)).max(6).optional(),
+  })
+  .refine((d) => d.stepType === "email" || d.linkedinAction !== undefined, {
+    message: "linkedinAction is required for LinkedIn steps",
+    path: ["linkedinAction"],
   });
 
 const reorderStepsSchema = z.object({
@@ -555,6 +568,32 @@ export async function sequenceRoutes(app: FastifyInstance) {
         return reply.status(err.statusCode).send({ error: err.message, details: err.details ?? null });
       }
       throw err;
+    }
+  });
+
+  // POST /sequences/:id/steps/suggest — AI copy suggestions for one Email / LinkedIn step,
+  // grounded in the sequence's name, neighbouring steps and audience. Persists nothing.
+  app.post("/sequences/:id/steps/suggest", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = requireWorkspaceId(request);
+    const parsed = suggestStepSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.errors[0]?.message ?? "Invalid request" });
+    }
+    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
+    const { stepType, linkedinAction, stepId, excludeAngles } = parsed.data;
+    try {
+      const result = await suggestStepForSequence(app.db, app.config, workspaceId, id, {
+        target: { stepType, ...(linkedinAction ? { linkedinAction } : {}) },
+        stepId,
+        excludeAngles,
+      });
+      return reply.send(result);
+    } catch (err: unknown) {
+      const e = err as { statusCode?: number; message?: string };
+      return reply
+        .status(e.statusCode ?? 500)
+        .send({ error: e.message ?? "step_suggestion_failed" });
     }
   });
 

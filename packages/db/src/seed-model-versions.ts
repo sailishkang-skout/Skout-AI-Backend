@@ -24,6 +24,7 @@ const LOGICAL_NAMES = [
   "suggest-reply",
   "personalize",
   "sequence-generate",
+  "sequence-step-suggest",
 ] as const;
 
 const databaseUrl = resolveDatabaseUrl();
