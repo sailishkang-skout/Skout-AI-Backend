@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
@@ -27,7 +28,7 @@ describe("DSAR routes", () => {
       method: "POST",
       url: "/api/v1/dsar",
       headers: json("dsar-basic@test.com"),
-      payload: { requestType: "erasure", subjectEmail: "subject@example.com" },
+      payload: { requestType: "erasure", subjectEmail: `subject-${randomUUID()}@example.com` },
     });
     if (res.statusCode === 503) {
       await app.close();
@@ -58,7 +59,7 @@ describe("DSAR routes", () => {
         headers: json("dsar-iso-userA@test.com"),
         // "erasure" stays in "received" (manual fulfillment) rather than auto-completing, so
         // there's a real pre-PATCH state to assert stays untouched from the other workspace.
-        payload: { requestType: "erasure", subjectEmail: "leak-check@example.com" },
+        payload: { requestType: "erasure", subjectEmail: `leak-check-${randomUUID()}@example.com` },
       });
       if (created.statusCode === 503) {
         await app.close();

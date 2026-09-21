@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import { errorResponse } from "../utils/http.js";
 import { buildDsarService } from "../services/dsar.service.js";
@@ -19,11 +19,19 @@ const statusSchema = z.object({
   notes: z.string().optional(),
 });
 
+function requireAdmin(request: { role?: string | null }, reply: FastifyReply) {
+  if (!request.role || !["owner", "admin"].includes(request.role)) {
+    return reply.code(403).send(errorResponse("Requires role: owner or admin", 403));
+  }
+  return null;
+}
+
 /** §16 — Data Subject Access Request intake + status. */
 export async function dsarRoutes(app: FastifyInstance) {
   const service = () => buildDsarService(app.db ?? null);
 
   app.post("/dsar", async (request, reply) => {
+    if (requireAdmin(request, reply)) return;
     if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const svc = service();
     if (!svc) return reply.code(503).send(errorResponse("Database unavailable", 503));
@@ -33,11 +41,18 @@ export async function dsarRoutes(app: FastifyInstance) {
       return reply.status(400).send(errorResponse("Invalid DSAR payload", 400, parsed.error.flatten()));
     }
 
-    const row = await svc.create(request.workspaceId, {
-      ...parsed.data,
-      requestedBy: request.userId,
-    });
-    return reply.code(201).send({ data: row });
+    try {
+      const row = await svc.create(request.workspaceId, {
+        ...parsed.data,
+        requestedBy: request.userId,
+      });
+      return reply.code(201).send({ data: row });
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return reply.status(err.statusCode).send(errorResponse(err.message, err.statusCode));
+      }
+      throw err;
+    }
   });
 
   app.get("/dsar", async (request, reply) => {
@@ -50,6 +65,7 @@ export async function dsarRoutes(app: FastifyInstance) {
   });
 
   app.patch("/dsar/:id", async (request, reply) => {
+    if (requireAdmin(request, reply)) return;
     if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const svc = service();
     if (!svc) return reply.code(503).send(errorResponse("Database unavailable", 503));

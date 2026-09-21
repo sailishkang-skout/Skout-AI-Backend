@@ -40,7 +40,7 @@ describe("GET /api/v1/unsubscribe/:token", () => {
     await app.close();
   });
 
-  it("accepts a valid token and confirms unsubscribe", async () => {
+  it("GET shows a confirmation page without unsubscribing", async () => {
     const app = await buildTestApp();
     const config = loadEnv();
     const token = buildUnsubscribeUrl(config, "00000000-0000-0000-0000-000000000000", "real@example.com").split(
@@ -48,6 +48,21 @@ describe("GET /api/v1/unsubscribe/:token", () => {
     )[1]!;
 
     const res = await app.inject({ method: "GET", url: `/api/v1/unsubscribe/${token}` });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("Confirm unsubscribe");
+
+    await app.close();
+  });
+
+  it("accepts a valid token and confirms unsubscribe", async () => {
+    const app = await buildTestApp();
+    const config = loadEnv();
+    const token = buildUnsubscribeUrl(config, "00000000-0000-0000-0000-000000000000", "real@example.com").split(
+      "/unsubscribe/"
+    )[1]!;
+
+    const res = await app.inject({ method: "POST", url: `/api/v1/unsubscribe/${token}` });
 
     if (res.statusCode !== 200) {
       // DB-backed insert may fail if the workspace FK doesn't exist in this env — acceptable in CI without a live DB.
