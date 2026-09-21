@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MERGE_TOKENS } from "./sequence-merge-tokens.js";
 import {
   buildStepSuggestionPrompt,
   coerceStepSuggestions,
@@ -76,6 +77,25 @@ describe("buildStepSuggestionPrompt", () => {
     expect(user).toContain("Step 4");
     // system prompt must constrain tokens to what the API accepts
     for (const token of ["firstName", "companyName", "senderName", "unsubscribeUrl"]) {
+      expect(system).toContain(`{{${token}}}`);
+    }
+  });
+
+  it("says what each merge token contains, so the model can't misuse one", () => {
+    const { system } = buildStepSuggestionPrompt(ctx());
+    // every token the API accepts has its own described line — a new token can't ship undescribed
+    for (const token of MERGE_TOKENS) {
+      expect(system).toMatch(new RegExp(`^\\{\\{${token}\\}\\} — .+`, "m"));
+    }
+    // companyDomain is a website address, not an industry
+    expect(system).toMatch(/^\{\{companyDomain\}\} — .*domain.*never .*(industry|sector)/im);
+  });
+
+  it("warns that company/title tokens can be blank so copy still reads without them", () => {
+    const { system } = buildStepSuggestionPrompt(ctx());
+    expect(system).toMatch(/may be (blank|empty)/i);
+    expect(system).toMatch(/still read (naturally|correctly)/i);
+    for (const token of ["companyName", "companyDomain", "title"]) {
       expect(system).toContain(`{{${token}}}`);
     }
   });
