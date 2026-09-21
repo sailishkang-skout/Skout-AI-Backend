@@ -5,6 +5,7 @@ import {
   buildUnsubscribeUrl,
   decodeUnsubscribeToken,
   isSuppressed,
+  listSuppressions,
   trackingSecret,
 } from "./suppression.service.js";
 
@@ -40,8 +41,13 @@ describe("suppression.service", () => {
       expect(trackingSecret({ INTEGRATION_ENCRYPTION_KEY: "b" } as Env)).toBe("b");
     });
 
-    it("falls back to a dev default when neither is set", () => {
+    it("falls back to a dev default when neither is set outside production", () => {
       expect(trackingSecret({} as Env)).toBe("dev-insecure-tracking-secret");
+      expect(trackingSecret({ NODE_ENV: "development" } as Env)).toBe("dev-insecure-tracking-secret");
+    });
+
+    it("refuses the insecure fallback in production", () => {
+      expect(() => trackingSecret({ NODE_ENV: "production" } as Env)).toThrow(/must be set in production/);
     });
   });
 
@@ -98,6 +104,24 @@ describe("suppression.service", () => {
 
     it("returns null for an invalid token", () => {
       expect(decodeUnsubscribeToken(env, "garbage")).toBeNull();
+    });
+  });
+
+  describe("listSuppressions", () => {
+    function listDb(rows: unknown[], count: number) {
+      const rowsChain: any = {};
+      for (const m of ["from", "where", "orderBy", "limit"]) rowsChain[m] = vi.fn().mockReturnValue(rowsChain);
+      rowsChain.offset = vi.fn().mockResolvedValue(rows);
+      const countChain: any = { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([{ total: count }]) };
+      const select = vi.fn().mockReturnValueOnce(rowsChain).mockReturnValueOnce(countChain);
+      return { select } as any;
+    }
+
+    it("returns the count(*) total rather than the page length", async () => {
+      const row = { id: "r1", workspaceId: "ws-1", email: "a@b.co", reason: "x", createdAt: new Date("2026-01-01T00:00:00Z") };
+      const out = await listSuppressions(listDb([row], 137), "ws-1", { limit: 1, email: "50%_off" });
+      expect(out.data).toHaveLength(1);
+      expect(out.total).toBe(137);
     });
   });
 });

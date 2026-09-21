@@ -4,6 +4,7 @@ import { errorResponse } from "../utils/http.js";
 import { buildConsentService } from "../services/consent.service.js";
 import {
   addSuppression,
+  isSuppressed,
   listSuppressions,
   removeSuppression,
 } from "../services/suppression.service.js";
@@ -42,8 +43,9 @@ export async function complianceRoutes(app: FastifyInstance) {
       })
       .parse(request.body ?? {});
 
+    const alreadyExisted = await isSuppressed(app.db, request.workspaceId, body.email);
     const row = await addSuppression(app.db, request.workspaceId, body.email, body.reason);
-    return reply.code(201).send({ data: row });
+    return reply.code(alreadyExisted ? 200 : 201).send({ data: row, alreadyExisted });
   });
 
   app.delete<{ Params: { id: string } }>("/suppressions/:id", async (request, reply) => {

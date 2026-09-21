@@ -1,4 +1,4 @@
-import { desc, eq, ilike } from "drizzle-orm";
+import { desc, eq, ilike, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, scopedTo, scopedById } from "@skout/db";
 import type { Env } from "../config/env.js";
@@ -19,8 +19,19 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+/** Escape LIKE wildcards so a search for "100%" or "a_b" matches literally. */
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, "\\$&");
+}
+
 export function trackingSecret(config: Env): string {
-  return config.TRACKING_SIGNING_SECRET ?? config.INTEGRATION_ENCRYPTION_KEY ?? "dev-insecure-tracking-secret";
+  const secret = config.TRACKING_SIGNING_SECRET ?? config.INTEGRATION_ENCRYPTION_KEY;
+  if (secret) return secret;
+  // A hardcoded fallback would let anyone forge unsubscribe/tracking tokens — dev/test only.
+  if (config.NODE_ENV === "production") {
+    throw new Error("TRACKING_SIGNING_SECRET (or INTEGRATION_ENCRYPTION_KEY) must be set in production");
+  }
+  return "dev-insecure-tracking-secret";
 }
 
 export async function isSuppressed(db: Db, workspaceId: string, email: string): Promise<boolean> {
@@ -50,7 +61,7 @@ export async function listSuppressions(
   const limit = Math.min(options.limit ?? 50, 200);
   const offset = options.offset ?? 0;
   const emailFilter = options.email?.trim()
-    ? ilike(suppressions.email, `%${normalizeEmail(options.email)}%`)
+    ? ilike(suppressions.email, `%${escapeLike(normalizeEmail(options.email))}%`)
     : undefined;
 
   const rows = await db
@@ -61,12 +72,12 @@ export async function listSuppressions(
     .limit(limit)
     .offset(offset);
 
-  const all = await db
-    .select({ id: suppressions.id })
+  const [countRow] = await db
+    .select({ total: sql<number>`count(*)::int` })
     .from(suppressions)
     .where(scopedTo(suppressions, workspaceId, emailFilter));
 
-  return { data: rows.map(toSuppressionDto), total: all.length };
+  return { data: rows.map(toSuppressionDto), total: countRow?.total ?? 0 };
 }
 
 export async function addSuppression(

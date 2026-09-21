@@ -1,3 +1,4 @@
+import { isSuppressed } from "./suppression.service.js";
 import { and, asc, count, desc, eq, exists, gt, gte, inArray, sql, type SQL } from "drizzle-orm";
 import { createDb, schema, scopedTo, scopedById } from "@skout/db";
 import { createLogger } from "@skout/observability";
@@ -955,7 +956,12 @@ export class InboxService {
     const replyTo =
       lastMsg?.fromAddress && lastMsg.fromAddress !== inbox.emailAddress
         ? lastMsg.fromAddress
-        : (thread.prospectId ?? "unknown@unknown.com");
+        : null;
+    // prospectId is a UUID, not an address — never use it as a recipient.
+    if (!replyTo) throw new HttpError("reply_recipient_unknown", 422);
+    if (await isSuppressed(this.db, workspaceId, replyTo)) {
+      throw new HttpError("recipient_suppressed", 422);
+    }
 
     const inReplyTo = lastMsg?.messageId ?? undefined;
     const refs = [lastMsg?.referencesHeader, lastMsg?.messageId].filter(Boolean).join(" ").trim() || undefined;

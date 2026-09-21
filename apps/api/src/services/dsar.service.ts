@@ -1,9 +1,9 @@
-import { desc, eq, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, scopedById, scopedTo } from "@skout/db";
 import { HttpError } from "../utils/http.js";
 
-const { dataSubjectRequests, consents } = schema;
+const { dataSubjectRequests, consents, suppressions } = schema;
 
 export type DsarRequestType = "access" | "erasure" | "rectification" | "portability";
 export type DsarStatus = "received" | "in_progress" | "completed" | "rejected";
@@ -78,6 +78,24 @@ export class DsarService {
     const mode: DsarFulfillmentMode =
       input.fulfillmentMode ??
       (input.requestType === "access" || input.requestType === "portability" ? "auto" : "manual");
+
+    const email = input.subjectEmail.toLowerCase();
+    const [open] = await this.db
+      .select({ id: dataSubjectRequests.id })
+      .from(dataSubjectRequests)
+      .where(
+        scopedTo(
+          dataSubjectRequests,
+          workspaceId,
+          and(
+            eq(dataSubjectRequests.subjectEmail, email),
+            eq(dataSubjectRequests.requestType, input.requestType),
+            inArray(dataSubjectRequests.status, ["received", "in_progress"])
+          )
+        )
+      )
+      .limit(1);
+    if (open) throw new HttpError("dsar_already_open", 409);
 
     const [row] = await this.db
       .insert(dataSubjectRequests)
@@ -161,6 +179,13 @@ export class DsarService {
       )
       .limit(200);
 
+    const [suppressionRow] = await this.db
+      .select()
+      .from(suppressions)
+      .where(scopedTo(suppressions, workspaceId, eq(suppressions.email, existing.subjectEmail.toLowerCase())))
+      .limit(1);
+    const hasData = consentRows.length > 0 || !!suppressionRow;
+
     const payload = {
       requestId: existing.id,
       requestType: existing.requestType,
@@ -176,17 +201,27 @@ export class DsarService {
         grantedAt: c.grantedAt?.toISOString?.() ?? c.grantedAt,
         revokedAt: c.revokedAt?.toISOString?.() ?? c.revokedAt,
       })),
-      note: "Auto-export v1: consents + request metadata. Expand to CRM/inbox in later passes.",
+      suppression: suppressionRow
+        ? { reason: suppressionRow.reason, createdAt: suppressionRow.createdAt.toISOString() }
+        : null,
+      note: hasData
+        ? "Auto-export v1: consents + suppression + request metadata. CRM/inbox records are not included yet."
+        : "No consent or suppression records are keyed to this email. CRM/inbox records are not covered by auto-export — manual review required.",
     };
 
     const [row] = await this.db
       .update(dataSubjectRequests)
       .set({
-        status: "completed",
+        // Nothing found != nothing exists (CRM/inbox aren't searched) — keep it open for a human.
+        status: hasData ? "completed" : "in_progress",
         exportPayload: JSON.stringify(payload),
-        exportCompletedAt: new Date(),
-        completedAt: new Date(),
-        notes: existing.notes ?? "Auto-export completed under 30-day SLA policy.",
+        exportCompletedAt: hasData ? new Date() : null,
+        completedAt: hasData ? new Date() : null,
+        notes:
+          existing.notes ??
+          (hasData
+            ? "Auto-export completed under 30-day SLA policy."
+            : "Auto-export found no records; manual review required."),
         updatedAt: new Date(),
       })
       .where(scopedById(dataSubjectRequests, workspaceId, id))
