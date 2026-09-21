@@ -2,6 +2,12 @@ import OpenAI from "openai";
 import { captureException, createLogger } from "@skout/observability";
 import type { WorkspaceToolRunner } from "./ai-workspace-tools.service.js";
 import { composeSystemPrompt, type CopilotPersona } from "./ai-copilot-personas.service.js";
+import {
+  buildStepSuggestionPrompt,
+  coerceStepSuggestions,
+  type StepSuggestion,
+  type StepSuggestionContext,
+} from "./sequence-step-suggestions.js";
 
 const log = createLogger("ai.service");
 
@@ -846,6 +852,56 @@ export class AiService {
         : "AI-generated sequence";
 
     return { name, steps };
+  }
+
+  /**
+   * Drafts a few alternative Email / LinkedIn copies for one step, grounded in the surrounding
+   * sequence (name, neighbouring steps, audience, workspace insights). Nothing is persisted —
+   * the UI lets the rep pick a draft.
+   */
+  async suggestStepContent(
+    ctx: StepSuggestionContext,
+    apiKey: string | undefined
+  ): Promise<StepSuggestion[]> {
+    if (!apiKey) {
+      throw Object.assign(new Error("OpenRouter API key is not configured on this workspace"), {
+        statusCode: 503,
+      });
+    }
+
+    const client = new OpenAI({
+      apiKey,
+      baseURL: "https://openrouter.ai/api/v1",
+      defaultHeaders: { "HTTP-Referer": "https://skoutai.io", "X-Title": "Skout AI" },
+      timeout: 60_000,
+    });
+
+    const { system, user } = buildStepSuggestionPrompt(ctx);
+    let raw: string;
+    try {
+      const result = await client.chat.completions.create({
+        model: process.env.AI_MODEL ?? "openai/gpt-4o-mini",
+        max_tokens: 2000,
+        temperature: 0.8,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+      });
+      raw = result.choices[0]?.message?.content ?? "{}";
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.error("ai.service: step suggestion failed", err);
+      captureException(err, { module: "ai.service", op: "suggestStepContent" });
+      throw Object.assign(new Error(`AI generation failed: ${msg}`), { statusCode: 502 });
+    }
+
+    const suggestions = coerceStepSuggestions(raw, ctx.target);
+    if (suggestions.length === 0) {
+      throw Object.assign(new Error("AI returned no usable suggestions"), { statusCode: 502 });
+    }
+    return suggestions;
   }
 }
 

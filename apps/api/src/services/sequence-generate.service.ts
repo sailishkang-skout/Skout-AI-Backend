@@ -31,7 +31,7 @@ function topValues(values: (string | undefined)[], limit: number): string[] {
 }
 
 /** Builds a short audience summary from a list's members for AI targeting context. */
-async function buildAudienceSummary(
+export async function buildAudienceSummary(
   db: Db,
   workspaceId: string,
   listId: string

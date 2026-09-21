@@ -10,6 +10,7 @@ import {
   type ConditionExpression,
 } from "./sequence-condition.js";
 import { recordSequenceEvent } from "./sequence-events.js";
+import { MERGE_TOKENS } from "./sequence-merge-tokens.js";
 import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.js";
 import { dispatchWebhookEvent } from "./webhook.service.js";
 
@@ -72,11 +73,6 @@ const STATUS_TRANSITIONS: Record<SequenceStatus, SequenceStatus[]> = {
   paused: ["active", "archived"],
   archived: [],
 };
-
-const MERGE_TOKENS = new Set([
-  "firstName", "lastName", "fullName", "companyName", "companyDomain",
-  "title", "senderName", "senderEmail", "unsubscribeUrl",
-]);
 
 function validateMergeTokens(template: string): void {
   const tokenRegex = /\{\{(\w+)\}\}/g;
