@@ -22,13 +22,25 @@ SkoutDev (only cluster)"). The dev/UAT/prod audit scope in AUTH-ADI-01 currently
 target, not three — confirm before writing UAT/prod rows into the audit results as "N/A" vs
 "not yet provisioned."
 
+Matching finding from AUTH-ADI-03 (2026-09-22, Aditya, dashboard walkthrough — not the full formal
+audit, but enough to confirm two of the three open decisions below): **Clerk also has no separate
+Production instance provisioned** — there is only a Development instance, consistent with the
+single-AWS-environment finding above. On that instance: **SMS verification code is enabled** (available for users to opt into);
+authenticator app and backup codes are off; "Require MFA" is off, so MFA is optional, not
+mandatory. This means some users may have voluntarily enrolled in SMS-based MFA today — actual
+adoption count is still unknown and needs checking (Users tab, or Clerk's Backend API
+`two_factor_enabled` field) before D3 can be called confirmed. Organizations is
+not enabled (no active orgs) and SSO Connections lists only Google as a social sign-in provider —
+no real enterprise SAML/OIDC connection exists. Session token custom claims are currently empty
+(`{}`) — worth a follow-up for AUTH-BE-03/BE-12 but not decision-blocking.
+
 ## Decisions
 
 | ID | Decision | Chosen | Rationale | Confirming input (not yet run) |
 |---|---|---|---|---|
-| D1 | SSO/SCIM strategy | **Build in-house** | Full removal of Clerk Enterprise dependency; matches AUTH-BE-23/24 scope already in the ticket doc. | AUTH-ADI-01 (active SSO workspace count) / AUTH-ADI-03 (SSO/SCIM connections) — confirm the customer count this must support before committing engineering time |
+| D1 | SSO/SCIM strategy | **Build in-house** | Full removal of Clerk Enterprise dependency; matches AUTH-BE-23/24 scope already in the ticket doc. Kept despite AUTH-ADI-03 showing zero active Organizations and no real enterprise SSO connection today — Aditya confirmed there is a business reason for building this ahead of visible usage (2026-09-22). | Confirmed via AUTH-ADI-03: zero Clerk Organizations, no enterprise SSO connections. Decision explicitly held anyway — see Risks. |
 | D2 | Token & cookie architecture | **Same-origin route-handler layer (BFF)** — JWT access + rotating opaque refresh; TTLs per ticket doc §3 (access 10 min · refresh idle 14 d · absolute 60 d) | Matches the ticket doc's recommended default; avoids the cross-origin cookie risk AUTH-ADI-11 flags for API-host cookies through the marketing proxy. | None — independently decidable, no change pending |
-| D3 | MFA scope | **None at launch** | Ship core own-auth first; revisit if AUTH-ADI-03 shows meaningful existing Clerk MFA usage. | AUTH-ADI-03 (does Clerk report MFA usage today?) — if usage is non-trivial, reopen this decision before cutover |
+| D3 | MFA scope | **None at launch** | Ship core own-auth first. | **Still open**: AUTH-ADI-03 shows SMS-based MFA is *enabled and optional* in Clerk (not required). Need an actual adoption count (Users tab or Backend API `two_factor_enabled`) before this can be finalized — if adoption is non-trivial, those users need a migration path (e.g. forced TOTP re-enrollment) even if MFA itself isn't built into launch scope. |
 | D4 | Where own-auth lives | **Module in `apps/api`** | Reuses existing DB, email, and OTP infrastructure; no new deploy target. | None |
 | D5 | User migration approach | **Import hashes (if exportable)**, **cohort rollout** | Least user disruption if Clerk exports usable password hashes. | AUTH-ADI-03 (Clerk's written answer on hash export format) — **if hashes are not exportable, this falls back to force-reset or passwordless-OTP; AUTH-BE-21/22 and FE-16 must not assume hash import until AUTH-ADI-03 confirms it** |
 | D6 | Signing-key custody | **Secrets Manager injected as env** | Matches the existing secrets pattern (AUTH-ADI-09), fastest to ship; revisit KMS custody later if a compliance requirement demands it. | None |
@@ -38,9 +50,13 @@ Cohort success criteria (error rate, login success rate, support-ticket threshol
 yet defined** — needs concrete numbers, follow up separately now that D5 (cohort rollout) is set.
 
 ## Risks — decisions made ahead of confirming audits
-- **D1** assumes in-house SSO/SCIM is worth building without yet knowing how many customers use
-  Clerk's SSO today (AUTH-ADI-01/03 not run). If that count is near zero, this may be over-scoped.
-- **D3** assumes dropping MFA at launch is acceptable without yet knowing current Clerk MFA usage.
+- **D1** — kept "build in-house" even though AUTH-ADI-03 shows zero active Clerk Organizations and
+  no real enterprise SSO connection today. Aditya confirmed (2026-09-22) there's a business reason
+  for this outside what's visible in Clerk's current config.
+- **D3** — SMS-based MFA is enabled and optional in Clerk today; adoption count is still unknown.
+  If any users have enrolled, "none at launch" needs a migration path for them specifically (they
+  lose their second factor silently otherwise) even though MFA isn't being built into own-auth at
+  launch. Get the adoption count before cutover, not after.
 - **D5** assumes Clerk's password hashes are exportable. AUTH-ADI-03 includes asking Clerk support
   this explicitly, in writing — until that answer lands, AUTH-BE-21 (import tool) should be built
   to support hash-import as the primary path but must not hard-fail if hashes turn out unavailable.
@@ -49,16 +65,19 @@ yet defined** — needs concrete numbers, follow up separately now that D5 (coho
 - [ ] AUTH-ADI-01 — identity data audit (counts only: total users, `clerk_user_id` nulls,
       `stub:%` ids, `@clerk.local` emails, case-duplicate emails, inactive users, SSO config counts
       by status/scim_enabled, active invite sessions). Script ready:
-      `pnpm --filter @skout/db audit-identity-data`. Scope note: only SkoutDev exists today (see
-      Context) — run there; UAT/prod rows are N/A until those environments exist.
+      `pnpm --filter @skout/db audit-identity-data`. Only one environment exists (see Context) —
+      run there; no UAT/prod rows needed.
 - [ ] AUTH-ADI-02 — prove `INTEGRATION_ENCRYPTION_KEY` / `HUBSPOT_CLIENT_SECRET` don't depend on
       `CLERK_SECRET_KEY`. Script ready: `pnpm --filter @skout/db audit-encryption-key-dependency`
       (read-only, counts only, no plaintext).
-- [ ] AUTH-ADI-03 — Clerk dashboard audit (dev + prod): customized session-token claims, issuer
-      URL, auth methods + user counts (incl. MFA usage — feeds D3), allowed origins/redirects, DNS
-      records, webhooks, Organizations/SSO connections (feeds D1), plan tier/MAU, and Clerk's
-      written answer on password-hash export format (feeds D5). Manual — needs Clerk dashboard
-      admin login.
+- [x] AUTH-ADI-03 (partial) — Clerk dashboard walkthrough done 2026-09-22 (single instance, no
+      separate prod — see Context): MFA config, Organizations, SSO Connections, session-token
+      claims all recorded above.
+  - [ ] Still open: SMS-MFA adoption count (Users tab or Backend API `two_factor_enabled`) — feeds
+        D3.
+  - [ ] Still open: Clerk support's written answer on password-hash export format — feeds D5.
+  - [ ] Still open (lower priority, not decision-blocking): issuer URL, allowed
+        origins/redirects, DNS records, webhooks, plan tier/MAU.
 
 ## Consequences
 AUTH-BE-10 (own-auth schema) and AUTH-FE-05 (route-handler layer) can start now — they only needed
