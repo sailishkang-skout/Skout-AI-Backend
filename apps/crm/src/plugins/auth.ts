@@ -1,6 +1,11 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
-import { resolveOrProvisionUser } from "@skout/auth";
+import {
+  AuthTokenInvalidError,
+  buildResolveAuthConfig,
+  resolveAuth,
+  resolveOrProvisionUser,
+} from "@skout/auth";
 import { errorResponse, HttpError } from "../utils/http.js";
 
 declare module "fastify" {
@@ -30,16 +35,6 @@ function isPublicRoute(url: string): boolean {
     pathname === "/api/v1/webhooks/meeting-rsvp" ||
     pathname.startsWith("/internal/v1/")
   );
-}
-
-function normalizeOrigin(origin: string): string {
-  try {
-    const parsed = new URL(origin);
-    parsed.hostname = parsed.hostname.toLowerCase();
-    return parsed.origin;
-  } catch {
-    return origin.toLowerCase();
-  }
 }
 
 export const authPlugin = fp(async (app) => {
@@ -84,12 +79,16 @@ export const authPlugin = fp(async (app) => {
     return;
   }
 
-  const authorizedParties = [
-    ...config.CORS_ORIGIN.map(normalizeOrigin),
-    ...(config.FRONTEND_URL ? [normalizeOrigin(config.FRONTEND_URL)] : []),
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-  ].filter((value, index, all) => all.indexOf(value) === index);
+  const clerkJwtIssuer = config.CLERK_JWT_ISSUER;
+  if (!clerkJwtIssuer) {
+    throw new Error("CLERK_JWT_ISSUER is required when Clerk auth is enabled (see AUTH-ADI-03)");
+  }
+  const resolveAuthConfig = buildResolveAuthConfig({
+    clerkSecretKey: config.CLERK_SECRET_KEY!,
+    clerkJwtIssuer,
+    corsOrigin: config.CORS_ORIGIN,
+    frontendUrl: config.FRONTEND_URL,
+  });
 
   app.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {
     if (request.method === "OPTIONS") return;
@@ -111,21 +110,8 @@ export const authPlugin = fp(async (app) => {
     }
 
     try {
-      const { verifyToken } = await import("@clerk/backend");
-      const claims = await verifyToken(token, {
-        secretKey: config.CLERK_SECRET_KEY,
-        authorizedParties,
-      });
-
-      const clerkUserId = claims?.sub;
-      if (!clerkUserId) {
-        return reply.code(401).send(errorResponse("Invalid Clerk token", 401));
-      }
-
-      const email = String(claims.email ?? `${clerkUserId}@clerk.local`);
-      const fullName = String(claims.name ?? claims.first_name ?? email);
-
-      const result = await resolveOrProvisionUser(db, clerkUserId, email, fullName);
+      const identity = await resolveAuth(token, resolveAuthConfig);
+      const result = await resolveOrProvisionUser(db, identity);
 
       request.userId = result.userId;
       request.userEmail = result.userEmail;
@@ -133,6 +119,9 @@ export const authPlugin = fp(async (app) => {
       request.role = result.role;
     } catch (error) {
       app.log.error({ err: error }, "Auth failed");
+      if (error instanceof AuthTokenInvalidError) {
+        return reply.code(401).send(errorResponse(error.message, 401));
+      }
       if (error instanceof HttpError) {
         return reply.code(error.statusCode).send(errorResponse(error.message, error.statusCode));
       }

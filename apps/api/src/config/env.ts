@@ -68,6 +68,8 @@ const envSchema = z
       ),
     CLERK_SECRET_KEY: z.string().optional(),
     CLERK_PUBLISHABLE_KEY: z.string().optional(),
+    /** Clerk session JWT `iss` (Frontend API URL) — AUTH-ADI-03 / AUTH-BE-03 issuer allowlist. */
+    CLERK_JWT_ISSUER: z.string().url().optional(),
     /** When true, skip JWT and use stub user (local only; never set in prod). */
     AUTH_STUB: z
       .string()

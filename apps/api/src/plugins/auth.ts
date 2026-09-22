@@ -3,7 +3,15 @@ import fp from "fastify-plugin";
 import { and, eq, gt } from "drizzle-orm";
 import { timingSafeEqual } from "node:crypto";
 import { schema } from "@skout/db";
-import { loadPlatformContext, type PlatformContext } from "@skout/auth";
+import {
+  AuthTokenInvalidError,
+  buildResolveAuthConfig,
+  computeAuthorizedParties,
+  loadPlatformContext,
+  normalizeOrigin,
+  resolveAuth,
+  type PlatformContext,
+} from "@skout/auth";
 import { resolveOrProvisionUser } from "../services/auth.service.js";
 import { errorResponse, HttpError } from "../utils/http.js";
 import type { Env } from "../config/env.js";
@@ -122,29 +130,7 @@ function isPublicRoute(url: string, method?: string): boolean {
   );
 }
 
-export function normalizeOrigin(origin: string): string {
-  try {
-    const url = new URL(origin);
-    url.hostname = url.hostname.toLowerCase();
-    return url.origin;
-  } catch {
-    return origin.toLowerCase();
-  }
-}
-
-/**
- * Shared with step-up.routes.ts so its independent Clerk verifyToken call uses the exact same
- * `authorizedParties` (azp claim allowlist) as this plugin's primary-session verification below
- * — a second, looser copy of this logic would be a real gap for a security-sensitive check.
- */
-export function computeAuthorizedParties(config: Pick<Env, "CORS_ORIGIN" | "FRONTEND_URL">): string[] {
-  return [
-    ...config.CORS_ORIGIN.map(normalizeOrigin),
-    ...(config.FRONTEND_URL ? [normalizeOrigin(config.FRONTEND_URL)] : []),
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-  ].filter((value, index, all) => all.indexOf(value) === index);
-}
+export { computeAuthorizedParties, normalizeOrigin };
 
 export const authPlugin = fp(async (app) => {
   const config = app.config;
@@ -202,7 +188,16 @@ export const authPlugin = fp(async (app) => {
     return;
   }
 
-  const authorizedParties = computeAuthorizedParties(config);
+  const clerkJwtIssuer = config.CLERK_JWT_ISSUER;
+  if (!clerkJwtIssuer) {
+    throw new Error("CLERK_JWT_ISSUER is required when Clerk auth is enabled (see AUTH-ADI-03)");
+  }
+  const resolveAuthConfig = buildResolveAuthConfig({
+    clerkSecretKey: config.CLERK_SECRET_KEY!,
+    clerkJwtIssuer,
+    corsOrigin: config.CORS_ORIGIN,
+    frontendUrl: config.FRONTEND_URL,
+  });
 
   app.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {
     // CORS preflight (and any OPTIONS) must never require auth.
@@ -288,21 +283,8 @@ export const authPlugin = fp(async (app) => {
     }
 
     try {
-      const { verifyToken } = await import("@clerk/backend");
-      const claims = await verifyToken(token, {
-        secretKey: config.CLERK_SECRET_KEY,
-        authorizedParties,
-      });
-
-      const clerkUserId = claims?.sub;
-      if (!clerkUserId) {
-        return reply.code(401).send(errorResponse("Invalid Clerk token", 401));
-      }
-
-      const email = String(claims.email ?? `${clerkUserId}@clerk.local`);
-      const fullName = String(claims.name ?? claims.first_name ?? email);
-
-      const result = await resolveOrProvisionUser(db, clerkUserId, email, fullName);
+      const identity = await resolveAuth(token, resolveAuthConfig);
+      const result = await resolveOrProvisionUser(db, identity);
 
       request.userId = result.userId;
       request.userEmail = result.userEmail;
@@ -310,6 +292,9 @@ export const authPlugin = fp(async (app) => {
       request.role = result.role;
     } catch (error) {
       app.log.error({ err: error }, "Auth failed");
+      if (error instanceof AuthTokenInvalidError) {
+        return reply.code(401).send(errorResponse(error.message, 401));
+      }
       if (error instanceof HttpError) {
         return reply.code(error.statusCode).send(errorResponse(error.message, error.statusCode));
       }

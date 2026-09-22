@@ -1,8 +1,9 @@
 import { schema } from "@skout/db";
 import type { Db } from "@skout/db";
+import { providerForClerkUserId } from "@skout/db/schema";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { HttpError } from "./http.js";
-import { linkAuthIdentityForClerkUserId } from "./link-auth-identity.js";
+import { linkAuthIdentity } from "./link-auth-identity.js";
 
 export interface ProvisionResult {
   userId: string;
@@ -11,14 +12,75 @@ export interface ProvisionResult {
   role: string;
 }
 
-export async function resolveOrProvisionUser(
-  db: Db,
-  clerkUserId: string,
-  email: string,
-  fullName: string
-): Promise<ProvisionResult> {
-  return db.transaction(async (tx) => {
-    const byClerk = await tx
+export type ResolveOrProvisionInput = {
+  provider: string;
+  subject: string;
+  email?: string;
+  emailVerified: boolean;
+  name?: string;
+};
+
+type UserRow = {
+  id: string;
+  email: string;
+  status: string;
+  isBlocked: boolean;
+};
+
+type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
+function legacyClerkUserIdColumn(provider: string, subject: string): string | null {
+  if (provider === "clerk" || provider === "stub") return subject;
+  return null;
+}
+
+function storageEmail(input: ResolveOrProvisionInput): string {
+  if (input.email) return input.email;
+  const encoded = encodeURIComponent(`${input.provider}:${input.subject}`);
+  return `unverified+${encoded}@accounts.skout.internal`;
+}
+
+function normalizeInput(
+  input: ResolveOrProvisionInput | string,
+  email?: string,
+  fullName?: string,
+  emailVerified = true
+): ResolveOrProvisionInput {
+  if (typeof input !== "string") return input;
+  return {
+    provider: providerForClerkUserId(input),
+    subject: input,
+    email,
+    emailVerified,
+    name: fullName,
+  };
+}
+
+type UserMatch = { user: UserRow; matchedBy: "identity" | "clerk" | "email" };
+
+async function findExistingUser(tx: Tx, input: ResolveOrProvisionInput): Promise<UserMatch | null> {
+  const [byIdentity] = await tx
+    .select({
+      id: schema.users.id,
+      email: schema.users.email,
+      status: schema.users.status,
+      isBlocked: schema.users.isBlocked,
+    })
+    .from(schema.authIdentities)
+    .innerJoin(schema.users, eq(schema.authIdentities.userId, schema.users.id))
+    .where(
+      and(
+        eq(schema.authIdentities.provider, input.provider),
+        eq(schema.authIdentities.providerSubject, input.subject)
+      )
+    )
+    .limit(1);
+
+  if (byIdentity) return { user: byIdentity, matchedBy: "identity" };
+
+  const legacyClerkId = legacyClerkUserIdColumn(input.provider, input.subject);
+  if (legacyClerkId) {
+    const [byClerk] = await tx
       .select({
         id: schema.users.id,
         email: schema.users.email,
@@ -26,59 +88,105 @@ export async function resolveOrProvisionUser(
         isBlocked: schema.users.isBlocked,
       })
       .from(schema.users)
-      .where(eq(schema.users.clerkUserId, clerkUserId))
+      .where(eq(schema.users.clerkUserId, legacyClerkId))
       .limit(1);
+    if (byClerk) return { user: byClerk, matchedBy: "clerk" };
+  }
+
+  if (input.emailVerified && input.email) {
+    const [byEmail] = await tx
+      .select({
+        id: schema.users.id,
+        email: schema.users.email,
+        status: schema.users.status,
+        isBlocked: schema.users.isBlocked,
+      })
+      .from(schema.users)
+      .where(eq(schema.users.email, input.email))
+      .limit(1);
+    if (byEmail) return { user: byEmail, matchedBy: "email" };
+  }
+
+  return null;
+}
+
+export async function resolveOrProvisionUser(
+  db: Db,
+  input: ResolveOrProvisionInput | string,
+  email?: string,
+  fullName?: string,
+  legacyOptions?: { emailVerified?: boolean }
+): Promise<ProvisionResult> {
+  const resolved = normalizeInput(input, email, fullName, legacyOptions?.emailVerified ?? true);
+  const storedEmail = storageEmail(resolved);
+  const displayName = resolved.name ?? resolved.email ?? storedEmail;
+  const legacyClerkId = legacyClerkUserIdColumn(resolved.provider, resolved.subject);
+  const emailVerifiedAt = resolved.emailVerified ? new Date() : null;
+
+  return db.transaction(async (tx) => {
+    const existing = await findExistingUser(tx, resolved);
 
     let userId: string;
     let userEmail: string;
     let userStatus: string;
     let userBlocked: boolean;
 
-    if (byClerk[0]) {
-      ({ id: userId, email: userEmail, status: userStatus, isBlocked: userBlocked } = byClerk[0]);
+    if (existing) {
+      ({ id: userId, email: userEmail, status: userStatus, isBlocked: userBlocked } = existing.user);
+
+      const shouldBackfillClerkId =
+        existing.matchedBy === "email" &&
+        resolved.emailVerified &&
+        resolved.email &&
+        legacyClerkId;
+
+      if (shouldBackfillClerkId) {
+        await tx
+          .update(schema.users)
+          .set({ clerkUserId: legacyClerkId, fullName: displayName, updatedAt: new Date() })
+          .where(eq(schema.users.id, userId));
+      }
     } else {
-      const byEmail = await tx
-        .select({
+      const [created] = await tx
+        .insert(schema.users)
+        .values({
+          email: storedEmail,
+          fullName: displayName,
+          clerkUserId: legacyClerkId,
+          status: "active",
+          isBlocked: false,
+        })
+        .onConflictDoUpdate({
+          target: schema.users.email,
+          set: {
+            clerkUserId: legacyClerkId,
+            fullName: displayName,
+            updatedAt: new Date(),
+          },
+        })
+        .returning({
           id: schema.users.id,
           email: schema.users.email,
           status: schema.users.status,
           isBlocked: schema.users.isBlocked,
-        })
-        .from(schema.users)
-        .where(eq(schema.users.email, email))
-        .limit(1);
+        });
 
-      if (byEmail[0]) {
-        await tx
-          .update(schema.users)
-          .set({ clerkUserId, fullName, updatedAt: new Date() })
-          .where(eq(schema.users.id, byEmail[0].id));
-        ({ id: userId, email: userEmail, status: userStatus, isBlocked: userBlocked } = byEmail[0]);
-      } else {
-        const [created] = await tx
-          .insert(schema.users)
-          .values({ email, fullName, clerkUserId, status: "active", isBlocked: false })
-          .onConflictDoUpdate({
-            target: schema.users.email,
-            set: { clerkUserId, fullName, updatedAt: new Date() },
-          })
-          .returning({
-            id: schema.users.id,
-            email: schema.users.email,
-            status: schema.users.status,
-            isBlocked: schema.users.isBlocked,
-          });
-
-        if (!created) throw new HttpError("Failed to create user record", 500);
-        ({ id: userId, email: userEmail, status: userStatus, isBlocked: userBlocked } = created);
-      }
+      if (!created) throw new HttpError("Failed to create user record", 500);
+      ({ id: userId, email: userEmail, status: userStatus, isBlocked: userBlocked } = created);
     }
 
     if (userStatus !== "active" || userBlocked) {
       throw new HttpError("Account is inactive or blocked", 403);
     }
 
-    await linkAuthIdentityForClerkUserId(tx, userId, clerkUserId, userEmail);
+    await linkAuthIdentity(
+      tx,
+      userId,
+      resolved.provider,
+      resolved.subject,
+      userEmail,
+      emailVerifiedAt
+    );
 
     const [membership] = await tx
       .select({
@@ -110,10 +218,8 @@ export async function resolveOrProvisionUser(
       return { userId, userEmail, workspaceId: membership.workspaceId, role: membership.role };
     }
 
-    // No membership yet — check for pending invites before creating a new workspace.
-    // If the user arrived via an invite link, accept those invites and join that workspace
-    // instead of provisioning a brand-new workspace as owner.
     const now = new Date();
+    const inviteEmail = (resolved.email ?? userEmail).toLowerCase();
     const pendingInvites = await tx
       .select({
         id: schema.workspaceInvites.id,
@@ -123,7 +229,7 @@ export async function resolveOrProvisionUser(
       .from(schema.workspaceInvites)
       .where(
         and(
-          eq(schema.workspaceInvites.email, email.toLowerCase()),
+          eq(schema.workspaceInvites.email, inviteEmail),
           isNull(schema.workspaceInvites.acceptedAt),
           gt(schema.workspaceInvites.expiresAt, now)
         )
@@ -161,12 +267,12 @@ export async function resolveOrProvisionUser(
     }
 
     const slug =
-      email.split("@")[0].toLowerCase().replace(/[^a-z0-9]+/g, "-") || "workspace";
+      storedEmail.split("@")[0].toLowerCase().replace(/[^a-z0-9]+/g, "-") || "workspace";
     const uniqueSlug = `${slug}-${Math.random().toString(36).slice(2, 7)}`;
 
     const [workspace] = await tx
       .insert(schema.workspaces)
-      .values({ name: `${fullName}'s Workspace`, slug: uniqueSlug })
+      .values({ name: `${displayName}'s Workspace`, slug: uniqueSlug })
       .returning({ id: schema.workspaces.id });
 
     if (!workspace) throw new HttpError("Failed to create workspace", 500);
@@ -193,14 +299,18 @@ export async function resolveOrProvisionUser(
 }
 
 async function autoAcceptPendingInvites(
-  tx: Parameters<Parameters<Db["transaction"]>[0]>[0],
+  tx: Tx,
   userId: string,
   email: string,
   currentWorkspaceId: string
 ): Promise<void> {
   const now = new Date();
   const pending = await tx
-    .select({ id: schema.workspaceInvites.id, workspaceId: schema.workspaceInvites.workspaceId, role: schema.workspaceInvites.role })
+    .select({
+      id: schema.workspaceInvites.id,
+      workspaceId: schema.workspaceInvites.workspaceId,
+      role: schema.workspaceInvites.role,
+    })
     .from(schema.workspaceInvites)
     .where(
       and(
@@ -225,7 +335,11 @@ async function autoAcceptPendingInvites(
       .limit(1);
 
     if (!alreadyMember) {
-      await tx.insert(schema.workspaceMembers).values({ workspaceId: invite.workspaceId, userId, role: invite.role });
+      await tx.insert(schema.workspaceMembers).values({
+        workspaceId: invite.workspaceId,
+        userId,
+        role: invite.role,
+      });
     }
 
     await tx.update(schema.workspaceInvites).set({ acceptedAt: now }).where(eq(schema.workspaceInvites.id, invite.id));
