@@ -652,7 +652,13 @@
       "when": 1792500000000,
       "tag": "0091_linkedin_voice_sequence_link",
       "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1792500100000,
+      "tag": "0092_auth_own_schema",
+      "breakpoints": true
     }
   ]
 }
-
