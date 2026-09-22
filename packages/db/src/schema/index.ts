@@ -1,5 +1,6 @@
 export * from "./workspaces.js";
 export * from "./users.js";
+export * from "./auth-identities.js";
 export * from "./credits.js";
 export * from "./icp.js";
 export * from "./jobs.js";

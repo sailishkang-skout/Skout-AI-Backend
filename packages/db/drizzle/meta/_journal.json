@@ -659,6 +659,13 @@
       "when": 1792500100000,
       "tag": "0092_auth_own_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1792600000000,
+      "tag": "0093_auth_identities",
+      "breakpoints": true
     }
   ]
 }

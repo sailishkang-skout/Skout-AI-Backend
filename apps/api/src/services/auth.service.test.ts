@@ -18,7 +18,15 @@ function selectChain(result: unknown[]) {
 //   mode "returning" → .values().returning() resolves with result
 //   mode "returning+conflict" → .values().onConflictDoUpdate().returning() resolves with result
 //   mode "void" → .values() resolves with []
-function insertChain(mode: "void" | "returning" | "returning+conflict", result: unknown[] = []) {
+//   mode "conflict-void" → .values().onConflictDoUpdate() (auth_identities upsert)
+function insertChain(mode: "void" | "returning" | "returning+conflict" | "conflict-void", result: unknown[] = []) {
+  if (mode === "conflict-void") {
+    return {
+      values: vi.fn().mockReturnValue({
+        onConflictDoUpdate: vi.fn().mockResolvedValue([]),
+      }),
+    };
+  }
   if (mode === "void") {
     return { values: vi.fn().mockResolvedValue([]) };
   }
@@ -50,7 +58,7 @@ function updateChain() {
 
 function makeTx(overrides: {
   selects?: unknown[][];
-  inserts?: Array<{ mode: "void" | "returning" | "returning+conflict"; result?: unknown[] }>;
+  inserts?: Array<{ mode: "void" | "returning" | "returning+conflict" | "conflict-void"; result?: unknown[] }>;
   withUpdate?: boolean;
 }) {
   const tx = {
@@ -83,9 +91,11 @@ const BASE_MEMBERSHIP = { workspaceId: "ws-1", role: "owner" };
 const NEW_USER = { id: "u-new", email: "new@example.com", status: "active", isBlocked: false };
 const NEW_WORKSPACE = { id: "ws-new" };
 
+const AUTH_IDENTITY_UPSERT = { mode: "conflict-void" as const };
+
 describe("resolveOrProvisionUser", () => {
   describe("returning user — found by clerkUserId", () => {
-    it("returns userId, workspaceId, role without any inserts", async () => {
+    it("returns userId, workspaceId, role and upserts auth_identities", async () => {
       const tx = makeTx({
         selects: [
           [BASE_USER],                   // user by clerkUserId
@@ -93,6 +103,7 @@ describe("resolveOrProvisionUser", () => {
           [{ workspaceId: "ws-1" }],     // credit_balance → exists, no heal
           [],                            // autoAcceptPendingInvites → no pending invites
         ],
+        inserts: [AUTH_IDENTITY_UPSERT],
       });
       const db = makeDb(tx);
 
@@ -104,7 +115,7 @@ describe("resolveOrProvisionUser", () => {
         workspaceId: "ws-1",
         role: "owner",
       });
-      expect(tx.insert).not.toHaveBeenCalled();
+      expect(tx.insert).toHaveBeenCalledTimes(1);
       expect(tx.update).not.toHaveBeenCalled();
     });
   });
@@ -120,6 +131,7 @@ describe("resolveOrProvisionUser", () => {
           [],                              // autoAcceptPendingInvites → no pending invites
         ],
         withUpdate: true,
+        inserts: [AUTH_IDENTITY_UPSERT],
       });
       const db = makeDb(tx);
 
@@ -128,7 +140,7 @@ describe("resolveOrProvisionUser", () => {
       expect(result.userId).toBe("u-1");
       expect(result.workspaceId).toBe("ws-1");
       expect(tx.update).toHaveBeenCalledTimes(1);
-      expect(tx.insert).not.toHaveBeenCalled();
+      expect(tx.insert).toHaveBeenCalledTimes(1);
     });
 
     it("heals missing credit balance on back-fill (pre-provisioning users)", async () => {
@@ -141,6 +153,7 @@ describe("resolveOrProvisionUser", () => {
           [],                // autoAcceptPendingInvites → no pending invites
         ],
         inserts: [
+          AUTH_IDENTITY_UPSERT,
           { mode: "void" }, // INSERT credit_balances
           { mode: "void" }, // INSERT credit_transactions
         ],
@@ -151,7 +164,7 @@ describe("resolveOrProvisionUser", () => {
       const result = await resolveOrProvisionUser(db as any, "clerk_new", "test@example.com", "Test User");
 
       expect(result.workspaceId).toBe("ws-1");
-      expect(tx.insert).toHaveBeenCalledTimes(2);
+      expect(tx.insert).toHaveBeenCalledTimes(3);
     });
   });
 
@@ -166,6 +179,7 @@ describe("resolveOrProvisionUser", () => {
         ],
         inserts: [
           { mode: "returning+conflict", result: [NEW_USER] },    // insert user
+          AUTH_IDENTITY_UPSERT,
           { mode: "returning",          result: [NEW_WORKSPACE] }, // insert workspace
           { mode: "void" },                                       // insert workspace_member
           { mode: "void" },                                       // insert credit_balance
@@ -182,7 +196,7 @@ describe("resolveOrProvisionUser", () => {
         workspaceId: "ws-new",
         role: "owner",
       });
-      expect(tx.insert).toHaveBeenCalledTimes(5);
+      expect(tx.insert).toHaveBeenCalledTimes(6);
       expect(tx.update).not.toHaveBeenCalled();
     });
 
@@ -191,6 +205,7 @@ describe("resolveOrProvisionUser", () => {
         selects: [[], [], [], []],  // byClerk, byEmail, membership, pendingInvites
         inserts: [
           { mode: "returning+conflict", result: [NEW_USER] },
+          AUTH_IDENTITY_UPSERT,
           { mode: "returning",          result: [NEW_WORKSPACE] },
           { mode: "void" },
           { mode: "void" },
@@ -200,8 +215,8 @@ describe("resolveOrProvisionUser", () => {
       const db = makeDb(tx);
       await resolveOrProvisionUser(db as any, "clerk_x", "new@example.com", "New User");
 
-      // 5th insert call is credit_transactions — check .values() arg
-      const ctInsertCall = (tx.insert.mock.results[4].value as ReturnType<typeof insertChain>);
+      // 6th insert call is credit_transactions — check .values() arg
+      const ctInsertCall = (tx.insert.mock.results[5].value as ReturnType<typeof insertChain>);
       const valuesFn = (ctInsertCall as { values: ReturnType<typeof vi.fn> }).values;
       expect(valuesFn).toHaveBeenCalledWith(
         expect.objectContaining({ amount: 500, action: "provision" })
@@ -218,6 +233,7 @@ describe("resolveOrProvisionUser", () => {
           [],          // pending invites → none
         ],
         inserts: [
+          AUTH_IDENTITY_UPSERT,
           { mode: "returning", result: [NEW_WORKSPACE] },
           { mode: "void" },
           { mode: "void" },
@@ -230,7 +246,7 @@ describe("resolveOrProvisionUser", () => {
 
       expect(result.workspaceId).toBe("ws-new");
       expect(result.role).toBe("owner");
-      expect(tx.insert).toHaveBeenCalledTimes(4);
+      expect(tx.insert).toHaveBeenCalledTimes(5);
     });
   });
 
@@ -269,6 +285,7 @@ describe("resolveOrProvisionUser", () => {
         selects: [[], [], [], []],  // byClerk, byEmail, membership, pendingInvites
         inserts: [
           { mode: "returning+conflict", result: [NEW_USER] },
+          AUTH_IDENTITY_UPSERT,
           { mode: "returning", result: [] }, // workspace insert returns nothing
         ],
       });
