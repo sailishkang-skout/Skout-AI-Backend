@@ -87,13 +87,19 @@ export function ipPrefix(ip: string | undefined): string | undefined {
   return undefined;
 }
 
-function hashUserAgent(ua: string | undefined): string | undefined {
+function hashUserAgent(config: Env, ua: string | undefined): string | undefined {
   if (!ua) return undefined;
-  return createHmac("sha256", "ua").update(ua).digest("hex").slice(0, 32);
+  // Keyed with the same pepper as refresh tokens — diagnostic metadata, but still a keyed
+  // hash rather than a fixed-key one anyone could precompute against a known UA string.
+  return createHmac("sha256", config.AUTH_REFRESH_TOKEN_PEPPER ?? "auth-ua-fallback")
+    .update(ua)
+    .digest("hex")
+    .slice(0, 32);
 }
 
 async function logEvent(
   db: Db,
+  config: Env,
   userId: string | null,
   type: string,
   meta: SessionMeta,
@@ -103,7 +109,7 @@ async function logEvent(
     userId,
     type,
     ipPrefix: ipPrefix(meta.ip) ?? null,
-    uaHash: hashUserAgent(meta.userAgent) ?? null,
+    uaHash: hashUserAgent(config, meta.userAgent) ?? null,
     metadata,
   });
 }
@@ -130,7 +136,7 @@ export async function createSession(
       userId,
       idleExpiresAt,
       absoluteExpiresAt,
-      userAgentHash: hashUserAgent(meta.userAgent) ?? null,
+      userAgentHash: hashUserAgent(config, meta.userAgent) ?? null,
       ipPrefix: ipPrefix(meta.ip) ?? null,
     })
     .returning();
@@ -143,7 +149,7 @@ export async function createSession(
     expiresAt: absoluteExpiresAt,
   });
 
-  await logEvent(db, userId, "session_created", meta, { sessionId: session.id });
+  await logEvent(db, config, userId, "session_created", meta, { sessionId: session.id });
 
   return { sessionId: session.id, refreshToken: rawToken, idleExpiresAt, absoluteExpiresAt };
 }
@@ -176,7 +182,7 @@ export async function revokeSession(
     .where(eq(authSessions.id, sessionId))
     .limit(1);
   await revokeSessionInternal(db, config, sessionId, reason);
-  await logEvent(db, session?.userId ?? null, "session_revoked", meta, { sessionId, reason });
+  await logEvent(db, config, session?.userId ?? null, "session_revoked", meta, { sessionId, reason });
 }
 
 /** logout-all / block / password-change: revoke every non-revoked session for a user. */
@@ -195,7 +201,7 @@ export async function revokeAllSessionsForUser(
   for (const row of rows) {
     await revokeSessionInternal(db, config, row.id, reason);
   }
-  await logEvent(db, userId, "session_revoked_all", meta, { reason, count: rows.length });
+  await logEvent(db, config, userId, "session_revoked_all", meta, { reason, count: rows.length });
   return rows.length;
 }
 
@@ -250,12 +256,35 @@ export async function rotateRefreshToken(
     throw new HttpError("AUTH_SESSION_REVOKED", 401);
   }
 
-  // Atomic claim: only the first caller to reach this update gets a row back.
-  const [claimed] = await db
-    .update(authRefreshTokens)
-    .set({ usedAt: now })
-    .where(and(eq(authRefreshTokens.id, existing.id), isNull(authRefreshTokens.usedAt)))
-    .returning();
+  // Atomic claim + child issuance run in one transaction so a concurrent loser reading
+  // committed state never observes "claimed" without also observing the child token that
+  // proves it — otherwise a benign double-fire can be misread as reuse (see the `withinGrace`
+  // branch below) purely because it raced the winner's second statement, not because it was
+  // actually reused.
+  const newIdleExpiresAt = new Date(now.getTime() + IDLE_TTL_MS);
+  const rawNewToken = generateRawToken();
+
+  const claimed = await db.transaction(async (tx) => {
+    const [claimedRow] = await tx
+      .update(authRefreshTokens)
+      .set({ usedAt: now })
+      .where(and(eq(authRefreshTokens.id, existing.id), isNull(authRefreshTokens.usedAt)))
+      .returning();
+    if (!claimedRow) return null;
+
+    await tx.insert(authRefreshTokens).values({
+      sessionId: session.id,
+      tokenHash: hashRefreshToken(rawNewToken, pepper),
+      parentId: existing.id,
+      expiresAt: session.absoluteExpiresAt,
+    });
+    await tx
+      .update(authSessions)
+      .set({ lastUsedAt: now, idleExpiresAt: newIdleExpiresAt })
+      .where(eq(authSessions.id, session.id));
+
+    return claimedRow;
+  });
 
   if (!claimed) {
     // Someone else already claimed it. Re-read to see how long ago.
@@ -285,25 +314,11 @@ export async function rotateRefreshToken(
 
     // Reuse beyond the grace window (or no child found) — theft signal.
     await revokeSessionInternal(db, config, session.id, "refresh_reuse_detected");
-    await logEvent(db, session.userId, "refresh_reuse_detected", meta, {
+    await logEvent(db, config, session.userId, "refresh_reuse_detected", meta, {
       sessionId: session.id,
     });
     throw new HttpError("AUTH_SESSION_REVOKED", 401);
   }
-
-  const newIdleExpiresAt = new Date(now.getTime() + IDLE_TTL_MS);
-  const rawNewToken = generateRawToken();
-
-  await db.insert(authRefreshTokens).values({
-    sessionId: session.id,
-    tokenHash: hashRefreshToken(rawNewToken, pepper),
-    parentId: existing.id,
-    expiresAt: session.absoluteExpiresAt,
-  });
-  await db
-    .update(authSessions)
-    .set({ lastUsedAt: now, idleExpiresAt: newIdleExpiresAt })
-    .where(eq(authSessions.id, session.id));
 
   return { sessionId: session.id, refreshToken: rawNewToken, idleExpiresAt: newIdleExpiresAt };
 }
