@@ -1,8 +1,13 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { resolveOrProvisionUser, issueStepUpToken } from "@skout/auth";
+import {
+  AuthTokenInvalidError,
+  buildResolveAuthConfig,
+  issueStepUpToken,
+  resolveAuth,
+  resolveOrProvisionUser,
+} from "@skout/auth";
 import { errorResponse } from "../utils/http.js";
-import { computeAuthorizedParties } from "../plugins/auth.js";
 
 const bodySchema = z.object({
   /**
@@ -49,28 +54,32 @@ export async function stepUpRoutes(app: FastifyInstance) {
       return reply.status(400).send(errorResponse("Invalid step-up payload", 400, parsed.error.flatten()));
     }
 
-    let clerkUserId: string;
-    let email: string;
-    let fullName: string;
+    const clerkJwtIssuer = config.CLERK_JWT_ISSUER;
+    if (!clerkJwtIssuer) {
+      return reply.code(503).send(errorResponse("CLERK_JWT_ISSUER is not configured", 503));
+    }
+
+    let identity;
     try {
-      const { verifyToken } = await import("@clerk/backend");
-      const claims = await verifyToken(parsed.data.clerkToken, {
-        secretKey: config.CLERK_SECRET_KEY,
-        authorizedParties: computeAuthorizedParties(config),
-      });
-      if (!claims?.sub) {
-        return reply.code(401).send(errorResponse("Invalid Clerk token", 401));
-      }
-      clerkUserId = claims.sub;
-      email = String(claims.email ?? `${clerkUserId}@clerk.local`);
-      fullName = String(claims.name ?? claims.first_name ?? email);
+      identity = await resolveAuth(
+        parsed.data.clerkToken,
+        buildResolveAuthConfig({
+          clerkSecretKey: config.CLERK_SECRET_KEY!,
+          clerkJwtIssuer,
+          corsOrigin: config.CORS_ORIGIN,
+          frontendUrl: config.FRONTEND_URL,
+        })
+      );
     } catch (err) {
       app.log.warn({ err }, "Step-up Clerk token verification failed");
+      if (err instanceof AuthTokenInvalidError) {
+        return reply.code(401).send(errorResponse(err.message, 401));
+      }
       return reply.code(401).send(errorResponse("Invalid or expired Clerk token", 401));
     }
 
     if (!app.db) return reply.code(503).send(errorResponse("Database unavailable", 503));
-    const result = await resolveOrProvisionUser(app.db, clerkUserId, email, fullName);
+    const result = await resolveOrProvisionUser(app.db, identity);
     if (result.userId !== request.userId) {
       return reply
         .code(403)

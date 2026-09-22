@@ -48,6 +48,7 @@ const envSchema = z.object({
     .default("http://localhost:3000")
     .transform((val) => val.split(",").map((s) => s.trim())),
   CLERK_SECRET_KEY: z.string().optional(),
+  CLERK_JWT_ISSUER: z.string().url().optional(),
   AUTH_STUB: z
     .string()
     .optional()

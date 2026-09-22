@@ -245,6 +245,9 @@ importers:
 
   packages/auth:
     dependencies:
+      '@clerk/backend':
+        specifier: ^3.6.1
+        version: 3.7.0
       '@skout/db':
         specifier: workspace:*
         version: link:../db

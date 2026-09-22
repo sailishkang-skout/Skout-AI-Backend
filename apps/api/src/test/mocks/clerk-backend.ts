@@ -3,6 +3,7 @@ export async function verifyToken(_token: string, _opts: { secretKey: string }) 
   return {
     sub: "clerk_test_user",
     email: "test@example.com",
+    email_verified: true,
     name: "Test User",
   };
 }

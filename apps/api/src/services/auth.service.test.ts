@@ -7,6 +7,7 @@ function selectChain(result: unknown[]) {
   const resolved = Promise.resolve(result);
   const c: Record<string, unknown> = {};
   c.from = vi.fn().mockReturnValue(c);
+  c.innerJoin = vi.fn().mockReturnValue(c);
   c.where = vi.fn().mockReturnValue(c);
   c.limit = vi.fn().mockResolvedValue(result);
   // make chain directly awaitable (for queries that omit .limit())
@@ -98,6 +99,7 @@ describe("resolveOrProvisionUser", () => {
     it("returns userId, workspaceId, role and upserts auth_identities", async () => {
       const tx = makeTx({
         selects: [
+          [],                            // auth_identities miss
           [BASE_USER],                   // user by clerkUserId
           [BASE_MEMBERSHIP],             // membership
           [{ workspaceId: "ws-1" }],     // credit_balance → exists, no heal
@@ -124,6 +126,7 @@ describe("resolveOrProvisionUser", () => {
     it("updates clerkUserId and returns workspace membership", async () => {
       const tx = makeTx({
         selects: [
+          [],                              // auth_identities miss
           [],                              // user by clerkUserId → miss
           [BASE_USER],                     // user by email → hit
           [BASE_MEMBERSHIP],               // membership → hit
@@ -146,6 +149,7 @@ describe("resolveOrProvisionUser", () => {
     it("heals missing credit balance on back-fill (pre-provisioning users)", async () => {
       const tx = makeTx({
         selects: [
+          [],                // auth_identities miss
           [],                // user by clerkUserId → miss
           [BASE_USER],       // user by email → hit
           [BASE_MEMBERSHIP], // membership → hit
@@ -172,6 +176,7 @@ describe("resolveOrProvisionUser", () => {
     it("creates user, workspace, member, credit balance, and credit transaction", async () => {
       const tx = makeTx({
         selects: [
+          [],  // auth_identities miss
           [],  // clerkUserId miss
           [],  // email miss
           [],  // membership miss
@@ -202,7 +207,7 @@ describe("resolveOrProvisionUser", () => {
 
     it("grants 500 credits in the credit_transactions insert", async () => {
       const tx = makeTx({
-        selects: [[], [], [], []],  // byClerk, byEmail, membership, pendingInvites
+        selects: [[], [], [], [], []],  // identity, clerk, email, membership, pendingInvites
         inserts: [
           { mode: "returning+conflict", result: [NEW_USER] },
           AUTH_IDENTITY_UPSERT,
@@ -228,6 +233,7 @@ describe("resolveOrProvisionUser", () => {
     it("provisions workspace for a user that exists but has no membership", async () => {
       const tx = makeTx({
         selects: [
+          [],          // auth_identities miss
           [BASE_USER], // clerkUserId hit
           [],          // membership miss
           [],          // pending invites → none
@@ -252,7 +258,7 @@ describe("resolveOrProvisionUser", () => {
 
   describe("access control", () => {
     it("throws HttpError 403 when user status is not active", async () => {
-      const tx = makeTx({ selects: [[{ ...BASE_USER, status: "suspended" }]] });
+      const tx = makeTx({ selects: [[], [{ ...BASE_USER, status: "suspended" }]] });
       const db = makeDb(tx);
       await expect(
         resolveOrProvisionUser(db as any, "clerk_1", "test@example.com", "Test")
@@ -260,7 +266,7 @@ describe("resolveOrProvisionUser", () => {
     });
 
     it("includes statusCode 403 in the error when user is suspended", async () => {
-      const tx = makeTx({ selects: [[{ ...BASE_USER, status: "suspended" }]] });
+      const tx = makeTx({ selects: [[], [{ ...BASE_USER, status: "suspended" }]] });
       const db = makeDb(tx);
       await expect(
         resolveOrProvisionUser(db as any, "clerk_1", "test@example.com", "Test")
@@ -269,7 +275,7 @@ describe("resolveOrProvisionUser", () => {
 
     it("throws HttpError 403 when user is blocked", async () => {
       const tx = makeTx({
-        selects: [[{ ...BASE_USER, isBlocked: true }]],
+        selects: [[], [{ ...BASE_USER, isBlocked: true }]],
       });
       const db = makeDb(tx);
 
@@ -282,7 +288,7 @@ describe("resolveOrProvisionUser", () => {
   describe("error propagation", () => {
     it("throws when workspace insert returns empty (DB constraint violation)", async () => {
       const tx = makeTx({
-        selects: [[], [], [], []],  // byClerk, byEmail, membership, pendingInvites
+        selects: [[], [], [], [], []],  // identity, clerk, email, membership, pendingInvites
         inserts: [
           { mode: "returning+conflict", result: [NEW_USER] },
           AUTH_IDENTITY_UPSERT,
@@ -298,7 +304,7 @@ describe("resolveOrProvisionUser", () => {
 
     it("throws when user insert returns empty", async () => {
       const tx = makeTx({
-        selects: [[], []],
+        selects: [[], [], []],
         inserts: [
           { mode: "returning+conflict", result: [] }, // user insert returns nothing
         ],
