@@ -196,6 +196,10 @@ const envSchema = z
     INTEGRATION_ENCRYPTION_KEY_PREVIOUS: z.string().optional(),
     /** HMAC secret for signed tracking/unsubscribe tokens. Falls back to INTEGRATION_ENCRYPTION_KEY. */
     TRACKING_SIGNING_SECRET: z.string().optional(),
+    /** AUTH-BE-13 — pepper mixed into refresh-token hashes (name from AUTH-ADI-09). Refresh
+     *  tokens are already >=256-bit random, so this isn't load-bearing for guessing resistance —
+     *  it's a second factor an attacker needs even if the DB (token_hash column) leaks alone. */
+    AUTH_REFRESH_TOKEN_PEPPER: z.string().optional(),
     // --- Enrichment provider API keys (PAL). Optional: stub adapters are used
     //     for any capability whose key is absent. ---
     HUNTER_API_KEY: z.string().optional(),
