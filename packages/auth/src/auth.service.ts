@@ -2,6 +2,7 @@ import { schema } from "@skout/db";
 import type { Db } from "@skout/db";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { HttpError } from "./http.js";
+import { linkAuthIdentityForClerkUserId } from "./link-auth-identity.js";
 
 export interface ProvisionResult {
   userId: string;
@@ -76,6 +77,8 @@ export async function resolveOrProvisionUser(
     if (userStatus !== "active" || userBlocked) {
       throw new HttpError("Account is inactive or blocked", 403);
     }
+
+    await linkAuthIdentityForClerkUserId(tx, userId, clerkUserId, userEmail);
 
     const [membership] = await tx
       .select({
