@@ -141,19 +141,18 @@ describe("auth plugin — isk_ invite session", () => {
     const db = app.db;
     if (!db) throw new Error("expected db");
 
-    const [user] = await db.select({ id: schema.users.id }).from(schema.users).limit(1);
-    if (!user) throw new Error("need at least one user in test database");
-
-    const [membership] = await db
-      .select({ workspaceId: schema.workspaceMembers.workspaceId })
+    const [member] = await db
+      .select({
+        userId: schema.workspaceMembers.userId,
+        workspaceId: schema.workspaceMembers.workspaceId,
+      })
       .from(schema.workspaceMembers)
-      .where(eq(schema.workspaceMembers.userId, user.id))
       .limit(1);
-    if (!membership) throw new Error("need workspace membership for test user");
+    if (!member) throw new Error("need at least one workspace_members row in test database");
 
     const sessionToken = `isk_test_${Date.now()}`;
     await db.insert(schema.inviteSessions).values({
-      userId: user.id,
+      userId: member.userId,
       token: sessionToken,
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
     });
@@ -165,7 +164,7 @@ describe("auth plugin — isk_ invite session", () => {
     });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json().data.workspaceId).toBe(membership.workspaceId);
+    expect(res.json().data.workspaceId).toBe(member.workspaceId);
 
     await db.delete(schema.inviteSessions).where(eq(schema.inviteSessions.token, sessionToken));
     await app.close();
