@@ -131,6 +131,12 @@ jobs:
           docker push "$WEB_REPO:$IMAGE_TAG"
           docker push "$WEB_REPO:latest"
 
+      # AUTH-ADI-07: migrations auto-run on container start (docker-entrypoint.sh) as soon
+      # as the CDK deploy below rolls out new tasks — snapshot before that happens, not just
+      # before the explicit migration step further down.
+      - name: Snapshot RDS before migrations
+        run: bash scripts/rds-snapshot.sh SkoutProd
+
       - name: Deploy CDK stacks
         working-directory: infra
         env:
