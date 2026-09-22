@@ -135,14 +135,35 @@ function channelRules(target: StepSuggestionTarget): string {
   }
 }
 
+/** What each token renders to at send time (see the enrollment worker's mergeData). */
+const TOKEN_HINTS: Record<string, string> = {
+  firstName: "the recipient's first name",
+  lastName: "the recipient's last name",
+  fullName: "the recipient's full name",
+  companyName: "the recipient's company name (may be blank)",
+  companyDomain:
+    "the company's website domain, e.g. acme.com (may be blank) — never use it as an industry, sector or topic",
+  title: "the recipient's job title (may be blank)",
+  senderName: "the sender's name — use it in the sign-off",
+  senderEmail: "the sender's email address",
+  unsubscribeUrl: "the unsubscribe link — only inside the required unsubscribe footer",
+};
+
+function describeTokens(): string {
+  return [...MERGE_TOKENS]
+    .map((t) => `{{${t}}} — ${TOKEN_HINTS[t] ?? "a merge value filled in at send time"}`)
+    .join("\n");
+}
+
 export function buildStepSuggestionPrompt(ctx: StepSuggestionContext): { system: string; user: string } {
-  const tokens = [...MERGE_TOKENS].map((t) => `{{${t}}}`).join(" ");
   const system = [
     "You are an expert B2B outbound copywriter helping a sales rep fill in ONE step of a multi-step sequence.",
     `Write ${MAX_SUGGESTIONS} distinct drafts for that step, each taking a genuinely different angle.`,
     "The drafts must fit the sequence's topic, follow on from earlier steps without repeating them, and leave room for later steps.",
     "",
-    `Merge tokens — use ONLY these exact placeholders: ${tokens}`,
+    "Merge tokens — use ONLY these exact placeholders. Each is replaced with real data when the message is sent:",
+    describeTokens(),
+    "{{companyName}}, {{companyDomain}} and {{title}} can be empty for some recipients, so every sentence must still read naturally if they are blank. Use them sparingly and never as the subject of a sentence.",
     "Never invent names, companies, products or metrics. Never write square-bracket placeholders like [Your Name] — use a merge token instead.",
     "Keep copy concise and deliverability-safe (avoid spam-trigger words).",
     "",
