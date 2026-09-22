@@ -337,8 +337,8 @@ export class ComputeStack extends Stack {
               // Static-auth admin data-import page (frontend /admin/import). Scoped to
               // /api/v1/import/* only — see apps/api/src/plugins/auth.ts. Seed the demo
               // workspace into this env with `scripts/ecs-run-seed.sh SkoutDev` if it doesn't
-              // already have one.
-              ADMIN_IMPORT_SECRET: "65332d15429ed7c121af30e803127eedf7f2f5bfbc775b44",
+              // already have one. AUTH-ADI-06: the secret itself now lives in Secrets Manager
+              // (appConfig.ADMIN_IMPORT_SECRET, wired below) — never a literal here again.
               ADMIN_IMPORT_WORKSPACE_ID: "00000000-0000-4000-8000-000000000001",
               TWILIO_ENABLED: "false",
               // §11.1 fail-closed RBAC — SkoutDev only after backfill-rbac (see docs/ops/rbac-fail-closed.md).
@@ -399,6 +399,12 @@ export class ComputeStack extends Stack {
         AUTH_JWT_PUBLIC_KEY_SET: ecs.Secret.fromSecretsManager(secrets.auth, "AUTH_JWT_PUBLIC_KEY_SET"),
         AUTH_REFRESH_TOKEN_PEPPER: ecs.Secret.fromSecretsManager(secrets.auth, "AUTH_REFRESH_TOKEN_PEPPER"),
         AUTH_COOKIE_SECRET: ecs.Secret.fromSecretsManager(secrets.auth, "AUTH_COOKIE_SECRET"),
+        // AUTH-ADI-06 — dev-only, matching the ADMIN_IMPORT_WORKSPACE_ID plaintext env above.
+        ...(config.name === "dev"
+          ? {
+              ADMIN_IMPORT_SECRET: ecs.Secret.fromSecretsManager(secrets.appConfig, "ADMIN_IMPORT_SECRET"),
+            }
+          : {}),
         WARMUP_TOOL_PLATFORM_PROVISIONING_KEY: ecs.Secret.fromSecretsManager(
           secrets.warmupTool,
           "PLATFORM_PROVISIONING_KEY"
