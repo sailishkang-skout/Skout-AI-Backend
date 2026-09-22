@@ -10,7 +10,7 @@ import {
   type ConditionExpression,
 } from "./sequence-condition.js";
 import { recordSequenceEvent } from "./sequence-events.js";
-import { MERGE_TOKENS } from "./sequence-merge-tokens.js";
+import { assertValidStepCopy } from "./sequence-copy-validation.js";
 import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.js";
 import { dispatchWebhookEvent } from "./webhook.service.js";
 
@@ -73,19 +73,6 @@ const STATUS_TRANSITIONS: Record<SequenceStatus, SequenceStatus[]> = {
   paused: ["active", "archived"],
   archived: [],
 };
-
-function validateMergeTokens(template: string): void {
-  const tokenRegex = /\{\{(\w+)\}\}/g;
-  let match: RegExpExecArray | null;
-  while ((match = tokenRegex.exec(template)) !== null) {
-    if (!MERGE_TOKENS.has(match[1]!)) {
-      throw new HttpError(`Unknown merge token: {{${match[1]}}}`, 422, {
-        invalidToken: match[1],
-        allowed: [...MERGE_TOKENS],
-      });
-    }
-  }
-}
 
 export interface StepVariantInput {
   variantKey: VariantKey;
@@ -485,9 +472,7 @@ export class SequenceService {
       .where(scopedById(sequences, workspaceId, sequenceId));
     if (!seq) return null;
 
-    if (input.bodyTemplate) {
-      validateMergeTokens(input.bodyTemplate);
-    }
+    assertValidStepCopy(input);
 
     const existing = await this.db
       .select({ stepOrder: sequenceSteps.stepOrder })
@@ -539,9 +524,7 @@ export class SequenceService {
       .where(scopedById(sequences, workspaceId, sequenceId));
     if (!seq) return null;
 
-    if (input.bodyTemplate) {
-      validateMergeTokens(input.bodyTemplate);
-    }
+    assertValidStepCopy(input);
 
     const [updated] = await this.db
       .update(sequenceSteps)
