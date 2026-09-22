@@ -29,4 +29,20 @@ describe("renderTemplate", () => {
   it("supports repeated tokens", () => {
     expect(renderTemplate("{{firstName}} {{firstName}}", { firstName: "Ada" })).toBe("Ada Ada");
   });
+
+  it("uses a token's fallback when the value is blank or missing", () => {
+    expect(renderTemplate("Hi {{firstName|there}},", { firstName: "" })).toBe("Hi there,");
+    expect(renderTemplate("Hi {{firstName|there}},", {})).toBe("Hi there,");
+    expect(renderTemplate("Hi {{firstName|there}},", { firstName: "Ada" })).toBe("Hi Ada,");
+  });
+
+  it("reads naturally without a company or title", () => {
+    const template = "Helping {{title|leaders}} at {{companyName|your company}} close faster.";
+    expect(renderTemplate(template, { title: "", companyName: "" })).toBe("Helping leaders at your company close faster.");
+    expect(renderTemplate(template, { title: "CFO", companyName: "Acme" })).toBe("Helping CFO at Acme close faster.");
+  });
+
+  it("still renders a plain token with no value as empty", () => {
+    expect(renderTemplate("[{{title}}]", {})).toBe("[]");
+  });
 });

@@ -1,3 +1,5 @@
+import { renderMergeTemplate } from "./merge-template.js";
+
 export interface MergeData {
   firstName: string;
   lastName: string;
@@ -10,10 +12,10 @@ export interface MergeData {
   unsubscribeUrl: string;
 }
 
-/** Replaces `{{token}}` placeholders with values from `data`; unknown tokens render as empty string. */
+/**
+ * Replaces `{{token}}` and `{{token|fallback}}` placeholders with values from `data`. A blank value
+ * uses the fallback when there is one; otherwise a missing value renders as an empty string.
+ */
 export function renderTemplate(template: string, data: Partial<MergeData>): string {
-  return template.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => {
-    const value = (data as Record<string, string | undefined>)[key];
-    return value ?? "";
-  });
+  return renderMergeTemplate(template, data as Record<string, string | undefined>);
 }
