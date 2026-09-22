@@ -61,9 +61,12 @@ import { ssoScimRoutes } from "./sso-scim.routes.js";
 import { automationRoutes } from "./automation.routes.js";
 import { complianceRoutes } from "./compliance.routes.js";
 import { enterpriseControlPlaneRoutes } from "./enterprise-control-plane.routes.js";
+import { jwksRoutes } from "./jwks.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoutes, { prefix: "/api/v1" });
+  // AUTH-BE-12 — true root path, not under /api/v1 (standard .well-known convention).
+  await app.register(jwksRoutes);
 
   await app.register(async (v1) => {
     await v1.register(userRoutes);

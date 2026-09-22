@@ -126,6 +126,8 @@ function isPublicRoute(url: string, method?: string): boolean {
     url.startsWith("/api/v1/calls/twiml/") ||
     url.startsWith("/api/v1/calls/status") ||
     url.startsWith("/api/v1/calls/recording-status") ||
+    // AUTH-BE-12 — public JWKS for own-auth token verification (contains no private material).
+    url === "/.well-known/jwks.json" ||
     isInviteTokenLookup
   );
 }
