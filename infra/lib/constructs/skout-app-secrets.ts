@@ -44,6 +44,15 @@ export class SkoutAppSecrets extends Construct {
   readonly google: secretsmanager.ISecret;
   /** Warm-Up Tool crypto + platform provisioning key (SkoutDev/warmup-tool). */
   readonly warmupTool: secretsmanager.ISecret;
+  /**
+   * Own-auth signing material (AUTH-ADI-09). AUTH_JWT_PRIVATE_KEY/KID sign access tokens
+   * (api only); AUTH_JWT_PUBLIC_KEY_SET verifies them (api/crm/web); AUTH_REFRESH_TOKEN_PEPPER
+   * peppers hashed refresh tokens (api only); AUTH_COOKIE_SECRET signs/encrypts the
+   * route-handler session cookie (api/web). Generate real values with
+   * `pnpm --filter @skout/infra generate-auth-keys` and rotate per
+   * docs/secrets-rotation-policy.md — never reuse a value across environments.
+   */
+  readonly auth: secretsmanager.ISecret;
 
   constructor(scope: Construct, id: string, props: SkoutAppSecretsProps) {
     super(scope, id);
@@ -152,6 +161,15 @@ export class SkoutAppSecrets extends Construct {
       ENCRYPTION_KEY: "replace-me-warmup-encryption-key-32chars-min!!",
       API_KEY_PEPPER: "replace-me-warmup-api-key-pepper-32chars-min!",
       PLATFORM_PROVISIONING_KEY: "replace-me-warmup-platform-provision-32!",
+    });
+    // Placeholder only — replace with real output from
+    // `pnpm --filter @skout/infra generate-auth-keys` before AUTH-BE-12 relies on it.
+    this.auth = createPlaceholder("Auth", "auth", {
+      AUTH_JWT_PRIVATE_KEY: "replace-me",
+      AUTH_JWT_KID: "replace-me",
+      AUTH_JWT_PUBLIC_KEY_SET: "replace-me",
+      AUTH_REFRESH_TOKEN_PEPPER: "replace-me",
+      AUTH_COOKIE_SECRET: "replace-me",
     });
   }
 }

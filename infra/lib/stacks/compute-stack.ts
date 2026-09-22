@@ -393,6 +393,12 @@ export class ComputeStack extends Stack {
           secrets.appConfig,
           "INTEGRATION_ENCRYPTION_KEY_PREVIOUS"
         ),
+        // Own-auth signing material (AUTH-ADI-09) — api signs, so it holds the private key.
+        AUTH_JWT_PRIVATE_KEY: ecs.Secret.fromSecretsManager(secrets.auth, "AUTH_JWT_PRIVATE_KEY"),
+        AUTH_JWT_KID: ecs.Secret.fromSecretsManager(secrets.auth, "AUTH_JWT_KID"),
+        AUTH_JWT_PUBLIC_KEY_SET: ecs.Secret.fromSecretsManager(secrets.auth, "AUTH_JWT_PUBLIC_KEY_SET"),
+        AUTH_REFRESH_TOKEN_PEPPER: ecs.Secret.fromSecretsManager(secrets.auth, "AUTH_REFRESH_TOKEN_PEPPER"),
+        AUTH_COOKIE_SECRET: ecs.Secret.fromSecretsManager(secrets.auth, "AUTH_COOKIE_SECRET"),
         WARMUP_TOOL_PLATFORM_PROVISIONING_KEY: ecs.Secret.fromSecretsManager(
           secrets.warmupTool,
           "PLATFORM_PROVISIONING_KEY"
@@ -511,6 +517,8 @@ export class ComputeStack extends Stack {
         GOOGLE_CLIENT_ID: ecs.Secret.fromSecretsManager(secrets.google, "GOOGLE_CLIENT_ID"),
         GOOGLE_CLIENT_SECRET: ecs.Secret.fromSecretsManager(secrets.google, "GOOGLE_CLIENT_SECRET"),
         INTEGRATION_ENCRYPTION_KEY: ecs.Secret.fromSecretsManager(secrets.appConfig, "INTEGRATION_ENCRYPTION_KEY"),
+        // CRM only verifies own-auth tokens (AUTH-ADI-09) — public key material only, never signs.
+        AUTH_JWT_PUBLIC_KEY_SET: ecs.Secret.fromSecretsManager(secrets.auth, "AUTH_JWT_PUBLIC_KEY_SET"),
       },
       datadog: {
         site: "us5.datadoghq.com",
@@ -665,10 +673,18 @@ export class ComputeStack extends Stack {
       secrets.twilio,
       secrets.telnyx,
       secrets.warmupTool,
-      secrets.emailIntelForwarder
+      secrets.emailIntelForwarder,
+      secrets.auth
     );
 
-    grantSecretRead(crmEcs.taskDefinition, database.secret, secrets.clerk, secrets.sentry, secrets.datadog);
+    grantSecretRead(
+      crmEcs.taskDefinition,
+      database.secret,
+      secrets.clerk,
+      secrets.sentry,
+      secrets.datadog,
+      secrets.auth
+    );
 
     const aiService = new SkoutEcsService(this, "AiService", {
       vpc,
@@ -748,9 +764,13 @@ export class ComputeStack extends Stack {
         ),
         NEXT_PUBLIC_SENTRY_DSN: ecs.Secret.fromSecretsManager(secrets.sentry, "SENTRY_DSN_WEB"),
         NEXT_PUBLIC_POSTHOG_KEY: ecs.Secret.fromSecretsManager(secrets.posthog, "POSTHOG_API_KEY"),
+        // Own-auth (AUTH-ADI-09): web's route-handler layer (D2) verifies tokens with the
+        // public key set and signs/encrypts its own session cookie — never the private key.
+        AUTH_JWT_PUBLIC_KEY_SET: ecs.Secret.fromSecretsManager(secrets.auth, "AUTH_JWT_PUBLIC_KEY_SET"),
+        AUTH_COOKIE_SECRET: ecs.Secret.fromSecretsManager(secrets.auth, "AUTH_COOKIE_SECRET"),
       },
     });
-    grantSecretRead(webService.taskDefinition, secrets.clerk, secrets.sentry, secrets.posthog);
+    grantSecretRead(webService.taskDefinition, secrets.clerk, secrets.sentry, secrets.posthog, secrets.auth);
 
     new ec2.CfnSecurityGroupIngress(this, "CrmToDbIngress", {
       groupId: database.securityGroup.securityGroupId,

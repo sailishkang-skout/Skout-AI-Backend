@@ -27,6 +27,7 @@
     "diff:prod": "cdk diff --all -c env=prod",
     "destroy:dev": "cdk destroy --all -c env=dev",
     "local:env": "tsx scripts/generate-local-env.ts",
+    "generate-auth-keys": "tsx scripts/generate-auth-keys.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
