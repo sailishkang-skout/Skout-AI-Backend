@@ -16,6 +16,11 @@ CONTAINER_NAME="${4:-Container}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
 export AWS_REGION="$REGION"
 export AWS_DEFAULT_REGION="$REGION"
+# Avoid Git Bash mangling leading-slash args (e.g. log group names) into
+# Windows paths, and avoid the AWS CLI crashing on non-ASCII log output
+# (pino's ✓/✗) under Windows' default console codepage.
+export MSYS_NO_PATHCONV=1
+export PYTHONIOENCODING=utf-8
 
 case "$AUDIT" in
   identity-data) SCRIPT_FILE="audit-identity-data.js" ;;
@@ -60,7 +65,7 @@ TASK_ARN="$(aws ecs run-task \
   --task-definition "$TASK_DEF" \
   --launch-type FARGATE \
   --network-configuration "$NETWORK_CONFIG" \
-  --overrides "{\"containerOverrides\":[{\"name\":\"${CONTAINER_NAME}\",\"command\":[\"node\",\"/app/db/dist/${SCRIPT_FILE}\"]}]}" \
+  --overrides "{\"containerOverrides\":[{\"name\":\"${CONTAINER_NAME}\",\"command\":[\"node\",\"/app/node_modules/@skout/db/dist/${SCRIPT_FILE}\"]}]}" \
   --query 'tasks[0].taskArn' \
   --output text)"
 
@@ -79,8 +84,14 @@ EXIT_CODE="$(aws ecs describe-tasks \
   --output text)"
 
 ENV_SLUG="$(echo "$STACK_PREFIX" | sed 's/^Skout//' | tr '[:upper:]' '[:lower:]')"
-echo "Task finished (exit ${EXIT_CODE}). Fetching output from logs..."
-aws logs tail "/skout/${ENV_SLUG}/api" --since 5m 2>/dev/null || true
+TASK_ID="${TASK_ARN##*/}"
+LOG_STREAM="${SERVICE_NAME}/${CONTAINER_NAME}/${TASK_ID}"
+echo "Task finished (exit ${EXIT_CODE}). Fetching output from log stream ${LOG_STREAM}..."
+aws logs get-log-events \
+  --log-group-name "/skout/${ENV_SLUG}/api" \
+  --log-stream-name "$LOG_STREAM" \
+  --query "events[].message" \
+  --output text 2>&1 || true
 
 if [ "$EXIT_CODE" != "0" ] && [ "$EXIT_CODE" != "2" ]; then
   echo "${AUDIT} audit crashed (exit ${EXIT_CODE}) — see logs above."
