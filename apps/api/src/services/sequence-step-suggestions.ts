@@ -5,6 +5,7 @@
  * unit-testable. `AiService.suggestStepContent` does the model call; `sequence-step-suggest.service`
  * gathers the sequence context.
  */
+import { findMergeTemplateIssue } from "./merge-template.js";
 import { MERGE_TOKENS } from "./sequence-merge-tokens.js";
 
 export type SuggestableLinkedinAction = "connect" | "message" | "inmail";
@@ -111,7 +112,7 @@ function channelRules(target: StepSuggestionTarget): string {
       "Channel: email.",
       `"subject": plain-text subject line, max ${SUBJECT_MAX} characters (tokens allowed).`,
       '"body": HTML using only <p>, <strong>, <em>, <a>, <br>, <ul>, <li> — 3 to 5 short paragraphs, no wrapper tags.',
-      'Greet with "Hi {{firstName}}," and sign off with {{senderName}}.',
+      'Greet with "Hi {{firstName|there}}," and sign off with {{senderName}}.',
       `End the body with exactly: ${UNSUBSCRIBE_FOOTER}`,
     ].join("\n");
   }
@@ -163,7 +164,7 @@ export function buildStepSuggestionPrompt(ctx: StepSuggestionContext): { system:
     "",
     "Merge tokens — use ONLY these exact placeholders. Each is replaced with real data when the message is sent:",
     describeTokens(),
-    "{{companyName}}, {{companyDomain}} and {{title}} can be empty for some recipients, so every sentence must still read naturally if they are blank. Use them sparingly and never as the subject of a sentence.",
+    "{{companyName}}, {{companyDomain}} and {{title}} can be empty for some recipients, so every sentence must still read naturally if they are blank. Prefer a fallback: {{title|your role}} shows \"your role\" when the title is blank. A fallback is 1-60 characters of plain text; never add one to {{unsubscribeUrl}}. Use these tokens sparingly and never as the subject of a sentence.",
     "Never invent names, companies, products or metrics. Never write square-bracket placeholders like [Your Name] — use a merge token instead.",
     "Keep copy concise and deliverability-safe (avoid spam-trigger words).",
     "",
@@ -193,12 +194,9 @@ export function buildStepSuggestionPrompt(ctx: StepSuggestionContext): { system:
   return { system, user: lines.filter(Boolean).join("\n\n") };
 }
 
-/** True when text uses a merge token the API would reject, or a bracketed placeholder. */
+/** True when text uses a merge placeholder the API would reject, or a bracketed placeholder. */
 function hasInvalidPlaceholder(text: string): boolean {
-  for (const m of text.matchAll(/\{\{([^}]*)\}\}/g)) {
-    if (!MERGE_TOKENS.has(m[1]!)) return true;
-  }
-  return /\[[^\]\n]{1,40}\]/.test(text);
+  return findMergeTemplateIssue(text, MERGE_TOKENS) !== null || /\[[^\]\n]{1,40}\]/.test(text);
 }
 
 function escapeText(text: string): string {
