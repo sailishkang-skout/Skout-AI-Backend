@@ -128,6 +128,11 @@ export class SkoutAppSecrets extends Construct {
       INTEGRATION_ENCRYPTION_KEY: "replace-me",
       // Empty until a rotation window; ECS injects this field for dual-read decrypt.
       INTEGRATION_ENCRYPTION_KEY_PREVIOUS: "",
+      // AUTH-ADI-06 — was a literal in compute-stack.ts (SkoutDev only, now removed). That
+      // value is burned (committed to git history) — replace this placeholder with a freshly
+      // generated value via `aws secretsmanager put-secret-value` after first deploy, same as
+      // every other secret in this file. Protects the /api/v1/import/* static-secret path.
+      ADMIN_IMPORT_SECRET: "replace-me",
     });
     /**
      * Email-Intel → Skout canonical Evidence Ledger forwarder (§5.3).
