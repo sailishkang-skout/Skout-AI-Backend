@@ -5,11 +5,14 @@ import { authPlugin } from "../plugins/auth.js";
 import { errorResponse } from "../utils/http.js";
 
 /** Minimal app for auth-plugin behavior tests (no full route graph / workspace packages). */
-export async function buildAuthProbeApp(overrides: Partial<Env> = {}): Promise<FastifyInstance> {
+export async function buildAuthProbeApp(
+  overrides: Partial<Env> = {},
+  db: unknown = { __authProbe: true }
+): Promise<FastifyInstance> {
   const config = { ...loadEnv(), ...overrides };
   const app = Fastify({ logger: { level: "fatal" } });
   app.decorate("config", config);
-  app.decorate("db", { __authProbe: true });
+  app.decorate("db", db);
 
   await app.register(authPlugin);
 
