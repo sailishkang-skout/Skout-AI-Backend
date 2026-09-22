@@ -33,15 +33,38 @@ function getBaseRef() {
   return base;
 }
 
-function getPrBody() {
+function readWebhookEvent() {
   const eventPath = process.env.GITHUB_EVENT_PATH;
-  if (!eventPath || !existsSync(eventPath)) return "";
+  if (!eventPath || !existsSync(eventPath)) return null;
   try {
-    const event = JSON.parse(readFileSync(eventPath, "utf8"));
-    return event.pull_request?.body ?? "";
+    return JSON.parse(readFileSync(eventPath, "utf8"));
   } catch {
-    return "";
+    return null;
   }
+}
+
+/** Webhook payload is frozen on workflow re-runs — fetch the live PR description when possible. */
+function getPrBody() {
+  const event = readWebhookEvent();
+  const prNumber = event?.pull_request?.number;
+  const token = process.env.GITHUB_TOKEN;
+  const repo = process.env.GITHUB_REPOSITORY;
+
+  if (token && repo && prNumber) {
+    try {
+      const live = JSON.parse(
+        sh(
+          `curl -fsSL -H "Authorization: Bearer ${token}" -H "Accept: application/vnd.github+json" ` +
+            `"https://api.github.com/repos/${repo}/pulls/${prNumber}"`
+        )
+      );
+      if (typeof live.body === "string" && live.body.length > 0) return live.body;
+    } catch {
+      // fall back to webhook payload
+    }
+  }
+
+  return event?.pull_request?.body ?? "";
 }
 
 function findNewTables(baseRef) {

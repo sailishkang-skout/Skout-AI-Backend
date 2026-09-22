@@ -28,8 +28,6 @@ jobs:
           node-version: "22"
 
       - name: "§1 Architecture gate (new tables must answer the fork-state question)"
-        env:
-          GITHUB_EVENT_PATH: ${{ github.event_path }}
         run: node scripts/check-architecture-gate.mjs
 
       - name: "§7.1 Read-model exceptions (no undocumented cross-service table reads)"
