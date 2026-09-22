@@ -58,6 +58,10 @@ not enabled (no active orgs) and SSO Connections lists only Google as a social s
 no real enterprise SAML/OIDC connection exists. Session token custom claims are currently empty
 (`{}`) — worth a follow-up for AUTH-BE-03/BE-12 but not decision-blocking.
 
+Issuer URL (2026-09-22, decoded from the publishable key — no secret material needed): **the
+Clerk instance's `iss` is `https://honest-mammoth-99.clerk.accounts.dev`.** This is the value
+AUTH-BE-03's issuer allowlist needs.
+
 ## Decisions
 
 | ID | Decision | Chosen | Rationale | Confirming input (not yet run) |
@@ -98,8 +102,10 @@ yet defined** — needs concrete numbers, follow up separately now that D5 (coho
   - [ ] Still open: SMS-MFA adoption count (Users tab or Backend API `two_factor_enabled`) — feeds
         D3.
   - [ ] Still open: Clerk support's written answer on password-hash export format — feeds D5.
-  - [ ] Still open (lower priority, not decision-blocking): issuer URL, allowed
-        origins/redirects, DNS records, webhooks, plan tier/MAU.
+  - [x] Issuer URL — `https://honest-mammoth-99.clerk.accounts.dev` (see Context above). Feeds
+        AUTH-BE-03's issuer allowlist.
+  - [ ] Still open (lower priority, not decision-blocking): allowed origins/redirects, DNS
+        records, webhooks, plan tier/MAU.
 
 ## Consequences
 AUTH-BE-10 (own-auth schema) and AUTH-FE-05 (route-handler layer) can start now — they only needed
