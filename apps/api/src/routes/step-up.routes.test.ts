@@ -44,12 +44,15 @@ describe("POST /api/v1/auth/step-up", () => {
       throw new skoutAuth.AuthTokenInvalidError();
     });
 
-    vi.spyOn(skoutAuth, "resolveOrProvisionUser").mockImplementation(async (_db, identity) => ({
-      userId: identity.subject === "clerk_session" ? SESSION_USER_ID : OTHER_USER_ID,
+    vi.spyOn(skoutAuth, "resolveOrProvisionUser").mockImplementation(async (_db, identity) => {
+      const subject = typeof identity === "string" ? identity : identity.subject;
+      return {
+      userId: subject === "clerk_session" ? SESSION_USER_ID : OTHER_USER_ID,
       userEmail: "user@example.com",
       workspaceId: "11111111-1111-4111-8111-111111111111",
       role: "member",
-    }));
+    };
+    });
 
     const res = await app.inject({
       method: "POST",

@@ -12,7 +12,7 @@ export async function buildAuthProbeApp(
   const config = { ...loadEnv(), ...overrides };
   const app = Fastify({ logger: { level: "fatal" } });
   app.decorate("config", config);
-  app.decorate("db", db);
+  app.decorate("db", db as never);
 
   await app.register(authPlugin);
 

@@ -9,7 +9,7 @@ export async function buildStepUpProbeApp(overrides: Partial<Env> = {}): Promise
   const config = { ...loadEnv(), ...overrides };
   const app = Fastify({ logger: { level: "fatal" } });
   app.decorate("config", config);
-  app.decorate("db", { __stepUpProbe: true });
+  app.decorate("db", {} as never);
 
   await app.register(authPlugin);
   await app.register(
