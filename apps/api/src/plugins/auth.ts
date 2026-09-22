@@ -5,7 +5,7 @@ import { timingSafeEqual } from "node:crypto";
 import { schema } from "@skout/db";
 import {
   AuthTokenInvalidError,
-  buildResolveAuthConfig,
+  buildClerkAppResolveAuthConfig,
   computeAuthorizedParties,
   loadPlatformContext,
   normalizeOrigin,
@@ -188,13 +188,9 @@ export const authPlugin = fp(async (app) => {
     return;
   }
 
-  const clerkJwtIssuer = config.CLERK_JWT_ISSUER;
-  if (!clerkJwtIssuer) {
-    throw new Error("CLERK_JWT_ISSUER is required when Clerk auth is enabled (see AUTH-ADI-03)");
-  }
-  const resolveAuthConfig = buildResolveAuthConfig({
+  const resolveAuthConfig = buildClerkAppResolveAuthConfig({
     clerkSecretKey: config.CLERK_SECRET_KEY!,
-    clerkJwtIssuer,
+    clerkJwtIssuer: config.CLERK_JWT_ISSUER,
     corsOrigin: config.CORS_ORIGIN,
     frontendUrl: config.FRONTEND_URL,
   });

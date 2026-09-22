@@ -2,7 +2,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 import {
   AuthTokenInvalidError,
-  buildResolveAuthConfig,
+  buildClerkAppResolveAuthConfig,
   resolveAuth,
   resolveOrProvisionUser,
 } from "@skout/auth";
@@ -37,6 +37,14 @@ function isPublicRoute(url: string): boolean {
   );
 }
 
+/**
+ * AUTH-BE-05 — Clerk JWTs use `@skout/auth` `resolveAuth` and shared `computeAuthorizedParties`
+ * (via `buildClerkAppResolveAuthConfig`). Public/vendor/internal paths are allowlisted below.
+ *
+ * Product note: unlike `apps/api`, this plugin does **not** accept `admin_` or `isk_` bearer
+ * tokens today (invite-session users cannot call CRM). Adding `isk_` parity is a product
+ * decision — confirm with Aditya before implementing (AUTH-BE-05).
+ */
 export const authPlugin = fp(async (app) => {
   const config = app.config;
 
@@ -79,13 +87,9 @@ export const authPlugin = fp(async (app) => {
     return;
   }
 
-  const clerkJwtIssuer = config.CLERK_JWT_ISSUER;
-  if (!clerkJwtIssuer) {
-    throw new Error("CLERK_JWT_ISSUER is required when Clerk auth is enabled (see AUTH-ADI-03)");
-  }
-  const resolveAuthConfig = buildResolveAuthConfig({
+  const resolveAuthConfig = buildClerkAppResolveAuthConfig({
     clerkSecretKey: config.CLERK_SECRET_KEY!,
-    clerkJwtIssuer,
+    clerkJwtIssuer: config.CLERK_JWT_ISSUER,
     corsOrigin: config.CORS_ORIGIN,
     frontendUrl: config.FRONTEND_URL,
   });

@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
   AuthTokenInvalidError,
-  buildResolveAuthConfig,
+  buildClerkAppResolveAuthConfig,
   issueStepUpToken,
   resolveAuth,
   resolveOrProvisionUser,
@@ -63,9 +63,9 @@ export async function stepUpRoutes(app: FastifyInstance) {
     try {
       identity = await resolveAuth(
         parsed.data.clerkToken,
-        buildResolveAuthConfig({
+        buildClerkAppResolveAuthConfig({
           clerkSecretKey: config.CLERK_SECRET_KEY!,
-          clerkJwtIssuer,
+          clerkJwtIssuer: config.CLERK_JWT_ISSUER,
           corsOrigin: config.CORS_ORIGIN,
           frontendUrl: config.FRONTEND_URL,
         })

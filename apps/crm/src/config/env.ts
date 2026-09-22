@@ -48,6 +48,7 @@ const envSchema = z.object({
     .default("http://localhost:3000")
     .transform((val) => val.split(",").map((s) => s.trim())),
   CLERK_SECRET_KEY: z.string().optional(),
+  /** Clerk session JWT issuer (AUTH-ADI-03). Required when Clerk auth is enabled; used by `buildClerkAppResolveAuthConfig`. */
   CLERK_JWT_ISSUER: z.string().url().optional(),
   AUTH_STUB: z
     .string()
