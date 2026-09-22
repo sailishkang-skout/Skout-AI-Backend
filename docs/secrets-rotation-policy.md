@@ -13,7 +13,9 @@ procedure so a human operator can run rotation on schedule, and names the one se
 Every secret listed in `docs/secrets-setup.md`, plus the ones added since that doc was last
 updated: `STEP_UP_SIGNING_SECRET`, `ADMIN_IMPORT_SECRET`, `TRACKING_SIGNING_SECRET`,
 `MEETING_BOT_WEBHOOK_SECRET`, `MEETING_RSVP_WEBHOOK_SECRET`, `RAZORPAY_WEBHOOK_SECRET`,
-`TWILIO_AUTH_TOKEN`, `TELNYX_API_KEY`, `SMTP_PASSWORD` / `MEETING_INVITE_SMTP_PASSWORD`. If a
+`TWILIO_AUTH_TOKEN`, `TELNYX_API_KEY`, `SMTP_PASSWORD` / `MEETING_INVITE_SMTP_PASSWORD`, and the
+`{Prefix}/auth` secret added for own-auth (AUTH-ADI-09): `AUTH_JWT_PRIVATE_KEY`,
+`AUTH_JWT_KID`, `AUTH_JWT_PUBLIC_KEY_SET`, `AUTH_REFRESH_TOKEN_PEPPER`, `AUTH_COOKIE_SECRET`. If a
 secret exists in `apps/*/src/config/env.ts` and isn't in either document, that's a gap in the
 inventory, not evidence the secret is exempt from this policy — treat "not listed" as "not yet
 classified," file it under the tier its blast radius implies, and add it to the table below.
@@ -36,6 +38,9 @@ below) on any suspected exposure, regardless of where in the 90-day window it fa
 | `STEP_UP_SIGNING_SECRET` | Forges step-up re-authentication proof for any privileged action once `STEP_UP_ENFORCEMENT_ENABLED` is on (see `packages/auth/src/step-up.ts`). |
 | `ADMIN_IMPORT_SECRET` | Bypasses normal ingestion paths to write records directly into a workspace. |
 | `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | Payment-provider credentials; a forged webhook can fabricate a paid state. |
+| `AUTH_JWT_PRIVATE_KEY` | Signs own-auth access tokens (AUTH-ADI-09, `AUTH-BE-12`) — a leak lets an attacker mint a valid access token for any user. Not a routine swap; see the special case below. |
+| `AUTH_REFRESH_TOKEN_PEPPER` | Peppers hashed own-auth refresh tokens (`AUTH-BE-13`) — a leak plus a stolen token hash lets an attacker forge session continuation. Not a routine swap; see the special case below. |
+| `AUTH_COOKIE_SECRET` | Signs/encrypts the own-auth session cookie set by web's route-handler layer (`AUTH-FE-05`, per ADR-0007 D2) — a leak lets an attacker forge a session cookie. |
 
 **Tier 2 — single-integration compromise.** A leak lets an attacker act as Skout against one
 third-party vendor (send email as Skout, read/write CRM records via an OAuth app, place calls
@@ -97,6 +102,28 @@ After the script reports `failed=0`, drop the previous key from the environment.
 `apps/api/src/config/env.ts`'s doc comment on it). An environment relying on that fallback
 inherits the same rotation constraint — set `TRACKING_SIGNING_SECRET` explicitly if it needs
 to rotate on a schedule independent of the encryption key.
+
+## The own-auth signing secrets special case (AUTH-ADI-09)
+
+`AUTH_JWT_PRIVATE_KEY` and `AUTH_REFRESH_TOKEN_PEPPER` are both generated locally — with
+`pnpm --filter @skout/infra generate-auth-keys` — not issued by a vendor, and both need care
+beyond the routine procedure below:
+
+- **`AUTH_JWT_PRIVATE_KEY` / `AUTH_JWT_KID` / `AUTH_JWT_PUBLIC_KEY_SET`.** These three rotate
+  together. Generate a new keypair, but keep the *old* public key in `AUTH_JWT_PUBLIC_KEY_SET`'s
+  `keys` array alongside the new one (per `AUTH-BE-12`'s "two published keys at once" design) so
+  tokens already signed with the old key still verify against `/.well-known/jwks.json` until
+  they expire (access tokens are short-lived — minutes, not days — so this overlap window is
+  short). Only remove the old public key, and only then rotate `AUTH_JWT_PRIVATE_KEY` /
+  `AUTH_JWT_KID` to match, once you're sure no token signed with the old key is still live.
+- **`AUTH_REFRESH_TOKEN_PEPPER`.** Refresh tokens are stored as a peppered hash
+  (`AUTH-BE-13`) — changing the pepper makes every existing refresh token fail verification
+  immediately, with no overlap window (there's no dual-pepper support). Rotating this is
+  equivalent to signing every user out and should be scheduled and communicated like a
+  maintenance event, not run silently mid-day.
+- **`AUTH_COOKIE_SECRET`** has no such constraint — rotating it just means every existing
+  session cookie stops verifying and the user is prompted to log in again, same as a routine
+  Tier 1 rotation.
 
 ## Procedure (routine rotation, Tiers 1–3)
 
