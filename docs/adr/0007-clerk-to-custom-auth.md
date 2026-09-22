@@ -28,14 +28,23 @@ invite sessions, and **`workspace_sso_configs` has zero rows** — the app's own
 had a single SSO binding configured, which is a second, independent confirmation of the D1 risk
 below (Clerk's dashboard already showed no real SSO connections).
 
-AUTH-ADI-02 ran against SkoutDev (2026-09-22): it refused to run the decrypt check because
-**`INTEGRATION_ENCRYPTION_KEY` is missing or still the CDK placeholder (`replace-me`) in this
-environment.** This is exactly the risk the ticket doc flagged for this ticket — until a real key
-is set, we don't know whether any currently-encrypted row (automation secrets, inbox SMTP/OAuth
-tokens, integration API keys, calendar tokens) depends on the dev-fallback default or the Clerk key
-fallback. **AUTH-BE-07 (removing the Clerk-key crypto fallback) cannot merge until this is fixed**
-— provisioning a real `INTEGRATION_ENCRYPTION_KEY` is a Secrets Manager write + redeploy, tracked
-under AUTH-ADI-09.
+AUTH-ADI-02 ran against SkoutDev (2026-09-22): it initially refused to run the decrypt check
+because **`INTEGRATION_ENCRYPTION_KEY` was still the CDK placeholder (`replace-me`)**. **Resolved
+same day**: a real key was provisioned in `SkoutDev/app-config` and the API service redeployed.
+The rotation script (`packages/db/src/rotate-integration-encryption-key.ts`) found that of 10
+encrypted values (3 `workspace_integrations`, up to 3 fields × 3 `inboxes`, 2 fields × 2
+`calendar_connections`), only 1 actually decrypted under the old `replace-me` value — the other 9
+decrypted under **neither** `replace-me` nor the real `CLERK_SECRET_KEY` (both tested directly,
+read-only, no key material ever printed). Not seed data either (`packages/db/src/seed.ts` has no
+path that writes these columns) — these were real accounts a user connected through the app.
+Working theory: this dev stack's Secrets Manager construct was recreated at some point (its
+placeholder is only set once, at first creation) while the database persisted, orphaning whatever
+real key existed before from any currently-configured value — Secrets Manager only retains two
+version stages, so that original key is not recoverable. Aditya confirmed resetting these accounts
+is acceptable (users just reconnect). **Deleted the 7 unrecoverable rows** (2
+`workspace_integrations`, 3 `inboxes`, 2 `calendar_connections` — exact IDs in the PR that made
+this change) rather than leaving them permanently undecryptable. Re-ran the audit after deletion:
+clean, zero undecryptable rows, zero Clerk-key dependency. **AUTH-BE-07 is now unblocked.**
 
 Matching finding from AUTH-ADI-03 (2026-09-22, Aditya, dashboard walkthrough — not the full formal
 audit, but enough to confirm two of the three open decisions below): **Clerk also has no separate
@@ -79,12 +88,10 @@ yet defined** — needs concrete numbers, follow up separately now that D5 (coho
 ## Inputs still needed (confirm or revise D1/D3/D5 above)
 - [x] AUTH-ADI-01 — ran against SkoutDev 2026-09-22, results in Context above. No cleanup items
       for BE-02 (zero stub/fake/duplicate rows); strengthens the D1 risk (zero SSO config rows).
-- [x] AUTH-ADI-02 (blocked, new action item) — ran against SkoutDev 2026-09-22: refused to proceed
-      because `INTEGRATION_ENCRYPTION_KEY` is still the CDK placeholder. **New task: provision a
-      real key for SkoutDev (AUTH-ADI-09), then re-run
-      `pnpm --filter @skout/db audit-encryption-key-dependency` (or
-      `./scripts/ecs-run-auth-audit.sh SkoutDev encryption-key-dependency`) before AUTH-BE-07 can
-      merge.**
+- [x] AUTH-ADI-02 — **resolved 2026-09-22**. Real key provisioned, 7 unrecoverable rows deleted
+      (see Context above), re-verified clean. AUTH-BE-07 unblocked. Remaining tidy-up (not
+      blocking): remove `INTEGRATION_ENCRYPTION_KEY_PREVIOUS` from `SkoutDev/app-config` and do one
+      more `--force-new-deployment` now that rotation is done.
 - [x] AUTH-ADI-03 (partial) — Clerk dashboard walkthrough done 2026-09-22 (single instance, no
       separate prod — see Context): MFA config, Organizations, SSO Connections, session-token
       claims all recorded above.
