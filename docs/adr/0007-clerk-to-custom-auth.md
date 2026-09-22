@@ -22,6 +22,21 @@ SkoutDev (only cluster)"). The dev/UAT/prod audit scope in AUTH-ADI-01 currently
 target, not three — confirm before writing UAT/prod rows into the audit results as "N/A" vs
 "not yet provisioned."
 
+AUTH-ADI-01 ran against SkoutDev (2026-09-22, script executed as a one-off ECS task): 14 total
+users, all with a `clerk_user_id`, zero stub/fake-email/duplicate/inactive rows, zero active
+invite sessions, and **`workspace_sso_configs` has zero rows** — the app's own database has never
+had a single SSO binding configured, which is a second, independent confirmation of the D1 risk
+below (Clerk's dashboard already showed no real SSO connections).
+
+AUTH-ADI-02 ran against SkoutDev (2026-09-22): it refused to run the decrypt check because
+**`INTEGRATION_ENCRYPTION_KEY` is missing or still the CDK placeholder (`replace-me`) in this
+environment.** This is exactly the risk the ticket doc flagged for this ticket — until a real key
+is set, we don't know whether any currently-encrypted row (automation secrets, inbox SMTP/OAuth
+tokens, integration API keys, calendar tokens) depends on the dev-fallback default or the Clerk key
+fallback. **AUTH-BE-07 (removing the Clerk-key crypto fallback) cannot merge until this is fixed**
+— provisioning a real `INTEGRATION_ENCRYPTION_KEY` is a Secrets Manager write + redeploy, tracked
+under AUTH-ADI-09.
+
 Matching finding from AUTH-ADI-03 (2026-09-22, Aditya, dashboard walkthrough — not the full formal
 audit, but enough to confirm two of the three open decisions below): **Clerk also has no separate
 Production instance provisioned** — there is only a Development instance, consistent with the
@@ -62,14 +77,14 @@ yet defined** — needs concrete numbers, follow up separately now that D5 (coho
   to support hash-import as the primary path but must not hard-fail if hashes turn out unavailable.
 
 ## Inputs still needed (confirm or revise D1/D3/D5 above)
-- [ ] AUTH-ADI-01 — identity data audit (counts only: total users, `clerk_user_id` nulls,
-      `stub:%` ids, `@clerk.local` emails, case-duplicate emails, inactive users, SSO config counts
-      by status/scim_enabled, active invite sessions). Script ready:
-      `pnpm --filter @skout/db audit-identity-data`. Only one environment exists (see Context) —
-      run there; no UAT/prod rows needed.
-- [ ] AUTH-ADI-02 — prove `INTEGRATION_ENCRYPTION_KEY` / `HUBSPOT_CLIENT_SECRET` don't depend on
-      `CLERK_SECRET_KEY`. Script ready: `pnpm --filter @skout/db audit-encryption-key-dependency`
-      (read-only, counts only, no plaintext).
+- [x] AUTH-ADI-01 — ran against SkoutDev 2026-09-22, results in Context above. No cleanup items
+      for BE-02 (zero stub/fake/duplicate rows); strengthens the D1 risk (zero SSO config rows).
+- [x] AUTH-ADI-02 (blocked, new action item) — ran against SkoutDev 2026-09-22: refused to proceed
+      because `INTEGRATION_ENCRYPTION_KEY` is still the CDK placeholder. **New task: provision a
+      real key for SkoutDev (AUTH-ADI-09), then re-run
+      `pnpm --filter @skout/db audit-encryption-key-dependency` (or
+      `./scripts/ecs-run-auth-audit.sh SkoutDev encryption-key-dependency`) before AUTH-BE-07 can
+      merge.**
 - [x] AUTH-ADI-03 (partial) — Clerk dashboard walkthrough done 2026-09-22 (single instance, no
       separate prod — see Context): MFA config, Organizations, SSO Connections, session-token
       claims all recorded above.
