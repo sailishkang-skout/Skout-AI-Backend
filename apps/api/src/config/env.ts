@@ -196,6 +196,16 @@ const envSchema = z
     INTEGRATION_ENCRYPTION_KEY_PREVIOUS: z.string().optional(),
     /** HMAC secret for signed tracking/unsubscribe tokens. Falls back to INTEGRATION_ENCRYPTION_KEY. */
     TRACKING_SIGNING_SECRET: z.string().optional(),
+    // --- AUTH-BE-12 own-auth token service (Clerk migration, dark until AUTH-BE-19). ---
+    /** RS256 private key, PKCS8 PEM. Generate locally with scripts/generate-local-auth-keys.mjs. */
+    AUTH_JWT_PRIVATE_KEY: z.string().optional(),
+    /** kid of AUTH_JWT_PRIVATE_KEY — must have a matching entry in AUTH_JWT_PUBLIC_KEY_SET. */
+    AUTH_JWT_KID: z.string().optional(),
+    /** JWKS JSON (string) — the current signing key's public half plus any previous key kept
+     *  published during rotation, so already-issued tokens keep verifying. */
+    AUTH_JWT_PUBLIC_KEY_SET: z.string().optional(),
+    AUTH_JWT_ISSUER: z.string().default("https://auth.skoutai.io"),
+    AUTH_JWT_AUDIENCE: z.string().default("skout-api"),
     /** AUTH-BE-13 — pepper mixed into refresh-token hashes (name from AUTH-ADI-09). Refresh
      *  tokens are already >=256-bit random, so this isn't load-bearing for guessing resistance —
      *  it's a second factor an attacker needs even if the DB (token_hash column) leaks alone. */
