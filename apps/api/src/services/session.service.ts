@@ -12,10 +12,12 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
+import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import { getRedis } from "../lib/redis.js";
 
+const log = createLogger("session.service");
 const { authSessions, authRefreshTokens, authEvents } = schema;
 
 /** §3 defaults. */
@@ -342,8 +344,10 @@ export async function isSessionRevoked(db: Db, config: Env, sessionId: string): 
       const cached = await redis.get(revocationCacheKey(sessionId));
       if (cached === "1") return true;
       if (cached === "0") return false;
-    } catch {
-      // fall through to DB
+    } catch (err) {
+      // fall through to DB — Redis being unreachable must never block a revocation check,
+      // but a silent, permanent fallback would hide a real outage, so log it.
+      log.warn("isSessionRevoked: Redis read failed, falling back to DB", { err, sessionId });
     }
   }
 
@@ -361,8 +365,9 @@ export async function isSessionRevoked(db: Db, config: Env, sessionId: string): 
       } else {
         await redis.set(revocationCacheKey(sessionId), "0", "EX", REVOKED_CACHE_NEGATIVE_TTL_SECONDS);
       }
-    } catch {
-      // best-effort cache
+    } catch (err) {
+      // best-effort cache — a write failure must not fail the request, but should be visible.
+      log.warn("isSessionRevoked: Redis write failed, cache not updated", { err, sessionId });
     }
   }
   return revoked;
@@ -376,8 +381,12 @@ export async function markSessionRevokedInCache(config: Env, sessionId: string):
   if (!redis) return;
   try {
     await redis.set(revocationCacheKey(sessionId), "1");
-  } catch {
-    // best-effort
+  } catch (err) {
+    // best-effort — if this fails, the revoke itself already committed to Postgres, so the
+    // session is still revoked; a stale "not revoked" cache entry can only live for up to
+    // REVOKED_CACHE_NEGATIVE_TTL_SECONDS instead of being invalidated immediately. Log it
+    // because that degrades the immediate-invalidation guarantee this function exists for.
+    log.warn("markSessionRevokedInCache: Redis write failed", { err, sessionId });
   }
 }
 
