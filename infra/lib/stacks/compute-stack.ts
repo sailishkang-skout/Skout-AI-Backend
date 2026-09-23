@@ -17,6 +17,7 @@ import type { SkoutAppSecrets } from "../constructs/skout-app-secrets.js";
 import { SkoutEcsService } from "../constructs/skout-ecs-service.js";
 import type { SkoutDatabase } from "../constructs/skout-database.js";
 import type { SkoutRedis } from "../constructs/skout-redis.js";
+import { SkoutAuthWaf } from "../constructs/skout-auth-waf.js";
 import { SkoutClickHouse } from "../constructs/skout-clickhouse.js";
 import { applyBusinessHoursSchedule, SPOT_STRATEGY } from "../constructs/skout-dev-schedule.js";
 
@@ -128,6 +129,13 @@ export class ComputeStack extends Stack {
     });
 
     const albDns = this.loadBalancer.loadBalancerDnsName;
+
+    // AUTH-ADI-11 — rate-limit the own-auth endpoints (credential stuffing / brute force).
+    new SkoutAuthWaf(this, "AuthWaf", {
+      name: config.stackPrefix,
+      loadBalancerArn: this.loadBalancer.loadBalancerArn,
+      behindFrontDoor: httpsFrontDoor,
+    });
 
     // CloudFront managed prefix list IDs per region — stable AWS resource IDs
     const CF_ORIGIN_PREFIX_LISTS: Record<string, string> = {
