@@ -6,6 +6,7 @@
   "scripts": {
     "predev": "pnpm --filter @skout/db build && pnpm --filter @skout/shared build && pnpm --filter @skout/auth build && pnpm --filter @skout/storage build && pnpm --filter @skout/scraper-orchestrator build && pnpm --filter @skout/crm-bridge build",
     "dev": "tsx watch src/index.ts",
+    "generate-local-auth-keys": "node scripts/generate-local-auth-keys.mjs",
     "worker:crm-export": "tsx src/workers/crm-export.worker.ts",
     "worker:sequence": "tsx src/workers/sequence-enrollment.worker.ts",
     "build": "tsc",
@@ -43,6 +44,7 @@
     "fastify-plugin": "^5.0.1",
     "imapflow": "^1.4.3",
     "ioredis": "^5.4.1",
+    "jose": "^5",
     "mailparser": "^3.9.12",
     "nodemailer": "^9.0.3",
     "openai": "^6.45.0",
