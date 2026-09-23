@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import { randomUUID } from "node:crypto";
+import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import { ZodError } from "zod";
 import { buildPinoOptions, captureException } from "@skout/observability";
@@ -37,6 +38,11 @@ export async function buildApp(config: Env) {
 
   await app.register(loggingPlugin);
   await app.register(securityPlugin, config);
+  // AUTH-BE-14 — parses the refresh-token cookie for /api/v1/auth/refresh|logout. Unsigned:
+  // the cookie's value is an opaque, high-entropy refresh token that is itself the credential
+  // (hashed server-side on lookup, see session.service.ts) — cookie signing would add nothing
+  // an attacker who can already read the cookie couldn't already do.
+  await app.register(cookie);
 
   // Preserve the raw request body alongside the parsed JSON. Webhook signature
   // verification (e.g. Razorpay) must hash the exact bytes the provider sent —

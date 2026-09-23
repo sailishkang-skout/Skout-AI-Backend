@@ -116,6 +116,18 @@ function isPublicRoute(url: string, method?: string): boolean {
     url.startsWith("/api/v1/unsubscribe/") ||
     url.startsWith("/api/v1/invite-auth/send-otp") ||
     url.startsWith("/api/v1/invite-auth/verify-otp") ||
+    // AUTH-BE-14 — signup/login/refresh are unauthenticated by definition; logout reads a
+    // refresh cookie, not a Bearer token; logout-all/me carry an own-auth *access* token that
+    // this plugin's resolveAuth() (Clerk-only until AUTH-BE-19) cannot verify. Each route in
+    // auth-core.routes.ts does its own verification — see that file's header comment. Listed
+    // individually (not a "/api/v1/auth/" prefix) so /api/v1/auth/step-up, which genuinely
+    // needs the Clerk-authenticated request.userId this plugin sets, stays protected.
+    url === "/api/v1/auth/signup" ||
+    url === "/api/v1/auth/login" ||
+    url === "/api/v1/auth/refresh" ||
+    url === "/api/v1/auth/logout" ||
+    url === "/api/v1/auth/logout-all" ||
+    url === "/api/v1/auth/me" ||
     // OAuth callbacks — Google/Microsoft redirect the browser here directly after consent, a
     // top-level navigation that can never carry our Authorization header. These were never
     // reachable without this: the global auth hook 401'd them with "Missing bearer token"

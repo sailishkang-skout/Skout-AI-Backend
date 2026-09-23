@@ -3,7 +3,16 @@ export const LOG_REDACT_PATHS = [
   "authorization",
   "req.headers.authorization",
   "headers.authorization",
+  // AUTH-BE-14 — the refresh-token cookie must never be logged, same reasoning as the
+  // Authorization header above (it is the raw, pre-hash credential).
+  "cookie",
+  "req.headers.cookie",
+  "headers.cookie",
+  "set-cookie",
+  "req.headers['set-cookie']",
+  "headers['set-cookie']",
   "*.password",
+  "*.refreshCookie",
   "*.secret",
   "*.apiKey",
   "*.api_key",

@@ -216,6 +216,16 @@ const envSchema = z
      *  tokens are already >=256-bit random, so this isn't load-bearing for guessing resistance —
      *  it's a second factor an attacker needs even if the DB (token_hash column) leaks alone. */
     AUTH_REFRESH_TOKEN_PEPPER: z.string().optional(),
+    /**
+     * AUTH-BE-14 — master switch for the own-auth core endpoints (signup/login/refresh/
+     * logout/logout-all/me). Default OFF (§3 ground rule: feature flags default to today's
+     * behavior) — with it off every route under /api/v1/auth/* (except the pre-existing
+     * /auth/step-up) returns 404, so this can ship dark before Clerk is touched.
+     */
+    AUTH_CUSTOM_ENABLED: z
+      .string()
+      .optional()
+      .transform((v) => v === "true" || v === "1"),
     // --- Enrichment provider API keys (PAL). Optional: stub adapters are used
     //     for any capability whose key is absent. ---
     HUNTER_API_KEY: z.string().optional(),
