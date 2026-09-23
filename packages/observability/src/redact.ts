@@ -17,6 +17,8 @@ export const LOG_REDACT_PATHS = [
   "*.apiKey",
   "*.api_key",
   "*.token",
+  "*.otp",
+  "*.code",
   "*.accessToken",
   "*.refreshToken",
   "*.clientSecret",

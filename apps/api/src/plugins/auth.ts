@@ -128,6 +128,14 @@ function isPublicRoute(url: string, method?: string): boolean {
     url === "/api/v1/auth/logout" ||
     url === "/api/v1/auth/logout-all" ||
     url === "/api/v1/auth/me" ||
+    // AUTH-BE-15 — verify, reset, and OTP are unauthenticated. Confirm/verify issue an
+    // own-auth session themselves; they must not pass through the Clerk preHandler.
+    url === "/api/v1/auth/verify-email/send" ||
+    url === "/api/v1/auth/verify-email/confirm" ||
+    url === "/api/v1/auth/password/forgot" ||
+    url === "/api/v1/auth/password/reset" ||
+    url === "/api/v1/auth/otp/send" ||
+    url === "/api/v1/auth/otp/verify" ||
     // OAuth callbacks — Google/Microsoft redirect the browser here directly after consent, a
     // top-level navigation that can never carry our Authorization header. These were never
     // reachable without this: the global auth hook 401'd them with "Missing bearer token"
