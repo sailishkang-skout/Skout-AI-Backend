@@ -16,6 +16,12 @@ export interface SkoutAppSecretsProps {
 export class SkoutAppSecrets extends Construct {
   readonly openai: secretsmanager.ISecret;
   readonly clerk: secretsmanager.ISecret;
+  /** Clerk session JWT issuer (AUTH-ADI-03). Created directly in Secrets Manager, imported by
+   * name — never wired into the `clerk` secret's own field list, since changing that secret's
+   * placeholder shape makes CloudFormation re-push the whole SecretString on next deploy and
+   * resets the live CLERK_SECRET_KEY/CLERK_PUBLISHABLE_KEY back to "replace-me" (see AUTH-ADI-06,
+   * which hit this exact problem with ADMIN_IMPORT_SECRET). */
+  readonly clerkIssuer: secretsmanager.ISecret;
   readonly apollo: secretsmanager.ISecret;
   readonly hunter: secretsmanager.ISecret;
   readonly unipile: secretsmanager.ISecret;
@@ -154,6 +160,8 @@ export class SkoutAppSecrets extends Construct {
     });
     // Created/rotated by infra/scripts/setup-ses-smtp.sh — import by name so CDK does not fight Secrets Manager.
     this.smtp = secretsmanager.Secret.fromSecretNameV2(this, "Smtp", `${prefix}/smtp`);
+    // Created directly via `aws secretsmanager create-secret` (see comment on the field above).
+    this.clerkIssuer = secretsmanager.Secret.fromSecretNameV2(this, "ClerkIssuer", `${prefix}/clerk-issuer`);
     this.meetingBot = secretsmanager.Secret.fromSecretNameV2(this, "MeetingBot", `${prefix}/meeting-bot`);
     this.twilio = secretsmanager.Secret.fromSecretNameV2(this, "Twilio", `${prefix}/twilio`);
     this.telnyx = secretsmanager.Secret.fromSecretNameV2(this, "Telnyx", `${prefix}/telnyx`);

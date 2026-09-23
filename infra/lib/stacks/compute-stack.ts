@@ -357,6 +357,7 @@ export class ComputeStack extends Stack {
       secrets: {
         DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(database.secret, "password"),
         CLERK_SECRET_KEY: ecs.Secret.fromSecretsManager(secrets.clerk, "CLERK_SECRET_KEY"),
+        CLERK_JWT_ISSUER: ecs.Secret.fromSecretsManager(secrets.clerkIssuer, "CLERK_JWT_ISSUER"),
         APOLLO_API_KEY: ecs.Secret.fromSecretsManager(secrets.apollo, "APOLLO_API_KEY"),
         HUNTER_API_KEY: ecs.Secret.fromSecretsManager(secrets.hunter, "HUNTER_API_KEY"),
         UNIPILE_DSN: ecs.Secret.fromSecretsManager(secrets.unipile, "UNIPILE_DSN"),
@@ -515,6 +516,7 @@ export class ComputeStack extends Stack {
       secrets: {
         DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(database.secret, "password"),
         CLERK_SECRET_KEY: ecs.Secret.fromSecretsManager(secrets.clerk, "CLERK_SECRET_KEY"),
+        CLERK_JWT_ISSUER: ecs.Secret.fromSecretsManager(secrets.clerkIssuer, "CLERK_JWT_ISSUER"),
         SENTRY_DSN: ecs.Secret.fromSecretsManager(secrets.sentry, "SENTRY_DSN"),
         DD_API_KEY: ecs.Secret.fromSecretsManager(secrets.datadog, "DD_API_KEY"),
         MEETING_BOT_PROVIDER: ecs.Secret.fromSecretsManager(secrets.meetingBot, "MEETING_BOT_PROVIDER"),
