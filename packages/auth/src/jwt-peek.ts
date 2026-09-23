@@ -26,3 +26,11 @@ export function peekJwtAlgorithm(token: string): string | null {
   const alg = (header as { alg?: unknown }).alg;
   return typeof alg === "string" ? alg : null;
 }
+
+export function peekJwtPayloadClaims(token: string): Record<string, unknown> {
+  const parts = token.split(".");
+  if (parts.length !== 3) return {};
+  const payload = decodeJsonSegment(parts[1]!);
+  if (!payload || typeof payload !== "object") return {};
+  return payload as Record<string, unknown>;
+}

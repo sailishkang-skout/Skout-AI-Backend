@@ -2,6 +2,8 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as dotenvConfig } from "dotenv";
+import { afterEach, beforeEach } from "vitest";
+import { ensureTestAuthHarness, resetTestAuthHarness } from "@skout/auth";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../");
 for (const candidate of [path.join(root, ".env"), path.join(root, ".env.local")]) {
@@ -69,3 +71,11 @@ if (await postgresReachable()) {
     delete process.env[key];
   }
 }
+
+beforeEach(() => {
+  ensureTestAuthHarness();
+});
+
+afterEach(() => {
+  resetTestAuthHarness();
+});

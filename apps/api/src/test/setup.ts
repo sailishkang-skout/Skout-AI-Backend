@@ -7,6 +7,8 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as dotenvConfig } from "dotenv";
+import { afterEach, beforeEach } from "vitest";
+import { ensureTestAuthHarness, resetTestAuthHarness } from "@skout/auth";
 
 // Load project .env (without overriding any CI-supplied vars) so that
 // DATABASE_URL and other secrets are visible to route integration tests.
@@ -76,3 +78,11 @@ if (await postgresReachable()) {
     delete process.env[key];
   }
 }
+
+beforeEach(() => {
+  ensureTestAuthHarness();
+});
+
+afterEach(() => {
+  resetTestAuthHarness();
+});

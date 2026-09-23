@@ -1,8 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthTokenInvalidError } from "./auth-token.js";
+import { ensureTestAuthHarness, resetTestAuthHarness, TEST_CLERK_ISSUER } from "./build-test-auth.js";
 import { resolveAuth } from "./resolve-auth.js";
 
-const ISSUER = "https://clerk.test.example";
+beforeEach(() => {
+  ensureTestAuthHarness();
+});
+
+afterEach(() => {
+  resetTestAuthHarness();
+});
+
+const ISSUER = TEST_CLERK_ISSUER;
 
 function jwt(header: Record<string, unknown>, payload: Record<string, unknown>): string {
   const b64 = (value: Record<string, unknown>) => Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -36,7 +45,7 @@ describe("resolveAuth (AUTH-BE-03)", () => {
     const identity = await resolveAuth(token, config);
     expect(identity).toMatchObject({
       provider: "clerk",
-      subject: "clerk_test_user",
+      subject: "user_ok",
       email: "test@example.com",
       emailVerified: true,
     });

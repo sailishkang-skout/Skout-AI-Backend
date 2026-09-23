@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as authService from "../services/auth.service.js";
 import { buildAuthProbeApp } from "../test/auth-probe-app.js";
-import { buildFakeClerkJwt, TEST_CLERK_ISSUER } from "../test/clerk-test-jwt.js";
+import { buildTestAuthEnv, buildTestAuthToken, TEST_CLERK_ISSUER } from "@skout/auth";
 import { mockDbForIskSession } from "../test/mock-isk-db.js";
 
 const ADMIN_WS = "11111111-1111-4111-8111-111111111111";
@@ -9,14 +9,11 @@ const ADMIN_SECRET = "test-admin-import-secret";
 const ISK_USER_ID = "22222222-2222-4222-8222-222222222222";
 const ISK_WORKSPACE_ID = "33333333-3333-4333-8333-333333333333";
 
-const clerkOverrides = {
-  CLERK_SECRET_KEY: "sk_test_clerk",
-  CLERK_JWT_ISSUER: TEST_CLERK_ISSUER,
-  AUTH_STUB: false,
+const clerkOverrides = buildTestAuthEnv(TEST_CLERK_ISSUER, {
   ADMIN_IMPORT_SECRET: ADMIN_SECRET,
   ADMIN_IMPORT_WORKSPACE_ID: ADMIN_WS,
   EMAIL_INTEL_EXTERNAL_API_KEY: "email-intel-test-key",
-} as const;
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -41,7 +38,7 @@ describe("auth plugin — Clerk bearer (resolveAuth)", () => {
 
   it("returns 401 for a JWT with an unknown issuer", async () => {
     const app = await buildAuthProbeApp(clerkOverrides);
-    const token = buildFakeClerkJwt("https://unknown-issuer.example");
+    const token = buildTestAuthToken("https://unknown-issuer.example");
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/__auth_probe",
@@ -60,7 +57,7 @@ describe("auth plugin — Clerk bearer (resolveAuth)", () => {
     });
 
     const app = await buildAuthProbeApp(clerkOverrides);
-    const token = buildFakeClerkJwt();
+    const token = buildTestAuthToken();
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/__auth_probe",

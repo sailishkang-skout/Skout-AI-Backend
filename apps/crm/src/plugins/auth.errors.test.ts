@@ -3,18 +3,16 @@ import Fastify from "fastify";
 import { AuthErrorCode, AuthErrorMessage } from "@skout/auth";
 import { loadEnv } from "../config/env.js";
 import { authPlugin } from "./auth.js";
-import { TEST_CLERK_ISSUER } from "../test/clerk-test-jwt.js";
+import { buildTestAuthEnv, TEST_CLERK_ISSUER } from "@skout/auth";
 
 async function buildCrmAuthProbe() {
   const config = {
     ...loadEnv(),
-    CLERK_SECRET_KEY: "sk_test_clerk",
-    CLERK_JWT_ISSUER: TEST_CLERK_ISSUER,
-    AUTH_STUB: false,
-    AUTH_MODE: "clerk" as const,
-    AUTH_MODE_LEGACY_DERIVED: false,
-    AUTH_USE_STUB: false,
-    AUTH_USE_CLERK_JWT: true,
+    ...buildTestAuthEnv(TEST_CLERK_ISSUER, {
+      AUTH_MODE_LEGACY_DERIVED: false,
+      AUTH_USE_STUB: false,
+      AUTH_USE_CLERK_JWT: true,
+    }),
   };
   const app = Fastify({ logger: { level: "fatal" } });
   app.decorate("config", config);

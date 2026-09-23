@@ -7,7 +7,6 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   resolve: {
     alias: {
-      "@clerk/backend": path.resolve(root, "src/test/mocks/clerk-backend.ts"),
       openai: path.resolve(root, "src/test/mocks/openai.ts"),
     },
   },

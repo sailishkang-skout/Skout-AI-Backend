@@ -5,14 +5,11 @@ import Fastify from "fastify";
 import { loadEnv } from "../config/env.js";
 import { authPlugin } from "../plugins/auth.js";
 import { stepUpRoutes } from "./step-up.routes.js";
-import { buildFakeClerkJwt, TEST_CLERK_ISSUER } from "../test/clerk-test-jwt.js";
+import { buildTestAuthEnv, buildTestAuthToken, TEST_CLERK_ISSUER } from "@skout/auth";
 
-const clerkOverrides = {
-  CLERK_SECRET_KEY: "sk_test_clerk",
-  CLERK_JWT_ISSUER: TEST_CLERK_ISSUER,
-  AUTH_STUB: false,
+const clerkOverrides = buildTestAuthEnv(TEST_CLERK_ISSUER, {
   STEP_UP_SIGNING_SECRET: "step-up-test-signing-secret",
-} as const;
+});
 
 async function buildStepUpProbeApp() {
   const config = { ...loadEnv(), ...clerkOverrides };
@@ -41,7 +38,7 @@ describe("POST /api/v1/auth/step-up — error codes", () => {
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/auth/step-up",
-      payload: { clerkToken: buildFakeClerkJwt() },
+      payload: { clerkToken: buildTestAuthToken() },
     });
     expect(res.statusCode).toBe(401);
     expect(res.json()).toMatchObject({
@@ -52,7 +49,7 @@ describe("POST /api/v1/auth/step-up — error codes", () => {
   });
 
   it("returns AUTH_TOKEN_EXPIRED for expired step-up Clerk token", async () => {
-    const sessionJwt = buildFakeClerkJwt();
+    const sessionJwt = buildTestAuthToken();
     vi.spyOn(skoutAuth, "resolveAuth").mockImplementation(async (token) => {
       if (token === sessionJwt) {
         return { provider: "clerk", subject: "u1", emailVerified: true };
@@ -71,7 +68,7 @@ describe("POST /api/v1/auth/step-up — error codes", () => {
       method: "POST",
       url: "/api/v1/auth/step-up",
       headers: { authorization: `Bearer ${sessionJwt}` },
-      payload: { clerkToken: buildFakeClerkJwt(TEST_CLERK_ISSUER, "step-up") },
+      payload: { clerkToken: buildTestAuthToken(TEST_CLERK_ISSUER, "step-up") },
     });
     expect(res.statusCode).toBe(401);
     expect(res.json()).toMatchObject({
@@ -82,8 +79,8 @@ describe("POST /api/v1/auth/step-up — error codes", () => {
   });
 
   it("returns AUTH_REAUTH_USER_MISMATCH on user mismatch", async () => {
-    const sessionJwt = buildFakeClerkJwt();
-    const stepUpJwt = buildFakeClerkJwt(TEST_CLERK_ISSUER, "step-up-subject");
+    const sessionJwt = buildTestAuthToken();
+    const stepUpJwt = buildTestAuthToken(TEST_CLERK_ISSUER, "step-up-subject");
     vi.spyOn(skoutAuth, "resolveAuth").mockResolvedValue({
       provider: "clerk",
       subject: "same",

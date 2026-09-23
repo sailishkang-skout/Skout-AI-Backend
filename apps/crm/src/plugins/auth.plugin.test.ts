@@ -1,13 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as skoutAuth from "@skout/auth";
 import { buildAuthProbeApp } from "../test/auth-probe-app.js";
-import { buildFakeClerkJwt, TEST_CLERK_ISSUER } from "../test/clerk-test-jwt.js";
+import { buildTestAuthEnv, buildTestAuthToken, TEST_CLERK_ISSUER } from "@skout/auth";
 
-const clerkOverrides = {
-  CLERK_SECRET_KEY: "sk_test_clerk",
-  CLERK_JWT_ISSUER: TEST_CLERK_ISSUER,
-  AUTH_STUB: false,
-} as const;
+const clerkOverrides = buildTestAuthEnv(TEST_CLERK_ISSUER);
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -61,7 +57,7 @@ describe("CRM auth plugin — Clerk bearer (resolveAuth)", () => {
 
   it("returns 401 for a JWT with an unknown issuer", async () => {
     const app = await buildAuthProbeApp(clerkOverrides);
-    const token = buildFakeClerkJwt("https://unknown-issuer.example");
+    const token = buildTestAuthToken("https://unknown-issuer.example");
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/__auth_probe",
@@ -83,7 +79,7 @@ describe("CRM auth plugin — Clerk bearer (resolveAuth)", () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/__auth_probe",
-      headers: { authorization: `Bearer ${buildFakeClerkJwt()}` },
+      headers: { authorization: `Bearer ${buildTestAuthToken()}` },
     });
 
     expect(res.statusCode).toBe(200);
