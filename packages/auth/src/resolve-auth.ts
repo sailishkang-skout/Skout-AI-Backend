@@ -3,6 +3,7 @@ import { peekJwtAlgorithm, peekJwtIssuer } from "./jwt-peek.js";
 import { AuthTokenInvalidError } from "./auth-token.js";
 import { clerkAuthProvider } from "./clerk-provider.js";
 import { emitAuthVerifyMetric } from "./auth-metrics.js";
+import { getTestAuthProvider } from "./test-auth-registry.js";
 
 export type ResolveAuthConfig = {
   /** Clerk session JWT issuer (AUTH-ADI-03 / CLERK_JWT_ISSUER). */
@@ -13,6 +14,8 @@ export type ResolveAuthConfig = {
 
 /** Configured issuers → provider (Skout issuer added in a later ticket). */
 function providerForIssuer(issuer: string, config: ResolveAuthConfig) {
+  const testProvider = getTestAuthProvider(issuer);
+  if (testProvider) return testProvider;
   if (issuer === config.clerkJwtIssuer) return clerkAuthProvider;
   return null;
 }

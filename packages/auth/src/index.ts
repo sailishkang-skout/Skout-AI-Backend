@@ -6,6 +6,19 @@ export {
 export type { AuthProvider, AuthVerifyContext, VerifiedIdentity } from "./auth-provider.js";
 export { computeAuthorizedParties, normalizeOrigin, type AuthorizedPartiesConfig } from "./authorized-parties.js";
 export { resolveAuth, type ResolveAuthConfig } from "./resolve-auth.js";
+export {
+  TEST_CLERK_ISSUER,
+  TEST_SKOUT_AUTH_ISSUER,
+  buildFakeClerkJwt,
+  buildTestAuth,
+  buildTestAuthEnv,
+  buildTestAuthToken,
+  ensureTestAuthHarness,
+  resetTestAuthHarness,
+  type BuildTestAuthOptions,
+  type BuildTestAuthResult,
+  type TestAuthProviderKind,
+} from "./build-test-auth.js";
 export { buildClerkAppResolveAuthConfig, buildResolveAuthConfig } from "./clerk-auth-config.js";
 export {
   AUTH_TOKEN_INVALID,

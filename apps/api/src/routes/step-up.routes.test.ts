@@ -1,17 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as skoutAuth from "@skout/auth";
 import { buildStepUpProbeApp } from "../test/step-up-probe-app.js";
-import { buildFakeClerkJwt, TEST_CLERK_ISSUER } from "../test/clerk-test-jwt.js";
+import { buildTestAuthEnv, buildTestAuthToken, TEST_CLERK_ISSUER } from "@skout/auth";
 
 const SESSION_USER_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const OTHER_USER_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
-const clerkOverrides = {
-  CLERK_SECRET_KEY: "sk_test_clerk",
-  CLERK_JWT_ISSUER: TEST_CLERK_ISSUER,
-  AUTH_STUB: false,
+const clerkOverrides = buildTestAuthEnv(TEST_CLERK_ISSUER, {
   STEP_UP_SIGNING_SECRET: "step-up-test-signing-secret",
-} as const;
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -23,7 +20,7 @@ describe("POST /api/v1/auth/step-up", () => {
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/auth/step-up",
-      payload: { clerkToken: buildFakeClerkJwt() },
+      payload: { clerkToken: buildTestAuthToken() },
     });
     expect(res.statusCode).toBe(401);
     await app.close();
@@ -31,8 +28,8 @@ describe("POST /api/v1/auth/step-up", () => {
 
   it("returns 403 when re-auth resolves to a different internal user", async () => {
     const app = await buildStepUpProbeApp(clerkOverrides);
-    const sessionJwt = buildFakeClerkJwt(TEST_CLERK_ISSUER, "session-subject");
-    const stepUpJwt = buildFakeClerkJwt(TEST_CLERK_ISSUER, "step-up-subject");
+    const sessionJwt = buildTestAuthToken(TEST_CLERK_ISSUER, "session-subject");
+    const stepUpJwt = buildTestAuthToken(TEST_CLERK_ISSUER, "step-up-subject");
 
     vi.spyOn(skoutAuth, "resolveAuth").mockImplementation(async (token) => {
       if (token === sessionJwt) {
@@ -68,8 +65,8 @@ describe("POST /api/v1/auth/step-up", () => {
 
   it("issues a reauth token when the step-up Clerk token matches the session user", async () => {
     const app = await buildStepUpProbeApp(clerkOverrides);
-    const sessionJwt = buildFakeClerkJwt(TEST_CLERK_ISSUER, "session-subject");
-    const stepUpJwt = buildFakeClerkJwt(TEST_CLERK_ISSUER, "step-up-subject");
+    const sessionJwt = buildTestAuthToken(TEST_CLERK_ISSUER, "session-subject");
+    const stepUpJwt = buildTestAuthToken(TEST_CLERK_ISSUER, "step-up-subject");
 
     vi.spyOn(skoutAuth, "resolveAuth").mockResolvedValue({
       provider: "clerk",

@@ -8,17 +8,13 @@ import {
 } from "@skout/auth";
 import * as authService from "../services/auth.service.js";
 import { buildAuthProbeApp } from "../test/auth-probe-app.js";
-import { buildFakeClerkJwt, TEST_CLERK_ISSUER } from "../test/clerk-test-jwt.js";
+import { buildTestAuthEnv, buildTestAuthToken, TEST_CLERK_ISSUER } from "@skout/auth";
 
-const clerkOverrides = {
-  CLERK_SECRET_KEY: "sk_test_clerk",
-  CLERK_JWT_ISSUER: TEST_CLERK_ISSUER,
-  AUTH_STUB: false,
-  AUTH_MODE: "clerk" as const,
+const clerkOverrides = buildTestAuthEnv(TEST_CLERK_ISSUER, {
   AUTH_MODE_LEGACY_DERIVED: false,
   AUTH_USE_STUB: false,
   AUTH_USE_CLERK_JWT: true,
-} as const;
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -41,7 +37,7 @@ describe("API auth plugin — structured error codes (AUTH-BE-08)", () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/__auth_probe",
-      headers: { authorization: `Bearer ${buildFakeClerkJwt("https://evil.example")}` },
+      headers: { authorization: `Bearer ${buildTestAuthToken("https://evil.example")}` },
     });
     expect(res.statusCode).toBe(401);
     expect(res.json().code).toBe(AuthErrorCode.AUTH_TOKEN_INVALID);
@@ -55,7 +51,7 @@ describe("API auth plugin — structured error codes (AUTH-BE-08)", () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/__auth_probe",
-      headers: { authorization: `Bearer ${buildFakeClerkJwt()}` },
+      headers: { authorization: `Bearer ${buildTestAuthToken()}` },
     });
     expect(res.statusCode).toBe(401);
     expect(res.json()).toMatchObject({
@@ -79,7 +75,7 @@ describe("API auth plugin — structured error codes (AUTH-BE-08)", () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/__auth_probe",
-      headers: { authorization: `Bearer ${buildFakeClerkJwt()}` },
+      headers: { authorization: `Bearer ${buildTestAuthToken()}` },
     });
     expect(res.statusCode).toBe(403);
     expect(res.json()).toMatchObject({
