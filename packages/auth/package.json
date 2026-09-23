@@ -20,6 +20,7 @@
     "@clerk/backend": "^3.6.1",
     "@skout/db": "workspace:*",
     "@skout/observability": "workspace:*",
+    "@skout/shared": "workspace:*",
     "drizzle-orm": "^0.44.2"
   },
   "devDependencies": {
