@@ -99,7 +99,10 @@ function hashUserAgent(config: Env, ua: string | undefined): string | undefined 
     .slice(0, 32);
 }
 
-async function logEvent(
+/** Exported so BE-14's auth endpoints (login/signup attempts, not just session lifecycle
+ *  events) write to the same auth_events shape/table rather than growing a second
+ *  ad-hoc audit-log writer. */
+export async function logEvent(
   db: Db,
   config: Env,
   userId: string | null,
