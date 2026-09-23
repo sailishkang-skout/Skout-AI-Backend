@@ -7,7 +7,18 @@ export type { AuthProvider, AuthVerifyContext, VerifiedIdentity } from "./auth-p
 export { computeAuthorizedParties, normalizeOrigin, type AuthorizedPartiesConfig } from "./authorized-parties.js";
 export { resolveAuth, type ResolveAuthConfig } from "./resolve-auth.js";
 export { buildClerkAppResolveAuthConfig, buildResolveAuthConfig } from "./clerk-auth-config.js";
-export { AUTH_TOKEN_INVALID, AuthTokenInvalidError } from "./auth-token.js";
+export {
+  AUTH_TOKEN_INVALID,
+  AuthTokenExpiredError,
+  AuthTokenInvalidError,
+} from "./auth-token.js";
+export {
+  AuthErrorCode,
+  AuthErrorMessage,
+  isJwtExpiredMessage,
+  resolveAuthErrorCode,
+} from "./auth-error-codes.js";
+export { authErrorResponse } from "./auth-error-response.js";
 export { HttpError } from "./http.js";
 export {
   assertPermission,

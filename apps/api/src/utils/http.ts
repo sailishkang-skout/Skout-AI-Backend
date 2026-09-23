@@ -10,6 +10,9 @@ export function errorResponse(message: string, statusCode = 400, details?: unkno
   };
 }
 
+/** §3 auth failures — stable `code` plus legacy `error` message text (AUTH-BE-08). */
+export { authErrorResponse } from "@skout/auth";
+
 export function successResponse(data: unknown) {
   return {
     ok: true,

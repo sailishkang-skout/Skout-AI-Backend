@@ -1,4 +1,5 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import * as redisLib from "../lib/redis.js";
 import { createDb, schema } from "@skout/db";
 import { eq } from "drizzle-orm";
 import { loadEnv } from "../config/env.js";
@@ -31,6 +32,7 @@ describe("session.service", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     // auth_refresh_tokens / auth_events cascade or are independently scoped — clean explicitly.
     for (const sessionId of cleanupSessionIds) {
       await db.delete(authRefreshTokens).where(eq(authRefreshTokens.sessionId, sessionId));
@@ -260,26 +262,26 @@ describe("session.service", () => {
       expect(await isSessionRevoked(db, config, "00000000-0000-0000-0000-000000000000")).toBe(true);
     });
 
-    it("measures and reports the added per-request latency of the cached check", async () => {
+    it("caches a live session answer in Redis so the second check does not refill the cache", async () => {
+      const cache = new Map<string, string>();
+      const redis = {
+        get: vi.fn(async (key: string) => cache.get(key) ?? null),
+        set: vi.fn(async (key: string, value: string) => {
+          cache.set(key, value);
+        }),
+      };
+      vi.spyOn(redisLib, "getRedis").mockReturnValue(redis as never);
+
       const session = await createSession(db, config, userId);
       cleanupSessionIds.push(session.sessionId);
 
-      const uncachedStart = performance.now();
-      await isSessionRevoked(db, config, session.sessionId); // first call: DB read + cache fill
-      const uncachedMs = performance.now() - uncachedStart;
+      expect(await isSessionRevoked(db, config, session.sessionId)).toBe(false);
+      expect(redis.set).toHaveBeenCalledTimes(1);
+      expect(cache.get(`auth:session:revoked:${session.sessionId}`)).toBe("0");
 
-      const cachedStart = performance.now();
-      await isSessionRevoked(db, config, session.sessionId); // second call: Redis cache hit
-      const cachedMs = performance.now() - cachedStart;
-
-      // eslint-disable-next-line no-console
-      console.log(
-        `[AUTH-BE-13] isSessionRevoked: first call (DB, against a remote dev DB) ${uncachedMs.toFixed(1)}ms, ` +
-          `cached call (Redis) ${cachedMs.toFixed(1)}ms — the cached number is what's added to every ` +
-          `request in BE-12's token verification; the first-call number is dominated by this sandbox's ` +
-          `remote-DB network hop (ap-northeast-2), not representative of same-region production latency.`
-      );
-      expect(cachedMs).toBeLessThan(uncachedMs);
+      expect(await isSessionRevoked(db, config, session.sessionId)).toBe(false);
+      expect(redis.get).toHaveBeenCalledTimes(2);
+      expect(redis.set).toHaveBeenCalledTimes(1);
     });
   });
 });

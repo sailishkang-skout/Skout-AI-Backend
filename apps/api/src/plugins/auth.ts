@@ -4,11 +4,15 @@ import { and, eq, gt } from "drizzle-orm";
 import { timingSafeEqual } from "node:crypto";
 import { schema } from "@skout/db";
 import {
+  AuthErrorCode,
+  AuthErrorMessage,
   AuthTokenInvalidError,
+  authErrorResponse,
   computeAuthorizedParties,
   loadPlatformContext,
   normalizeOrigin,
   resolveAuth,
+  resolveAuthErrorCode,
   type PlatformContext,
 } from "@skout/auth";
 import { buildApiResolveAuthConfig } from "./auth-resolve-config.js";
@@ -216,7 +220,9 @@ export const authPlugin = fp(async (app) => {
         : undefined;
 
     if (!token) {
-      return reply.code(401).send(errorResponse("Missing bearer token", 401));
+      return reply
+        .code(401)
+        .send(authErrorResponse(AuthErrorCode.AUTH_MISSING_TOKEN, AuthErrorMessage.MISSING_BEARER, 401));
     }
 
     // Static-secret admin import auth (/admin/import page in the frontend). Deliberately
@@ -226,11 +232,27 @@ export const authPlugin = fp(async (app) => {
       const secret = config.ADMIN_IMPORT_SECRET;
       const targetWorkspaceId = config.ADMIN_IMPORT_WORKSPACE_ID;
       if (!isImportRoute || !secret || !targetWorkspaceId) {
-        return reply.code(401).send(errorResponse("Invalid authorization token", 401));
+        return reply
+          .code(401)
+          .send(
+            authErrorResponse(
+              AuthErrorCode.AUTH_TOKEN_INVALID,
+              AuthErrorMessage.INVALID_AUTHORIZATION,
+              401
+            )
+          );
       }
       const provided = token.slice("admin_".length);
       if (!timingSafeEqualStrings(provided, secret)) {
-        return reply.code(401).send(errorResponse("Invalid authorization token", 401));
+        return reply
+          .code(401)
+          .send(
+            authErrorResponse(
+              AuthErrorCode.AUTH_TOKEN_INVALID,
+              AuthErrorMessage.INVALID_AUTHORIZATION,
+              401
+            )
+          );
       }
       request.userId = "admin-import";
       request.userEmail = "admin-import@skoutai.internal";
@@ -253,7 +275,15 @@ export const authPlugin = fp(async (app) => {
         .limit(1);
 
       if (!session) {
-        return reply.code(401).send(errorResponse("Session expired or invalid", 401));
+        return reply
+          .code(401)
+          .send(
+            authErrorResponse(
+              AuthErrorCode.AUTH_SESSION_INVALID,
+              AuthErrorMessage.SESSION_EXPIRED_OR_INVALID,
+              401
+            )
+          );
       }
 
       const [user] = await db
@@ -286,10 +316,12 @@ export const authPlugin = fp(async (app) => {
     } catch (error) {
       app.log.error({ err: error }, "Auth failed");
       if (error instanceof AuthTokenInvalidError) {
-        return reply.code(401).send(errorResponse(error.message, 401));
+        const code = resolveAuthErrorCode(error);
+        return reply.code(401).send(authErrorResponse(code, error.message, 401));
       }
       if (error instanceof HttpError) {
-        return reply.code(error.statusCode).send(errorResponse(error.message, error.statusCode));
+        const code = resolveAuthErrorCode(error);
+        return reply.code(error.statusCode).send(authErrorResponse(code, error.message, error.statusCode));
       }
       // DB errors during provisioning are server failures, not invalid tokens.
       const isDbError =
@@ -299,8 +331,9 @@ export const authPlugin = fp(async (app) => {
       if (isDbError) {
         return reply.code(500).send(errorResponse("User provisioning failed", 500));
       }
-      const message = error instanceof Error ? error.message : "Invalid authorization token";
-      return reply.code(401).send(errorResponse(message, 401));
+      const message = error instanceof Error ? error.message : AuthErrorMessage.INVALID_AUTHORIZATION;
+      const code = resolveAuthErrorCode(error, message);
+      return reply.code(401).send(authErrorResponse(code, message, 401));
     }
   });
 
