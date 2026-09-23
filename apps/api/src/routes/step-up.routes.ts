@@ -5,6 +5,7 @@ import {
   AuthErrorMessage,
   AuthTokenInvalidError,
   authErrorResponse,
+  authRuntimeFlags,
   issueStepUpToken,
   resolveAuth,
   resolveAuthErrorCode,
@@ -49,9 +50,8 @@ export async function stepUpRoutes(app: FastifyInstance) {
     if (!config.STEP_UP_SIGNING_SECRET) {
       return reply.code(503).send(errorResponse("Step-up re-authentication is not configured", 503));
     }
-    const clerkKeyInvalid =
-      !config.CLERK_SECRET_KEY || config.CLERK_SECRET_KEY.trim().toLowerCase() === "replace-me";
-    if (config.AUTH_STUB || clerkKeyInvalid) {
+    const authRuntime = authRuntimeFlags({ ...config, appRole: "api" });
+    if (authRuntime.AUTH_USE_STUB || !authRuntime.AUTH_USE_CLERK_JWT) {
       return reply
         .code(501)
         .send(errorResponse("Step-up re-authentication requires Clerk auth to be active", 501));

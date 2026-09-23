@@ -1,6 +1,7 @@
 import path from "node:path";
 import dotenv from "dotenv";
 import { z } from "zod";
+import { applyAuthModeEnv, AUTH_MODE_DEPRECATION_WARNING } from "@skout/auth";
 
 const candidatePaths = [
   path.resolve(process.cwd(), ".env"),
@@ -70,6 +71,18 @@ const envSchema = z
     CLERK_PUBLISHABLE_KEY: z.string().optional(),
     /** Clerk session JWT `iss` (Frontend API URL) — AUTH-ADI-03 / AUTH-BE-03 issuer allowlist. */
     CLERK_JWT_ISSUER: z.string().url().optional(),
+    /**
+     * Auth runtime mode (AUTH-BE-06). When unset, derived from AUTH_STUB + CLERK_SECRET_KEY
+     * for backward compatibility until AUTH-ADI-08 sets this in ECS.
+     */
+    AUTH_MODE: z.enum(["clerk", "stub", "custom", "dual"]).optional(),
+    /** Own-auth signing material (AUTH-ADI-09 / AUTH-BE-12) — required when AUTH_MODE is custom or dual. */
+    /** RS256 private key, PKCS8 PEM. Generate locally with scripts/generate-local-auth-keys.mjs. */
+    AUTH_JWT_PRIVATE_KEY: z.string().optional(),
+    /** kid of AUTH_JWT_PRIVATE_KEY — must have a matching entry in AUTH_JWT_PUBLIC_KEY_SET. */
+    AUTH_JWT_KID: z.string().optional(),
+    /** JWKS JSON (string) — current signing public key plus any previous key kept during rotation. */
+    AUTH_JWT_PUBLIC_KEY_SET: z.string().optional(),
     /** When true, skip JWT and use stub user (local only; never set in prod). */
     AUTH_STUB: z
       .string()
@@ -197,13 +210,6 @@ const envSchema = z
     /** HMAC secret for signed tracking/unsubscribe tokens. Falls back to INTEGRATION_ENCRYPTION_KEY. */
     TRACKING_SIGNING_SECRET: z.string().optional(),
     // --- AUTH-BE-12 own-auth token service (Clerk migration, dark until AUTH-BE-19). ---
-    /** RS256 private key, PKCS8 PEM. Generate locally with scripts/generate-local-auth-keys.mjs. */
-    AUTH_JWT_PRIVATE_KEY: z.string().optional(),
-    /** kid of AUTH_JWT_PRIVATE_KEY — must have a matching entry in AUTH_JWT_PUBLIC_KEY_SET. */
-    AUTH_JWT_KID: z.string().optional(),
-    /** JWKS JSON (string) — the current signing key's public half plus any previous key kept
-     *  published during rotation, so already-issued tokens keep verifying. */
-    AUTH_JWT_PUBLIC_KEY_SET: z.string().optional(),
     AUTH_JWT_ISSUER: z.string().default("https://auth.skoutai.io"),
     AUTH_JWT_AUDIENCE: z.string().default("skout-api"),
     /** AUTH-BE-13 — pepper mixed into refresh-token hashes (name from AUTH-ADI-09). Refresh
@@ -421,7 +427,25 @@ const envSchema = z
         OPENROUTER_API_KEY: isPlaceholder(fallback) ? undefined : fallback,
       };
     }
-    return next;
+
+    const authModeResolved = applyAuthModeEnv({
+      authModeRaw: next.AUTH_MODE,
+      nodeEnv: next.NODE_ENV,
+      authStub: next.AUTH_STUB,
+      clerkSecretKey: next.CLERK_SECRET_KEY,
+      authJwtPrivateKey: next.AUTH_JWT_PRIVATE_KEY,
+      authJwtKid: next.AUTH_JWT_KID,
+      authJwtPublicKeySet: next.AUTH_JWT_PUBLIC_KEY_SET,
+      appRole: "api",
+    });
+    if (
+      authModeResolved.AUTH_MODE_LEGACY_DERIVED &&
+      next.NODE_ENV !== "test" &&
+      !process.env.VITEST
+    ) {
+      console.warn(AUTH_MODE_DEPRECATION_WARNING);
+    }
+    return { ...next, ...authModeResolved };
   });
 
 export type Env = z.infer<typeof envSchema>;

@@ -8,6 +8,7 @@ import {
   AuthErrorMessage,
   AuthTokenInvalidError,
   authErrorResponse,
+  authRuntimeFlags,
   computeAuthorizedParties,
   loadPlatformContext,
   normalizeOrigin,
@@ -141,17 +142,13 @@ export { computeAuthorizedParties, normalizeOrigin };
 export const authPlugin = fp(async (app) => {
   const config = app.config;
 
-  const clerkKeyInvalid =
-    !config.CLERK_SECRET_KEY ||
-    config.CLERK_SECRET_KEY.trim().toLowerCase() === "replace-me";
+  const authRuntime = authRuntimeFlags({ ...config, appRole: "api" });
 
-  if (config.NODE_ENV === "production" && (config.AUTH_STUB || clerkKeyInvalid)) {
-    throw new Error("Production requires CLERK_SECRET_KEY and AUTH_STUB must be false");
+  if (authRuntime.AUTH_MODE === "custom") {
+    throw new Error("AUTH_MODE=custom is not enabled in apps/api yet — use clerk or dual");
   }
 
-  const useStubAuth = clerkKeyInvalid || config.AUTH_STUB;
-
-  if (useStubAuth) {
+  if (authRuntime.AUTH_USE_STUB) {
     app.log.warn(
       config.AUTH_STUB
         ? "AUTH_STUB=true — JWT disabled, using stub user"

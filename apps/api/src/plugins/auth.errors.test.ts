@@ -14,6 +14,10 @@ const clerkOverrides = {
   CLERK_SECRET_KEY: "sk_test_clerk",
   CLERK_JWT_ISSUER: TEST_CLERK_ISSUER,
   AUTH_STUB: false,
+  AUTH_MODE: "clerk" as const,
+  AUTH_MODE_LEGACY_DERIVED: false,
+  AUTH_USE_STUB: false,
+  AUTH_USE_CLERK_JWT: true,
 } as const;
 
 afterEach(() => {
