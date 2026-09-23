@@ -206,6 +206,10 @@ const envSchema = z
     AUTH_JWT_PUBLIC_KEY_SET: z.string().optional(),
     AUTH_JWT_ISSUER: z.string().default("https://auth.skoutai.io"),
     AUTH_JWT_AUDIENCE: z.string().default("skout-api"),
+    /** AUTH-BE-13 — pepper mixed into refresh-token hashes (name from AUTH-ADI-09). Refresh
+     *  tokens are already >=256-bit random, so this isn't load-bearing for guessing resistance —
+     *  it's a second factor an attacker needs even if the DB (token_hash column) leaks alone. */
+    AUTH_REFRESH_TOKEN_PEPPER: z.string().optional(),
     // --- Enrichment provider API keys (PAL). Optional: stub adapters are used
     //     for any capability whose key is absent. ---
     HUNTER_API_KEY: z.string().optional(),
