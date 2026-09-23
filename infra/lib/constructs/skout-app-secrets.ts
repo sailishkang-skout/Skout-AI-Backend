@@ -1,5 +1,5 @@
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
-import { SecretValue } from "aws-cdk-lib";
+import { SecretValue, Stack } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import type { EnvironmentConfig } from "../config/environments.js";
 
@@ -161,7 +161,19 @@ export class SkoutAppSecrets extends Construct {
     // Created/rotated by infra/scripts/setup-ses-smtp.sh — import by name so CDK does not fight Secrets Manager.
     this.smtp = secretsmanager.Secret.fromSecretNameV2(this, "Smtp", `${prefix}/smtp`);
     // Created directly via `aws secretsmanager create-secret` (see comment on the field above).
-    this.clerkIssuer = secretsmanager.Secret.fromSecretNameV2(this, "ClerkIssuer", `${prefix}/clerk-issuer`);
+    // Must be imported by COMPLETE ARN: fromSecretNameV2 yields a suffix-less ARN, ECS presents that
+    // to Secrets Manager, and IAM then denies it against the `name-??????` grant CDK emits — the
+    // task fails with AccessDeniedException no matter how long the policy has propagated.
+    // The 6-char suffix is fixed for this secret's lifetime; other envs keep the by-name import
+    // until their secret exists.
+    this.clerkIssuer =
+      props.config.name === "dev"
+        ? secretsmanager.Secret.fromSecretCompleteArn(
+            this,
+            "ClerkIssuer",
+            `arn:aws:secretsmanager:${props.config.region}:${Stack.of(this).account}:secret:${prefix}/clerk-issuer-fU7g9h`
+          )
+        : secretsmanager.Secret.fromSecretNameV2(this, "ClerkIssuer", `${prefix}/clerk-issuer`);
     this.meetingBot = secretsmanager.Secret.fromSecretNameV2(this, "MeetingBot", `${prefix}/meeting-bot`);
     this.twilio = secretsmanager.Secret.fromSecretNameV2(this, "Twilio", `${prefix}/twilio`);
     this.telnyx = secretsmanager.Secret.fromSecretNameV2(this, "Telnyx", `${prefix}/telnyx`);
