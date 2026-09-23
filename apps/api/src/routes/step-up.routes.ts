@@ -2,11 +2,11 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
   AuthTokenInvalidError,
-  buildClerkAppResolveAuthConfig,
   issueStepUpToken,
   resolveAuth,
   resolveOrProvisionUser,
 } from "@skout/auth";
+import { buildApiResolveAuthConfig } from "../plugins/auth-resolve-config.js";
 import { errorResponse } from "../utils/http.js";
 
 const bodySchema = z.object({
@@ -21,8 +21,8 @@ const bodySchema = z.object({
 
 /**
  * §11.1 (Enterprise Completion Plan) — Task 16: the real issuer for @skout/auth's
- * assertStepUp() control, using the same Clerk verifyToken pattern apps/api's auth plugin
- * (plugins/auth.ts) already uses for the primary session. Independently verifies the posted
+ * assertStepUp() control, using the same `resolveAuth` path as apps/api's auth plugin
+ * (plugins/auth.ts) for the primary session. Independently verifies the posted
  * Clerk token, confirms it resolves to the *same* internal user already authenticated on this
  * request (not just any valid Clerk token — see the userId match check below, which is what
  * stops a stolen-but-valid Clerk token for a different account from stepping up this session),
@@ -61,15 +61,7 @@ export async function stepUpRoutes(app: FastifyInstance) {
 
     let identity;
     try {
-      identity = await resolveAuth(
-        parsed.data.clerkToken,
-        buildClerkAppResolveAuthConfig({
-          clerkSecretKey: config.CLERK_SECRET_KEY!,
-          clerkJwtIssuer: config.CLERK_JWT_ISSUER,
-          corsOrigin: config.CORS_ORIGIN,
-          frontendUrl: config.FRONTEND_URL,
-        })
-      );
+      identity = await resolveAuth(parsed.data.clerkToken, buildApiResolveAuthConfig(config));
     } catch (err) {
       app.log.warn({ err }, "Step-up Clerk token verification failed");
       if (err instanceof AuthTokenInvalidError) {

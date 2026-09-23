@@ -5,13 +5,13 @@ import { timingSafeEqual } from "node:crypto";
 import { schema } from "@skout/db";
 import {
   AuthTokenInvalidError,
-  buildClerkAppResolveAuthConfig,
   computeAuthorizedParties,
   loadPlatformContext,
   normalizeOrigin,
   resolveAuth,
   type PlatformContext,
 } from "@skout/auth";
+import { buildApiResolveAuthConfig } from "./auth-resolve-config.js";
 import { resolveOrProvisionUser } from "../services/auth.service.js";
 import { errorResponse, HttpError } from "../utils/http.js";
 import type { Env } from "../config/env.js";
@@ -126,6 +126,8 @@ function isPublicRoute(url: string, method?: string): boolean {
     url.startsWith("/api/v1/calls/twiml/") ||
     url.startsWith("/api/v1/calls/status") ||
     url.startsWith("/api/v1/calls/recording-status") ||
+    // AUTH-BE-12 — public JWKS for own-auth token verification (contains no private material).
+    url === "/.well-known/jwks.json" ||
     isInviteTokenLookup
   );
 }
@@ -188,12 +190,7 @@ export const authPlugin = fp(async (app) => {
     return;
   }
 
-  const resolveAuthConfig = buildClerkAppResolveAuthConfig({
-    clerkSecretKey: config.CLERK_SECRET_KEY!,
-    clerkJwtIssuer: config.CLERK_JWT_ISSUER,
-    corsOrigin: config.CORS_ORIGIN,
-    frontendUrl: config.FRONTEND_URL,
-  });
+  const resolveAuthConfig = buildApiResolveAuthConfig(config);
 
   app.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {
     // CORS preflight (and any OPTIONS) must never require auth.
