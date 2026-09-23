@@ -217,6 +217,7 @@ export async function authCoreRoutes(app: FastifyInstance) {
       const meta = requestMeta(request);
 
       if (await isIpLocked(config, meta.ip)) {
+        await logEvent(db, config, null, "signup_failure", meta, { email, reason: "ip_rate_limited" });
         return reply
           .code(429)
           .send(authErrorResponse(AuthErrorCode.AUTH_RATE_LIMITED, "Too many attempts. Try again later.", 429));
@@ -315,6 +316,7 @@ export async function authCoreRoutes(app: FastifyInstance) {
           );
 
       if (await isIpLocked(config, meta.ip)) {
+        await logEvent(db, config, null, "login_failure", meta, { email, reason: "ip_rate_limited" });
         return reply
           .code(429)
           .send(authErrorResponse(AuthErrorCode.AUTH_RATE_LIMITED, "Too many attempts. Try again later.", 429));
@@ -354,6 +356,7 @@ export async function authCoreRoutes(app: FastifyInstance) {
       if (row.lockedUntil && row.lockedUntil.getTime() > Date.now()) {
         // Locked from repeated failures — signalled as rate-limited (not a distinct "locked"
         // code) so this can't be used to distinguish "wrong password" from "account locked".
+        await logEvent(db, config, row.userId, "login_failure", meta, { email, reason: "account_locked" });
         return reply
           .code(429)
           .send(authErrorResponse(AuthErrorCode.AUTH_RATE_LIMITED, "Too many attempts. Try again later.", 429));
@@ -385,6 +388,7 @@ export async function authCoreRoutes(app: FastifyInstance) {
       }
 
       if (row.status !== "active" || row.isBlocked) {
+        await logEvent(db, config, row.userId, "login_failure", meta, { email, reason: "account_blocked" });
         return reply
           .code(403)
           .send(authErrorResponse(AuthErrorCode.AUTH_ACCOUNT_BLOCKED, "Account is inactive or blocked", 403));

@@ -344,9 +344,31 @@ describe("auth-core.routes (AUTH-BE-14)", () => {
       expect(res.json().data.workspaceId).toBeTruthy();
     });
 
-    it("me without a token is rejected", async () => {
+    it("me without a token is rejected with AUTH_MISSING_TOKEN", async () => {
       const res = await app.inject({ method: "GET", url: "/api/v1/auth/me" });
       expect(res.statusCode).toBe(401);
+      expect(res.json().code).toBe("AUTH_MISSING_TOKEN");
+    });
+
+    it("me with a garbage bearer token is rejected with AUTH_TOKEN_INVALID", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/auth/me",
+        headers: { authorization: "Bearer not-a-real-jwt" },
+      });
+      expect(res.statusCode).toBe(401);
+      expect(res.json().code).toBe("AUTH_TOKEN_INVALID");
+    });
+
+    it("refresh with an unknown cookie value is rejected with AUTH_TOKEN_INVALID", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/refresh",
+        cookies: { skout_refresh: "not-a-real-token", skout_csrf: "x" },
+        headers: { "x-csrf-token": "x" },
+      });
+      expect(res.statusCode).toBe(401);
+      expect(res.json().code).toBe("AUTH_TOKEN_INVALID");
     });
 
     it("logout-all revokes every session, so a still-valid access token's session is dead", async () => {
