@@ -20,9 +20,14 @@ export function normalizeDomain(domain: string): string {
   return value;
 }
 
+/** Normalize email by trimming whitespace and converting to lowercase */
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
 /** Hash email for identity — never store raw in search index if compliance-sensitive */
 export function hashEmail(email: string): string {
-  const normalized = email.trim().toLowerCase();
+  const normalized = normalizeEmail(email);
   return createHash("sha256").update(normalized).digest("hex");
 }
 

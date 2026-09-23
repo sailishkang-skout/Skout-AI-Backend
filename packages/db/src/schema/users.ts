@@ -1,10 +1,11 @@
+import { sql } from "drizzle-orm";
 import { boolean, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { workspaces } from "./workspaces.js";
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   clerkUserId: text("clerk_user_id").unique(),
-  email: text("email").notNull().unique(),
+  email: text("email").notNull(),
   fullName: text("full_name"),
   /** R20.2 — the "agent leg" number Twilio dials first to bridge a click-to-call. E.164 format. */
   phone: text("phone"),
@@ -12,7 +13,10 @@ export const users = pgTable("users", {
   isBlocked: boolean("is_blocked").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+  // Case-insensitive unique index for email - enforces that "Bob@x.com" and "bob@x.com" are considered the same
+  sql`CREATE UNIQUE INDEX users_lower_email_unique ON ${table} (lower(${table.email}))`,
+]);
 
 export const workspaceMembers = pgTable(
   "workspace_members",

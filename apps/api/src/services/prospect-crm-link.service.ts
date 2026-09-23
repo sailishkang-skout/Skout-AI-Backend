@@ -2,6 +2,7 @@ import { eq, isNull } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, scopedTo } from "@skout/db";
 import { createLogger } from "@skout/observability";
+import { normalizeEmail } from "@skout/shared";
 import { recordEvidence } from "./evidence.service.js";
 
 const log = createLogger("prospect-crm-link");
@@ -33,7 +34,7 @@ export async function ensureContactLinkedToProspect(
     return { contactId: existing.id, companyId: existing.companyId, created: false };
   }
 
-  let email = opts?.email?.trim().toLowerCase() ?? null;
+  let email = opts?.email ? normalizeEmail(opts.email) : null;
   let fullName = opts?.fullName ?? null;
   let companyDomain = opts?.companyDomain ?? null;
   let companyName = opts?.companyName ?? null;
@@ -45,7 +46,7 @@ export async function ensureContactLinkedToProspect(
       .where(scopedTo(prospectActivations, workspaceId, eq(prospectActivations.prospectId, prospectId)))
       .limit(1);
     const snap = (activation?.snapshot ?? {}) as Record<string, unknown>;
-    email = email ?? (typeof snap.email === "string" ? snap.email.toLowerCase() : null);
+    email = email ?? (typeof snap.email === "string" ? normalizeEmail(snap.email) : null);
     fullName =
       fullName ??
       (typeof snap.fullName === "string"

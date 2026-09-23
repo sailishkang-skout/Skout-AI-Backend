@@ -2,6 +2,7 @@ import { schema } from "@skout/db";
 import type { Db } from "@skout/db";
 import { providerForClerkUserId } from "@skout/db/schema";
 import { and, eq, gt, isNull } from "drizzle-orm";
+import { normalizeEmail } from "@skout/shared";
 import { HttpError } from "./http.js";
 import { linkAuthIdentity } from "./link-auth-identity.js";
 
@@ -35,7 +36,7 @@ function legacyClerkUserIdColumn(provider: string, subject: string): string | nu
 }
 
 function storageEmail(input: ResolveOrProvisionInput): string {
-  if (input.email) return input.email;
+  if (input.email) return normalizeEmail(input.email);
   const encoded = encodeURIComponent(`${input.provider}:${input.subject}`);
   return `unverified+${encoded}@accounts.skout.internal`;
 }
@@ -102,7 +103,7 @@ async function findExistingUser(tx: Tx, input: ResolveOrProvisionInput): Promise
         isBlocked: schema.users.isBlocked,
       })
       .from(schema.users)
-      .where(eq(schema.users.email, input.email))
+      .where(eq(schema.users.email, normalizeEmail(input.email)))
       .limit(1);
     if (byEmail) return { user: byEmail, matchedBy: "email" };
   }
@@ -219,7 +220,7 @@ export async function resolveOrProvisionUser(
     }
 
     const now = new Date();
-    const inviteEmail = (resolved.email ?? userEmail).toLowerCase();
+    const inviteEmail = normalizeEmail(resolved.email ?? userEmail);
     const pendingInvites = await tx
       .select({
         id: schema.workspaceInvites.id,
@@ -305,6 +306,7 @@ async function autoAcceptPendingInvites(
   currentWorkspaceId: string
 ): Promise<void> {
   const now = new Date();
+  const normalizedEmail = normalizeEmail(email);
   const pending = await tx
     .select({
       id: schema.workspaceInvites.id,
@@ -314,7 +316,7 @@ async function autoAcceptPendingInvites(
     .from(schema.workspaceInvites)
     .where(
       and(
-        eq(schema.workspaceInvites.email, email.toLowerCase()),
+        eq(schema.workspaceInvites.email, normalizedEmail),
         isNull(schema.workspaceInvites.acceptedAt),
         gt(schema.workspaceInvites.expiresAt, now)
       )

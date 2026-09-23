@@ -3,6 +3,7 @@ import { and, eq, gt, gte, inArray, isNull, lte } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { MeetingCreateInput, MeetingInvitee, MeetingUpdateInput } from "@skout/shared";
+import { normalizeEmail } from "@skout/shared";
 import type { ActivitiesService } from "./activities.service.js";
 import { serviceLog } from "../lib/obs.js";
 import { generateMeetingIcs } from "./ics-generator.service.js";
@@ -148,13 +149,13 @@ export class MeetingsService {
     if (attendeeRows.length === 0) return byMeeting;
 
     const namesByMeeting = new Map<string, Map<string, string | undefined>>(
-      rows.map((r) => [r.id, new Map(((r.invitees ?? []) as MeetingInvitee[]).map((i) => [i.email.toLowerCase(), i.name]))])
+      rows.map((r) => [r.id, new Map(((r.invitees ?? []) as MeetingInvitee[]).map((i) => [normalizeEmail(i.email), i.name]))])
     );
 
     for (const a of attendeeRows) {
       const dto: MeetingAttendeeDto = {
         email: a.email,
-        name: namesByMeeting.get(a.meetingId)?.get(a.email.toLowerCase()) ?? null,
+        name: namesByMeeting.get(a.meetingId)?.get(normalizeEmail(a.email)) ?? null,
         rsvpStatus: a.rsvpStatus,
         respondedAt: a.respondedAt ? a.respondedAt.toISOString() : null,
       };
@@ -233,7 +234,7 @@ export class MeetingsService {
     const shouldSendIcsInvites = input.sendIcsInvites ?? true;
     const attendeeEmails =
       input.invitees?.length && shouldSendIcsInvites
-        ? [...new Map(input.invitees.map((i) => [i.email.toLowerCase(), i.email])).values()]
+        ? [...new Map(input.invitees.map((i) => [normalizeEmail(i.email), i.email])).values()]
         : [];
     const icsUid = attendeeEmails.length ? `${randomUUID()}@meetings.skout.ai` : null;
 
@@ -266,10 +267,10 @@ export class MeetingsService {
           .onConflictDoNothing({ target: [meetingAttendees.meetingId, meetingAttendees.email] });
       }
 
-      const namesByEmail = new Map((input.invitees ?? []).map((i) => [i.email.toLowerCase(), i.name]));
+      const namesByEmail = new Map((input.invitees ?? []).map((i) => [normalizeEmail(i.email), i.name]));
       const attendees: MeetingAttendeeDto[] = attendeeEmails.map((email) => ({
         email,
-        name: namesByEmail.get(email.toLowerCase()) ?? null,
+        name: namesByEmail.get(normalizeEmail(email)) ?? null,
         rsvpStatus: "needs-action",
         respondedAt: null,
       }));

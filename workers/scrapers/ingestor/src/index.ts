@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { generateCompanyId, normalizeDomain } from "@skout/shared";
-import type { CompanyCandidate, ProspectCandidate } from "@skout/scraper-contracts";
+import { generateCompanyId, normalizeDomain, normalizeEmail } from "@skout/shared";
+import type { CompanyCandidate, ProspectCandidate, TechStackEntry, Signal, FieldProvenance } from "@skout/scraper-contracts";
 import type { ProspectDocument } from "@skout/opensearch";
 
 export function companyId(domain: string): string {
@@ -10,7 +10,7 @@ export function companyId(domain: string): string {
 export function prospectId(domain: string, email?: string, fullName?: string): string {
   const d = normalizeDomain(domain);
   const key = email
-    ? `${d}:${createHash("sha256").update(email.toLowerCase()).digest("hex")}`
+    ? `${d}:${createHash("sha256").update(normalizeEmail(email)).digest("hex")}`
     : `${d}:${(fullName ?? "").toLowerCase()}`;
   return createHash("sha256").update(key).digest("hex");
 }
@@ -48,10 +48,10 @@ export function companyToProspectDoc(c: CompanyCandidate): ProspectDocument {
       ? Object.keys(c.hiringByDept).filter((dept) => (c.hiringByDept?.[dept] ?? 0) > 0)
       : undefined,
     foundedYear: foundedYearFromCandidate(c),
-    techStack: c.techStack?.map((t) => ({ category: t.category, technology: t.technology })),
+    techStack: c.techStack?.map((t: TechStackEntry) => ({ category: t.category, technology: t.technology })),
     signals: [
-      ...(c.signals?.map((s) => ({ type: s.type, observedAt: s.observedAt, detail: s.detail })) ?? []),
-      ...(c.provenance?.map((p) => ({
+      ...(c.signals?.map((s: Signal) => ({ type: s.type, observedAt: s.observedAt, detail: s.detail })) ?? []),
+      ...(c.provenance?.map((p: FieldProvenance) => ({
         type: "field_provenance",
         observedAt: p.scrapedAt,
         detail: `${p.field}@${p.source}`,
@@ -74,7 +74,7 @@ export function prospectToDoc(c: ProspectCandidate): ProspectDocument {
     companyDomain: domain,
     companyName: c.companyName,
     country: c.country,
-    signals: c.contactSignals?.map((s) => ({ type: s.type, observedAt: s.observedAt, detail: s.detail })),
+    signals: c.contactSignals?.map((s: Signal) => ({ type: s.type, observedAt: s.observedAt, detail: s.detail })),
     updatedAt: c.scrapedAt,
   };
 }

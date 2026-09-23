@@ -1,4 +1,5 @@
 import type { RecordEvidenceInput } from "@skout/db";
+import { normalizeEmail } from "@skout/shared";
 
 /**
  * Maps Skout-Email-Intelligence-Tool's evidence_ledger row shape onto the
@@ -44,7 +45,7 @@ export function mapEmailIntelObservationToCanonical(
   return {
     workspaceId,
     entityType: "email",
-    entityId: obs.email.toLowerCase(),
+    entityId: normalizeEmail(obs.email),
     attribute: "deliverability_observation",
     value: {
       email: obs.email,
