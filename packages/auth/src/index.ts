@@ -19,6 +19,21 @@ export {
   resolveAuthErrorCode,
 } from "./auth-error-codes.js";
 export { authErrorResponse } from "./auth-error-response.js";
+export {
+  AUTH_MODE_DEPRECATION_WARNING,
+  AUTH_MODE_VALUES,
+  applyAuthModeEnv,
+  authRuntimeFlags,
+  assertAuthModeBootGuards,
+  deriveLegacyAuthMode,
+  isClerkSecretKeyInvalid,
+  parseAuthModeEnv,
+  resolveAuthMode,
+  type AuthMode,
+  type AuthModeAppRole,
+  type AuthModeEnvInput,
+  type ResolvedAuthMode,
+} from "./auth-mode.js";
 export { HttpError } from "./http.js";
 export {
   assertPermission,

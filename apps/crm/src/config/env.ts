@@ -1,6 +1,7 @@
 import path from "node:path";
 import dotenv from "dotenv";
 import { z } from "zod";
+import { applyAuthModeEnv, AUTH_MODE_DEPRECATION_WARNING, type ResolvedAuthMode } from "@skout/auth";
 
 const candidatePaths = [
   path.resolve(process.cwd(), ".env"),
@@ -50,6 +51,8 @@ const envSchema = z.object({
   CLERK_SECRET_KEY: z.string().optional(),
   /** Clerk session JWT issuer (AUTH-ADI-03). Required when Clerk auth is enabled; used by `buildClerkAppResolveAuthConfig`. */
   CLERK_JWT_ISSUER: z.string().url().optional(),
+  AUTH_MODE: z.enum(["clerk", "stub", "custom", "dual"]).optional(),
+  AUTH_JWT_PUBLIC_KEY_SET: z.string().optional(),
   AUTH_STUB: z
     .string()
     .optional()
@@ -110,7 +113,7 @@ const envSchema = z.object({
   REDIS_URL: z.string().optional(),
 });
 
-export type Env = z.infer<typeof envSchema>;
+export type Env = z.infer<typeof envSchema> & ResolvedAuthMode;
 
 export function loadEnv(overrides?: Partial<Env>): Env {
   const parsed = envSchema.safeParse(process.env);
@@ -134,5 +137,23 @@ export function loadEnv(overrides?: Partial<Env>): Env {
     port = 3002;
   }
 
-  return { ...parsed.data, PORT: port, DATABASE_URL: databaseUrl, ...overrides };
+  const merged = { ...parsed.data, PORT: port, DATABASE_URL: databaseUrl, ...overrides };
+
+  const authModeResolved = applyAuthModeEnv({
+    authModeRaw: merged.AUTH_MODE,
+    nodeEnv: merged.NODE_ENV,
+    authStub: merged.AUTH_STUB,
+    clerkSecretKey: merged.CLERK_SECRET_KEY,
+    authJwtPublicKeySet: merged.AUTH_JWT_PUBLIC_KEY_SET,
+    appRole: "crm",
+  });
+  if (
+    authModeResolved.AUTH_MODE_LEGACY_DERIVED &&
+    merged.NODE_ENV !== "test" &&
+    !process.env.VITEST
+  ) {
+    console.warn(AUTH_MODE_DEPRECATION_WARNING);
+  }
+
+  return { ...merged, ...authModeResolved };
 }
