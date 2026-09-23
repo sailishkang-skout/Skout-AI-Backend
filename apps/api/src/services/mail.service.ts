@@ -240,3 +240,77 @@ export function buildOtpEmail(opts: {
     }),
   };
 }
+
+/** AUTH-BE-15 — own-auth code mail. The code is only in the body, never the subject
+ *  (sendMail logs the subject). */
+export function buildAuthCodeEmail(opts: {
+  to: string;
+  code: string;
+  title: string;
+  intro: string;
+  expiresInMinutes: number;
+}): MailOptions {
+  const code = escapeHtml(opts.code);
+  const bodyHtml = `
+    <p style="margin:0 0 16px;">${escapeHtml(opts.intro)}</p>
+    <div style="margin:8px 0 24px;text-align:center;">
+      <div style="display:inline-block;padding:16px 28px;background:#f4f4f5;border:1px solid #e4e4e7;border-radius:10px;font-size:32px;font-weight:700;letter-spacing:0.35em;color:#09090b;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;">
+        ${code}
+      </div>
+    </div>
+    <p style="margin:0;font-size:13px;color:#71717a;">Expires in ${opts.expiresInMinutes} minutes. Never share this code with anyone.</p>
+  `;
+  return {
+    to: opts.to,
+    subject: opts.title,
+    text: [
+      opts.intro,
+      "",
+      `Code: ${opts.code}`,
+      "",
+      `This code expires in ${opts.expiresInMinutes} minutes.`,
+      "Do not share this code with anyone.",
+    ].join("\n"),
+    html: renderTransactionalLayout({
+      preheader: opts.title,
+      title: opts.title,
+      bodyHtml,
+      footerNote: "If you didn't request this code, you can safely ignore this email.",
+    }),
+  };
+}
+
+/** AUTH-BE-15 — verify-email and password-reset links. The URL stays in the body only. */
+export function buildAuthLinkEmail(opts: {
+  to: string;
+  url: string;
+  title: string;
+  intro: string;
+  buttonLabel: string;
+  expiresInMinutes: number;
+}): MailOptions {
+  const bodyHtml = `
+    <p style="margin:0 0 16px;">${escapeHtml(opts.intro)}</p>
+    <p style="margin:0 0 8px;">${ctaButton(opts.url, opts.buttonLabel)}</p>
+    <p style="margin:20px 0 0;font-size:12px;color:#71717a;word-break:break-all;">Or paste this link into your browser:<br /><a href="${escapeHtml(opts.url)}" style="color:#3f3f46;">${escapeHtml(opts.url)}</a></p>
+    <p style="margin:20px 0 0;font-size:12px;color:#71717a;">This link expires in ${opts.expiresInMinutes} minutes.</p>
+  `;
+  return {
+    to: opts.to,
+    subject: opts.title,
+    text: [
+      opts.intro,
+      "",
+      `Link: ${opts.url}`,
+      "",
+      `This link expires in ${opts.expiresInMinutes} minutes.`,
+      "If you didn't request this, you can ignore this email.",
+    ].join("\n"),
+    html: renderTransactionalLayout({
+      preheader: opts.title,
+      title: opts.title,
+      bodyHtml,
+      footerNote: "If you didn't request this, you can safely ignore this email.",
+    }),
+  };
+}

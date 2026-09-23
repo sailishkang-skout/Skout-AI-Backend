@@ -4,6 +4,7 @@ import cookie from "@fastify/cookie";
 import type { Db } from "@skout/db";
 import { loadEnv, type Env } from "../config/env.js";
 import { authCoreRoutes } from "../routes/auth-core.routes.js";
+import { authRecoveryRoutes } from "../routes/auth-recovery.routes.js";
 
 /** Minimal app for AUTH-BE-14 route-level tests: cookie parsing + the real routes, no full
  *  route graph, no rate-limit plugin (route-level `config.rateLimit` is inert without it,
@@ -25,6 +26,7 @@ export async function buildAuthCoreProbeApp(
   await app.register(cookie);
   await app.register(async (v1) => {
     await v1.register(authCoreRoutes);
+    await v1.register(authRecoveryRoutes);
   }, { prefix: "/api/v1" });
   await app.ready();
   return app;

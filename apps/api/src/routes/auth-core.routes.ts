@@ -11,12 +11,9 @@
  * AUTH-BE-19's job — see token.service.ts's TODO). All six routes are added to
  * plugins/auth.ts's isPublicRoute() allowlist and each does its own verification inline.
  *
- * Scope note: email-verification enforcement (refusing login with AUTH_EMAIL_NOT_VERIFIED) is
- * explicitly deferred here — the ticket doc says BE-14 "starts refusing password login for
- * unverified emails once [BE-15/FE-09] lands", and BE-15 (the endpoints that actually verify an
- * email) is a separate, not-yet-built ticket. Signups are usable immediately so this can ship
- * without a dependency that doesn't exist yet; auth_identities.emailVerifiedAt is still recorded
- * (null at signup) so BE-15 has something to update and this gate is a one-line addition later.
+ * AUTH-BE-15 landed the verify/reset/OTP endpoints, so password login now refuses an unverified
+ * email with AUTH_EMAIL_NOT_VERIFIED after the password checks out. Signup still records
+ * auth_identities.emailVerifiedAt as null until verify-email/confirm or otp/verify sets it.
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { createHmac, randomBytes } from "node:crypto";
@@ -50,6 +47,7 @@ import {
   isIpLocked,
   recordIpFailureAndCheckLocked,
 } from "../services/auth-lockout.service.js";
+import { isPasswordEmailVerified } from "../services/auth-recovery.service.js";
 
 const { users, userCredentials, authRefreshTokens } = schema;
 
@@ -88,6 +86,21 @@ function csrfCookieOptions(config: Env) {
 
 function newCsrfToken(): string {
   return randomBytes(24).toString("base64url");
+}
+
+/** Creates a session, sets the refresh + CSRF cookies, and returns the access token. Shared
+ *  with AUTH-BE-15 confirm/verify so those land the user the same way login does. */
+export async function issueOwnAuthSession(
+  db: Db,
+  config: Env,
+  reply: FastifyReply,
+  userId: string,
+  meta: { ip: string; userAgent?: string }
+): Promise<{ accessToken: string; expiresIn: number; sessionId: string }> {
+  const session = await createSession(db, config, userId, meta);
+  const accessToken = await signAccessToken({ sub: userId, sid: session.sessionId }, config);
+  setAuthCookies(reply, config, session.refreshToken);
+  return { accessToken, expiresIn: ACCESS_TOKEN_TTL_SECONDS, sessionId: session.sessionId };
 }
 
 function setAuthCookies(reply: FastifyReply, config: Env, refreshToken: string): string {
@@ -414,12 +427,23 @@ export async function authCoreRoutes(app: FastifyInstance) {
         .where(eq(userCredentials.userId, row.userId));
       await clearIpFailures(config, meta.ip);
 
-      const session = await createSession(db, config, row.userId, meta);
-      const accessToken = await signAccessToken({ sub: row.userId, sid: session.sessionId }, config);
-      setAuthCookies(reply, config, session.refreshToken);
+      if (!(await isPasswordEmailVerified(db, row.userId))) {
+        await logEvent(db, config, row.userId, "login_failure", meta, { email, reason: "email_not_verified" });
+        return reply
+          .code(403)
+          .send(
+            authErrorResponse(
+              AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED,
+              "Verify your email before signing in.",
+              403
+            )
+          );
+      }
+
+      const session = await issueOwnAuthSession(db, config, reply, row.userId, meta);
       await logEvent(db, config, row.userId, "login_success", meta, { email, sessionId: session.sessionId });
 
-      return reply.send(successResponse({ accessToken, expiresIn: ACCESS_TOKEN_TTL_SECONDS }));
+      return reply.send(successResponse({ accessToken: session.accessToken, expiresIn: session.expiresIn }));
     }
   );
 

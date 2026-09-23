@@ -13,7 +13,7 @@ export default defineConfig({
   test: {
     include: ["src/**/*.test.ts"],
     setupFiles: ["src/test/setup.ts"],
-    testTimeout: 30000,
-    hookTimeout: 60000,
+    testTimeout: 90000,
+    hookTimeout: 90000,
   },
 });

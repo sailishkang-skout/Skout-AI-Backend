@@ -63,6 +63,7 @@ import { complianceRoutes } from "./compliance.routes.js";
 import { enterpriseControlPlaneRoutes } from "./enterprise-control-plane.routes.js";
 import { jwksRoutes } from "./jwks.routes.js";
 import { authCoreRoutes } from "./auth-core.routes.js";
+import { authRecoveryRoutes } from "./auth-recovery.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoutes, { prefix: "/api/v1" });
@@ -101,6 +102,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(teamRoutes);
     await v1.register(inviteAuthRoutes);
     await v1.register(authCoreRoutes);
+    await v1.register(authRecoveryRoutes);
     await v1.register(activationRuleRoutes);
     await v1.register(callRoutes);
     await v1.register(numberRequestRoutes);

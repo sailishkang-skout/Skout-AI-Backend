@@ -6,7 +6,7 @@ import type { FastifyInstance } from "fastify";
 import { loadEnv } from "../config/env.js";
 import { buildAuthCoreProbeApp } from "../test/auth-core-probe-app.js";
 
-const { users, userCredentials, authSessions, authEvents, workspaceMembers, workspaces, creditBalances } = schema;
+const { users, userCredentials, authSessions, authEvents, workspaceMembers, workspaces, creditBalances, authIdentities } = schema;
 
 function cookieValue(response: { cookies: Array<{ name: string; value: string }> }, name: string): string | undefined {
   return response.cookies.find((c) => c.name === name)?.value;
@@ -82,8 +82,18 @@ describe("auth-core.routes (AUTH-BE-14)", () => {
         AUTH_CUSTOM_ENABLED: false,
         AUTH_REFRESH_TOKEN_PEPPER: config.AUTH_REFRESH_TOKEN_PEPPER,
       });
-      const res = await offApp.inject({ method: "POST", url: "/api/v1/auth/signup", payload: {} });
-      expect(res.statusCode).toBe(404);
+      const routes: Array<{ method: "POST" | "GET"; url: string }> = [
+        { method: "POST", url: "/api/v1/auth/signup" },
+        { method: "POST", url: "/api/v1/auth/login" },
+        { method: "POST", url: "/api/v1/auth/refresh" },
+        { method: "POST", url: "/api/v1/auth/logout" },
+        { method: "POST", url: "/api/v1/auth/logout-all" },
+        { method: "GET", url: "/api/v1/auth/me" },
+      ];
+      for (const route of routes) {
+        const res = await offApp.inject({ method: route.method, url: route.url, payload: {} });
+        expect(res.statusCode, route.url).toBe(404);
+      }
       await offApp.close();
     });
   });
@@ -201,10 +211,26 @@ describe("auth-core.routes (AUTH-BE-14)", () => {
       return res.json().data.userId as string;
     }
 
+    async function markVerified(userId: string) {
+      await db
+        .update(authIdentities)
+        .set({ emailVerifiedAt: new Date() })
+        .where(eq(authIdentities.userId, userId));
+    }
+
+    it("refuses password login until the email is verified", async () => {
+      const email = freshEmail("login-unverified");
+      const password = "correct horse battery staple";
+      await signup(email, password);
+      const res = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { email, password } });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe("AUTH_EMAIL_NOT_VERIFIED");
+    });
+
     it("correct credentials return an access token and set refresh+csrf cookies", async () => {
       const email = freshEmail("login-ok");
       const password = "correct horse battery staple";
-      await signup(email, password);
+      await markVerified(await signup(email, password));
 
       const res = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { email, password } });
       expect(res.statusCode).toBe(200);
@@ -235,6 +261,22 @@ describe("auth-core.routes (AUTH-BE-14)", () => {
       expect(wrongPw.json().code).toBe("AUTH_INVALID_CREDENTIALS");
       expect(unknownEmail.json().code).toBe("AUTH_INVALID_CREDENTIALS");
       expect(wrongPw.json().error).toBe(unknownEmail.json().error);
+
+      const startedWrong = Date.now();
+      await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email, password: "another wrong password" },
+      });
+      const wrongMs = Date.now() - startedWrong;
+      const startedUnknown = Date.now();
+      await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: `nobody-timing-${Date.now()}@example.test`, password: "another wrong password" },
+      });
+      const unknownMs = Date.now() - startedUnknown;
+      expect(Math.abs(wrongMs - unknownMs)).toBeLessThan(3500);
     });
 
     it("locks the account after repeated failures", async () => {
@@ -275,7 +317,11 @@ describe("auth-core.routes (AUTH-BE-14)", () => {
 
   describe("refresh / logout / logout-all / me", () => {
     async function loginAndGetCookies(email: string, password: string) {
-      await app.inject({ method: "POST", url: "/api/v1/auth/signup", payload: { email, password } });
+      const signupRes = await app.inject({ method: "POST", url: "/api/v1/auth/signup", payload: { email, password } });
+      await db
+        .update(authIdentities)
+        .set({ emailVerifiedAt: new Date() })
+        .where(eq(authIdentities.userId, signupRes.json().data.userId as string));
       const res = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { email, password } });
       return {
         accessToken: res.json().data.accessToken as string,
@@ -313,6 +359,13 @@ describe("auth-core.routes (AUTH-BE-14)", () => {
     it("logout revokes the session so the old refresh cookie stops working", async () => {
       const email = freshEmail("logout");
       const { refresh, csrf } = await loginAndGetCookies(email, "correct horse battery staple");
+
+      const missingCsrf = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/logout",
+        cookies: { skout_refresh: refresh },
+      });
+      expect(missingCsrf.statusCode).toBe(403);
 
       const logoutRes = await app.inject({
         method: "POST",
@@ -381,6 +434,14 @@ describe("auth-core.routes (AUTH-BE-14)", () => {
         headers: { authorization: `Bearer ${accessToken}` },
       });
       expect(logoutAllRes.statusCode).toBe(204);
+
+      const meAfter = await app.inject({
+        method: "GET",
+        url: "/api/v1/auth/me",
+        headers: { authorization: `Bearer ${accessToken}` },
+      });
+      expect(meAfter.statusCode).toBe(401);
+      expect(meAfter.json().code).toBe("AUTH_SESSION_REVOKED");
 
       const refreshAfter = await app.inject({
         method: "POST",
