@@ -13,6 +13,7 @@ import { and, desc, eq, isNull } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
+import { emitAuthRefreshMetric, emitAuthRefreshReuseMetric } from "@skout/auth";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import { getRedis } from "../lib/redis.js";
@@ -236,6 +237,7 @@ export async function rotateRefreshToken(
     .where(eq(authRefreshTokens.tokenHash, tokenHash))
     .limit(1);
   if (!existing) {
+    emitAuthRefreshMetric({ result: "failure" });
     throw new HttpError("AUTH_TOKEN_INVALID", 401);
   }
 
@@ -245,19 +247,23 @@ export async function rotateRefreshToken(
     .where(eq(authSessions.id, existing.sessionId))
     .limit(1);
   if (!session) {
+    emitAuthRefreshMetric({ result: "failure" });
     throw new HttpError("AUTH_TOKEN_INVALID", 401);
   }
   if (session.revokedAt) {
+    emitAuthRefreshMetric({ result: "failure", userId: session.userId });
     throw new HttpError("AUTH_SESSION_REVOKED", 401);
   }
 
   const now = new Date();
   if (session.absoluteExpiresAt <= now) {
     await revokeSessionInternal(db, config, session.id, "absolute_expired");
+    emitAuthRefreshMetric({ result: "failure", userId: session.userId });
     throw new HttpError("AUTH_SESSION_REVOKED", 401);
   }
   if (session.idleExpiresAt <= now) {
     await revokeSessionInternal(db, config, session.id, "idle_expired");
+    emitAuthRefreshMetric({ result: "failure", userId: session.userId });
     throw new HttpError("AUTH_SESSION_REVOKED", 401);
   }
 
@@ -313,6 +319,7 @@ export async function rotateRefreshToken(
         // We don't have the winner's raw token (only its hash is stored) — this endpoint
         // cannot re-issue the exact same raw value. Signal the caller to retry the flow
         // with the token the winner's response already returned, rather than fail hard.
+        emitAuthRefreshMetric({ result: "failure", userId: session.userId });
         throw new HttpError("AUTH_TOKEN_ROTATED_CONCURRENTLY", 409);
       }
     }
@@ -322,9 +329,12 @@ export async function rotateRefreshToken(
     await logEvent(db, config, session.userId, "refresh_reuse_detected", meta, {
       sessionId: session.id,
     });
+    emitAuthRefreshReuseMetric({ userId: session.userId, sessionId: session.id });
+    emitAuthRefreshMetric({ result: "failure", userId: session.userId });
     throw new HttpError("AUTH_SESSION_REVOKED", 401);
   }
 
+  emitAuthRefreshMetric({ result: "success", userId: session.userId });
   return { sessionId: session.id, refreshToken: rawNewToken, idleExpiresAt: newIdleExpiresAt };
 }
 
