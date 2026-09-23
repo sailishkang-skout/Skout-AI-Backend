@@ -100,6 +100,14 @@ describe("buildStepSuggestionPrompt", () => {
     }
   });
 
+  it("teaches the fallback syntax and greets with a fallback", () => {
+    const { system } = buildStepSuggestionPrompt(ctx());
+    expect(system).toContain("{{title|your role}}");
+    expect(system).toMatch(/fallback is 1.60 characters/i);
+    expect(system).toMatch(/never add one to \{\{unsubscribeUrl\}\}/i);
+    expect(system).toContain('"Hi {{firstName|there}},"');
+  });
+
   it("adds audience, insights and angles-to-avoid only when provided", () => {
     const bare = buildStepSuggestionPrompt(ctx()).user;
     expect(bare).not.toMatch(/audience/i);
@@ -216,6 +224,33 @@ describe("coerceStepSuggestions — email", () => {
   it("falls back to a numbered angle when the model omits one", () => {
     const raw = JSON.stringify({ suggestions: [{ subject: "S", body: "<p>x</p>" }] });
     expect(coerceStepSuggestions(raw, email)[0]!.angle).toBe("Option 1");
+  });
+
+  it("keeps drafts that use valid fallbacks", () => {
+    const raw = JSON.stringify({
+      suggestions: [
+        {
+          angle: "A",
+          subject: "Hi {{firstName|there}}",
+          body: "<p>Hi {{firstName|there}}, at {{companyName|your company}}</p>",
+        },
+      ],
+    });
+    expect(coerceStepSuggestions(raw, email)).toHaveLength(1);
+  });
+
+  it("drops drafts with invalid fallbacks or malformed placeholders", () => {
+    const bad = [
+      "{{unsubscribeUrl|x}}",
+      "{{firstName|}}",
+      `{{title|${"x".repeat(61)}}}`,
+      "{{ firstName }}",
+      "{{nickname|pal}}",
+    ];
+    for (const text of bad) {
+      const raw = JSON.stringify({ suggestions: [{ angle: "A", subject: "S", body: `<p>${text}</p>` }] });
+      expect(coerceStepSuggestions(raw, email)).toEqual([]);
+    }
   });
 });
 
