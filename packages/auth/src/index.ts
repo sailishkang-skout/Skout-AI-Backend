@@ -6,7 +6,7 @@ export {
 export type { AuthProvider, AuthVerifyContext, VerifiedIdentity } from "./auth-provider.js";
 export { computeAuthorizedParties, normalizeOrigin, type AuthorizedPartiesConfig } from "./authorized-parties.js";
 export { resolveAuth, type ResolveAuthConfig } from "./resolve-auth.js";
-export { buildResolveAuthConfig } from "./clerk-auth-config.js";
+export { buildClerkAppResolveAuthConfig, buildResolveAuthConfig } from "./clerk-auth-config.js";
 export { AUTH_TOKEN_INVALID, AuthTokenInvalidError } from "./auth-token.js";
 export { HttpError } from "./http.js";
 export {
