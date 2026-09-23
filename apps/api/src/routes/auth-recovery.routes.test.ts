@@ -177,9 +177,44 @@ describe("auth-recovery.routes (AUTH-BE-15)", () => {
     const unknownMs = Date.now() - startedUnknown;
     expect(Math.abs(knownMs - unknownMs)).toBeLessThan(750);
     expect(Math.abs(knownMs - unknownMs)).toBeLessThan(2500);
-    expect(sentMails).toHaveLength(1);
+    // Two known-address sends happened above (the body-comparison call and the timing call).
+    expect(sentMails).toHaveLength(2);
     expect(sentMails[0]?.subject).not.toMatch(/token=/);
     expect(sentMails[0]?.subject).not.toMatch(/\d{6}/);
+  });
+
+  it("does not make a known address wait for the SMTP round trip (fire-and-forget delivery)", async () => {
+    // A mocked sendMail this slow would fail the 750ms timing assertion above if the route
+    // awaited it before responding — this is what actually catches the enumeration timing leak
+    // that a fast/instant mock (the default in this file) cannot. The delay is large (3s) and
+    // the pass threshold generous (2s) so this stays reliable against this environment's own
+    // baseline DB latency (real Postgres, no local optimization — other tests in this file take
+    // 15-80s each) rather than a tight absolute cutoff that would be noise-sensitive here.
+    const SMTP_DELAY_MS = 3000;
+    const { sendMail } = await import("../services/mail.service.js");
+    const mockedSendMail = vi.mocked(sendMail);
+    mockedSendMail.mockImplementationOnce(async (_config, opts) => {
+      await new Promise((resolve) => setTimeout(resolve, SMTP_DELAY_MS));
+      sentMails.push(opts);
+      return { sent: true };
+    });
+
+    const email = freshEmail("slow-smtp");
+    await signup(email);
+    sentMails.length = 0;
+
+    const started = Date.now();
+    const res = await app.inject({ method: "POST", url: "/api/v1/auth/verify-email/send", payload: { email } });
+    const elapsedMs = Date.now() - started;
+
+    expect(res.statusCode).toBe(200);
+    // Must return well before the mocked SMTP delay elapses — proves the response didn't wait
+    // for it, without being tight enough to false-fail on this environment's own DB latency.
+    expect(elapsedMs).toBeLessThan(SMTP_DELAY_MS - 1000);
+
+    // The mail eventually goes out even though the response didn't wait for it.
+    await new Promise((resolve) => setTimeout(resolve, SMTP_DELAY_MS));
+    expect(sentMails).toHaveLength(1);
   });
 
   it("confirm verifies the email, issues a session, and rejects a replay", async () => {

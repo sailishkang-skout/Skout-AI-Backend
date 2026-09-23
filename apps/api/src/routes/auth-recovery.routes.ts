@@ -114,12 +114,11 @@ export async function authRecoveryRoutes(app: FastifyInstance) {
 
     const raw = await issueVerificationToken(db, config, user.id, purpose);
     const message = deliver(email, raw);
-    try {
-      await sendMail(config, message);
-    } catch (err) {
-      // Same 200 as an unknown address. A 503 only for a real user would confirm the email exists.
-      logSafeMailFailure(err);
-    }
+    // Anti-enumeration: the unknown-address branch above never touches the network (no SMTP
+    // round trip), so awaiting sendMail here would make a known address measurably slower to
+    // respond to in a real deployed env (SES calls are not instant). Fire-and-forget instead —
+    // the response is identical either way, and delivery failures are still logged.
+    void sendMail(config, message).catch((err) => logSafeMailFailure(err));
     await logEvent(db, config, user.id, "recovery_sent", meta, { purpose });
     return reply.send(successResponse(ACCEPTED));
   }
