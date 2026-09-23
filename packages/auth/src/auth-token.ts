@@ -7,3 +7,10 @@ export class AuthTokenInvalidError extends HttpError {
     super(message, 401);
   }
 }
+
+/** Clerk (or other provider) rejected the token because it is past TTL — message text preserved. */
+export class AuthTokenExpiredError extends AuthTokenInvalidError {
+  constructor(message: string) {
+    super(message);
+  }
+}

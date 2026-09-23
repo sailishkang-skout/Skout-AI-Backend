@@ -1,9 +1,13 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 import {
+  AuthErrorCode,
+  AuthErrorMessage,
   AuthTokenInvalidError,
+  authErrorResponse,
   buildClerkAppResolveAuthConfig,
   resolveAuth,
+  resolveAuthErrorCode,
   resolveOrProvisionUser,
 } from "@skout/auth";
 import { errorResponse, HttpError } from "../utils/http.js";
@@ -110,7 +114,9 @@ export const authPlugin = fp(async (app) => {
         : undefined;
 
     if (!token) {
-      return reply.code(401).send(errorResponse("Missing bearer token", 401));
+      return reply
+        .code(401)
+        .send(authErrorResponse(AuthErrorCode.AUTH_MISSING_TOKEN, AuthErrorMessage.MISSING_BEARER, 401));
     }
 
     try {
@@ -124,10 +130,12 @@ export const authPlugin = fp(async (app) => {
     } catch (error) {
       app.log.error({ err: error }, "Auth failed");
       if (error instanceof AuthTokenInvalidError) {
-        return reply.code(401).send(errorResponse(error.message, 401));
+        const code = resolveAuthErrorCode(error);
+        return reply.code(401).send(authErrorResponse(code, error.message, 401));
       }
       if (error instanceof HttpError) {
-        return reply.code(error.statusCode).send(errorResponse(error.message, error.statusCode));
+        const code = resolveAuthErrorCode(error);
+        return reply.code(error.statusCode).send(authErrorResponse(code, error.message, error.statusCode));
       }
       const isDbError =
         typeof error === "object" &&
@@ -136,8 +144,9 @@ export const authPlugin = fp(async (app) => {
       if (isDbError) {
         return reply.code(500).send(errorResponse("User provisioning failed", 500));
       }
-      const message = error instanceof Error ? error.message : "Invalid authorization token";
-      return reply.code(401).send(errorResponse(message, 401));
+      const message = error instanceof Error ? error.message : AuthErrorMessage.INVALID_AUTHORIZATION;
+      const code = resolveAuthErrorCode(error, message);
+      return reply.code(401).send(authErrorResponse(code, message, 401));
     }
   });
 });

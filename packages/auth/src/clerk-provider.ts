@@ -1,5 +1,5 @@
 import type { AuthProvider, AuthVerifyContext, VerifiedIdentity } from "./auth-provider.js";
-import { AuthTokenInvalidError } from "./auth-token.js";
+import { AuthTokenExpiredError, AuthTokenInvalidError } from "./auth-token.js";
 
 function readEmailVerified(claims: Record<string, unknown>): boolean {
   if (typeof claims.email_verified === "boolean") return claims.email_verified;
@@ -48,6 +48,10 @@ export class ClerkAuthProvider implements AuthProvider {
       };
     } catch (err) {
       if (err instanceof AuthTokenInvalidError) throw err;
+      const message = err instanceof Error ? err.message : "";
+      if (/expired/i.test(message)) {
+        throw new AuthTokenExpiredError(message);
+      }
       throw new AuthTokenInvalidError();
     }
   }

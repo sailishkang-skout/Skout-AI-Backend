@@ -1,9 +1,13 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
+  AuthErrorCode,
+  AuthErrorMessage,
   AuthTokenInvalidError,
+  authErrorResponse,
   issueStepUpToken,
   resolveAuth,
+  resolveAuthErrorCode,
   resolveOrProvisionUser,
 } from "@skout/auth";
 import { buildApiResolveAuthConfig } from "../plugins/auth-resolve-config.js";
@@ -35,7 +39,11 @@ const bodySchema = z.object({
  */
 export async function stepUpRoutes(app: FastifyInstance) {
   app.post("/auth/step-up", async (request, reply) => {
-    if (!request.userId) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    if (!request.userId) {
+      return reply
+        .code(401)
+        .send(authErrorResponse(AuthErrorCode.AUTH_UNAUTHORIZED, AuthErrorMessage.UNAUTHORIZED, 401));
+    }
 
     const config = app.config;
     if (!config.STEP_UP_SIGNING_SECRET) {
@@ -65,9 +73,18 @@ export async function stepUpRoutes(app: FastifyInstance) {
     } catch (err) {
       app.log.warn({ err }, "Step-up Clerk token verification failed");
       if (err instanceof AuthTokenInvalidError) {
-        return reply.code(401).send(errorResponse(err.message, 401));
+        const code = resolveAuthErrorCode(err);
+        return reply.code(401).send(authErrorResponse(code, err.message, 401));
       }
-      return reply.code(401).send(errorResponse("Invalid or expired Clerk token", 401));
+      return reply
+        .code(401)
+        .send(
+          authErrorResponse(
+            AuthErrorCode.AUTH_TOKEN_INVALID,
+            AuthErrorMessage.STEP_UP_CLERK_INVALID,
+            401
+          )
+        );
     }
 
     if (!app.db) return reply.code(503).send(errorResponse("Database unavailable", 503));
@@ -75,7 +92,13 @@ export async function stepUpRoutes(app: FastifyInstance) {
     if (result.userId !== request.userId) {
       return reply
         .code(403)
-        .send(errorResponse("Re-authentication does not match the current session", 403));
+        .send(
+          authErrorResponse(
+            AuthErrorCode.AUTH_REAUTH_USER_MISMATCH,
+            AuthErrorMessage.REAUTH_USER_MISMATCH,
+            403
+          )
+        );
     }
 
     const issuedAtMs = Date.now();
