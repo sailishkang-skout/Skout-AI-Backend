@@ -5,13 +5,13 @@ import { timingSafeEqual } from "node:crypto";
 import { schema } from "@skout/db";
 import {
   AuthTokenInvalidError,
-  buildResolveAuthConfig,
   computeAuthorizedParties,
   loadPlatformContext,
   normalizeOrigin,
   resolveAuth,
   type PlatformContext,
 } from "@skout/auth";
+import { buildApiResolveAuthConfig } from "./auth-resolve-config.js";
 import { resolveOrProvisionUser } from "../services/auth.service.js";
 import { errorResponse, HttpError } from "../utils/http.js";
 import type { Env } from "../config/env.js";
@@ -190,16 +190,7 @@ export const authPlugin = fp(async (app) => {
     return;
   }
 
-  const clerkJwtIssuer = config.CLERK_JWT_ISSUER;
-  if (!clerkJwtIssuer) {
-    throw new Error("CLERK_JWT_ISSUER is required when Clerk auth is enabled (see AUTH-ADI-03)");
-  }
-  const resolveAuthConfig = buildResolveAuthConfig({
-    clerkSecretKey: config.CLERK_SECRET_KEY!,
-    clerkJwtIssuer,
-    corsOrigin: config.CORS_ORIGIN,
-    frontendUrl: config.FRONTEND_URL,
-  });
+  const resolveAuthConfig = buildApiResolveAuthConfig(config);
 
   app.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {
     // CORS preflight (and any OPTIONS) must never require auth.
