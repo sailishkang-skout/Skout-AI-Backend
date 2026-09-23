@@ -325,6 +325,12 @@ export class ComputeStack extends Stack {
         DATABASE_NAME: "skout",
         DATABASE_USER: "skout",
         SERVICE_NAME: "skout-api",
+        // AUTH-ADI-08 — explicit, so the legacy CLERK_SECRET_KEY-presence inference (BE-06)
+        // can eventually be deleted, and so removing the Clerk secret can never silently flip
+        // this environment into unauthenticated stub mode. Later phases change this to
+        // "dual" then "custom" (see AUTH-ADI-15, AUTH-ADI-17) — never "stub" outside a
+        // deliberate local/test override.
+        AUTH_MODE: "clerk",
         LOG_LEVEL: "info",
         TRUST_PROXY: "true",
         DD_SERVICE: "skout-api",
@@ -509,6 +515,8 @@ export class ComputeStack extends Stack {
         DATABASE_NAME: "skout",
         DATABASE_USER: "skout",
         SERVICE_NAME: "skout-crm",
+        // AUTH-ADI-08 — see the matching comment on the api service above.
+        AUTH_MODE: "clerk",
         LOG_LEVEL: "info",
         TRUST_PROXY: "true",
         DD_SERVICE: "skout-crm",
