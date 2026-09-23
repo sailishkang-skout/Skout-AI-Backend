@@ -17,6 +17,12 @@ export interface ObservabilityStackProps extends StackProps {
   readonly database: rds.DatabaseInstance;
   readonly apiLogGroupName: string;
   readonly alertEmail?: string;
+  /**
+   * SES sending quota per 24h, used to size the quota alarm (AUTH-ADI-10). Defaults to the
+   * SES sandbox limit (200) — raise this when production access is granted, or the alarm will
+   * fire constantly on normal volume.
+   */
+  readonly sesDailySendQuota?: number;
 }
 
 export class ObservabilityStack extends Stack {
@@ -91,6 +97,48 @@ export class ObservabilityStack extends Stack {
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
     apiErrorAlarm.addAlarmAction(alarmAction);
+
+    // AUTH-ADI-10 — own-auth makes email a hard dependency for login (verify / reset / OTP), so
+    // a suspended or throttled SES account is a login outage. These use the account-level SES
+    // reputation metrics, which AWS publishes automatically (no configuration set needed).
+    // SES starts a compliance review at 5% bounces / 0.1% complaints and pauses sending at
+    // 10% / 0.5%; alarm before the review threshold.
+    const sesMetric = (metricName: string, statistic: string, period: Duration) =>
+      new cloudwatch.Metric({ namespace: "AWS/SES", metricName, statistic, period });
+
+    const sesBounceRate = new cloudwatch.Alarm(this, "SesBounceRateAlarm", {
+      alarmName: `${config.stackPrefix}-ses-bounce-rate`,
+      alarmDescription: "SES account bounce rate approaching the 5% review threshold",
+      metric: sesMetric("Reputation.BounceRate", "Average", Duration.hours(1)),
+      threshold: 0.04,
+      evaluationPeriods: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+    sesBounceRate.addAlarmAction(alarmAction);
+
+    const sesComplaintRate = new cloudwatch.Alarm(this, "SesComplaintRateAlarm", {
+      alarmName: `${config.stackPrefix}-ses-complaint-rate`,
+      alarmDescription: "SES account complaint rate approaching the 0.1% review threshold",
+      metric: sesMetric("Reputation.ComplaintRate", "Average", Duration.hours(1)),
+      threshold: 0.0008,
+      evaluationPeriods: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+    sesComplaintRate.addAlarmAction(alarmAction);
+
+    const sesDailySendQuota = props.sesDailySendQuota ?? 200;
+    const sesQuota = new cloudwatch.Alarm(this, "SesSendQuotaAlarm", {
+      alarmName: `${config.stackPrefix}-ses-send-quota`,
+      alarmDescription: `SES sends in the last 24h above 80% of the ${sesDailySendQuota}/day quota`,
+      metric: sesMetric("Send", "Sum", Duration.days(1)),
+      threshold: sesDailySendQuota * 0.8,
+      evaluationPeriods: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+    sesQuota.addAlarmAction(alarmAction);
 
     Tags.of(this).add("skout:environment", config.name);
   }
