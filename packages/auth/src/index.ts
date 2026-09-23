@@ -38,3 +38,10 @@ export {
   type PlatformContext,
   type PlatformConsentSnapshot,
 } from "./platform-context.js";
+export {
+  emitAuthVerifyMetric,
+  emitAuthLoginMetric,
+  emitAuthRefreshMetric,
+  emitAuthRefreshReuseMetric,
+  type AuthMetricResult,
+} from "./auth-metrics.js";
