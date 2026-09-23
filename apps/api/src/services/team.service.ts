@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { Db } from "@skout/db";
 import { schema, scopedTo, scopedById } from "@skout/db";
+import { normalizeEmail } from "@skout/shared";
 import { createLogger } from "@skout/observability";
 import { count, eq, gt, isNull, ne } from "drizzle-orm";
 import { HttpError } from "../utils/http.js";
@@ -119,6 +120,7 @@ export function createTeamService(db: Db) {
 
       // All invited users get "member" role — no exceptions
       const role: WorkspaceRole = "member";
+      const normalizedEmail = normalizeEmail(email);
 
       // Enforce workspace member limit (members + pending invites)
       const [memberCount] = await db
@@ -148,7 +150,7 @@ export function createTeamService(db: Db) {
         .from(schema.workspaceMembers)
         .innerJoin(schema.users, eq(schema.users.id, schema.workspaceMembers.userId))
         .where(
-          scopedTo(schema.workspaceMembers, workspaceId, eq(schema.users.email, email.toLowerCase()))
+          scopedTo(schema.workspaceMembers, workspaceId, eq(schema.users.email, normalizedEmail))
         )
         .limit(1);
 
@@ -161,7 +163,7 @@ export function createTeamService(db: Db) {
         .select({ id: schema.workspaceInvites.id })
         .from(schema.workspaceInvites)
         .where(
-          scopedTo(schema.workspaceInvites, workspaceId, eq(schema.workspaceInvites.email, email.toLowerCase()), isNull(schema.workspaceInvites.acceptedAt))
+          scopedTo(schema.workspaceInvites, workspaceId, eq(schema.workspaceInvites.email, normalizedEmail), isNull(schema.workspaceInvites.acceptedAt))
         )
         .limit(1);
 
@@ -177,7 +179,7 @@ export function createTeamService(db: Db) {
         await db.insert(schema.workspaceInvites).values({
           workspaceId,
           invitedByUserId,
-          email: email.toLowerCase(),
+          email: normalizedEmail,
           role,
           token,
           expiresAt,
@@ -187,12 +189,12 @@ export function createTeamService(db: Db) {
       log.info("team invite created", {
         workspaceId,
         invitedByUserId,
-        email: email.toLowerCase(),
+        email: normalizedEmail,
         role,
         refreshed: Boolean(pendingForEmail),
       });
 
-      return { token, email: email.toLowerCase(), role, expiresAt };
+      return { token, email: normalizedEmail, role, expiresAt };
     },
 
     async getInviteByToken(token: string) {
@@ -235,7 +237,7 @@ export function createTeamService(db: Db) {
       if (!invite) throw new HttpError("Invite not found.", 404);
       if (new Date() > invite.expiresAt) throw new HttpError("This invite has expired.", 410);
 
-      if (invite.email.toLowerCase() !== userEmail.toLowerCase()) {
+      if (normalizeEmail(invite.email) !== normalizeEmail(userEmail)) {
         throw new HttpError(
           `This invite was sent to ${invite.email}. Sign in with that email to accept.`,
           403

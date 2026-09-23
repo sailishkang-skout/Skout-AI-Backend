@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { and, eq, gt } from "drizzle-orm";
 import { schema, scopedTo } from "@skout/db";
+import { normalizeEmail } from "@skout/shared";
 import { generateOtp, hashOtp, verifyOtp } from "../utils/otp.js";
 import { sendMail, buildOtpEmail } from "../services/mail.service.js";
 import { errorResponse, HttpError } from "../utils/http.js";
@@ -113,10 +114,11 @@ export async function inviteAuthRoutes(app: FastifyInstance) {
         .where(eq(schema.inviteOtps.id, validOtp.id));
 
       // Provision user (create if not exists)
+      const normalizedEmail = normalizeEmail(invite.email);
       const [existingUser] = await db
         .select({ id: schema.users.id })
         .from(schema.users)
-        .where(eq(schema.users.email, invite.email.toLowerCase()))
+        .where(eq(schema.users.email, normalizedEmail))
         .limit(1);
 
       let userId: string;
@@ -125,7 +127,7 @@ export async function inviteAuthRoutes(app: FastifyInstance) {
       } else {
         const [created] = await db
           .insert(schema.users)
-          .values({ email: invite.email.toLowerCase(), fullName: invite.email.split("@")[0], status: "active", isBlocked: false })
+          .values({ email: normalizedEmail, fullName: invite.email.split("@")[0], status: "active", isBlocked: false })
           .onConflictDoUpdate({ target: schema.users.email, set: { updatedAt: new Date() } })
           .returning({ id: schema.users.id });
         if (!created) return reply.code(500).send(errorResponse("Failed to create user", 500));

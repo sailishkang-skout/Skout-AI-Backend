@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { schema, scopedTo } from "@skout/db";
 import type { Db } from "@skout/db";
+import { normalizeEmail } from "@skout/shared";
 import { errorResponse } from "../utils/http.js";
 
 const { workspaceSsoConfigs, users, workspaceMembers } = schema;
@@ -40,7 +41,8 @@ async function applyScimMembers(
         .limit(1);
       if (byClerk) return byClerk.id;
 
-      const [byEmail] = await tx.select({ id: users.id }).from(users).where(eq(users.email, member.email)).limit(1);
+      const normalizedEmail = normalizeEmail(member.email);
+      const [byEmail] = await tx.select({ id: users.id }).from(users).where(eq(users.email, normalizedEmail)).limit(1);
       if (byEmail) {
         await tx
           .update(users)
@@ -52,7 +54,7 @@ async function applyScimMembers(
       const [inserted] = await tx
         .insert(users)
         .values({
-          email: member.email,
+          email: normalizedEmail,
           clerkUserId: member.clerkUserId,
           fullName: member.email.split("@")[0],
           status: "active",

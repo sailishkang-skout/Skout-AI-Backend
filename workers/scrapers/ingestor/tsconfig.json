@@ -9,7 +9,12 @@
     "strict": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "@skout/shared": ["../../packages/shared/dist/index"],
+      "@skout/scraper-contracts": ["../../packages/scraper-contracts/dist/index"],
+      "@skout/opensearch": ["../../packages/opensearch/dist/index"]
+    }
   },
   "include": ["src/**/*"],
   "exclude": ["src/**/*.test.ts"]
