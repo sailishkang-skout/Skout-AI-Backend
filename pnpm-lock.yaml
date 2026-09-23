@@ -266,6 +266,9 @@ importers:
       '@skout/observability':
         specifier: workspace:*
         version: link:../observability
+      '@skout/shared':
+        specifier: workspace:*
+        version: link:../shared
       drizzle-orm:
         specifier: ^0.44.2
         version: 0.44.7(@opentelemetry/api@1.9.1)(@types/pg@8.6.1)(postgres@3.4.9)
