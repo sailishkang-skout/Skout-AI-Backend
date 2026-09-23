@@ -224,6 +224,7 @@ export async function authCoreRoutes(app: FastifyInstance) {
 
       const policy = checkPasswordPolicy(parsed.data.password);
       if (!policy.ok) {
+        await logEvent(db, config, null, "signup_failure", meta, { email, reason: "policy_rejected" });
         return reply.code(400).send(errorResponse(policy.reasons[0] ?? "Password does not meet policy", 400, policy));
       }
 
@@ -244,6 +245,10 @@ export async function authCoreRoutes(app: FastifyInstance) {
           .limit(1);
         if (existingCred) {
           await recordIpFailureAndCheckLocked(config, meta.ip);
+          await logEvent(db, config, existingUser.id, "signup_failure", meta, {
+            email,
+            reason: "account_exists",
+          });
           return reply.code(409).send(errorResponse("An account with this email already exists.", 409));
         }
       }
@@ -271,6 +276,10 @@ export async function authCoreRoutes(app: FastifyInstance) {
 
       if (!credRow) {
         // Lost a race against a concurrent signup/credential-attach for the same user.
+        await logEvent(db, config, result.userId, "signup_failure", meta, {
+          email,
+          reason: "account_exists_race",
+        });
         return reply.code(409).send(errorResponse("An account with this email already exists.", 409));
       }
 

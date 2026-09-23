@@ -141,6 +141,58 @@ describe("auth-core.routes (AUTH-BE-14)", () => {
       });
       expect(res.statusCode).toBe(409);
     });
+
+    it("auto-accepts a pending workspace invite for the signup email, same as any other provider", async () => {
+      const email = freshEmail("signup-invite");
+      const [inviter] = await db
+        .insert(users)
+        .values({ email: `be14-inviter-${Date.now()}@example.test`, status: "active" })
+        .returning();
+      const [inviteWorkspace] = await db
+        .insert(workspaces)
+        .values({ name: "Invite Test Workspace", slug: `be14-invite-${Date.now()}` })
+        .returning();
+      await db.insert(schema.workspaceInvites).values({
+        workspaceId: inviteWorkspace!.id,
+        invitedByUserId: inviter!.id,
+        email,
+        role: "member",
+        token: `be14-test-token-${Date.now()}`,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      });
+
+      try {
+        const res = await app.inject({
+          method: "POST",
+          url: "/api/v1/auth/signup",
+          payload: { email, password: "correct horse battery staple" },
+        });
+        expect(res.statusCode).toBe(201);
+        const userId = res.json().data.userId as string;
+
+        const [membership] = await db
+          .select()
+          .from(workspaceMembers)
+          .where(eq(workspaceMembers.userId, userId))
+          .limit(1);
+        expect(membership?.workspaceId).toBe(inviteWorkspace!.id);
+        expect(membership?.role).toBe("member");
+
+        const [invite] = await db
+          .select()
+          .from(schema.workspaceInvites)
+          .where(eq(schema.workspaceInvites.workspaceId, inviteWorkspace!.id))
+          .limit(1);
+        expect(invite?.acceptedAt).toBeTruthy();
+      } finally {
+        await db.delete(schema.workspaceInvites).where(eq(schema.workspaceInvites.workspaceId, inviteWorkspace!.id));
+        await db.delete(workspaceMembers).where(eq(workspaceMembers.workspaceId, inviteWorkspace!.id));
+        await db.delete(creditBalances).where(eq(creditBalances.workspaceId, inviteWorkspace!.id));
+        await db.delete(schema.creditTransactions).where(eq(schema.creditTransactions.workspaceId, inviteWorkspace!.id));
+        await db.delete(workspaces).where(eq(workspaces.id, inviteWorkspace!.id));
+        await db.delete(users).where(eq(users.id, inviter!.id));
+      }
+    });
   });
 
   describe("login", () => {
@@ -207,6 +259,17 @@ describe("auth-core.routes (AUTH-BE-14)", () => {
         payload: { email, password: "correct horse battery staple" },
       });
       expect(withCorrect.statusCode).toBe(429);
+    });
+
+    it("refuses login for a blocked account with the correct password", async () => {
+      const email = freshEmail("login-blocked");
+      const password = "correct horse battery staple";
+      const userId = await signup(email, password);
+      await db.update(users).set({ isBlocked: true }).where(eq(users.id, userId));
+
+      const res = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { email, password } });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe("AUTH_ACCOUNT_BLOCKED");
     });
   });
 
