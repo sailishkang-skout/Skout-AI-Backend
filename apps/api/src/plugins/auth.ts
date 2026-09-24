@@ -103,10 +103,12 @@ function applyEmailIntelIdentity(
 }
 
 function isPublicRoute(url: string, method?: string): boolean {
+  const pathname = url.split("?")[0]!;
   // Only GET /api/v1/team/invites/<token> is public; DELETE and /accept suffix require auth
   const isInviteTokenLookup =
     method === "GET" &&
     /^\/api\/v1\/team\/invites\/[^/]+$/.test(url.split("?")[0]!);
+    /^\/api\/v1\/team\/invites\/[^/]+$/.test(pathname);
   return (
     url.startsWith("/api/v1/crm/hubspot/callback") ||
     url.startsWith("/api/v1/crm/hubspot/webhook") ||
@@ -116,6 +118,14 @@ function isPublicRoute(url: string, method?: string): boolean {
     url.startsWith("/api/v1/unsubscribe/") ||
     url.startsWith("/api/v1/invite-auth/send-otp") ||
     url.startsWith("/api/v1/invite-auth/verify-otp") ||
+    pathname.startsWith("/api/v1/crm/hubspot/callback") ||
+    pathname.startsWith("/api/v1/crm/hubspot/webhook") ||
+    pathname.startsWith("/api/v1/billing/webhooks/") ||
+    pathname.startsWith("/api/v1/webhooks/unipile/") ||
+    pathname.startsWith("/api/v1/track/") ||
+    pathname.startsWith("/api/v1/unsubscribe/") ||
+    pathname.startsWith("/api/v1/invite-auth/send-otp") ||
+    pathname.startsWith("/api/v1/invite-auth/verify-otp") ||
     // AUTH-BE-14 — signup/login/refresh are unauthenticated by definition; logout reads a
     // refresh cookie, not a Bearer token; logout-all/me carry an own-auth *access* token that
     // this plugin's resolveAuth() (Clerk-only until AUTH-BE-19) cannot verify. Each route in
@@ -128,6 +138,12 @@ function isPublicRoute(url: string, method?: string): boolean {
     url === "/api/v1/auth/logout" ||
     url === "/api/v1/auth/logout-all" ||
     url === "/api/v1/auth/me" ||
+    pathname === "/api/v1/auth/signup" ||
+    pathname === "/api/v1/auth/login" ||
+    pathname === "/api/v1/auth/refresh" ||
+    pathname === "/api/v1/auth/logout" ||
+    pathname === "/api/v1/auth/logout-all" ||
+    pathname === "/api/v1/auth/me" ||
     // AUTH-BE-15 — verify, reset, and OTP are unauthenticated. Confirm/verify issue an
     // own-auth session themselves; they must not pass through the Clerk preHandler.
     url === "/api/v1/auth/verify-email/send" ||
@@ -136,6 +152,17 @@ function isPublicRoute(url: string, method?: string): boolean {
     url === "/api/v1/auth/password/reset" ||
     url === "/api/v1/auth/otp/send" ||
     url === "/api/v1/auth/otp/verify" ||
+    pathname === "/api/v1/auth/verify-email/send" ||
+    pathname === "/api/v1/auth/verify-email/confirm" ||
+    pathname === "/api/v1/auth/password/forgot" ||
+    pathname === "/api/v1/auth/password/reset" ||
+    pathname === "/api/v1/auth/otp/send" ||
+    pathname === "/api/v1/auth/otp/verify" ||
+    // AUTH-BE-16 — Google sign-in start and callback are unauthenticated.
+    url === "/api/v1/auth/google/start" ||
+    url === "/api/v1/auth/google/callback" ||
+    pathname === "/api/v1/auth/google/start" ||
+    pathname === "/api/v1/auth/google/callback" ||
     // OAuth callbacks — Google/Microsoft redirect the browser here directly after consent, a
     // top-level navigation that can never carry our Authorization header. These were never
     // reachable without this: the global auth hook 401'd them with "Missing bearer token"
@@ -147,12 +174,21 @@ function isPublicRoute(url: string, method?: string): boolean {
     url.startsWith("/api/v1/inboxes/connect/microsoft/callback") ||
     url.startsWith("/api/v1/warmup-tool/oauth/google/callback") ||
     url.startsWith("/api/v1/warmup-tool/oauth/microsoft/callback") ||
+    pathname.startsWith("/api/v1/calendar/connect/google/callback") ||
+    pathname.startsWith("/api/v1/inboxes/connect/google/callback") ||
+    pathname.startsWith("/api/v1/inboxes/connect/microsoft/callback") ||
+    pathname.startsWith("/api/v1/warmup-tool/oauth/google/callback") ||
+    pathname.startsWith("/api/v1/warmup-tool/oauth/microsoft/callback") ||
     // R20.2 — Twilio calls these directly; not signature-verified yet (see dependency doc).
     url.startsWith("/api/v1/calls/twiml/") ||
     url.startsWith("/api/v1/calls/status") ||
     url.startsWith("/api/v1/calls/recording-status") ||
+    pathname.startsWith("/api/v1/calls/twiml/") ||
+    pathname.startsWith("/api/v1/calls/status") ||
+    pathname.startsWith("/api/v1/calls/recording-status") ||
     // AUTH-BE-12 — public JWKS for own-auth token verification (contains no private material).
     url === "/.well-known/jwks.json" ||
+    pathname === "/.well-known/jwks.json" ||
     isInviteTokenLookup
   );
 }

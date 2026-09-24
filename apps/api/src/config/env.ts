@@ -259,6 +259,10 @@ const envSchema = z
     HUBSPOT_CLIENT_SECRET: z.string().optional(),
     GOOGLE_CLIENT_ID: z.string().optional(),
     GOOGLE_CLIENT_SECRET: z.string().optional(),
+    /** AUTH-ADI-09 / AUTH-BE-16 — dedicated Google OAuth credentials for login */
+    GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
+    GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
+    GOOGLE_OAUTH_REDIRECT_URI: z.string().url().optional(),
     MICROSOFT_CLIENT_ID: z.string().optional(),
     MICROSOFT_CLIENT_SECRET: z.string().optional(),
     /** Razorpay checkout (optional — beta top-up remains when unset). */
