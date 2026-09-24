@@ -111,6 +111,23 @@ export interface GoogleOAuthStateData {
   createdAt: number;
 }
 
+// In-memory replay protection cache (ensures single-use guarantee even when Redis is unavailable)
+const consumedStateIds = new Map<string, number>();
+
+function pruneExpiredConsumedStates(): void {
+  const now = Date.now();
+  const maxAgeMs = GOOGLE_STATE_TTL_SECONDS * 1000;
+  for (const [sid, timestamp] of consumedStateIds.entries()) {
+    if (now - timestamp > maxAgeMs) {
+      consumedStateIds.delete(sid);
+    }
+  }
+}
+
+export function clearConsumedStateIdsForTesting(): void {
+  consumedStateIds.clear();
+}
+
 export async function createGoogleOAuthState(
   config: Env,
   opts: { verifier: string; nonce: string; next?: string }
@@ -159,6 +176,13 @@ export async function verifyAndConsumeGoogleOAuthState(
 
   const stateId = parsed.sid;
 
+  // In-memory anti-replay check
+  pruneExpiredConsumedStates();
+  if (consumedStateIds.has(stateId)) {
+    log.warn("verifyAndConsumeGoogleOAuthState: State replay detected in memory", { stateId });
+    return null;
+  }
+
   // Bound to browser session/cookie check
   if (cookieStateId && cookieStateId !== stateId) {
     return null; // State ID mismatch with browser session
@@ -178,6 +202,9 @@ export async function verifyAndConsumeGoogleOAuthState(
       log.warn("verifyAndConsumeGoogleOAuthState: Redis check failed", { err });
     }
   }
+
+  // Mark as consumed in memory
+  consumedStateIds.set(stateId, Date.now());
 
   return {
     verifier: parsed.v,

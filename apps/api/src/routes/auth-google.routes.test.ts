@@ -9,6 +9,7 @@ import { closeRedis, getRedis } from "../lib/redis.js";
 import {
   setGoogleRemoteJwks,
   resetGoogleRemoteJwks,
+  clearConsumedStateIdsForTesting,
   GOOGLE_STATE_COOKIE_NAME,
 } from "../services/google-auth.service.js";
 
@@ -128,6 +129,7 @@ describe("auth-google.routes (AUTH-BE-16)", () => {
   });
 
   afterEach(async () => {
+    clearConsumedStateIdsForTesting();
     await clearRecoveryRedisKeys();
     for (const email of createdUserEmails) {
       const [user] = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
