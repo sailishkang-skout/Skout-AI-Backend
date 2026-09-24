@@ -6,6 +6,7 @@ import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import { decryptSecretWithFallback, encryptSecret, maskApiKey } from "@skout/shared";
+import { getIntegrationEncryptionSecret } from "../utils/encryption-secrets.js";
 import {
   DEFAULT_UNIPILE_DSN,
   INTEGRATION_PROVIDERS,
@@ -50,11 +51,7 @@ export class IntegrationService {
   ) {}
 
   private get encryptionSecret(): string {
-    return (
-      this.config.INTEGRATION_ENCRYPTION_KEY ??
-      this.config.CLERK_SECRET_KEY ??
-      "dev-integration-encryption-key-change-me"
-    );
+    return getIntegrationEncryptionSecret(this.config);
   }
 
   private get previousEncryptionSecret(): string | undefined {
