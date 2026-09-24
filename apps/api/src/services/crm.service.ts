@@ -6,6 +6,7 @@ import { schema, scopedById, scopedTo } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import { signOAuthState, verifyOAuthState } from "../utils/oauth-state.js";
+import { getHubSpotOAuthSecret } from "../utils/encryption-secrets.js";
 import { enqueueCrmExportJob } from "../workers/crm-export.queue.js";
 import { DbStore } from "./enrichment/db-store.js";
 import { InsufficientCreditsError } from "./enrichment/types.js";
@@ -155,7 +156,7 @@ export class CrmService {
   }
 
   private get oauthSecret(): string {
-    return this.config.HUBSPOT_CLIENT_SECRET ?? this.config.CLERK_SECRET_KEY ?? "dev-oauth-state";
+    return getHubSpotOAuthSecret(this.config);
   }
 
   private get apiPublicUrl(): string {
