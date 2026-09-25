@@ -7,6 +7,7 @@ import {
   authErrorResponse,
   authRuntimeFlags,
   buildClerkAppResolveAuthConfig,
+  parseAcceptedIssuers,
   resolveAuth,
   resolveAuthErrorCode,
   resolveOrProvisionUser,
@@ -89,10 +90,14 @@ export const authPlugin = fp(async (app) => {
   }
 
   const resolveAuthConfig = buildClerkAppResolveAuthConfig({
-    clerkSecretKey: config.CLERK_SECRET_KEY!,
+    clerkSecretKey: config.CLERK_SECRET_KEY,
     clerkJwtIssuer: config.CLERK_JWT_ISSUER,
     corsOrigin: config.CORS_ORIGIN,
     frontendUrl: config.FRONTEND_URL,
+    acceptedIssuers: parseAcceptedIssuers(config.AUTH_ACCEPTED_ISSUERS, config.AUTH_MODE),
+    skoutJwtIssuer: config.AUTH_JWT_ISSUER,
+    skoutJwtAudience: config.AUTH_JWT_AUDIENCE,
+    skoutJwtPublicKeySet: config.AUTH_JWT_PUBLIC_KEY_SET,
   });
 
   app.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {

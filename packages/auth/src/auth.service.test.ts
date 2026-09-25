@@ -87,3 +87,157 @@ describe("resolveOrProvisionUser — unverified email (AUTH-BE-03)", () => {
     expect(tx.select).toHaveBeenCalledTimes(4);
   });
 });
+
+describe("resolveOrProvisionUser — Skout own-auth provider (AUTH-BE-19)", () => {
+  const validUserId = "11111111-1111-4111-8111-111111111111";
+  const validSessionId = "22222222-2222-4222-8222-222222222222";
+  const validWsId = "33333333-3333-4333-8333-333333333333";
+
+  it("throws 401 when user does not exist for Skout token (never auto-provisions)", async () => {
+    const tx = { select: vi.fn(), insert: vi.fn(), update: vi.fn() };
+    tx.select.mockReturnValueOnce(selectChain([])); // findExistingUser returns none
+
+    const db = {
+      transaction: vi.fn((cb: (inner: typeof tx) => Promise<unknown>) => cb(tx)),
+    };
+
+    await expect(
+      resolveOrProvisionUser(db as any, {
+        provider: "skout",
+        subject: validUserId,
+        sessionId: validSessionId,
+        emailVerified: true,
+      })
+    ).rejects.toThrow("User not found");
+  });
+
+  it("throws 403 when user is inactive or blocked", async () => {
+    const tx = { select: vi.fn(), insert: vi.fn(), update: vi.fn() };
+    tx.select.mockReturnValueOnce(
+      selectChain([
+        {
+          id: validUserId,
+          email: "blocked@example.com",
+          status: "active",
+          isBlocked: true,
+        },
+      ])
+    );
+
+    const db = {
+      transaction: vi.fn((cb: (inner: typeof tx) => Promise<unknown>) => cb(tx)),
+    };
+
+    await expect(
+      resolveOrProvisionUser(db as any, {
+        provider: "skout",
+        subject: validUserId,
+        sessionId: validSessionId,
+        emailVerified: true,
+      })
+    ).rejects.toThrow("Account is inactive or blocked");
+  });
+
+  it("throws 401 AUTH_SESSION_REVOKED when session is revoked", async () => {
+    const tx = { select: vi.fn(), insert: vi.fn(), update: vi.fn() };
+    tx.select
+      .mockReturnValueOnce(
+        selectChain([
+          {
+            id: validUserId,
+            email: "user@example.com",
+            status: "active",
+            isBlocked: false,
+          },
+        ])
+      )
+      .mockReturnValueOnce(
+        selectChain([
+          {
+            id: validSessionId,
+            revokedAt: new Date(),
+            absoluteExpiresAt: new Date(Date.now() + 100000),
+            idleExpiresAt: new Date(Date.now() + 100000),
+          },
+        ])
+      );
+
+    const db = {
+      transaction: vi.fn((cb: (inner: typeof tx) => Promise<unknown>) => cb(tx)),
+    };
+
+    await expect(
+      resolveOrProvisionUser(db as any, {
+        provider: "skout",
+        subject: validUserId,
+        sessionId: validSessionId,
+        emailVerified: true,
+      })
+    ).rejects.toThrow("AUTH_SESSION_REVOKED");
+  });
+
+  it("successfully resolves existing user with active session and workspace", async () => {
+    const tx = {
+      select: vi.fn(),
+      insert: vi.fn().mockReturnValue(insertConflictVoid()),
+      update: vi.fn(),
+    };
+    tx.select
+      .mockReturnValueOnce(
+        selectChain([
+          {
+            id: validUserId,
+            email: "user@example.com",
+            status: "active",
+            isBlocked: false,
+          },
+        ])
+      )
+      .mockReturnValueOnce(
+        selectChain([
+          {
+            id: validSessionId,
+            revokedAt: null,
+            absoluteExpiresAt: new Date(Date.now() + 100000),
+            idleExpiresAt: new Date(Date.now() + 100000),
+          },
+        ])
+      )
+      .mockReturnValueOnce(
+        selectChain([
+          {
+            workspaceId: validWsId,
+            role: "owner",
+          },
+        ])
+      )
+      .mockReturnValueOnce(
+        selectChain([
+          {
+            workspaceId: validWsId,
+          },
+        ])
+      )
+      .mockReturnValueOnce(selectChain([]));
+
+    const db = {
+      transaction: vi.fn((cb: (inner: typeof tx) => Promise<unknown>) => cb(tx)),
+    };
+
+    const result = await resolveOrProvisionUser(db as any, {
+      provider: "skout",
+      subject: validUserId,
+      sessionId: validSessionId,
+      email: "user@example.com",
+      emailVerified: true,
+    });
+
+    expect(result).toEqual({
+      userId: validUserId,
+      userEmail: "user@example.com",
+      workspaceId: validWsId,
+      role: "owner",
+    });
+  });
+});
+
