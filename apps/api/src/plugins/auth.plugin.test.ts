@@ -26,6 +26,17 @@ describe("auth plugin — public routes", () => {
     expect(res.statusCode).not.toBe(401);
     await app.close();
   });
+
+  it("does not require auth for POST /api/v1/auth/discover (AUTH-BE-22)", async () => {
+    const app = await buildAuthProbeApp(clerkOverrides);
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/discover",
+      payload: { email: "a@example.com" },
+    });
+    expect(res.statusCode).not.toBe(401);
+    await app.close();
+  });
 });
 
 describe("auth plugin — Clerk bearer (resolveAuth)", () => {
