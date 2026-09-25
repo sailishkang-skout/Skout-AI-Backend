@@ -145,6 +145,8 @@ function isPublicRoute(url: string, method?: string): boolean {
     // AUTH-BE-16 (Microsoft, ADR-0007 D7) — Microsoft sign-in start and callback are unauthenticated.
     pathname === "/api/v1/auth/microsoft/start" ||
     pathname === "/api/v1/auth/microsoft/callback" ||
+    // AUTH-BE-22 — login discovery runs before the user has authenticated.
+    pathname === "/api/v1/auth/discover" ||
     // OAuth callbacks — Google/Microsoft redirect the browser here directly after consent, a
     // top-level navigation that can never carry our Authorization header. These were never
     // reachable without this: the global auth hook 401'd them with "Missing bearer token"
