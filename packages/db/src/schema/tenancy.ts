@@ -183,6 +183,7 @@ export const workspaceSsoConfigs = pgTable("workspace_sso_configs", {
   idpConnectionId: text("idp_connection_id"),
   idpMetadataUrl: text("idp_metadata_url"),
   scimEnabled: boolean("scim_enabled").notNull().default(false),
+  scimApiToken: text("scim_api_token"),
   groupRoleMap: jsonb("group_role_map")
     .notNull()
     .default({ Owners: "owner", Admins: "admin", Members: "member" }),
