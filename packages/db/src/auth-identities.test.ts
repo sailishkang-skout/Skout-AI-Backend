@@ -75,7 +75,7 @@ describe.skipIf(!hasDatabase)("auth_identities (AUTH-BE-01)", () => {
     expect(second.clerkLinkedIdentityCount).toBe(first.clerkLinkedIdentityCount);
     expect(second.clerkUserIdCount).toBe(first.clerkUserIdCount);
     expect(second.clerkLinkedIdentityCount).toBe(second.clerkUserIdCount);
-  }, 30000);
+  });
 
   it("allows two providers on one user", async () => {
     const [user] = await db
@@ -106,7 +106,7 @@ describe.skipIf(!hasDatabase)("auth_identities (AUTH-BE-01)", () => {
       .where(eq(schema.authIdentities.userId, user!.id));
 
     expect(rows.map((r) => r.provider).sort()).toEqual(["clerk", "google"]);
-  }, 30000);
+  });
 
   it("rejects the same (provider, subject) on two users", async () => {
     const subject = `shared-subject-${suffix}`;
@@ -135,5 +135,5 @@ describe.skipIf(!hasDatabase)("auth_identities (AUTH-BE-01)", () => {
         emailAtLink: `user-b-${suffix}@example.com`,
       })
     ).rejects.toThrow();
-  }, 30000);
+  });
 });
