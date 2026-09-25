@@ -19,6 +19,8 @@ export const LOG_REDACT_PATHS = [
   "*.token",
   "*.otp",
   "*.code",
+  "*.inviteToken",
+  "*.sessionToken",
   "*.codeVerifier",
   "*.code_verifier",
   "*.idToken",

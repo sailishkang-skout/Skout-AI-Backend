@@ -18,6 +18,7 @@ import {
 } from "@skout/auth";
 import { buildApiResolveAuthConfig } from "./auth-resolve-config.js";
 import { resolveOrProvisionUser } from "../services/auth.service.js";
+import { verifyInviteSession } from "../services/invite-auth.service.js";
 import { errorResponse, HttpError } from "../utils/http.js";
 import type { Env } from "../config/env.js";
 
@@ -107,17 +108,8 @@ function isPublicRoute(url: string, method?: string): boolean {
   // Only GET /api/v1/team/invites/<token> is public; DELETE and /accept suffix require auth
   const isInviteTokenLookup =
     method === "GET" &&
-    /^\/api\/v1\/team\/invites\/[^/]+$/.test(url.split("?")[0]!);
     /^\/api\/v1\/team\/invites\/[^/]+$/.test(pathname);
   return (
-    url.startsWith("/api/v1/crm/hubspot/callback") ||
-    url.startsWith("/api/v1/crm/hubspot/webhook") ||
-    url.startsWith("/api/v1/billing/webhooks/") ||
-    url.startsWith("/api/v1/webhooks/unipile/") ||
-    url.startsWith("/api/v1/track/") ||
-    url.startsWith("/api/v1/unsubscribe/") ||
-    url.startsWith("/api/v1/invite-auth/send-otp") ||
-    url.startsWith("/api/v1/invite-auth/verify-otp") ||
     pathname.startsWith("/api/v1/crm/hubspot/callback") ||
     pathname.startsWith("/api/v1/crm/hubspot/webhook") ||
     pathname.startsWith("/api/v1/billing/webhooks/") ||
@@ -126,18 +118,13 @@ function isPublicRoute(url: string, method?: string): boolean {
     pathname.startsWith("/api/v1/unsubscribe/") ||
     pathname.startsWith("/api/v1/invite-auth/send-otp") ||
     pathname.startsWith("/api/v1/invite-auth/verify-otp") ||
+    pathname === "/api/v1/invite-auth/set-password" ||
     // AUTH-BE-14 — signup/login/refresh are unauthenticated by definition; logout reads a
     // refresh cookie, not a Bearer token; logout-all/me carry an own-auth *access* token that
     // this plugin's resolveAuth() (Clerk-only until AUTH-BE-19) cannot verify. Each route in
     // auth-core.routes.ts does its own verification — see that file's header comment. Listed
     // individually (not a "/api/v1/auth/" prefix) so /api/v1/auth/step-up, which genuinely
     // needs the Clerk-authenticated request.userId this plugin sets, stays protected.
-    url === "/api/v1/auth/signup" ||
-    url === "/api/v1/auth/login" ||
-    url === "/api/v1/auth/refresh" ||
-    url === "/api/v1/auth/logout" ||
-    url === "/api/v1/auth/logout-all" ||
-    url === "/api/v1/auth/me" ||
     pathname === "/api/v1/auth/signup" ||
     pathname === "/api/v1/auth/login" ||
     pathname === "/api/v1/auth/refresh" ||
@@ -146,12 +133,6 @@ function isPublicRoute(url: string, method?: string): boolean {
     pathname === "/api/v1/auth/me" ||
     // AUTH-BE-15 — verify, reset, and OTP are unauthenticated. Confirm/verify issue an
     // own-auth session themselves; they must not pass through the Clerk preHandler.
-    url === "/api/v1/auth/verify-email/send" ||
-    url === "/api/v1/auth/verify-email/confirm" ||
-    url === "/api/v1/auth/password/forgot" ||
-    url === "/api/v1/auth/password/reset" ||
-    url === "/api/v1/auth/otp/send" ||
-    url === "/api/v1/auth/otp/verify" ||
     pathname === "/api/v1/auth/verify-email/send" ||
     pathname === "/api/v1/auth/verify-email/confirm" ||
     pathname === "/api/v1/auth/password/forgot" ||
@@ -159,8 +140,6 @@ function isPublicRoute(url: string, method?: string): boolean {
     pathname === "/api/v1/auth/otp/send" ||
     pathname === "/api/v1/auth/otp/verify" ||
     // AUTH-BE-16 — Google sign-in start and callback are unauthenticated.
-    url === "/api/v1/auth/google/start" ||
-    url === "/api/v1/auth/google/callback" ||
     pathname === "/api/v1/auth/google/start" ||
     pathname === "/api/v1/auth/google/callback" ||
     // OAuth callbacks — Google/Microsoft redirect the browser here directly after consent, a
@@ -169,25 +148,16 @@ function isPublicRoute(url: string, method?: string): boolean {
     // before the handler below got a chance to run. Each handler independently verifies the
     // signed `state` param (verifyOAuthState, same HMAC pattern as the already-public HubSpot
     // callback above) — that's the real auth here, not this header.
-    url.startsWith("/api/v1/calendar/connect/google/callback") ||
-    url.startsWith("/api/v1/inboxes/connect/google/callback") ||
-    url.startsWith("/api/v1/inboxes/connect/microsoft/callback") ||
-    url.startsWith("/api/v1/warmup-tool/oauth/google/callback") ||
-    url.startsWith("/api/v1/warmup-tool/oauth/microsoft/callback") ||
     pathname.startsWith("/api/v1/calendar/connect/google/callback") ||
     pathname.startsWith("/api/v1/inboxes/connect/google/callback") ||
     pathname.startsWith("/api/v1/inboxes/connect/microsoft/callback") ||
     pathname.startsWith("/api/v1/warmup-tool/oauth/google/callback") ||
     pathname.startsWith("/api/v1/warmup-tool/oauth/microsoft/callback") ||
     // R20.2 — Twilio calls these directly; not signature-verified yet (see dependency doc).
-    url.startsWith("/api/v1/calls/twiml/") ||
-    url.startsWith("/api/v1/calls/status") ||
-    url.startsWith("/api/v1/calls/recording-status") ||
     pathname.startsWith("/api/v1/calls/twiml/") ||
     pathname.startsWith("/api/v1/calls/status") ||
     pathname.startsWith("/api/v1/calls/recording-status") ||
     // AUTH-BE-12 — public JWKS for own-auth token verification (contains no private material).
-    url === "/.well-known/jwks.json" ||
     pathname === "/.well-known/jwks.json" ||
     isInviteTokenLookup
   );
@@ -314,19 +284,9 @@ export const authPlugin = fp(async (app) => {
       return;
     }
 
-    // Invite session token (issued after OTP verification)
+    // Invite session token (issued after OTP verification) — AUTH-BE-26
     if (token.startsWith("isk_")) {
-      const [session] = await db
-        .select({ userId: schema.inviteSessions.userId })
-        .from(schema.inviteSessions)
-        .where(
-          and(
-            eq(schema.inviteSessions.token, token),
-            gt(schema.inviteSessions.expiresAt, new Date())
-          )
-        )
-        .limit(1);
-
+      const session = await verifyInviteSession(db, token);
       if (!session) {
         return reply
           .code(401)
@@ -339,22 +299,10 @@ export const authPlugin = fp(async (app) => {
           );
       }
 
-      const [user] = await db
-        .select({ email: schema.users.email })
-        .from(schema.users)
-        .where(eq(schema.users.id, session.userId))
-        .limit(1);
-
-      const [membership] = await db
-        .select({ workspaceId: schema.workspaceMembers.workspaceId, role: schema.workspaceMembers.role })
-        .from(schema.workspaceMembers)
-        .where(eq(schema.workspaceMembers.userId, session.userId))
-        .limit(1);
-
       request.userId = session.userId;
-      request.userEmail = user?.email;
-      request.workspaceId = membership?.workspaceId;
-      request.role = membership?.role;
+      request.userEmail = session.email;
+      request.workspaceId = session.workspaceId;
+      request.role = session.role;
       return;
     }
 

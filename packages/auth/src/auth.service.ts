@@ -4,6 +4,7 @@ import { providerForClerkUserId } from "@skout/db/schema";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { normalizeEmail } from "@skout/shared";
 import { HttpError } from "./http.js";
+import { AuthErrorCode, AuthErrorMessage } from "./auth-error-codes.js";
 import { linkAuthIdentity } from "./link-auth-identity.js";
 
 export interface ProvisionResult {
@@ -19,6 +20,7 @@ export type ResolveOrProvisionInput = {
   email?: string;
   emailVerified: boolean;
   name?: string;
+  sessionId?: string;
 };
 
 type UserRow = {
@@ -59,7 +61,26 @@ function normalizeInput(
 
 type UserMatch = { user: UserRow; matchedBy: "identity" | "clerk" | "email" };
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 async function findExistingUser(tx: Tx, input: ResolveOrProvisionInput): Promise<UserMatch | null> {
+  if (input.provider === "skout") {
+    if (!UUID_REGEX.test(input.subject)) return null;
+    const [byUserId] = await tx
+      .select({
+        id: schema.users.id,
+        email: schema.users.email,
+        status: schema.users.status,
+        isBlocked: schema.users.isBlocked,
+      })
+      .from(schema.users)
+      .where(eq(schema.users.id, input.subject))
+      .limit(1);
+
+    if (byUserId) return { user: byUserId, matchedBy: "identity" };
+    return null;
+  }
+
   const [byIdentity] = await tx
     .select({
       id: schema.users.id,
@@ -148,6 +169,10 @@ export async function resolveOrProvisionUser(
           .where(eq(schema.users.id, userId));
       }
     } else {
+      if (resolved.provider === "skout") {
+        throw new HttpError("User not found", 401);
+      }
+
       const [created] = await tx
         .insert(schema.users)
         .values({
@@ -177,7 +202,33 @@ export async function resolveOrProvisionUser(
     }
 
     if (userStatus !== "active" || userBlocked) {
-      throw new HttpError("Account is inactive or blocked", 403);
+      throw new HttpError(AuthErrorMessage.ACCOUNT_INACTIVE_OR_BLOCKED, 403);
+    }
+
+    if (resolved.provider === "skout") {
+      if (!resolved.sessionId || !UUID_REGEX.test(resolved.sessionId)) {
+        throw new HttpError(AuthErrorCode.AUTH_SESSION_REVOKED, 401);
+      }
+      const [session] = await tx
+        .select({
+          id: schema.authSessions.id,
+          revokedAt: schema.authSessions.revokedAt,
+          absoluteExpiresAt: schema.authSessions.absoluteExpiresAt,
+          idleExpiresAt: schema.authSessions.idleExpiresAt,
+        })
+        .from(schema.authSessions)
+        .where(eq(schema.authSessions.id, resolved.sessionId))
+        .limit(1);
+
+      const now = new Date();
+      if (
+        !session ||
+        session.revokedAt !== null ||
+        (session.absoluteExpiresAt && session.absoluteExpiresAt < now) ||
+        (session.idleExpiresAt && session.idleExpiresAt < now)
+      ) {
+        throw new HttpError(AuthErrorCode.AUTH_SESSION_REVOKED, 401);
+      }
     }
 
     await linkAuthIdentity(

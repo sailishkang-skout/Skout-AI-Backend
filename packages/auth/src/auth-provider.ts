@@ -5,11 +5,15 @@ export type VerifiedIdentity = {
   email?: string;
   emailVerified: boolean;
   name?: string;
+  sessionId?: string;
 };
 
 export type AuthVerifyContext = {
-  clerkSecretKey: string;
-  authorizedParties: string[];
+  clerkSecretKey?: string;
+  authorizedParties?: string[];
+  skoutJwtIssuer?: string;
+  skoutJwtAudience?: string;
+  skoutJwtPublicKeySet?: string;
 };
 
 export interface AuthProvider {

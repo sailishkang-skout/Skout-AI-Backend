@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthTokenInvalidError } from "./auth-token.js";
-import { ensureTestAuthHarness, resetTestAuthHarness, TEST_CLERK_ISSUER } from "./build-test-auth.js";
-import { resolveAuth } from "./resolve-auth.js";
+import {
+  ensureTestAuthHarness,
+  resetTestAuthHarness,
+  TEST_CLERK_ISSUER,
+  TEST_SKOUT_AUTH_ISSUER,
+} from "./build-test-auth.js";
+import { resolveAuth, type AcceptedIssuer } from "./resolve-auth.js";
 
 beforeEach(() => {
   ensureTestAuthHarness();
@@ -48,6 +53,59 @@ describe("resolveAuth (AUTH-BE-03)", () => {
       subject: "user_ok",
       email: "test@example.com",
       emailVerified: true,
+    });
+  });
+
+  describe("Dual-verify with Skout issuer (AUTH-BE-19)", () => {
+    it("returns verified identity for Skout issuer when acceptedIssuers includes skout", async () => {
+      const token = jwt({ alg: "RS256", kid: "k1" }, { iss: TEST_SKOUT_AUTH_ISSUER, sub: "user_skout_1" });
+      const dualConfig = {
+        ...config,
+        acceptedIssuers: ["clerk", "skout"] as AcceptedIssuer[],
+        skoutJwtIssuer: TEST_SKOUT_AUTH_ISSUER,
+        skoutJwtAudience: "skout-api",
+      };
+      const identity = await resolveAuth(token, dualConfig);
+      expect(identity).toMatchObject({
+        provider: "skout",
+        subject: "user_skout_1",
+      });
+    });
+
+    it("rejects Skout token when acceptedIssuers is clerk-only", async () => {
+      const token = jwt({ alg: "RS256", kid: "k1" }, { iss: TEST_SKOUT_AUTH_ISSUER, sub: "user_skout_1" });
+      const clerkOnlyConfig = {
+        ...config,
+        acceptedIssuers: ["clerk"] as AcceptedIssuer[],
+        skoutJwtIssuer: TEST_SKOUT_AUTH_ISSUER,
+      };
+      await expect(resolveAuth(token, clerkOnlyConfig)).rejects.toBeInstanceOf(AuthTokenInvalidError);
+    });
+
+    it("rejects Clerk token when acceptedIssuers is skout-only", async () => {
+      const token = jwt({ alg: "RS256", kid: "k1" }, { iss: ISSUER, sub: "user_ok" });
+      const skoutOnlyConfig = {
+        ...config,
+        acceptedIssuers: ["skout"] as AcceptedIssuer[],
+        skoutJwtIssuer: TEST_SKOUT_AUTH_ISSUER,
+      };
+      await expect(resolveAuth(token, skoutOnlyConfig)).rejects.toBeInstanceOf(AuthTokenInvalidError);
+    });
+
+    it("accepts both Clerk and Skout tokens when in dual mode", async () => {
+      const dualConfig = {
+        ...config,
+        acceptedIssuers: ["clerk", "skout"] as AcceptedIssuer[],
+        skoutJwtIssuer: TEST_SKOUT_AUTH_ISSUER,
+      };
+
+      const clerkToken = jwt({ alg: "RS256", kid: "k1" }, { iss: ISSUER, sub: "user_clerk" });
+      const clerkId = await resolveAuth(clerkToken, dualConfig);
+      expect(clerkId.provider).toBe("clerk");
+
+      const skoutToken = jwt({ alg: "RS256", kid: "k1" }, { iss: TEST_SKOUT_AUTH_ISSUER, sub: "user_skout" });
+      const skoutId = await resolveAuth(skoutToken, dualConfig);
+      expect(skoutId.provider).toBe("skout");
     });
   });
 });

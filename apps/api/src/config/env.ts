@@ -76,6 +76,11 @@ const envSchema = z
      * for backward compatibility until AUTH-ADI-08 sets this in ECS.
      */
     AUTH_MODE: z.enum(["clerk", "stub", "custom", "dual"]).optional(),
+    /**
+     * AUTH-BE-19 — accepted issuers for dual-verify (e.g. "clerk", "skout", or "clerk,skout").
+     * When unset, derived from AUTH_MODE.
+     */
+    AUTH_ACCEPTED_ISSUERS: z.string().optional(),
     /** Own-auth signing material (AUTH-ADI-09 / AUTH-BE-12) — required when AUTH_MODE is custom or dual. */
     /** RS256 private key, PKCS8 PEM. Generate locally with scripts/generate-local-auth-keys.mjs. */
     AUTH_JWT_PRIVATE_KEY: z.string().optional(),
