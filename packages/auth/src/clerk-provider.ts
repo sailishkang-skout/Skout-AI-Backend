@@ -1,5 +1,8 @@
 import type { AuthProvider, AuthVerifyContext, VerifiedIdentity } from "./auth-provider.js";
+import { createLogger } from "@skout/observability";
 import { AuthTokenExpiredError, AuthTokenInvalidError } from "./auth-token.js";
+
+const log = createLogger("auth.clerk");
 
 function readEmailVerified(claims: Record<string, unknown>): boolean {
   if (typeof claims.email_verified === "boolean") return claims.email_verified;
@@ -49,6 +52,13 @@ export class ClerkAuthProvider implements AuthProvider {
     } catch (err) {
       if (err instanceof AuthTokenInvalidError) throw err;
       const message = err instanceof Error ? err.message : "";
+      // Clerk's `reason` is a fixed enum (e.g. token-invalid-authorized-parties, jwk-kid-mismatch) —
+      // safe to log, unlike the message which can echo claim values. Never log the token.
+      const reason = (err as { reason?: unknown } | null)?.reason;
+      log.warn("clerk.verify_failed", {
+        reason: typeof reason === "string" ? reason : "unknown",
+        errorName: err instanceof Error ? err.name : typeof err,
+      });
       if (/expired/i.test(message)) {
         throw new AuthTokenExpiredError(message);
       }
