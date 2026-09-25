@@ -1,5 +1,5 @@
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
-import { SecretValue, Stack } from "aws-cdk-lib";
+import { RemovalPolicy, SecretValue, Stack } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import type { EnvironmentConfig } from "../config/environments.js";
 
@@ -140,6 +140,14 @@ export class SkoutAppSecrets extends Construct {
       // every other secret in this file. Protects the /api/v1/import/* static-secret path.
       ADMIN_IMPORT_SECRET: "replace-me",
     });
+    // Step 1 of 2 of migrating appConfig off CDK-owned management (see the clerkIssuer comment
+    // above — this construct is exactly the secret that bug hit: adding ADMIN_IMPORT_SECRET's
+    // field here made CloudFormation re-push the whole SecretString and reset a manually-rotated
+    // INTEGRATION_ENCRYPTION_KEY back to "replace-me"). RETAIN here first, deployed and confirmed
+    // live, *before* a follow-up change removes this `new Secret(...)` and replaces it with
+    // `fromSecretCompleteArn` (matching clerkIssuer's pattern) — otherwise CloudFormation would
+    // delete the live secret instead of just dropping it from stack management.
+    this.appConfig.applyRemovalPolicy(RemovalPolicy.RETAIN);
     /**
      * Email-Intel → Skout canonical Evidence Ledger forwarder (§5.3).
      * Created/rotated by infra/scripts/setup-email-intel-forwarder.sh — import by name
@@ -196,5 +204,9 @@ export class SkoutAppSecrets extends Construct {
       AUTH_REFRESH_TOKEN_PEPPER: "replace-me",
       AUTH_COOKIE_SECRET: "replace-me",
     });
+    // Same reasoning and same two-step migration as appConfig above — RETAIN now, switch to
+    // fromSecretCompleteArn in a follow-up deploy, so a future change to this secret's field
+    // list can never silently wipe a manually-rotated real RS256 key.
+    this.auth.applyRemovalPolicy(RemovalPolicy.RETAIN);
   }
 }
