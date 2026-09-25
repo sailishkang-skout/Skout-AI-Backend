@@ -57,12 +57,19 @@ export function generateNonce(): string {
 }
 
 function getOAuthSigningSecret(config: Env): string {
-  return config.AUTH_REFRESH_TOKEN_PEPPER || config.INTEGRATION_ENCRYPTION_KEY || "skout-google-oauth-state-secret";
+  // No hardcoded fallback: a constant secret would let anyone mint valid-looking states.
+  const secret = config.AUTH_REFRESH_TOKEN_PEPPER || config.INTEGRATION_ENCRYPTION_KEY;
+  if (!secret) {
+    throw new HttpError("Google sign-in is not configured", 503);
+  }
+  return secret;
 }
 
+/** Login uses its own OAuth client only — never the calendar/inbox GOOGLE_CLIENT_* app, whose
+ *  scopes and consent screen are for a different purpose (AUTH-BE-16). */
 export function getGoogleOAuthCredentials(config: Env): { clientId: string; clientSecret?: string } {
-  const clientId = config.GOOGLE_OAUTH_CLIENT_ID || config.GOOGLE_CLIENT_ID;
-  const clientSecret = config.GOOGLE_OAUTH_CLIENT_SECRET || config.GOOGLE_CLIENT_SECRET;
+  const clientId = config.GOOGLE_OAUTH_CLIENT_ID;
+  const clientSecret = config.GOOGLE_OAUTH_CLIENT_SECRET;
   if (!clientId) {
     throw new HttpError("Google OAuth client ID is not configured", 503);
   }
@@ -135,6 +142,7 @@ export async function createGoogleOAuthState(
   const stateId = randomBytes(16).toString("hex");
   const next = validateSafeNextUrl(opts.next);
   const payload: Record<string, string> = {
+    p: "google",
     sid: stateId,
     v: opts.verifier,
     n: opts.nonce,
@@ -165,7 +173,9 @@ export async function verifyAndConsumeGoogleOAuthState(
 ): Promise<{ verifier: string; nonce: string; next: string } | null> {
   const secret = getOAuthSigningSecret(config);
   const parsed = verifyOAuthState(signedState, secret);
-  if (!parsed || !parsed.sid || !parsed.v || !parsed.n || !parsed.t) {
+  // `p` is absent on states minted before the provider tag existed (10-minute TTL); any other
+  // value means the state was minted for another provider (e.g. Microsoft).
+  if (!parsed || (parsed.p !== undefined && parsed.p !== "google") || !parsed.sid || !parsed.v || !parsed.n || !parsed.t) {
     return null;
   }
 
@@ -179,13 +189,13 @@ export async function verifyAndConsumeGoogleOAuthState(
   // In-memory anti-replay check
   pruneExpiredConsumedStates();
   if (consumedStateIds.has(stateId)) {
-    log.warn("verifyAndConsumeGoogleOAuthState: State replay detected in memory", { stateId });
+    log.warn("verifyAndConsumeGoogleOAuthState: State replay detected in memory");
     return null;
   }
 
-  // Bound to browser session/cookie check
-  if (cookieStateId && cookieStateId !== stateId) {
-    return null; // State ID mismatch with browser session
+  // Bound to the browser that started the flow: the state cookie is required and must match.
+  if (!cookieStateId || cookieStateId !== stateId) {
+    return null;
   }
 
   // Single-use anti-replay check via Redis if available
@@ -195,7 +205,7 @@ export async function verifyAndConsumeGoogleOAuthState(
       const exists = await redis.del(`auth:oauth:google:${stateId}`);
       if (exists === 0) {
         // Already consumed or expired in Redis
-        log.warn("verifyAndConsumeGoogleOAuthState: State replay detected in Redis", { stateId });
+        log.warn("verifyAndConsumeGoogleOAuthState: State replay detected in Redis");
         return null;
       }
     } catch (err) {
@@ -272,11 +282,8 @@ export async function exchangeGoogleCode(
   });
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => "");
-    log.error("exchangeGoogleCode: Google token exchange failed", {
-      status: response.status,
-      errorText,
-    });
+    // Status only — the error body can echo request parameters.
+    log.error("exchangeGoogleCode: Google token exchange failed", { status: response.status });
     throw new HttpError("Failed to exchange code with Google", 401);
   }
 
@@ -312,7 +319,12 @@ export async function verifyGoogleIdToken(
       audience: aud,
     });
   } catch (err) {
-    log.warn("verifyGoogleIdToken: ID token signature/claims verification failed", { err });
+    // Never log `err` itself: jose's claim errors carry the whole token payload (email, name).
+    const e = err as { code?: unknown; claim?: unknown };
+    log.warn("verifyGoogleIdToken: ID token signature/claims verification failed", {
+      reason: typeof e.code === "string" ? e.code : "unknown",
+      claim: typeof e.claim === "string" ? e.claim : undefined,
+    });
     throw new HttpError("Invalid Google ID token signature or claims", 401);
   }
 
@@ -320,14 +332,14 @@ export async function verifyGoogleIdToken(
 
   // Nonce check
   if (!claims.nonce || claims.nonce !== expectedNonce) {
-    log.warn("verifyGoogleIdToken: Nonce mismatch", { expected: expectedNonce, received: claims.nonce });
+    log.warn("verifyGoogleIdToken: Nonce mismatch");
     throw new HttpError("Invalid Google ID token: nonce mismatch", 401);
   }
 
   // Strict email_verified check — Ground Rule 5: never auto-link an account unless provider reports verified
   const isVerified = claims.email_verified === true || claims.email_verified === "true";
   if (!isVerified) {
-    log.warn("verifyGoogleIdToken: Google account email is not verified", { email: claims.email });
+    log.warn("verifyGoogleIdToken: Google account email is not verified");
     throw new HttpError("Google email is not verified", 403);
   }
 
