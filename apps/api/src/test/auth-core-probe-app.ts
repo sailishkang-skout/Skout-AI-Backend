@@ -7,6 +7,7 @@ import { authCoreRoutes } from "../routes/auth-core.routes.js";
 import { authRecoveryRoutes } from "../routes/auth-recovery.routes.js";
 import { inviteAuthRoutes } from "../routes/invite-auth.routes.js";
 import { authGoogleRoutes } from "../routes/auth-google.routes.js";
+import { authMicrosoftRoutes } from "../routes/auth-microsoft.routes.js";
 
 /** Minimal app for AUTH-BE-14 route-level tests: cookie parsing + the real routes, no full
  *  route graph, no rate-limit plugin (route-level `config.rateLimit` is inert without it,
@@ -31,6 +32,7 @@ export async function buildAuthCoreProbeApp(
     await v1.register(authRecoveryRoutes);
     await v1.register(inviteAuthRoutes);
     await v1.register(authGoogleRoutes);
+    await v1.register(authMicrosoftRoutes);
   }, { prefix: "/api/v1" });
   await app.ready();
   return app;
