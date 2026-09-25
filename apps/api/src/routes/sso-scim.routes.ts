@@ -152,27 +152,25 @@ async function applyScimMembers(
  * IdP metadata lives in Clerk; Skout stores the binding so each workspace can be
  * activated at deal time without a code deploy.
  */
+const memberSchema = z.object({
+  clerkUserId: z.string().min(1).optional(),
+  externalUserId: z.string().min(1).optional(),
+  email: z.string().email(),
+  role: z.enum(["owner", "admin", "member", "viewer"]).default("member"),
+  groups: z.array(z.string()).optional(),
+}).refine(data => data.clerkUserId || data.externalUserId, {
+  message: "Every member must have either clerkUserId or externalUserId",
+  path: ["clerkUserId"],
+});
+
 const syncSchema = z.object({
   clerkOrgId: z.string().min(1).max(200).optional(),
   orgRef: z.string().min(1).max(200).optional(),
-  members: z
-    .array(
-      z.object({
-        clerkUserId: z.string().min(1).optional(),
-        externalUserId: z.string().min(1).optional(),
-        email: z.string().email(),
-        role: z.enum(["owner", "admin", "member", "viewer"]).default("member"),
-        groups: z.array(z.string()).optional(),
-      })
-    )
-    .max(500),
+  members: z.array(memberSchema).max(500),
   dryRun: z.boolean().optional().default(false),
 }).refine(data => data.clerkOrgId || data.orgRef, {
   message: "Either clerkOrgId or orgRef must be provided",
   path: ["clerkOrgId"],
-}).refine(data => data.members.every(m => m.clerkUserId || m.externalUserId), {
-  message: "Every member must have either clerkUserId or externalUserId",
-  path: ["members"],
 });
 
 const configSchema = z.object({
@@ -254,7 +252,7 @@ export async function ssoScimRoutes(app: FastifyInstance) {
       .insert(workspaceSsoConfigs)
       .values({
         workspaceId: request.workspaceId,
-        clerkOrgId: parsed.data.clerkOrgId!, // validated by schema refinement
+        clerkOrgId: parsed.data.clerkOrgId ?? "", // clerkOrgId is still NOT NULL in schema, so we provide empty string only when orgRef is used (maintains backward compatibility while allowing new provider usage)
         idpOrgRef: parsed.data.orgRef ?? null,
         idpProvider: parsed.data.idpProvider,
         idpConnectionId: parsed.data.idpConnectionId ?? null,
@@ -272,7 +270,7 @@ export async function ssoScimRoutes(app: FastifyInstance) {
       .onConflictDoUpdate({
         target: workspaceSsoConfigs.workspaceId,
         set: {
-          clerkOrgId: parsed.data.clerkOrgId!, // validated by schema refinement
+          clerkOrgId: parsed.data.clerkOrgId ?? "", // maintain NOT NULL constraint while supporting new orgRef field
           idpOrgRef: parsed.data.orgRef ?? null,
           idpProvider: parsed.data.idpProvider,
           idpConnectionId: parsed.data.idpConnectionId ?? null,
@@ -328,70 +326,76 @@ export async function ssoScimRoutes(app: FastifyInstance) {
   });
 
   app.post("/sso/scim/sync-members", async (request, reply) => {
-    if (!request.workspaceId || !request.userId || !app.db) {
-      return reply.code(401).send(errorResponse("Unauthorized", 401));
-    }
-    if (!request.role || !["owner", "admin"].includes(request.role)) {
-      return reply.code(403).send(errorResponse("Requires owner or admin", 403));
-    }
+    try {
+      if (!request.workspaceId || !request.userId || !app.db) {
+        return reply.code(401).send(errorResponse("Unauthorized", 401));
+      }
+      if (!request.role || !["owner", "admin"].includes(request.role)) {
+        return reply.code(403).send(errorResponse("Requires owner or admin", 403));
+      }
 
-    const parsed = syncSchema.safeParse(request.body ?? {});
-    if (!parsed.success) {
-      return reply.code(400).send(errorResponse("Invalid SCIM sync payload", 400, parsed.error.flatten()));
-    }
+      const parsed = syncSchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        app.log.error({ error: parsed.error }, "Invalid SCIM sync payload");
+        return reply.code(400).send(errorResponse("Invalid SCIM sync payload", 400, parsed.error.flatten()));
+      }
 
-    const [cfg] = await app.db
-      .select()
-      .from(workspaceSsoConfigs)
-      .where(scopedTo(workspaceSsoConfigs, request.workspaceId))
-      .limit(1);
+      const [cfg] = await app.db
+        .select()
+        .from(workspaceSsoConfigs)
+        .where(scopedTo(workspaceSsoConfigs, request.workspaceId))
+        .limit(1);
 
-    const planned = parsed.data.members.map((m) => ({
-      email: m.email,
-      clerkUserId: m.clerkUserId,
-      externalUserId: m.externalUserId,
-      role: mapScimGroupsToRole(m.groups, m.role),
-    }));
+      const planned = parsed.data.members.map((m) => ({
+        email: m.email,
+        clerkUserId: m.clerkUserId,
+        externalUserId: m.externalUserId,
+        role: mapScimGroupsToRole(m.groups, m.role),
+      }));
 
-    if (parsed.data.dryRun) {
-      return reply.send({
+      if (parsed.data.dryRun) {
+        return reply.send({
+          data: {
+            dryRun: true,
+            clerkOrgId: parsed.data.clerkOrgId,
+            orgRef: parsed.data.orgRef,
+            workspaceId: request.workspaceId,
+            ssoStatus: cfg?.status ?? "unconfigured",
+            planned,
+          },
+        });
+      }
+
+      const { created, updated } = await applyScimMembers(app.db, request.workspaceId, cfg, planned);
+
+      app.log.info(
+        {
+          workspaceId: request.workspaceId,
+          clerkOrgId: parsed.data.clerkOrgId,
+          orgRef: parsed.data.orgRef,
+          count: planned.length,
+          created,
+          updated,
+          ssoStatus: cfg?.status,
+        },
+        "SCIM member sync applied"
+      );
+
+      return reply.code(202).send({
         data: {
-          dryRun: true,
+          accepted: true,
           clerkOrgId: parsed.data.clerkOrgId,
           orgRef: parsed.data.orgRef,
           workspaceId: request.workspaceId,
-          ssoStatus: cfg?.status ?? "unconfigured",
           planned,
+          applied: { created, updated },
+          ssoStatus: cfg?.status ?? "unconfigured",
+          next: "Membership applied to workspace_members. Run backfill-rbac to grant RBAC permission rows for any newly-created members.",
         },
       });
+    } catch (err) {
+      app.log.error({ error: err }, "SCIM sync failed with unhandled exception");
+      return reply.code(500).send(errorResponse("Internal server error", 500));
     }
-
-    const { created, updated } = await applyScimMembers(app.db, request.workspaceId, cfg, planned);
-
-    app.log.info(
-      {
-        workspaceId: request.workspaceId,
-        clerkOrgId: parsed.data.clerkOrgId,
-        orgRef: parsed.data.orgRef,
-        count: planned.length,
-        created,
-        updated,
-        ssoStatus: cfg?.status,
-      },
-      "SCIM member sync applied"
-    );
-
-    return reply.code(202).send({
-      data: {
-        accepted: true,
-        clerkOrgId: parsed.data.clerkOrgId,
-        orgRef: parsed.data.orgRef,
-        workspaceId: request.workspaceId,
-        planned,
-        applied: { created, updated },
-        ssoStatus: cfg?.status ?? "unconfigured",
-        next: "Membership applied to workspace_members. Run backfill-rbac to grant RBAC permission rows for any newly-created members.",
-      },
-    });
   });
 }
