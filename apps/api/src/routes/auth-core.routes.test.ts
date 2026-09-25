@@ -343,6 +343,51 @@ describe("auth-core.routes (AUTH-BE-14)", () => {
 
       emitLoginSpy.mockRestore();
     });
+
+    it("a user imported with a bcrypt hash logs in with the same password via own-auth and is re-hashed to argon2id (AUTH-BE-21)", async () => {
+      const email = freshEmail("bcrypt-imported");
+      const password = "imported-password-123";
+      // 1. Create user in Postgres as if lazily provisioned
+      const [user] = await db
+        .insert(users)
+        .values({ email, status: "active", fullName: "Imported User" })
+        .returning();
+      createdUserEmails.push(email);
+
+      // 2. Import bcrypt credential and password identity for user (as AUTH-BE-21 does)
+      const bcryptHash = "$2b$10$QIqUudM2zteZ.aq/tEPbMeNhcBI6Uni.9a.CU/Xda79ELB2G06Die";
+      await db.insert(userCredentials).values({
+        userId: user!.id,
+        passwordHash: bcryptHash,
+        hashAlgo: "bcrypt",
+        hashParams: {},
+        mustReset: false,
+      });
+      await db.insert(authIdentities).values({
+        userId: user!.id,
+        provider: "password",
+        providerSubject: email,
+        emailAtLink: email,
+        emailVerifiedAt: new Date(),
+      });
+
+      // 3. User logs in with own-auth
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email, password },
+      });
+      expect(res.statusCode).toBe(200);
+
+      // 4. Verify user_credentials was re-hashed to argon2id
+      const [updatedCred] = await db
+        .select()
+        .from(userCredentials)
+        .where(eq(userCredentials.userId, user!.id));
+      expect(updatedCred?.hashAlgo).toBe("argon2id");
+      expect(updatedCred?.passwordHash).not.toBe(bcryptHash);
+      expect(updatedCred?.passwordHash.startsWith("$argon2id$")).toBe(true);
+    });
   });
 
   describe("refresh / logout / logout-all / me", () => {
