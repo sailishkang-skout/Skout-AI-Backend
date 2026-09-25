@@ -28,7 +28,7 @@ interface PlannedScimMember {
 async function applyScimMembers(
   db: Db,
   workspaceId: string,
-  ssoConfig: typeof workspaceSsoConfigs.$inferSelect | undefined,
+  ssoConfig: { idpProvider?: string } | undefined,
   planned: PlannedScimMember[]
 ): Promise<{ created: number; updated: number }> {
   let created = 0;
@@ -199,7 +199,13 @@ export async function ssoScimRoutes(app: FastifyInstance) {
   app.get("/sso/stage6/status", async (request, reply) => {
     if (!request.workspaceId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const [cfg] = await app.db
-      .select()
+      .select({
+        status: workspaceSsoConfigs.status,
+        clerkOrgId: workspaceSsoConfigs.clerkOrgId,
+        idpProvider: workspaceSsoConfigs.idpProvider,
+        scimEnabled: workspaceSsoConfigs.scimEnabled,
+        activatedAt: workspaceSsoConfigs.activatedAt,
+      })
       .from(workspaceSsoConfigs)
       .where(scopedTo(workspaceSsoConfigs, request.workspaceId))
       .limit(1);
@@ -229,7 +235,21 @@ export async function ssoScimRoutes(app: FastifyInstance) {
   app.get("/sso/workspaces/current", async (request, reply) => {
     if (!request.workspaceId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const [cfg] = await app.db
-      .select()
+      .select({
+        workspaceId: workspaceSsoConfigs.workspaceId,
+        clerkOrgId: workspaceSsoConfigs.clerkOrgId,
+        idpProvider: workspaceSsoConfigs.idpProvider,
+        idpConnectionId: workspaceSsoConfigs.idpConnectionId,
+        idpMetadataUrl: workspaceSsoConfigs.idpMetadataUrl,
+        scimEnabled: workspaceSsoConfigs.scimEnabled,
+        groupRoleMap: workspaceSsoConfigs.groupRoleMap,
+        status: workspaceSsoConfigs.status,
+        activatedAt: workspaceSsoConfigs.activatedAt,
+        activatedBy: workspaceSsoConfigs.activatedBy,
+        notes: workspaceSsoConfigs.notes,
+        createdAt: workspaceSsoConfigs.createdAt,
+        updatedAt: workspaceSsoConfigs.updatedAt,
+      })
       .from(workspaceSsoConfigs)
       .where(scopedTo(workspaceSsoConfigs, request.workspaceId))
       .limit(1);
@@ -297,7 +317,10 @@ export async function ssoScimRoutes(app: FastifyInstance) {
       return reply.code(403).send(errorResponse("Requires owner or admin", 403));
     }
     const [cfg] = await app.db
-      .select()
+      .select({
+        idpConnectionId: workspaceSsoConfigs.idpConnectionId,
+        idpMetadataUrl: workspaceSsoConfigs.idpMetadataUrl,
+      })
       .from(workspaceSsoConfigs)
       .where(scopedTo(workspaceSsoConfigs, request.workspaceId))
       .limit(1);
@@ -341,7 +364,10 @@ export async function ssoScimRoutes(app: FastifyInstance) {
       }
 
       const [cfg] = await app.db
-        .select()
+        .select({
+          idpProvider: workspaceSsoConfigs.idpProvider,
+          status: workspaceSsoConfigs.status,
+        })
         .from(workspaceSsoConfigs)
         .where(scopedTo(workspaceSsoConfigs, request.workspaceId))
         .limit(1);
