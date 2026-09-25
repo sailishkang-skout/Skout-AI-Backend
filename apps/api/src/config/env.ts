@@ -270,6 +270,16 @@ const envSchema = z
     GOOGLE_OAUTH_REDIRECT_URI: z.string().url().optional(),
     MICROSOFT_CLIENT_ID: z.string().optional(),
     MICROSOFT_CLIENT_SECRET: z.string().optional(),
+    /**
+     * AUTH-BE-16 (Microsoft, ADR-0007 D7) — dedicated Microsoft OAuth app for *login* only.
+     * Never falls back to MICROSOFT_CLIENT_* (the inbox/warm-up app). The app registration must
+     * emit the `email` and `xms_edov` optional ID-token claims (see microsoft-auth.service.ts).
+     */
+    MICROSOFT_OAUTH_CLIENT_ID: z.string().optional(),
+    MICROSOFT_OAUTH_CLIENT_SECRET: z.string().optional(),
+    MICROSOFT_OAUTH_REDIRECT_URI: z.string().url().optional(),
+    /** "common" (any work/school or personal account), "organizations", or a tenant GUID. */
+    MICROSOFT_OAUTH_TENANT: z.string().default("common"),
     /** Razorpay checkout (optional — beta top-up remains when unset). */
     RAZORPAY_KEY_ID: z.string().optional(),
     RAZORPAY_KEY_SECRET: z.string().optional(),
