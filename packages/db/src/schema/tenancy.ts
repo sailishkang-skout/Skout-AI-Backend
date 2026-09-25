@@ -178,6 +178,7 @@ export const workspaceSsoConfigs = pgTable("workspace_sso_configs", {
     .primaryKey()
     .references(() => workspaces.id, { onDelete: "cascade" }),
   clerkOrgId: text("clerk_org_id").notNull(),
+  idpOrgRef: text("idp_org_ref"),
   idpProvider: text("idp_provider").notNull().default("okta"),
   idpConnectionId: text("idp_connection_id"),
   idpMetadataUrl: text("idp_metadata_url"),
