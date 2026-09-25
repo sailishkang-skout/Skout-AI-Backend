@@ -4,11 +4,12 @@ import { schema, scopedById } from "@skout/db";
 import { encryptSecret, decryptSecretWithFallback } from "@skout/shared";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
+import { getIntegrationEncryptionSecret } from "../utils/encryption-secrets.js";
 
 const { automationSecrets } = schema;
 
 function encryptionSecret(config: Env): string {
-  return config.INTEGRATION_ENCRYPTION_KEY ?? config.CLERK_SECRET_KEY ?? "dev-integration-encryption-key-change-me";
+  return getIntegrationEncryptionSecret(config);
 }
 
 export async function saveAutomationSecret(db: Db, config: Env, workspaceId: string, name: string, value: string) {

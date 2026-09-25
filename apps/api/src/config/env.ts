@@ -204,9 +204,9 @@ const envSchema = z
     /** Unipile DSN (e.g. https://api1.unipile.com:13111) for LinkedIn sequence sends. */
     UNIPILE_DSN: z.string().url().optional(),
     UNIPILE_API_KEY: z.string().optional(),
-    INTEGRATION_ENCRYPTION_KEY: z.string().optional(),
+    INTEGRATION_ENCRYPTION_KEY: z.string().min(16).optional(),
     /** Previous key retained during rotate-integration-encryption-key cutover. */
-    INTEGRATION_ENCRYPTION_KEY_PREVIOUS: z.string().optional(),
+    INTEGRATION_ENCRYPTION_KEY_PREVIOUS: z.string().min(16).optional(),
     /** HMAC secret for signed tracking/unsubscribe tokens. Falls back to INTEGRATION_ENCRYPTION_KEY. */
     TRACKING_SIGNING_SECRET: z.string().optional(),
     // --- AUTH-BE-12 own-auth token service (Clerk migration, dark until AUTH-BE-19). ---
@@ -259,6 +259,10 @@ const envSchema = z
     HUBSPOT_CLIENT_SECRET: z.string().optional(),
     GOOGLE_CLIENT_ID: z.string().optional(),
     GOOGLE_CLIENT_SECRET: z.string().optional(),
+    /** AUTH-ADI-09 / AUTH-BE-16 — dedicated Google OAuth credentials for login */
+    GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
+    GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
+    GOOGLE_OAUTH_REDIRECT_URI: z.string().url().optional(),
     MICROSOFT_CLIENT_ID: z.string().optional(),
     MICROSOFT_CLIENT_SECRET: z.string().optional(),
     /** Razorpay checkout (optional — beta top-up remains when unset). */

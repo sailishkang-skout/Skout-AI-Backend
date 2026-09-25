@@ -4,6 +4,7 @@ import { schema, scopedTo } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import { decryptSecretWithFallback, encryptSecret, maskApiKey } from "@skout/shared";
 import type { Env } from "../config/env.js";
+import { getIntegrationEncryptionSecret } from "../utils/encryption-secrets.js";
 
 const log = createLogger("warmup-tool.service");
 const { workspaceIntegrations, warmupToolSyncState } = schema;
@@ -32,11 +33,7 @@ function baseUrl(config: Pick<Env, "WARMUP_TOOL_SERVICE_URL">): string | null {
 }
 
 function encryptionSecret(config: Env): string {
-  return (
-    config.INTEGRATION_ENCRYPTION_KEY ??
-    config.CLERK_SECRET_KEY ??
-    "dev-integration-encryption-key-change-me"
-  );
+  return getIntegrationEncryptionSecret(config);
 }
 
 function decryptIntegrationSecret(payload: string, config: Env): string {
