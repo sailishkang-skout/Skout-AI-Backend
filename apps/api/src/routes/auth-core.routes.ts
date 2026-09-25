@@ -580,11 +580,19 @@ async function rotateRefreshTokenChecked(
   meta: ReturnType<typeof requestMeta>
 ): Promise<{ userId: string; sessionId: string; refreshToken: string }> {
   const rotated = await rotateRefreshToken(db, config, rawToken, meta);
-  const [session] = await db
-    .select({ userId: schema.authSessions.userId })
+  const [row] = await db
+    .select({
+      userId: schema.authSessions.userId,
+      isBlocked: schema.users.isBlocked,
+      status: schema.users.status,
+    })
     .from(schema.authSessions)
+    .innerJoin(schema.users, eq(schema.users.id, schema.authSessions.userId))
     .where(eq(schema.authSessions.id, rotated.sessionId))
     .limit(1);
-  if (!session) throw new HttpError(AuthErrorCode.AUTH_TOKEN_INVALID, 401);
-  return { userId: session.userId, sessionId: rotated.sessionId, refreshToken: rotated.refreshToken };
+  if (!row) throw new HttpError(AuthErrorCode.AUTH_TOKEN_INVALID, 401);
+  if (row.isBlocked || row.status !== "active") {
+    throw new HttpError(AuthErrorCode.AUTH_ACCOUNT_BLOCKED, 403);
+  }
+  return { userId: row.userId, sessionId: rotated.sessionId, refreshToken: rotated.refreshToken };
 }
