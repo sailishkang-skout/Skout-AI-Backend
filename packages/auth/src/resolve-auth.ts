@@ -5,18 +5,40 @@ import { clerkAuthProvider } from "./clerk-provider.js";
 import { emitAuthVerifyMetric } from "./auth-metrics.js";
 import { getTestAuthProvider } from "./test-auth-registry.js";
 
+import { skoutAuthProvider } from "./skout-provider.js";
+
+export type AcceptedIssuer = "clerk" | "skout";
+
 export type ResolveAuthConfig = {
+  /** Configured allowed issuers (clerk, skout, or both). Defaults to ["clerk"] if omitted. */
+  acceptedIssuers?: AcceptedIssuer[];
   /** Clerk session JWT issuer (AUTH-ADI-03 / CLERK_JWT_ISSUER). */
-  clerkJwtIssuer: string;
-  clerkSecretKey: string;
-  authorizedParties: string[];
+  clerkJwtIssuer?: string;
+  clerkSecretKey?: string;
+  authorizedParties?: string[];
+  /** Skout own-auth JWT issuer & key material (AUTH-BE-19). */
+  skoutJwtIssuer?: string;
+  skoutJwtAudience?: string;
+  skoutJwtPublicKeySet?: string;
 };
 
-/** Configured issuers → provider (Skout issuer added in a later ticket). */
+/** Configured issuers → provider (Clerk, Skout, or registered test providers). */
 function providerForIssuer(issuer: string, config: ResolveAuthConfig) {
   const testProvider = getTestAuthProvider(issuer);
-  if (testProvider) return testProvider;
-  if (issuer === config.clerkJwtIssuer) return clerkAuthProvider;
+  if (testProvider) {
+    if (config.acceptedIssuers && !config.acceptedIssuers.includes(testProvider.id as AcceptedIssuer)) {
+      return null;
+    }
+    return testProvider;
+  }
+
+  const accepted = config.acceptedIssuers ?? ["clerk"];
+  if (accepted.includes("clerk") && config.clerkJwtIssuer && issuer === config.clerkJwtIssuer) {
+    return clerkAuthProvider;
+  }
+  if (accepted.includes("skout") && config.skoutJwtIssuer && issuer === config.skoutJwtIssuer) {
+    return skoutAuthProvider;
+  }
   return null;
 }
 
@@ -49,6 +71,9 @@ export async function resolveAuth(token: string, config: ResolveAuthConfig): Pro
     const identity = await provider.verify(token, {
       clerkSecretKey: config.clerkSecretKey,
       authorizedParties: config.authorizedParties,
+      skoutJwtIssuer: config.skoutJwtIssuer,
+      skoutJwtAudience: config.skoutJwtAudience,
+      skoutJwtPublicKeySet: config.skoutJwtPublicKeySet,
     });
     // No userId tag here: resolveAuth only resolves the external provider identity, not the
     // internal users.id (Ground Rule 7's actual identity) — that mapping happens one layer up

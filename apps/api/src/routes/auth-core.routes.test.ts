@@ -452,4 +452,9 @@ describe("auth-core.routes (AUTH-BE-14)", () => {
       expect(refreshAfter.statusCode).toBe(401);
     });
   });
+
+  afterAll(async () => {
+    await app?.close();
+    await sql.end();
+  });
 });

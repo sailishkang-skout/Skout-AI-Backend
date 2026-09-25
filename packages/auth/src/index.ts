@@ -9,7 +9,7 @@ export {
 } from "./link-auth-identity.js";
 export type { AuthProvider, AuthVerifyContext, VerifiedIdentity } from "./auth-provider.js";
 export { computeAuthorizedParties, normalizeOrigin, type AuthorizedPartiesConfig } from "./authorized-parties.js";
-export { resolveAuth, type ResolveAuthConfig } from "./resolve-auth.js";
+export { resolveAuth, type AcceptedIssuer, type ResolveAuthConfig } from "./resolve-auth.js";
 export {
   TEST_CLERK_ISSUER,
   TEST_SKOUT_AUTH_ISSUER,
@@ -44,6 +44,7 @@ export {
   assertAuthModeBootGuards,
   deriveLegacyAuthMode,
   isClerkSecretKeyInvalid,
+  parseAcceptedIssuers,
   parseAuthModeEnv,
   resolveAuthMode,
   type AuthMode,
