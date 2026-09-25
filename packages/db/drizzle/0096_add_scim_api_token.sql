@@ -1,0 +1,1 @@
+ALTER TABLE "workspace_sso_configs" ADD COLUMN IF NOT EXISTS "scim_api_token" text;

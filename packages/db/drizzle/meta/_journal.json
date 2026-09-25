@@ -666,6 +666,13 @@
       "when": 1792600000000,
       "tag": "0093_auth_identities",
       "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1793000000000,
+      "tag": "0096_add_scim_api_token",
+      "breakpoints": true
     }
   ]
 }

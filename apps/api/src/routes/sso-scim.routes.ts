@@ -5,6 +5,8 @@ import { schema, scopedTo } from "@skout/db";
 import type { Db } from "@skout/db";
 import { normalizeEmail } from "@skout/shared";
 import { errorResponse } from "../utils/http.js";
+import { registerScimRoutes } from "../services/scim.service.js";
+import { registerSamlRoutes } from "../services/saml.service.js";
 
 const { workspaceSsoConfigs, users, workspaceMembers, authIdentities } = schema;
 
@@ -424,4 +426,8 @@ export async function ssoScimRoutes(app: FastifyInstance) {
       return reply.code(500).send(errorResponse("Internal server error", 500));
     }
   });
+
+  // Register in-house SAML and SCIM 2.0 endpoints (AUTH-BE-24)
+  await registerSamlRoutes(app);
+  await registerScimRoutes(app);
 }
