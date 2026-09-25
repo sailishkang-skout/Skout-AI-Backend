@@ -21,8 +21,13 @@ import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { schema } from "@skout/db";
 import type { Db } from "@skout/db";
-import { resolveOrProvisionUser } from "@skout/auth";
-import { AuthErrorCode, authErrorResponse, HttpError } from "@skout/auth";
+import {
+  AuthErrorCode,
+  authErrorResponse,
+  emitAuthLoginMetric,
+  HttpError,
+  resolveOrProvisionUser,
+} from "@skout/auth";
 import type { Env } from "../config/env.js";
 import { errorResponse, successResponse } from "../utils/http.js";
 import {
@@ -329,6 +334,7 @@ export async function authCoreRoutes(app: FastifyInstance) {
           );
 
       if (await isIpLocked(config, meta.ip)) {
+        emitAuthLoginMetric({ result: "failure" });
         await logEvent(db, config, null, "login_failure", meta, { email, reason: "ip_rate_limited" });
         return reply
           .code(429)
@@ -357,6 +363,7 @@ export async function authCoreRoutes(app: FastifyInstance) {
         // comparison so response time can't distinguish "no such account" from "wrong password".
         await verifyUnknownUser(parsed.data.password);
         const ipLocked = await recordIpFailureAndCheckLocked(config, meta.ip);
+        emitAuthLoginMetric({ result: "failure" });
         await logEvent(db, config, null, "login_failure", meta, { email, reason: "no_account" });
         if (ipLocked) {
           return reply
@@ -369,6 +376,7 @@ export async function authCoreRoutes(app: FastifyInstance) {
       if (row.lockedUntil && row.lockedUntil.getTime() > Date.now()) {
         // Locked from repeated failures — signalled as rate-limited (not a distinct "locked"
         // code) so this can't be used to distinguish "wrong password" from "account locked".
+        emitAuthLoginMetric({ result: "failure", userId: row.userId });
         await logEvent(db, config, row.userId, "login_failure", meta, { email, reason: "account_locked" });
         return reply
           .code(429)
@@ -391,6 +399,7 @@ export async function authCoreRoutes(app: FastifyInstance) {
           .set({ failedAttempts: nextFailed, lockedUntil, updatedAt: new Date() })
           .where(eq(userCredentials.userId, row.userId));
         const ipLocked = await recordIpFailureAndCheckLocked(config, meta.ip);
+        emitAuthLoginMetric({ result: "failure", userId: row.userId });
         await logEvent(db, config, row.userId, "login_failure", meta, { email, reason: "bad_password" });
         if (ipLocked) {
           return reply
@@ -401,6 +410,7 @@ export async function authCoreRoutes(app: FastifyInstance) {
       }
 
       if (row.status !== "active" || row.isBlocked) {
+        emitAuthLoginMetric({ result: "failure", userId: row.userId });
         await logEvent(db, config, row.userId, "login_failure", meta, { email, reason: "account_blocked" });
         return reply
           .code(403)
@@ -428,6 +438,7 @@ export async function authCoreRoutes(app: FastifyInstance) {
       await clearIpFailures(config, meta.ip);
 
       if (!(await isPasswordEmailVerified(db, row.userId))) {
+        emitAuthLoginMetric({ result: "failure", userId: row.userId });
         await logEvent(db, config, row.userId, "login_failure", meta, { email, reason: "email_not_verified" });
         return reply
           .code(403)
@@ -441,6 +452,7 @@ export async function authCoreRoutes(app: FastifyInstance) {
       }
 
       const session = await issueOwnAuthSession(db, config, reply, row.userId, meta);
+      emitAuthLoginMetric({ result: "success", userId: row.userId });
       await logEvent(db, config, row.userId, "login_success", meta, { email, sessionId: session.sessionId });
 
       return reply.send(successResponse({ accessToken: session.accessToken, expiresIn: session.expiresIn }));
