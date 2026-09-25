@@ -3,6 +3,10 @@ export {
   type ProvisionResult,
   type ResolveOrProvisionInput,
 } from "./auth.service.js";
+export {
+  linkAuthIdentity,
+  linkAuthIdentityForClerkUserId,
+} from "./link-auth-identity.js";
 export type { AuthProvider, AuthVerifyContext, VerifiedIdentity } from "./auth-provider.js";
 export { computeAuthorizedParties, normalizeOrigin, type AuthorizedPartiesConfig } from "./authorized-parties.js";
 export { resolveAuth, type ResolveAuthConfig } from "./resolve-auth.js";
