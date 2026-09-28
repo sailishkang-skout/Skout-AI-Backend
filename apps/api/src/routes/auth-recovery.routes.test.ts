@@ -131,6 +131,13 @@ describe("auth-recovery.routes (AUTH-BE-15)", () => {
       payload: { email, password: "correct horse battery staple" },
     });
     expect(res.statusCode).toBe(201);
+    // AUTH-BE-14 now sends its own verification email on signup (§3: "201 {userId} (+
+    // verification email)"), fire-and-forget so it can land after this response returns.
+    // These BE-15 tests assert on mail from a specific endpoint call they make afterward, so
+    // give signup's own send a moment to land, then drop it — otherwise it can leak into (or
+    // race with) the next assertion's count/index.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    sentMails.length = 0;
     return res.json().data.userId as string;
   }
 
@@ -185,6 +192,12 @@ describe("auth-recovery.routes (AUTH-BE-15)", () => {
     // whose own real-DB latency (other tests in this file: 15-80s each) makes any
     // millisecond-based assertion flaky by construction, as two earlier versions of this test
     // found out the hard way.
+    const email = freshEmail("slow-smtp");
+    await signup(email);
+
+    // AUTH-BE-14's signup also calls sendMail, so the gate is wired up only now — otherwise
+    // signup's own fire-and-forget call would consume this mockImplementationOnce before the
+    // verify-email/send request below ever runs.
     let releaseMail!: () => void;
     const mailGate = new Promise<void>((resolve) => {
       releaseMail = resolve;
@@ -196,10 +209,6 @@ describe("auth-recovery.routes (AUTH-BE-15)", () => {
       sentMails.push(opts);
       return { sent: true };
     });
-
-    const email = freshEmail("slow-smtp");
-    await signup(email);
-    sentMails.length = 0;
 
     const res = await app.inject({ method: "POST", url: "/api/v1/auth/verify-email/send", payload: { email } });
 
