@@ -327,10 +327,12 @@ export class ComputeStack extends Stack {
         SERVICE_NAME: "skout-api",
         // AUTH-ADI-08 — explicit, so the legacy CLERK_SECRET_KEY-presence inference (BE-06)
         // can eventually be deleted, and so removing the Clerk secret can never silently flip
-        // this environment into unauthenticated stub mode. Later phases change this to
-        // "dual" then "custom" (see AUTH-ADI-15, AUTH-ADI-17) — never "stub" outside a
-        // deliberate local/test override.
-        AUTH_MODE: "clerk",
+        // this environment into unauthenticated stub mode. AUTH-ADI-15: dev now accepts both
+        // issuers (AUTH_MODE=dual) so BE-14's own-auth endpoints work alongside the still-live
+        // Clerk login; UAT/prod stay on "clerk" until their own ADI-15 rollout step. Never
+        // "stub" outside a deliberate local/test override.
+        AUTH_MODE: config.name === "dev" ? "dual" : "clerk",
+        ...(config.name === "dev" ? { AUTH_ACCEPTED_ISSUERS: "clerk,skout" } : {}),
         LOG_LEVEL: "info",
         TRUST_PROXY: "true",
         DD_SERVICE: "skout-api",
@@ -515,8 +517,10 @@ export class ComputeStack extends Stack {
         DATABASE_NAME: "skout",
         DATABASE_USER: "skout",
         SERVICE_NAME: "skout-crm",
-        // AUTH-ADI-08 — see the matching comment on the api service above.
-        AUTH_MODE: "clerk",
+        // AUTH-ADI-08 / AUTH-ADI-15 — see the matching comment on the api service above; crm must
+        // accept own-auth tokens too, or CRM calls break once the web pilot cohort logs in with them.
+        AUTH_MODE: config.name === "dev" ? "dual" : "clerk",
+        ...(config.name === "dev" ? { AUTH_ACCEPTED_ISSUERS: "clerk,skout" } : {}),
         LOG_LEVEL: "info",
         TRUST_PROXY: "true",
         DD_SERVICE: "skout-crm",
