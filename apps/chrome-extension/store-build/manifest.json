@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Skout AI Prospector",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "description": "Capture LinkedIn profiles into Skout lists, enrich contacts, and send sequence connection requests/messages.",
   "permissions": [
     "storage",
