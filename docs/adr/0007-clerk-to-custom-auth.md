@@ -102,8 +102,22 @@ between instances.
 | D6 | Signing-key custody | **Secrets Manager injected as env** | Matches the existing secrets pattern (AUTH-ADI-09), fastest to ship; revisit KMS custody later if a compliance requirement demands it. | None |
 | D7 | Social-login scope | **Google + Microsoft** | Adds Microsoft OAuth alongside Google in AUTH-BE-16/FE-10 scope. | None — no blocking audit, but adds scope to BE-16/FE-10 vs. the ticket doc's Google-only baseline |
 
-Cohort success criteria (error rate, login success rate, support-ticket threshold gating G5): **not
-yet defined** — needs concrete numbers, follow up separately now that D5 (cohort rollout) is set.
+### Cohort success criteria (gates G5, and ADI-14's rehearsal / ADI-17's cutover)
+
+**Proposed 2026-09-28, needs Aditya's sign-off before it gates anything.** Measured on the pilot
+cohort only, over the window it's in dual-verify, own-auth (own-issued) attempts only unless noted:
+
+| Metric | Threshold | Action if breached |
+|---|---|---|
+| Login success rate (own-auth) | ≥ 99% of attempts (excluding wrong-password/locked-account, which are correct rejections, not errors) | Investigate before expanding the cohort; do not proceed to the next tranche |
+| Auth error rate (5xx from `/auth/*`, or unexpected `AUTH_TOKEN_INVALID` on a token this service issued) | < 0.5% of login/refresh/me calls, sustained over any 15-minute window | Same as above; if sustained > 2% for 15 min, treat as a rollback trigger per ADI-17 |
+| Refresh-reuse (theft signal) rate | No more than baseline-expected benign double-fires; any *confirmed* reuse (beyond the 5s grace window, `session.service.ts`) outside a known test gets investigated same-day | Do not expand the cohort until explained |
+| Support tickets tagged auth-related | ≤ 5 per 100 pilot users over the cohort's first 7 days | Pause expansion, review ticket contents for a pattern before continuing |
+| Rollback decision window | Any single breach above → hold at current cohort size for 48h minimum before the next tranche, not an automatic rollback (ADI-17's runbook, not this table, owns the actual rollback trigger) | — |
+
+These are proposed numbers, not measured baselines — Clerk's own current error/success rates were
+not pulled before writing this table. If real Clerk-era numbers exist (e.g. from Sentry/Datadog),
+compare against them before treating a own-auth number as a regression.
 
 ## Risks — decisions made ahead of confirming audits
 - **D1** — kept "build in-house" even though AUTH-ADI-03 shows zero active Clerk Organizations and
