@@ -151,7 +151,7 @@ async function resolveProfile(message, senderTabId) {
   return readLinkedInProfile();
 }
 
-/** Refresh Clerk JWT before API calls; opens Skout if needed. */
+/** Refresh Skout JWT before API calls; opens Skout if needed. */
 async function ensureAuthForApi() {
   const config = await chrome.storage.sync.get(["useStubAuth", "webUrl"]);
   if (config.useStubAuth) return;
