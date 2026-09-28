@@ -231,6 +231,14 @@ const envSchema = z
       .string()
       .optional()
       .transform((v) => v === "true" || v === "1"),
+    /**
+     * AUTH-BE-22 — login method `POST /auth/discover` returns for any email with no
+     * auth_login_cohorts row. Defaults to "clerk" (today's behavior); flipped per environment as
+     * the cohort rollout progresses.
+     */
+    AUTH_DISCOVERY_DEFAULT_METHOD: z
+      .enum(["clerk", "password", "google", "microsoft", "sso"])
+      .default("clerk"),
     // --- Enrichment provider API keys (PAL). Optional: stub adapters are used
     //     for any capability whose key is absent. ---
     HUNTER_API_KEY: z.string().optional(),
