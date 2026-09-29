@@ -4,7 +4,7 @@ import * as appscaling from "aws-cdk-lib/aws-applicationautoscaling";
 /**
  * Dev-only cost lever: scales a Fargate service to 0 outside business hours instead of
  * running it 24/7. Scale-down runs every day at 22:00 IST (16:30 UTC); scale-up runs
- * Mon-Fri at 11:00 IST (05:30 UTC) — so a Friday-evening scale-down persists through the
+ * Mon-Fri at 10:00 IST (04:30 UTC) — so a Friday-evening scale-down persists through the
  * weekend since there's no Sat/Sun scale-up. AWS Application Auto Scaling cron is UTC-only.
  */
 export function applyBusinessHoursSchedule(service: ecs.FargateService, desiredCount: number): void {
@@ -17,7 +17,7 @@ export function applyBusinessHoursSchedule(service: ecs.FargateService, desiredC
   });
 
   scalable.scaleOnSchedule("ScaleUpBusinessHours", {
-    schedule: appscaling.Schedule.cron({ minute: "30", hour: "5", weekDay: "MON-FRI" }),
+    schedule: appscaling.Schedule.cron({ minute: "30", hour: "4", weekDay: "MON-FRI" }),
     minCapacity: desiredCount,
     maxCapacity: desiredCount,
   });
