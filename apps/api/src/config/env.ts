@@ -71,6 +71,10 @@ const envSchema = z
     CLERK_PUBLISHABLE_KEY: z.string().optional(),
     /** Clerk session JWT `iss` (Frontend API URL) — AUTH-ADI-03 / AUTH-BE-03 issuer allowlist. */
     CLERK_JWT_ISSUER: z.string().url().optional(),
+    /** SAML configuration for in-house SSO implementation (AUTH-BE-24) */
+    SAML_ISSUER: z.string().default("https://app.skout.com"),
+    SAML_AUDIENCE: z.string().default("https://api.skout.com"),
+    API_URL: z.string().default("https://api.skout.com"),
     /**
      * Auth runtime mode (AUTH-BE-06). When unset, derived from AUTH_STUB + CLERK_SECRET_KEY
      * for backward compatibility until AUTH-ADI-08 sets this in ECS.
