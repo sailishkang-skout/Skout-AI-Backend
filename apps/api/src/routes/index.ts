@@ -66,6 +66,7 @@ import { authCoreRoutes } from "./auth-core.routes.js";
 import { authRecoveryRoutes } from "./auth-recovery.routes.js";
 import { authGoogleRoutes } from "./auth-google.routes.js";
 import { authMicrosoftRoutes } from "./auth-microsoft.routes.js";
+import { authDiscoveryRoutes } from "./auth-discovery.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoutes, { prefix: "/api/v1" });
@@ -107,6 +108,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(authRecoveryRoutes);
     await v1.register(authGoogleRoutes);
     await v1.register(authMicrosoftRoutes);
+    await v1.register(authDiscoveryRoutes);
     await v1.register(activationRuleRoutes);
     await v1.register(callRoutes);
     await v1.register(numberRequestRoutes);

@@ -115,16 +115,31 @@ jobs:
         env:
           IMAGE_TAG: ${{ steps.meta.outputs.tag }}
           API_URL: ${{ vars.PROD_API_URL }}
+          AUTH_MODE_ARG: ${{ vars.NEXT_PUBLIC_AUTH_MODE || 'clerk' }}
         run: |
           if [ ! -f frontend/package.json ] || [ ! -f frontend/Dockerfile ]; then
             echo "Frontend repo or Dockerfile not found — skipping web image build"
             exit 0
+          fi
+          # AUTH-ADI-18 — a prod image built for own-auth (custom) must not point at a
+          # placeholder API URL; own-auth has no Clerk fallback to save it if the API is
+          # unreachable. This is deliberately loose (URL shape only) — it cannot check that the
+          # API's own-auth secrets are real, only that this build isn't wired to nothing.
+          if [ "$AUTH_MODE_ARG" = "custom" ]; then
+            case "$API_URL" in
+              https://*) ;;
+              *)
+                echo "::error::NEXT_PUBLIC_AUTH_MODE=custom requires vars.PROD_API_URL to be a real https:// URL (got '${API_URL}')."
+                exit 1
+                ;;
+            esac
           fi
           WEB_REPO=$(aws ecr describe-repositories --repository-names skout-prod-web --query 'repositories[0].repositoryUri' --output text)
           docker build -f frontend/Dockerfile \
             --build-arg NEXT_PUBLIC_API_URL="${API_URL}" \
             --build-arg NEXT_PUBLIC_APP_URL="https://www.skoutai.io/app" \
             --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}" \
+            --build-arg NEXT_PUBLIC_AUTH_MODE="${{ vars.NEXT_PUBLIC_AUTH_MODE || 'clerk' }}" \
             --build-arg CLERK_SECRET_KEY="${{ secrets.CLERK_SECRET_KEY }}" \
             --build-arg GATE_TOKEN="${{ secrets.GATE_TOKEN }}" \
             -t "$WEB_REPO:$IMAGE_TAG" -t "$WEB_REPO:latest" frontend

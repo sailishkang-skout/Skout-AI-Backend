@@ -52,7 +52,15 @@ import {
   isIpLocked,
   recordIpFailureAndCheckLocked,
 } from "../services/auth-lockout.service.js";
-import { isPasswordEmailVerified } from "../services/auth-recovery.service.js";
+import { isPasswordEmailVerified, issueVerificationToken, VERIFICATION_TTL_MINUTES } from "../services/auth-recovery.service.js";
+import { buildAuthLinkEmail, sendMail } from "../services/mail.service.js";
+import { createLogger } from "@skout/observability";
+
+const log = createLogger("auth-core.routes");
+
+function appBase(config: Env): string {
+  return (config.FRONTEND_URL || "http://localhost:3000").replace(/\/$/, "");
+}
 
 const { users, userCredentials, authRefreshTokens } = schema;
 
@@ -304,6 +312,25 @@ export async function authCoreRoutes(app: FastifyInstance) {
 
       await clearIpFailures(config, meta.ip);
       await logEvent(db, config, result.userId, "signup", meta, { email });
+
+      // §3: signup responds 201 "+ verification email". BE-14 previously stopped short of
+      // actually sending it, leaving new accounts permanently unverified (BE-14 already refuses
+      // password login until AUTH-BE-15's verify-email/confirm or otp/verify runs). Fire-and-
+      // forget like AUTH-BE-15's own send endpoints: never let SES latency slow the signup
+      // response, and a delivery failure here must not fail account creation, which already
+      // succeeded.
+      const verifyRaw = await issueVerificationToken(db, config, result.userId, "email_verify");
+      const verifyMessage = buildAuthLinkEmail({
+        to: email,
+        url: `${appBase(config)}/verify-email?token=${encodeURIComponent(verifyRaw)}`,
+        title: "Verify your Skout AI email",
+        intro: "Confirm this is your email address to finish creating your Skout AI account.",
+        buttonLabel: "Verify email",
+        expiresInMinutes: VERIFICATION_TTL_MINUTES,
+      });
+      void sendMail(config, verifyMessage).catch((err) =>
+        log.warn("Failed to send signup verification email", { reason: (err as Error)?.name })
+      );
 
       return reply.code(201).send(successResponse({ userId: result.userId }));
     }

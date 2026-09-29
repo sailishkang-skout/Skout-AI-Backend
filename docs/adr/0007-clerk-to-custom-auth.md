@@ -98,12 +98,26 @@ between instances.
 | D2 | Token & cookie architecture | **Same-origin route-handler layer (BFF)** — JWT access + rotating opaque refresh; TTLs per ticket doc §3 (access 10 min · refresh idle 14 d · absolute 60 d) | Matches the ticket doc's recommended default; avoids the cross-origin cookie risk AUTH-ADI-11 flags for API-host cookies through the marketing proxy. | None — independently decidable, no change pending |
 | D3 | MFA scope | **None at launch** | Ship core own-auth first. | **Still open**: AUTH-ADI-03 shows SMS-based MFA is *enabled and optional* in Clerk (not required). Need an actual adoption count (Users tab or Backend API `two_factor_enabled`) before this can be finalized — if adoption is non-trivial, those users need a migration path (e.g. forced TOTP re-enrollment) even if MFA itself isn't built into launch scope. |
 | D4 | Where own-auth lives | **Module in `apps/api`** | Reuses existing DB, email, and OTP infrastructure; no new deploy target. | None |
-| D5 | User migration approach | **Import hashes (if exportable)**, **cohort rollout** | Least user disruption if Clerk exports usable password hashes. | AUTH-ADI-03 (Clerk's written answer on hash export format) — **if hashes are not exportable, this falls back to force-reset or passwordless-OTP; AUTH-BE-21/22 and FE-16 must not assume hash import until AUTH-ADI-03 confirms it** |
+| D5 | User migration approach | **Import hashes (confirmed exportable)**, **cohort rollout** | Least user disruption; Clerk support confirmed (2026-09-22, written 2026-09-28) the Dashboard self-serve export includes standard bcrypt digests, importable as-is. | **Confirmed** — see Context below. |
 | D6 | Signing-key custody | **Secrets Manager injected as env** | Matches the existing secrets pattern (AUTH-ADI-09), fastest to ship; revisit KMS custody later if a compliance requirement demands it. | None |
 | D7 | Social-login scope | **Google + Microsoft** | Adds Microsoft OAuth alongside Google in AUTH-BE-16/FE-10 scope. | None — no blocking audit, but adds scope to BE-16/FE-10 vs. the ticket doc's Google-only baseline |
 
-Cohort success criteria (error rate, login success rate, support-ticket threshold gating G5): **not
-yet defined** — needs concrete numbers, follow up separately now that D5 (cohort rollout) is set.
+### Cohort success criteria (gates G5, and ADI-14's rehearsal / ADI-17's cutover)
+
+**Proposed 2026-09-28, needs Aditya's sign-off before it gates anything.** Measured on the pilot
+cohort only, over the window it's in dual-verify, own-auth (own-issued) attempts only unless noted:
+
+| Metric | Threshold | Action if breached |
+|---|---|---|
+| Login success rate (own-auth) | ≥ 99% of attempts (excluding wrong-password/locked-account, which are correct rejections, not errors) | Investigate before expanding the cohort; do not proceed to the next tranche |
+| Auth error rate (5xx from `/auth/*`, or unexpected `AUTH_TOKEN_INVALID` on a token this service issued) | < 0.5% of login/refresh/me calls, sustained over any 15-minute window | Same as above; if sustained > 2% for 15 min, treat as a rollback trigger per ADI-17 |
+| Refresh-reuse (theft signal) rate | No more than baseline-expected benign double-fires; any *confirmed* reuse (beyond the 5s grace window, `session.service.ts`) outside a known test gets investigated same-day | Do not expand the cohort until explained |
+| Support tickets tagged auth-related | ≤ 5 per 100 pilot users over the cohort's first 7 days | Pause expansion, review ticket contents for a pattern before continuing |
+| Rollback decision window | Any single breach above → hold at current cohort size for 48h minimum before the next tranche, not an automatic rollback (ADI-17's runbook, not this table, owns the actual rollback trigger) | — |
+
+These are proposed numbers, not measured baselines — Clerk's own current error/success rates were
+not pulled before writing this table. If real Clerk-era numbers exist (e.g. from Sentry/Datadog),
+compare against them before treating a own-auth number as a regression.
 
 ## Risks — decisions made ahead of confirming audits
 - **D1** — kept "build in-house" even though AUTH-ADI-03 shows zero active Clerk Organizations and
@@ -113,9 +127,18 @@ yet defined** — needs concrete numbers, follow up separately now that D5 (coho
   If any users have enrolled, "none at launch" needs a migration path for them specifically (they
   lose their second factor silently otherwise) even though MFA isn't being built into own-auth at
   launch. Get the adoption count before cutover, not after.
-- **D5** assumes Clerk's password hashes are exportable. AUTH-ADI-03 includes asking Clerk support
-  this explicitly, in writing — until that answer lands, AUTH-BE-21 (import tool) should be built
-  to support hash-import as the primary path but must not hard-fail if hashes turn out unavailable.
+- **D5 — resolved 2026-09-28.** Clerk support confirmed in writing (2026-09-22 email, reviewed
+  2026-09-28): the Dashboard's per-instance User export (Instance Settings -> User exports ->
+  Export users; self-serve, workspace-admin only, no Clerk-side request needed) includes standard
+  bcrypt digests (`$2a$10$...`, cost factor and 22-char salt embedded — importable directly, no
+  separate salt field needed). Google-only sign-ups have no digest (expected — they never set a
+  password) and fall back to force-reset/OTP on first own-auth login, same as any hash-import
+  migration. The CSV export may not carry full OAuth provider user IDs; for Google `sub` values,
+  call the Backend API `GET /users` (`external_accounts[]`) and match by Clerk user id instead —
+  AUTH-BE-21 needs this as a second data source alongside the CSV.
+  **Handle the export file as sensitive**: it can contain password hashes. Encrypt at rest, delete
+  after the retention window, never commit it or paste it into chat/tickets (AUTH-ADI-13 already
+  says this; repeating it here since this is where the file's contents are first confirmed).
 
 ## Inputs still needed (confirm or revise D1/D3/D5 above)
 - [x] AUTH-ADI-01 — ran against SkoutDev 2026-09-22, results in Context above. No cleanup items
@@ -129,7 +152,9 @@ yet defined** — needs concrete numbers, follow up separately now that D5 (coho
       claims all recorded above.
   - [ ] Still open: SMS-MFA adoption count (Users tab or Backend API `two_factor_enabled`) — feeds
         D3.
-  - [ ] Still open: Clerk support's written answer on password-hash export format — feeds D5.
+  - [x] Clerk support's written answer on password-hash export format — feeds D5. **Confirmed
+        exportable, bcrypt, self-serve.** See Risks above for the full answer and the caveat on
+        Google-only users and OAuth provider ids.
   - [x] Issuer URL — `https://honest-mammoth-99.clerk.accounts.dev` (see Context above). Feeds
         AUTH-BE-03's issuer allowlist.
   - [ ] Still open (lower priority, not decision-blocking): allowed origins/redirects, DNS
@@ -138,6 +163,6 @@ yet defined** — needs concrete numbers, follow up separately now that D5 (coho
 ## Consequences
 AUTH-BE-10 (own-auth schema) and AUTH-FE-05 (route-handler layer) can start now — they only needed
 D2/D4. AUTH-BE-17/FE-13 (MFA) are closed as not-in-scope per D3. AUTH-BE-16/FE-10 (Google sign-in)
-gain Microsoft as in-scope per D7. AUTH-BE-21/22 and FE-16 (migration tooling) should build for
-hash-import as primary per D5, with force-reset/OTP as the documented fallback until AUTH-ADI-03
-confirms hash export is real.
+gain Microsoft as in-scope per D7. AUTH-BE-21/22 and FE-16 (migration tooling) build for hash-import as the
+primary, now-confirmed path per D5, with force-reset/OTP only for the expected Google-only-signup
+case (no password hash exists for them) — not as a fallback for hash-import failing.
