@@ -208,6 +208,10 @@ const loginBodySchema = z.object({
   password: z.string(),
 });
 
+const discoverBodySchema = z.object({
+  email: z.string().trim().email(),
+});
+
 export async function authCoreRoutes(app: FastifyInstance) {
   function requireEnabled(reply: FastifyReply): boolean {
     if (!app.config.AUTH_CUSTOM_ENABLED) {
@@ -216,6 +220,83 @@ export async function authCoreRoutes(app: FastifyInstance) {
     }
     return true;
   }
+
+  // --- POST /auth/discover --------------------------------------------------------------
+  // AUTH-BE-22: Identifier-first login discovery - returns available auth methods for an email
+  app.post(
+    "/auth/discover",
+    { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      if (!requireEnabled(reply)) return;
+      const config = app.config;
+      const db = app.db;
+      if (!db) return reply.code(503).send(errorResponse("Database unavailable", 503));
+
+      const parsed = discoverBodySchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        return reply.code(400).send(errorResponse("Invalid request", 400, parsed.error.flatten()));
+      }
+      const email = normalizeEmail(parsed.data.email);
+
+      // Find user by email
+      const [user] = await db
+        .select({
+          id: users.id,
+        })
+        .from(users)
+        .where(sql`lower(trim(${users.email})) = ${email}`)
+        .limit(1);
+
+      // Default methods for new users (signup flow)
+      const methods: string[] = ["password", "otp"];
+      let mustReset = false;
+      let hasGoogleIdentity = false;
+
+      if (user) {
+        // Check if user has credentials with mustReset
+        const [credentials] = await db
+          .select({
+            mustReset: userCredentials.mustReset,
+          })
+          .from(userCredentials)
+          .where(eq(userCredentials.userId, user.id))
+          .limit(1);
+
+        if (credentials) {
+          mustReset = credentials.mustReset;
+          if (!mustReset) {
+            // If they have a valid password, add password method
+            if (!methods.includes("password")) methods.push("password");
+          }
+        }
+
+        // Check if user has Google identity
+        const [googleIdentity] = await db
+          .select({ id: authIdentities.id })
+          .from(authIdentities)
+          .where(and(
+            eq(authIdentities.userId, user.id),
+            eq(authIdentities.provider, "google")
+          ))
+          .limit(1);
+
+        if (googleIdentity) {
+          hasGoogleIdentity = true;
+          methods.push("google");
+        }
+      }
+
+      // Return discovery data - never expose existence of user directly to prevent enumeration
+      return reply.send(successResponse({
+        data: {
+          methods,
+          mustReset,
+          hasGoogleIdentity,
+          isExistingUser: !!user,
+        }
+      }));
+    }
+  );
 
   // --- POST /auth/signup --------------------------------------------------------------
   app.post(
