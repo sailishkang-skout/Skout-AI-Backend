@@ -3,9 +3,10 @@ import type { Db } from "@skout/db";
 import { providerForClerkUserId } from "@skout/db/schema";
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+export type DbOrTx = Db | Tx;
 
 export async function linkAuthIdentity(
-  tx: Tx,
+  tx: DbOrTx,
   userId: string,
   provider: string,
   providerSubject: string,

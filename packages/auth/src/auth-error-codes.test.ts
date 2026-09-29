@@ -25,6 +25,12 @@ describe("resolveAuthErrorCode", () => {
     ).toBe(AuthErrorCode.AUTH_ACCOUNT_BLOCKED);
   });
 
+  it("maps session revoked HttpError to AUTH_SESSION_REVOKED", () => {
+    expect(
+      resolveAuthErrorCode(new HttpError(AuthErrorCode.AUTH_SESSION_REVOKED, 401))
+    ).toBe(AuthErrorCode.AUTH_SESSION_REVOKED);
+  });
+
   it("detects expired wording in fallback messages", () => {
     expect(resolveAuthErrorCode(null, "Token jwt is expired")).toBe(AuthErrorCode.AUTH_TOKEN_EXPIRED);
   });

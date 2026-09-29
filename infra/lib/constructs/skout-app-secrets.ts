@@ -1,5 +1,5 @@
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
-import { SecretValue, Stack } from "aws-cdk-lib";
+import { RemovalPolicy, SecretValue, Stack } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import type { EnvironmentConfig } from "../config/environments.js";
 
@@ -130,16 +130,32 @@ export class SkoutAppSecrets extends Construct {
       POSTHOG_HOST: "https://us.i.posthog.com",
       POSTHOG_PROJECT_ID: "replace-me",
     });
-    this.appConfig = createPlaceholder("AppConfig", "app-config", {
-      INTEGRATION_ENCRYPTION_KEY: "replace-me",
-      // Empty until a rotation window; ECS injects this field for dual-read decrypt.
-      INTEGRATION_ENCRYPTION_KEY_PREVIOUS: "",
-      // AUTH-ADI-06 — was a literal in compute-stack.ts (SkoutDev only, now removed). That
-      // value is burned (committed to git history) — replace this placeholder with a freshly
-      // generated value via `aws secretsmanager put-secret-value` after first deploy, same as
-      // every other secret in this file. Protects the /api/v1/import/* static-secret path.
-      ADMIN_IMPORT_SECRET: "replace-me",
-    });
+    // Dev: imported by complete ARN so CloudFormation can never re-push a placeholder over the
+    // live, manually-rotated INTEGRATION_ENCRYPTION_KEY / ADMIN_IMPORT_SECRET (that reset caused a
+    // real outage — see the clerkIssuer note below). Other envs stay CDK-managed but RETAIN, and
+    // move to this same pattern once their live secret exists and its ARN suffix is known.
+    if (props.config.name === "dev") {
+      // Compute still imports this export until its own next deploy; CloudFormation refuses to
+      // drop an in-use export, so keep it (same name, same ARN value) for one more deploy, then
+      // delete these two exportValue calls in a follow-up.
+      Stack.of(this).exportValue(
+        `arn:aws:secretsmanager:${props.config.region}:${Stack.of(this).account}:secret:${prefix}/app-config-o0LN6V`,
+        { name: "SkoutDev-Data:ExportsOutputRefAppSecretsAppConfig118B932242AF5AD8" }
+      );
+      this.appConfig = secretsmanager.Secret.fromSecretCompleteArn(
+        this,
+        "AppConfig",
+        `arn:aws:secretsmanager:${props.config.region}:${Stack.of(this).account}:secret:${prefix}/app-config-o0LN6V`
+      );
+    } else {
+      const appConfig = createPlaceholder("AppConfig", "app-config", {
+        INTEGRATION_ENCRYPTION_KEY: "replace-me",
+        INTEGRATION_ENCRYPTION_KEY_PREVIOUS: "",
+        ADMIN_IMPORT_SECRET: "replace-me",
+      });
+      appConfig.applyRemovalPolicy(RemovalPolicy.RETAIN);
+      this.appConfig = appConfig;
+    }
     /**
      * Email-Intel → Skout canonical Evidence Ledger forwarder (§5.3).
      * Created/rotated by infra/scripts/setup-email-intel-forwarder.sh — import by name
@@ -189,12 +205,28 @@ export class SkoutAppSecrets extends Construct {
     });
     // Placeholder only — replace with real output from
     // `pnpm --filter @skout/infra generate-auth-keys` before AUTH-BE-12 relies on it.
-    this.auth = createPlaceholder("Auth", "auth", {
-      AUTH_JWT_PRIVATE_KEY: "replace-me",
-      AUTH_JWT_KID: "replace-me",
-      AUTH_JWT_PUBLIC_KEY_SET: "replace-me",
-      AUTH_REFRESH_TOKEN_PEPPER: "replace-me",
-      AUTH_COOKIE_SECRET: "replace-me",
-    });
+    // Dev: imported by complete ARN (same reason as appConfig) so a field-list change can never
+    // wipe the real RS256 key. Other envs stay CDK-managed with RETAIN.
+    if (props.config.name === "dev") {
+      Stack.of(this).exportValue(
+        `arn:aws:secretsmanager:${props.config.region}:${Stack.of(this).account}:secret:${prefix}/auth-axjQL7`,
+        { name: "SkoutDev-Data:ExportsOutputRefAppSecretsAuth933E2836EAC0C3D9" }
+      );
+      this.auth = secretsmanager.Secret.fromSecretCompleteArn(
+        this,
+        "Auth",
+        `arn:aws:secretsmanager:${props.config.region}:${Stack.of(this).account}:secret:${prefix}/auth-axjQL7`
+      );
+    } else {
+      const auth = createPlaceholder("Auth", "auth", {
+        AUTH_JWT_PRIVATE_KEY: "replace-me",
+        AUTH_JWT_KID: "replace-me",
+        AUTH_JWT_PUBLIC_KEY_SET: "replace-me",
+        AUTH_REFRESH_TOKEN_PEPPER: "replace-me",
+        AUTH_COOKIE_SECRET: "replace-me",
+      });
+      auth.applyRemovalPolicy(RemovalPolicy.RETAIN);
+      this.auth = auth;
+    }
   }
 }

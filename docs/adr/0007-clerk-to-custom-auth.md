@@ -62,6 +62,34 @@ Issuer URL (2026-09-22, decoded from the publishable key — no secret material 
 Clerk instance's `iss` is `https://honest-mammoth-99.clerk.accounts.dev`.** This is the value
 AUTH-BE-03's issuer allowlist needs.
 
+### Incident: Clerk instance mismatch on dev (2026-09-25)
+
+The live Clerk instance for dev is **`honest-mammoth-99`** (dashboard: Skout AI / Development). A
+second, unexplained dev instance, `large-warthog-47`, was baked into the deployed frontend
+(`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` GitHub Actions secret, repo-level, last set June 2026), so
+browser tokens carried `iss=https://large-warthog-47.clerk.accounts.dev` while the API trusts only
+`CLERK_JWT_ISSUER` (`SkoutDev/clerk-issuer`). Result: every API call 401 `AUTH_TOKEN_INVALID`,
+and onboarding ("Could not save your answers") failed. Users, sessions and SSO do not carry
+between instances.
+
+- Fix: set the repo secrets `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` to the
+  `honest-mammoth-99` keys and redeploy (the key is compiled into the web image at build time).
+- `SkoutDev/clerk-issuer` was briefly changed to `large-warthog-47` during triage and had to be
+  restored to `https://honest-mammoth-99.clerk.accounts.dev` (no trailing slash), followed by a
+  forced api/crm redeploy (ECS tasks read secrets only at start).
+- Phone number was required at sign-up on `honest-mammoth-99` and Clerk blocks SMS to India;
+  disabled in Configure -> User & authentication -> Phone number.
+- Symptom to recognise: `auth.verify` failures for the correct issuer with **no**
+  `clerk.verify_failed` log line mean the issuer allowlist rejected the token before Clerk was
+  consulted (`providerForIssuer` returned null). A `clerk.verify_failed` line carries Clerk's
+  fixed `reason` enum (PR #154).
+- Known frontend bug, not fixed: the sign-up form's hardcoded `signInUrl="/app/signin"`
+  (`sign-up-form.tsx`) plus Next's `/app` basePath yields `/app/app/signin` (blank page).
+- Also on 2026-09-25: `INTEGRATION_ENCRYPTION_KEY`(_PREVIOUS) had been reset to `replace-me` by
+  CloudFormation re-pushing the CDK placeholder, tripping the ECS circuit breaker (PR #148 RETAIN;
+  PR #153 imports `appConfig`/`auth` by ARN on dev). One undecryptable Warm-Up Tool credential
+  row remained in the personal dev workspace pending delete/reconnect.
+
 ## Decisions
 
 | ID | Decision | Chosen | Rationale | Confirming input (not yet run) |

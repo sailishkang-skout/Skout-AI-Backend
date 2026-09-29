@@ -14,6 +14,26 @@ export function isClerkSecretKeyInvalid(clerkSecretKey?: string): boolean {
   return isPlaceholder(clerkSecretKey);
 }
 
+export const ACCEPTED_ISSUER_VALUES = ["clerk", "skout"] as const;
+export type AcceptedIssuer = (typeof ACCEPTED_ISSUER_VALUES)[number];
+
+export function parseAcceptedIssuers(raw?: string, fallbackMode?: AuthMode): AcceptedIssuer[] {
+  if (raw && raw.trim()) {
+    const list = raw
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    const valid = list.filter((s): s is AcceptedIssuer =>
+      (ACCEPTED_ISSUER_VALUES as readonly string[]).includes(s)
+    );
+    if (valid.length > 0) return Array.from(new Set(valid));
+  }
+
+  if (fallbackMode === "dual") return ["clerk", "skout"];
+  if (fallbackMode === "custom") return ["skout"];
+  return ["clerk"];
+}
+
 export function parseAuthModeEnv(raw?: string): AuthMode | undefined {
   if (!raw || !raw.trim()) return undefined;
   const normalized = raw.trim().toLowerCase();

@@ -15,9 +15,8 @@
  *
  * Wiring status: auth.verify is wired into resolve-auth.ts (the shared verifier, merged);
  * auth.refresh / auth.refresh_reuse are wired into session.service.ts's rotateRefreshToken
- * (BE-13, merged). auth.login is NOT wired yet — BE-14 (the login endpoint itself) is still an
- * open PR, not on this branch, so there's nothing to call emitAuthLoginMetric() from yet. It's
- * exported and ready; wiring it in is a one-line addition to BE-14's login handler once merged.
+ * (BE-13, merged); auth.login is wired into apps/api/src/routes/auth-core.routes.ts's
+ * POST /auth/login handler (BE-20).
  */
 import { createLogger } from "@skout/observability";
 

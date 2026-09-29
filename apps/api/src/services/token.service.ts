@@ -2,11 +2,8 @@
  * AUTH-BE-12 — own-auth access-token service: sign/verify short-lived JWTs, publish JWKS,
  * support key rotation.
  *
- * Scope note: this ticket also asks to "Add the Skout provider to resolveAuth (BE-03) as
- * SkoutAuthProvider" — that step needs AUTH-BE-03 (Sahil Sawal's AuthProvider/resolveAuth
- * abstraction in @skout/auth), which does not exist on this branch yet. This file is the
- * self-contained part (sign, verify, JWKS) that doesn't need it; wiring a SkoutAuthProvider
- * into resolveAuth is left as a follow-up once BE-03 lands — see the TODO at the bottom.
+ * The SkoutAuthProvider that plugs these tokens into resolveAuth lives in
+ * packages/auth/src/skout-provider.ts (wired up by AUTH-BE-19).
  *
  * Algorithm: RS256, not EdDSA. The ticket allows either; RS256 was chosen because AUTH-FE-07's
  * edge middleware needs to verify these tokens with WebCrypto in a Next.js edge runtime, where
@@ -143,14 +140,3 @@ export function getPublicJwks(config: Env): JSONWebKeySet {
 }
 
 export type { JWK, JSONWebKeySet };
-
-// TODO(AUTH-BE-19): AUTH-BE-03 merged (resolveAuth/AuthProvider now exist in @skout/auth,
-// PR #114) — checked the actual shape. Wiring a Skout provider in cleanly is bigger than "add
-// one more branch to providerForIssuer", so it's left for BE-19 rather than forced in here:
-//   1. resolve-auth.ts's `AuthVerifyContext` is Clerk-shaped (clerkSecretKey, authorizedParties)
-//      — no room for JWT key material. It needs widening in @skout/auth first.
-//   2. Per this ticket's own BE-19 context, a Skout token's downstream path is NOT
-//      resolveOrProvisionUser (used for external IdPs) — sub is already users.id, so it's a
-//      direct user lookup by id/status/is_blocked. Forcing that through the
-//      AuthProvider/VerifiedIdentity shape built for Clerk would be a mismatch, not a reuse.
-// verifyAccessToken() above is the piece BE-19 wraps once it designs that dispatch path.

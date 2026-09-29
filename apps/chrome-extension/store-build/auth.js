@@ -9,7 +9,7 @@ import {
   urlMatchesSkoutWeb,
 } from "./skout-urls.js";
 
-/** Refresh this many ms before JWT exp (Clerk session tokens are ~60s). */
+/** Refresh this many ms before JWT exp (Skout session tokens are ~10mins; works for any JWT with exp claim). */
 const REFRESH_BUFFER_MS = 15_000;
 
 export function isTokenExpired(token, bufferMs = REFRESH_BUFFER_MS) {
@@ -99,7 +99,7 @@ async function injectBridgeIfNeeded(tabId) {
   return true;
 }
 
-/** Ask the Skout web app (via postMessage) to push a fresh Clerk token to the extension. */
+/** Ask the Skout web app (via postMessage) to push a fresh Skout auth token to the extension. */
 async function requestAuthViaPostMessage(tabId) {
   const injectable = await injectBridgeIfNeeded(tabId);
   if (!injectable) return null;
@@ -142,7 +142,7 @@ async function readAuthFromTab(tabId) {
   return injection?.result;
 }
 
-/** Max time to spend polling a single Skout tab for a Clerk token. */
+/** Max time to spend polling a single Skout tab for a Skout auth token. */
 const TAB_AUTH_TIMEOUT_MS = 12_000;
 
 async function readAuthFromTabWithRetry(tabId, webUrl, attempts = 8) {
@@ -184,7 +184,7 @@ async function findSkoutTabs(webUrl = DEFAULT_WEB_URL) {
   return all.filter((tab) => isUsableTab(tab) && urlMatchesSkoutWeb(tab.url, webUrl));
 }
 
-/** Pull a fresh Clerk JWT from an open, signed-in Skout tab. */
+/** Pull a fresh Skout JWT from an open, signed-in Skout tab. */
 export async function refreshAuthFromSkoutTabs() {
   const { webUrl } = await getStoredSkoutUrls();
   const tabs = await findSkoutTabs(webUrl);

@@ -1,5 +1,6 @@
 import { generateKeyPair, exportJWK, exportPKCS8 } from "jose";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import * as authModule from "@skout/auth";
 import { createDb, schema } from "@skout/db";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -313,6 +314,80 @@ describe("auth-core.routes (AUTH-BE-14)", () => {
       expect(res.statusCode).toBe(403);
       expect(res.json().code).toBe("AUTH_ACCOUNT_BLOCKED");
     });
+
+    it("emits auth.login metrics on success and failure (AUTH-BE-20)", async () => {
+      const emitLoginSpy = vi.spyOn(authModule, "emitAuthLoginMetric");
+      emitLoginSpy.mockClear();
+
+      const email = freshEmail("login-metrics");
+      const password = "correct horse battery staple";
+      const userId = await signup(email, password);
+      await markVerified(userId);
+
+      // 1. Successful login emits result: "success" with userId
+      const okRes = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { email, password } });
+      expect(okRes.statusCode).toBe(200);
+      expect(emitLoginSpy).toHaveBeenCalledWith({ result: "success", userId });
+
+      // 2. Failed login (wrong password) emits result: "failure" with userId
+      emitLoginSpy.mockClear();
+      const failRes = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { email, password: "wrong password" } });
+      expect(failRes.statusCode).toBe(401);
+      expect(emitLoginSpy).toHaveBeenCalledWith({ result: "failure", userId });
+
+      // 3. Unknown account emits result: "failure" without userId
+      emitLoginSpy.mockClear();
+      const unknownRes = await app.inject({ method: "POST", url: "/api/v1/auth/login", payload: { email: `nobody-${Date.now()}@example.test`, password: "any password" } });
+      expect(unknownRes.statusCode).toBe(401);
+      expect(emitLoginSpy).toHaveBeenCalledWith({ result: "failure" });
+
+      emitLoginSpy.mockRestore();
+    });
+
+    it("a user imported with a bcrypt hash logs in with the same password via own-auth and is re-hashed to argon2id (AUTH-BE-21)", async () => {
+      const email = freshEmail("bcrypt-imported");
+      const password = "imported-password-123";
+      // 1. Create user in Postgres as if lazily provisioned
+      const [user] = await db
+        .insert(users)
+        .values({ email, status: "active", fullName: "Imported User" })
+        .returning();
+      createdUserEmails.push(email);
+
+      // 2. Import bcrypt credential and password identity for user (as AUTH-BE-21 does)
+      const bcryptHash = "$2b$10$QIqUudM2zteZ.aq/tEPbMeNhcBI6Uni.9a.CU/Xda79ELB2G06Die";
+      await db.insert(userCredentials).values({
+        userId: user!.id,
+        passwordHash: bcryptHash,
+        hashAlgo: "bcrypt",
+        hashParams: {},
+        mustReset: false,
+      });
+      await db.insert(authIdentities).values({
+        userId: user!.id,
+        provider: "password",
+        providerSubject: email,
+        emailAtLink: email,
+        emailVerifiedAt: new Date(),
+      });
+
+      // 3. User logs in with own-auth
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email, password },
+      });
+      expect(res.statusCode).toBe(200);
+
+      // 4. Verify user_credentials was re-hashed to argon2id
+      const [updatedCred] = await db
+        .select()
+        .from(userCredentials)
+        .where(eq(userCredentials.userId, user!.id));
+      expect(updatedCred?.hashAlgo).toBe("argon2id");
+      expect(updatedCred?.passwordHash).not.toBe(bcryptHash);
+      expect(updatedCred?.passwordHash.startsWith("$argon2id$")).toBe(true);
+    });
   });
 
   describe("refresh / logout / logout-all / me", () => {
@@ -451,5 +526,10 @@ describe("auth-core.routes (AUTH-BE-14)", () => {
       });
       expect(refreshAfter.statusCode).toBe(401);
     });
+  });
+
+  afterAll(async () => {
+    await app?.close();
+    await sql.end();
   });
 });

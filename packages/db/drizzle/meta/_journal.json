@@ -670,8 +670,15 @@
     {
       "idx": 95,
       "version": "7",
-      "when": 1793000000000,
-      "tag": "0096_add_scim_api_token",
+      "when": 1792610000000,
+      "tag": "0094_email_normalization_unique_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1792620000000,
+      "tag": "0095_add_idp_org_ref",
       "breakpoints": true
     }
   ]

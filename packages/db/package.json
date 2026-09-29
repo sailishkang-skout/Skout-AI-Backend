@@ -31,6 +31,7 @@
     "rotate-integration-encryption-key": "tsx src/rotate-integration-encryption-key.ts",
     "audit-encryption-key-dependency": "tsx src/audit-encryption-key-dependency.ts",
     "audit-identity-data": "tsx src/audit-identity-data.ts",
+    "import-clerk-users": "tsx src/import-clerk-users.ts",
     "push": "drizzle-kit push",
     "studio": "drizzle-kit studio",
     "truncate": "tsx src/truncate.ts",

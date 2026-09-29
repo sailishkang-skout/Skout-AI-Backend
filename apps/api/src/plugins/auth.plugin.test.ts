@@ -26,6 +26,19 @@ describe("auth plugin — public routes", () => {
     expect(res.statusCode).not.toBe(401);
     await app.close();
   });
+
+  it("does not require auth for the Microsoft sign-in start and callback (AUTH-BE-16)", async () => {
+    const app = await buildAuthProbeApp(clerkOverrides);
+    const start = await app.inject({ method: "GET", url: "/api/v1/auth/microsoft/start" });
+    expect(start.statusCode).not.toBe(401);
+    const callback = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/microsoft/callback",
+      payload: { code: "c", state: "s" },
+    });
+    expect(callback.statusCode).not.toBe(401);
+    await app.close();
+  });
 });
 
 describe("auth plugin — Clerk bearer (resolveAuth)", () => {

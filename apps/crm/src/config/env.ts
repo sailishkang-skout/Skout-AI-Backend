@@ -52,6 +52,10 @@ const envSchema = z.object({
   /** Clerk session JWT issuer (AUTH-ADI-03). Required when Clerk auth is enabled; used by `buildClerkAppResolveAuthConfig`. */
   CLERK_JWT_ISSUER: z.string().url().optional(),
   AUTH_MODE: z.enum(["clerk", "stub", "custom", "dual"]).optional(),
+  /** AUTH-BE-19 — accepted issuers for dual-verify (e.g. "clerk", "skout", or "clerk,skout"). Derived from AUTH_MODE if unset. */
+  AUTH_ACCEPTED_ISSUERS: z.string().optional(),
+  AUTH_JWT_ISSUER: z.string().default("https://auth.skoutai.io"),
+  AUTH_JWT_AUDIENCE: z.string().default("skout-api"),
   AUTH_JWT_PUBLIC_KEY_SET: z.string().optional(),
   AUTH_STUB: z
     .string()

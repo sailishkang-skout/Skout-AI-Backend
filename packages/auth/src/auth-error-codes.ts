@@ -47,13 +47,20 @@ export function resolveAuthErrorCode(error: unknown, messageFallback = ""): Auth
     return AuthErrorCode.AUTH_TOKEN_INVALID;
   }
   if (error instanceof HttpError) {
-    if (error.statusCode === 403 && error.message === AuthErrorMessage.ACCOUNT_INACTIVE_OR_BLOCKED) {
+    if (error.statusCode === 403 && (error.message === AuthErrorMessage.ACCOUNT_INACTIVE_OR_BLOCKED || error.message === AuthErrorCode.AUTH_ACCOUNT_BLOCKED)) {
       return AuthErrorCode.AUTH_ACCOUNT_BLOCKED;
+    }
+    if ((Object.values(AuthErrorCode) as string[]).includes(error.message)) {
+      return error.message as AuthErrorCode;
     }
   }
   const message = messageFallback || (error instanceof Error ? error.message : "");
   if (isJwtExpiredMessage(message)) {
     return AuthErrorCode.AUTH_TOKEN_EXPIRED;
   }
+  if ((Object.values(AuthErrorCode) as string[]).includes(message)) {
+    return message as AuthErrorCode;
+  }
   return AuthErrorCode.AUTH_TOKEN_INVALID;
 }
+
