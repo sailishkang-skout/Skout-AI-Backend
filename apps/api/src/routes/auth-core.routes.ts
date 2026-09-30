@@ -18,7 +18,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { createHmac, randomBytes } from "node:crypto";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { and, desc, eq, isNull, ne } from "drizzle-orm";
 import { schema } from "@skout/db";
 import type { Db } from "@skout/db";
 import {
@@ -62,7 +62,7 @@ function appBase(config: Env): string {
   return (config.FRONTEND_URL || "http://localhost:3000").replace(/\/$/, "");
 }
 
-const { users, userCredentials, authRefreshTokens } = schema;
+const { users, userCredentials, authRefreshTokens, authSessions } = schema;
 
 const REFRESH_COOKIE_NAME = "skout_refresh";
 const CSRF_COOKIE_NAME = "skout_csrf";
@@ -214,6 +214,11 @@ const signupBodySchema = z.object({
 const loginBodySchema = z.object({
   email: z.string().trim().email(),
   password: z.string(),
+});
+
+const changePasswordBodySchema = z.object({
+  currentPassword: z.string(),
+  newPassword: z.string(),
 });
 
 export async function authCoreRoutes(app: FastifyInstance) {
@@ -588,6 +593,148 @@ export async function authCoreRoutes(app: FastifyInstance) {
       throw err;
     }
   });
+
+  // --- GET /auth/sessions — AUTH-FE-13 (active-sessions list) ------------------------------
+  app.get("/auth/sessions", async (request, reply) => {
+    if (!requireEnabled(reply)) return;
+    const db = app.db;
+    if (!db) return reply.code(503).send(errorResponse("Database unavailable", 503));
+
+    try {
+      const identity = await requireOwnAuthUser(request, app);
+      const rows = await db
+        .select({
+          id: authSessions.id,
+          createdAt: authSessions.createdAt,
+          lastUsedAt: authSessions.lastUsedAt,
+          idleExpiresAt: authSessions.idleExpiresAt,
+        })
+        .from(authSessions)
+        .where(and(eq(authSessions.userId, identity.userId), isNull(authSessions.revokedAt)))
+        .orderBy(desc(authSessions.lastUsedAt));
+
+      return reply.send(
+        successResponse({
+          sessions: rows.map((row) => ({
+            id: row.id,
+            isCurrent: row.id === identity.sessionId,
+            createdAt: row.createdAt.toISOString(),
+            lastUsedAt: row.lastUsedAt.toISOString(),
+            idleExpiresAt: row.idleExpiresAt.toISOString(),
+          })),
+        })
+      );
+    } catch (err) {
+      if (err instanceof HttpError) return sendAuthHttpError(reply, err);
+      throw err;
+    }
+  });
+
+  // --- POST /auth/sessions/:id/revoke — AUTH-FE-13 ("sign out this device / all devices") -
+  app.post<{ Params: { id: string } }>("/auth/sessions/:id/revoke", async (request, reply) => {
+    if (!requireEnabled(reply)) return;
+    const db = app.db;
+    if (!db) return reply.code(503).send(errorResponse("Database unavailable", 503));
+
+    try {
+      const identity = await requireOwnAuthUser(request, app);
+      const [target] = await db
+        .select({ id: authSessions.id, userId: authSessions.userId, revokedAt: authSessions.revokedAt })
+        .from(authSessions)
+        .where(eq(authSessions.id, request.params.id))
+        .limit(1);
+
+      // Same-shape 404 whether the session doesn't exist or belongs to someone else — never
+      // confirm/deny another user's session ids.
+      if (!target || target.userId !== identity.userId) {
+        return reply.code(404).send(errorResponse("Not found", 404));
+      }
+      if (!target.revokedAt) {
+        await revokeSession(db, app.config, target.id, "logout", requestMeta(request));
+      }
+      return reply.code(204).send();
+    } catch (err) {
+      if (err instanceof HttpError) return sendAuthHttpError(reply, err);
+      throw err;
+    }
+  });
+
+  // --- POST /auth/password/change — AUTH-FE-13 ----------------------------------------------
+  app.post(
+    "/auth/password/change",
+    { config: { rateLimit: { max: 5, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      if (!requireEnabled(reply)) return;
+      const db = app.db;
+      if (!db) return reply.code(503).send(errorResponse("Database unavailable", 503));
+
+      const parsed = changePasswordBodySchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send(errorResponse("Invalid request body", 400));
+      }
+
+      try {
+        const identity = await requireOwnAuthUser(request, app);
+
+        const [credential] = await db
+          .select({
+            passwordHash: userCredentials.passwordHash,
+            hashAlgo: userCredentials.hashAlgo,
+            hashParams: userCredentials.hashParams,
+          })
+          .from(userCredentials)
+          .where(eq(userCredentials.userId, identity.userId))
+          .limit(1);
+
+        // Same dummy-hash comparison path as login (BE-11) — a missing credential row (e.g.
+        // Google-only account with no password set) must cost the same time as a wrong password.
+        const verify = credential
+          ? await verifyPassword(parsed.data.currentPassword, credential)
+          : await verifyUnknownUser(parsed.data.currentPassword);
+        if (!credential || !verify.valid) {
+          return reply
+            .code(401)
+            .send(authErrorResponse(AuthErrorCode.AUTH_INVALID_CREDENTIALS, "Current password is incorrect", 401));
+        }
+
+        const policy = checkPasswordPolicy(parsed.data.newPassword);
+        if (!policy.ok) {
+          return reply.code(400).send(errorResponse(policy.reasons.join(" "), 400));
+        }
+
+        const hashed = await hashPassword(parsed.data.newPassword);
+        await db
+          .update(userCredentials)
+          .set({
+            passwordHash: hashed.hash,
+            hashAlgo: hashed.algo,
+            hashParams: hashed.params,
+            passwordUpdatedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(userCredentials.userId, identity.userId));
+
+        // Revoke every other session (Ground Rule / §3: password change revokes all sessions) —
+        // the current one is left alone so the user isn't logged out by changing their own password.
+        await db
+          .update(authSessions)
+          .set({ revokedAt: new Date(), revokedReason: "password_changed" })
+          .where(
+            and(
+              eq(authSessions.userId, identity.userId),
+              isNull(authSessions.revokedAt),
+              ne(authSessions.id, identity.sessionId)
+            )
+          );
+        await logEvent(db, app.config, identity.userId, "password_changed", requestMeta(request), {});
+
+        return reply.code(204).send();
+      } catch (err) {
+        if (err instanceof HttpError) return sendAuthHttpError(reply, err);
+        throw err;
+      }
+    }
+  );
 }
 
 /** Looks up which session a raw refresh-token cookie value belongs to, without rotating it —
