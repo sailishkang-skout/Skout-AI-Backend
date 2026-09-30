@@ -170,7 +170,12 @@ export async function verifyAndConsumeMicrosoftOAuthState(
         return null;
       }
     } catch (err) {
-      log.warn("verifyAndConsumeMicrosoftOAuthState: Redis check failed", { err });
+      // AUTH-BE-16-R1 — fail closed, not open. The in-memory consumedStateIds map only
+      // protects the single task handling both requests; Redis is the only fleet-wide replay
+      // check. Swallowing this error and proceeding used to silently disable that check across
+      // the whole fleet for the duration of any Redis error, not just a full outage.
+      log.warn("verifyAndConsumeMicrosoftOAuthState: Redis check failed, failing closed", { err });
+      return null;
     }
   }
 

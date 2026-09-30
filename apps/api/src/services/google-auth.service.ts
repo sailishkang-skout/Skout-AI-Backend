@@ -209,7 +209,11 @@ export async function verifyAndConsumeGoogleOAuthState(
         return null;
       }
     } catch (err) {
-      log.warn("verifyAndConsumeGoogleOAuthState: Redis check failed", { err });
+      // AUTH-BE-16-R1 — fail closed, not open (see the matching fix in
+      // microsoft-auth.service.ts). The in-memory consumedStateIds map only protects the single
+      // task handling both requests; Redis is the only fleet-wide replay check.
+      log.warn("verifyAndConsumeGoogleOAuthState: Redis check failed, failing closed", { err });
+      return null;
     }
   }
 
