@@ -254,6 +254,14 @@ export async function inviteAuthRoutes(app: FastifyInstance) {
           if (rawToken.startsWith("isk_")) {
             const session = await verifyInviteSession(db, rawToken);
             if (session) {
+              // AUTH-BE-26-R1 — the own-auth-token branch below re-checks status/isBlocked
+              // before trusting it; this branch previously didn't, letting a user blocked
+              // after their invite session was issued still complete set-password with it.
+              if (!session.isActiveAndUnblocked) {
+                return reply
+                  .code(403)
+                  .send(authErrorResponse(AuthErrorCode.AUTH_ACCOUNT_BLOCKED, "Account is inactive or blocked", 403));
+              }
               userId = session.userId;
               userEmail = session.email;
               userWorkspaceId = session.workspaceId;

@@ -16,6 +16,11 @@ export interface VerifiedInviteSession {
   email?: string;
   workspaceId?: string;
   role?: string;
+  /** AUTH-BE-26-R1 — the user's current status, not a snapshot from when the session was
+   *  issued. A session issued while the user was active is still returned here if they were
+   *  blocked afterward; callers MUST check this before trusting the session (see
+   *  invite-auth.routes.ts's set-password handler, which previously did not). */
+  isActiveAndUnblocked: boolean;
 }
 
 /**
@@ -46,7 +51,7 @@ export async function verifyInviteSession(
   if (!session) return null;
 
   const [user] = await db
-    .select({ email: schema.users.email })
+    .select({ email: schema.users.email, status: schema.users.status, isBlocked: schema.users.isBlocked })
     .from(schema.users)
     .where(eq(schema.users.id, session.userId))
     .limit(1);
@@ -65,6 +70,7 @@ export async function verifyInviteSession(
     email: user?.email,
     workspaceId: membership?.workspaceId,
     role: membership?.role,
+    isActiveAndUnblocked: Boolean(user) && user!.status === "active" && !user!.isBlocked,
   };
 }
 
