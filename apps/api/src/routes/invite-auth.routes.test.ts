@@ -437,6 +437,47 @@ describe("invite-auth.routes (AUTH-BE-26)", () => {
     expect(res.json().code).toBe("AUTH_ACCOUNT_BLOCKED");
   });
 
+  it("set-password rejects a blocked user's still-valid isk_ session (AUTH-BE-26-R1)", async () => {
+    // Regression: the invite-session branch of set-password previously trusted a still-valid
+    // isk_ token without re-checking whether the user was blocked *after* the session was
+    // issued — unlike the own-auth-token branch a few lines below it, which already did.
+    const { inviteToken, email } = await createTestWorkspaceAndInvite("blocked-after-verify");
+
+    const sendRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/invite-auth/send-otp",
+      payload: { inviteToken },
+    });
+    expect(sendRes.statusCode).toBe(200);
+    const otp = otpCode(sentMails[0]);
+
+    const verifyRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/invite-auth/verify-otp",
+      payload: { inviteToken, otp },
+    });
+    expect(verifyRes.statusCode).toBe(200);
+    const iskToken = verifyRes.json().data.sessionToken;
+    expect(iskToken).toBeTruthy();
+
+    // Block the user after the invite session was already issued.
+    await db.update(users).set({ isBlocked: true, status: "suspended" }).where(eq(users.email, email));
+
+    const setPassRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/invite-auth/set-password",
+      headers: { authorization: `Bearer ${iskToken}` },
+      payload: { password: "VerySecurePassword2026!" },
+    });
+    expect(setPassRes.statusCode).toBe(403);
+    expect(setPassRes.json().code).toBe("AUTH_ACCOUNT_BLOCKED");
+
+    // No credential should have been written for the blocked user.
+    const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
+    const [cred] = await db.select().from(userCredentials).where(eq(userCredentials.userId, user!.id)).limit(1);
+    expect(cred).toBeUndefined();
+  });
+
   it("set-password rejects unauthorized request without token", async () => {
     const res = await app.inject({
       method: "POST",
