@@ -332,7 +332,15 @@ export class ComputeStack extends Stack {
         // Clerk login; UAT/prod stay on "clerk" until their own ADI-15 rollout step. Never
         // "stub" outside a deliberate local/test override.
         AUTH_MODE: config.name === "dev" ? "dual" : "clerk",
-        ...(config.name === "dev" ? { AUTH_ACCEPTED_ISSUERS: "clerk,skout" } : {}),
+        ...(config.name === "dev"
+          ? {
+              AUTH_ACCEPTED_ISSUERS: "clerk,skout",
+              // AUTH-ADI-14 rehearsal — exposes /api/v1/auth/{signup,login,refresh,...}, which
+              // previously 404d even with AUTH_MODE=dual. Additive only: Clerk stays fully
+              // live, this just stops own-auth's own endpoints from being dark. Dev only.
+              AUTH_CUSTOM_ENABLED: "true",
+            }
+          : {}),
         LOG_LEVEL: "info",
         TRUST_PROXY: "true",
         DD_SERVICE: "skout-api",
