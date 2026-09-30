@@ -8,9 +8,8 @@ import {
   AuthErrorCode,
   AuthErrorMessage,
   HttpError,
-  sanitizeRedirectPath,
-  isSafeRedirectPath,
 } from "@skout/auth";
+import { validateSafeNextUrl } from "../services/google-auth.service.js";
 import { loadEnv, type Env } from "../config/env.js";
 import { buildAuthCoreProbeApp } from "../test/auth-core-probe-app.js";
 import {
@@ -538,48 +537,46 @@ describe("AUTH-BE-18 — Auth Security Test Suite & Threat Controls", () => {
   // =========================================================================
   // 6. Open-Redirect Defense on Redirect/Next Parameters
   // =========================================================================
+  // AUTH-BE-18-R1 — these used to test packages/auth/src/safe-redirect.ts
+  // (sanitizeRedirectPath/isSafeRedirectPath), which was never actually called from any real
+  // route (grep across apps/api/src/routes and plugins found only this test file). The function
+  // that really validates the OAuth `next` parameter is validateSafeNextUrl, used by both
+  // google-auth.service.ts and microsoft-auth.service.ts. Retargeted this suite at the real one
+  // and deleted the unused file — see the ticket for how that was found (a control-character
+  // bypass: the deleted function accepted "/\t/evil.com", which browsers collapse to
+  // "//evil.com" by stripping the tab, an open redirect; validateSafeNextUrl's fixed-prefix
+  // allowlist does not have this bug, since a tab breaks the literal prefix match).
   describe("6. Open-Redirect Defense on Redirect/Next Parameters", () => {
-    it("sanitizes absolute external URLs to fallback", () => {
-      expect(sanitizeRedirectPath("https://evil.example", "/dashboard")).toBe("/dashboard");
-      expect(sanitizeRedirectPath("http://evil.example/login", "/dashboard")).toBe("/dashboard");
-      expect(sanitizeRedirectPath("https://attacker.com/steal?token=1", "/dashboard")).toBe("/dashboard");
+    it("rejects absolute external URLs, falling back to /dashboard", () => {
+      expect(validateSafeNextUrl("https://evil.example")).toBe("/dashboard");
+      expect(validateSafeNextUrl("http://evil.example/login")).toBe("/dashboard");
+      expect(validateSafeNextUrl("https://attacker.com/steal?token=1")).toBe("/dashboard");
     });
 
-    it("sanitizes protocol-relative URLs to fallback", () => {
-      expect(sanitizeRedirectPath("//evil.example", "/dashboard")).toBe("/dashboard");
-      expect(sanitizeRedirectPath("///evil.example", "/dashboard")).toBe("/dashboard");
-      expect(sanitizeRedirectPath("//evil.example/path", "/dashboard")).toBe("/dashboard");
+    it("rejects protocol-relative URLs", () => {
+      expect(validateSafeNextUrl("//evil.example")).toBe("/dashboard");
+      expect(validateSafeNextUrl("///evil.example")).toBe("/dashboard");
     });
 
-    it("sanitizes backslash bypass attempts to fallback", () => {
-      expect(sanitizeRedirectPath("\\evil.example", "/dashboard")).toBe("/dashboard");
-      expect(sanitizeRedirectPath("/\\evil.example", "/dashboard")).toBe("/dashboard");
-      expect(sanitizeRedirectPath("//\\evil.example", "/dashboard")).toBe("/dashboard");
+    it("rejects backslash bypass attempts", () => {
+      expect(validateSafeNextUrl("\\evil.example")).toBe("/dashboard");
+      expect(validateSafeNextUrl("/\\evil.example")).toBe("/dashboard");
     });
 
-    it("sanitizes pseudo-protocols to fallback", () => {
-      expect(sanitizeRedirectPath("javascript:alert(1)", "/dashboard")).toBe("/dashboard");
-      expect(sanitizeRedirectPath("data:text/html,<script>alert(1)</script>", "/dashboard")).toBe("/dashboard");
-      expect(sanitizeRedirectPath("vbscript:msgbox(1)", "/dashboard")).toBe("/dashboard");
+    it("rejects a control-character bypass that would collapse to a protocol-relative URL", () => {
+      // A browser strips ASCII tab/newline/CR when parsing a URL, which would turn this exact
+      // string into "//evil.com" (protocol-relative) if it were ever handed back as a redirect
+      // target. This is the bug the deleted sanitizeRedirectPath had and this one doesn't.
+      expect(validateSafeNextUrl("/\t/evil.com")).toBe("/dashboard");
+      expect(validateSafeNextUrl("/\n/evil.com")).toBe("/dashboard");
     });
 
-    it("allows valid relative paths and same-origin paths", () => {
-      expect(sanitizeRedirectPath("/dashboard", "/fallback")).toBe("/dashboard");
-      expect(sanitizeRedirectPath("/settings?tab=security", "/fallback")).toBe("/settings?tab=security");
-      expect(sanitizeRedirectPath("/onboarding/step-2#finish", "/fallback")).toBe("/onboarding/step-2#finish");
-
-      // Allowed absolute origin
-      expect(
-        sanitizeRedirectPath("https://app.skoutai.io/dashboard", "/fallback", ["https://app.skoutai.io"])
-      ).toBe("/dashboard");
-    });
-
-    it("isSafeRedirectPath correctly classifies redirect targets", () => {
-      expect(isSafeRedirectPath("/dashboard")).toBe(true);
-      expect(isSafeRedirectPath("https://evil.example")).toBe(false);
-      expect(isSafeRedirectPath("//evil.example")).toBe(false);
-      expect(isSafeRedirectPath("\\evil.example")).toBe(false);
-      expect(isSafeRedirectPath("javascript:alert(1)")).toBe(false);
+    it("allows only the fixed allowlist of real app paths", () => {
+      expect(validateSafeNextUrl("/dashboard")).toBe("/dashboard");
+      expect(validateSafeNextUrl("/settings/security")).toBe("/settings/security");
+      expect(validateSafeNextUrl("/onboarding/step-2")).toBe("/onboarding/step-2");
+      // Not on the allowlist — falls back even though it's a well-formed relative path.
+      expect(validateSafeNextUrl("/some-other-page")).toBe("/dashboard");
     });
   });
 

@@ -78,7 +78,3 @@ export {
   emitAuthRefreshReuseMetric,
   type AuthMetricResult,
 } from "./auth-metrics.js";
-export {
-  sanitizeRedirectPath,
-  isSafeRedirectPath,
-} from "./safe-redirect.js";
