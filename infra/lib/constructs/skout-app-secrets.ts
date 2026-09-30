@@ -48,6 +48,11 @@ export class SkoutAppSecrets extends Construct {
   readonly telnyx: secretsmanager.ISecret;
   /** Google OAuth client (Gmail inbox connection + Calendar). Placeholder until a real Google Cloud OAuth client is created. */
   readonly google: secretsmanager.ISecret;
+  /** AUTH-BE-16 — dedicated Google OAuth client for *login* only (api service). Never the same
+   *  Google Cloud OAuth client as `google` above — different scopes/consent screen. Placeholder
+   *  until a real "Web application" OAuth client is created in Google Cloud Console with redirect
+   *  URI `${FRONTEND_URL}/api/auth/google/callback` (e.g. https://www.skoutai.io/app/api/auth/google/callback). */
+  readonly googleOAuthLogin: secretsmanager.ISecret;
   /** Warm-Up Tool crypto + platform provisioning key (SkoutDev/warmup-tool). */
   readonly warmupTool: secretsmanager.ISecret;
   /**
@@ -196,6 +201,10 @@ export class SkoutAppSecrets extends Construct {
     this.google = createPlaceholder("Google", "google", {
       GOOGLE_CLIENT_ID: "replace-me",
       GOOGLE_CLIENT_SECRET: "replace-me",
+    });
+    this.googleOAuthLogin = createPlaceholder("GoogleOAuthLogin", "google-oauth-login", {
+      GOOGLE_OAUTH_CLIENT_ID: "replace-me",
+      GOOGLE_OAUTH_CLIENT_SECRET: "replace-me",
     });
     // Generate strong placeholders once; rotate in Secrets Manager after first deploy.
     this.warmupTool = createPlaceholder("WarmupTool", "warmup-tool", {

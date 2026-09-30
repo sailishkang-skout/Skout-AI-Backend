@@ -458,6 +458,12 @@ export class ComputeStack extends Stack {
         MEETING_BOT_WEBHOOK_SECRET: ecs.Secret.fromSecretsManager(secrets.meetingBot, "MEETING_BOT_WEBHOOK_SECRET"),
         GOOGLE_CLIENT_ID: ecs.Secret.fromSecretsManager(secrets.google, "GOOGLE_CLIENT_ID"),
         GOOGLE_CLIENT_SECRET: ecs.Secret.fromSecretsManager(secrets.google, "GOOGLE_CLIENT_SECRET"),
+        // AUTH-BE-16 — dedicated login-only Google OAuth client, never the inbox/calendar one above.
+        GOOGLE_OAUTH_CLIENT_ID: ecs.Secret.fromSecretsManager(secrets.googleOAuthLogin, "GOOGLE_OAUTH_CLIENT_ID"),
+        GOOGLE_OAUTH_CLIENT_SECRET: ecs.Secret.fromSecretsManager(
+          secrets.googleOAuthLogin,
+          "GOOGLE_OAUTH_CLIENT_SECRET"
+        ),
         TWILIO_ACCOUNT_SID: ecs.Secret.fromSecretsManager(secrets.twilio, "TWILIO_ACCOUNT_SID"),
         TWILIO_AUTH_TOKEN: ecs.Secret.fromSecretsManager(secrets.twilio, "TWILIO_AUTH_TOKEN"),
         TWILIO_PHONE_NUMBER: ecs.Secret.fromSecretsManager(secrets.twilio, "TWILIO_PHONE_NUMBER"),
