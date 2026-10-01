@@ -3,6 +3,7 @@ export {
   type ProvisionResult,
   type ResolveOrProvisionInput,
 } from "./auth.service.js";
+export { grantSystemMemberRole } from "./grant-member-role.js";
 export {
   linkAuthIdentity,
   linkAuthIdentityForClerkUserId,
