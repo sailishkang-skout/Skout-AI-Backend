@@ -660,6 +660,24 @@ export class ComputeStack extends Stack {
       });
     }
 
+    // AUTH-BE-12's JWKS endpoint is deliberately mounted at the true root path, not under
+    // /api/v1 (standard .well-known convention for JWT/OIDC consumers) — see routes/index.ts.
+    // Without this rule it falls through to the web-service catch-all ("/*", priority 100) and
+    // 404s, so no own-auth JWT (including the one Google OAuth login issues) could ever be
+    // verified via middleware.ts's remote JWKS fetch — found via AUTH-ADI-14 rehearsal: a
+    // real Google sign-in completed and set session cookies, but every subsequent protected-route
+    // check treated the request as unauthenticated and bounced back to sign-in.
+    if (apiEcs.targetGroup) {
+      listener.addTargetGroups("api-jwks", {
+        targetGroups: [apiEcs.targetGroup],
+        priority: 3,
+        conditions: [
+          elbv2.ListenerCondition.pathPatterns(["/.well-known/jwks.json"]),
+          ...albExtraConditions,
+        ],
+      });
+    }
+
     if (config.clickhouse?.enabled) {
       this.clickhouse = new SkoutClickHouse(this, "ClickHouse", {
         vpc,
