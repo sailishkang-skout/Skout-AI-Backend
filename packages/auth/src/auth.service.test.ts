@@ -34,6 +34,14 @@ function insertReturningDirect(result: unknown[]) {
   };
 }
 
+function insertConflictNothing() {
+  return {
+    values: vi.fn().mockReturnValue({
+      onConflictDoNothing: vi.fn().mockResolvedValue([]),
+    }),
+  };
+}
+
 function insertConflictVoid() {
   return {
     values: vi.fn().mockReturnValue({
@@ -62,13 +70,15 @@ describe("resolveOrProvisionUser — unverified email (AUTH-BE-03)", () => {
       .mockReturnValueOnce(selectChain([]))
       .mockReturnValueOnce(selectChain([]))
       .mockReturnValueOnce(selectChain([]))
-      .mockReturnValueOnce(selectChain([]));
+      .mockReturnValueOnce(selectChain([]))
+      .mockReturnValueOnce(selectChain([{ id: "role-owner" }])); // system "owner" role lookup
 
     tx.insert
       .mockReturnValueOnce(insertReturning([createdUser]))
       .mockReturnValueOnce(insertConflictVoid())
       .mockReturnValueOnce(insertReturningDirect([workspace]))
-      .mockReturnValueOnce(insertVoid())
+      .mockReturnValueOnce(insertVoid()) // workspace_members
+      .mockReturnValueOnce(insertConflictNothing()) // workspace_member_roles (owner grant)
       .mockReturnValueOnce(insertVoid())
       .mockReturnValueOnce(insertVoid());
 
@@ -84,7 +94,7 @@ describe("resolveOrProvisionUser — unverified email (AUTH-BE-03)", () => {
       name: "New",
     });
 
-    expect(tx.select).toHaveBeenCalledTimes(4);
+    expect(tx.select).toHaveBeenCalledTimes(5);
   });
 });
 

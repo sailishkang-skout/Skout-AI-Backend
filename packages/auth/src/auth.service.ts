@@ -6,6 +6,7 @@ import { normalizeEmail } from "@skout/shared";
 import { HttpError } from "./http.js";
 import { AuthErrorCode, AuthErrorMessage } from "./auth-error-codes.js";
 import { linkAuthIdentity } from "./link-auth-identity.js";
+import { grantSystemMemberRole } from "./grant-member-role.js";
 
 export interface ProvisionResult {
   userId: string;
@@ -293,6 +294,7 @@ export async function resolveOrProvisionUser(
           .insert(schema.workspaceMembers)
           .values({ workspaceId: invite.workspaceId, userId, role: invite.role })
           .onConflictDoNothing();
+        await grantSystemMemberRole(tx, invite.workspaceId, userId, invite.role);
         await tx
           .update(schema.workspaceInvites)
           .set({ acceptedAt: now })
@@ -334,6 +336,7 @@ export async function resolveOrProvisionUser(
       userId,
       role: "owner",
     });
+    await grantSystemMemberRole(tx, workspace.id, userId, "owner");
 
     await tx.insert(schema.creditBalances).values({
       workspaceId: workspace.id,
@@ -393,6 +396,7 @@ async function autoAcceptPendingInvites(
         userId,
         role: invite.role,
       });
+      await grantSystemMemberRole(tx, invite.workspaceId, userId, invite.role);
     }
 
     await tx.update(schema.workspaceInvites).set({ acceptedAt: now }).where(eq(schema.workspaceInvites.id, invite.id));

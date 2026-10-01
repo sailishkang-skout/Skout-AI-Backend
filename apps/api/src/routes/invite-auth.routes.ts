@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { and, eq, gt } from "drizzle-orm";
 import { schema, scopedTo } from "@skout/db";
 import { normalizeEmail } from "@skout/shared";
-import { AuthErrorCode, authErrorResponse, linkAuthIdentity } from "@skout/auth";
+import { AuthErrorCode, authErrorResponse, grantSystemMemberRole, linkAuthIdentity } from "@skout/auth";
 import { generateOtp, hashOtp, verifyOtp } from "../utils/otp.js";
 import { sendMail, buildOtpEmail } from "../services/mail.service.js";
 import { errorResponse, HttpError } from "../utils/http.js";
@@ -167,6 +167,7 @@ export async function inviteAuthRoutes(app: FastifyInstance) {
           userId,
           role: invite.role,
         });
+        await grantSystemMemberRole(db, invite.workspaceId, userId, invite.role);
       }
 
       // Mark invite accepted

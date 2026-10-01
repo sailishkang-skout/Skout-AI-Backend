@@ -19,12 +19,20 @@ function selectChain(result: unknown[]) {
 //   mode "returning" → .values().returning() resolves with result
 //   mode "returning+conflict" → .values().onConflictDoUpdate().returning() resolves with result
 //   mode "void" → .values() resolves with []
+//   mode "conflict-nothing" → .values().onConflictDoNothing() (workspace_member_roles grant)
 //   mode "conflict-void" → .values().onConflictDoUpdate() (auth_identities upsert)
-function insertChain(mode: "void" | "returning" | "returning+conflict" | "conflict-void", result: unknown[] = []) {
+function insertChain(mode: "void" | "returning" | "returning+conflict" | "conflict-void" | "conflict-nothing", result: unknown[] = []) {
   if (mode === "conflict-void") {
     return {
       values: vi.fn().mockReturnValue({
         onConflictDoUpdate: vi.fn().mockResolvedValue([]),
+      }),
+    };
+  }
+  if (mode === "conflict-nothing") {
+    return {
+      values: vi.fn().mockReturnValue({
+        onConflictDoNothing: vi.fn().mockResolvedValue([]),
       }),
     };
   }
@@ -59,7 +67,7 @@ function updateChain() {
 
 function makeTx(overrides: {
   selects?: unknown[][];
-  inserts?: Array<{ mode: "void" | "returning" | "returning+conflict" | "conflict-void"; result?: unknown[] }>;
+  inserts?: Array<{ mode: "void" | "returning" | "returning+conflict" | "conflict-void" | "conflict-nothing"; result?: unknown[] }>;
   withUpdate?: boolean;
 }) {
   const tx = {
@@ -181,12 +189,14 @@ describe("resolveOrProvisionUser", () => {
           [],  // email miss
           [],  // membership miss
           [],  // pending invites → none
+          [{ id: "role-owner" }], // system owner role lookup
         ],
         inserts: [
           { mode: "returning+conflict", result: [NEW_USER] },    // insert user
           AUTH_IDENTITY_UPSERT,
           { mode: "returning",          result: [NEW_WORKSPACE] }, // insert workspace
           { mode: "void" },                                       // insert workspace_member
+          { mode: "conflict-nothing" },                           // insert workspace_member_roles
           { mode: "void" },                                       // insert credit_balance
           { mode: "void" },                                       // insert credit_transaction
         ],
@@ -201,18 +211,19 @@ describe("resolveOrProvisionUser", () => {
         workspaceId: "ws-new",
         role: "owner",
       });
-      expect(tx.insert).toHaveBeenCalledTimes(6);
+      expect(tx.insert).toHaveBeenCalledTimes(7);
       expect(tx.update).not.toHaveBeenCalled();
     });
 
     it("grants 500 credits in the credit_transactions insert", async () => {
       const tx = makeTx({
-        selects: [[], [], [], [], []],  // identity, clerk, email, membership, pendingInvites
+        selects: [[], [], [], [], [], [{ id: "role-owner" }]],  // identity, clerk, email, membership, pendingInvites, owner role
         inserts: [
           { mode: "returning+conflict", result: [NEW_USER] },
           AUTH_IDENTITY_UPSERT,
           { mode: "returning",          result: [NEW_WORKSPACE] },
           { mode: "void" },
+          { mode: "conflict-nothing" },
           { mode: "void" },
           { mode: "void" },
         ],
@@ -220,8 +231,8 @@ describe("resolveOrProvisionUser", () => {
       const db = makeDb(tx);
       await resolveOrProvisionUser(db as any, "clerk_x", "new@example.com", "New User");
 
-      // 6th insert call is credit_transactions — check .values() arg
-      const ctInsertCall = (tx.insert.mock.results[5].value as ReturnType<typeof insertChain>);
+      // 7th insert call is credit_transactions — check .values() arg
+      const ctInsertCall = (tx.insert.mock.results[6].value as ReturnType<typeof insertChain>);
       const valuesFn = (ctInsertCall as { values: ReturnType<typeof vi.fn> }).values;
       expect(valuesFn).toHaveBeenCalledWith(
         expect.objectContaining({ amount: 500, action: "provision" })
@@ -237,11 +248,13 @@ describe("resolveOrProvisionUser", () => {
           [BASE_USER], // clerkUserId hit
           [],          // membership miss
           [],          // pending invites → none
+          [{ id: "role-owner" }], // system owner role lookup
         ],
         inserts: [
           AUTH_IDENTITY_UPSERT,
           { mode: "returning", result: [NEW_WORKSPACE] },
           { mode: "void" },
+          { mode: "conflict-nothing" },
           { mode: "void" },
           { mode: "void" },
         ],
@@ -252,7 +265,7 @@ describe("resolveOrProvisionUser", () => {
 
       expect(result.workspaceId).toBe("ws-new");
       expect(result.role).toBe("owner");
-      expect(tx.insert).toHaveBeenCalledTimes(5);
+      expect(tx.insert).toHaveBeenCalledTimes(6);
     });
   });
 
