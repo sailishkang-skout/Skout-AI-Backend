@@ -59,7 +59,7 @@ TASK_ARN="$(aws ecs run-task \
   --task-definition "$TASK_DEF" \
   --launch-type FARGATE \
   --network-configuration "$NETWORK_CONFIG" \
-  --overrides "{\"containerOverrides\":[{\"name\":\"${CONTAINER_NAME}\",\"command\":[\"node\",\"/app/db/dist/backfill-rbac.js\"]}]}" \
+  --overrides "{\"containerOverrides\":[{\"name\":\"${CONTAINER_NAME}\",\"command\":[\"node\",\"/app/node_modules/@skout/db/dist/backfill-rbac.js\"]}]}" \
   --query 'tasks[0].taskArn' \
   --output text)"
 
