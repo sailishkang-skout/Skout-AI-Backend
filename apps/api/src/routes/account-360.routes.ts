@@ -8,9 +8,10 @@ import { errorResponse, HttpError } from "../utils/http.js";
 import { getEvidence } from "../services/evidence.service.js";
 import { createRegionalBriefService } from "../services/regional-brief.service.js";
 import { requireAnyCopsPermission, writeCopsAudit } from "../services/cops-platform.service.js";
+import { runLifecycleTransition } from "../services/cops-lifecycle.service.js";
 import { AccountLinkError, linkAccounts } from "../services/cops-account-relationships.service.js";
 
-const { companies, contacts, deals, activities, signals, copsLifecycleStates, copsTimelineEvents, tasks, workspaceMembers, copsSavedViews } = schema;
+const { companies, contacts, deals, activities, signals, copsLifecycleStates, copsTimelineEvents, tasks, workspaceMembers, copsSavedViews, pipelineStages } = schema;
 
 const LOW_CONFIDENCE_THRESHOLD = 0.5;
 
@@ -980,4 +981,97 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       };
     }
   );
+
+  // POST /opportunities/:id/stage — moves the deal to a stage of its own pipeline. The stage maps to
+  // a COPS opportunity lifecycle state, and the change goes through the same transition service as
+  // POST /cops/lifecycle, so an illegal move is 409 with the allowed transitions.
+  app.post<{ Params: { id: string }; Body: { stage_id?: string; reason?: string; source?: string } }>(
+    "/opportunities/:id/stage",
+    { preHandler: writeGate },
+    async (request, reply) => {
+      const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+      const fail = (path: string, message: string) =>
+        reply.status(copsErrorStatus("VALIDATION_FAILED")).send(
+          copsErrorBody({ code: "VALIDATION_FAILED", message, requestId, details: { fields: [{ path, code: "invalid", message }] } })
+        );
+
+      if (!UUID.test(request.params.id)) return fail("id", "Invalid opportunity id");
+      const stageId = request.body?.stage_id ?? "";
+      const reason = (request.body?.reason ?? "").trim();
+      const source = (request.body?.source ?? "api").trim() || "api";
+      if (!UUID.test(stageId)) return fail("stage_id", "stage_id must be a UUID");
+      if (reason.length < 1 || reason.length > 500) return fail("reason", "reason is required (1-500 characters)");
+
+      const workspaceId = request.workspaceId!;
+      try {
+        const result = await db.transaction(async (tx) => {
+          const [deal] = await tx
+            .select({ id: deals.id, pipelineId: deals.pipelineId })
+            .from(deals)
+            .where(and(eq(deals.id, request.params.id), eq(deals.workspaceId, workspaceId)))
+            .limit(1);
+          if (!deal) return { kind: "not_found" as const };
+
+          const [stage] = await tx
+            .select({ id: pipelineStages.id, name: pipelineStages.name, isClosedWon: pipelineStages.isClosedWon, isClosedLost: pipelineStages.isClosedLost })
+            .from(pipelineStages)
+            .where(and(eq(pipelineStages.id, stageId), eq(pipelineStages.pipelineId, deal.pipelineId ?? "")))
+            .limit(1);
+          if (!stage) return { kind: "bad_stage" as const };
+
+          const state = stageToLifecycleState(stage);
+          if (!state) return { kind: "unmapped" as const, name: stage.name };
+
+          const transition = await runLifecycleTransition(tx as unknown as Db, {
+            workspaceId,
+            dimension: "opportunity",
+            entityId: deal.id,
+            to: state,
+            actorId: request.userId!,
+            source,
+            reason,
+            requestId,
+            occurredAt: new Date(),
+          });
+          await tx.update(deals).set({ stageId: stage.id, updatedAt: new Date() }).where(eq(deals.id, deal.id));
+          return { kind: "ok" as const, transition, stageId: stage.id };
+        });
+
+        if (result.kind === "not_found") {
+          return reply.status(404).send(copsErrorBody({ code: "NOT_FOUND", message: "Opportunity not found", requestId, details: {} }));
+        }
+        if (result.kind === "bad_stage") return fail("stage_id", "Stage does not belong to this opportunity's pipeline");
+        if (result.kind === "unmapped") return fail("stage_id", `Stage "${result.name}" has no lifecycle mapping`);
+        return { data: { opportunity_id: request.params.id, stage_id: result.stageId, state: result.transition.to } };
+      } catch (err) {
+        if (err instanceof Error && err.name === "CopsIllegalTransitionError") {
+          const t = err as Error & { dimension: string; from: string; to: string; allowed: string[] };
+          return reply.status(copsErrorStatus("BUSINESS_STATE_CONFLICT")).send(
+            copsErrorBody({
+              code: "BUSINESS_STATE_CONFLICT",
+              message: t.message,
+              requestId,
+              details: { dimension: t.dimension, current_state: { state: t.from }, requested_state: t.to, allowed_transitions: t.allowed },
+            })
+          );
+        }
+        throw err;
+      }
+    }
+  );
+}
+
+/**
+ * Pipeline stage -> COPS opportunity lifecycle state. Closed flags win over names. Names are the
+ * default pipeline (Qualified -> Discovery -> Demo -> Commercial -> Contracting -> Payment/Procurement
+ * -> Closed); a custom stage with no mapping returns null and the move is refused (422).
+ */
+export function stageToLifecycleState(stage: { name: string; isClosedWon: boolean; isClosedLost: boolean }): string | null {
+  if (stage.isClosedWon) return "won";
+  if (stage.isClosedLost) return "lost";
+  const key = stage.name.trim().toLowerCase();
+  if (key === "qualified" || key === "discovery") return "qualified";
+  if (key === "demo") return "demo";
+  if (key === "commercial" || key === "contracting" || key === "payment/procurement" || key === "payment") return "commercial";
+  return null;
 }
