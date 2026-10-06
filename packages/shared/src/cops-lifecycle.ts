@@ -17,6 +17,15 @@ export const COPS_STATES = {
   support: ["no_issue", "open_ticket", "incident_impacted"],
 } as const satisfies Record<CopsDimension, readonly string[]>;
 
+export const COPS_INITIAL_STATES: Record<CopsDimension, string> = {
+  opportunity: "qualified",
+  commercial: "proposal_sent",
+  onboarding: "not_started",
+  account: "trial",
+  health: "healthy",
+  support: "no_issue",
+};
+
 export type CopsState<D extends CopsDimension> = (typeof COPS_STATES)[D][number];
 
 /** Allowed transitions per dimension. Anything not listed is illegal and returns a 409. */
@@ -90,6 +99,59 @@ export interface CopsTransitionResult {
   source: string;
   reason: string;
   at: Date;
+}
+
+export interface CopsLifecycleTransitionEvent {
+  dimension: CopsDimension;
+  entityId: string;
+  from: string;
+  to: string;
+  actor: CopsTransitionInput["actor"];
+  source: string;
+  reason: string;
+  occurredAt: Date;
+}
+
+export class CopsLifecycleProjectionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CopsLifecycleProjectionError";
+  }
+}
+
+/** Rebuild the current state from the ordered, immutable lifecycle transition history. */
+export function deriveCopsLifecycleState(
+  events: readonly CopsLifecycleTransitionEvent[],
+  dimension: CopsDimension,
+  entityId: string,
+  initialStateAt?: Date
+): { state: string; updatedAt: Date } | null {
+  const relevant = events.filter((event) => event.dimension === dimension && event.entityId === entityId);
+  if (relevant.length === 0) {
+    return initialStateAt ? { state: COPS_INITIAL_STATES[dimension], updatedAt: initialStateAt } : null;
+  }
+
+  let state = COPS_INITIAL_STATES[dimension];
+  let updatedAt = relevant[0]!.occurredAt;
+  for (const event of relevant) {
+    if (event.from !== state) {
+      throw new CopsLifecycleProjectionError(
+        `Lifecycle history is discontinuous for ${dimension}/${entityId}: expected ${state}, found ${event.from}`
+      );
+    }
+    applyCopsTransition({
+      dimension,
+      from: event.from,
+      to: event.to,
+      actor: event.actor,
+      source: event.source,
+      reason: event.reason,
+      at: event.occurredAt,
+    });
+    state = event.to;
+    updatedAt = event.occurredAt;
+  }
+  return { state, updatedAt };
 }
 
 /** Validate a transition and return its record. Throws CopsIllegalTransitionError on a bad move. */

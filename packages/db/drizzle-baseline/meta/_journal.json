@@ -64,6 +64,20 @@
       "when": 1791268629008,
       "tag": "0008_mysterious_blue_blade",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791290313126,
+      "tag": "0009_wide_mister_fear",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791292217051,
+      "tag": "0010_bizarre_zuras",
+      "breakpoints": true
     }
   ]
 }

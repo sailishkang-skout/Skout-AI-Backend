@@ -1,17 +1,21 @@
 import type { FastifyInstance } from "fastify";
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { schema, type Db } from "@skout/db";
 import {
   appendCopsEvent,
   applyCopsTransition,
+  COPS_INITIAL_STATES,
   COPS_DIMENSIONS,
   COPS_STATES,
   copsErrorBody,
   copsErrorStatus,
   createCopsEvent,
+  deriveCopsLifecycleState,
+  parseCopsEvent,
   resolveCorrelationId,
   type CopsDimension,
+  type CopsLifecycleTransitionEvent,
   type CopsResource,
 } from "@skout/shared";
 import { getMemberPermissions } from "@skout/auth";
@@ -23,16 +27,7 @@ import {
 } from "../services/cops-platform.service.js";
 import { withCopsIdempotency } from "../services/cops-idempotent.js";
 
-const { copsLifecycleStates } = schema;
-
-const INITIAL_STATE: Record<CopsDimension, string> = {
-  opportunity: "qualified",
-  commercial: "proposal_sent",
-  onboarding: "not_started",
-  account: "trial",
-  health: "healthy",
-  support: "no_issue",
-};
+const { copsLifecycleStates, copsOutbox } = schema;
 
 const PERMISSION_RESOURCE: Record<CopsDimension, CopsResource> = {
   opportunity: "crm",
@@ -52,6 +47,10 @@ export const COPS_LIFECYCLE_BODY_SCHEMA = z.object({
   to: z.string().min(1),
   source: z.string().trim().min(1).max(100),
   reason: z.string().trim().min(1).max(500),
+}).strict();
+
+export const COPS_LIFECYCLE_RECOMPUTE_BODY_SCHEMA = z.object({
+  reason: z.string().trim().min(8).max(500),
 }).strict();
 
 export async function copsLifecycleRoutes(app: FastifyInstance, opts: { db: Db }) {
@@ -133,7 +132,7 @@ export async function copsLifecycleRoutes(app: FastifyInstance, opts: { db: Db }
         const result = await db.transaction(async (tx) => {
           await tx
             .insert(copsLifecycleStates)
-            .values({ workspaceId, dimension, entityId, state: INITIAL_STATE[dimension] })
+            .values({ workspaceId, dimension, entityId, state: COPS_INITIAL_STATES[dimension] })
             .onConflictDoNothing();
 
           const [current] = await tx
@@ -226,6 +225,159 @@ export async function copsLifecycleRoutes(app: FastifyInstance, opts: { db: Db }
         }
         throw err;
       }
+    })
+  );
+
+  app.post<{ Params: { dimension: string; entityId: string }; Body: { reason: string } }>(
+    "/cops/lifecycle/:dimension/:entityId/recompute",
+    {
+      preHandler: requireCopsPermission("admin", "admin", (workspaceId, userId) =>
+        getMemberPermissions(db, workspaceId, userId)
+      ),
+    },
+    withCopsIdempotency(idempotency, async (request) => {
+      const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+      const parsedParams = COPS_LIFECYCLE_PARAMS_SCHEMA.safeParse(request.params);
+      const parsedBody = COPS_LIFECYCLE_RECOMPUTE_BODY_SCHEMA.safeParse(request.body);
+      if (!parsedParams.success || !parsedBody.success) {
+        const issues = [
+          ...(parsedParams.success ? [] : parsedParams.error.issues),
+          ...(parsedBody.success ? [] : parsedBody.error.issues),
+        ];
+        return {
+          status: copsErrorStatus("VALIDATION_FAILED"),
+          body: copsErrorBody({
+            code: "VALIDATION_FAILED",
+            message: "Invalid lifecycle recompute request",
+            requestId,
+            details: {
+              fields: issues.map((issue) => ({
+                path: issue.path.join("."),
+                code: issue.code,
+                message: issue.message,
+              })),
+            },
+          }),
+        };
+      }
+
+      const { dimension, entityId } = parsedParams.data;
+      const workspaceId = requireWorkspaceId(request);
+      const actorId = request.userId!;
+      const occurredAt = new Date();
+      const result = await db.transaction(async (tx) => {
+        const eventTypes =
+          dimension === "opportunity"
+            ? ["LifecycleTransitioned", "OpportunityQualified"]
+            : ["LifecycleTransitioned"];
+        const rows = await tx
+          .select({ envelope: copsOutbox.envelope })
+          .from(copsOutbox)
+          .where(
+            and(
+              eq(copsOutbox.tenantId, workspaceId),
+              inArray(copsOutbox.eventType, eventTypes),
+              eq(copsOutbox.aggregateType, dimension),
+              eq(copsOutbox.aggregateId, entityId)
+            )
+          )
+          .orderBy(asc(copsOutbox.createdAt), asc(copsOutbox.id));
+
+        const transitionEvents: CopsLifecycleTransitionEvent[] = [];
+        let initialStateAt: Date | undefined;
+        for (const row of rows) {
+          const event = parseCopsEvent(row.envelope);
+          if (event.event_type === "OpportunityQualified" && dimension === "opportunity") {
+            const payload = event.payload as { opportunity_id: string };
+            if (payload.opportunity_id === entityId) initialStateAt = new Date(event.occurred_at);
+            continue;
+          }
+          if (event.event_type !== "LifecycleTransitioned") continue;
+          const payload = event.payload as {
+            dimension: CopsDimension;
+            entity_id: string;
+            from: string;
+            to: string;
+            source: string;
+            reason: string;
+          };
+          transitionEvents.push({
+            dimension: payload.dimension,
+            entityId: payload.entity_id,
+            from: payload.from,
+            to: payload.to,
+            actor: event.actor,
+            source: payload.source,
+            reason: payload.reason,
+            occurredAt: new Date(event.occurred_at),
+          });
+        }
+        const projection = deriveCopsLifecycleState(transitionEvents, dimension, entityId, initialStateAt);
+        const [before] = await tx
+          .select({ state: copsLifecycleStates.state, updatedAt: copsLifecycleStates.updatedAt })
+          .from(copsLifecycleStates)
+          .where(
+            and(
+              eq(copsLifecycleStates.workspaceId, workspaceId),
+              eq(copsLifecycleStates.dimension, dimension),
+              eq(copsLifecycleStates.entityId, entityId)
+            )
+          )
+          .limit(1);
+
+        if (projection) {
+          await tx
+            .insert(copsLifecycleStates)
+            .values({ workspaceId, dimension, entityId, state: projection.state, updatedAt: projection.updatedAt })
+            .onConflictDoUpdate({
+              target: [
+                copsLifecycleStates.workspaceId,
+                copsLifecycleStates.dimension,
+                copsLifecycleStates.entityId,
+              ],
+              set: { state: projection.state, updatedAt: projection.updatedAt },
+            });
+        } else {
+          await tx
+            .delete(copsLifecycleStates)
+            .where(
+              and(
+                eq(copsLifecycleStates.workspaceId, workspaceId),
+                eq(copsLifecycleStates.dimension, dimension),
+                eq(copsLifecycleStates.entityId, entityId)
+              )
+            );
+        }
+
+        await writeCopsAudit(tx, {
+          tenantId: workspaceId,
+          actor: { type: "user", id: actorId },
+          entityType: `cops_${dimension}`,
+          entityId,
+          action: "lifecycle.recomputed",
+          before: before ? { state: before.state, updated_at: before.updatedAt.toISOString() } : null,
+          after: projection ? { state: projection.state, updated_at: projection.updatedAt.toISOString() } : null,
+          reason: parsedBody.data.reason,
+          correlationId: requestId,
+          sourceChannel: "api",
+          occurredAt,
+        });
+
+        return projection;
+      });
+
+      return {
+        status: 200,
+        body: {
+          data: {
+            dimension,
+            entity_id: entityId,
+            state: result?.state ?? null,
+            updated_at: result?.updatedAt.toISOString() ?? null,
+          },
+          request_id: requestId,
+        },
+      };
     })
   );
 }

@@ -45,8 +45,9 @@ export function getDexterEventQueue(config: Env): Queue<DexterEventJobPayload> {
 export async function enqueueDexterEventJob(config: Env, payload: DexterEventJobPayload): Promise<void> {
   const eventType = "type" in payload.event ? payload.event.type : payload.event.event_type;
   const eventId = "id" in payload.event ? payload.event.id : payload.event.event_id;
+  const jobOptions = "event_type" in payload.event ? { attempts: 8 } : {};
   const addPromise = getDexterEventQueue(config)
-    .add("process-event", payload, { jobId: eventId })
+    .add("process-event", payload, { jobId: eventId, ...jobOptions })
     .then(() => "added" as const)
     .catch((err: unknown) => {
       log.warn("dexter event enqueue failed", { eventType, eventId, err });

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { COPS_LIFECYCLE_BODY_SCHEMA, COPS_LIFECYCLE_PARAMS_SCHEMA } from "./cops-lifecycle.routes.js";
+import {
+  COPS_LIFECYCLE_BODY_SCHEMA,
+  COPS_LIFECYCLE_PARAMS_SCHEMA,
+  COPS_LIFECYCLE_RECOMPUTE_BODY_SCHEMA,
+} from "./cops-lifecycle.routes.js";
 import { COPS_STATES, applyCopsTransition, CopsIllegalTransitionError } from "@skout/shared";
 
 describe("COPS lifecycle transition contract", () => {
@@ -11,6 +15,14 @@ describe("COPS lifecycle transition contract", () => {
       }).success
     ).toBe(true);
     expect(COPS_LIFECYCLE_BODY_SCHEMA.safeParse({ to: "in_progress", source: "web", reason: "Kickoff started" }).success).toBe(true);
+  });
+
+  describe("COPS lifecycle recompute contract", () => {
+    it("requires an auditable reason and rejects unexpected fields", () => {
+      expect(COPS_LIFECYCLE_RECOMPUTE_BODY_SCHEMA.safeParse({ reason: "Repair projection" }).success).toBe(true);
+      expect(COPS_LIFECYCLE_RECOMPUTE_BODY_SCHEMA.safeParse({ reason: "short" }).success).toBe(false);
+      expect(COPS_LIFECYCLE_RECOMPUTE_BODY_SCHEMA.safeParse({ reason: "Repair projection", state: "won" }).success).toBe(false);
+    });
   });
 
   it("rejects unknown dimensions, empty source/reason and unexpected body fields", () => {

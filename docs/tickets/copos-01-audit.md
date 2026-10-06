@@ -29,6 +29,8 @@ systems and adds only the missing transactional-outbox and idempotency capabilit
   `skout-dexter-event` queue and worker.
 - The six independent lifecycle dimensions and their allowed-transition rules. Opportunity
   `won` does not imply onboarding `activated`.
+- An audited lifecycle projection rebuild from the ordered `LifecycleTransitioned` outbox history;
+  opportunity qualification is also used as the opportunity dimension's initial-state event.
 - The COPS verb/resource permission catalog and role grants, layered onto the existing RBAC
   tables. `Engineering` is deliberately not granted commercial or legal reads.
 - Persisted idempotency outcomes for mutating endpoints.
@@ -36,6 +38,9 @@ systems and adds only the missing transactional-outbox and idempotency capabilit
   existing `audit_logs` table.
 - The OpenAPI contract and the audit-log view. The existing dashboard navigation is extended to
   link the view only when the server-reported permission allows it.
+- COPS event-to-role notification defaults and workspace overrides, implemented through the
+  existing notification API, worker, preferences, and delivery service rather than a second
+  notification center.
 
 ## Contract and rollout notes
 
@@ -49,6 +54,17 @@ systems and adds only the missing transactional-outbox and idempotency capabilit
   update. It is idempotent and creates the COPS system roles/grants for future assignment.
 - Notification delivery remains on the current notification service. The existing bell is the
   notification center; `/settings/notifications` remains the preferences and channel setup page.
+- `GET/PUT /api/v1/notifications/cops-routes` manages audited workspace overrides; `DELETE
+  /api/v1/notifications/cops-routes/{eventType}` restores the built-in default and also requires
+  an audited reason. `/settings/notifications` exposes the editor only to users with
+  `admin:admin`; users can view/edit recipient roles and restore defaults. The existing bell/feed
+  remains the notification center. Event receipts and in-app notification inserts share one
+  transaction; `(workspace, user, event_id)` uniqueness prevents duplicate notices on replay.
+  Existing user preferences and email/Slack delivery are reused.
+- Teams delivery uses the Microsoft Teams Workflows incoming-webhook contract, configured per
+  workspace through owner/admin settings; the API restricts URLs to HTTPS Microsoft webhook
+  hosts. Delivery failures retry and are reported without failing in-app notification creation.
+  A configured Teams environment and production alert routing are not verified.
 
 ## Acceptance verification (2026-10-06)
 
@@ -56,21 +72,33 @@ systems and adds only the missing transactional-outbox and idempotency capabilit
 |---|---|---|
 | Outbox crash safety and duplicate-event no-op | ✅ | In-memory crash/consumer tests pass; the real-Postgres process-kill test passed 2/2 with `COPS_TEST_DATABASE_URL` and is committed as `81f9c61`. |
 | Illegal lifecycle transitions return 409; won does not imply activated | ✅ | Independent dimensions and transition tables; lifecycle/error unit tests pass. |
+| Derived lifecycle state can be rebuilt from events | ✅ | Admin-only, reason-required recompute endpoint validates ordered transition continuity and transactionally rebuilds the projection with an audit row. CRM qualification events restore the initial `qualified` state. |
 | Permission matrix; Engineering denied commercial/legal reads | ✅ | Full role-permission matrix passed against the seeded local Postgres catalog. Engineering lacks `commercial:read` and `legal:read`. Production/staging rollout must run the idempotent backfill before enforcement is enabled. |
 | Overrides require a reason and create audit records | ✅ | Shared audit validation rejects overrides without a reason; lifecycle/replay writes persist audit records transactionally. Each later ticket must assert its own override audit write. |
-| Notification provider outage retries, alerts, and does not fail the originating write | ✅ | Provider retry/fallback tests pass; exhausted failures are sent to Sentry via `captureException`, while in-app notification creation succeeds. Production alert routing/delivery is an operational configuration check. |
-| Permission-aware frontend; no raw 403 screen | ✅ | Audit nav is permission-gated; the audit page renders a user-facing forbidden message. |
-| 422 field errors and retryable/429 handling | ✅ | API returns `details.fields[]`; audit-page integration test and Playwright browser test verify date-filter submit → 422 field alert. Playwright uses the local E2E auth bypass and a mocked API error envelope; envelope/retry unit tests also pass. |
+| Notification routing, provider retries, and outage isolation | ✅ | COPS events create deduped in-app notifications; admins have an audited role-route editor. Email/Slack/Teams adapters retry and report exhausted failures without failing in-app writes. Per-channel successes are checkpointed; COPS BullMQ retries recover an event committed before provider delivery and Sentry captures final exhaustion. Production alert routing and Teams credentials still require environment verification. |
+| Permission-aware frontend; no raw 403 screen | ⚠️ Partial | Audit navigation is gated on `admin:read`; the routing editor is gated on `admin:admin`, with API-side checks retained. Audit page renders a user-facing forbidden state. Full CustomerOps nav sections remain owned by their corresponding capability tickets. |
+| 422 field errors and retryable/429 handling | ⚠️ Partial | API returns `details.fields[]`; audit-page integration and Playwright tests verify a mocked 422 field alert. Playwright uses local E2E auth bypass; authenticated browser verification against a real API response remains pending. |
 | OpenAPI contract and existing-code audit | ✅ | Contract: `docs/api/copos-01-platform-foundation.openapi.yaml`; findings recorded above. |
 | Six Bible p.10 ADRs | ✅ | All six decisions are documented and linked below. ADRs are proposed pending reviewer sign-off; provider selections are correctly deferred to the tickets that integrate them. |
 | Commercial / Engineering navigation | ⏭ | Deliberately deferred to COPS-03 / COPS-06. |
 
-Focused verification run: backend COPS shared tests **67/67 passed**; seeded COPS role grant and
+Focused verification run before the latest local-only extensions: backend COPS shared tests **67/67 passed**; seeded COPS role grant and
 Postgres matrix tests **4/4 passed**; frontend COPS error, fetch, navigation-helper, audit-viewer,
 and audit-page integration tests **20/20 passed**; COPS Playwright browser tests **2/2 passed**;
 notification provider retry, Sentry-capture, and fallback tests **7/7 passed**. The RBAC backfill
 was run and queried only in the local `skout_test` database; no shared or production database was
 modified.
+
+Latest local-only validation: lifecycle projection tests **8/8 passed**; focused API notification,
+routing, worker, lifecycle, and notification delivery tests **24/24 passed**; Teams webhook URL
+validation **8/8 passed**; API/DB TypeScript checks passed.
+Frontend typecheck passed and COPS audit, notification-center, and routing-editor tests **6/6
+passed**. Provider recovery tests additionally cover duplicate event delivery after the in-app
+transaction. All changes remain uncommitted and undeployed.
+Local `skout_test` migration application previously stopped at `0079_whatsapp_outreach_jobs.sql`
+because its table already existed; that migration is now safe to re-run when the table is present.
+The DB migrations have not been re-applied, so runtime DB validation still requires applying
+`0101`/`0102` after reconciling the local migration history.
 
 ## Operational follow-up (not a COPS-01 code acceptance blocker)
 

@@ -16,7 +16,7 @@ components:
     IdempotencyKey:
       name: Idempotency-Key
       in: header
-      required: false
+      required: true
       description: |
         Client-generated key for safe retries of unsafe methods. Same key + same body
         returns the original response. Same key + different body returns 422.
@@ -202,6 +202,145 @@ components:
                   details:
                     $ref: "#/components/schemas/RateLimitErrorDetails"
 paths:
+  /cops/lifecycle/{dimension}/{entityId}/recompute:
+    post:
+      summary: Recompute lifecycle state from immutable events
+      description: |
+        Requires admin:admin and an Idempotency-Key. Replays the ordered LifecycleTransitioned
+        history for this workspace entity, validates continuity, and transactionally rebuilds
+        the lifecycle projection with an audit record. A discontinuous event history is rejected.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - name: dimension
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [opportunity, commercial, onboarding, account, health, support]
+        - name: entityId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              additionalProperties: false
+              properties:
+                reason: { type: string, minLength: 8, maxLength: 500 }
+      responses:
+        "200":
+          description: Rebuilt projection, or null state when no transition events exist.
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "500":
+          description: Event history failed validation; the projection and audit remain unchanged.
+  /notifications/cops-routes:
+    get:
+      summary: List workspace COPS event notification overrides
+      description: Requires admin:admin. An event without an override uses the built-in role defaults.
+      responses:
+        "200":
+          description: Workspace-specific event-to-role overrides.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [eventType, roleKeys, updatedAt]
+                      properties:
+                        eventType: { type: string }
+                        roleKeys: { type: array, items: { type: string } }
+                        updatedAt: { type: string, format: date-time }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      summary: Set a workspace COPS event notification override
+      description: Requires admin:admin. Empty role_keys disables routing for that event. The update requires a reason and is audited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event_type, role_keys, reason]
+              additionalProperties: false
+              properties:
+                event_type:
+                  type: string
+                  enum: [OpportunityQualified, ProposalSent, ContractSent, ContractSigned, PaymentRequested, PaymentSucceeded, WorkspaceProvisioned, CreditsGranted, WelcomeEmailSent, SequenceEnrolled, TaskCreated, FirstLogin, ActivationMilestoneCompleted, CustomerActivated, TicketCreated, TicketEscalated, TicketResolved, LifecycleTransitioned]
+                role_keys:
+                  type: array
+                  items:
+                    type: string
+                    enum: [sales, sales_manager, cs, finance, legal_revops, engineering, product, admin, owner]
+                reason: { type: string, minLength: 8, maxLength: 500 }
+      responses:
+        "200":
+          description: Stored workspace override.
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+  /notifications/cops-routes/{eventType}:
+    delete:
+      summary: Reset a workspace COPS event route to its built-in default
+      description: Requires admin:admin. The reset requires a reason and is audited. Repeating a reset is safe.
+      parameters:
+        - name: eventType
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [OpportunityQualified, ProposalSent, ContractSent, ContractSigned, PaymentRequested, PaymentSucceeded, WorkspaceProvisioned, CreditsGranted, WelcomeEmailSent, SequenceEnrolled, TaskCreated, FirstLogin, ActivationMilestoneCompleted, CustomerActivated, TicketCreated, TicketEscalated, TicketResolved, LifecycleTransitioned]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              additionalProperties: false
+              properties:
+                reason: { type: string, minLength: 8, maxLength: 500 }
+      responses:
+        "200":
+          description: Route reset; `reset` indicates whether an override was removed.
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+  /workspaces/current/teams-webhook:
+    put:
+      summary: Configure Teams Workflows notification delivery
+      description: Requires owner/admin and workspace:manage. Only HTTPS Microsoft Workflows webhook URLs are accepted; pass null to disconnect.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              additionalProperties: false
+              properties:
+                url: { type: [string, "null"], format: uri }
+      responses:
+        "200":
+          description: Teams webhook configuration updated.
+        "400":
+          description: URL is invalid or not an approved Microsoft webhook host.
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /cops/lifecycle/{dimension}/{entityId}/transitions:
     post:
       summary: Apply an audited lifecycle transition

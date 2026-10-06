@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { applyCopsTransition, CopsIllegalTransitionError } from "./cops-lifecycle.js";
+import {
+  applyCopsTransition,
+  CopsIllegalTransitionError,
+  CopsLifecycleProjectionError,
+  deriveCopsLifecycleState,
+  type CopsLifecycleTransitionEvent,
+} from "./cops-lifecycle.js";
 import {
   copsErrorBody,
   copsErrorStatus,
@@ -19,6 +25,60 @@ describe("applyCopsTransition", () => {
       source: "crm.kanban",
       reason: "Discovery call done",
       at,
+    });
+
+    describe("deriveCopsLifecycleState", () => {
+      const history: CopsLifecycleTransitionEvent[] = [
+        {
+          dimension: "opportunity",
+          entityId: "deal-1",
+          from: "qualified",
+          to: "demo",
+          actor,
+          source: "crm",
+          reason: "Discovery call scheduled",
+          occurredAt: new Date("2026-10-06T10:00:00.000Z"),
+        },
+        {
+          dimension: "opportunity",
+          entityId: "deal-1",
+          from: "demo",
+          to: "commercial",
+          actor,
+          source: "crm",
+          reason: "Demo completed",
+          occurredAt: new Date("2026-10-06T11:00:00.000Z"),
+        },
+      ];
+
+      it("rebuilds state and timestamp from the immutable ordered transition history", () => {
+        expect(deriveCopsLifecycleState(history, "opportunity", "deal-1")).toEqual({
+          state: "commercial",
+          updatedAt: new Date("2026-10-06T11:00:00.000Z"),
+        });
+      });
+
+      it("returns null when there is no transition history", () => {
+        expect(deriveCopsLifecycleState([], "opportunity", "deal-1")).toBeNull();
+      });
+
+      it("rebuilds the qualified baseline from the CRM qualification event timestamp", () => {
+        const occurredAt = new Date("2026-10-06T09:00:00.000Z");
+        expect(deriveCopsLifecycleState([], "opportunity", "deal-1", occurredAt)).toEqual({
+          state: "qualified",
+          updatedAt: occurredAt,
+        });
+      });
+
+      it("rejects discontinuous event history instead of silently projecting an invalid state", () => {
+        expect(() =>
+          deriveCopsLifecycleState(
+            [{ ...history[1]!, from: "qualified" }],
+            "opportunity",
+            "deal-1"
+          )
+        ).toThrow(CopsLifecycleProjectionError);
+      });
     });
     expect(r).toMatchObject({ dimension: "opportunity", from: "qualified", to: "demo", source: "crm.kanban", at });
   });
