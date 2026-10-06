@@ -1,12 +1,12 @@
 import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
-import type { ActivityCreateInput, ActivityType, CrmEntityType } from "@skout/shared";
+import { appendCopsEvent, createCopsEvent, type ActivityCreateInput, type ActivityType, type CrmEntityType } from "@skout/shared";
 import { serviceLog } from "../lib/obs.js";
 import { RetentionRulesService } from "./retention-rules.service.js";
 
 const log = serviceLog("activities");
-const { activities } = schema;
+const { activities, contacts, deals } = schema;
 
 export interface ActivityDto {
   id: string;
@@ -82,7 +82,7 @@ export class ActivitiesService {
   }
 
   async create(workspaceId: string, ownerId: string | undefined, input: ActivityCreateInput): Promise<ActivityDto> {
-    return this.record(workspaceId, ownerId, input.entityType, input.entityId, input.activityType, input.subject, input.body);
+    return this.record(workspaceId, ownerId, input.entityType, input.entityId, input.activityType, input.subject, input.body, input.visibility ?? "public");
   }
 
   async record(
@@ -92,7 +92,8 @@ export class ActivitiesService {
     entityId: string,
     activityType: ActivityType,
     subject?: string,
-    body?: string
+    body?: string,
+    visibility: "public" | "internal" = "public"
   ): Promise<ActivityDto> {
     // §8.12 / Task 19 — every activity-ingestion path funnels through this one method (create(),
     // sequence-enrollment.worker.ts, call disposition, meeting outcomes, etc.), so wiring
@@ -109,10 +110,35 @@ export class ActivitiesService {
       log.warn("retention classification failed — recording activity unclassified", { workspaceId, entityType, activityType, err });
     }
 
-    const [row] = await this.db
-      .insert(activities)
-      .values({ workspaceId, entityType, entityId, activityType, subject, body, ownerId, retentionClassification })
-      .returning();
+    // COPS-02: the activity and its ActivityRecorded event commit together, so the timeline
+    // projector sees every activity exactly once (outbox + idempotent consumer).
+    const row = await this.db.transaction(async (tx) => {
+      const [inserted] = await tx
+        .insert(activities)
+        .values({ workspaceId, entityType, entityId, activityType, subject, body, ownerId, retentionClassification, visibility })
+        .returning();
+      const accountId = await accountIdForActivity(tx, workspaceId, entityType, entityId);
+      await appendCopsEvent(
+        tx as never,
+        createCopsEvent({
+          eventType: "ActivityRecorded",
+          tenantId: workspaceId,
+          aggregateType: entityType,
+          aggregateId: entityId,
+          actor: ownerId ? { type: "user", id: ownerId } : { type: "system", id: null },
+          payload: {
+            activity_id: inserted.id,
+            activity_type: activityType,
+            entity_type: entityType,
+            entity_id: entityId,
+            account_id: accountId,
+            subject: subject ?? null,
+            visibility,
+          },
+        })
+      );
+      return inserted;
+    });
     log.info("activity recorded", { workspaceId, entityType, entityId, activityType, activityId: row.id, retentionClassification });
     return toDto(row);
   }
@@ -120,4 +146,31 @@ export class ActivitiesService {
 
 export function buildActivitiesService(db: Db | null): ActivitiesService | null {
   return db ? new ActivitiesService(db) : null;
+}
+
+/** The account (company) an activity belongs to, for the account timeline. Null when there is none. */
+async function accountIdForActivity(
+  tx: Parameters<Parameters<Db["transaction"]>[0]>[0],
+  workspaceId: string,
+  entityType: string,
+  entityId: string
+): Promise<string | null> {
+  if (entityType === "company") return entityId;
+  if (entityType === "contact") {
+    const [c] = await tx
+      .select({ companyId: contacts.companyId })
+      .from(contacts)
+      .where(and(eq(contacts.id, entityId), eq(contacts.workspaceId, workspaceId)))
+      .limit(1);
+    return c?.companyId ?? null;
+  }
+  if (entityType === "deal") {
+    const [d] = await tx
+      .select({ companyId: deals.companyId })
+      .from(deals)
+      .where(and(eq(deals.id, entityId), eq(deals.workspaceId, workspaceId)))
+      .limit(1);
+    return d?.companyId ?? null;
+  }
+  return null;
 }

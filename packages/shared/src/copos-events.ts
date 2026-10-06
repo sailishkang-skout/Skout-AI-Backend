@@ -45,6 +45,16 @@ export const CreditsGrantedPayload = z.object({ wallet_id: id, amount: z.number(
 export const WelcomeEmailSentPayload = z.object({ account_id: id, email_send_id: id });
 export const SequenceEnrolledPayload = z.object({ account_id: id, enrollment_id: id, template_version: z.string() });
 export const TaskCreatedPayload = z.object({ task_id: id, account_id: id, task_type: z.string() });
+/** Added for COPS-02: every recorded CRM activity reaches the timeline through this event. */
+export const ActivityRecordedPayload = z.object({
+  activity_id: id,
+  activity_type: z.string(),
+  entity_type: z.string(),
+  entity_id: id,
+  account_id: id.nullable(),
+  subject: z.string().nullable(),
+  visibility: z.enum(["public", "internal"]),
+});
 /** Added for COPS-02: completing a task emits an event (COPS-02 ticket). */
 export const TaskCompletedPayload = z.object({ task_id: id, account_id: id.nullable(), task_type: z.string() });
 export const FirstLoginPayload = z.object({ account_id: id, user_id: id });
@@ -76,6 +86,7 @@ export const COPS_PHASE1_EVENTS = {
   SequenceEnrolled: SequenceEnrolledPayload,
   TaskCreated: TaskCreatedPayload,
   TaskCompleted: TaskCompletedPayload,
+  ActivityRecorded: ActivityRecordedPayload,
   FirstLogin: FirstLoginPayload,
   ActivationMilestoneCompleted: ActivationMilestoneCompletedPayload,
   CustomerActivated: CustomerActivatedPayload,

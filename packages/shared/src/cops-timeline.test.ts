@@ -28,4 +28,11 @@ describe("projectCopsEventToTimeline", () => {
       expect(COPS_TIMELINE_TYPES).toContain(projection!.type);
     }
   });
+
+  it("maps a recorded activity to its timeline type and keeps internal notes internal", () => {
+    const call = projectCopsEventToTimeline({ event_type: "ActivityRecorded", payload: { activity_type: "call", subject: "Intro call", visibility: "public" } });
+    expect(call).toEqual({ type: "call", visibility: "public", summary: "Intro call" });
+    const note = projectCopsEventToTimeline({ event_type: "ActivityRecorded", payload: { activity_type: "note", subject: null, visibility: "internal" } });
+    expect(note).toEqual({ type: "note", visibility: "internal", summary: "Internal note" });
+  });
 });

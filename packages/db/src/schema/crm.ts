@@ -226,6 +226,8 @@ export const activities = pgTable(
     entityType: text("entity_type").notNull(),
     entityId: uuid("entity_id").notNull(),
     activityType: text("activity_type").notNull(),
+    /** COPS-02: internal notes are distinct from customer-facing history; internal rows need crm:admin to read. */
+    visibility: text("visibility").notNull().default("public"),
     subject: text("subject"),
     body: text("body"),
     ownerId: uuid("owner_id").references(() => users.id, { onDelete: "set null" }),

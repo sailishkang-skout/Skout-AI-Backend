@@ -764,6 +764,13 @@
       "when": 1793800000000,
       "tag": "0107_pipeline_stage_lifecycle_state",
       "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "7",
+      "when": 1793900000000,
+      "tag": "0108_activities_visibility",
+      "breakpoints": true
     }
   ]
 }

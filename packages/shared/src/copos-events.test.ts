@@ -15,7 +15,7 @@ const base = {
 
 describe("COPS Phase 1 event contract", () => {
   it("registers the 17 Phase 1 business events plus the shared lifecycle transition event", () => {
-    expect(Object.keys(COPS_PHASE1_EVENTS)).toHaveLength(19);
+    expect(Object.keys(COPS_PHASE1_EVENTS)).toHaveLength(20);
     expect(COPS_PHASE1_EVENTS).toHaveProperty("LifecycleTransitioned");
   });
 

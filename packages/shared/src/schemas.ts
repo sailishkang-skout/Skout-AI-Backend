@@ -719,6 +719,8 @@ export const activityCreateSchema = z.object({
   activityType: z.enum(ACTIVITY_TYPES),
   subject: z.string().max(500).optional(),
   body: z.string().optional(),
+  /** COPS-02: "internal" notes are hidden from users without crm:admin on the timeline. */
+  visibility: z.enum(["public", "internal"]).optional(),
 });
 
 export const activityResponseSchema = z.object({
