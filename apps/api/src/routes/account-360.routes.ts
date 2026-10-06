@@ -7,8 +7,9 @@ import { getMemberPermissions } from "@skout/auth";
 import { errorResponse, HttpError } from "../utils/http.js";
 import { getEvidence } from "../services/evidence.service.js";
 import { createRegionalBriefService } from "../services/regional-brief.service.js";
-import { requireAnyCopsPermission, writeCopsAudit } from "../services/cops-platform.service.js";
+import { copsIdempotencyStore, requireAnyCopsPermission, writeCopsAudit } from "../services/cops-platform.service.js";
 import { runLifecycleTransition } from "../services/cops-lifecycle.service.js";
+import { withCopsIdempotentReply } from "../services/cops-idempotent.js";
 import { AccountLinkError, linkAccounts } from "../services/cops-account-relationships.service.js";
 
 const { companies, contacts, deals, activities, signals, copsLifecycleStates, copsTimelineEvents, tasks, workspaceMembers, copsSavedViews, pipelineStages, copsAccountMerges, accountRelationships, crmNativeLinks } = schema;
@@ -291,6 +292,8 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
   const { db } = opts;
   // Same reach as the CRM nav: crm:read, or crm:manage (held by the Member role).
   const gate = requireAnyCopsPermission(["crm:read", "crm:manage"], (ws, user) => getMemberPermissions(db, ws, user));
+  // One idempotency store for every COPS-02 write route (Idempotency-Key required; replays return the stored result).
+  const idempotency = copsIdempotencyStore(db);
 
   app.get<{ Params: { id: string }; Querystring: { fields?: string } }>(
     "/accounts/:id/360",
@@ -414,7 +417,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
   app.post<{ Params: { id: string }; Body: { child_account_id?: string; relationship?: string } }>(
     "/accounts/:id/relationships",
     { preHandler: writeGate },
-    async (request, reply) => {
+    withCopsIdempotentReply<{ Params: { id: string }; Body: { child_account_id?: string; relationship?: string } }>(idempotency, async (request, reply) => {
       const requestId = resolveCorrelationId(request.headers["x-request-id"]);
       const fail = (path: string, message: string) =>
         reply.status(copsErrorStatus("VALIDATION_FAILED")).send(
@@ -428,11 +431,24 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       if (relationship.length < 1 || relationship.length > 60) return fail("relationship", "relationship must be 1-60 characters");
 
       try {
-        const id = await linkAccounts(db, {
-          workspaceId: request.workspaceId!,
-          parentAccountId: request.params.id,
-          childAccountId: childId,
-          relationship,
+        const id = await db.transaction(async (tx) => {
+          const linkId = await linkAccounts(tx as unknown as Db, {
+            workspaceId: request.workspaceId!,
+            parentAccountId: request.params.id,
+            childAccountId: childId,
+            relationship,
+          });
+          await writeCopsAudit(tx, {
+            tenantId: request.workspaceId!,
+            actor: { type: "user", id: request.userId ?? null },
+            entityType: "account",
+            entityId: request.params.id,
+            action: "account.related",
+            after: { child_account_id: childId, relationship },
+            correlationId: requestId,
+            sourceChannel: "api",
+          });
+          return linkId;
         });
         return reply.status(201).send({ data: { id, parent_account_id: request.params.id, child_account_id: childId, relationship } });
       } catch (err) {
@@ -441,7 +457,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
         }
         throw err;
       }
-    }
+    })
   );
 
   // POST /accounts/bulk-reassign — set the owner of many accounts at once. Ids outside this
@@ -450,7 +466,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
   app.post<{ Body: { ids?: string[]; owner_id?: string; reason?: string } }>(
     "/accounts/bulk-reassign",
     { preHandler: bulkGate },
-    async (request, reply) => {
+    withCopsIdempotentReply<{ Body: { ids?: string[]; owner_id?: string; reason?: string } }>(idempotency, async (request, reply) => {
       const requestId = resolveCorrelationId(request.headers["x-request-id"]);
       const fail = (path: string, message: string) =>
         reply.status(copsErrorStatus("VALIDATION_FAILED")).send(
@@ -497,7 +513,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
 
       const skipped = ids.filter((id) => !updated.includes(id));
       return { data: { updated: updated.length, updated_ids: updated, skipped_ids: skipped } };
-    }
+    })
   );
 
   // GET /accounts — account list: q (name contains), owner_id, sort (name | -created_at), cursor
@@ -920,7 +936,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
   app.post<{ Params: { id: string } }>(
     "/tasks/:id/complete",
     { preHandler: writeGate },
-    async (request, reply) => {
+    withCopsIdempotentReply<{ Params: { id: string } }>(idempotency, async (request, reply) => {
       const requestId = resolveCorrelationId(request.headers["x-request-id"]);
       if (!UUID.test(request.params.id)) {
         return reply.status(copsErrorStatus("VALIDATION_FAILED")).send(
@@ -968,6 +984,17 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
             payload: { task_id: task.id, account_id: accountId, task_type: task.type },
           })
         );
+        await writeCopsAudit(tx, {
+          tenantId: workspaceId,
+          actor: { type: "user", id: request.userId ?? null },
+          entityType: "task",
+          entityId: task.id,
+          action: "task.completed",
+          before: { status: "open" },
+          after: { status: "done" },
+          correlationId: requestId,
+          sourceChannel: "api",
+        });
         return row;
       });
       if (!updated) {
@@ -979,7 +1006,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       return {
         data: { id: updated.id, status: updated.status, completed_at: updated.completedAt?.toISOString() ?? null },
       };
-    }
+    })
   );
 
   // POST /opportunities/:id/stage — moves the deal to a stage of its own pipeline. The stage maps to
@@ -988,7 +1015,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
   app.post<{ Params: { id: string }; Body: { stage_id?: string; reason?: string; source?: string } }>(
     "/opportunities/:id/stage",
     { preHandler: writeGate },
-    async (request, reply) => {
+    withCopsIdempotentReply<{ Params: { id: string }; Body: { stage_id?: string; reason?: string; source?: string } }>(idempotency, async (request, reply) => {
       const requestId = resolveCorrelationId(request.headers["x-request-id"]);
       const fail = (path: string, message: string) =>
         reply.status(copsErrorStatus("VALIDATION_FAILED")).send(
@@ -1079,7 +1106,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
         }
         throw err;
       }
-    }
+    })
   );
 
   // POST /accounts/merge: merge a duplicate account into a survivor. Without confirm it returns the
@@ -1090,7 +1117,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
   app.post<{ Body: { survivor_id?: string; duplicate_id?: string; reason?: string; confirm?: boolean } }>(
     "/accounts/merge",
     { preHandler: mergeGate },
-    async (request, reply) => {
+    withCopsIdempotentReply<{ Body: { survivor_id?: string; duplicate_id?: string; reason?: string; confirm?: boolean } }>(idempotency, async (request, reply) => {
       const requestId = resolveCorrelationId(request.headers["x-request-id"]);
       const fail = (path: string, message: string) =>
         reply.status(copsErrorStatus("VALIDATION_FAILED")).send(
@@ -1155,6 +1182,19 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
             conflicts,
             mergedBy: request.userId ?? null,
           });
+          await writeCopsAudit(tx, {
+            tenantId: workspaceId,
+            actor: { type: "user", id: request.userId ?? null },
+            entityType: "account",
+            entityId: survivorId,
+            action: "account.merged",
+            before: { duplicate_id: duplicateId, duplicate_name: duplicate.name },
+            after: { survivor_id: survivorId, conflicts },
+            reason,
+            override: conflicts.length > 0,
+            correlationId: requestId,
+            sourceChannel: "api",
+          });
           for (const d of collidingDuplicateLinks) {
             await tx.delete(crmNativeLinks).where(eq(crmNativeLinks.id, d.id));
           }
@@ -1188,7 +1228,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
         throw err;
       }
       return { data: { status: "merged", survivor_id: survivorId, duplicate_id: duplicateId, conflicts_resolved_to_survivor: conflicts } };
-    }
+    })
   );
 }
 
