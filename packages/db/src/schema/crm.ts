@@ -116,6 +116,8 @@ export const pipelineStages = pgTable(
     probability: integer("probability").notNull().default(0),
     isClosedWon: boolean("is_closed_won").notNull().default(false),
     isClosedLost: boolean("is_closed_lost").notNull().default(false),
+    /** COPS-02 configurable stage rule: the opportunity lifecycle state this stage represents. Null = derived from the stage name. */
+    lifecycleState: text("lifecycle_state"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

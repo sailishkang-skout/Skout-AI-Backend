@@ -1006,14 +1006,14 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       try {
         const result = await db.transaction(async (tx) => {
           const [deal] = await tx
-            .select({ id: deals.id, pipelineId: deals.pipelineId })
+            .select({ id: deals.id, pipelineId: deals.pipelineId, stageId: deals.stageId })
             .from(deals)
             .where(and(eq(deals.id, request.params.id), eq(deals.workspaceId, workspaceId)))
             .limit(1);
           if (!deal) return { kind: "not_found" as const };
 
           const [stage] = await tx
-            .select({ id: pipelineStages.id, name: pipelineStages.name, isClosedWon: pipelineStages.isClosedWon, isClosedLost: pipelineStages.isClosedLost })
+            .select({ id: pipelineStages.id, name: pipelineStages.name, isClosedWon: pipelineStages.isClosedWon, isClosedLost: pipelineStages.isClosedLost, lifecycleState: pipelineStages.lifecycleState })
             .from(pipelineStages)
             .where(and(eq(pipelineStages.id, stageId), eq(pipelineStages.pipelineId, deal.pipelineId ?? "")))
             .limit(1);
@@ -1022,19 +1022,41 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
           const state = stageToLifecycleState(stage);
           if (!state) return { kind: "unmapped" as const, name: stage.name };
 
-          const transition = await runLifecycleTransition(tx as unknown as Db, {
-            workspaceId,
-            dimension: "opportunity",
-            entityId: deal.id,
-            to: state,
-            actorId: request.userId!,
-            source,
-            reason,
-            requestId,
-            occurredAt: new Date(),
-          });
+          // Several stages can share one lifecycle state (e.g. New and Qualified). Moving between them
+          // changes the stage only; the lifecycle transition runs when the state actually changes.
+          const [current] = await tx
+            .select({ state: copsLifecycleStates.state })
+            .from(copsLifecycleStates)
+            .where(and(eq(copsLifecycleStates.workspaceId, workspaceId), eq(copsLifecycleStates.dimension, "opportunity"), eq(copsLifecycleStates.entityId, deal.id)))
+            .limit(1);
+          const currentState = current?.state ?? "qualified";
+          if (state !== currentState) {
+            await runLifecycleTransition(tx as unknown as Db, {
+              workspaceId,
+              dimension: "opportunity",
+              entityId: deal.id,
+              to: state,
+              actorId: request.userId!,
+              source,
+              reason,
+              requestId,
+              occurredAt: new Date(),
+            });
+          }
           await tx.update(deals).set({ stageId: stage.id, updatedAt: new Date() }).where(eq(deals.id, deal.id));
-          return { kind: "ok" as const, transition, stageId: stage.id };
+          await writeCopsAudit(tx, {
+            tenantId: workspaceId,
+            actor: { type: "user", id: request.userId ?? null },
+            entityType: "opportunity",
+            entityId: deal.id,
+            action: "stage.changed",
+            before: { stage_id: deal.stageId, state: currentState },
+            after: { stage_id: stage.id, state },
+            reason,
+            correlationId: requestId,
+            sourceChannel: source === "web" ? "web" : "api",
+          });
+          return { kind: "ok" as const, state, stageId: stage.id };
         });
 
         if (result.kind === "not_found") {
@@ -1042,7 +1064,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
         }
         if (result.kind === "bad_stage") return fail("stage_id", "Stage does not belong to this opportunity's pipeline");
         if (result.kind === "unmapped") return fail("stage_id", `Stage "${result.name}" has no lifecycle mapping`);
-        return { data: { opportunity_id: request.params.id, stage_id: result.stageId, state: result.transition.to } };
+        return { data: { opportunity_id: request.params.id, stage_id: result.stageId, state: result.state } };
       } catch (err) {
         if (err instanceof Error && err.name === "CopsIllegalTransitionError") {
           const t = err as Error & { dimension: string; from: string; to: string; allowed: string[] };
@@ -1175,12 +1197,24 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
  * default pipeline (Qualified -> Discovery -> Demo -> Commercial -> Contracting -> Payment/Procurement
  * -> Closed); a custom stage with no mapping returns null and the move is refused (422).
  */
-export function stageToLifecycleState(stage: { name: string; isClosedWon: boolean; isClosedLost: boolean }): string | null {
+export function stageToLifecycleState(stage: {
+  name: string;
+  isClosedWon: boolean;
+  isClosedLost: boolean;
+  lifecycleState?: string | null;
+}): string | null {
+  // Configured on the stage (pipeline_stages.lifecycle_state) wins over everything else.
+  if (stage.lifecycleState && OPPORTUNITY_STATES.includes(stage.lifecycleState)) return stage.lifecycleState;
   if (stage.isClosedWon) return "won";
   if (stage.isClosedLost) return "lost";
   const key = stage.name.trim().toLowerCase();
-  if (key === "qualified" || key === "discovery") return "qualified";
-  if (key === "demo") return "demo";
-  if (key === "commercial" || key === "contracting" || key === "payment/procurement" || key === "payment") return "commercial";
+  // Bible default pipeline, plus the existing Skout default (New, Qualified, Proposal, Negotiation).
+  // The existing pipeline has no Demo stage, so Proposal stands in for it; otherwise commercial could
+  // never be reached (the transition table requires qualified -> demo -> commercial).
+  if (["new", "qualified", "discovery"].includes(key)) return "qualified";
+  if (["demo", "proposal"].includes(key)) return "demo";
+  if (["commercial", "negotiation", "contracting", "payment", "payment/procurement"].includes(key)) return "commercial";
   return null;
 }
+
+const OPPORTUNITY_STATES = ["qualified", "demo", "commercial", "won", "lost"];
