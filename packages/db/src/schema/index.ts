@@ -45,3 +45,4 @@ export * from "./auth-own.js";
 export * from "./auth-login-cohorts.js";
 export * from "./cops-timeline.js";
 export * from "./cops-crm.js";
+export * from "./cops-views.js";
