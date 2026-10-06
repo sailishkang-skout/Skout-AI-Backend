@@ -60,11 +60,12 @@ systems and adds only the missing transactional-outbox and idempotency capabilit
 | Overrides require a reason and create audit records | ⚠️ Partial | Shared audit validation and reason tests pass; each later ticket must still assert its own override audit write. |
 | Notification provider outage retries and does not fail the originating write | ⚠️ Partial | Existing notification delivery tests cover retries and preserving in-app records. Operational alert wiring remains open; see the runbook open item. |
 | Permission-aware frontend; no raw 403 screen | ✅ | Audit nav is permission-gated; the audit page renders a user-facing forbidden message. |
-| 422 field errors and retryable/429 handling | ⚠️ Partial | API returns `details.fields[]`; frontend field-error, envelope, and retry unit tests pass. Form-level browser test is added but currently blocked by the local E2E auth setup (`Missing bearer token`) and must be rerun with a valid test token or auth fixture. |
+| 422 field errors and retryable/429 handling | ⚠️ Partial | API returns `details.fields[]`; frontend field-error rendering, date-filter submission, envelope, and retry unit tests pass. A browser-level invalid-date test remains open: the local E2E run had no usable auth token and the page performed native form navigation before React hydration. Rerun with a valid test token or a stable auth fixture. |
 | OpenAPI contract and existing-code audit | ✅ | Contract: `docs/api/copos-01-platform-foundation.openapi.yaml`; findings recorded above. |
 | Six Bible p.10 ADRs | ⏳ | ADR 0017 records the event transport decision, but the six Bible decisions are not all documented or linked here. |
 | Commercial / Engineering navigation | ⏭ | Deliberately deferred to COPS-03 / COPS-06. |
 
 Focused verification run: backend COPS shared tests **67/67 passed**; frontend COPS error,
-fetch, navigation-helper, and audit-viewer tests **18/18 passed**. The form-level Playwright check
-is not yet green, so field-error acceptance is not complete.
+fetch, navigation-helper, and audit-viewer tests **19/19 passed**. Existing audit-page Playwright
+smoke coverage is present; browser-level 422 acceptance is not yet verified, so this item remains
+partial.
