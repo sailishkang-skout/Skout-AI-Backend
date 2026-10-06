@@ -1,0 +1,51 @@
+{
+  "rewrite": [
+    ["clickhouse.skoutdev.local", "clickhouse"]
+  ],
+  "whenPresent": {
+    "DATABASE_HOST": {
+      "DATABASE_HOST": "${PG_HOST}",
+      "DATABASE_PORT": "${PG_PORT}",
+      "DATABASE_USER": "${PG_USER}",
+      "DATABASE_PASSWORD": "${PG_PASSWORD}",
+      "DATABASE_SSL": "true"
+    },
+    "REDIS_URL": {
+      "REDIS_URL": "redis://redis:6379"
+    },
+    "AI_SERVICE_URL": {
+      "AI_SERVICE_URL": "http://ai:8000",
+      "EMAIL_INTEL_SERVICE_URL": "http://email-intel-api:3001",
+      "WARMUP_TOOL_SERVICE_URL": "http://warmup-tool-api:3010"
+    },
+    "EXPORTS_BUCKET": {
+      "EXPORTS_BUCKET": "${R2_EXPORTS_BUCKET}",
+      "SCRAPE_BUCKET": "${R2_SCRAPE_BUCKET}",
+      "S3_ENDPOINT": "${R2_ENDPOINT}",
+      "S3_FORCE_PATH_STYLE": "true",
+      "AWS_REGION": "auto",
+      "AWS_ACCESS_KEY_ID": "${R2_ACCESS_KEY_ID}",
+      "AWS_SECRET_ACCESS_KEY": "${R2_SECRET_ACCESS_KEY}"
+    },
+    "SCRAPE_BUCKET": {
+      "SCRAPE_BUCKET": "${R2_SCRAPE_BUCKET}",
+      "S3_ENDPOINT": "${R2_ENDPOINT}",
+      "S3_FORCE_PATH_STYLE": "true",
+      "AWS_REGION": "auto",
+      "AWS_ACCESS_KEY_ID": "${R2_ACCESS_KEY_ID}",
+      "AWS_SECRET_ACCESS_KEY": "${R2_SECRET_ACCESS_KEY}"
+    },
+    "CRM_SECRETS_PREFIX": {
+      "CRM_CREDENTIALS_BACKEND": "inline"
+    },
+    "SMTP_HOST": {
+      "SMTP_HOST": "${MAIL_SMTP_HOST}",
+      "SMTP_PORT": "${MAIL_SMTP_PORT}",
+      "SMTP_USERNAME": "${MAIL_SMTP_USERNAME}",
+      "SMTP_PASSWORD": "${MAIL_SMTP_PASSWORD}"
+    },
+    "DD_AGENT_HOST": {
+      "DD_AGENT_HOST": "datadog-agent"
+    }
+  }
+}

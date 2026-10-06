@@ -48,3 +48,11 @@ __pycache__
 
 # Large MVP planning exports (keep docs/*.md tracked)
 docs/mvp/
+
+# hetzner deploy: plaintext env files, encrypted secret backups and terraform local state
+deploy/hetzner/env/
+deploy/hetzner/backup/
+deploy/hetzner/terraform/.terraform/
+deploy/hetzner/terraform/*.tfstate*
+deploy/hetzner/terraform/*.plan
+deploy/hetzner/terraform/terraform.tfvars
