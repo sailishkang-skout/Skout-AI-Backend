@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
 import { projectCopsEventToTimeline } from "@skout/shared";
 
-const { companies, copsTimelineEvents } = schema;
+const { companies, copsTimelineEvents, deals } = schema;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export interface TimelineSourceEvent {
@@ -18,11 +18,20 @@ export interface TimelineSourceEvent {
  * Which account a COPS event belongs to. Account-dimension lifecycle events carry the account id
  * as entity_id; other events may carry an explicit account_id. Anything else is not projected.
  */
-export function accountIdForEvent(event: TimelineSourceEvent): string | null {
+export async function accountIdForEvent(db: Db, event: TimelineSourceEvent): Promise<string | null> {
   const p = event.payload ?? {};
-  const candidate =
-    typeof p.account_id === "string" ? p.account_id : p.dimension === "account" && typeof p.entity_id === "string" ? p.entity_id : null;
-  return candidate && UUID.test(candidate) ? candidate : null;
+  if (typeof p.account_id === "string" && UUID.test(p.account_id)) return p.account_id;
+  if (p.dimension === "account" && typeof p.entity_id === "string" && UUID.test(p.entity_id)) return p.entity_id;
+  // Opportunity events: the entity is a deal; its timeline belongs to the deal's company, if it has one.
+  if (p.dimension === "opportunity" && typeof p.entity_id === "string" && UUID.test(p.entity_id)) {
+    const [deal] = await db
+      .select({ companyId: deals.companyId })
+      .from(deals)
+      .where(and(eq(deals.id, p.entity_id), eq(deals.workspaceId, event.tenant_id)))
+      .limit(1);
+    return deal?.companyId ?? null;
+  }
+  return null;
 }
 
 /**
@@ -33,7 +42,7 @@ export function accountIdForEvent(event: TimelineSourceEvent): string | null {
 export async function projectCopsEventToTimelineRow(db: Db, event: TimelineSourceEvent): Promise<boolean> {
   const projection = projectCopsEventToTimeline(event);
   if (!projection) return false;
-  const accountId = accountIdForEvent(event);
+  const accountId = (await accountIdForEvent(db, event)) ?? null;
   if (!accountId) return false;
 
   const [account] = await db
