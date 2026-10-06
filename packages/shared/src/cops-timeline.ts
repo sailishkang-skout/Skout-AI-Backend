@@ -53,6 +53,8 @@ const TYPE_BY_ACTIVITY: Record<string, CopsTimelineType> = {
   email: "email",
   meeting: "meeting",
   stage_change: "workflow_action",
+  // Outbound LinkedIn voice message to the contact: closest normalised type is a call.
+  linkedin_voice_sent: "call",
 };
 
 export function projectCopsEventToTimeline(event: { event_type: string; payload?: unknown }): CopsTimelineProjection | null {

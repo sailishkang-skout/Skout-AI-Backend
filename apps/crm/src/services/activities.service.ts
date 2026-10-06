@@ -1,12 +1,12 @@
 import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
-import { appendCopsEvent, createCopsEvent, type ActivityCreateInput, type ActivityType, type CrmEntityType } from "@skout/shared";
+import { appendActivityRecorded, type ActivityCreateInput, type ActivityType, type CrmEntityType } from "@skout/shared";
 import { serviceLog } from "../lib/obs.js";
 import { RetentionRulesService } from "./retention-rules.service.js";
 
 const log = serviceLog("activities");
-const { activities, contacts, deals } = schema;
+const { activities } = schema;
 
 export interface ActivityDto {
   id: string;
@@ -117,26 +117,16 @@ export class ActivitiesService {
         .insert(activities)
         .values({ workspaceId, entityType, entityId, activityType, subject, body, ownerId, retentionClassification, visibility })
         .returning();
-      const accountId = await accountIdForActivity(tx, workspaceId, entityType, entityId);
-      await appendCopsEvent(
-        tx as never,
-        createCopsEvent({
-          eventType: "ActivityRecorded",
-          tenantId: workspaceId,
-          aggregateType: entityType,
-          aggregateId: entityId,
-          actor: ownerId ? { type: "user", id: ownerId } : { type: "system", id: null },
-          payload: {
-            activity_id: inserted.id,
-            activity_type: activityType,
-            entity_type: entityType,
-            entity_id: entityId,
-            account_id: accountId,
-            subject: subject ?? null,
-            visibility,
-          },
-        })
-      );
+      await appendActivityRecorded(tx, {
+        workspaceId,
+        activityId: inserted.id,
+        activityType,
+        entityType,
+        entityId,
+        subject: subject ?? null,
+        visibility,
+        actorUserId: ownerId ?? null,
+      });
       return inserted;
     });
     log.info("activity recorded", { workspaceId, entityType, entityId, activityType, activityId: row.id, retentionClassification });
@@ -148,29 +138,3 @@ export function buildActivitiesService(db: Db | null): ActivitiesService | null 
   return db ? new ActivitiesService(db) : null;
 }
 
-/** The account (company) an activity belongs to, for the account timeline. Null when there is none. */
-async function accountIdForActivity(
-  tx: Parameters<Parameters<Db["transaction"]>[0]>[0],
-  workspaceId: string,
-  entityType: string,
-  entityId: string
-): Promise<string | null> {
-  if (entityType === "company") return entityId;
-  if (entityType === "contact") {
-    const [c] = await tx
-      .select({ companyId: contacts.companyId })
-      .from(contacts)
-      .where(and(eq(contacts.id, entityId), eq(contacts.workspaceId, workspaceId)))
-      .limit(1);
-    return c?.companyId ?? null;
-  }
-  if (entityType === "deal") {
-    const [d] = await tx
-      .select({ companyId: deals.companyId })
-      .from(deals)
-      .where(and(eq(deals.id, entityId), eq(deals.workspaceId, workspaceId)))
-      .limit(1);
-    return d?.companyId ?? null;
-  }
-  return null;
-}
