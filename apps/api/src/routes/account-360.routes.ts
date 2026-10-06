@@ -578,4 +578,113 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       };
     }
   );
+
+  // GET /contacts — contact list: q (first/last name or email contains), company_id, sort
+  // (name | -created_at), JSON cursor pagination. `view_id` applies a saved view for object "contact".
+  app.get<{ Querystring: { q?: string; company_id?: string; sort?: string; limit?: string; cursor?: string; view_id?: string } }>(
+    "/contacts",
+    { preHandler: listGate },
+    async (request, reply) => {
+      const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+      const fail = (path: string, message: string) =>
+        reply.status(copsErrorStatus("VALIDATION_FAILED")).send(
+          copsErrorBody({ code: "VALIDATION_FAILED", message, requestId, details: { fields: [{ path, code: "invalid", message }] } })
+        );
+
+      const workspaceId = request.workspaceId!;
+      const qs = request.query;
+      let filters: { q?: string; company_id?: string } = { q: qs.q, company_id: qs.company_id };
+      if (qs.view_id) {
+        if (!UUID.test(qs.view_id)) return fail("view_id", "Invalid view id");
+        const [view] = await db
+          .select({ filters: copsSavedViews.filters, objectType: copsSavedViews.objectType })
+          .from(copsSavedViews)
+          .where(
+            and(
+              eq(copsSavedViews.id, qs.view_id),
+              eq(copsSavedViews.workspaceId, workspaceId),
+              or(eq(copsSavedViews.ownerUserId, request.userId!), eq(copsSavedViews.shared, true))
+            )
+          )
+          .limit(1);
+        if (!view) return fail("view_id", "Saved view not found");
+        if (view.objectType !== "contact") return fail("view_id", "Saved view is for another object type");
+        const f = view.filters as { q?: unknown; company_id?: unknown };
+        filters = {
+          q: filters.q ?? (typeof f.q === "string" ? f.q : undefined),
+          company_id: filters.company_id ?? (typeof f.company_id === "string" ? f.company_id : undefined),
+        };
+      }
+
+      if (qs.sort && qs.sort !== "name" && qs.sort !== "-created_at") return fail("sort", "sort must be name or -created_at");
+      const sortDesc = qs.sort !== "name";
+      if (filters.company_id && !UUID.test(filters.company_id)) return fail("company_id", "Invalid company_id");
+      const limit = Math.min(100, Math.max(1, Number.parseInt(qs.limit ?? "25", 10) || 25));
+      // Sort key for names: last name then first name, so the cursor value is one string.
+      const nameKey = sql<string>`lower(coalesce(${contacts.lastName}, '') || ' ' || ${contacts.firstName})`;
+
+      const conditions = [eq(contacts.workspaceId, workspaceId)];
+      if (filters.q) {
+        const pattern = "%" + filters.q.replace(/[%_]/g, "\$&") + "%";
+        conditions.push(
+          or(
+            sql`${contacts.firstName} ilike ${pattern}`,
+            sql`${contacts.lastName} ilike ${pattern}`,
+            sql`${contacts.email} ilike ${pattern}`
+          )!
+        );
+      }
+      if (filters.company_id) conditions.push(eq(contacts.companyId, filters.company_id));
+
+      if (qs.cursor) {
+        let decoded: { v: string; id: string } | null = null;
+        try {
+          const parsed = JSON.parse(Buffer.from(qs.cursor, "base64url").toString("utf8")) as { v?: unknown; id?: unknown };
+          if (typeof parsed.v === "string" && typeof parsed.id === "string" && UUID.test(parsed.id)) decoded = { v: parsed.v, id: parsed.id };
+        } catch {
+          decoded = null;
+        }
+        if (!decoded) return fail("cursor", "Invalid cursor");
+        const { v: value, id } = decoded;
+        conditions.push(
+          sortDesc
+            ? or(lt(contacts.createdAt, new Date(value)), and(eq(contacts.createdAt, new Date(value)), lt(contacts.id, id)))!
+            : or(gt(nameKey, value), and(eq(nameKey, value), gt(contacts.id, id)))!
+        );
+      }
+
+      const rows = await db
+        .select({
+          id: contacts.id,
+          firstName: contacts.firstName,
+          lastName: contacts.lastName,
+          email: contacts.email,
+          companyId: contacts.companyId,
+          createdAt: contacts.createdAt,
+          nameKey,
+        })
+        .from(contacts)
+        .where(and(...conditions))
+        .orderBy(...(sortDesc ? [desc(contacts.createdAt), desc(contacts.id)] : [asc(nameKey), asc(contacts.id)]))
+        .limit(limit + 1);
+
+      const page = rows.slice(0, limit);
+      const last = page[page.length - 1];
+      const cursorOut = rows.length > limit && last
+        ? Buffer.from(JSON.stringify({ v: sortDesc ? last.createdAt.toISOString() : last.nameKey, id: last.id }), "utf8").toString("base64url")
+        : null;
+      return {
+        data: page.map((r) => ({
+          id: r.id,
+          first_name: r.firstName,
+          last_name: r.lastName,
+          email: r.email,
+          company_id: r.companyId,
+          created_at: r.createdAt.toISOString(),
+        })),
+        next_cursor: cursorOut,
+        applied_filters: filters,
+      };
+    }
+  );
 }
