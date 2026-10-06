@@ -1,0 +1,212 @@
+x-app-env: &app-defaults
+  networks: [skout]
+  logging:
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+
+x-node-health: &node-health-3001
+  test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3001/api/v1/health').then((r)=>process.exit(r.status<400?0:1)).catch(()=>process.exit(1))\""]
+  interval: 30s
+  timeout: 5s
+  retries: 3
+  start_period: 60s
+
+networks:
+  skout:
+    driver: overlay
+    attachable: true
+
+volumes:
+  redis-data:
+  clickhouse-data:
+
+configs:
+  caddyfile:
+    file: ./Caddyfile
+  unescape:
+    file: ./unescape-env.sh
+
+services:
+  cloudflared:
+    <<: *app-defaults
+    image: cloudflare/cloudflared:${CLOUDFLARED_TAG:-latest}
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+    deploy:
+      replicas: 2
+
+  caddy:
+    <<: *app-defaults
+    image: caddy:2-alpine
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
+    deploy:
+      replicas: 2
+
+  api:
+    <<: *app-defaults
+    image: ghcr.io/${GHCR_OWNER}/skout-api:${IMAGE_TAG}
+    env_file: ../env/api.env
+    configs:
+      - source: unescape
+        target: /unescape-env.sh
+        mode: 0555
+    entrypoint: ["/unescape-env.sh", "/app/docker-entrypoint.sh"]
+    command: ["node", "dist/index.js"]
+    healthcheck: *node-health-3001
+    deploy:
+      replicas: 1
+      resources: { limits: { memory: 1024M } }
+
+  crm:
+    <<: *app-defaults
+    image: ghcr.io/${GHCR_OWNER}/skout-crm:${IMAGE_TAG}
+    env_file: ../env/crm.env
+    deploy:
+      replicas: 1
+      resources: { limits: { memory: 512M } }
+
+  ai:
+    <<: *app-defaults
+    image: ghcr.io/${GHCR_OWNER}/skout-ai:${IMAGE_TAG}
+    env_file: ../env/ai.env
+    deploy:
+      replicas: 1
+      resources: { limits: { memory: 512M } }
+
+  web:
+    <<: *app-defaults
+    image: ghcr.io/${GHCR_OWNER}/skout-web:${IMAGE_TAG}
+    env_file: ../env/web.env
+    deploy:
+      replicas: 1
+      resources: { limits: { memory: 512M } }
+
+  scraper-orchestrator:
+    <<: *app-defaults
+    image: ghcr.io/${GHCR_OWNER}/skout-scraper-orchestrator:${IMAGE_TAG}
+    env_file: ../env/scraper-orchestrator.env
+    deploy:
+      replicas: ${OUTBOUND_REPLICAS:-0}
+      resources: { limits: { memory: 512M } }
+
+  scraper-cleaner:
+    <<: *app-defaults
+    image: ghcr.io/${GHCR_OWNER}/skout-scraper-cleaner:${IMAGE_TAG}
+    env_file: ../env/scraper-cleaner.env
+    deploy:
+      replicas: 1
+      resources: { limits: { memory: 512M } }
+
+  scraper-ingestor:
+    <<: *app-defaults
+    image: ghcr.io/${GHCR_OWNER}/skout-scraper-ingestor:${IMAGE_TAG}
+    env_file: ../env/scraper-ingestor.env
+    deploy:
+      replicas: 1
+      resources: { limits: { memory: 512M } }
+
+  email-intel-api:
+    <<: *app-defaults
+    image: ghcr.io/${GHCR_OWNER}/skout-email-intel:${IMAGE_TAG}
+    env_file: ../env/email-intel-api.env
+    deploy:
+      replicas: 1
+      resources: { limits: { memory: 512M } }
+
+  email-intel-worker:
+    <<: *app-defaults
+    image: ghcr.io/${GHCR_OWNER}/skout-email-intel:${IMAGE_TAG}
+    command: ["node", "dist/worker.js"]
+    env_file: ../env/email-intel-worker.env
+    deploy:
+      replicas: ${OUTBOUND_REPLICAS:-0}
+      resources: { limits: { memory: 512M } }
+
+  warmup-tool-api:
+    <<: *app-defaults
+    image: ghcr.io/${GHCR_OWNER}/skout-warmup-tool:${IMAGE_TAG}
+    env_file: ../env/warmup-tool-api.env
+    deploy:
+      replicas: 1
+      resources: { limits: { memory: 512M } }
+
+  warmup-tool-worker:
+    <<: *app-defaults
+    image: ghcr.io/${GHCR_OWNER}/skout-warmup-tool:${IMAGE_TAG}
+    command: ["node", "dist/workers/execution-worker-process.js"]
+    env_file: ../env/warmup-tool-worker.env
+    deploy:
+      replicas: ${OUTBOUND_REPLICAS:-0}
+      resources: { limits: { memory: 512M } }
+
+  warmup-tool-inbound:
+    <<: *app-defaults
+    image: ghcr.io/${GHCR_OWNER}/skout-warmup-tool:${IMAGE_TAG}
+    command: ["node", "dist/workers/inbound-poller-process.js"]
+    env_file: ../env/warmup-tool-inbound.env
+    deploy:
+      replicas: ${OUTBOUND_REPLICAS:-0}
+      resources: { limits: { memory: 512M } }
+
+  warmup-tool-classification:
+    <<: *app-defaults
+    image: ghcr.io/${GHCR_OWNER}/skout-warmup-tool:${IMAGE_TAG}
+    command: ["node", "dist/workers/conversation-classification-process.js"]
+    env_file: ../env/warmup-tool-classification.env
+    deploy:
+      replicas: ${OUTBOUND_REPLICAS:-0}
+      resources: { limits: { memory: 512M } }
+
+  warmup-tool-policy:
+    <<: *app-defaults
+    image: ghcr.io/${GHCR_OWNER}/skout-warmup-tool:${IMAGE_TAG}
+    command: ["node", "dist/workers/conversation-policy-process.js"]
+    env_file: ../env/warmup-tool-policy.env
+    deploy:
+      replicas: ${OUTBOUND_REPLICAS:-0}
+      resources: { limits: { memory: 512M } }
+
+  redis:
+    <<: *app-defaults
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis-data:/data
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.stateful == true]
+
+  clickhouse:
+    <<: *app-defaults
+    image: clickhouse/clickhouse-server:24.8-alpine
+    environment:
+      CLICKHOUSE_DB: skout
+      CLICKHOUSE_USER: skout
+      CLICKHOUSE_PASSWORD: skout
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    deploy:
+      replicas: 1
+      resources: { limits: { memory: 2048M } }
+      placement:
+        constraints: [node.labels.stateful == true]
+
+  datadog-agent:
+    <<: *app-defaults
+    image: gcr.io/datadoghq/agent:7
+    environment:
+      DD_API_KEY: ${DD_API_KEY}
+      DD_SITE: us5.datadoghq.com
+      DD_APM_ENABLED: "true"
+      DD_APM_NON_LOCAL_TRAFFIC: "true"
+      DD_LOGS_ENABLED: "false"
+      DD_PROCESS_AGENT_ENABLED: "false"
+    deploy:
+      mode: global

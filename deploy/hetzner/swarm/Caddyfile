@@ -1,0 +1,37 @@
+{
+	auto_https off
+	admin off
+}
+
+(proxy) {
+	header_up X-Forwarded-For {header.Cf-Connecting-Ip}
+	header_up X-Forwarded-Proto https
+	header_up x-skout-public-origin https://{host}
+}
+
+:80 {
+	@crm path /api/v1/crm/health /api/v1/companies* /api/v1/contacts* /api/v1/deals*
+	handle @crm {
+		reverse_proxy crm:3002 {
+			import proxy
+		}
+	}
+
+	handle /api/* {
+		reverse_proxy api:3001 {
+			import proxy
+		}
+	}
+
+	handle /.well-known/jwks.json {
+		reverse_proxy api:3001 {
+			import proxy
+		}
+	}
+
+	handle {
+		reverse_proxy web:3000 {
+			import proxy
+		}
+	}
+}

@@ -1,0 +1,176 @@
+name: Deploy Hetzner (staging)
+
+on:
+  workflow_dispatch:
+    inputs:
+      outbound_replicas:
+        description: "Replicas for outbound workers (scrapers, email-intel worker, warm-up workers). Keep 0 for staging."
+        default: "0"
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: deploy-hetzner-staging
+  cancel-in-progress: false
+
+env:
+  GHCR_OWNER: ${{ github.repository_owner }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: hetzner-staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set image tag
+        id: meta
+        run: echo "tag=stg-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend images
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          push() { docker push "ghcr.io/$GHCR_OWNER/$1:$TAG"; }
+          docker build -f apps/api/Dockerfile -t "ghcr.io/$GHCR_OWNER/skout-api:$TAG" . && push skout-api
+          docker build -f apps/crm/Dockerfile -t "ghcr.io/$GHCR_OWNER/skout-crm:$TAG" . && push skout-crm
+          docker build -f apps/ai/Dockerfile -t "ghcr.io/$GHCR_OWNER/skout-ai:$TAG" apps/ai && push skout-ai
+          for pair in orchestrator:@skout/scraper-orchestrator cleaner:@skout/scraper-cleaner ingestor:@skout/scraper-ingestor; do
+            sub="${pair%%:*}"; pkg="${pair#*:}"
+            docker build --platform linux/amd64 -f workers/scrapers/Dockerfile \
+              --build-arg WORKER_SUBPATH="$sub" --build-arg WORKER_PACKAGE="$pkg" \
+              -t "ghcr.io/$GHCR_OWNER/skout-scraper-$sub:$TAG" .
+            push "skout-scraper-$sub"
+          done
+
+      - name: Checkout Email Intelligence Tool
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/Skout-Email-Intelligence-Tool
+          ref: main
+          path: email-intel
+
+      - name: Build and push Email Intelligence image
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          docker build -f email-intel/Dockerfile -t "ghcr.io/$GHCR_OWNER/skout-email-intel:$TAG" email-intel
+          docker push "ghcr.io/$GHCR_OWNER/skout-email-intel:$TAG"
+
+      - name: Checkout Warm-Up Tool
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/Skout-Warm-Up-Tool
+          ref: main
+          path: warmup-tool
+
+      - name: Build and push Warm-Up Tool image
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          docker build -f warmup-tool/Dockerfile -t "ghcr.io/$GHCR_OWNER/skout-warmup-tool:$TAG" warmup-tool
+          docker push "ghcr.io/$GHCR_OWNER/skout-warmup-tool:$TAG"
+
+      - name: Checkout frontend
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/Skout-AI-Frontend
+          ref: develop
+          path: frontend
+
+      - name: Build and push Web image
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          WEB_URL: ${{ vars.STAGING_URL }}
+        run: |
+          docker build -f frontend/Dockerfile \
+            --build-arg NEXT_PUBLIC_API_URL="${WEB_URL}" \
+            --build-arg NEXT_PUBLIC_APP_URL="${WEB_URL}/app" \
+            --build-arg NEXT_PUBLIC_CRM_API_URL="${WEB_URL}" \
+            --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}" \
+            --build-arg NEXT_PUBLIC_AUTH_MODE="${{ vars.NEXT_PUBLIC_AUTH_MODE || 'clerk' }}" \
+            --build-arg CLERK_SECRET_KEY="${{ secrets.CLERK_SECRET_KEY }}" \
+            --build-arg GATE_TOKEN="${{ secrets.GATE_TOKEN }}" \
+            -t "ghcr.io/$GHCR_OWNER/skout-web:$TAG" frontend
+          docker push "ghcr.io/$GHCR_OWNER/skout-web:$TAG"
+
+      - name: Install sops and age
+        run: |
+          set -euo pipefail
+          sudo curl -fsSL -o /usr/local/bin/sops https://github.com/getsops/sops/releases/download/v3.9.0/sops-v3.9.0.linux.amd64
+          sudo chmod +x /usr/local/bin/sops
+          sudo apt-get update -qq && sudo apt-get install -y -qq age
+
+      - name: Decrypt env files
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p deploy/hetzner/env
+          for f in deploy/hetzner/env-enc/staging/*.env; do
+            sops --decrypt --input-type dotenv --output-type dotenv "$f" > "deploy/hetzner/env/$(basename "$f")"
+          done
+
+      - name: Configure SSH to the Swarm manager
+        env:
+          SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HETZNER_KNOWN_HOSTS }}
+          MANAGER_IP: ${{ vars.MANAGER_IP }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          echo "DOCKER_HOST=ssh://root@${MANAGER_IP}" >> "$GITHUB_ENV"
+
+      - name: Registry login on the cluster
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Note time for point-in-time restore
+        run: echo "Managed Postgres keeps PITR backups; restore point if needed is before $(date -u +%FT%TZ)"
+
+      - name: Run migrations
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+        run: bash deploy/hetzner/scripts/run-migrations.sh
+
+      - name: Deploy stack
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+          TUNNEL_TOKEN: ${{ secrets.TUNNEL_TOKEN }}
+          DD_API_KEY: ${{ secrets.DD_API_KEY }}
+          OUTBOUND_REPLICAS: ${{ inputs.outbound_replicas }}
+        run: docker stack deploy --with-registry-auth --prune -c deploy/hetzner/swarm/stack.yml skout
+
+      - name: Wait for services to converge
+        run: |
+          for _ in $(seq 1 30); do
+            pending="$(docker service ls --format '{{.Name}} {{.Replicas}}' | awk '{split($2,a,"/"); if (a[1]!=a[2]) print $1}')"
+            [ -z "$pending" ] && exit 0
+            echo "waiting for: $pending"; sleep 10
+          done
+          echo "services did not converge" >&2; exit 1
+
+      - name: Smoke test
+        run: node deploy/hetzner/scripts/smoke.mjs "${{ vars.STAGING_URL }}"
+
+      - name: Roll back on failure
+        if: failure()
+        run: |
+          for svc in $(docker service ls --format '{{.Name}}'); do
+            docker service rollback "$svc" || true
+          done
+
+      - name: Remove decrypted env files
+        if: always()
+        run: rm -rf deploy/hetzner/env
