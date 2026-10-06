@@ -687,6 +687,34 @@
       "when": 1792700000000,
       "tag": "0096_auth_login_cohorts",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1792800000000,
+      "tag": "0097_cops_outbox",
+      "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1792900000000,
+      "tag": "0098_cops_platform",
+      "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1793000000000,
+      "tag": "0099_cops_outbox_workspace_fk",
+      "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1793100000000,
+      "tag": "0100_cops_lifecycle_states",
+      "breakpoints": true
     }
   ]
 }

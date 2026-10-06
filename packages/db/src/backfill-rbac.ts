@@ -6,6 +6,7 @@ import { resolveDatabaseUrl } from "./database-url.js";
 import { permissions, roles, rolePermissions, tenantWorkspaces, tenants, workspaceMemberRoles } from "./schema/tenancy.js";
 import { workspaceMembers } from "./schema/users.js";
 import { workspaces } from "./schema/workspaces.js";
+import { COPS_SYSTEM_ROLE_GRANTS } from "./cops-role-grants.js";
 
 /**
  * §5.1 (Enterprise Completion Plan) — Wave-1 backfill for the RBAC/tenancy tables added in
@@ -37,6 +38,14 @@ const PERMISSION_CATALOG: Array<{ key: string; description: string; category: st
   { key: "automation:manage", description: "Create or modify activation rules and automations.", category: "automation" },
   { key: "identity:review_merges", description: "Approve or reject identity-merge proposals.", category: "data" },
   { key: "data:manage_retention", description: "Create and manage data-retention classification rules.", category: "data" },
+  ...(["crm", "commercial", "legal", "billing", "credits", "onboarding", "tickets", "analytics", "admin"] as const).flatMap(
+    (resource) =>
+      (["read", "write", "send", "approve", "refund", "adjust", "export", "admin"] as const).map((verb) => ({
+        key: `${resource}:${verb}`,
+        description: `${verb[0]!.toUpperCase()}${verb.slice(1)} ${resource} records.`,
+        category: resource,
+      }))
+  ),
 ];
 
 const SYSTEM_ROLES: Array<{ key: string; name: string; description: string; permissionKeys: string[] }> = [
@@ -58,6 +67,12 @@ const SYSTEM_ROLES: Array<{ key: string; name: string; description: string; perm
     description: "Runs outreach and works CRM records. Cannot manage team, billing, or automations.",
     permissionKeys: ["sequences:send", "crm:manage"],
   },
+  ...COPS_SYSTEM_ROLE_GRANTS.map((role) => ({
+    key: role.key,
+    name: role.name,
+    description: `CustomerOps ${role.name} role.`,
+    permissionKeys: [...role.permissionKeys],
+  })),
 ];
 
 const databaseUrl = resolveDatabaseUrl();

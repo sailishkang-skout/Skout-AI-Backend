@@ -12,7 +12,7 @@ vi.mock("./telecom.service.js", () => ({
 
 import { sendMail } from "./mail.service.js";
 import { isSmsConfigured, sendSms } from "./telecom.service.js";
-import { createNotification } from "./notifications.service.js";
+import { createNotification, retryNotificationDelivery } from "./notifications.service.js";
 
 const fakeConfig = {} as Env;
 
@@ -140,7 +140,7 @@ describe("createNotification — sms delivery", () => {
     expect(sendSms).not.toHaveBeenCalled();
   });
 
-  it("swallows sendSms failures without throwing", async () => {
+  it("retries an SMS provider failure and keeps the in-app record", async () => {
     vi.mocked(sendSms).mockRejectedValueOnce(new Error("Twilio down"));
     const db = makeDb({ preference: { channel: "sms", digest: false }, userPhone: "+14155551234" });
 
@@ -152,6 +152,23 @@ describe("createNotification — sms delivery", () => {
     });
 
     expect(result).toBeTruthy();
+    expect(sendSms).toHaveBeenCalledTimes(2);
+    expect(result.deliveredChannels).toContain("sms");
+  });
+
+  it("does not fail notification creation when the SMS provider exhausts retries", async () => {
+    vi.mocked(sendSms).mockRejectedValue(new Error("Twilio unavailable"));
+    const db = makeDb({ preference: { channel: "sms", digest: false }, userPhone: "+14155551234" });
+
+    const result = await createNotification(db, fakeConfig, {
+      workspaceId: "ws-1",
+      userId: "user-1",
+      type: "meeting_reminder",
+      title: "Meeting soon",
+    });
+
+    expect(sendSms).toHaveBeenCalledTimes(3);
+    expect(result.deliveredChannels).toContain("in_app");
     expect(result.deliveredChannels).not.toContain("sms");
   });
 
@@ -163,6 +180,18 @@ describe("createNotification — sms delivery", () => {
       userId: "user-1",
       type: "meeting_reminder",
       title: "Meeting soon",
+    });
+
+    describe("retryNotificationDelivery", () => {
+      it("alerts after the retry budget while returning control to the originating operation", async () => {
+        const deliver = vi.fn().mockRejectedValue(new Error("provider down"));
+        const sleep = vi.fn().mockResolvedValue(undefined);
+
+        await expect(retryNotificationDelivery("email", { workspaceId: "ws-1" }, deliver, sleep)).resolves.toBeNull();
+        expect(deliver).toHaveBeenCalledTimes(3);
+        expect(sleep).toHaveBeenNthCalledWith(1, 100);
+        expect(sleep).toHaveBeenNthCalledWith(2, 200);
+      });
     });
 
     expect(sendSms).not.toHaveBeenCalled();

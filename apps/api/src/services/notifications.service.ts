@@ -1,7 +1,7 @@
 import { and, desc, eq, isNull, or } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, scopedTo } from "@skout/db";
-import { createLogger } from "@skout/observability";
+import { captureException, createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { sendMail } from "./mail.service.js";
 import { isSmsConfigured, sendSms } from "./telecom.service.js";
@@ -9,6 +9,7 @@ import { isSmsConfigured, sendSms } from "./telecom.service.js";
 const { notifications, notificationPreferences, users, workspaces } = schema;
 
 const log = createLogger("notifications.service");
+const PROVIDER_DELIVERY_ATTEMPTS = 3;
 
 /** "in_app" | "email" | "both" | "sms" — R17.4 per-type channel preference. */
 export type NotificationChannel = "in_app" | "email" | "both" | "sms";
@@ -200,20 +201,55 @@ async function resolvePreference(
   return { channel: "in_app", digest: false };
 }
 
+export async function retryNotificationDelivery<T>(
+  channel: string,
+  context: Record<string, unknown>,
+  deliver: () => Promise<T>,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+): Promise<T | null> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= PROVIDER_DELIVERY_ATTEMPTS; attempt++) {
+    try {
+      return await deliver();
+    } catch (err) {
+      lastError = err;
+      log.warn("Notification provider attempt failed", { channel, attempt, ...context, err });
+      if (attempt < PROVIDER_DELIVERY_ATTEMPTS) await sleep(100 * 2 ** (attempt - 1));
+    }
+  }
+  log.error("Notification provider delivery exhausted retries; in-app notification remains available", {
+    channel,
+    attempts: PROVIDER_DELIVERY_ATTEMPTS,
+    ...context,
+  });
+  if (lastError) captureException(lastError, { module: "notifications.service", channel, ...context });
+  return null;
+}
+
+function isMailDeliveryConfigured(config: Env): boolean {
+  return Boolean(
+    config.SMTP_HOST &&
+      config.SMTP_USERNAME &&
+      config.SMTP_USERNAME !== "replace-me" &&
+      config.SMTP_PASSWORD &&
+      config.SMTP_PASSWORD !== "replace-me"
+  );
+}
+
 async function deliverSlack(config: Env, db: Db, workspaceId: string, title: string, body: string | null): Promise<boolean> {
   const [ws] = await db.select({ slackWebhookUrl: workspaces.slackWebhookUrl }).from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
-  if (!ws?.slackWebhookUrl) return false;
-  try {
-    const res = await fetch(ws.slackWebhookUrl, {
+  const webhookUrl = ws?.slackWebhookUrl;
+  if (!webhookUrl) return false;
+  const delivered = await retryNotificationDelivery("slack", { workspaceId }, async () => {
+    const res = await fetch(webhookUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: body ? `*${title}*\n${body}` : title }),
     });
-    return res.ok;
-  } catch (err) {
-    log.warn("Slack notification delivery failed", { err, workspaceId });
-    return false;
-  }
+    if (!res.ok) throw new Error(`Slack webhook returned HTTP ${res.status}`);
+    return true;
+  });
+  return delivered === true;
 }
 
 export interface CreateNotificationInput {
@@ -252,37 +288,38 @@ export async function createNotification(db: Db, config: Env, input: CreateNotif
 
   // R17.3 — digest-preferring users get their email folded into the daily digest sweep instead
   // of a real-time send; the in-app row above is still created immediately either way.
-  if (input.userId && !digest && (channel === "email" || channel === "both")) {
-    try {
-      const [user] = await db.select({ email: users.email }).from(users).where(eq(users.id, input.userId)).limit(1);
-      if (user?.email) {
+  if (input.userId && !digest && isMailDeliveryConfigured(config) && (channel === "email" || channel === "both")) {
+    const userId = input.userId;
+    const [user] = await db.select({ email: users.email }).from(users).where(eq(users.id, userId)).limit(1);
+    if (user?.email) {
+      await retryNotificationDelivery("email", { userId, workspaceId: input.workspaceId }, async () => {
         const mail = await sendMail(config, {
           to: user.email,
           subject: input.title,
           text: input.body ?? input.title,
           html: `<p><strong>${input.title}</strong></p>${input.body ? `<p>${input.body}</p>` : ""}`,
         });
-        if (mail.sent) delivered.add("email");
-      }
-    } catch (err) {
-      log.warn("Email notification delivery failed", { err, userId: input.userId });
+        if (!mail.sent) throw new Error("Email provider did not confirm delivery");
+        delivered.add("email");
+      });
     }
   }
 
   // SMS — separate opt-in channel (not folded into "both", which is in-app + email only).
   // Delivery failures never block notification creation, same as email above.
   if (input.userId && !digest && channel === "sms" && isSmsConfigured(config)) {
-    try {
-      const [user] = await db.select({ phone: users.phone }).from(users).where(eq(users.id, input.userId)).limit(1);
-      if (user?.phone) {
+    const userId = input.userId;
+    const [user] = await db.select({ phone: users.phone }).from(users).where(eq(users.id, userId)).limit(1);
+    const phone = user?.phone;
+    if (phone) {
+      await retryNotificationDelivery("sms", { userId, workspaceId: input.workspaceId }, async () => {
         const sms = await sendSms(config, {
-          to: user.phone,
+          to: phone,
           body: input.body ? `${input.title}\n${input.body}` : input.title,
         });
-        if (sms.messageSid) delivered.add("sms");
-      }
-    } catch (err) {
-      log.warn("SMS notification delivery failed", { err, userId: input.userId });
+        if (!sms.messageSid) throw new Error("SMS provider did not confirm delivery");
+        delivered.add("sms");
+      });
     }
   }
 

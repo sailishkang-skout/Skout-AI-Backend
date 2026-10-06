@@ -36,6 +36,34 @@
       "when": 1790056310960,
       "tag": "0004_auth_own_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791260679345,
+      "tag": "0005_useful_betty_brant",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791266590765,
+      "tag": "0006_tiresome_barracuda",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791268032461,
+      "tag": "0007_bouncy_komodo",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791268629008,
+      "tag": "0008_mysterious_blue_blade",
+      "breakpoints": true
     }
   ]
 }
