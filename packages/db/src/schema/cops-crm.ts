@@ -132,3 +132,23 @@ export const customFieldValues = pgTable(
     uniquePair: unique("custom_field_values_unique").on(t.workspaceId, t.definitionId, t.objectId),
   })
 );
+
+/** Tag assignments: one tag on one CRM record (account, contact, opportunity or task). */
+export const entityTags = pgTable(
+  "entity_tags",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    tagId: uuid("tag_id")
+      .notNull()
+      .references(() => tags.id, { onDelete: "cascade" }),
+    entityType: text("entity_type").notNull(),
+    entityId: uuid("entity_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqueAssignment: unique("entity_tags_unique").on(t.workspaceId, t.tagId, t.entityType, t.entityId),
+    entityIdx: index("entity_tags_entity_idx").on(t.workspaceId, t.entityType, t.entityId),
+  })
+);

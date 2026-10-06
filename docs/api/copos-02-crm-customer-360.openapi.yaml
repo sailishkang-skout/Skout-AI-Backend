@@ -515,3 +515,113 @@ paths:
       responses:
         '200':
           description: Merge result
+  /tags:
+    get:
+      summary: Tags in this workspace (implemented)
+      responses:
+        '200': { description: Tags }
+    post:
+      summary: Create a tag; an existing name returns the existing tag (implemented)
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [name], properties: { name: { type: string, minLength: 1, maxLength: 60 } } }
+      responses:
+        '201': { description: Created }
+        '200': { description: Already existed }
+  /tags/{id}/assign:
+    post:
+      summary: Tag a record in this workspace (implemented)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [entity_type, entity_id], properties: { entity_type: { type: string, enum: [account, contact, opportunity, task] }, entity_id: { type: string, format: uuid } } }
+      responses:
+        '200': { description: Assigned }
+        '422': { description: Record not in this workspace, content: { application/json: { schema: { $ref: '#/components/schemas/FieldErrors' } } } }
+  /tags/{id}/unassign:
+    post:
+      summary: Remove a tag from a record (implemented)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200': { description: Removed count }
+  /records/{type}/{id}/tags:
+    get:
+      summary: Tags on one record (implemented)
+      parameters:
+        - { name: type, in: path, required: true, schema: { type: string, enum: [account, contact, opportunity, task] } }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Tags }
+  /opportunities/{id}/contacts:
+    get:
+      summary: Contacts on an opportunity with their role (implemented)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Opportunity contacts }
+    post:
+      summary: Add or update a contact's role on an opportunity (implemented)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [contact_id], properties: { contact_id: { type: string, format: uuid }, role: { type: string, default: stakeholder } } }
+      responses:
+        '201': { description: Linked }
+        '404': { description: Opportunity not found }
+  /opportunities/{id}/contacts/{contactId}:
+    delete:
+      summary: Remove a contact from an opportunity (implemented)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: contactId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200': { description: Removed count }
+  /contacts/{id}/channels:
+    get:
+      summary: Contact channels with verification, confidence, suppression and bounce status (implemented)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Channels }
+    post:
+      summary: Record a channel value; an unverified or lower-confidence write never replaces a verified value (implemented)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [channel, value], properties: { channel: { type: string, enum: [email, phone, linkedin] }, value: { type: string }, verified: { type: boolean }, confidence: { type: number, minimum: 0, maximum: 1 }, source: { type: string } } }
+      responses:
+        '200': { description: 'outcome: inserted, updated, kept_verified or kept_higher_confidence' }
+  /contacts/{id}/channels/{channelId}/status:
+    post:
+      summary: Set suppression or bounce status; reason required and audited (implemented)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: channelId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [reason], properties: { suppressed: { type: boolean }, bounce_status: { type: string, enum: [none, soft, hard] }, reason: { type: string, minLength: 1, maxLength: 500 } } }
+      responses:
+        '200': { description: Updated }
+        '422': { description: Missing reason, content: { application/json: { schema: { $ref: '#/components/schemas/FieldErrors' } } } }

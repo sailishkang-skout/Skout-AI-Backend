@@ -771,6 +771,13 @@
       "when": 1793900000000,
       "tag": "0108_activities_visibility",
       "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "7",
+      "when": 1794000000000,
+      "tag": "0109_entity_tags",
+      "breakpoints": true
     }
   ]
 }
