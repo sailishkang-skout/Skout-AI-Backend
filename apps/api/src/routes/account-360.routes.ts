@@ -543,12 +543,19 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       if (filters.q) conditions.push(sql`${companies.name} ilike ${"%" + filters.q.replace(/[%_]/g, "\$&") + "%"}`);
       if (filters.owner_id) conditions.push(eq(companies.ownerId, filters.owner_id));
       if (q.cursor) {
-        const [value, id] = Buffer.from(q.cursor, "base64url").toString("utf8").split("|");
-        if (!value || !UUID.test(id ?? "")) return fail("cursor", "Invalid cursor");
+        let decoded: { v: string; id: string } | null = null;
+        try {
+          const parsed = JSON.parse(Buffer.from(q.cursor, "base64url").toString("utf8")) as { v?: unknown; id?: unknown };
+          if (typeof parsed.v === "string" && typeof parsed.id === "string" && UUID.test(parsed.id)) decoded = { v: parsed.v, id: parsed.id };
+        } catch {
+          decoded = null;
+        }
+        if (!decoded) return fail("cursor", "Invalid cursor");
+        const { v: value, id } = decoded;
         conditions.push(
           sortDesc
-            ? or(lt(companies.createdAt, new Date(value)), and(eq(companies.createdAt, new Date(value)), lt(companies.id, id!)))!
-            : or(gt(companies.name, value), and(eq(companies.name, value), gt(companies.id, id!)))!
+            ? or(lt(companies.createdAt, new Date(value)), and(eq(companies.createdAt, new Date(value)), lt(companies.id, id)))!
+            : or(gt(companies.name, value), and(eq(companies.name, value), gt(companies.id, id)))!
         );
       }
 
@@ -562,7 +569,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       const page = rows.slice(0, limit);
       const last = page[page.length - 1];
       const cursorOut = rows.length > limit && last
-        ? Buffer.from(sortDesc ? `${last.createdAt.toISOString()}|${last.id}` : `${last.name}|${last.id}`, "utf8").toString("base64url")
+        ? Buffer.from(JSON.stringify({ v: sortDesc ? last.createdAt.toISOString() : last.name, id: last.id }), "utf8").toString("base64url")
         : null;
       return {
         data: page.map((r) => ({ id: r.id, name: r.name, owner_id: r.ownerId, created_at: r.createdAt.toISOString() })),
