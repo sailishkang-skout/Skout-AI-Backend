@@ -1,7 +1,7 @@
 import { and, asc, eq, isNull, lte } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { createDb, schema } from "@skout/db";
-import { createLogger, withSpan } from "@skout/observability";
+import { captureException, createLogger, withSpan } from "@skout/observability";
 import { parseCopsEvent, relayCopsOutboxRow, type CopsOutboxUpdate } from "@skout/shared";
 import type { Env } from "../config/env.js";
 import { isRedisAvailable } from "../lib/redis.js";
@@ -13,6 +13,8 @@ const log = createLogger("cops-outbox-relay.worker");
 export const COPS_EVENTS_QUEUE = DEXTER_EVENT_QUEUE;
 const BATCH_SIZE = 50;
 const POLL_INTERVAL_MS = 1_000;
+/** Wait after a failed pass so a down Redis is not hammered or spammed to Sentry. */
+const FAILURE_BACKOFF_MS = 30_000;
 
 /**
  * Map a relay decision to the columns it writes. Kept pure so the update rules are testable
@@ -86,6 +88,7 @@ export async function startCopsOutboxRelay(db: Db, config: Env): Promise<() => P
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let activePass: Promise<void> | null = null;
+  let consecutiveFailures = 0;
 
   const tick = async () => {
     if (stopped) return;
@@ -103,12 +106,19 @@ export async function startCopsOutboxRelay(db: Db, config: Env): Promise<() => P
             );
           });
         });
+        consecutiveFailures = 0;
         if (counts.picked > 0) log.info("cops-outbox relay pass", counts);
       } catch (err) {
-        log.error("cops-outbox relay pass failed", { error: String(err) });
+        consecutiveFailures++;
+        // Back off after a failure so a down Redis is not retried every second or spammed to Sentry.
+        if (consecutiveFailures === 1) {
+          log.error("cops-outbox relay pass failed", { error: String(err) });
+          captureException(err, { component: "cops-outbox-relay" });
+        }
       } finally {
         activePass = null;
-        if (!stopped) timer = setTimeout(() => void tick(), POLL_INTERVAL_MS);
+        const delay = consecutiveFailures > 0 ? FAILURE_BACKOFF_MS : POLL_INTERVAL_MS;
+        if (!stopped) timer = setTimeout(() => void tick(), delay);
       }
     })();
     await activePass;

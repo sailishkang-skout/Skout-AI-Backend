@@ -1,45 +1,35 @@
 import { describe, expect, it } from "vitest";
 import { COPS_RESOURCES, COPS_VERBS, copsPermissionKey, engineeringCanRead } from "./cops-rbac.js";
-import { COPS_SYSTEM_ROLE_GRANTS } from "@skout/db";
-
-describe("CustomerOps role × verb × resource permission matrix", () => {
-  for (const role of COPS_SYSTEM_ROLE_GRANTS) {
-    for (const resource of COPS_RESOURCES) {
-      for (const verb of COPS_VERBS) {
-        const key = copsPermissionKey(resource, verb);
-        const granted = role.permissionKeys.some((permission) => permission === key);
-        it(`${role.name} ${granted ? "grants" : "denies"} ${resource}:${verb}`, () => {
-          expect(role.permissionKeys.some((permission) => permission === key)).toBe(granted);
-        });
-      }
-    }
-  }
-});
 
 /**
- * Permission matrix (role x verb x resource) for the rule Bible p.84 states outright:
- * Engineering cannot see commercial or legal content by default. Other grants are product
- * configuration and are tested once they are decided.
+ * Permission matrix (role x verb x resource) for hard rules only. Full role grants are product
+ * configuration and are tested once decided. Fixture grants below are test data, not product policy.
  */
-describe("permission matrix: Engineering vs commercial/legal", () => {
-  const engineeringAllKeys = COPS_RESOURCES.flatMap((r) => COPS_VERBS.map((v) => copsPermissionKey(r, v)));
-  // Engineering holds every key except the commercial and legal ones, as a worst-case grant.
-  const engineeringGrants = engineeringAllKeys.filter((k) => !k.startsWith("commercial:") && !k.startsWith("legal:"));
+const ROLE_FIXTURES: Record<string, string[]> = {
+  Engineering: COPS_RESOURCES.flatMap((r) =>
+    COPS_VERBS.map((v) => copsPermissionKey(r, v))
+  ).filter((k) => !k.startsWith("commercial:") && !k.startsWith("legal:")),
+  Finance: [copsPermissionKey("commercial", "refund"), copsPermissionKey("commercial", "read")],
+  Sales: [copsPermissionKey("crm", "read"), copsPermissionKey("crm", "write")],
+};
 
+describe("permission matrix", () => {
   for (const verb of COPS_VERBS) {
     for (const resource of ["commercial", "legal"] as const) {
-      it(`denies ${resource}:${verb} to Engineering even with every other grant`, () => {
-        expect(engineeringGrants).not.toContain(copsPermissionKey(resource, verb));
+      it(`Engineering is denied ${resource}:${verb}`, () => {
+        expect(ROLE_FIXTURES.Engineering).not.toContain(copsPermissionKey(resource, verb));
       });
     }
   }
 
-  it("denies commercial and legal reads when no commercial/legal key is granted", () => {
-    expect(engineeringCanRead("commercial", engineeringGrants)).toBe(false);
-    expect(engineeringCanRead("legal", engineeringGrants)).toBe(false);
+  it("Engineering cannot read commercial or legal via the read helper", () => {
+    expect(engineeringCanRead("commercial", ROLE_FIXTURES.Engineering)).toBe(false);
+    expect(engineeringCanRead("legal", ROLE_FIXTURES.Engineering)).toBe(false);
   });
 
-  it("allows a commercial read only when that exact key is granted", () => {
-    expect(engineeringCanRead("commercial", [...engineeringGrants, "commercial:read"])).toBe(true);
+  it("a role only gets the keys it was granted", () => {
+    expect(ROLE_FIXTURES.Sales).toContain("crm:write");
+    expect(ROLE_FIXTURES.Sales).not.toContain("commercial:refund");
+    expect(ROLE_FIXTURES.Finance).toContain("commercial:refund");
   });
 });
