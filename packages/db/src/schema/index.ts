@@ -46,3 +46,4 @@ export * from "./auth-login-cohorts.js";
 export * from "./cops-timeline.js";
 export * from "./cops-crm.js";
 export * from "./cops-views.js";
+export * from "./cops-merges.js";

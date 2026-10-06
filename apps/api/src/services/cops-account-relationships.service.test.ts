@@ -4,7 +4,7 @@ import { createDb } from "@skout/db";
 import { AccountLinkError, linkAccounts } from "./cops-account-relationships.service.js";
 
 // postgres is a dependency of packages/db; resolve it from there.
-const postgres = createRequire(new URL("../../../../packages/db/package.json", import.meta.url))("postgres") as typeof import("postgres");
+const postgres = createRequire(new URL("../../../../packages/db/package.json", import.meta.url))("postgres") as (url: string, options?: object) => any;
 
 /** Runs only when COPS_TEST_DATABASE_URL is set (real Postgres). */
 const url = process.env.COPS_TEST_DATABASE_URL;

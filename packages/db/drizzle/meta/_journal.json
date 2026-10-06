@@ -750,6 +750,13 @@
       "when": 1793600000000,
       "tag": "0105_cops_saved_views",
       "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "7",
+      "when": 1793700000000,
+      "tag": "0106_cops_account_merges",
+      "breakpoints": true
     }
   ]
 }

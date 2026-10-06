@@ -12,14 +12,14 @@ import { buildApp } from "../app.js";
 const url = process.env.COPS_TEST_DATABASE_URL;
 const maybe = url ? describe : describe.skip;
 
-const postgres = createRequire(new URL("../../../../packages/db/package.json", import.meta.url))("postgres") as typeof import("postgres");
+const postgres = createRequire(new URL("../../../../packages/db/package.json", import.meta.url))("postgres") as (url: string, options?: object) => any;
 
 const OWNER_EMAIL = "signup.tester1791282671@example.test";
 const WORKSPACE_ID = "bb214f11-bdb4-4012-add2-dd471a078981";
 
 maybe("GET /accounts/:id/360 query count", () => {
   let app: FastifyInstance;
-  let sql: ReturnType<typeof postgres>;
+  let sql: any;
   let counting = false;
   let queries = 0;
 

@@ -11,7 +11,7 @@ import { requireAnyCopsPermission, writeCopsAudit } from "../services/cops-platf
 import { runLifecycleTransition } from "../services/cops-lifecycle.service.js";
 import { AccountLinkError, linkAccounts } from "../services/cops-account-relationships.service.js";
 
-const { companies, contacts, deals, activities, signals, copsLifecycleStates, copsTimelineEvents, tasks, workspaceMembers, copsSavedViews, pipelineStages } = schema;
+const { companies, contacts, deals, activities, signals, copsLifecycleStates, copsTimelineEvents, tasks, workspaceMembers, copsSavedViews, pipelineStages, copsAccountMerges, accountRelationships, crmNativeLinks } = schema;
 
 const LOW_CONFIDENCE_THRESHOLD = 0.5;
 
@@ -1057,6 +1057,95 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
         }
         throw err;
       }
+    }
+  );
+
+  // POST /accounts/merge: merge a duplicate account into a survivor. Without confirm it returns the
+  // conflicts and changes nothing. With confirm, the survivor keeps its values, fills its empty fields
+  // from the duplicate, moves every reference to the survivor, records the merge, and removes the
+  // duplicate. Needs crm:admin.
+  const mergeGate = requireAnyCopsPermission(["crm:admin"], (ws, user) => getMemberPermissions(db, ws, user));
+  app.post<{ Body: { survivor_id?: string; duplicate_id?: string; reason?: string; confirm?: boolean } }>(
+    "/accounts/merge",
+    { preHandler: mergeGate },
+    async (request, reply) => {
+      const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+      const fail = (path: string, message: string) =>
+        reply.status(copsErrorStatus("VALIDATION_FAILED")).send(
+          copsErrorBody({ code: "VALIDATION_FAILED", message, requestId, details: { fields: [{ path, code: "invalid", message }] } })
+        );
+
+      const survivorId = request.body?.survivor_id ?? "";
+      const duplicateId = request.body?.duplicate_id ?? "";
+      const reason = (request.body?.reason ?? "").trim();
+      if (!UUID.test(survivorId)) return fail("survivor_id", "survivor_id must be a UUID");
+      if (!UUID.test(duplicateId)) return fail("duplicate_id", "duplicate_id must be a UUID");
+      if (survivorId === duplicateId) return fail("duplicate_id", "An account cannot be merged into itself");
+      if (reason.length < 8 || reason.length > 500) return fail("reason", "reason is required (8-500 characters)");
+
+      const workspaceId = request.workspaceId!;
+      const found = await db
+        .select({ id: companies.id, name: companies.name, domain: companies.domain, ownerId: companies.ownerId })
+        .from(companies)
+        .where(and(eq(companies.workspaceId, workspaceId), inArray(companies.id, [survivorId, duplicateId])));
+      const survivor = found.find((c) => c.id === survivorId);
+      const duplicate = found.find((c) => c.id === duplicateId);
+      if (!survivor) return fail("survivor_id", "Survivor account not found in this workspace");
+      if (!duplicate) return fail("duplicate_id", "Duplicate account not found in this workspace");
+
+      const conflicts: Array<{ field: string; survivor_value: unknown; duplicate_value: unknown }> = [];
+      for (const field of ["name", "domain", "ownerId"] as const) {
+        const a = survivor[field];
+        const b = duplicate[field];
+        if (a != null && b != null && a !== b) {
+          conflicts.push({ field: field === "ownerId" ? "owner_id" : field, survivor_value: a, duplicate_value: b });
+        }
+      }
+      if (conflicts.length > 0 && request.body?.confirm !== true) {
+        return { data: { status: "review_required", conflicts } };
+      }
+
+      try {
+        await db.transaction(async (tx) => {
+          await tx.insert(copsAccountMerges).values({
+            workspaceId,
+            survivorId,
+            duplicateId,
+            duplicateName: duplicate.name,
+            reason,
+            conflicts,
+            mergedBy: request.userId ?? null,
+          });
+          await tx.update(contacts).set({ companyId: survivorId }).where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.companyId, duplicateId)));
+          await tx.update(deals).set({ companyId: survivorId }).where(and(eq(deals.workspaceId, workspaceId), eq(deals.companyId, duplicateId)));
+          await tx
+            .update(tasks)
+            .set({ relatedEntityId: survivorId })
+            .where(and(eq(tasks.workspaceId, workspaceId), eq(tasks.relatedEntityType, "company"), eq(tasks.relatedEntityId, duplicateId)));
+          await tx.update(copsTimelineEvents).set({ accountId: survivorId }).where(and(eq(copsTimelineEvents.workspaceId, workspaceId), eq(copsTimelineEvents.accountId, duplicateId)));
+          await tx.update(crmNativeLinks).set({ entityId: survivorId }).where(and(eq(crmNativeLinks.workspaceId, workspaceId), eq(crmNativeLinks.entityType, "company"), eq(crmNativeLinks.entityId, duplicateId)));
+          await tx.update(accountRelationships).set({ parentAccountId: survivorId }).where(and(eq(accountRelationships.workspaceId, workspaceId), eq(accountRelationships.parentAccountId, duplicateId)));
+          await tx.update(accountRelationships).set({ childAccountId: survivorId }).where(and(eq(accountRelationships.workspaceId, workspaceId), eq(accountRelationships.childAccountId, duplicateId)));
+          // A relationship that now points an account at itself carries no meaning; drop it.
+          await tx.delete(accountRelationships).where(and(eq(accountRelationships.workspaceId, workspaceId), sql`${accountRelationships.parentAccountId} = ${accountRelationships.childAccountId}`));
+          await tx
+            .update(companies)
+            .set({
+              domain: sql`coalesce(${companies.domain}, ${duplicate.domain})`,
+              ownerId: sql`coalesce(${companies.ownerId}, ${duplicate.ownerId})`,
+            })
+            .where(eq(companies.id, survivorId));
+          await tx.delete(companies).where(and(eq(companies.id, duplicateId), eq(companies.workspaceId, workspaceId)));
+        });
+      } catch (err) {
+        if (err instanceof Error && /cops_account_merges_duplicate_unique|duplicate key/.test(err.message)) {
+          return reply.status(copsErrorStatus("BUSINESS_STATE_CONFLICT")).send(
+            copsErrorBody({ code: "BUSINESS_STATE_CONFLICT", message: "This account has already been merged", requestId, details: {} })
+          );
+        }
+        throw err;
+      }
+      return { data: { status: "merged", survivor_id: survivorId, duplicate_id: duplicateId, conflicts_resolved_to_survivor: conflicts } };
     }
   );
 }
