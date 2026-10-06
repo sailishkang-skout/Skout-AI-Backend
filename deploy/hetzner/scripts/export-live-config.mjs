@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // deploy/hetzner/scripts/export-live-config.mjs
-// Export the live ECS service configuration (plaintext env + resolved Secrets Manager values)
-// into one env file per service, applying Hetzner overrides. READ-ONLY against AWS.
+// Shared helpers (override application, env-file encoding, shim guard) used by config-from-synth.mjs.
+// The CLI below reads the LIVE ECS task definitions and Secrets Manager and only worked while AWS was
+// reachable. AWS is now shut off: use config-from-synth.mjs (variable lists from `cdk synth`, values from
+// local env files plus generate-secrets.mjs) instead.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -94,6 +96,7 @@ export function applyOverrides(env, overrides, processEnv, extraRewrites = []) {
     if (!(present in base)) continue;
     for (const [k, v] of Object.entries(sets)) out[k] = expand(v, processEnv);
   }
+  for (const k of overrides.remove ?? []) delete out[k];
   return out;
 }
 

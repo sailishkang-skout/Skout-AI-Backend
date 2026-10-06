@@ -2,6 +2,7 @@
   "rewrite": [
     ["clickhouse.skoutdev.local", "clickhouse"]
   ],
+  "remove": ["SCRAPE_SCHEDULE_QUEUE_URL"],
   "whenPresent": {
     "DATABASE_HOST": {
       "DATABASE_HOST": "${PG_HOST}",
@@ -46,6 +47,28 @@
     },
     "SCRAPE_SCHEDULE_QUEUE_URL": {
       "SCRAPE_DAILY_SCHEDULE_ENABLED": "true"
+    },
+    "API_PUBLIC_URL": {
+      "API_PUBLIC_URL": "${PUBLIC_URL}"
+    },
+    "CORS_ORIGIN": {
+      "CORS_ORIGIN": "${PUBLIC_URL},https://www.skoutai.io,https://skoutai.io"
+    },
+    "NEXT_PUBLIC_API_URL": {
+      "NEXT_PUBLIC_API_URL": "${PUBLIC_URL}"
+    },
+    "GOOGLE_REDIRECT_URI": {
+      "GOOGLE_REDIRECT_URI": "${PUBLIC_URL}/api/v1/warmup-tool/oauth/google/callback",
+      "WARMUP_OAUTH_GOOGLE_CALLBACK": "${PUBLIC_URL}/api/v1/warmup-tool/oauth/google/callback",
+      "WARMUP_OAUTH_MICROSOFT_CALLBACK": "${PUBLIC_URL}/api/v1/warmup-tool/oauth/microsoft/callback"
+    },
+    "STORAGE_BUCKET": {
+      "STORAGE_BUCKET": "${R2_EMAIL_INTEL_BUCKET}",
+      "STORAGE_ENDPOINT": "${R2_ENDPOINT}",
+      "STORAGE_REGION": "auto",
+      "STORAGE_FORCE_PATH_STYLE": "true",
+      "STORAGE_ACCESS_KEY_ID": "${R2_ACCESS_KEY_ID}",
+      "STORAGE_SECRET_ACCESS_KEY": "${R2_SECRET_ACCESS_KEY}"
     },
     "DD_AGENT_HOST": {
       "DD_AGENT_HOST": "datadog-agent"

@@ -56,3 +56,4 @@ deploy/hetzner/terraform/.terraform/
 deploy/hetzner/terraform/*.tfstate*
 deploy/hetzner/terraform/*.plan
 deploy/hetzner/terraform/terraform.tfvars
+deploy/hetzner/generated/

@@ -128,6 +128,12 @@ test("applyOverrides: static rewrites, then whenPresent sets, with ${VAR} templa
   assert.equal("REDIS_URL" in out, false, "whenPresent must not add keys the service never had");
 });
 
+test("applyOverrides: remove drops keys after the whenPresent sets have run", () => {
+  const overrides = { whenPresent: { QUEUE_URL: { FLAG: "true" } }, remove: ["QUEUE_URL", "NOT_THERE"] };
+  const out = applyOverrides({ QUEUE_URL: "https://sqs.example/q", KEEP: "1" }, overrides, {}, []);
+  assert.deepEqual(out, { KEEP: "1", FLAG: "true" });
+});
+
 test("applyOverrides throws when a template variable is unset", () => {
   const overrides = { whenPresent: { A: { A: "${NOPE}" } } };
   assert.throws(() => applyOverrides({ A: "1" }, overrides, {}, []), /NOPE/);
