@@ -56,9 +56,9 @@ systems and adds only the missing transactional-outbox and idempotency capabilit
 |---|---|---|
 | Outbox crash safety and duplicate-event no-op | ✅ | In-memory crash/consumer tests pass; the real-Postgres process-kill test passed 2/2 with `COPS_TEST_DATABASE_URL` and is committed as `81f9c61`. |
 | Illegal lifecycle transitions return 409; won does not imply activated | ✅ | Independent dimensions and transition tables; lifecycle/error unit tests pass. |
-| Permission matrix; Engineering denied commercial/legal reads | ⚠️ Partial | Permission matrix tests and the exact CustomerOps role grant seed pass, including Engineering's denial. Verify the live database grants after the idempotent RBAC backfill; do not enable enforcement before rollout. |
+| Permission matrix; Engineering denied commercial/legal reads | ⚠️ Partial | Permission matrix tests and exact CustomerOps role grant seed pass. Idempotent backfill ran against local `skout_test`; querying the resulting grants confirmed Engineering lacks `commercial:read` and `legal:read`. Production/staging grants remain unverified; do not enable enforcement there before backfill. |
 | Overrides require a reason and create audit records | ✅ | Shared audit validation rejects overrides without a reason; lifecycle/replay writes persist audit records transactionally. Each later ticket must assert its own override audit write. |
-| Notification provider outage retries, alerts, and does not fail the originating write | ⚠️ Partial | Existing delivery tests verify retry/fallback and Sentry exception capture; notification creation still succeeds with the in-app record. Production alert delivery still requires configured SENTRY_DSN and Sentry alert rules. |
+| Notification provider outage retries, alerts, and does not fail the originating write | ⚠️ Partial | Existing delivery tests verify retry/fallback and Sentry exception capture; notification creation still succeeds with the in-app record. Local `.env` has a SENTRY_DSN, but Sentry org/project/auth-token configuration is absent, so production alert rules could not be provisioned or verified. |
 | Permission-aware frontend; no raw 403 screen | ✅ | Audit nav is permission-gated; the audit page renders a user-facing forbidden message. |
 | 422 field errors and retryable/429 handling | ⚠️ Partial | API returns `details.fields[]`; frontend audit-page integration test verifies submitting a date filter displays the returned `from` error. Envelope/retry tests pass. Browser smoke for audit page passes; authenticated browser-level 422 still needs a valid E2E auth fixture before release. |
 | OpenAPI contract and existing-code audit | ✅ | Contract: `docs/api/copos-01-platform-foundation.openapi.yaml`; findings recorded above. |
@@ -68,7 +68,9 @@ systems and adds only the missing transactional-outbox and idempotency capabilit
 Focused verification run: backend COPS shared tests **67/67 passed**; seeded COPS role grant
 tests **3/3 passed**; frontend COPS error, fetch, navigation-helper, audit-viewer, and audit-page
 integration tests **20/20 passed**. The existing audit-page Playwright smoke test passes.
-Notification provider retry, Sentry-capture, and fallback tests **7/7 passed**.
+Notification provider retry, Sentry-capture, and fallback tests **7/7 passed**. The RBAC backfill
+was run and queried only in the local `skout_test` database; no shared or production database was
+modified.
 
 ### Product Bible v2 p.10 decision ADRs
 
