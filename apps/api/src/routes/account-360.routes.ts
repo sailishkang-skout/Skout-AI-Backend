@@ -801,4 +801,116 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       };
     }
   );
+
+  // GET /tasks — task list: q (title contains), type, status, assigned_to, account_id (tasks
+  // related to a company), sort (created_at | -created_at), exact-precision JSON cursor, and
+  // view_id for saved views (object "task").
+  app.get<{ Querystring: { q?: string; type?: string; status?: string; assigned_to?: string; account_id?: string; sort?: string; limit?: string; cursor?: string; view_id?: string } }>(
+    "/tasks",
+    { preHandler: listGate },
+    async (request, reply) => {
+      const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+      const fail = (path: string, message: string) =>
+        reply.status(copsErrorStatus("VALIDATION_FAILED")).send(
+          copsErrorBody({ code: "VALIDATION_FAILED", message, requestId, details: { fields: [{ path, code: "invalid", message }] } })
+        );
+
+      const workspaceId = request.workspaceId!;
+      const qs = request.query;
+      let filters: { q?: string; type?: string; status?: string; assigned_to?: string; account_id?: string } = {
+        q: qs.q, type: qs.type, status: qs.status, assigned_to: qs.assigned_to, account_id: qs.account_id,
+      };
+      if (qs.view_id) {
+        if (!UUID.test(qs.view_id)) return fail("view_id", "Invalid view id");
+        const [view] = await db
+          .select({ filters: copsSavedViews.filters, objectType: copsSavedViews.objectType })
+          .from(copsSavedViews)
+          .where(
+            and(
+              eq(copsSavedViews.id, qs.view_id),
+              eq(copsSavedViews.workspaceId, workspaceId),
+              or(eq(copsSavedViews.ownerUserId, request.userId!), eq(copsSavedViews.shared, true))
+            )
+          )
+          .limit(1);
+        if (!view) return fail("view_id", "Saved view not found");
+        if (view.objectType !== "task") return fail("view_id", "Saved view is for another object type");
+        const f = view.filters as Record<string, unknown>;
+        const pick = (key: keyof typeof filters) => filters[key] ?? (typeof f[key] === "string" ? (f[key] as string) : undefined);
+        filters = { q: pick("q"), type: pick("type"), status: pick("status"), assigned_to: pick("assigned_to"), account_id: pick("account_id") };
+      }
+
+      if (qs.sort && qs.sort !== "created_at" && qs.sort !== "-created_at") return fail("sort", "sort must be created_at or -created_at");
+      const sortDesc = qs.sort !== "created_at";
+      if (filters.assigned_to && !UUID.test(filters.assigned_to)) return fail("assigned_to", "Invalid assigned_to");
+      if (filters.account_id && !UUID.test(filters.account_id)) return fail("account_id", "Invalid account_id");
+      const limit = Math.min(100, Math.max(1, Number.parseInt(qs.limit ?? "25", 10) || 25));
+
+      const conditions = [eq(tasks.workspaceId, workspaceId)];
+      if (filters.q) conditions.push(sql`${tasks.title} ilike ${"%" + filters.q.replace(/[%_]/g, "\$&") + "%"}`);
+      if (filters.type) conditions.push(eq(tasks.type, filters.type));
+      if (filters.status) conditions.push(eq(tasks.status, filters.status));
+      if (filters.assigned_to) conditions.push(eq(tasks.assignedTo, filters.assigned_to));
+      if (filters.account_id) {
+        conditions.push(and(eq(tasks.relatedEntityType, "company"), eq(tasks.relatedEntityId, filters.account_id))!);
+      }
+
+      if (qs.cursor) {
+        let decoded: { v: string; id: string } | null = null;
+        try {
+          const parsed = JSON.parse(Buffer.from(qs.cursor, "base64url").toString("utf8")) as { v?: unknown; id?: unknown };
+          if (typeof parsed.v === "string" && typeof parsed.id === "string" && UUID.test(parsed.id)) decoded = { v: parsed.v, id: parsed.id };
+        } catch {
+          decoded = null;
+        }
+        if (!decoded) return fail("cursor", "Invalid cursor");
+        const { v: value, id } = decoded;
+        conditions.push(
+          sortDesc
+            ? or(sql`${tasks.createdAt} < ${value}::timestamptz`, and(sql`${tasks.createdAt} = ${value}::timestamptz`, lt(tasks.id, id)))!
+            : or(sql`${tasks.createdAt} > ${value}::timestamptz`, and(sql`${tasks.createdAt} = ${value}::timestamptz`, gt(tasks.id, id)))!
+        );
+      }
+
+      const rows = await db
+        .select({
+          id: tasks.id,
+          title: tasks.title,
+          type: tasks.type,
+          status: tasks.status,
+          priority: tasks.priority,
+          dueDate: tasks.dueDate,
+          assignedTo: tasks.assignedTo,
+          relatedEntityType: tasks.relatedEntityType,
+          relatedEntityId: tasks.relatedEntityId,
+          createdAt: tasks.createdAt,
+          createdAtText: tsText(tasks.createdAt),
+        })
+        .from(tasks)
+        .where(and(...conditions))
+        .orderBy(...(sortDesc ? [desc(tasks.createdAt), desc(tasks.id)] : [asc(tasks.createdAt), asc(tasks.id)]))
+        .limit(limit + 1);
+
+      const page = rows.slice(0, limit);
+      const last = page[page.length - 1];
+      const cursorOut = rows.length > limit && last
+        ? Buffer.from(JSON.stringify({ v: last.createdAtText, id: last.id }), "utf8").toString("base64url")
+        : null;
+      return {
+        data: page.map((r) => ({
+          id: r.id,
+          title: r.title,
+          type: r.type,
+          status: r.status,
+          priority: r.priority,
+          due_at: r.dueDate ? r.dueDate.toISOString() : null,
+          assigned_to: r.assignedTo,
+          account_id: r.relatedEntityType === "company" ? r.relatedEntityId : null,
+          created_at: r.createdAt.toISOString(),
+        })),
+        next_cursor: cursorOut,
+        applied_filters: filters,
+      };
+    }
+  );
 }
