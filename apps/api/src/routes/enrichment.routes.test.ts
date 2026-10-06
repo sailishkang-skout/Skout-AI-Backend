@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { schema } from "@skout/db";
+import { and, eq, isNull, like } from "drizzle-orm";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
 import { ensureDemoIcp } from "../test/ensure-demo-icp.js";
+import { buildTestAuth } from "@skout/auth";
 import type { FastifyInstance } from "fastify";
 
 const WORKSPACE = "00000000-0000-4000-8000-000000000001";
@@ -29,27 +31,71 @@ const BASE_OVERRIDES = {
 
 let app: FastifyInstance;
 
+const TEST_USER_ID = "00000000-0000-4000-8000-000000000002"; // Valid UUID for test user
+let testAuth: ReturnType<typeof buildTestAuth>;
+
 beforeAll(async () => {
   const config = loadEnv();
   app = await buildApp({ ...config, ...BASE_OVERRIDES });
   await ensureDemoIcp(app, WORKSPACE);
+  
+  // Build test auth with proper permissions for enrichment endpoints
+  testAuth = buildTestAuth({ workspaceId: WORKSPACE, userId: TEST_USER_ID, role: "owner" });
 
   // Stub auth provisions its own workspace and ignores x-workspace-id. Local runs can
   // deplete that balance — top it up so credit-gated enrich/score tests stay green.
   if (app.db) {
-    const probe = await app.inject({
-      method: "GET",
-      url: "/api/v1/enrichment/credits",
-      headers: { "x-workspace-id": WORKSPACE },
-    });
-    const { workspaceId } = probe.json() as { workspaceId: string };
-    await app.db
-      .insert(schema.creditBalances)
-      .values({ workspaceId, balance: 5000 })
-      .onConflictDoUpdate({
-        target: schema.creditBalances.workspaceId,
-        set: { balance: 5000, updatedAt: new Date() },
-      });
+          // First create the test user in the users table to satisfy foreign key constraints
+          await app.db
+            .insert(schema.users)
+            .values({
+              id: TEST_USER_ID,
+              email: "test-enrichment@example.com",
+              fullName: "Enrichment Test User",
+              status: "active",
+            })
+            .onConflictDoNothing();
+          
+          // Look up the system owner role that's already seeded
+        const [ownerRole] = await app.db
+          .select({ id: schema.roles.id })
+          .from(schema.roles)
+          .where(and(eq(schema.roles.key, "owner"), isNull(schema.roles.workspaceId)))
+          .limit(1);
+
+        if (ownerRole) {
+          // Assign the owner role to the test user
+          await app.db
+            .insert(schema.workspaceMemberRoles)
+            .values({
+              workspaceId: WORKSPACE,
+              userId: TEST_USER_ID,
+              roleId: ownerRole.id,
+            })
+            .onConflictDoNothing();
+          
+          // Also ensure the owner role has all enrichment permissions
+          const enrichmentPermissions = await app.db
+            .select({ key: schema.permissions.key })
+            .from(schema.permissions)
+            .where(like(schema.permissions.key, "enrichment:%"));
+          
+          for (const perm of enrichmentPermissions) {
+            await app.db
+              .insert(schema.rolePermissions)
+              .values({ roleId: ownerRole.id, permissionKey: perm.key })
+              .onConflictDoNothing();
+          }
+        }
+
+          // Top up credit balance for test workspace
+            await app.db
+              .insert(schema.creditBalances)
+              .values({ workspaceId: WORKSPACE, balance: 5000 })
+              .onConflictDoUpdate({
+                target: schema.creditBalances.workspaceId,
+                set: { balance: 5000, updatedAt: new Date() },
+              });
   }
 }, 60000);
 
@@ -62,7 +108,10 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/enrichment/credits",
-      headers: { "x-workspace-id": WORKSPACE },
+      headers: { 
+        "x-workspace-id": WORKSPACE,
+        "Authorization": testAuth.bearer
+      },
     });
     expect(res.statusCode).toBe(200);
     const body = res.json() as { balance: number };
@@ -73,7 +122,11 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/prospects/acme-prospect/enrich",
-      headers: { "x-workspace-id": WORKSPACE, "content-type": "application/json" },
+      headers: { 
+        "x-workspace-id": WORKSPACE, 
+        "content-type": "application/json",
+        "Authorization": testAuth.bearer
+      },
       payload: {
         prospect: {
           fullName: "John Smith",
@@ -103,7 +156,11 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/prospects/low-score-phone-gate/enrich",
-      headers: { "x-workspace-id": WORKSPACE, "content-type": "application/json" },
+      headers: { 
+        "x-workspace-id": WORKSPACE, 
+        "content-type": "application/json",
+        "Authorization": testAuth.bearer
+      },
       payload: {
         prospect: { fullName: "Jane Doe", companyDomain: "example.com", industry: "Retail", country: "US" },
         fields: ["phone"],
@@ -118,12 +175,73 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
   it("allows phone when gate is overridden via env (§6)", async () => {
     const config = loadEnv();
     const gateApp = await buildApp({ ...config, ...BASE_OVERRIDES, ENRICHMENT_PHONE_SCORE_GATE: -1 });
+    const gateTestAuth = buildTestAuth({ workspaceId: WORKSPACE, userId: TEST_USER_ID, role: "owner" });
     try {
       await ensureDemoIcp(gateApp, WORKSPACE);
+      
+      // Add same permissions for gateApp test user
+      if (gateApp.db) {
+        // First create the test user in the users table to satisfy foreign key constraints
+        await gateApp.db
+          .insert(schema.users)
+          .values({
+            id: TEST_USER_ID,
+            email: "test-enrichment@example.com",
+            fullName: "Enrichment Test User",
+            status: "active",
+          })
+          .onConflictDoNothing();
+          
+        // Look up the system owner role that's already seeded
+        const [ownerRole] = await gateApp.db
+          .select({ id: schema.roles.id })
+          .from(schema.roles)
+          .where(and(eq(schema.roles.key, "owner"), isNull(schema.roles.workspaceId)))
+          .limit(1);
+
+        if (ownerRole) {
+          // Assign the owner role to the test user
+          await gateApp.db
+            .insert(schema.workspaceMemberRoles)
+            .values({
+              workspaceId: WORKSPACE,
+              userId: TEST_USER_ID,
+              roleId: ownerRole.id,
+            })
+            .onConflictDoNothing();
+          
+          // Also ensure the owner role has all enrichment permissions
+          const enrichmentPermissions = await gateApp.db
+            .select({ key: schema.permissions.key })
+            .from(schema.permissions)
+            .where(like(schema.permissions.key, "enrichment:%"));
+          
+          for (const perm of enrichmentPermissions) {
+            await gateApp.db
+              .insert(schema.rolePermissions)
+              .values({ roleId: ownerRole.id, permissionKey: perm.key })
+              .onConflictDoNothing();
+          }
+        }
+          
+        // Top up credit balance for test workspace in gateApp
+        await gateApp.db
+          .insert(schema.creditBalances)
+          .values({ workspaceId: WORKSPACE, balance: 5000 })
+          .onConflictDoUpdate({
+            target: schema.creditBalances.workspaceId,
+            set: { balance: 5000, updatedAt: new Date() },
+          });
+      }
+
       const res = await gateApp.inject({
         method: "POST",
         url: "/api/v1/prospects/gate-test/enrich",
-        headers: { "x-workspace-id": WORKSPACE, "content-type": "application/json" },
+        headers: { 
+          "x-workspace-id": WORKSPACE, 
+          "content-type": "application/json",
+          "Authorization": gateTestAuth.bearer
+        },
         payload: {
           prospect: { fullName: "John Smith", companyDomain: "acme.com" },
           fields: ["phone"],
@@ -135,13 +253,17 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     } finally {
       await gateApp.close();
     }
-  }, 30000);
+  }, 60000);
 
   it("activates prospects without external spend (§8 Tier 2 add-to-workspace)", async () => {
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/prospects/activate",
-      headers: { "x-workspace-id": WORKSPACE, "content-type": "application/json" },
+      headers: { 
+        "x-workspace-id": WORKSPACE, 
+        "content-type": "application/json",
+        "Authorization": testAuth.bearer
+      },
       payload: {
         prospects: [{ fullName: "Amy Lee", companyDomain: "foo.com", title: "CEO" }],
       },
@@ -154,7 +276,11 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/enrichment/score",
-      headers: { "x-workspace-id": WORKSPACE, "content-type": "application/json" },
+      headers: { 
+        "x-workspace-id": WORKSPACE, 
+        "content-type": "application/json",
+        "Authorization": testAuth.bearer
+      },
       payload: {
         prospect: {
           companyDomain: "acme.com",
@@ -192,7 +318,11 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     const create = await app.inject({
       method: "POST",
       url: "/api/v1/lists",
-      headers: { "x-workspace-id": WORKSPACE, "content-type": "application/json" },
+      headers: { 
+        "x-workspace-id": WORKSPACE, 
+        "content-type": "application/json",
+        "Authorization": testAuth.bearer
+      },
       payload: { name: "Test List", mode: "static" },
     });
     expect(create.statusCode).toBe(201);
@@ -201,7 +331,11 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     const members = await app.inject({
       method: "POST",
       url: `/api/v1/lists/${list.id}/members`,
-      headers: { "x-workspace-id": WORKSPACE, "content-type": "application/json" },
+      headers: { 
+        "x-workspace-id": WORKSPACE, 
+        "content-type": "application/json",
+        "Authorization": testAuth.bearer
+      },
       payload: {
         prospects: [
           {
@@ -224,7 +358,11 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     const enrich = await app.inject({
       method: "POST",
       url: `/api/v1/lists/${list.id}/enrich`,
-      headers: { "x-workspace-id": WORKSPACE, "content-type": "application/json" },
+      headers: { 
+        "x-workspace-id": WORKSPACE, 
+        "content-type": "application/json",
+        "Authorization": testAuth.bearer
+      },
       payload: { fields: ["company", "email", "validation"] },
     });
     expect(enrich.statusCode).toBe(202);
@@ -235,7 +373,10 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     const jobs = await app.inject({
       method: "GET",
       url: "/api/v1/enrichment/jobs",
-      headers: { "x-workspace-id": WORKSPACE },
+      headers: { 
+        "x-workspace-id": WORKSPACE,
+        "Authorization": testAuth.bearer
+      },
     });
     expect(jobs.statusCode).toBe(200);
     const jobList = jobs.json() as { data: unknown[]; total: number };
@@ -246,7 +387,11 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     const enrich = await app.inject({
       method: "POST",
       url: "/api/v1/prospects/job-fetch-test/enrich",
-      headers: { "x-workspace-id": WORKSPACE, "content-type": "application/json" },
+      headers: { 
+        "x-workspace-id": WORKSPACE, 
+        "content-type": "application/json",
+        "Authorization": testAuth.bearer
+      },
       payload: {
         prospect: { fullName: "Test User", companyDomain: "test.com" },
         fields: ["company"],
@@ -257,7 +402,10 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     const get = await app.inject({
       method: "GET",
       url: `/api/v1/enrichment/jobs/${jobId}`,
-      headers: { "x-workspace-id": WORKSPACE },
+      headers: { 
+        "x-workspace-id": WORKSPACE,
+        "Authorization": testAuth.bearer
+      },
     });
     expect(get.statusCode).toBe(200);
     expect(get.json()).toMatchObject({ id: jobId, status: "completed" });
@@ -267,7 +415,10 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     const get = await app.inject({
       method: "GET",
       url: "/api/v1/enrichment/jobs/optimistic-1787639887967",
-      headers: { "x-workspace-id": WORKSPACE },
+      headers: { 
+        "x-workspace-id": WORKSPACE,
+        "Authorization": testAuth.bearer
+      },
     });
     expect(get.statusCode).toBe(404);
     // The app-wide onSend hook (app.ts) normalizes every {error} reply into {error, message,
@@ -279,7 +430,10 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     const retry = await app.inject({
       method: "POST",
       url: "/api/v1/enrichment/jobs/optimistic-1787639887967/retry",
-      headers: { "x-workspace-id": WORKSPACE },
+      headers: { 
+        "x-workspace-id": WORKSPACE,
+        "Authorization": testAuth.bearer
+      },
     });
     expect(retry.statusCode).toBe(404);
     expect(retry.json()).toEqual({ error: "job_not_found", message: "job_not_found", statusCode: 404 });
@@ -345,7 +499,10 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/enrichment/efficiency",
-      headers: { "x-workspace-id": WORKSPACE },
+      headers: { 
+        "x-workspace-id": WORKSPACE,
+        "Authorization": testAuth.bearer
+      },
     });
     expect(res.statusCode).toBe(200);
     const body = res.json() as { workspaceId: string; data: { date: string; spent: number; found: number }[] };

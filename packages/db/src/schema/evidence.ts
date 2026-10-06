@@ -1,6 +1,7 @@
 import { index, integer, jsonb, pgTable, real, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { users } from "./users.js";
 import { workspaces } from "./workspaces.js";
+import { companies } from "./crm.js";
 
 /**
  * §5.3 (Enterprise Completion Plan) — the canonical Evidence Ledger.
@@ -55,7 +56,7 @@ export const evidenceLedger = pgTable(
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [
+  (table: any) => [
     index("evidence_ledger_workspace_entity_idx").on(table.workspaceId, table.entityType, table.entityId),
     index("evidence_ledger_workspace_entity_attr_idx").on(
       table.workspaceId,
@@ -90,7 +91,7 @@ export const identityMergeProposals = pgTable(
     reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("identity_merge_proposals_workspace_status_idx").on(table.workspaceId, table.status)]
+  (table: any) => [index("identity_merge_proposals_workspace_status_idx").on(table.workspaceId, table.status)]
 );
 
 /** Audit trail for merges/splits — every merge is reversible via its stored beforeSnapshot. */
@@ -113,5 +114,32 @@ export const identityMergeEvents = pgTable(
     performedAt: timestamp("performed_at", { withTimezone: true }).notNull().defaultNow(),
     reversedAt: timestamp("reversed_at", { withTimezone: true }),
   },
-  (table) => [index("identity_merge_events_workspace_idx").on(table.workspaceId)]
+  (table: any) => [index("identity_merge_events_workspace_idx").on(table.workspaceId)]
+);
+
+/**
+ * Company email pattern tracking for enrichment's email discovery feature.
+ * Stores learned email patterns per company with confidence scoring, workspace-scoped.
+ */
+export const companyEmailPatterns = pgTable(
+  "company_email_patterns",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    pattern: text("pattern").notNull(),
+    confidence: integer("confidence").notNull().default(0),
+    sampleCount: integer("sample_count").notNull().default(1),
+    lastVerifiedAt: timestamp("last_verified_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table: any) => [
+    index("company_email_patterns_workspace_company_idx").on(table.workspaceId, table.companyId),
+    index("company_email_patterns_confidence_idx").on(table.workspaceId, table.confidence)
+  ]
 );
