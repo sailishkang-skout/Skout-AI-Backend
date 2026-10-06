@@ -64,6 +64,10 @@ resource "cloudflare_zero_trust_tunnel_cloudflared" "stack" {
   account_id = var.cloudflare_account_id
   name       = "${local.prefix}-tunnel"
   secret     = random_id.tunnel_secret.b64_std
+  # Remote-managed tunnel: cloudflared run with the token takes its ingress from the _config resource
+  # below. With the default ("local") it would ignore that config and answer 503. Changing this forces
+  # a new tunnel, so it is set before the first apply.
+  config_src = "cloudflare"
 }
 
 resource "cloudflare_zero_trust_tunnel_cloudflared_config" "stack" {
@@ -100,7 +104,7 @@ resource "cloudflare_ruleset" "auth_rate_limits" {
     action      = "block"
     description = "Credential endpoints: login, social login, signup, recovery, OTP"
     enabled     = true
-    expression  = "(http.host eq \"${local.app_host}\" and (http.request.uri.path contains \"/auth/login\" or http.request.uri.path contains \"/auth/google\" or http.request.uri.path contains \"/auth/microsoft\" or http.request.uri.path contains \"/auth/signup\" or http.request.uri.path contains \"/auth/password\" or http.request.uri.path contains \"/auth/otp\" or http.request.uri.path contains \"/auth/verify-email\"))"
+    expression  = "(http.host eq \"${local.app_host}\" and (lower(http.request.uri.path) contains \"/auth/login\" or lower(http.request.uri.path) contains \"/auth/google\" or lower(http.request.uri.path) contains \"/auth/microsoft\" or lower(http.request.uri.path) contains \"/auth/signup\" or lower(http.request.uri.path) contains \"/auth/password\" or lower(http.request.uri.path) contains \"/auth/otp\" or lower(http.request.uri.path) contains \"/auth/verify-email\"))"
 
     ratelimit {
       characteristics     = ["ip.src", "cf.colo.id"]
@@ -114,7 +118,7 @@ resource "cloudflare_ruleset" "auth_rate_limits" {
     action      = "block"
     description = "All other auth routes"
     enabled     = true
-    expression  = "(http.host eq \"${local.app_host}\" and (http.request.uri.path contains \"/api/v1/auth/\" or http.request.uri.path contains \"/app/api/auth/\"))"
+    expression  = "(http.host eq \"${local.app_host}\" and (lower(http.request.uri.path) contains \"/api/v1/auth/\" or lower(http.request.uri.path) contains \"/app/api/auth/\"))"
 
     ratelimit {
       characteristics     = ["ip.src", "cf.colo.id"]

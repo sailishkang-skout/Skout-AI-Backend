@@ -7,6 +7,8 @@ set -euo pipefail
 
 for db in skout email_intelligence email_warmup; do
   PGPASSWORD="$PG_ADMIN_PASSWORD" psql "host=$PG_HOST port=$PG_PORT user=$PG_ADMIN_USER dbname=$db sslmode=require" -v ON_ERROR_STOP=1 <<SQL
+-- PostgreSQL 16: a role that is not a superuser must be a member of the target role to hand it ownership.
+GRANT skout TO CURRENT_USER;
 ALTER DATABASE $db OWNER TO skout;
 GRANT ALL ON SCHEMA public TO skout;
 SQL

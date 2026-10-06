@@ -6,23 +6,37 @@ import {
   resolveSecrets,
   applyOverrides,
   toEnvFile,
+  chunk,
+  assertShimSupport,
 } from "./export-live-config.mjs";
 
 test("parseValueFrom strips the 6-char ARN suffix and returns the JSON key", () => {
   assert.deepEqual(
     parseValueFrom("arn:aws:secretsmanager:us-east-1:119408973331:secret:SkoutDev/clerk-AbC123:CLERK_SECRET_KEY::"),
-    { secretName: "SkoutDev/clerk", key: "CLERK_SECRET_KEY" }
+    {
+      secretName: "SkoutDev/clerk",
+      secretId: "arn:aws:secretsmanager:us-east-1:119408973331:secret:SkoutDev/clerk-AbC123",
+      key: "CLERK_SECRET_KEY",
+    }
   );
   assert.deepEqual(
     parseValueFrom("arn:aws:secretsmanager:us-east-1:119408973331:secret:SkoutDev/scraper/proxy-Zz9Yx8:PROXY_URL::"),
-    { secretName: "SkoutDev/scraper/proxy", key: "PROXY_URL" }
+    {
+      secretName: "SkoutDev/scraper/proxy",
+      secretId: "arn:aws:secretsmanager:us-east-1:119408973331:secret:SkoutDev/scraper/proxy-Zz9Yx8",
+      key: "PROXY_URL",
+    }
   );
 });
 
 test("parseValueFrom returns key null when the whole secret string is injected", () => {
   assert.deepEqual(
     parseValueFrom("arn:aws:secretsmanager:us-east-1:119408973331:secret:SkoutDev/openai-AbC123"),
-    { secretName: "SkoutDev/openai", key: null }
+    {
+      secretName: "SkoutDev/openai",
+      secretId: "arn:aws:secretsmanager:us-east-1:119408973331:secret:SkoutDev/openai-AbC123",
+      key: null,
+    }
   );
 });
 
@@ -49,7 +63,13 @@ test("extractContainer reads plaintext env and secret refs, ignoring the Datadog
   };
   const out = extractContainer(taskDef);
   assert.deepEqual(out.env, { PORT: "3001" });
-  assert.deepEqual(out.secrets, { CLERK_SECRET_KEY: { secretName: "SkoutDev/clerk", key: "CLERK_SECRET_KEY" } });
+  assert.deepEqual(out.secrets, {
+    CLERK_SECRET_KEY: {
+      secretName: "SkoutDev/clerk",
+      secretId: "arn:aws:secretsmanager:us-east-1:1:secret:SkoutDev/clerk-AbC123",
+      key: "CLERK_SECRET_KEY",
+    },
+  });
   assert.deepEqual(out.command, ["node", "dist/worker.js"]);
 });
 
@@ -124,4 +144,31 @@ test("toEnvFile writes KEY=value lines, sorted, and escapes multi-line values un
 
 test("toEnvFile rejects carriage returns", () => {
   assert.throws(() => toEnvFile({ A: "x\ry" }), /carriage return/i);
+});
+
+test("parseValueFrom keeps the full ARN as the secret id so a name that merely looks suffixed is fetched correctly", () => {
+  // A secret literally named "SkoutDev/clerk-issuer" referenced without an ARN suffix must not become "SkoutDev/clerk".
+  const ref = parseValueFrom("arn:aws:secretsmanager:us-east-1:1:secret:SkoutDev/clerk-issuer:CLERK_JWT_ISSUER::");
+  assert.equal(ref.secretId, "arn:aws:secretsmanager:us-east-1:1:secret:SkoutDev/clerk-issuer");
+});
+
+test("chunk splits a list into batches of at most n (ECS DescribeServices accepts 10 per call)", () => {
+  const items = Array.from({ length: 14 }, (_, i) => i + 1);
+  assert.deepEqual(chunk(items, 10), [items.slice(0, 10), items.slice(10)]);
+  assert.deepEqual(chunk([], 10), []);
+  assert.deepEqual(chunk([1, 2], 10), [[1, 2]]);
+});
+
+test("toEnvFile escapes existing backslashes in multi-line values so the shim restores them exactly", () => {
+  // value: a literal backslash-n and backslash-c, then a REAL newline, then a second line
+  const value = "has literal \\n and \\c\nsecond line";
+  const out = toEnvFile({ K: value });
+  // backslashes doubled, the real newline encoded as backslash-n
+  assert.equal(out, "K__NL=has literal \\\\n and \\\\c\\nsecond line\n");
+});
+
+test("assertShimSupport allows multi-line values only for services whose entrypoint runs the shim", () => {
+  assert.doesNotThrow(() => assertShimSupport("api", { PEM: "a\nb" }));
+  assert.doesNotThrow(() => assertShimSupport("crm", { PLAIN: "single line" }));
+  assert.throws(() => assertShimSupport("crm", { PEM: "a\nb" }), /crm.*PEM/);
 });

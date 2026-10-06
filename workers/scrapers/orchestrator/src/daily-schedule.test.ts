@@ -3,8 +3,47 @@ import {
   DAILY_SCRAPE_CRON,
   DAILY_SCRAPE_SCHEDULER_ID,
   dailyScrapeSeeds,
+  isDailyScheduleEnabled,
   startDailyScrapeSchedule,
+  syncDailyScrapeSchedule,
 } from "./daily-schedule.js";
+
+describe("isDailyScheduleEnabled", () => {
+  it("is off by default, so local scrapers:dev does not schedule daily scrapes", () => {
+    expect(isDailyScheduleEnabled({})).toBe(false);
+  });
+
+  it("is on with SCRAPE_DAILY_SCHEDULE_ENABLED=true", () => {
+    expect(isDailyScheduleEnabled({ SCRAPE_DAILY_SCHEDULE_ENABLED: "true" })).toBe(true);
+  });
+
+  it("stays on for deployments that already set the legacy SCRAPE_SCHEDULE_QUEUE_URL opt-in", () => {
+    expect(isDailyScheduleEnabled({ SCRAPE_SCHEDULE_QUEUE_URL: "https://sqs.example/queue" })).toBe(true);
+    expect(isDailyScheduleEnabled({ SCRAPE_SCHEDULE_QUEUE_URL: "   " })).toBe(false);
+  });
+
+  it("an explicit SCRAPE_DAILY_SCHEDULE_ENABLED=false wins over the legacy opt-in", () => {
+    expect(
+      isDailyScheduleEnabled({ SCRAPE_DAILY_SCHEDULE_ENABLED: "false", SCRAPE_SCHEDULE_QUEUE_URL: "https://sqs.example/q" })
+    ).toBe(false);
+  });
+});
+
+describe("syncDailyScrapeSchedule", () => {
+  it("registers the scheduler when enabled", async () => {
+    const queue = { upsertJobScheduler: vi.fn().mockResolvedValue(undefined), removeJobScheduler: vi.fn() };
+    await syncDailyScrapeSchedule(queue as never, { SCRAPE_DAILY_SCHEDULE_ENABLED: "true" });
+    expect(queue.upsertJobScheduler).toHaveBeenCalledTimes(1);
+    expect(queue.removeJobScheduler).not.toHaveBeenCalled();
+  });
+
+  it("removes a previously persisted scheduler when disabled, so a turned-off environment stops scraping", async () => {
+    const queue = { upsertJobScheduler: vi.fn(), removeJobScheduler: vi.fn().mockResolvedValue(true) };
+    await syncDailyScrapeSchedule(queue as never, {});
+    expect(queue.removeJobScheduler).toHaveBeenCalledWith(DAILY_SCRAPE_SCHEDULER_ID);
+    expect(queue.upsertJobScheduler).not.toHaveBeenCalled();
+  });
+});
 
 describe("dailyScrapeSeeds", () => {
   it("falls back to the historical default seeds", () => {

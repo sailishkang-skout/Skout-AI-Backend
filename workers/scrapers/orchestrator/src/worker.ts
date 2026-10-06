@@ -14,7 +14,7 @@ import { scrapeLinkedInJobs } from "./bots/linkedin-jobs.js";
 import { scrapeOpenCorporates } from "./bots/opencorporates.js";
 import { scrapeSecEdgar } from "./bots/sec-edgar.js";
 import { scrapeGoogleBusiness } from "./bots/google-business.js";
-import { startDailyScrapeSchedule } from "./daily-schedule.js";
+import { syncDailyScrapeSchedule } from "./daily-schedule.js";
 import { createScrapeJob, openDb, patchScrapeJob } from "./db.js";
 import {
   queueForSource,
@@ -160,7 +160,7 @@ export async function startOrchestratorWorkers() {
   }
 
   const scheduleQueue = new Queue(SCRAPE_QUEUES.schedule, { connection });
-  await startDailyScrapeSchedule(scheduleQueue);
+  await syncDailyScrapeSchedule(scheduleQueue);
 
   const shutdown = async () => {
     await scheduleQueue.close();

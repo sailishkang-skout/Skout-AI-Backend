@@ -44,6 +44,9 @@
       "SMTP_USERNAME": "${MAIL_SMTP_USERNAME}",
       "SMTP_PASSWORD": "${MAIL_SMTP_PASSWORD}"
     },
+    "SCRAPE_SCHEDULE_QUEUE_URL": {
+      "SCRAPE_DAILY_SCHEDULE_ENABLED": "true"
+    },
     "DD_AGENT_HOST": {
       "DD_AGENT_HOST": "datadog-agent"
     }

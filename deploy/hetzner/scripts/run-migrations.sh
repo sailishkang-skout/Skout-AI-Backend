@@ -5,12 +5,14 @@
 set -euo pipefail
 : "${GHCR_OWNER:?}" "${IMAGE_TAG:?}"
 ENV_DIR="$(cd "$(dirname "$0")/../env" && pwd)"
-NET=skout_skout
 
+# No --network: migrations only need the managed Postgres, which is reachable over the node's public
+# address (the DB firewall allows the node IPs). The skout_skout overlay network does not exist yet on a
+# first deploy, because `docker stack deploy` creates it.
 run() { # image env-file entrypoint args...
   local image="$1" envfile="$2" ep="$3"
   shift 3
-  docker run --rm --network "$NET" --env-file "$ENV_DIR/$envfile" -e MIGRATIONS_FOLDER=/app/db/drizzle \
+  docker run --rm --env-file "$ENV_DIR/$envfile" -e MIGRATIONS_FOLDER=/app/db/drizzle \
     --entrypoint "$ep" "ghcr.io/$GHCR_OWNER/$image:$IMAGE_TAG" "$@"
 }
 

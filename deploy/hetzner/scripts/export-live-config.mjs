@@ -21,8 +21,31 @@ export function parseValueFrom(valueFrom) {
     throw new Error(`Not a Secrets Manager reference: ${valueFrom}`);
   }
   const secretName = parts[6].replace(/-[A-Za-z0-9]{6}$/, "");
+  // The ARN without the JSON-key/version fields identifies the secret unambiguously, even when a name
+  // merely looks like it carries an ARN suffix (e.g. "SkoutDev/clerk-issuer").
+  const secretId = parts.slice(0, 7).join(":");
   const key = parts[7] ? parts[7] : null;
-  return { secretName, key };
+  return { secretName, secretId, key };
+}
+
+export function chunk(items, size) {
+  const out = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+// Only these services start through /unescape-env.sh (see swarm/stack.yml); a multi-line value elsewhere
+// would arrive as FOO__NL with no FOO.
+const SHIM_SERVICES = new Set(["api"]);
+
+export function assertShimSupport(service, env) {
+  if (SHIM_SERVICES.has(service)) return;
+  const multiline = Object.keys(env).filter((k) => env[k].includes("\n"));
+  if (multiline.length) {
+    throw new Error(
+      `Service ${service} has multi-line value(s) ${multiline.join(", ")} but its entrypoint does not run unescape-env.sh`
+    );
+  }
 }
 
 export function extractContainer(taskDef, containerName = "Container") {
@@ -80,7 +103,9 @@ export function toEnvFile(env) {
     .map((k) => {
       const v = env[k];
       if (v.includes("\r")) throw new Error(`${k} contains a carriage return`);
-      if (v.includes("\n")) return `${k}__NL=${v.replace(/\n/g, "\\n")}`;
+      // Escape existing backslashes first: the shim decodes with printf '%b', which would otherwise
+      // turn a literal \n, \\ or \c inside the value into something else.
+      if (v.includes("\n")) return `${k}__NL=${v.replace(/\\/g, "\\\\").replace(/\n/g, "\\n")}`;
       return `${k}=${v}`;
     });
   return lines.join("\n") + "\n";
@@ -107,18 +132,24 @@ function main() {
   const overrides = JSON.parse(readFileSync(overridesFile, "utf8"));
   mkdirSync(outDir, { recursive: true });
 
-  const described = JSON.parse(
-    aws(["ecs", "describe-services", "--region", region, "--cluster", cluster, "--services", ...SERVICES, "--output", "json"])
-  );
-  if (described.failures?.length) {
+  // ECS DescribeServices accepts at most 10 services per call.
+  const described = { services: [], failures: [] };
+  for (const batch of chunk(SERVICES, 10)) {
+    const part = JSON.parse(
+      aws(["ecs", "describe-services", "--region", region, "--cluster", cluster, "--services", ...batch, "--output", "json"])
+    );
+    described.services.push(...(part.services ?? []));
+    described.failures.push(...(part.failures ?? []));
+  }
+  if (described.failures.length) {
     throw new Error(`Services not found: ${JSON.stringify(described.failures)}`);
   }
 
   const secretCache = {};
-  const fetchSecret = (name) => {
-    if (!(name in secretCache)) {
-      const raw = aws(["secretsmanager", "get-secret-value", "--region", region, "--secret-id", name, "--query", "SecretString", "--output", "text"]).replace(/\n$/, "");
-      try { secretCache[name] = JSON.parse(raw); } catch { secretCache[name] = raw; }
+  const fetchSecret = ({ secretName, secretId }) => {
+    if (!(secretName in secretCache)) {
+      const raw = aws(["secretsmanager", "get-secret-value", "--region", region, "--secret-id", secretId, "--query", "SecretString", "--output", "text"]).replace(/\n$/, "");
+      try { secretCache[secretName] = JSON.parse(raw); } catch { secretCache[secretName] = raw; }
     }
   };
 
@@ -127,9 +158,10 @@ function main() {
       aws(["ecs", "describe-task-definition", "--region", region, "--task-definition", svc.taskDefinition, "--query", "taskDefinition", "--output", "json"])
     );
     const { env, secrets } = extractContainer(taskDef);
-    for (const ref of Object.values(secrets)) fetchSecret(ref.secretName);
+    for (const ref of Object.values(secrets)) fetchSecret(ref);
     const merged = { ...env, ...resolveSecrets(secrets, secretCache) };
     const final = applyOverrides(merged, overrides, process.env, rewrites);
+    assertShimSupport(svc.serviceName, final);
     const file = path.join(outDir, `${svc.serviceName}.env`);
     writeFileSync(file, toEnvFile(final), { mode: 0o600 });
     console.log(`wrote ${file} (${Object.keys(final).length} vars)`);

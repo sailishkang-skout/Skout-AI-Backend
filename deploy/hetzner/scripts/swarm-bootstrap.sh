@@ -8,6 +8,11 @@ shift 2
 
 SSH=(ssh -o StrictHostKeyChecking=accept-new -i "${SSH_KEY:-$HOME/.ssh/skout_hetzner_deploy}")
 
+# cloud-init installs Docker on first boot; wait for it so we do not race the install.
+for host in "$MANAGER_PUB" "$@"; do
+  "${SSH[@]}" "root@$host" "cloud-init status --wait >/dev/null"
+done
+
 "${SSH[@]}" "root@$MANAGER_PUB" "docker info --format '{{.Swarm.LocalNodeState}}' | grep -q active || docker swarm init --advertise-addr $MANAGER_PRIV"
 TOKEN="$("${SSH[@]}" "root@$MANAGER_PUB" docker swarm join-token -q worker)"
 

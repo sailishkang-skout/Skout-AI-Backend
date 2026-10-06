@@ -35,22 +35,28 @@ await check("jwks routed to api", async () => {
   if (!Array.isArray(body.keys) || body.keys.length === 0) throw new Error("no keys in JWKS");
 });
 
-const apiContainer = () =>
-  sh(["ps", "--filter", "name=skout_api", "--format", "{{.Names}}"]).split("\n").filter(Boolean)[0];
+// Probe from a throwaway container on the stack's overlay network, so the check works wherever the api
+// task happens to be scheduled (a plain `docker exec` only sees containers on the manager node).
 const internal = (url) =>
-  sh(["exec", apiContainer(), "node", "-e", `fetch('${url}').then(r=>process.exit(r.status<400?0:1)).catch(()=>process.exit(1))`]);
+  sh([
+    "run", "--rm", "--network", "skout_skout", "node:20-alpine",
+    "node", "-e", `fetch('${url}').then(r=>process.exit(r.status<400?0:1)).catch(()=>process.exit(1))`,
+  ]);
 
 await check("api -> ai over overlay DNS", () => internal("http://ai:8000/health"));
 await check("api -> email-intel-api over overlay DNS", () => internal("http://email-intel-api:3001/liveness"));
 await check("api -> warmup-tool-api over overlay DNS", () => internal("http://warmup-tool-api:3010/health"));
 await check("api -> clickhouse over overlay DNS", () => internal("http://clickhouse:8123/ping"));
 
-await check("outbound workers are scaled to 0 in staging", () => {
+// Staging keeps outbound workers off. The deploy workflow passes the replica count it asked for, so a
+// deliberate non-zero deploy (e.g. production cutover) is checked against that number instead.
+const expected = process.env.EXPECT_OUTBOUND_REPLICAS ?? "0";
+await check(`outbound workers are at ${expected}/${expected}`, () => {
   const out = sh(["service", "ls", "--format", "{{.Name}} {{.Replicas}}"]);
   const outbound = ["scraper-orchestrator", "email-intel-worker", "warmup-tool-worker", "warmup-tool-inbound", "warmup-tool-classification", "warmup-tool-policy"];
   for (const name of outbound) {
     const line = out.split("\n").find((l) => l.startsWith(`skout_${name} `));
-    if (!line || !line.includes(" 0/0")) throw new Error(`${name} not at 0/0: ${line}`);
+    if (!line || !line.includes(` ${expected}/${expected}`)) throw new Error(`${name} not at ${expected}/${expected}: ${line}`);
   }
 });
 

@@ -15,6 +15,30 @@ export function dailyScrapeSeeds(env: NodeJS.ProcessEnv = process.env): string[]
 }
 
 /**
+ * The daily scrape used to run only where SCRAPE_SCHEDULE_QUEUE_URL was set (the SQS opt-in). Keep that
+ * working, and let new environments opt in explicitly with SCRAPE_DAILY_SCHEDULE_ENABLED=true.
+ * An explicit "false" always wins. Off by default so local `scrapers:dev` does not schedule scrapes.
+ */
+export function isDailyScheduleEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const flag = env.SCRAPE_DAILY_SCHEDULE_ENABLED?.trim().toLowerCase();
+  if (flag === "false") return false;
+  if (flag === "true") return true;
+  return Boolean(env.SCRAPE_SCHEDULE_QUEUE_URL?.trim());
+}
+
+/** Enable or disable the scheduler to match the environment; disabling removes a persisted schedule. */
+export async function syncDailyScrapeSchedule(
+  queue: Pick<Queue, "upsertJobScheduler" | "removeJobScheduler">,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<void> {
+  if (isDailyScheduleEnabled(env)) {
+    await startDailyScrapeSchedule(queue, env);
+  } else {
+    await queue.removeJobScheduler(DAILY_SCRAPE_SCHEDULER_ID);
+  }
+}
+
+/**
  * Register the daily scrape as a BullMQ job scheduler on the `scrape-schedule` queue.
  * Idempotent by scheduler id, so every orchestrator replica/restart can call it safely.
  */

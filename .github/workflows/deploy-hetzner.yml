@@ -133,8 +133,14 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
           echo "DOCKER_HOST=ssh://root@${MANAGER_IP}" >> "$GITHUB_ENV"
 
+      # --with-registry-auth forwards this login to the cluster, so it must outlive the job: GITHUB_TOKEN
+      # expires when the run ends and nodes would then fail to pull images after a reschedule or reboot.
+      # Use a long-lived classic PAT with read:packages only (secret GHCR_PULL_TOKEN, variable GHCR_PULL_USER).
       - name: Registry login on the cluster
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+        env:
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          GHCR_PULL_USER: ${{ vars.GHCR_PULL_USER }}
+        run: echo "$GHCR_PULL_TOKEN" | docker login ghcr.io -u "$GHCR_PULL_USER" --password-stdin
 
       - name: Note time for point-in-time restore
         run: echo "Managed Postgres keeps PITR backups; restore point if needed is before $(date -u +%FT%TZ)"
@@ -150,7 +156,15 @@ jobs:
           TUNNEL_TOKEN: ${{ secrets.TUNNEL_TOKEN }}
           DD_API_KEY: ${{ secrets.DD_API_KEY }}
           OUTBOUND_REPLICAS: ${{ inputs.outbound_replicas }}
-        run: docker stack deploy --with-registry-auth --prune -c deploy/hetzner/swarm/stack.yml skout
+        run: |
+          set -euo pipefail
+          # Swarm configs are immutable, so their names carry a content hash (see swarm/stack.yml).
+          CADDYFILE_HASH="$(sha256sum deploy/hetzner/swarm/Caddyfile | cut -c1-12)"
+          UNESCAPE_HASH="$(sha256sum deploy/hetzner/swarm/unescape-env.sh | cut -c1-12)"
+          export CADDYFILE_HASH UNESCAPE_HASH
+          # --detach=false blocks until every service converges (or rolls back), so the checks below
+          # never run against the old version.
+          docker stack deploy --detach=false --with-registry-auth --prune -c deploy/hetzner/swarm/stack.yml skout
 
       - name: Wait for services to converge
         run: |
@@ -162,6 +176,8 @@ jobs:
           echo "services did not converge" >&2; exit 1
 
       - name: Smoke test
+        env:
+          EXPECT_OUTBOUND_REPLICAS: ${{ inputs.outbound_replicas }}
         run: node deploy/hetzner/scripts/smoke.mjs "${{ vars.STAGING_URL }}"
 
       - name: Roll back on failure
