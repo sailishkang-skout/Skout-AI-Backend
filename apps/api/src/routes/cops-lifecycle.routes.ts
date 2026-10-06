@@ -26,6 +26,7 @@ import {
   writeCopsAudit,
 } from "../services/cops-platform.service.js";
 import { withCopsIdempotency } from "../services/cops-idempotent.js";
+import { runLifecycleTransition } from "../services/cops-lifecycle.service.js";
 
 const { copsLifecycleStates, copsOutbox } = schema;
 
@@ -130,77 +131,17 @@ export async function copsLifecycleRoutes(app: FastifyInstance, opts: { db: Db }
       const occurredAt = new Date();
       try {
         const result = await db.transaction(async (tx) => {
-          await tx
-            .insert(copsLifecycleStates)
-            .values({ workspaceId, dimension, entityId, state: COPS_INITIAL_STATES[dimension] })
-            .onConflictDoNothing();
-
-          const [current] = await tx
-            .select()
-            .from(copsLifecycleStates)
-            .where(
-              and(
-                eq(copsLifecycleStates.workspaceId, workspaceId),
-                eq(copsLifecycleStates.dimension, dimension),
-                eq(copsLifecycleStates.entityId, entityId)
-              )
-            )
-            .for("update")
-            .limit(1);
-          if (!current) throw new Error("Lifecycle state row missing after initialization");
-
-          const transition = applyCopsTransition({
+          const transition = await runLifecycleTransition(tx as unknown as Db, {
+            workspaceId,
             dimension,
-            from: current.state,
+            entityId,
             to: body.to,
-            actor: { type: "user", id: actorId },
+            actorId,
             source: body.source,
             reason: body.reason,
-            at: occurredAt,
+            requestId,
+            occurredAt,
           });
-          await tx
-            .update(copsLifecycleStates)
-            .set({ state: transition.to, updatedAt: transition.at })
-            .where(
-              and(
-                eq(copsLifecycleStates.workspaceId, workspaceId),
-                eq(copsLifecycleStates.dimension, dimension),
-                eq(copsLifecycleStates.entityId, entityId)
-              )
-            );
-
-          await writeCopsAudit(tx, {
-            tenantId: workspaceId,
-            actor: transition.actor,
-            entityType: `cops_${dimension}`,
-            entityId,
-            action: "lifecycle.transitioned",
-            before: { state: transition.from },
-            after: { state: transition.to },
-            reason: transition.reason,
-            correlationId: requestId,
-            sourceChannel: body.source === "web" ? "web" : "api",
-            occurredAt: transition.at,
-          });
-
-          const event = createCopsEvent({
-            eventType: "LifecycleTransitioned",
-            tenantId: workspaceId,
-            aggregateType: dimension,
-            aggregateId: entityId,
-            actor: transition.actor,
-            correlationId: requestId,
-            payload: {
-              dimension,
-              entity_id: entityId,
-              from: transition.from,
-              to: transition.to,
-              source: transition.source,
-              reason: transition.reason,
-            },
-            occurredAt: transition.at,
-          });
-          await appendCopsEvent(tx as never, event);
           return transition;
         });
 
