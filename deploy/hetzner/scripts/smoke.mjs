@@ -50,7 +50,7 @@ await check("api -> clickhouse over overlay DNS", () => internal("http://clickho
 
 // Staging keeps outbound workers off. The deploy workflow passes the replica count it asked for, so a
 // deliberate non-zero deploy (e.g. production cutover) is checked against that number instead.
-const expected = process.env.EXPECT_OUTBOUND_REPLICAS ?? "0";
+const expected = process.env.EXPECT_OUTBOUND_REPLICAS || "0";
 await check(`outbound workers are at ${expected}/${expected}`, () => {
   const out = sh(["service", "ls", "--format", "{{.Name}} {{.Replicas}}"]);
   const outbound = ["scraper-orchestrator", "email-intel-worker", "warmup-tool-worker", "warmup-tool-inbound", "warmup-tool-classification", "warmup-tool-policy"];

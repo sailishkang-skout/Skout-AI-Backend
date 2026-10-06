@@ -1,6 +1,10 @@
 name: Deploy Hetzner (staging)
 
 on:
+  # Manual runs only work once this file is on the default branch (main is a stub), so the staging
+  # branch also deploys on push. Both paths target the same GitHub environment (hetzner-staging).
+  push:
+    branches: [infra/hetzner-migration]
   workflow_dispatch:
     inputs:
       outbound_replicas:
@@ -155,7 +159,7 @@ jobs:
           IMAGE_TAG: ${{ steps.meta.outputs.tag }}
           TUNNEL_TOKEN: ${{ secrets.TUNNEL_TOKEN }}
           DD_API_KEY: ${{ secrets.DD_API_KEY }}
-          OUTBOUND_REPLICAS: ${{ inputs.outbound_replicas }}
+          OUTBOUND_REPLICAS: ${{ inputs.outbound_replicas || '0' }}
         run: |
           set -euo pipefail
           # Swarm configs are immutable, so their names carry a content hash (see swarm/stack.yml).
@@ -177,7 +181,7 @@ jobs:
 
       - name: Smoke test
         env:
-          EXPECT_OUTBOUND_REPLICAS: ${{ inputs.outbound_replicas }}
+          EXPECT_OUTBOUND_REPLICAS: ${{ inputs.outbound_replicas || '0' }}
         run: node deploy/hetzner/scripts/smoke.mjs "${{ vars.STAGING_URL }}"
 
       - name: Roll back on failure
