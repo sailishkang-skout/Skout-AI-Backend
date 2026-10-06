@@ -58,3 +58,8 @@ deploy/hetzner/terraform/*.plan
 deploy/hetzner/terraform/terraform.tfvars
 deploy/hetzner/generated/
 deploy/hetzner/terraform/backend.hcl
+deploy/gcp/terraform/.terraform/
+deploy/gcp/terraform/*.tfstate*
+deploy/gcp/terraform/*.plan
+deploy/gcp/terraform/terraform.tfvars
+deploy/gcp/terraform/backend.hcl

@@ -129,13 +129,15 @@ jobs:
           SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
           KNOWN_HOSTS: ${{ secrets.HETZNER_KNOWN_HOSTS }}
           MANAGER_IP: ${{ vars.MANAGER_IP }}
+          # Hetzner logs in as root; GCP does not allow root SSH, so set the variable SSH_USER=deploy there.
+          SSH_USER: ${{ vars.SSH_USER || 'root' }}
         run: |
           set -euo pipefail
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
-          echo "DOCKER_HOST=ssh://root@${MANAGER_IP}" >> "$GITHUB_ENV"
+          echo "DOCKER_HOST=ssh://${SSH_USER}@${MANAGER_IP}" >> "$GITHUB_ENV"
 
       # --with-registry-auth forwards this login to the cluster, so it must outlive the job: GITHUB_TOKEN
       # expires when the run ends and nodes would then fail to pull images after a reschedule or reboot.

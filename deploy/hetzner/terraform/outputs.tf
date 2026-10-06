@@ -3,7 +3,7 @@ output "private_ips" { value = module.compute.private_ips }
 output "app_host" { value = local.app_host }
 
 output "tunnel_token" {
-  value     = cloudflare_zero_trust_tunnel_cloudflared.stack.tunnel_token
+  value     = module.edge.tunnel_token
   sensitive = true
 }
 
@@ -22,4 +22,4 @@ output "skout_db_password" {
   sensitive = true
 }
 
-output "r2_buckets" { value = { for k, b in cloudflare_r2_bucket.bucket : k => b.name } }
+output "r2_buckets" { value = module.edge.r2_buckets }
