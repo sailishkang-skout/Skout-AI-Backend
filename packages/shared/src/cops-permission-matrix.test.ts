@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { COPS_RESOURCES, COPS_VERBS, copsPermissionKey, engineeringCanRead } from "./cops-rbac.js";
+import { COPS_SYSTEM_ROLE_GRANTS } from "@skout/db";
 
 /**
  * Permission matrix (role x verb x resource) for hard rules only. Full role grants are product
@@ -32,4 +33,26 @@ describe("permission matrix", () => {
     expect(ROLE_FIXTURES.Sales).not.toContain("commercial:refund");
     expect(ROLE_FIXTURES.Finance).toContain("commercial:refund");
   });
+});
+
+/**
+ * Same rule checked against the real seeded grants (packages/db cops-role-grants), not fixtures.
+ */
+describe("permission matrix against the seeded system roles", () => {
+  const engineering = COPS_SYSTEM_ROLE_GRANTS.find((r) => r.key === "engineering");
+
+  it("the Engineering role exists in the seeded grants", () => {
+    expect(engineering).toBeDefined();
+  });
+
+  for (const resource of ["commercial", "legal"] as const) {
+    for (const verb of COPS_VERBS) {
+      it(`Engineering seed does not grant ${resource}:${verb}`, () => {
+        expect(engineering!.permissionKeys).not.toContain(copsPermissionKey(resource, verb));
+      });
+    }
+    it(`Engineering cannot read ${resource} via the read helper against the seed`, () => {
+      expect(engineeringCanRead(resource, engineering!.permissionKeys)).toBe(false);
+    });
+  }
 });
