@@ -8,9 +8,10 @@ import {
 } from "@skout/opensearch";
 import { buildEnrichmentService, InsufficientCreditsError } from "../services/enrichment/index.js";
 import type { Env } from "../config/env.js";
-import { requireWorkspaceId } from "../utils/http.js";
+import { HttpError, requireWorkspaceId } from "../utils/http.js";
 import { emitSkoutEvent } from "../services/skout-event.service.js";
 import { createLogger } from "@skout/observability";
+import { assertPermission, recordPrivilegedAction } from "@skout/auth";
 
 const log = createLogger("prospect.routes");
 
@@ -248,8 +249,11 @@ export async function prospectRoutes(app: FastifyInstance) {
   });
 
   app.post("/prospects/:id/enrich", async (request, reply) => {
+    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const { id } = request.params as { id: string };
     const workspaceId = requireWorkspaceId(request);
+    if (!request.userId) throw new HttpError("unauthorized", 401);
+    await assertPermission(app.db, workspaceId, request.userId, "enrichment:capture");
     const body = enrichBodySchema.parse(request.body ?? {});
     const svc = buildEnrichmentService(app.db, app.config);
 
@@ -267,6 +271,17 @@ export async function prospectRoutes(app: FastifyInstance) {
           data: { workspaceId, prospectId: body.prospect.prospectId ?? id, jobId: job.id, status: job.status, creditsUsed: job.creditsUsed, trigger: "manual_enrich" },
         }).catch((err: unknown) => log.warn("failed to emit enrichment.completed", { prospectId: id, err }));
       }
+      
+      // Log audit event for initial enrichment (ENR-01 requirement)
+      await recordPrivilegedAction(app.db, {
+        workspaceId,
+        actorId: request.userId,
+        action: "enrichment.capture",
+        entityType: "prospect",
+        entityId: body.prospect.prospectId ?? id,
+        afterState: { jobId: job.id, companyDomain: body.prospect.companyDomain, fullName: body.prospect.fullName, title: body.prospect.title }
+      });
+      
       return reply.status(202).send({
         jobId: job.id,
         status: job.status,
