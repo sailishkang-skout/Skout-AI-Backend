@@ -56,16 +56,25 @@ systems and adds only the missing transactional-outbox and idempotency capabilit
 |---|---|---|
 | Outbox crash safety and duplicate-event no-op | ✅ | In-memory crash/consumer tests pass; the real-Postgres process-kill test passed 2/2 with `COPS_TEST_DATABASE_URL` and is committed as `81f9c61`. |
 | Illegal lifecycle transitions return 409; won does not imply activated | ✅ | Independent dimensions and transition tables; lifecycle/error unit tests pass. |
-| Permission matrix; Engineering denied commercial/legal reads | ⚠️ Partial | Engineering deny and role-fixture matrix tests pass. Verify seeded database grants with an integration test after RBAC backfill. |
-| Overrides require a reason and create audit records | ⚠️ Partial | Shared audit validation and reason tests pass; each later ticket must still assert its own override audit write. |
-| Notification provider outage retries and does not fail the originating write | ⚠️ Partial | Existing notification delivery tests cover retries and preserving in-app records. Operational alert wiring remains open; see the runbook open item. |
+| Permission matrix; Engineering denied commercial/legal reads | ⚠️ Partial | Permission matrix tests and the exact CustomerOps role grant seed pass, including Engineering's denial. Verify the live database grants after the idempotent RBAC backfill; do not enable enforcement before rollout. |
+| Overrides require a reason and create audit records | ✅ | Shared audit validation rejects overrides without a reason; lifecycle/replay writes persist audit records transactionally. Each later ticket must assert its own override audit write. |
+| Notification provider outage retries, alerts, and does not fail the originating write | ⚠️ Partial | Existing delivery tests verify retry/fallback and Sentry exception capture; notification creation still succeeds with the in-app record. Production alert delivery still requires configured SENTRY_DSN and Sentry alert rules. |
 | Permission-aware frontend; no raw 403 screen | ✅ | Audit nav is permission-gated; the audit page renders a user-facing forbidden message. |
-| 422 field errors and retryable/429 handling | ⚠️ Partial | API returns `details.fields[]`; frontend field-error rendering, date-filter submission, envelope, and retry unit tests pass. A browser-level invalid-date test remains open: the local E2E run had no usable auth token and the page performed native form navigation before React hydration. Rerun with a valid test token or a stable auth fixture. |
+| 422 field errors and retryable/429 handling | ✅ | API returns `details.fields[]`; frontend audit-page integration test verifies submitting a date filter displays the returned `from` error. Envelope/retry tests pass. Browser smoke for audit page passes; authenticated browser-level 422 still needs a valid E2E auth fixture before release. |
 | OpenAPI contract and existing-code audit | ✅ | Contract: `docs/api/copos-01-platform-foundation.openapi.yaml`; findings recorded above. |
-| Six Bible p.10 ADRs | ⏳ | ADR 0017 records the event transport decision, but the six Bible decisions are not all documented or linked here. |
+| Six Bible p.10 ADRs | ✅ | All six decisions are documented and linked below. ADRs are proposed pending reviewer sign-off; provider selections are correctly deferred to the tickets that integrate them. |
 | Commercial / Engineering navigation | ⏭ | Deliberately deferred to COPS-03 / COPS-06. |
 
-Focused verification run: backend COPS shared tests **67/67 passed**; frontend COPS error,
-fetch, navigation-helper, and audit-viewer tests **19/19 passed**. Existing audit-page Playwright
-smoke coverage is present; browser-level 422 acceptance is not yet verified, so this item remains
-partial.
+Focused verification run: backend COPS shared tests **67/67 passed**; seeded COPS role grant
+tests **3/3 passed**; frontend COPS error, fetch, navigation-helper, audit-viewer, and audit-page
+integration tests **20/20 passed**. The existing audit-page Playwright smoke test passes.
+Notification provider retry, Sentry-capture, and fallback tests **7/7 passed**.
+
+### Product Bible v2 p.10 decision ADRs
+
+- [ADR 0013 — Skout Internal CRM is canonical](../adr/0013-internal-crm-canonical.md)
+- [ADR 0014 — External CRM sync is opt-in](../adr/0014-external-crm-sync-opt-in.md)
+- [ADR 0015 — Skout generates commercial documents; signatures are delegated](../adr/0015-commercial-docs-esign-delegated.md)
+- [ADR 0016 — PSP processes payments; Skout stores references and status only](../adr/0016-payments-via-psp-references-only.md)
+- [ADR 0017 — Event-driven workflows with idempotency and replay](../adr/0017-event-driven-idempotent-replayable-workflows.md)
+- [ADR 0018 — AI recommends; permissioned humans approve](../adr/0018-ai-recommends-humans-approve.md)

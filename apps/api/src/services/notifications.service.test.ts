@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../config/env.js";
 
+const captureExceptionMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@skout/observability", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@skout/observability")>();
+  return { ...actual, captureException: captureExceptionMock };
+});
+
 vi.mock("./mail.service.js", () => ({
   sendMail: vi.fn(async () => ({ sent: false })),
 }));
@@ -12,6 +19,7 @@ vi.mock("./telecom.service.js", () => ({
 
 import { sendMail } from "./mail.service.js";
 import { isSmsConfigured, sendSms } from "./telecom.service.js";
+import { captureException } from "@skout/observability";
 import { createNotification, retryNotificationDelivery } from "./notifications.service.js";
 
 const fakeConfig = {} as Env;
@@ -69,6 +77,7 @@ function makeDb({ preference = null, userPhone = null, slackWebhookUrl = null }:
 
 describe("createNotification — sms delivery", () => {
   beforeEach(() => {
+    vi.mocked(captureException).mockClear();
     vi.mocked(sendMail).mockClear();
     vi.mocked(sendSms).mockClear();
     vi.mocked(isSmsConfigured).mockClear().mockReturnValue(true);
@@ -170,6 +179,10 @@ describe("createNotification — sms delivery", () => {
     expect(sendSms).toHaveBeenCalledTimes(3);
     expect(result.deliveredChannels).toContain("in_app");
     expect(result.deliveredChannels).not.toContain("sms");
+    expect(captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ module: "notifications.service", channel: "sms" })
+    );
   });
 
   it("does not attempt sms delivery for the email channel", async () => {
