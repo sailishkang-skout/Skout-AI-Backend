@@ -59,7 +59,7 @@ import { dexterPlatformRoutes } from "./dexter-platform.routes.js";
 import { account360Routes } from "./account-360.routes.js";
 import { copsAuditRoutes } from "./cops-audit.routes.js";
 import { copsTimelineRoutes } from "./cops-timeline.routes.js";
-import { copsAccount360Routes } from "./cops-account-360.routes.js";
+import { copsAccount360Routes } from "./account-360.routes.js";
 import { copsOutboxRoutes } from "./cops-outbox.routes.js";
 import { copsLifecycleRoutes } from "./cops-lifecycle.routes.js";
 import { ssoScimRoutes } from "./sso-scim.routes.js";
