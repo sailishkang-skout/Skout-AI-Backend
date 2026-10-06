@@ -8,6 +8,7 @@ import { errorResponse, HttpError } from "../utils/http.js";
 import { getEvidence } from "../services/evidence.service.js";
 import { createRegionalBriefService } from "../services/regional-brief.service.js";
 import { requireAnyCopsPermission } from "../services/cops-platform.service.js";
+import { AccountLinkError, linkAccounts } from "../services/cops-account-relationships.service.js";
 
 const { companies, contacts, deals, activities, signals, copsLifecycleStates, copsTimelineEvents, tasks } = schema;
 
@@ -401,6 +402,41 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       }
 
       return { data, next_cursor: null };
+    }
+  );
+
+  // POST /accounts/:id/relationships — link this account to another account in the same workspace.
+  const writeGate = requireAnyCopsPermission(["crm:write", "crm:manage"], (ws, user) => getMemberPermissions(db, ws, user));
+  app.post<{ Params: { id: string }; Body: { child_account_id?: string; relationship?: string } }>(
+    "/accounts/:id/relationships",
+    { preHandler: writeGate },
+    async (request, reply) => {
+      const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+      const fail = (path: string, message: string) =>
+        reply.status(copsErrorStatus("VALIDATION_FAILED")).send(
+          copsErrorBody({ code: "VALIDATION_FAILED", message, requestId, details: { fields: [{ path, code: "invalid", message }] } })
+        );
+
+      if (!UUID.test(request.params.id)) return fail("id", "Invalid account id");
+      const childId = request.body?.child_account_id ?? "";
+      const relationship = (request.body?.relationship ?? "").trim();
+      if (!UUID.test(childId)) return fail("child_account_id", "Invalid child account id");
+      if (relationship.length < 1 || relationship.length > 60) return fail("relationship", "relationship must be 1-60 characters");
+
+      try {
+        const id = await linkAccounts(db, {
+          workspaceId: request.workspaceId!,
+          parentAccountId: request.params.id,
+          childAccountId: childId,
+          relationship,
+        });
+        return reply.status(201).send({ data: { id, parent_account_id: request.params.id, child_account_id: childId, relationship } });
+      } catch (err) {
+        if (err instanceof AccountLinkError) {
+          return fail("child_account_id", err.message);
+        }
+        throw err;
+      }
     }
   );
 }
