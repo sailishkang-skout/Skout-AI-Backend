@@ -12,6 +12,7 @@ import {
   resolveCopsNotificationRoles,
 } from "../services/cops-notification-routing.js";
 import { deliverNotificationChannels } from "../services/notifications.service.js";
+import { projectCopsEventToTimelineRow } from "../services/cops-timeline.service.js";
 
 const log = createLogger("dexter-event.worker");
 const { copsNotificationRoutes, copsProcessedEvents, notifications } = schema;
@@ -112,6 +113,7 @@ export async function handleDexterEvent(
         });
       }
     }
+    await projectCopsEventToTimelineRow(db, copsEvent);
     log.info("processed COPS event on the existing dexter event spine", {
       type: copsEvent.event_type,
       eventId: copsEvent.event_id,
