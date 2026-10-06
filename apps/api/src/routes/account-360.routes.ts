@@ -7,10 +7,10 @@ import { getMemberPermissions } from "@skout/auth";
 import { errorResponse, HttpError } from "../utils/http.js";
 import { getEvidence } from "../services/evidence.service.js";
 import { createRegionalBriefService } from "../services/regional-brief.service.js";
-import { requireAnyCopsPermission } from "../services/cops-platform.service.js";
+import { requireAnyCopsPermission, writeCopsAudit } from "../services/cops-platform.service.js";
 import { AccountLinkError, linkAccounts } from "../services/cops-account-relationships.service.js";
 
-const { companies, contacts, deals, activities, signals, copsLifecycleStates, copsTimelineEvents, tasks } = schema;
+const { companies, contacts, deals, activities, signals, copsLifecycleStates, copsTimelineEvents, tasks, workspaceMembers } = schema;
 
 const LOW_CONFIDENCE_THRESHOLD = 0.5;
 
@@ -437,6 +437,62 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
         }
         throw err;
       }
+    }
+  );
+
+  // POST /accounts/bulk-reassign — set the owner of many accounts at once. Ids outside this
+  // workspace are skipped, not an error. Every change writes one audit row (reason required).
+  const bulkGate = requireAnyCopsPermission(["crm:write", "crm:manage"], (ws, user) => getMemberPermissions(db, ws, user));
+  app.post<{ Body: { ids?: string[]; owner_id?: string; reason?: string } }>(
+    "/accounts/bulk-reassign",
+    { preHandler: bulkGate },
+    async (request, reply) => {
+      const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+      const fail = (path: string, message: string) =>
+        reply.status(copsErrorStatus("VALIDATION_FAILED")).send(
+          copsErrorBody({ code: "VALIDATION_FAILED", message, requestId, details: { fields: [{ path, code: "invalid", message }] } })
+        );
+
+      const ids = request.body?.ids ?? [];
+      const ownerId = request.body?.owner_id ?? "";
+      const reason = (request.body?.reason ?? "").trim();
+      if (!Array.isArray(ids) || ids.length < 1 || ids.length > 500) return fail("ids", "ids must contain 1-500 account ids");
+      if (ids.some((id) => !UUID.test(id))) return fail("ids", "every id must be a UUID");
+      if (!UUID.test(ownerId)) return fail("owner_id", "owner_id must be a UUID");
+      if (reason.length < 1 || reason.length > 500) return fail("reason", "reason is required (1-500 characters)");
+
+      const workspaceId = request.workspaceId!;
+      const [member] = await db
+        .select({ userId: workspaceMembers.userId })
+        .from(workspaceMembers)
+        .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, ownerId)))
+        .limit(1);
+      if (!member) return fail("owner_id", "owner must be a member of this workspace");
+
+      const updated = await db.transaction(async (tx) => {
+        const rows = await tx
+          .update(companies)
+          .set({ ownerId })
+          .where(and(eq(companies.workspaceId, workspaceId), inArray(companies.id, ids)))
+          .returning({ id: companies.id });
+        for (const row of rows) {
+          await writeCopsAudit(tx, {
+            tenantId: workspaceId,
+            actor: { type: "user", id: request.userId ?? null },
+            entityType: "account",
+            entityId: row.id,
+            action: "owner.reassigned",
+            after: { owner_id: ownerId },
+            reason,
+            correlationId: requestId,
+            sourceChannel: "api",
+          });
+        }
+        return rows.map((r) => r.id);
+      });
+
+      const skipped = ids.filter((id) => !updated.includes(id));
+      return { data: { updated: updated.length, updated_ids: updated, skipped_ids: skipped } };
     }
   );
 }
