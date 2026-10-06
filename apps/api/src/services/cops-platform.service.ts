@@ -153,3 +153,34 @@ export function requireCopsPermission(
     }
   };
 }
+
+/**
+ * Any-of gate: passes when the caller holds at least one of `requiredKeys`. Used where an existing
+ * CRM permission (e.g. crm:manage, held by the Member role) should also reach a COPS read surface.
+ */
+export function requireAnyCopsPermission(
+  requiredKeys: readonly string[],
+  getPermissions: (workspaceId: string, userId: string) => Promise<string[]>
+) {
+  return async function copsAnyPreHandler(request: FastifyRequest, reply: FastifyReply) {
+    const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+    const workspaceId = request.workspaceId;
+    const userId = request.userId;
+    if (!workspaceId || !userId) {
+      return reply
+        .status(401)
+        .send(copsErrorBody({ code: "UNAUTHENTICATED", message: "Missing workspace context", requestId }));
+    }
+    const granted = await getPermissions(workspaceId, userId);
+    if (!requiredKeys.some((key) => granted.includes(key))) {
+      return reply.status(copsErrorStatus("FORBIDDEN")).send(
+        copsErrorBody({
+          code: "FORBIDDEN",
+          message: "You do not have permission for this action",
+          requestId,
+          details: { required_permission: requiredKeys.join(" or ") },
+        })
+      );
+    }
+  };
+}

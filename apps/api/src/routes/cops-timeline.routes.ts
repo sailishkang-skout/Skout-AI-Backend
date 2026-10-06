@@ -5,7 +5,7 @@ import { z } from "zod";
 import { schema, type Db } from "@skout/db";
 import { COPS_TIMELINE_TYPES, copsErrorBody, copsErrorStatus, resolveCorrelationId } from "@skout/shared";
 import { getMemberPermissions } from "@skout/auth";
-import { requireCopsPermission } from "../services/cops-platform.service.js";
+import { requireAnyCopsPermission } from "../services/cops-platform.service.js";
 
 const { copsTimelineEvents } = schema;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -26,10 +26,11 @@ export function decodeTimelineCursor(cursor: string): { occurredAt: Date; id: st
   }
 }
 
-/** GET /api/v1/accounts/:id/timeline — crm:read. Internal notes need crm:admin. Newest first. */
+/** GET /api/v1/accounts/:id/timeline — crm:read or crm:manage. Internal notes need crm:admin. Newest first. */
 export async function copsTimelineRoutes(app: FastifyInstance, opts: { db: Db }) {
   const { db } = opts;
-  const gate = requireCopsPermission("crm", "read", (ws, user) => getMemberPermissions(db, ws, user));
+  // Same reach as the CRM nav: crm:read, or crm:manage (held by the Member role).
+  const gate = requireAnyCopsPermission(["crm:read", "crm:manage"], (ws, user) => getMemberPermissions(db, ws, user));
 
   app.get<{ Params: { id: string } }>("/accounts/:id/timeline", { preHandler: gate }, async (request, reply) => {
     const requestId = resolveCorrelationId(request.headers["x-request-id"]);

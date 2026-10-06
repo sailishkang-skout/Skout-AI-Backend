@@ -4,7 +4,7 @@ import { z } from "zod";
 import { schema, type Db } from "@skout/db";
 import { copsErrorBody, copsErrorStatus, resolveCorrelationId } from "@skout/shared";
 import { getMemberPermissions } from "@skout/auth";
-import { requireCopsPermission } from "../services/cops-platform.service.js";
+import { requireAnyCopsPermission } from "../services/cops-platform.service.js";
 
 const { companies, contacts, copsLifecycleStates, copsTimelineEvents, tasks } = schema;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -26,7 +26,8 @@ export function parseFields(raw: string | undefined): Block[] | "invalid" {
  */
 export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db }) {
   const { db } = opts;
-  const gate = requireCopsPermission("crm", "read", (ws, user) => getMemberPermissions(db, ws, user));
+  // Same reach as the CRM nav: crm:read, or crm:manage (held by the Member role).
+  const gate = requireAnyCopsPermission(["crm:read", "crm:manage"], (ws, user) => getMemberPermissions(db, ws, user));
 
   app.get<{ Params: { id: string }; Querystring: { fields?: string } }>(
     "/accounts/:id/360",
