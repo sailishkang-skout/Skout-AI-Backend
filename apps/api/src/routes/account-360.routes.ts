@@ -1107,6 +1107,23 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
 
       try {
         await db.transaction(async (tx) => {
+          // External refs are unique per (connection, entity). Where both accounts are linked on the
+          // same connection, the survivor's link stays and the duplicate's external id is kept in the
+          // merge history, so no external reference is lost.
+          const survivorLinks = await tx
+            .select({ connectionId: crmNativeLinks.connectionId, externalId: crmNativeLinks.externalId })
+            .from(crmNativeLinks)
+            .where(and(eq(crmNativeLinks.workspaceId, workspaceId), eq(crmNativeLinks.entityType, "company"), eq(crmNativeLinks.entityId, survivorId)));
+          const duplicateLinks = await tx
+            .select({ id: crmNativeLinks.id, connectionId: crmNativeLinks.connectionId, externalId: crmNativeLinks.externalId })
+            .from(crmNativeLinks)
+            .where(and(eq(crmNativeLinks.workspaceId, workspaceId), eq(crmNativeLinks.entityType, "company"), eq(crmNativeLinks.entityId, duplicateId)));
+          const collidingDuplicateLinks = duplicateLinks.filter((d) => survivorLinks.some((s) => s.connectionId === d.connectionId));
+          for (const d of collidingDuplicateLinks) {
+            const kept = survivorLinks.find((s) => s.connectionId === d.connectionId)!;
+            conflicts.push({ field: `external_ref:${d.connectionId}`, survivor_value: kept.externalId, duplicate_value: d.externalId });
+          }
+
           await tx.insert(copsAccountMerges).values({
             workspaceId,
             survivorId,
@@ -1116,6 +1133,9 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
             conflicts,
             mergedBy: request.userId ?? null,
           });
+          for (const d of collidingDuplicateLinks) {
+            await tx.delete(crmNativeLinks).where(eq(crmNativeLinks.id, d.id));
+          }
           await tx.update(contacts).set({ companyId: survivorId }).where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.companyId, duplicateId)));
           await tx.update(deals).set({ companyId: survivorId }).where(and(eq(deals.workspaceId, workspaceId), eq(deals.companyId, duplicateId)));
           await tx
