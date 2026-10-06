@@ -49,3 +49,22 @@ systems and adds only the missing transactional-outbox and idempotency capabilit
   update. It is idempotent and creates the COPS system roles/grants for future assignment.
 - Notification delivery remains on the current notification service. The existing bell is the
   notification center; `/settings/notifications` remains the preferences and channel setup page.
+
+## Acceptance verification (2026-10-06)
+
+| Acceptance item | Status | Evidence / remaining work |
+|---|---|---|
+| Outbox crash safety and duplicate-event no-op | ✅ | In-memory crash/consumer tests pass; the real-Postgres process-kill test passed 2/2 with `COPS_TEST_DATABASE_URL` and is committed as `81f9c61`. |
+| Illegal lifecycle transitions return 409; won does not imply activated | ✅ | Independent dimensions and transition tables; lifecycle/error unit tests pass. |
+| Permission matrix; Engineering denied commercial/legal reads | ⚠️ Partial | Engineering deny and role-fixture matrix tests pass. Verify seeded database grants with an integration test after RBAC backfill. |
+| Overrides require a reason and create audit records | ⚠️ Partial | Shared audit validation and reason tests pass; each later ticket must still assert its own override audit write. |
+| Notification provider outage retries and does not fail the originating write | ⚠️ Partial | Existing notification delivery tests cover retries and preserving in-app records. Operational alert wiring remains open; see the runbook open item. |
+| Permission-aware frontend; no raw 403 screen | ✅ | Audit nav is permission-gated; the audit page renders a user-facing forbidden message. |
+| 422 field errors and retryable/429 handling | ⚠️ Partial | API returns `details.fields[]`; frontend field-error, envelope, and retry unit tests pass. Form-level browser test is added but currently blocked by the local E2E auth setup (`Missing bearer token`) and must be rerun with a valid test token or auth fixture. |
+| OpenAPI contract and existing-code audit | ✅ | Contract: `docs/api/copos-01-platform-foundation.openapi.yaml`; findings recorded above. |
+| Six Bible p.10 ADRs | ⏳ | ADR 0017 records the event transport decision, but the six Bible decisions are not all documented or linked here. |
+| Commercial / Engineering navigation | ⏭ | Deliberately deferred to COPS-03 / COPS-06. |
+
+Focused verification run: backend COPS shared tests **67/67 passed**; frontend COPS error,
+fetch, navigation-helper, and audit-viewer tests **18/18 passed**. The form-level Playwright check
+is not yet green, so field-error acceptance is not complete.
