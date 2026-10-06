@@ -4,7 +4,7 @@ locals {
 }
 
 resource "google_project_service" "apis" {
-  for_each           = toset(["compute.googleapis.com", "sqladmin.googleapis.com"])
+  for_each           = toset(["compute.googleapis.com", "sqladmin.googleapis.com", "storage.googleapis.com", "iam.googleapis.com"])
   service            = each.key
   disable_on_destroy = false
 }
@@ -17,6 +17,7 @@ module "compute" {
   ssh_public_key = var.ssh_public_key
   ssh_user       = var.ssh_user
   admin_cidrs    = var.admin_cidrs
+  web_cidrs      = var.web_cidrs
   machine_type   = var.machine_type
   server_count   = var.server_count
 
@@ -88,12 +89,51 @@ resource "google_sql_user" "postgres" {
   password = random_password.pg_admin.result
 }
 
-# ---------- Cloudflare: tunnel, DNS, rate limits, R2 (shared with the Hetzner root) ----------
-module "edge" {
-  source                = "../../modules/edge"
-  prefix                = local.prefix
-  app_host              = local.app_host
-  cloudflare_account_id = var.cloudflare_account_id
-  cloudflare_zone_id    = var.cloudflare_zone_id
-  r2_location           = var.r2_location
+# ---------- Object storage (Cloud Storage, reached through its S3-compatible API with an HMAC key) ----------
+locals {
+  # Same retention the old S3 lifecycle rules had (dev values). Cloud Storage has no Glacier transition for raw/.
+  bucket_rules = {
+    "exports"     = { age = 30, prefix = null }
+    "email-intel" = { age = 30, prefix = null }
+    "scrape"      = { age = 30, prefix = "quarantine/" }
+  }
+}
+
+resource "google_storage_bucket" "bucket" {
+  for_each                    = local.bucket_rules
+  name                        = "${var.gcp_project}-${var.environment}-${each.key}"
+  location                    = var.storage_location
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  force_destroy               = true # staging only
+
+  lifecycle_rule {
+    condition {
+      age            = each.value.age
+      matches_prefix = each.value.prefix == null ? [] : [each.value.prefix]
+    }
+    action {
+      type = "Delete"
+    }
+  }
+
+  depends_on = [google_project_service.apis]
+}
+
+resource "google_service_account" "app" {
+  account_id   = "${local.prefix}-app"
+  display_name = "Skout app object storage"
+
+  depends_on = [google_project_service.apis]
+}
+
+resource "google_storage_hmac_key" "app" {
+  service_account_email = google_service_account.app.email
+}
+
+resource "google_storage_bucket_iam_member" "app" {
+  for_each = google_storage_bucket.bucket
+  bucket   = each.value.name
+  role     = "roles/storage.objectAdmin"
+  member   = "serviceAccount:${google_service_account.app.email}"
 }

@@ -19,6 +19,8 @@ networks:
 volumes:
   redis-data:
   clickhouse-data:
+  caddy-data:
+  caddy-config:
 
 # Swarm configs are immutable: a changed file must get a new name, or `docker stack deploy` fails with
 # "only updates to Labels are allowed". The deploy workflow exports the content hashes.
@@ -31,25 +33,27 @@ configs:
     file: ./unescape-env.sh
 
 services:
-  cloudflared:
-    <<: *app-defaults
-    image: cloudflare/cloudflared:${CLOUDFLARED_TAG:-latest}
-    command: tunnel --no-autoupdate run
-    environment:
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
-    deploy:
-      update_config: { failure_action: rollback, order: start-first }
-      replicas: 2
-
   caddy:
     <<: *app-defaults
     image: caddy:2-alpine
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST}
+      ACME_EMAIL: ${ACME_EMAIL}
     configs:
       - source: caddyfile
         target: /etc/caddy/Caddyfile
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    ports:
+      # Host mode keeps the real client address (the ingress mesh would hide it behind NAT).
+      - { target: 80, published: 80, protocol: tcp, mode: host }
+      - { target: 443, published: 443, protocol: tcp, mode: host }
     deploy:
-      update_config: { failure_action: rollback, order: start-first }
-      replicas: 2
+      update_config: { failure_action: rollback, order: stop-first }
+      replicas: 1
+      placement:
+        constraints: [node.labels.stateful == true]
 
   api:
     <<: *app-defaults

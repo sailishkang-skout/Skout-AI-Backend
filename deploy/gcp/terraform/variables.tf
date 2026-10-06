@@ -18,17 +18,9 @@ variable "gcp_zone" {
   default = "us-east1-b"
 }
 
-variable "cloudflare_api_token" {
-  type      = string
-  sensitive = true
-}
-
-variable "cloudflare_account_id" { type = string }
-variable "cloudflare_zone_id" { type = string }
-
 variable "base_domain" {
   type        = string
-  description = "Zone apex, e.g. skoutai.io. The app is served at stg.<base_domain>."
+  description = "Domain whose DNS stays where it is (BigRock). The app is served at stg.<base_domain>."
 }
 
 variable "ssh_public_key" {
@@ -47,10 +39,16 @@ variable "admin_cidrs" {
   description = "CIDRs allowed to SSH to the nodes."
 }
 
+variable "web_cidrs" {
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+  description = "CIDRs allowed to reach ports 80 and 443 (Caddy terminates TLS on the node)."
+}
+
 variable "server_count" {
   type        = number
   default     = 1
-  description = "Free-trial accounts cannot raise quotas (about 8 vCPUs), so staging runs on one node."
+  description = "Staging runs on one node by default to keep credit burn low; set 2 for a second node."
 }
 
 variable "machine_type" {
@@ -65,7 +63,7 @@ variable "db_tier" {
   description = "Cloud SQL: 1 vCPU / 3.75 GB."
 }
 
-variable "r2_location" {
+variable "storage_location" {
   type    = string
-  default = "ENAM"
+  default = "US-EAST1"
 }

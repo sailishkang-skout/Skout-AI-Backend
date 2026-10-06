@@ -159,7 +159,7 @@ jobs:
       - name: Deploy stack
         env:
           IMAGE_TAG: ${{ steps.meta.outputs.tag }}
-          TUNNEL_TOKEN: ${{ secrets.TUNNEL_TOKEN }}
+          ACME_EMAIL: ${{ vars.ACME_EMAIL }}
           DD_API_KEY: ${{ secrets.DD_API_KEY }}
           OUTBOUND_REPLICAS: ${{ inputs.outbound_replicas || '0' }}
         run: |
@@ -168,6 +168,10 @@ jobs:
           CADDYFILE_HASH="$(sha256sum deploy/hetzner/swarm/Caddyfile | cut -c1-12)"
           UNESCAPE_HASH="$(sha256sum deploy/hetzner/swarm/unescape-env.sh | cut -c1-12)"
           export CADDYFILE_HASH UNESCAPE_HASH
+          # Caddy serves HTTPS for this host name (from the STAGING_URL variable, scheme stripped).
+          PUBLIC_HOST="${{ vars.STAGING_URL }}"
+          PUBLIC_HOST="${PUBLIC_HOST#https://}"
+          export PUBLIC_HOST
           # --detach=false blocks until every service converges (or rolls back), so the checks below
           # never run against the old version.
           docker stack deploy --detach=false --with-registry-auth --prune -c deploy/hetzner/swarm/stack.yml skout

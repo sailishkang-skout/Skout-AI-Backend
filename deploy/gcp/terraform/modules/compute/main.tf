@@ -16,7 +16,19 @@ resource "google_compute_subnetwork" "subnet" {
   ip_cidr_range = "10.30.0.0/24"
 }
 
-# No inbound 80/443: public traffic arrives through the Cloudflare Tunnel (outbound connection).
+# Caddy on the node terminates TLS (Let's Encrypt) and routes by path, so 80 and 443 are open.
+resource "google_compute_firewall" "web" {
+  name          = "${var.name}-web"
+  network       = google_compute_network.vpc.name
+  source_ranges = var.web_cidrs
+  target_tags   = ["swarm-node"]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["80", "443"]
+  }
+}
+
 resource "google_compute_firewall" "ssh" {
   name          = "${var.name}-ssh"
   network       = google_compute_network.vpc.name

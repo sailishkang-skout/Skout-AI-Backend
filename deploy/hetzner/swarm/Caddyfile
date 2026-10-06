@@ -1,15 +1,16 @@
 {
-	auto_https off
+	# Contact address for Let's Encrypt expiry notices.
+	email {$ACME_EMAIL}
 	admin off
 }
 
 (proxy) {
-	header_up X-Forwarded-For {header.Cf-Connecting-Ip}
-	header_up X-Forwarded-Proto https
+	# Caddy already sets X-Forwarded-For (client address) and X-Forwarded-Proto for the upstream.
 	header_up x-skout-public-origin https://{host}
 }
 
-:80 {
+# Certificates are issued automatically for this host (needs the DNS A record and ports 80/443 open).
+{$PUBLIC_HOST} {
 	@crm path /api/v1/crm/health /api/v1/companies* /api/v1/contacts* /api/v1/deals* /api/v1/pipelines* /api/v1/tasks* /api/v1/activities* /api/v1/meetings* /api/v1/dashboard/overview* /api/v1/dashboard/switching-cost* /api/v1/dashboard/cro-summary* /api/v1/dashboard/pipeline-velocity* /api/v1/audit-logs* /api/v1/promotion-candidates* /api/v1/dashboard/stale-deals* /api/v1/dashboard/missing-stakeholder* /api/v1/dashboard/disengagement-flags* /api/v1/dashboard/renewal-risk-flags* /api/v1/dashboard/expansion-signal-flags* /api/v1/retention-rules* /api/v1/buying-committee*
 	handle @crm {
 		reverse_proxy crm:3002 {
