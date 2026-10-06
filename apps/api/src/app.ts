@@ -14,7 +14,7 @@ import { securityPlugin } from "./plugins/security.js";
 import { registerRoutes } from "./routes/index.js";
 import { apiError, defaultCodeForStatus, HttpError, isDatabaseError } from "./utils/http.js";
 
-export async function buildApp(config: Env) {
+export async function buildApp(config: Env, options: { onDbQuery?: (query: string) => void } = {}) {
   const app = Fastify({
     logger: buildPinoOptions({
       service: config.SERVICE_NAME,
@@ -161,6 +161,7 @@ export async function buildApp(config: Env) {
   });
 
   await app.register(configPlugin, config);
+  app.decorate("onDbQuery", options.onDbQuery ?? null);
   await app.register(dbPlugin);
   await app.register(authPlugin);
 
