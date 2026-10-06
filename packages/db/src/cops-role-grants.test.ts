@@ -1,5 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
+import { eq, inArray } from "drizzle-orm";
+import { createDb } from "./client.js";
 import { COPS_SYSTEM_ROLE_GRANTS } from "./cops-role-grants.js";
+import { rolePermissions, roles } from "./schema/tenancy.js";
 
 describe("COPS system role grants", () => {
   it("seeds the complete set of CustomerOps roles", () => {
@@ -28,3 +31,39 @@ describe("COPS system role grants", () => {
     expect(legalReaders).toEqual(["legal_revops"]);
   });
 });
+
+const testDatabaseUrl = process.env.COPS_TEST_DATABASE_URL;
+if (testDatabaseUrl) {
+  describe("COPS role grants in Postgres", () => {
+    const { db, sql } = createDb(testDatabaseUrl);
+
+    afterAll(async () => {
+      await sql.end();
+    });
+
+    it("has seeded CustomerOps roles and denies Engineering commercial/legal reads", async () => {
+      const grants = await db
+        .select({ role: roles.key, permission: rolePermissions.permissionKey })
+        .from(roles)
+        .leftJoin(rolePermissions, eq(rolePermissions.roleId, roles.id))
+        .where(inArray(roles.key, COPS_SYSTEM_ROLE_GRANTS.map((role) => role.key)));
+
+      const roleKeys = new Set(grants.map((grant) => grant.role));
+      const engineeringGrants = grants.filter((grant) => grant.role === "engineering");
+      const legalRevopsGrants = grants.filter((grant) => grant.role === "legal_revops");
+
+      expect(roleKeys).toEqual(new Set(COPS_SYSTEM_ROLE_GRANTS.map((role) => role.key)));
+      for (const role of COPS_SYSTEM_ROLE_GRANTS) {
+        const actualPermissions = grants
+          .filter((grant) => grant.role === role.key)
+          .map((grant) => grant.permission)
+          .filter((permission): permission is string => permission !== null)
+          .sort();
+        expect(actualPermissions, `permission matrix for ${role.key}`).toEqual([...role.permissionKeys].sort());
+      }
+      expect(engineeringGrants.map((grant) => grant.permission)).not.toContain("commercial:read");
+      expect(engineeringGrants.map((grant) => grant.permission)).not.toContain("legal:read");
+      expect(legalRevopsGrants.map((grant) => grant.permission)).toContain("legal:read");
+    });
+  });
+}
