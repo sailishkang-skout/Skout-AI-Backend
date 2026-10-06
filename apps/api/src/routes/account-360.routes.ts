@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { schema, scopedTo, scopedById, type Db } from "@skout/db";
 import { copsErrorBody, copsErrorStatus, resolveCorrelationId } from "@skout/shared";
@@ -10,7 +10,7 @@ import { createRegionalBriefService } from "../services/regional-brief.service.j
 import { requireAnyCopsPermission, writeCopsAudit } from "../services/cops-platform.service.js";
 import { AccountLinkError, linkAccounts } from "../services/cops-account-relationships.service.js";
 
-const { companies, contacts, deals, activities, signals, copsLifecycleStates, copsTimelineEvents, tasks, workspaceMembers } = schema;
+const { companies, contacts, deals, activities, signals, copsLifecycleStates, copsTimelineEvents, tasks, workspaceMembers, copsSavedViews } = schema;
 
 const LOW_CONFIDENCE_THRESHOLD = 0.5;
 
@@ -493,6 +493,82 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
 
       const skipped = ids.filter((id) => !updated.includes(id));
       return { data: { updated: updated.length, updated_ids: updated, skipped_ids: skipped } };
+    }
+  );
+
+  // GET /accounts — account list: q (name contains), owner_id, sort (name | -created_at), cursor
+  // pagination, field select. `view_id` applies a saved view's filters for object "account".
+  const listGate = requireAnyCopsPermission(["crm:read", "crm:manage"], (ws, user) => getMemberPermissions(db, ws, user));
+  app.get<{ Querystring: { q?: string; owner_id?: string; sort?: string; limit?: string; cursor?: string; view_id?: string } }>(
+    "/accounts",
+    { preHandler: listGate },
+    async (request, reply) => {
+      const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+      const fail = (path: string, message: string) =>
+        reply.status(copsErrorStatus("VALIDATION_FAILED")).send(
+          copsErrorBody({ code: "VALIDATION_FAILED", message, requestId, details: { fields: [{ path, code: "invalid", message }] } })
+        );
+
+      const workspaceId = request.workspaceId!;
+      const q = request.query;
+      let filters: { q?: string; owner_id?: string } = { q: q.q, owner_id: q.owner_id };
+      if (q.view_id) {
+        if (!UUID.test(q.view_id)) return fail("view_id", "Invalid view id");
+        const [view] = await db
+          .select({ filters: copsSavedViews.filters, objectType: copsSavedViews.objectType })
+          .from(copsSavedViews)
+          .where(
+            and(
+              eq(copsSavedViews.id, q.view_id),
+              eq(copsSavedViews.workspaceId, workspaceId),
+              or(eq(copsSavedViews.ownerUserId, request.userId!), eq(copsSavedViews.shared, true))
+            )
+          )
+          .limit(1);
+        if (!view) return fail("view_id", "Saved view not found");
+        if (view.objectType !== "account") return fail("view_id", "Saved view is for another object type");
+        const f = view.filters as { q?: unknown; owner_id?: unknown };
+        filters = {
+          q: typeof filters.q === "string" ? filters.q : typeof f.q === "string" ? f.q : undefined,
+          owner_id: typeof filters.owner_id === "string" ? filters.owner_id : typeof f.owner_id === "string" ? f.owner_id : undefined,
+        };
+      }
+
+      const sortDesc = q.sort !== "name";
+      if (q.sort && q.sort !== "name" && q.sort !== "-created_at") return fail("sort", "sort must be name or -created_at");
+      const limit = Math.min(100, Math.max(1, Number.parseInt(q.limit ?? "25", 10) || 25));
+      if (filters.owner_id && !UUID.test(filters.owner_id)) return fail("owner_id", "Invalid owner_id");
+
+      const conditions = [eq(companies.workspaceId, workspaceId)];
+      if (filters.q) conditions.push(sql`${companies.name} ilike ${"%" + filters.q.replace(/[%_]/g, "\$&") + "%"}`);
+      if (filters.owner_id) conditions.push(eq(companies.ownerId, filters.owner_id));
+      if (q.cursor) {
+        const [value, id] = Buffer.from(q.cursor, "base64url").toString("utf8").split("|");
+        if (!value || !UUID.test(id ?? "")) return fail("cursor", "Invalid cursor");
+        conditions.push(
+          sortDesc
+            ? or(lt(companies.createdAt, new Date(value)), and(eq(companies.createdAt, new Date(value)), lt(companies.id, id!)))!
+            : or(gt(companies.name, value), and(eq(companies.name, value), gt(companies.id, id!)))!
+        );
+      }
+
+      const rows = await db
+        .select({ id: companies.id, name: companies.name, ownerId: companies.ownerId, createdAt: companies.createdAt })
+        .from(companies)
+        .where(and(...conditions))
+        .orderBy(...(sortDesc ? [desc(companies.createdAt), desc(companies.id)] : [asc(companies.name), asc(companies.id)]))
+        .limit(limit + 1);
+
+      const page = rows.slice(0, limit);
+      const last = page[page.length - 1];
+      const cursorOut = rows.length > limit && last
+        ? Buffer.from(sortDesc ? `${last.createdAt.toISOString()}|${last.id}` : `${last.name}|${last.id}`, "utf8").toString("base64url")
+        : null;
+      return {
+        data: page.map((r) => ({ id: r.id, name: r.name, owner_id: r.ownerId, created_at: r.createdAt.toISOString() })),
+        next_cursor: cursorOut,
+        applied_filters: filters,
+      };
     }
   );
 }
