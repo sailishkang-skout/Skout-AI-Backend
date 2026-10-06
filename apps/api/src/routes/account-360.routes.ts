@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { and, asc, desc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { schema, scopedTo, scopedById, type Db } from "@skout/db";
-import { copsErrorBody, copsErrorStatus, resolveCorrelationId } from "@skout/shared";
+import { appendCopsEvent, copsErrorBody, copsErrorStatus, createCopsEvent, resolveCorrelationId } from "@skout/shared";
 import { getMemberPermissions } from "@skout/auth";
 import { errorResponse, HttpError } from "../utils/http.js";
 import { getEvidence } from "../services/evidence.service.js";
@@ -910,6 +910,73 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
         })),
         next_cursor: cursorOut,
         applied_filters: filters,
+      };
+    }
+  );
+
+  // POST /tasks/:id/complete — marks an open task done and emits TaskCompleted through the outbox
+  // in the same transaction. A task that is already done or skipped is a 409.
+  app.post<{ Params: { id: string } }>(
+    "/tasks/:id/complete",
+    { preHandler: writeGate },
+    async (request, reply) => {
+      const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+      if (!UUID.test(request.params.id)) {
+        return reply.status(copsErrorStatus("VALIDATION_FAILED")).send(
+          copsErrorBody({ code: "VALIDATION_FAILED", message: "Invalid task id", requestId, details: { fields: [{ path: "id", code: "invalid", message: "Invalid task id" }] } })
+        );
+      }
+      const workspaceId = request.workspaceId!;
+      const [task] = await db
+        .select({ id: tasks.id, title: tasks.title, type: tasks.type, status: tasks.status, relatedEntityType: tasks.relatedEntityType, relatedEntityId: tasks.relatedEntityId })
+        .from(tasks)
+        .where(and(eq(tasks.id, request.params.id), eq(tasks.workspaceId, workspaceId)))
+        .limit(1);
+      if (!task) {
+        return reply.status(404).send(copsErrorBody({ code: "NOT_FOUND", message: "Task not found", requestId, details: {} }));
+      }
+      if (task.status !== "open") {
+        return reply.status(copsErrorStatus("BUSINESS_STATE_CONFLICT")).send(
+          copsErrorBody({
+            code: "BUSINESS_STATE_CONFLICT",
+            message: `Task is already ${task.status}`,
+            requestId,
+            details: { current_state: { status: task.status }, requested_state: "done" },
+          })
+        );
+      }
+
+      const accountId = task.relatedEntityType === "company" ? task.relatedEntityId : null;
+      const completedAt = new Date();
+      const updated = await db.transaction(async (tx) => {
+        const [row] = await tx
+          .update(tasks)
+          .set({ status: "done", completedAt })
+          .where(and(eq(tasks.id, task.id), eq(tasks.status, "open")))
+          .returning({ id: tasks.id, status: tasks.status, completedAt: tasks.completedAt });
+        if (!row) return null;
+        await appendCopsEvent(
+          tx,
+          createCopsEvent({
+            eventType: "TaskCompleted",
+            tenantId: workspaceId,
+            aggregateType: "task",
+            aggregateId: task.id,
+            actor: { type: "user", id: request.userId ?? null },
+            correlationId: requestId,
+            payload: { task_id: task.id, account_id: accountId, task_type: task.type },
+          })
+        );
+        return row;
+      });
+      if (!updated) {
+        // Lost a race with another completion between the read and the write.
+        return reply.status(copsErrorStatus("BUSINESS_STATE_CONFLICT")).send(
+          copsErrorBody({ code: "BUSINESS_STATE_CONFLICT", message: "Task was completed by someone else", requestId, details: {} })
+        );
+      }
+      return {
+        data: { id: updated.id, status: updated.status, completed_at: updated.completedAt?.toISOString() ?? null },
       };
     }
   );

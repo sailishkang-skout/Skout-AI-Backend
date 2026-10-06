@@ -15,7 +15,7 @@ const base = {
 
 describe("COPS Phase 1 event contract", () => {
   it("registers the 17 Phase 1 business events plus the shared lifecycle transition event", () => {
-    expect(Object.keys(COPS_PHASE1_EVENTS)).toHaveLength(18);
+    expect(Object.keys(COPS_PHASE1_EVENTS)).toHaveLength(19);
     expect(COPS_PHASE1_EVENTS).toHaveProperty("LifecycleTransitioned");
   });
 
@@ -63,6 +63,16 @@ describe("COPS Phase 1 event contract", () => {
         payload: { task_id: "t", account_id: "a", task_type: "call" },
       })
     ).toThrow();
+  });
+
+  it("accepts a TaskCompleted event with a null account", () => {
+    expect(() =>
+      parseCopsEvent({
+        ...base,
+        event_type: "TaskCompleted",
+        payload: { task_id: "t", account_id: null, task_type: "call" },
+      })
+    ).not.toThrow();
   });
 
   it("rejects an actor type outside the allowed set", () => {

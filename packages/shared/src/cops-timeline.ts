@@ -36,6 +36,7 @@ const TYPE_BY_EVENT: Record<string, CopsTimelineType> = {
   WelcomeEmailSent: "email",
   SequenceEnrolled: "workflow_action",
   TaskCreated: "workflow_action",
+  TaskCompleted: "workflow_action",
   LifecycleTransitioned: "workflow_action",
   FirstLogin: "product_milestone",
   ActivationMilestoneCompleted: "product_milestone",

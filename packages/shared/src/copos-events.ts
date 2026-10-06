@@ -45,6 +45,8 @@ export const CreditsGrantedPayload = z.object({ wallet_id: id, amount: z.number(
 export const WelcomeEmailSentPayload = z.object({ account_id: id, email_send_id: id });
 export const SequenceEnrolledPayload = z.object({ account_id: id, enrollment_id: id, template_version: z.string() });
 export const TaskCreatedPayload = z.object({ task_id: id, account_id: id, task_type: z.string() });
+/** Added for COPS-02: completing a task emits an event (COPS-02 ticket). */
+export const TaskCompletedPayload = z.object({ task_id: id, account_id: id.nullable(), task_type: z.string() });
 export const FirstLoginPayload = z.object({ account_id: id, user_id: id });
 export const ActivationMilestoneCompletedPayload = z.object({ account_id: id, milestone_id: id });
 export const CustomerActivatedPayload = z.object({ account_id: id, rule_version: z.string() });
@@ -73,6 +75,7 @@ export const COPS_PHASE1_EVENTS = {
   WelcomeEmailSent: WelcomeEmailSentPayload,
   SequenceEnrolled: SequenceEnrolledPayload,
   TaskCreated: TaskCreatedPayload,
+  TaskCompleted: TaskCompletedPayload,
   FirstLogin: FirstLoginPayload,
   ActivationMilestoneCompleted: ActivationMilestoneCompletedPayload,
   CustomerActivated: CustomerActivatedPayload,
