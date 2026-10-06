@@ -300,6 +300,11 @@ const envSchema = z
     RAZORPAY_CREDIT_PACKS_JSON: z.string().optional(),
     /** Prefix for per-workspace CRM OAuth secrets in AWS Secrets Manager. */
     CRM_SECRETS_PREFIX: z.string().default("SkoutDev/crm"),
+    /**
+     * Where per-workspace CRM OAuth tokens live: `aws` = AWS Secrets Manager (default),
+     * `inline` = AES-encrypted in the connection row's credentials_ref (no AWS dependency).
+     */
+    CRM_CREDENTIALS_BACKEND: z.enum(["aws", "inline"]).default("aws"),
     /** When true, store CRM OAuth tokens in local `.crm-secrets/` instead of AWS. */
     CRM_CREDENTIALS_LOCAL: z
       .string()

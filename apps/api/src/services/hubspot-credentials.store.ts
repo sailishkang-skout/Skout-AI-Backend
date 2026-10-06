@@ -7,7 +7,9 @@ import {
 } from "@aws-sdk/client-secrets-manager";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { decryptSecretWithFallback, encryptSecret } from "@skout/shared";
 import type { Env } from "../config/env.js";
+import { getIntegrationEncryptionSecret } from "../utils/encryption-secrets.js";
 import type { HubSpotTokens } from "./hubspot.client.js";
 
 export interface HubSpotCredentialsStore {
@@ -134,9 +136,56 @@ export class LocalHubSpotCredentialsStore implements HubSpotCredentialsStore {
   }
 }
 
+const INLINE_PREFIX = "enc:v1:";
+
+/**
+ * Tokens encrypted with INTEGRATION_ENCRYPTION_KEY and carried inside the ref itself, which the
+ * caller persists in `crm_connections.credentials_ref`. No external secret store needed.
+ * Every save returns a new ref (fresh IV) — callers must persist the returned value, as
+ * `saveHubSpotTokens` already does.
+ */
+export class InlineEncryptedHubSpotCredentialsStore implements HubSpotCredentialsStore {
+  private readonly secret: string;
+  private readonly previousSecret: string | null;
+
+  constructor(config: Env) {
+    this.secret = getIntegrationEncryptionSecret(config);
+    this.previousSecret = config.INTEGRATION_ENCRYPTION_KEY_PREVIOUS ?? null;
+  }
+
+  buildRef(workspaceId: string): string {
+    return `${INLINE_PREFIX}${workspaceId}:${HUBSPOT_PROVIDER}`;
+  }
+
+  async save(_workspaceId: string, tokens: HubSpotTokens): Promise<string> {
+    return INLINE_PREFIX + encryptSecret(JSON.stringify(tokens), this.secret);
+  }
+
+  async load(credentialsRef: string): Promise<HubSpotTokens | null> {
+    if (!credentialsRef.startsWith(INLINE_PREFIX)) return null;
+    try {
+      const raw = decryptSecretWithFallback(
+        credentialsRef.slice(INLINE_PREFIX.length),
+        this.secret,
+        this.previousSecret
+      );
+      return parseTokens(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  async delete(_credentialsRef: string): Promise<void> {
+    // Nothing external to remove: the ciphertext lives in the connection row.
+  }
+}
+
 export function createHubSpotCredentialsStore(config: Env): HubSpotCredentialsStore {
   if (config.CRM_CREDENTIALS_LOCAL === true) {
     return new LocalHubSpotCredentialsStore();
+  }
+  if (config.CRM_CREDENTIALS_BACKEND === "inline") {
+    return new InlineEncryptedHubSpotCredentialsStore(config);
   }
   return new AwsHubSpotCredentialsStore(config);
 }
