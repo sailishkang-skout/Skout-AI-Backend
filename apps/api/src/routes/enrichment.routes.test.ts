@@ -270,9 +270,15 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
       headers: { "x-workspace-id": WORKSPACE },
     });
     expect(get.statusCode).toBe(404);
-    // The app-wide onSend hook (app.ts) normalizes every {error} reply into {error, message,
-    // statusCode} — this asserts the real response shape, not just this route's own .send() call.
-    expect(get.json()).toEqual({ error: "job_not_found", message: "job_not_found", statusCode: 404 });
+    // The app-wide onSend hook adds the standard error envelope to legacy route responses.
+    expect(get.json()).toMatchObject({
+      error: "job_not_found",
+      code: "job_not_found",
+      message: "job_not_found",
+      statusCode: 404,
+      retryable: false,
+    });
+    expect(get.json().request_id).toEqual(expect.any(String));
   });
 
   it("returns 404 for a retry against a non-uuid job id", async () => {
@@ -282,7 +288,14 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
       headers: { "x-workspace-id": WORKSPACE },
     });
     expect(retry.statusCode).toBe(404);
-    expect(retry.json()).toEqual({ error: "job_not_found", message: "job_not_found", statusCode: 404 });
+    expect(retry.json()).toMatchObject({
+      error: "job_not_found",
+      code: "job_not_found",
+      message: "job_not_found",
+      statusCode: 404,
+      retryable: false,
+    });
+    expect(retry.json().request_id).toEqual(expect.any(String));
   });
 
   it("does not persist unverified email on activation snapshot (E4.3)", async () => {

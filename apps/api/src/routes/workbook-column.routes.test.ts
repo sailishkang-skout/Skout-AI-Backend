@@ -84,7 +84,7 @@ describe("workbook column routes", () => {
       headers: json("wb-col-invalid@test.com"),
       payload: { key: "research", label: "Research", columnType: "ai_research" },
     });
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(422);
     await app.close();
   });
 

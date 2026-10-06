@@ -68,7 +68,7 @@ describe("inbox routes", () => {
     await app.close();
   });
 
-  it("POST /inboxes returns 400 for an invalid payload", async () => {
+  it("POST /inboxes returns 422 for an invalid payload", async () => {
     const app = await buildTestApp();
 
     const res = await app.inject({
@@ -78,7 +78,7 @@ describe("inbox routes", () => {
       payload: { emailAddress: "not-an-email" },
     });
 
-    expect([400, 503]).toContain(res.statusCode);
+    expect([422, 503]).toContain(res.statusCode);
 
     await app.close();
   });
@@ -199,7 +199,7 @@ describe("inbox manual-review routes", () => {
       payload: { action: "not_a_real_action" },
     });
 
-    expect([400, 503]).toContain(res.statusCode);
+    expect([422, 503]).toContain(res.statusCode);
 
     await app.close();
   });
