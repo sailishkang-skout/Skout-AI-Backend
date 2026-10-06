@@ -14,7 +14,7 @@ import { scrapeLinkedInJobs } from "./bots/linkedin-jobs.js";
 import { scrapeOpenCorporates } from "./bots/opencorporates.js";
 import { scrapeSecEdgar } from "./bots/sec-edgar.js";
 import { scrapeGoogleBusiness } from "./bots/google-business.js";
-import { startSqsScheduleConsumer } from "./sqs-schedule-consumer.js";
+import { startDailyScrapeSchedule } from "./daily-schedule.js";
 import { createScrapeJob, openDb, patchScrapeJob } from "./db.js";
 import {
   queueForSource,
@@ -159,10 +159,11 @@ export async function startOrchestratorWorkers() {
     attachDeadLetterHandler(w, deadLetterQueue, w.name);
   }
 
-  const stopSqs = startSqsScheduleConsumer();
+  const scheduleQueue = new Queue(SCRAPE_QUEUES.schedule, { connection });
+  await startDailyScrapeSchedule(scheduleQueue);
 
   const shutdown = async () => {
-    stopSqs();
+    await scheduleQueue.close();
     await scheduleWorker.close();
     await Promise.all(botWorkers.map((w) => w.close()));
     await cleanQueue.close();
