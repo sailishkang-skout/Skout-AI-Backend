@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { Buffer } from "node:buffer";
-import { and, desc, eq, inArray, lt, or } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { schema, type Db } from "@skout/db";
 import { COPS_TIMELINE_TYPES, copsErrorBody, copsErrorStatus, resolveCorrelationId } from "@skout/shared";
@@ -11,16 +11,17 @@ const { copsTimelineEvents } = schema;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const LIMIT_MAX = 100;
 
-const cursorSchema = z.object({ occurred_at: z.string().datetime(), id: z.string().uuid() });
+const cursorSchema = z.object({ occurred_at: z.string().min(10).max(40), id: z.string().uuid() });
 
-export function encodeTimelineCursor(occurredAt: Date, id: string): string {
-  return Buffer.from(JSON.stringify({ occurred_at: occurredAt.toISOString(), id }), "utf8").toString("base64url");
+/** `occurredAt` is the exact Postgres timestamp text (microseconds), so a page boundary never drops rows. */
+export function encodeTimelineCursor(occurredAt: string, id: string): string {
+  return Buffer.from(JSON.stringify({ occurred_at: occurredAt, id }), "utf8").toString("base64url");
 }
 
-export function decodeTimelineCursor(cursor: string): { occurredAt: Date; id: string } | null {
+export function decodeTimelineCursor(cursor: string): { occurredAt: string; id: string } | null {
   try {
     const parsed = cursorSchema.safeParse(JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")));
-    return parsed.success ? { occurredAt: new Date(parsed.data.occurred_at), id: parsed.data.id } : null;
+    return parsed.success ? { occurredAt: parsed.data.occurred_at, id: parsed.data.id } : null;
   } catch {
     return null;
   }
@@ -53,7 +54,7 @@ export async function copsTimelineRoutes(app: FastifyInstance, opts: { db: Db })
       return invalid("Unknown timeline type", "type");
     }
 
-    let cursor: { occurredAt: Date; id: string } | null = null;
+    let cursor: { occurredAt: string; id: string } | null = null;
     if (q.cursor) {
       cursor = decodeTimelineCursor(q.cursor);
       if (!cursor) return invalid("Invalid cursor", "cursor");
@@ -72,8 +73,8 @@ export async function copsTimelineRoutes(app: FastifyInstance, opts: { db: Db })
     if (cursor) {
       conditions.push(
         or(
-          lt(copsTimelineEvents.occurredAt, cursor.occurredAt),
-          and(eq(copsTimelineEvents.occurredAt, cursor.occurredAt), lt(copsTimelineEvents.id, cursor.id))
+          sql`${copsTimelineEvents.occurredAt} < ${cursor.occurredAt}::timestamptz`,
+          and(sql`${copsTimelineEvents.occurredAt} = ${cursor.occurredAt}::timestamptz`, lt(copsTimelineEvents.id, cursor.id))
         )!
       );
     }
@@ -84,6 +85,7 @@ export async function copsTimelineRoutes(app: FastifyInstance, opts: { db: Db })
         type: copsTimelineEvents.type,
         visibility: copsTimelineEvents.visibility,
         occurredAt: copsTimelineEvents.occurredAt,
+        occurredAtText: sql<string>`to_char(${copsTimelineEvents.occurredAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
         actorType: copsTimelineEvents.actorType,
         actorId: copsTimelineEvents.actorId,
         sourceEventId: copsTimelineEvents.sourceEventId,
@@ -106,7 +108,7 @@ export async function copsTimelineRoutes(app: FastifyInstance, opts: { db: Db })
         source_event_id: r.sourceEventId,
         summary: r.summary,
       })),
-      next_cursor: rows.length > limit && last ? encodeTimelineCursor(last.occurredAt, last.id) : null,
+      next_cursor: rows.length > limit && last ? encodeTimelineCursor(last.occurredAtText, last.id) : null,
     };
   });
 }

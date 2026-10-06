@@ -271,6 +271,9 @@ const BLOCKS = ["header", "contacts", "timeline", "next_actions", "risks"] as co
 type Block = (typeof BLOCKS)[number];
 const SUMMARY_LIMIT = 5;
 
+/** Postgres timestamp as text with microseconds, so a cursor never drops rows that share a millisecond. */
+const tsText = (col: unknown) => sql<string>`to_char(${col} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+
 export function parseFields(raw: string | undefined): Block[] | "invalid" {
   if (!raw) return [...BLOCKS];
   const requested = raw.split(",").map((s) => s.trim()).filter(Boolean);
@@ -554,13 +557,13 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
         const { v: value, id } = decoded;
         conditions.push(
           sortDesc
-            ? or(lt(companies.createdAt, new Date(value)), and(eq(companies.createdAt, new Date(value)), lt(companies.id, id)))!
+            ? or(sql`${companies.createdAt} < ${value}::timestamptz`, and(sql`${companies.createdAt} = ${value}::timestamptz`, lt(companies.id, id)))!
             : or(gt(companies.name, value), and(eq(companies.name, value), gt(companies.id, id)))!
         );
       }
 
       const rows = await db
-        .select({ id: companies.id, name: companies.name, ownerId: companies.ownerId, createdAt: companies.createdAt })
+        .select({ id: companies.id, name: companies.name, ownerId: companies.ownerId, createdAt: companies.createdAt, createdAtText: tsText(companies.createdAt) })
         .from(companies)
         .where(and(...conditions))
         .orderBy(...(sortDesc ? [desc(companies.createdAt), desc(companies.id)] : [asc(companies.name), asc(companies.id)]))
@@ -569,7 +572,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       const page = rows.slice(0, limit);
       const last = page[page.length - 1];
       const cursorOut = rows.length > limit && last
-        ? Buffer.from(JSON.stringify({ v: sortDesc ? last.createdAt.toISOString() : last.name, id: last.id }), "utf8").toString("base64url")
+        ? Buffer.from(JSON.stringify({ v: sortDesc ? last.createdAtText : last.name, id: last.id }), "utf8").toString("base64url")
         : null;
       return {
         data: page.map((r) => ({ id: r.id, name: r.name, owner_id: r.ownerId, created_at: r.createdAt.toISOString() })),
@@ -648,7 +651,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
         const { v: value, id } = decoded;
         conditions.push(
           sortDesc
-            ? or(lt(contacts.createdAt, new Date(value)), and(eq(contacts.createdAt, new Date(value)), lt(contacts.id, id)))!
+            ? or(sql`${contacts.createdAt} < ${value}::timestamptz`, and(sql`${contacts.createdAt} = ${value}::timestamptz`, lt(contacts.id, id)))!
             : or(gt(nameKey, value), and(eq(nameKey, value), gt(contacts.id, id)))!
         );
       }
@@ -661,6 +664,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
           email: contacts.email,
           companyId: contacts.companyId,
           createdAt: contacts.createdAt,
+          createdAtText: tsText(contacts.createdAt),
           nameKey,
         })
         .from(contacts)
@@ -671,7 +675,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       const page = rows.slice(0, limit);
       const last = page[page.length - 1];
       const cursorOut = rows.length > limit && last
-        ? Buffer.from(JSON.stringify({ v: sortDesc ? last.createdAt.toISOString() : last.nameKey, id: last.id }), "utf8").toString("base64url")
+        ? Buffer.from(JSON.stringify({ v: sortDesc ? last.createdAtText : last.nameKey, id: last.id }), "utf8").toString("base64url")
         : null;
       return {
         data: page.map((r) => ({
@@ -681,6 +685,116 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
           email: r.email,
           company_id: r.companyId,
           created_at: r.createdAt.toISOString(),
+        })),
+        next_cursor: cursorOut,
+        applied_filters: filters,
+      };
+    }
+  );
+
+  // GET /opportunities — opportunity list: q (name contains), company_id, pipeline_id, stage_id,
+  // status, sort (updated_at | -updated_at), JSON cursor pagination. `view_id` applies a saved view
+  // for object "opportunity".
+  app.get<{ Querystring: { q?: string; company_id?: string; pipeline_id?: string; stage_id?: string; status?: string; sort?: string; limit?: string; cursor?: string; view_id?: string } }>(
+    "/opportunities",
+    { preHandler: listGate },
+    async (request, reply) => {
+      const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+      const fail = (path: string, message: string) =>
+        reply.status(copsErrorStatus("VALIDATION_FAILED")).send(
+          copsErrorBody({ code: "VALIDATION_FAILED", message, requestId, details: { fields: [{ path, code: "invalid", message }] } })
+        );
+
+      const workspaceId = request.workspaceId!;
+      const qs = request.query;
+      let filters: { q?: string; company_id?: string; pipeline_id?: string; stage_id?: string; status?: string } = {
+        q: qs.q, company_id: qs.company_id, pipeline_id: qs.pipeline_id, stage_id: qs.stage_id, status: qs.status,
+      };
+      if (qs.view_id) {
+        if (!UUID.test(qs.view_id)) return fail("view_id", "Invalid view id");
+        const [view] = await db
+          .select({ filters: copsSavedViews.filters, objectType: copsSavedViews.objectType })
+          .from(copsSavedViews)
+          .where(
+            and(
+              eq(copsSavedViews.id, qs.view_id),
+              eq(copsSavedViews.workspaceId, workspaceId),
+              or(eq(copsSavedViews.ownerUserId, request.userId!), eq(copsSavedViews.shared, true))
+            )
+          )
+          .limit(1);
+        if (!view) return fail("view_id", "Saved view not found");
+        if (view.objectType !== "opportunity") return fail("view_id", "Saved view is for another object type");
+        const f = view.filters as Record<string, unknown>;
+        const pick = (key: keyof typeof filters) => filters[key] ?? (typeof f[key] === "string" ? (f[key] as string) : undefined);
+        filters = { q: pick("q"), company_id: pick("company_id"), pipeline_id: pick("pipeline_id"), stage_id: pick("stage_id"), status: pick("status") };
+      }
+
+      if (qs.sort && qs.sort !== "updated_at" && qs.sort !== "-updated_at") return fail("sort", "sort must be updated_at or -updated_at");
+      const sortDesc = qs.sort !== "updated_at";
+      for (const key of ["company_id", "pipeline_id", "stage_id"] as const) {
+        if (filters[key] && !UUID.test(filters[key] as string)) return fail(key, `Invalid ${key}`);
+      }
+      const limit = Math.min(100, Math.max(1, Number.parseInt(qs.limit ?? "25", 10) || 25));
+
+      const conditions = [eq(deals.workspaceId, workspaceId)];
+      if (filters.q) conditions.push(sql`${deals.name} ilike ${"%" + filters.q.replace(/[%_]/g, "\$&") + "%"}`);
+      if (filters.company_id) conditions.push(eq(deals.companyId, filters.company_id));
+      if (filters.pipeline_id) conditions.push(eq(deals.pipelineId, filters.pipeline_id));
+      if (filters.stage_id) conditions.push(eq(deals.stageId, filters.stage_id));
+      if (filters.status) conditions.push(eq(deals.status, filters.status));
+
+      if (qs.cursor) {
+        let decoded: { v: string; id: string } | null = null;
+        try {
+          const parsed = JSON.parse(Buffer.from(qs.cursor, "base64url").toString("utf8")) as { v?: unknown; id?: unknown };
+          if (typeof parsed.v === "string" && typeof parsed.id === "string" && UUID.test(parsed.id)) decoded = { v: parsed.v, id: parsed.id };
+        } catch {
+          decoded = null;
+        }
+        if (!decoded) return fail("cursor", "Invalid cursor");
+        const { v: value, id } = decoded;
+        conditions.push(
+          sortDesc
+            ? or(sql`${deals.updatedAt} < ${value}::timestamptz`, and(sql`${deals.updatedAt} = ${value}::timestamptz`, lt(deals.id, id)))!
+            : or(sql`${deals.updatedAt} > ${value}::timestamptz`, and(sql`${deals.updatedAt} = ${value}::timestamptz`, gt(deals.id, id)))!
+        );
+      }
+
+      const rows = await db
+        .select({
+          id: deals.id,
+          name: deals.name,
+          companyId: deals.companyId,
+          pipelineId: deals.pipelineId,
+          stageId: deals.stageId,
+          status: deals.status,
+          amount: deals.amount,
+          currency: deals.currency,
+          updatedAt: deals.updatedAt,
+          updatedAtText: tsText(deals.updatedAt),
+        })
+        .from(deals)
+        .where(and(...conditions))
+        .orderBy(...(sortDesc ? [desc(deals.updatedAt), desc(deals.id)] : [asc(deals.updatedAt), asc(deals.id)]))
+        .limit(limit + 1);
+
+      const page = rows.slice(0, limit);
+      const last = page[page.length - 1];
+      const cursorOut = rows.length > limit && last
+        ? Buffer.from(JSON.stringify({ v: last.updatedAtText, id: last.id }), "utf8").toString("base64url")
+        : null;
+      return {
+        data: page.map((r) => ({
+          id: r.id,
+          name: r.name,
+          company_id: r.companyId,
+          pipeline_id: r.pipelineId,
+          stage_id: r.stageId,
+          status: r.status,
+          amount: r.amount,
+          currency: r.currency,
+          updated_at: r.updatedAt.toISOString(),
         })),
         next_cursor: cursorOut,
         applied_filters: filters,
