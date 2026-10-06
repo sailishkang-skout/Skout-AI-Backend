@@ -273,6 +273,30 @@ const BLOCKS = ["header", "contacts", "timeline", "next_actions", "risks"] as co
 type Block = (typeof BLOCKS)[number];
 const SUMMARY_LIMIT = 5;
 
+/**
+ * Field selection for list routes (`?fields=name,owner_id`). `id` is always returned so a client
+ * can still key rows; an unknown field is a 422 with the allowed list.
+ */
+const LIST_FIELDS = {
+  account: ["id", "name", "owner_id", "created_at"],
+  contact: ["id", "first_name", "last_name", "email", "company_id", "created_at"],
+  opportunity: ["id", "name", "company_id", "pipeline_id", "stage_id", "status", "amount", "currency", "updated_at"],
+  task: ["id", "title", "type", "status", "priority", "due_at", "assigned_to", "account_id", "created_at"],
+} as const;
+
+export function parseListFields(raw: string | undefined, allowed: readonly string[]): string[] | null | "invalid" {
+  if (!raw) return null;
+  const requested = raw.split(",").map((f) => f.trim()).filter(Boolean);
+  if (requested.some((f) => !allowed.includes(f))) return "invalid";
+  return Array.from(new Set(["id", ...requested]));
+}
+
+function pickFields<T extends Record<string, unknown>>(rows: T[], fields: string[] | null): Array<Partial<T>> {
+  if (!fields) return rows;
+  return rows.map((r) => Object.fromEntries(fields.map((f) => [f, r[f]])) as Partial<T>);
+}
+
+
 /** Postgres timestamp as text with microseconds, so a cursor never drops rows that share a millisecond. */
 const tsText = (col: unknown) => sql<string>`to_char(${col} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 
@@ -519,7 +543,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
   // GET /accounts — account list: q (name contains), owner_id, sort (name | -created_at), cursor
   // pagination, field select. `view_id` applies a saved view's filters for object "account".
   const listGate = requireAnyCopsPermission(["crm:read", "crm:manage"], (ws, user) => getMemberPermissions(db, ws, user));
-  app.get<{ Querystring: { q?: string; owner_id?: string; sort?: string; limit?: string; cursor?: string; view_id?: string } }>(
+  app.get<{ Querystring: { fields?: string; q?: string; owner_id?: string; sort?: string; limit?: string; cursor?: string; view_id?: string } }>(
     "/accounts",
     { preHandler: listGate },
     async (request, reply) => {
@@ -591,8 +615,10 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       const cursorOut = rows.length > limit && last
         ? Buffer.from(JSON.stringify({ v: sortDesc ? last.createdAtText : last.name, id: last.id }), "utf8").toString("base64url")
         : null;
+      const fieldList = parseListFields(request.query.fields, LIST_FIELDS.account);
+      if (fieldList === "invalid") return fail("fields", `fields must be from: ${LIST_FIELDS.account.join(", ")}`);
       return {
-        data: page.map((r) => ({ id: r.id, name: r.name, owner_id: r.ownerId, created_at: r.createdAt.toISOString() })),
+        data: pickFields(page.map((r) => ({ id: r.id, name: r.name, owner_id: r.ownerId, created_at: r.createdAt.toISOString() })), fieldList),
         next_cursor: cursorOut,
         applied_filters: filters,
       };
@@ -601,7 +627,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
 
   // GET /contacts — contact list: q (first/last name or email contains), company_id, sort
   // (name | -created_at), JSON cursor pagination. `view_id` applies a saved view for object "contact".
-  app.get<{ Querystring: { q?: string; company_id?: string; sort?: string; limit?: string; cursor?: string; view_id?: string } }>(
+  app.get<{ Querystring: { fields?: string; q?: string; company_id?: string; sort?: string; limit?: string; cursor?: string; view_id?: string } }>(
     "/contacts",
     { preHandler: listGate },
     async (request, reply) => {
@@ -694,15 +720,17 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       const cursorOut = rows.length > limit && last
         ? Buffer.from(JSON.stringify({ v: sortDesc ? last.createdAtText : last.nameKey, id: last.id }), "utf8").toString("base64url")
         : null;
+      const fieldList = parseListFields(request.query.fields, LIST_FIELDS.contact);
+      if (fieldList === "invalid") return fail("fields", `fields must be from: ${LIST_FIELDS.contact.join(", ")}`);
       return {
-        data: page.map((r) => ({
+        data: pickFields(page.map((r) => ({
           id: r.id,
           first_name: r.firstName,
           last_name: r.lastName,
           email: r.email,
           company_id: r.companyId,
           created_at: r.createdAt.toISOString(),
-        })),
+        })), fieldList),
         next_cursor: cursorOut,
         applied_filters: filters,
       };
@@ -712,7 +740,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
   // GET /opportunities — opportunity list: q (name contains), company_id, pipeline_id, stage_id,
   // status, sort (updated_at | -updated_at), JSON cursor pagination. `view_id` applies a saved view
   // for object "opportunity".
-  app.get<{ Querystring: { q?: string; company_id?: string; pipeline_id?: string; stage_id?: string; status?: string; sort?: string; limit?: string; cursor?: string; view_id?: string } }>(
+  app.get<{ Querystring: { fields?: string; q?: string; company_id?: string; pipeline_id?: string; stage_id?: string; status?: string; sort?: string; limit?: string; cursor?: string; view_id?: string } }>(
     "/opportunities",
     { preHandler: listGate },
     async (request, reply) => {
@@ -801,8 +829,10 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       const cursorOut = rows.length > limit && last
         ? Buffer.from(JSON.stringify({ v: last.updatedAtText, id: last.id }), "utf8").toString("base64url")
         : null;
+      const fieldList = parseListFields(request.query.fields, LIST_FIELDS.opportunity);
+      if (fieldList === "invalid") return fail("fields", `fields must be from: ${LIST_FIELDS.opportunity.join(", ")}`);
       return {
-        data: page.map((r) => ({
+        data: pickFields(page.map((r) => ({
           id: r.id,
           name: r.name,
           company_id: r.companyId,
@@ -812,7 +842,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
           amount: r.amount,
           currency: r.currency,
           updated_at: r.updatedAt.toISOString(),
-        })),
+        })), fieldList),
         next_cursor: cursorOut,
         applied_filters: filters,
       };
@@ -822,7 +852,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
   // GET /tasks — task list: q (title contains), type, status, assigned_to, account_id (tasks
   // related to a company), sort (created_at | -created_at), exact-precision JSON cursor, and
   // view_id for saved views (object "task").
-  app.get<{ Querystring: { q?: string; type?: string; status?: string; assigned_to?: string; account_id?: string; sort?: string; limit?: string; cursor?: string; view_id?: string } }>(
+  app.get<{ Querystring: { fields?: string; q?: string; type?: string; status?: string; assigned_to?: string; account_id?: string; sort?: string; limit?: string; cursor?: string; view_id?: string } }>(
     "/tasks",
     { preHandler: listGate },
     async (request, reply) => {
@@ -913,8 +943,10 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       const cursorOut = rows.length > limit && last
         ? Buffer.from(JSON.stringify({ v: last.createdAtText, id: last.id }), "utf8").toString("base64url")
         : null;
+      const fieldList = parseListFields(request.query.fields, LIST_FIELDS.task);
+      if (fieldList === "invalid") return fail("fields", `fields must be from: ${LIST_FIELDS.task.join(", ")}`);
       return {
-        data: page.map((r) => ({
+        data: pickFields(page.map((r) => ({
           id: r.id,
           title: r.title,
           type: r.type,
@@ -924,7 +956,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
           assigned_to: r.assignedTo,
           account_id: r.relatedEntityType === "company" ? r.relatedEntityId : null,
           created_at: r.createdAt.toISOString(),
-        })),
+        })), fieldList),
         next_cursor: cursorOut,
         applied_filters: filters,
       };
