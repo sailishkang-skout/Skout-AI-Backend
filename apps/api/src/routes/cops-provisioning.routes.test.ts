@@ -84,6 +84,10 @@ maybe("COPS-04 provisioning routes", () => {
     expect(second.statusCode).toBe(409);
     expect(second.json()).toMatchObject({ code: "ALREADY_PROVISIONED", details: { provisioning_id: data.id } });
 
+    const header = (await call("GET", `/accounts/${accountId}/360?fields=header`)).json().data.header;
+    expect(header).toMatchObject({ plan: "trial", provisioning: { workspace_id: data.provisioned_workspace_id, trial_ends_at: data.trial_ends_at } });
+    expect(header.lifecycle.account).toBe("trial");
+
     const list = await call("GET", `/accounts/${accountId}/provisioning`);
     expect(list.json().data.map((p: { id: string }) => p.id)).toEqual([data.id]);
   });

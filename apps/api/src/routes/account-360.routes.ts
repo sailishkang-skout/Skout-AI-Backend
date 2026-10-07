@@ -25,7 +25,7 @@ import { AccountLinkError, linkAccounts } from "../services/cops-account-relatio
  *   - Review date: revisit when apps/crm's internal API covers transactional writes
  */
 
-const { companies, contacts, deals, activities, signals, copsLifecycleStates, copsTimelineEvents, tasks, workspaceMembers, copsSavedViews, pipelineStages, copsAccountMerges, accountRelationships, crmNativeLinks } = schema;
+const { companies, contacts, deals, activities, signals, copsLifecycleStates, copsTimelineEvents, tasks, workspaceMembers, copsSavedViews, pipelineStages, copsAccountMerges, accountRelationships, crmNativeLinks, copsProvisionings } = schema;
 
 const LOW_CONFIDENCE_THRESHOLD = 0.5;
 
@@ -399,6 +399,23 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
             .limit(1);
           commercialState = row?.state ?? null;
         }
+        // COPS-04: the provisioned trial workspace (Bible p.28 provisioning fields).
+        const [provisioned] = await db
+          .select({
+            workspaceId: copsProvisionings.provisionedWorkspaceId,
+            request: copsProvisionings.request,
+            trialStartsAt: copsProvisionings.trialStartsAt,
+            trialEndsAt: copsProvisionings.trialEndsAt,
+          })
+          .from(copsProvisionings)
+          .where(
+            and(
+              eq(copsProvisionings.workspaceId, workspaceId),
+              eq(copsProvisionings.accountId, accountId),
+              eq(copsProvisionings.status, "succeeded")
+            )
+          )
+          .limit(1);
         data.header = {
           id: account.id,
           name: account.name,
@@ -407,7 +424,14 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
           health: life.health ?? null,
           commercial_state: commercialState,
           onboarding_pct: null,
-          plan: null,
+          plan: provisioned ? ((provisioned.request as { plan?: string }).plan ?? null) : null,
+          provisioning: provisioned
+            ? {
+                workspace_id: provisioned.workspaceId,
+                trial_starts_at: provisioned.trialStartsAt?.toISOString() ?? null,
+                trial_ends_at: provisioned.trialEndsAt?.toISOString() ?? null,
+              }
+            : null,
           renewal_at: null,
         };
       }
