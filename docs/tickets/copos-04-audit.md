@@ -50,3 +50,39 @@ Contract: `docs/api/copos-04-provisioning.openapi.yaml`.
 - Q1: Provisioning requires a fired gate. Is a trial without an opportunity ever allowed?
 - Q2: Credit categories (e.g. enrichment vs AI credits)?
 - Q3: Default trial length and trial credits (default 14 days / 500 credits, the signup amount).
+
+## Implementation status (2026-10-07)
+
+| Acceptance | Where it is proved |
+|---|---|
+| Same idempotency key returns the same result; no duplicate workspace/invite/wallet | `cops-provisioning.service.test.ts` (replay, concurrent replay, second key 409), `cops-provisioning.routes.test.ts` (201 then 200) |
+| Failure injected at each saga step resumes cleanly | `cops-provisioning.service.test.ts`: one test per step (7); the failed step rolls back, retry resumes from it, nothing runs twice, one WorkspaceProvisioned and one CreditsGranted |
+| No UPDATE/DELETE on ledger rows; duplicate adjustment idempotent; reconciliation detects corruption | `packages/db/src/credit-ledger.test.ts` (trigger, concurrent duplicate, drifted wallet), `credit-reconciliation.worker.test.ts` |
+| Latency measured against the 2-minute target | `duration_ms` + `within_target` on every provisioning (API and audit row); log warning above 120 s |
+
+Also built:
+
+- Wallet API: balance, ledger (cursor), 30-day usage, complimentary grant, manual adjustment (override audit, compensating `compensates_id`), trial extension. Finance-only for grant/adjust (`credits:adjust`).
+- Purchases: credits lines of a paid COPS-03 payment request become one `purchase` (key = payment request id), from the existing COPS-03 webhook hook and from the provisioning wallet step (payment before provisioning). Reuses the COPS-03 payment service; no new payment code.
+- 360 header: `plan` and `provisioning {workspace_id, trial_starts_at, trial_ends_at}`; account lifecycle starts at `trial`.
+- Daily reconciliation worker (03:15 UTC), records runs, logs mismatches as errors, never edits a wallet.
+- Tenant isolation test covers `cops_provisionings`, `cops_provisioning_steps`.
+
+Decisions taken while building:
+
+- Provision does not use the COPS-01 idempotency store: a stored 502 would block resume. The saga row's own key (sha256(account + Idempotency-Key)) does replay and resume. Other writes use the store, and grant/adjust also use the key as the ledger key.
+- Invite email is sent after the invite commits; a send failure is recorded on the step (`email_sent: false`), never fails provisioning. The accept link is on the provisioning for the rep.
+- `CreditsGranted` payload gained an optional `account_id` (additive) so grants reach the account timeline.
+- `duration_ms` is the wall time of the run that finished (a retry a day later is not counted as one slow provisioning).
+
+## Runbook: correct the credit ledger
+
+1. `GET /credits/reconciliation` (or the latest row in `credit_reconciliation_runs`) shows the wallet and the problem.
+2. Never edit `credit_transactions` or `credit_balances` by hand (the trigger refuses ledger edits).
+3. Post `POST /accounts/:id/credits/adjustments` with the signed amount, a reason, and `compensates_id` of the wrong entry. It is audited as an override.
+4. If only `credit_balances` drifted (ledger is right), the fix is an engineering ticket: the balance row is restored to the ledger sum in a reviewed migration, since the adjustment API moves both together.
+
+## Still open
+
+- Q1-Q3 above. Q4: refunds of a credit purchase (COPS-08 finance ops) are not reversed automatically yet; Finance posts an adjustment.
+- Frontend (separate PR).

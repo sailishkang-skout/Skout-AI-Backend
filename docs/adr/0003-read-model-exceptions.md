@@ -103,3 +103,16 @@ Proposals, contracts, payment requests and the provisioning gate are written in 
 with the opportunity ownership check, the audit row and the outbox event. The file carries the
 formal exception comment block. The COPS-03 tables themselves (proposals, contracts,
 payment_requests, commercial gate tables) are owned by apps/api.
+
+## COPS-04 additions (2026-10-07)
+
+| File | Tables touched | Read/write |
+|---|---|---|
+| `apps/api/src/services/cops-provisioning.service.ts` | companies, deals | read (account lock, opportunity ownership) |
+| `apps/api/src/services/cops-credits.service.ts` | deals | read (account of a paid payment request) |
+| `apps/api/src/routes/account-360.routes.ts` | cops_provisionings | read (header plan / trial) |
+
+Each provisioning step writes the new workspace, invite, entitlements or ledger row in the same
+transaction as its saga status, audit row and outbox event, so a step is all-or-nothing. An HTTP call
+into apps/crm cannot take part in that transaction. The saga, wallet and ledger tables are owned by
+apps/api and packages/db.
