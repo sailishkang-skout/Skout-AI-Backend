@@ -2,6 +2,17 @@ import { and, eq } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
 import { projectCopsEventToTimeline } from "@skout/shared";
 
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md (COPS-02 additions).
+ *   - Tables touched directly: deals - read only (resolve the account of an opportunity event) (owned by apps/crm)
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: The timeline projector runs inside the BullMQ event consumer; resolving an opportunity to its
+ *     account is one indexed read per event, and an HTTP round trip there would add latency and a
+ *     failure mode to event consumption (same rationale as the sweep workers in ADR 0003).
+ *   - Review date: revisit when apps/crm's internal API covers transactional writes
+ */
+
 const { companies, copsTimelineEvents, deals } = schema;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

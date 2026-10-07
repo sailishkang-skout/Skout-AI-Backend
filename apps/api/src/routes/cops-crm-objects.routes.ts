@@ -7,6 +7,17 @@ import { copsIdempotencyStore, requireAnyCopsPermission, writeCopsAudit } from "
 import { withCopsIdempotentReply } from "../services/cops-idempotent.js";
 import { writeContactChannel } from "../services/cops-contact-channels.service.js";
 
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md (COPS-02 additions).
+ *   - Tables touched directly: companies, contacts, deals, tasks - read only (existence checks for tags, opportunity contacts and contact channels) (owned by apps/crm)
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: Each write first checks that the referenced CRM record belongs to the caller's workspace. One
+ *     indexed lookup in the same request is cheaper and simpler than an HTTP call into apps/crm for
+ *     every tag or contact-channel write.
+ *   - Review date: revisit when apps/crm's internal API covers transactional writes
+ */
+
 const { companies, contacts, deals, tasks, tags, entityTags, opportunityContacts, contactChannels } = schema;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TAGGABLE = ["account", "contact", "opportunity", "task"] as const;

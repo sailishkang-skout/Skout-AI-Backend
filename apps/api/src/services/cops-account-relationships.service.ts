@@ -1,6 +1,16 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
 
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md (COPS-02 additions).
+ *   - Tables touched directly: companies - read only (same-workspace check before linking two accounts) (owned by apps/crm)
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: Linking two accounts must confirm both are in the caller's workspace inside the same
+ *     transaction that inserts the relationship.
+ *   - Review date: revisit when apps/crm's internal API covers transactional writes
+ */
+
 const { accountRelationships, companies } = schema;
 
 export class AccountLinkError extends Error {

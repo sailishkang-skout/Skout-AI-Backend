@@ -12,6 +12,19 @@ import { runLifecycleTransition } from "../services/cops-lifecycle.service.js";
 import { withCopsIdempotentReply } from "../services/cops-idempotent.js";
 import { AccountLinkError, linkAccounts } from "../services/cops-account-relationships.service.js";
 
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md (COPS-02 additions).
+ *   - Tables touched directly: companies, contacts, deals, tasks, activities, pipeline_stages - read + write (owned by apps/crm)
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: Customer 360 must load header and summaries in one request with an asserted query count
+ *     (COPS-02 acceptance), which an HTTP fan-out into apps/crm cannot meet. Stage changes, bulk
+ *     reassignment and account merge write the CRM row, the lifecycle state, the audit row and the
+ *     outbox event in one transaction; splitting the CRM write into an apps/crm call would lose that
+ *     atomicity.
+ *   - Review date: revisit when apps/crm's internal API covers transactional writes
+ */
+
 const { companies, contacts, deals, activities, signals, copsLifecycleStates, copsTimelineEvents, tasks, workspaceMembers, copsSavedViews, pipelineStages, copsAccountMerges, accountRelationships, crmNativeLinks } = schema;
 
 const LOW_CONFIDENCE_THRESHOLD = 0.5;
