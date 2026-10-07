@@ -280,7 +280,7 @@ const SUMMARY_LIMIT = 5;
 const LIST_FIELDS = {
   account: ["id", "name", "owner_id", "created_at", "updated_at"],
   contact: ["id", "first_name", "last_name", "email", "company_id", "created_at"],
-  opportunity: ["id", "name", "company_id", "pipeline_id", "stage_id", "status", "amount", "currency", "updated_at"],
+  opportunity: ["id", "name", "company_id", "pipeline_id", "stage_id", "status", "amount", "currency", "owner_id", "updated_at"],
   task: ["id", "title", "type", "status", "priority", "due_at", "assigned_to", "account_id", "related_entity_type", "related_entity_id", "created_at"],
 } as const;
 
@@ -487,59 +487,66 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
   // POST /accounts/bulk-reassign — set the owner of many accounts at once. Ids outside this
   // workspace are skipped, not an error. Every change writes one audit row (reason required).
   const bulkGate = requireAnyCopsPermission(["crm:write", "crm:manage"], (ws, user) => getMemberPermissions(db, ws, user));
-  app.post<{ Body: { ids?: string[]; owner_id?: string; reason?: string } }>(
-    "/accounts/bulk-reassign",
-    { preHandler: bulkGate },
-    withCopsIdempotentReply<{ Body: { ids?: string[]; owner_id?: string; reason?: string } }>(idempotency, async (request, reply) => {
-      const requestId = resolveCorrelationId(request.headers["x-request-id"]);
-      const fail = (path: string, message: string) =>
-        reply.status(copsErrorStatus("VALIDATION_FAILED")).send(
-          copsErrorBody({ code: "VALIDATION_FAILED", message, requestId, details: { fields: [{ path, code: "invalid", message }] } })
-        );
+  // One implementation for every bulk owner change (accounts and opportunities): owner must be a
+  // workspace member, reason required, other workspaces' ids skipped, updated_at bumped, one audit
+  // row per changed record, Idempotency-Key required.
+  type BulkGeneric = { Body: { ids?: string[]; owner_id?: string; reason?: string } };
+  const bulkReassignRoute = (path: string, table: typeof companies | typeof deals, entityType: "account" | "opportunity") =>
+    app.post<BulkGeneric>(
+      path,
+      { preHandler: bulkGate },
+      withCopsIdempotentReply<BulkGeneric>(idempotency, async (request, reply) => {
+        const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+        const fail = (field: string, message: string) =>
+          reply.status(copsErrorStatus("VALIDATION_FAILED")).send(
+            copsErrorBody({ code: "VALIDATION_FAILED", message, requestId, details: { fields: [{ path: field, code: "invalid", message }] } })
+          );
 
-      const ids = request.body?.ids ?? [];
-      const ownerId = request.body?.owner_id ?? "";
-      const reason = (request.body?.reason ?? "").trim();
-      if (!Array.isArray(ids) || ids.length < 1 || ids.length > 500) return fail("ids", "ids must contain 1-500 account ids");
-      if (ids.some((id) => !UUID.test(id))) return fail("ids", "every id must be a UUID");
-      if (!UUID.test(ownerId)) return fail("owner_id", "owner_id must be a UUID");
-      if (reason.length < 1 || reason.length > 500) return fail("reason", "reason is required (1-500 characters)");
+        const ids = request.body?.ids ?? [];
+        const ownerId = request.body?.owner_id ?? "";
+        const reason = (request.body?.reason ?? "").trim();
+        if (!Array.isArray(ids) || ids.length < 1 || ids.length > 500) return fail("ids", `ids must contain 1-500 ${entityType} ids`);
+        if (ids.some((id) => !UUID.test(id))) return fail("ids", "every id must be a UUID");
+        if (!UUID.test(ownerId)) return fail("owner_id", "owner_id must be a UUID");
+        if (reason.length < 1 || reason.length > 500) return fail("reason", "reason is required (1-500 characters)");
 
-      const workspaceId = request.workspaceId!;
-      const [member] = await db
-        .select({ userId: workspaceMembers.userId })
-        .from(workspaceMembers)
-        .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, ownerId)))
-        .limit(1);
-      if (!member) return fail("owner_id", "owner must be a member of this workspace");
+        const workspaceId = request.workspaceId!;
+        const [member] = await db
+          .select({ userId: workspaceMembers.userId })
+          .from(workspaceMembers)
+          .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, ownerId)))
+          .limit(1);
+        if (!member) return fail("owner_id", "owner must be a member of this workspace");
 
-      const updated = await db.transaction(async (tx) => {
-        const rows = await tx
-          .update(companies)
-          // An owner change is a change to the account: bump updated_at so it is no longer stale.
-          .set({ ownerId, updatedAt: new Date() })
-          .where(and(eq(companies.workspaceId, workspaceId), inArray(companies.id, ids)))
-          .returning({ id: companies.id });
-        for (const row of rows) {
-          await writeCopsAudit(tx, {
-            tenantId: workspaceId,
-            actor: { type: "user", id: request.userId ?? null },
-            entityType: "account",
-            entityId: row.id,
-            action: "owner.reassigned",
-            after: { owner_id: ownerId },
-            reason,
-            correlationId: requestId,
-            sourceChannel: "api",
-          });
-        }
-        return rows.map((r) => r.id);
-      });
+        const updated = await db.transaction(async (tx) => {
+          const rows = await tx
+            .update(table)
+            // An owner change is a change to the record: bump updated_at so it is no longer stale.
+            .set({ ownerId, updatedAt: new Date() })
+            .where(and(eq(table.workspaceId, workspaceId), inArray(table.id, ids)))
+            .returning({ id: table.id });
+          for (const row of rows) {
+            await writeCopsAudit(tx, {
+              tenantId: workspaceId,
+              actor: { type: "user", id: request.userId ?? null },
+              entityType,
+              entityId: row.id,
+              action: "owner.reassigned",
+              after: { owner_id: ownerId },
+              reason,
+              correlationId: requestId,
+              sourceChannel: "api",
+            });
+          }
+          return rows.map((r) => r.id);
+        });
 
-      const skipped = ids.filter((id) => !updated.includes(id));
-      return { data: { updated: updated.length, updated_ids: updated, skipped_ids: skipped } };
-    })
-  );
+        const skipped = ids.filter((id) => !updated.includes(id));
+        return { data: { updated: updated.length, updated_ids: updated, skipped_ids: skipped } };
+      })
+    );
+  bulkReassignRoute("/accounts/bulk-reassign", companies, "account");
+  bulkReassignRoute("/opportunities/bulk-reassign", deals, "opportunity");
 
   // GET /accounts — account list: q (name contains), owner_id, sort (name | -created_at), cursor
   // pagination, field select. `view_id` applies a saved view's filters for object "account".
@@ -741,7 +748,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
   // GET /opportunities — opportunity list: q (name contains), company_id, pipeline_id, stage_id,
   // status, sort (updated_at | -updated_at), JSON cursor pagination. `view_id` applies a saved view
   // for object "opportunity".
-  app.get<{ Querystring: { fields?: string; q?: string; company_id?: string; pipeline_id?: string; stage_id?: string; status?: string; sort?: string; limit?: string; cursor?: string; view_id?: string } }>(
+  app.get<{ Querystring: { fields?: string; owner_id?: string; q?: string; company_id?: string; pipeline_id?: string; stage_id?: string; status?: string; sort?: string; limit?: string; cursor?: string; view_id?: string } }>(
     "/opportunities",
     { preHandler: listGate },
     async (request, reply) => {
@@ -789,6 +796,10 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       if (filters.pipeline_id) conditions.push(eq(deals.pipelineId, filters.pipeline_id));
       if (filters.stage_id) conditions.push(eq(deals.stageId, filters.stage_id));
       if (filters.status) conditions.push(eq(deals.status, filters.status));
+      if (qs.owner_id) {
+        if (!UUID.test(qs.owner_id)) return fail("owner_id", "Invalid owner_id");
+        conditions.push(eq(deals.ownerId, qs.owner_id));
+      }
 
       if (qs.cursor) {
         let decoded: { v: string; id: string } | null = null;
@@ -817,6 +828,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
           status: deals.status,
           amount: deals.amount,
           currency: deals.currency,
+          ownerId: deals.ownerId,
           updatedAt: deals.updatedAt,
           updatedAtText: tsText(deals.updatedAt),
         })
@@ -842,6 +854,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
           status: r.status,
           amount: r.amount,
           currency: r.currency,
+          owner_id: r.ownerId,
           updated_at: r.updatedAt.toISOString(),
         })), fieldList),
         next_cursor: cursorOut,

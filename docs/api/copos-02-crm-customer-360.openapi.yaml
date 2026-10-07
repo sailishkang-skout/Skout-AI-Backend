@@ -115,6 +115,7 @@ components:
         status: { type: string }
         amount: { type: string, nullable: true, description: Decimal as a string. }
         currency: { type: string, nullable: true }
+        owner_id: { type: string, format: uuid, nullable: true }
         updated_at: { type: string, format: date-time }
     Task:
       type: object
@@ -367,6 +368,7 @@ paths:
         - { name: pipeline_id, in: query, schema: { type: string, format: uuid } }
         - { name: stage_id, in: query, schema: { type: string, format: uuid } }
         - { name: status, in: query, schema: { type: string } }
+        - { name: owner_id, in: query, schema: { type: string, format: uuid } }
         - { name: sort, in: query, schema: { type: string, enum: [updated_at, -updated_at] } }
         - { name: fields, in: query, description: 'Comma-separated fields to return; id is always included; unknown field is 422.', schema: { type: string } }
         - $ref: '#/components/parameters/Limit'
@@ -633,3 +635,22 @@ paths:
       responses:
         '200': { description: Updated }
         '422': { description: Missing reason, content: { application/json: { schema: { $ref: '#/components/schemas/FieldErrors' } } } }
+  /opportunities/bulk-reassign:
+    post:
+      summary: Set the owner of up to 500 opportunities; same rules as /accounts/bulk-reassign (implemented)
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids, owner_id, reason]
+              properties:
+                ids: { type: array, minItems: 1, maxItems: 500, items: { type: string, format: uuid } }
+                owner_id: { type: string, format: uuid }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        '200': { description: 'updated, updated_ids, skipped_ids' }
+        '422': { description: Validation, content: { application/json: { schema: { $ref: '#/components/schemas/FieldErrors' } } } }
