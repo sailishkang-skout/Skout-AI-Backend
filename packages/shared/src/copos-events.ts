@@ -48,7 +48,8 @@ export const ProvisioningRequestedPayload = z.object({
   trigger: z.enum(["signature", "payment", "trial_approval", "override", "policy_change"]),
 });
 export const WorkspaceProvisionedPayload = z.object({ account_id: id, workspace_id: id });
-export const CreditsGrantedPayload = z.object({ wallet_id: id, amount: z.number().int(), reason: z.string() });
+/** COPS-04: optional account_id (additive) so the grant reaches the account timeline. */
+export const CreditsGrantedPayload = z.object({ wallet_id: id, amount: z.number().int(), reason: z.string(), account_id: id.optional() });
 export const WelcomeEmailSentPayload = z.object({ account_id: id, email_send_id: id });
 export const SequenceEnrolledPayload = z.object({ account_id: id, enrollment_id: id, template_version: z.string() });
 export const TaskCreatedPayload = z.object({ task_id: id, account_id: id, task_type: z.string() });
