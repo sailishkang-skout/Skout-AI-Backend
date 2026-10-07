@@ -5,6 +5,7 @@ import { appendCopsEvent, createCopsEvent, normalizeEmail } from "@skout/shared"
 import { createLogger } from "@skout/observability";
 import { writeCopsAudit } from "./cops-platform.service.js";
 import { EntitlementsService } from "./entitlements.service.js";
+import { applyPaidCreditPurchases } from "./cops-credits.service.js";
 
 /**
  * COPS-04 trial provisioning saga (Bible p.39, Appendix H "provisioning partial failure").
@@ -497,9 +498,17 @@ const STEP_RUNNERS: Record<ProvisioningStepName, StepRunner> = {
 
   async credit_wallet(tx, run) {
     const workspaceId = requireWorkspace(run);
+    // Credits bought through a payment link before the workspace existed land now (Bible p.36).
+    const purchased = () =>
+      applyPaidCreditPurchases(tx, {
+        operatorWorkspaceId: run.operatorWorkspaceId,
+        accountId: run.accountId,
+        walletWorkspaceId: workspaceId,
+        requestId: run.requestId,
+      });
     if (run.request.credits === 0) {
       await tx.insert(creditBalances).values({ workspaceId, balance: 0 }).onConflictDoNothing();
-      return { result: { wallet_id: workspaceId, granted: 0 } };
+      return { result: { wallet_id: workspaceId, granted: 0, purchased: await purchased() } };
     }
     const reason = `Trial credits at provisioning (${run.request.plan})`;
     const posted = await postCreditTransaction(tx, {
@@ -539,7 +548,9 @@ const STEP_RUNNERS: Record<ProvisioningStepName, StepRunner> = {
         sourceChannel: "api",
       });
     }
-    return { result: { wallet_id: workspaceId, granted: run.request.credits, transaction_id: posted.transaction.id } };
+    return {
+      result: { wallet_id: workspaceId, granted: run.request.credits, transaction_id: posted.transaction.id, purchased: await purchased() },
+    };
   },
 
   async integration_placeholders(tx, run) {

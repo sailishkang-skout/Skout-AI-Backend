@@ -33,6 +33,7 @@ import {
   setGatePolicy,
 } from "../services/cops-gate.service.js";
 import type { PspAdapter } from "../services/psp/psp-adapter.js";
+import { applyPaidCreditPurchases } from "../services/cops-credits.service.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -412,6 +413,15 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
         actor: { type: "integration", id: psp.provider },
         requestId: paid.requestId,
       });
+      // COPS-04: credits bought on this deal go to the account's wallet once payment is confirmed.
+      const [deal] = await tx
+        .select({ companyId: schema.deals.companyId })
+        .from(schema.deals)
+        .where(and(eq(schema.deals.id, paid.opportunityId), eq(schema.deals.workspaceId, paid.workspaceId)))
+        .limit(1);
+      if (deal?.companyId) {
+        await applyPaidCreditPurchases(tx, { operatorWorkspaceId: paid.workspaceId, accountId: deal.companyId, requestId: paid.requestId });
+      }
     });
     if (result.kind === "unauthorized") {
       return reply.status(401).send(copsErrorBody({ code: "UNAUTHENTICATED", message: "Invalid webhook signature", requestId }));
