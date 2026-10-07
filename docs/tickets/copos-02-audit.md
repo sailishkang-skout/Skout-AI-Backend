@@ -54,3 +54,42 @@ needs a tenant-isolation test.
 - Confirm the mapping: `companies` = Account, `deals` = Opportunity, `pipelineStages` = Stage.
   Renaming to the Bible names is not required and would be a parallel system.
 - The Bible's default pipeline has seven stages; the existing seed should be checked against it.
+
+## Implementation status (branch feature/copos-02-internal-crm-360, backend and frontend)
+
+Not merged; for review.
+
+### Acceptance
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| CRM fully works with no external CRM connected | Done | Lists, 360, timeline, stage moves, merge and bulk actions use only Skout tables; verified with no CRM connection. |
+| Every Phase 1 event on the timeline; internal items hidden without permission | Done | Projector maps all Phase 1 events plus `TaskCompleted` and `ActivityRecorded`; every activity writer (CRM service, LinkedIn voice, automation writeback) emits through `appendActivityRecorded`. Internal notes need `crm:admin`; verified owner sees them, member does not. |
+| 360 header and summaries in one request, query count asserted | Done | `cops-account-360.query-count.test.ts`: same statement count with 1 and 21 contacts. |
+| Merge preserves external refs and history; tenant isolation test on every new table | Done | Merge keeps the survivor's link, moves other links, records colliding external ids in `cops_account_merges` and `audit_logs`. `cops-tenant-isolation.test.ts` covers all nine new tables. |
+| FE: kanban drag uses the transition service and shows 409 rules inline | Done | Board calls `POST /opportunities/:id/stage`; refused moves roll back and show the allowed next moves. Browser-verified. |
+
+### Not done (depends on other tickets)
+
+- 360 header `commercial_state`, `onboarding_pct`, `plan`, `renewal_at` are null until COPS-03, COPS-04 and COPS-05 provide the data.
+- Empty states follow the ticket's examples; the Appendix G wording itself is not in the repo and should be matched in review.
+
+### Decisions for the reviewer
+
+1. Event registry grew from 17 to 20 events: `LifecycleTransitioned` (COPS-01), `TaskCompleted` and `ActivityRecorded` (COPS-02).
+2. The existing Skout default pipeline has no Demo stage, so `Proposal` maps to the `demo` lifecycle state; any stage can override with `pipeline_stages.lifecycle_state`. New pipelines use the Bible stages.
+3. Tasks linked to an account use `related_entity_type = 'company'` (new value; existing code used contact, sequence_call_step, wrong_person_escalation).
+4. Internal notes can be written by any CRM user but read only with `crm:admin`.
+5. Two 360 endpoints exist: the page header still reads `/account-360/:companyId`; the new section reads `/accounts/:id/360`. Unifying them means refactoring the existing 697-line page; proposed as a follow-up PR.
+6. The idempotency fingerprint now covers method and path as well as the body (also fixed on the COPS-01 branch). Keys stored before the change replay as 422 inside their 24h window.
+
+### Rollout
+
+1. Run migrations 0103 to 0109 (verified on a freshly created empty database: all 111 migrations apply).
+2. Run `pnpm --filter @skout/db backfill-rbac` if not already run (COPS routes read `workspace_member_roles`).
+3. Run `pnpm --filter @skout/db backfill-deal-closed-status` (dry run), then with `-- --apply`: aligns status and lifecycle for deals already in closed stages.
+
+### Found outside this ticket
+
+- When the session refresh fails (409), the app stays on "Checking workspace setup…" instead of returning to sign-in. Existing auth behaviour; needs its own ticket.
+- Local runs with `AUTH_MODE` in `.env` turned stub-auth tests into 401s; the api and crm test setups now ignore an `AUTH_MODE` that only comes from `.env`.
