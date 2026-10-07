@@ -12,6 +12,8 @@ export const workspaces = pgTable("workspaces", {
   meetingBotAutoJoinDefault: boolean("meeting_bot_auto_join_default").notNull().default(false),
   /** Score threshold (0-100) above which a scored prospect is flagged as a promotion candidate. */
   dealPromotionThreshold: integer("deal_promotion_threshold").notNull().default(80),
+  /** Number of enrichment credits remaining for this workspace */
+  enrichmentCredits: integer("enrichment_credits").notNull().default(100),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

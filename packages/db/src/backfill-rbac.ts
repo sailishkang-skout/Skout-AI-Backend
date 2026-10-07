@@ -35,9 +35,10 @@ const PERMISSION_CATALOG: Array<{ key: string; description: string; category: st
   { key: "sequences:manage", description: "Create, edit, and archive outreach sequences.", category: "outreach" },
   { key: "sequences:send", description: "Enroll prospects and trigger sends in an active sequence.", category: "outreach" },
   { key: "crm:manage", description: "Create and edit CRM records (companies, deals, contacts).", category: "crm" },
-  { key: "automation:manage", description: "Create or modify activation rules and automations.", category: "automation" },
+  { key: "automation:manage", description: "Create or modify activation rules and automation.", category: "automation" },
   { key: "identity:review_merges", description: "Approve or reject identity-merge proposals.", category: "data" },
   { key: "data:manage_retention", description: "Create and manage data-retention classification rules.", category: "data" },
+  { key: "enrichment:capture", description: "Capture, view, and manage enrichment data including LinkedIn lead scraping.", category: "enrichment" },
   ...(["crm", "commercial", "legal", "billing", "credits", "onboarding", "tickets", "analytics", "admin"] as const).flatMap(
     (resource) =>
       (["read", "write", "send", "approve", "refund", "adjust", "export", "admin"] as const).map((verb) => ({
@@ -58,14 +59,14 @@ const SYSTEM_ROLES: Array<{ key: string; name: string; description: string; perm
   {
     key: "admin",
     name: "Admin",
-    description: "Manages team, automations, and day-to-day workspace operation. Cannot manage billing.",
+    description: "Manages team, automation, and day-to-day workspace operation. Cannot manage billing.",
     permissionKeys: PERMISSION_CATALOG.filter((p) => p.key !== "billing:manage").map((p) => p.key),
   },
   {
     key: "member",
     name: "Member",
-    description: "Runs outreach and works CRM records. Cannot manage team, billing, or automations.",
-    permissionKeys: ["sequences:send", "crm:manage"],
+    description: "Runs outreach and works CRM records. Cannot manage team, billing, or automation.",
+    permissionKeys: ["sequences:send", "crm:manage", "enrichment:capture"],
   },
   ...COPS_SYSTEM_ROLE_GRANTS.map((role) => ({
     key: role.key,

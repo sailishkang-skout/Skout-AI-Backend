@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { HttpError } from "@skout/auth";
+import type { FastifyRequest } from "fastify";
 
 const idParamSchema = z.object({ id: z.string().uuid() });
 
@@ -11,6 +13,20 @@ const idParamSchema = z.object({ id: z.string().uuid() });
  */
 export function parseIdParam(request: { params: unknown }): string {
   return idParamSchema.parse(request.params).id;
+}
+
+/**
+ * `authPlugin`'s preHandler hook always sets `request.workspaceId` from server-verified
+ * identity before any route handler runs (Clerk JWT / stub auth / invite session / admin
+ * import token) — a missing value here means that guarantee was somehow violated, not a
+ * normal "no tenant" case. Fail closed (401) instead of silently proceeding with a
+ * placeholder tenant id, which is what `request.workspaceId ?? "unknown"` used to do.
+ */
+export function requireWorkspaceId(request: FastifyRequest): string {
+  if (!request.workspaceId) {
+    throw new HttpError("Missing workspace context", 401);
+  }
+  return request.workspaceId;
 }
 
 export function errorResponse(message: string, statusCode = 400, details?: unknown) {
