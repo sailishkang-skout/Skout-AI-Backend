@@ -81,7 +81,7 @@ resource "google_compute_instance" "node" {
   boot_disk {
     initialize_params {
       image = "ubuntu-os-cloud/ubuntu-2404-lts-amd64"
-      size  = 60
+      size  = var.boot_disk_gb
       type  = "pd-balanced"
     }
   }
@@ -97,6 +97,16 @@ resource "google_compute_instance" "node" {
   metadata = {
     ssh-keys               = "${var.ssh_user}:${var.ssh_public_key}"
     block-project-ssh-keys = "true"
+  }
+
+  desired_status = var.running ? "RUNNING" : "TERMINATED"
+
+  scheduling {
+    provisioning_model          = var.spot ? "SPOT" : "STANDARD"
+    preemptible                 = var.spot
+    automatic_restart           = var.spot ? false : true
+    on_host_maintenance         = var.spot ? "TERMINATE" : "MIGRATE"
+    instance_termination_action = var.spot ? "STOP" : null
   }
 
   metadata_startup_script   = templatefile("${path.module}/startup.sh", { ssh_user = var.ssh_user })

@@ -28,11 +28,11 @@ for host in "$MANAGER_PUB" "$@"; do
   wait_for_docker "$host"
 done
 
-"${SSH[@]}" "$USER_AT@$MANAGER_PUB" "docker info --format '{{.Swarm.LocalNodeState}}' | grep -q active || docker swarm init --advertise-addr $MANAGER_PRIV"
+"${SSH[@]}" "$USER_AT@$MANAGER_PUB" "docker info --format '{{.Swarm.LocalNodeState}}' | grep -qx active || docker swarm init --advertise-addr $MANAGER_PRIV"
 TOKEN="$("${SSH[@]}" "$USER_AT@$MANAGER_PUB" docker swarm join-token -q worker)"
 
 for worker in "$@"; do
-  "${SSH[@]}" "$USER_AT@$worker" "docker info --format '{{.Swarm.LocalNodeState}}' | grep -q active || docker swarm join --token $TOKEN $MANAGER_PRIV:2377"
+  "${SSH[@]}" "$USER_AT@$worker" "docker info --format '{{.Swarm.LocalNodeState}}' | grep -qx active || docker swarm join --token $TOKEN $MANAGER_PRIV:2377"
 done
 
 MANAGER_ID="$("${SSH[@]}" "$USER_AT@$MANAGER_PUB" docker node ls --filter role=manager -q | head -n1)"

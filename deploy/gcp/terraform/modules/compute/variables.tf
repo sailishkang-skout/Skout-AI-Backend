@@ -7,3 +7,6 @@ variable "admin_cidrs" { type = list(string) }
 variable "machine_type" { type = string }
 variable "server_count" { type = number }
 variable "web_cidrs" { type = list(string) }
+variable "spot" { type = bool }
+variable "running" { type = bool }
+variable "boot_disk_gb" { type = number }

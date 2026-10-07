@@ -20,6 +20,9 @@ module "compute" {
   web_cidrs      = var.web_cidrs
   machine_type   = var.machine_type
   server_count   = var.server_count
+  spot           = var.spot
+  running        = var.running
+  boot_disk_gb   = var.boot_disk_gb
 
   depends_on = [google_project_service.apis]
 }
@@ -45,12 +48,14 @@ resource "google_sql_database_instance" "pg" {
     tier              = var.db_tier
     edition           = "ENTERPRISE"
     availability_type = "ZONAL"
-    disk_size         = 20
+    disk_size         = var.db_disk_gb
+    disk_type         = var.db_disk_type
     disk_autoresize   = true
+    activation_policy = var.running ? "ALWAYS" : "NEVER"
 
     backup_configuration {
-      enabled                        = true
-      point_in_time_recovery_enabled = true
+      enabled                        = var.db_backups
+      point_in_time_recovery_enabled = var.db_backups
     }
 
     ip_configuration {
