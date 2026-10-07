@@ -9,7 +9,6 @@ import postgres from "postgres";
 const url = process.env.COPS_TEST_DATABASE_URL;
 const maybe = url ? describe : describe.skip;
 
-const OWNER_USER = "6c118a84-68e0-49d2-a386-3fbf6741d4d1";
 
 const TABLES = [
   "account_relationships",
@@ -34,6 +33,8 @@ maybe("COPS-02 tables are tenant-isolated (Postgres)", () => {
 
   /** Writes one row into every COPS-02 table for workspace `ws`, with its own parents. */
   async function seed(ws: string, label: string) {
+    // The saved view needs an owner; create one so the test runs on any database.
+    const [owner] = await sql`insert into users (email) values (${"iso-owner-" + label + "-" + stamp + "@example.test"}) returning id`;
     const [co] = await sql`insert into companies (workspace_id, name) values (${ws}, ${label + " co"}) returning id`;
     const [co2] = await sql`insert into companies (workspace_id, name) values (${ws}, ${label + " co 2"}) returning id`;
     const [ct] = await sql`insert into contacts (workspace_id, company_id, first_name, email) values (${ws}, ${co.id}, ${label}, ${label + "." + stamp + "@example.test"}) returning id`;
@@ -48,7 +49,7 @@ maybe("COPS-02 tables are tenant-isolated (Postgres)", () => {
     await sql`insert into tags (workspace_id, name) values (${ws}, ${"tag-" + label + stamp})`;
     await sql`insert into custom_field_values (workspace_id, definition_id, object_id, value) values (${ws}, ${def.id}, ${co.id}, '"v"'::jsonb)`;
     await sql`insert into cops_timeline_events (workspace_id, account_id, type, occurred_at, actor_type, source_event_id, event_type, summary) values (${ws}, ${co.id}, 'workflow_action', now(), 'system', gen_random_uuid(), 'LifecycleTransitioned', ${label})`;
-    await sql`insert into cops_saved_views (workspace_id, owner_user_id, name, object_type) values (${ws}, ${OWNER_USER}, ${"view-" + label}, 'account')`;
+    await sql`insert into cops_saved_views (workspace_id, owner_user_id, name, object_type) values (${ws}, ${owner.id}, ${"view-" + label}, 'account')`;
     await sql`insert into cops_account_merges (workspace_id, survivor_id, duplicate_id, duplicate_name, reason) values (${ws}, ${co.id}, ${co2.id}, ${label}, 'iso check')`;
   }
 

@@ -39,7 +39,8 @@ maybe("COPS outbox survives a real process kill (Postgres)", () => {
   const dbUrl = url as string;
   const postgres = dbRequire("postgres") as typeof import("postgres");
   const sql = postgres(dbUrl, { max: 1 });
-  const tenant = "bb214f11-bdb4-4012-add2-dd471a078981";
+  // Own workspace so the test runs on any database (cops_outbox.tenant_id references workspaces).
+  let tenant = "";
   const runChild = (mode: "before-commit" | "after-commit", id: string) =>
     spawnSync(process.execPath, ["-e", childScript(mode, id, tenant)], {
       env: { ...process.env, COPS_TEST_DATABASE_URL: dbUrl },
@@ -48,6 +49,8 @@ maybe("COPS outbox survives a real process kill (Postgres)", () => {
     });
 
   it("kill before commit leaves neither the row nor an effect", async () => {
+    const [ws] = await sql`insert into workspaces (name, slug) values ('outbox kill test', ${"outbox-kill-" + Date.now() + "-" + Math.random()}) returning id`;
+    tenant = ws.id as string;
     const id = "11111111-1111-4111-8111-111111111111";
     await sql`delete from cops_outbox where id = ${id}`;
     const res = runChild("before-commit", id);

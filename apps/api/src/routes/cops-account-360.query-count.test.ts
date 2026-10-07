@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import type { FastifyInstance } from "fastify";
 import { loadEnv } from "../config/env.js";
@@ -14,8 +15,9 @@ const maybe = url ? describe : describe.skip;
 
 const postgres = createRequire(new URL("../../../../packages/db/package.json", import.meta.url))("postgres") as (url: string, options?: object) => any;
 
-const OWNER_EMAIL = "signup.tester1791282671@example.test";
-const WORKSPACE_ID = "bb214f11-bdb4-4012-add2-dd471a078981";
+// The stub user is provisioned (with its own workspace) on its first request, so this runs on any database.
+const OWNER_EMAIL = `query-count-${Date.now()}@example.test`;
+let WORKSPACE_ID = "";
 
 maybe("GET /accounts/:id/360 query count", () => {
   let app: FastifyInstance;
@@ -37,8 +39,22 @@ maybe("GET /accounts/:id/360 query count", () => {
         },
       }
     );
-    await app.ready();
     sql = postgres(url as string, { max: 1 });
+    // COPS routes read permissions from workspace_member_roles. On a database where the RBAC catalog
+    // was never seeded every request is 403, so seed it with the repo's idempotent backfill first.
+    const [roles] = await sql`select count(*)::int as n from roles where key = 'owner'`;
+    if (roles.n === 0) {
+      const backfill = spawnSync("npx", ["tsx", "src/backfill-rbac.ts"], {
+        cwd: new URL("../../../../packages/db/", import.meta.url),
+        env: { ...process.env, DATABASE_URL: url },
+        shell: true,
+        encoding: "utf8",
+      });
+      if (backfill.status !== 0) throw new Error(`backfill-rbac failed: ${backfill.stderr}`);
+    }
+    await app.ready();
+    const me = await app.inject({ method: "GET", url: "/api/v1/me", headers: { "x-stub-user-email": OWNER_EMAIL } });
+    WORKSPACE_ID = (me.json() as { workspaceId: string }).workspaceId;
   });
 
   afterAll(async () => {
