@@ -13,7 +13,7 @@ info:
 
     Money is integer minor units (e.g. paise, cents) with an ISO 4217 currency.
     No card data is accepted, stored or returned by any route.
-    Status: draft, pending reviewer sign-off.
+    Status: implemented on feature/copos-03-commercial (backend); pending reviewer sign-off.
 servers:
   - url: /api/v1
 security:

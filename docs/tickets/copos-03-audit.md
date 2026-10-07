@@ -92,3 +92,43 @@ read-only empty state until given a CustomerOps role. Owner and admin hold all k
 - Q3: Default commercial gate per deal type. Until answered, `signature+payment` everywhere and the
   admin can set per-type policies through the API.
 - Tax: a single tax % per version (no tax engine). Enough for Phase 1?
+
+## Implementation status (branch feature/copos-03-commercial, backend)
+
+Not merged; for review. Frontend (PR 5) follows as a separate PR against this contract.
+
+### Acceptance
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| Sent versions cannot be mutated (test + hash check) | Done | Migration 0111 triggers reject UPDATE of a sent proposal or contract version and any write to its line items; reads return `hash_valid`. `cops-commercial.routes.test.ts`: direct SQL UPDATE/INSERT rejected, a removed line flips `hash_valid` to false, edits create v2 and leave v1 byte-identical. |
+| Totals unit-tested | Done | `packages/shared/src/cops-commercial.test.ts`: line and header discount, tax, half-up rounding, 100% discount, large quantities, invalid input. |
+| No card data stored or logged | Done | Only ids, status and amounts are kept (`payment_provider_events.refs` has a fixed key set). `cops-payments.routes.test.ts` sends a webhook with card number, name, email and phone and asserts none of it is stored. |
+| Replayed webhook leaves state unchanged | Done | Dedupe on `X-Razorpay-Event-Id` inside the transaction; replay and three concurrent deliveries apply once. |
+| Bad signature -> 401 | Done | Missing secret, missing signature, wrong signature and a body changed after signing all return 401. |
+| Gate fires exactly once under duplicate/concurrent events | Done | `cops-gate.routes.test.ts`: four concurrent paid events on two links emit one `ProvisioningRequested`. |
+| Later payment failure does not delete the workspace | Done | Refund after firing keeps `fired_at` and the single event; nothing in this ticket deletes or suspends a workspace. |
+| Manual override needs permission + reason + audit | Done | 422 without reason, 403 for Sales, audit row with `is_override = true` and the reason, second override 409. |
+| FE: status visible from the account record without refresh | Pending (FE PR) | `GET /accounts/:id/commercial` and `/opportunities/:id/commercial` return everything in one call for polling. |
+
+### Decisions for the reviewer
+
+1. Event registry grew from 20 to 21 events: `ProvisioningRequested` (payload: opportunity_id, account_id, policy, trigger).
+2. Commercial events reach the account timeline through `opportunity_id` (the COPS-02 resolver now also maps
+   `opportunity_id` and the commercial lifecycle dimension to the deal's company). Before this, they were not projected.
+3. `runLifecycleTransition` takes an optional actor type so webhook-driven moves are recorded as the integration, not a user.
+4. Razorpay auth header and HMAC check moved to `services/psp/razorpay.ts` and are shared with credit-pack billing.
+   The credit-pack webhook keeps its existing behaviour (no secret = accepted, bad signature = 400); only the new
+   payment-link webhook enforces 401.
+5. Webhook events are matched by one identifier, most specific first (link id, then our id in the notes, then the
+   provider payment id), never an OR of several.
+6. Customer 360 `commercial_state` is the commercial lifecycle of the account's most recently updated open or won
+   opportunity, and is null for roles without `commercial:read` (Engineering).
+
+### Rollout
+
+1. Run migration 0111 (idempotent; verified on a freshly created empty database: all 113 migrations apply).
+2. Configure a second Razorpay webhook to `/api/v1/billing/webhooks/razorpay/payment-links` with events
+   `payment_link.paid`, `payment_link.expired`, `payment_link.cancelled`, `payment.failed`, `refund.processed`,
+   using `RAZORPAY_WEBHOOK_SECRET`. Without the secret every delivery is rejected with 401.
+3. Optional: set gate policies per deal type with `PUT /commercial/gate-policies` (default `signature+payment`).
