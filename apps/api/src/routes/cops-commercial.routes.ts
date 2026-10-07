@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import type { Db } from "@skout/db";
-import { BILLING_CADENCES, COMMERCIAL_LINE_KINDS, copsErrorBody, copsErrorStatus, resolveCorrelationId } from "@skout/shared";
+import { schema, type Db } from "@skout/db";
+import { and, eq, inArray, isNull } from "drizzle-orm";
+import { BILLING_CADENCES, COMMERCIAL_GATE_POLICIES, COMMERCIAL_LINE_KINDS, copsErrorBody, copsErrorStatus, resolveCorrelationId } from "@skout/shared";
 import { getMemberPermissions } from "@skout/auth";
 import { copsIdempotencyStore, requireAnyCopsPermission } from "../services/cops-platform.service.js";
 import { withCopsIdempotentReply, type CopsCapturingReply } from "../services/cops-idempotent.js";
@@ -11,6 +12,7 @@ import {
   CommercialError,
   createContract,
   createProposal,
+  getOpportunity,
   loadContracts,
   loadProposals,
   sendContract,
@@ -21,6 +23,15 @@ import {
 } from "../services/cops-commercial.service.js";
 import { createPaymentRequest, handlePaymentWebhook, loadPaymentRequests } from "../services/cops-payments.service.js";
 import { createRazorpayPaymentLinkAdapter } from "../services/psp/razorpay.js";
+import {
+  approveTrial,
+  evaluateGate,
+  getGate,
+  listGatePolicies,
+  overrideGate,
+  setDealType,
+  setGatePolicy,
+} from "../services/cops-gate.service.js";
 import type { PspAdapter } from "../services/psp/psp-adapter.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -78,6 +89,20 @@ const paymentRequestSchema = z
       .strict()
       .optional(),
     expires_at: z.string().datetime().optional(),
+  })
+  .strict();
+const gateReasonSchema = z.object({ reason: reasonText }).strict();
+const gatePolicySchema = z
+  .object({ deal_type: z.string().trim().min(1).max(64), policy: z.enum(COMMERCIAL_GATE_POLICIES) })
+  .strict();
+const dealTypeSchema = z
+  .object({
+    deal_type: z
+      .string()
+      .trim()
+      .min(1)
+      .max(64)
+      .refine((v) => v !== "*", "The value * is reserved for the workspace default"),
   })
   .strict();
 const contractStatusSchema = z
@@ -323,6 +348,14 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
             status: parsed.data.status,
             reason: parsed.data.reason,
             signedAt: parsed.data.signed_at ? new Date(parsed.data.signed_at) : undefined,
+          }, async (tx, contract) => {
+            await evaluateGate(tx, {
+              workspaceId: ctx.workspaceId,
+              opportunityId: contract.opportunityId,
+              trigger: "signature",
+              actor: { type: "user", id: ctx.userId },
+              requestId: ctx.requestId,
+            });
           });
           return (await loadContracts(db, ctx.workspaceId, { contractId: request.params.id }))[0];
         },
@@ -371,7 +404,15 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
   app.post("/billing/webhooks/razorpay/payment-links", async (request, reply) => {
     const requestId = resolveCorrelationId(request.headers["x-request-id"]);
     const rawBody = request.rawBody ?? JSON.stringify(request.body ?? {});
-    const result = await handlePaymentWebhook(db, psp, rawBody, request.headers);
+    const result = await handlePaymentWebhook(db, psp, rawBody, request.headers, async (tx, paid) => {
+      await evaluateGate(tx, {
+        workspaceId: paid.workspaceId,
+        opportunityId: paid.opportunityId,
+        trigger: "payment",
+        actor: { type: "integration", id: psp.provider },
+        requestId: paid.requestId,
+      });
+    });
     if (result.kind === "unauthorized") {
       return reply.status(401).send(copsErrorBody({ code: "UNAUTHENTICATED", message: "Invalid webhook signature", requestId }));
     }
@@ -380,5 +421,167 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
     }
     if (result.kind === "duplicate") return { ok: true, duplicate: true };
     return { ok: true, duplicate: false, outcome: result.outcome, status: result.status ?? null };
+  });
+
+  // ---- Provisioning gate ----
+
+  const approveGate = requireAnyCopsPermission(["commercial:approve"], perms);
+  const policyAdminGate = requireAnyCopsPermission(["commercial:admin"], perms);
+  const dealTypeGate = requireAnyCopsPermission(["commercial:write", "commercial:send"], perms);
+
+  app.get<{ Params: { id: string } }>("/opportunities/:id/gate", { preHandler: readGate }, async (request, reply) => {
+    const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+    const bad = checkId(reply as never, requestId, request.params.id);
+    if (bad) return bad;
+    return run(reply as never, requestId, () => getGate(db, request.workspaceId!, request.params.id), (gate) => ({ data: gate }));
+  });
+
+  const gateActions = [
+    ["/opportunities/:id/gate/approve-trial", approveTrial],
+    ["/opportunities/:id/gate/override", overrideGate],
+  ] as const;
+  for (const [path, action] of gateActions) {
+    app.post<IdBody>(
+      path,
+      { preHandler: approveGate },
+      withCopsIdempotentReply<IdBody>(idempotency, async (request, reply) => {
+        const ctx = ctxOf(request);
+        const bad = checkId(reply, ctx.requestId, request.params.id);
+        if (bad) return bad;
+        const parsed = gateReasonSchema.safeParse(request.body ?? {});
+        if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+        return run(
+          reply,
+          ctx.requestId,
+          async () => {
+            const result = await action(db, ctx, request.params.id, parsed.data.reason);
+            return { ...(await getGate(db, ctx.workspaceId, request.params.id)), fired_now: result.fired };
+          },
+          (gate) => ({ data: gate })
+        );
+      })
+    );
+  }
+
+  app.put<IdBody>(
+    "/opportunities/:id/deal-type",
+    { preHandler: dealTypeGate },
+    withCopsIdempotentReply<IdBody>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      const parsed = dealTypeSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(
+        reply,
+        ctx.requestId,
+        async () => {
+          await setDealType(db, ctx, request.params.id, parsed.data.deal_type);
+          return getGate(db, ctx.workspaceId, request.params.id);
+        },
+        (gate) => ({ data: gate })
+      );
+    })
+  );
+
+  app.get("/commercial/gate-policies", { preHandler: readGate }, async (request) => ({
+    data: await listGatePolicies(db, request.workspaceId!),
+  }));
+
+  app.put<PayBody>(
+    "/commercial/gate-policies",
+    { preHandler: policyAdminGate },
+    withCopsIdempotentReply<PayBody>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const parsed = gatePolicySchema.safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(
+        reply,
+        ctx.requestId,
+        async () => {
+          await setGatePolicy(db, ctx, parsed.data.deal_type, parsed.data.policy);
+          return listGatePolicies(db, ctx.workspaceId);
+        },
+        (policies) => ({ data: policies })
+      );
+    })
+  );
+
+  // ---- Summaries for the Commercial Desk and the Customer 360 Commercial tab. Clients poll these. ----
+
+  async function summaries(workspaceId: string, opportunityIds: string[]) {
+    if (opportunityIds.length === 0) return [];
+    const { deals, copsLifecycleStates } = schema;
+    const [opps, states, proposalRows, contractRows, paymentRows] = await Promise.all([
+      db
+        .select({ id: deals.id, name: deals.name, amount: deals.amount, currency: deals.currency, dealType: deals.dealType, status: deals.status })
+        .from(deals)
+        .where(and(eq(deals.workspaceId, workspaceId), inArray(deals.id, opportunityIds))),
+      db
+        .select({ entityId: copsLifecycleStates.entityId, state: copsLifecycleStates.state })
+        .from(copsLifecycleStates)
+        .where(
+          and(
+            eq(copsLifecycleStates.workspaceId, workspaceId),
+            eq(copsLifecycleStates.dimension, "commercial"),
+            inArray(copsLifecycleStates.entityId, opportunityIds)
+          )
+        ),
+      loadProposals(db, workspaceId, { opportunityIds }),
+      loadContracts(db, workspaceId, { opportunityIds }),
+      loadPaymentRequests(db, workspaceId, { opportunityIds }),
+    ]);
+    const gates = await Promise.all(opps.map((o) => getGate(db, workspaceId, o.id)));
+    return opps.map((o, i) => ({
+      opportunity: {
+        id: o.id,
+        name: o.name,
+        amount: o.amount,
+        currency: o.currency,
+        deal_type: o.dealType,
+        status: o.status,
+        commercial_state: states.find((st) => st.entityId === o.id)?.state ?? null,
+      },
+      proposals: proposalRows.filter((p) => p.opportunity_id === o.id),
+      contracts: contractRows.filter((c) => c.opportunity_id === o.id),
+      payment_requests: paymentRows.filter((p) => p.opportunity_id === o.id),
+      gate: gates[i],
+    }));
+  }
+
+  app.get<{ Params: { id: string } }>("/opportunities/:id/commercial", { preHandler: readGate }, async (request, reply) => {
+    const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+    const bad = checkId(reply as never, requestId, request.params.id);
+    if (bad) return bad;
+    return run(
+      reply as never,
+      requestId,
+      async () => {
+        await getOpportunity(db, request.workspaceId!, request.params.id);
+        return (await summaries(request.workspaceId!, [request.params.id]))[0];
+      },
+      (summary) => ({ data: summary })
+    );
+  });
+
+  app.get<{ Params: { id: string } }>("/accounts/:id/commercial", { preHandler: readGate }, async (request, reply) => {
+    const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+    const bad = checkId(reply as never, requestId, request.params.id);
+    if (bad) return bad;
+    const { deals } = schema;
+    // Open and won opportunities of the account; lost ones have no commercial work left.
+    const opps = await db
+      .select({ id: deals.id })
+      .from(deals)
+      .where(
+        and(
+          eq(deals.workspaceId, request.workspaceId!),
+          eq(deals.companyId, request.params.id),
+          isNull(deals.deletedAt),
+          inArray(deals.status, ["open", "won"])
+        )
+      )
+      .limit(20);
+    return { data: await summaries(request.workspaceId!, opps.map((o) => o.id)) };
   });
 }

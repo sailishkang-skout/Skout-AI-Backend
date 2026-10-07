@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { and, asc, desc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { schema, scopedTo, scopedById, type Db } from "@skout/db";
 import { appendCopsEvent, copsErrorBody, copsErrorStatus, createCopsEvent, resolveCorrelationId } from "@skout/shared";
@@ -377,13 +377,35 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       const data: Record<string, unknown> = {};
 
       if (want.has("header")) {
+        // COPS-03: commercial state of the account's most recently updated open or won opportunity.
+        // Commercial content is hidden from roles without commercial:read (e.g. Engineering, COPS-01).
+        let commercialState: string | null = null;
+        if (permissions.includes("commercial:read")) {
+          const [row] = await db
+            .select({ state: copsLifecycleStates.state })
+            .from(copsLifecycleStates)
+            .innerJoin(deals, eq(deals.id, copsLifecycleStates.entityId))
+            .where(
+              and(
+                eq(copsLifecycleStates.workspaceId, workspaceId),
+                eq(copsLifecycleStates.dimension, "commercial"),
+                eq(deals.workspaceId, workspaceId),
+                eq(deals.companyId, accountId),
+                isNull(deals.deletedAt),
+                inArray(deals.status, ["open", "won"])
+              )
+            )
+            .orderBy(desc(copsLifecycleStates.updatedAt))
+            .limit(1);
+          commercialState = row?.state ?? null;
+        }
         data.header = {
           id: account.id,
           name: account.name,
           owner_id: account.ownerId,
           lifecycle: { account: life.account ?? null, health: life.health ?? null, support: life.support ?? null },
           health: life.health ?? null,
-          commercial_state: null,
+          commercial_state: commercialState,
           onboarding_pct: null,
           plan: null,
           renewal_at: null,

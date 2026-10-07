@@ -40,6 +40,13 @@ export const ContractSentPayload = z.object({ contract_id: id, opportunity_id: i
 export const ContractSignedPayload = z.object({ contract_id: id, opportunity_id: id });
 export const PaymentRequestedPayload = z.object({ payment_request_id: id, opportunity_id: id });
 export const PaymentSucceededPayload = z.object({ payment_request_id: id, opportunity_id: id });
+/** Added for COPS-03: the commercial gate opened for an opportunity. Emitted once per opportunity. */
+export const ProvisioningRequestedPayload = z.object({
+  opportunity_id: id,
+  account_id: id.nullable(),
+  policy: z.enum(["trial_approval_only", "signature", "payment", "signature+payment", "manual_override"]),
+  trigger: z.enum(["signature", "payment", "trial_approval", "override", "policy_change"]),
+});
 export const WorkspaceProvisionedPayload = z.object({ account_id: id, workspace_id: id });
 export const CreditsGrantedPayload = z.object({ wallet_id: id, amount: z.number().int(), reason: z.string() });
 export const WelcomeEmailSentPayload = z.object({ account_id: id, email_send_id: id });
@@ -80,6 +87,7 @@ export const COPS_PHASE1_EVENTS = {
   ContractSigned: ContractSignedPayload,
   PaymentRequested: PaymentRequestedPayload,
   PaymentSucceeded: PaymentSucceededPayload,
+  ProvisioningRequested: ProvisioningRequestedPayload,
   WorkspaceProvisioned: WorkspaceProvisionedPayload,
   CreditsGranted: CreditsGrantedPayload,
   WelcomeEmailSent: WelcomeEmailSentPayload,

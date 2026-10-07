@@ -31,6 +31,7 @@ const TYPE_BY_EVENT: Record<string, CopsTimelineType> = {
   ContractSigned: "contract",
   PaymentRequested: "payment",
   PaymentSucceeded: "payment",
+  ProvisioningRequested: "provisioning",
   WorkspaceProvisioned: "provisioning",
   CreditsGranted: "provisioning",
   WelcomeEmailSent: "email",
