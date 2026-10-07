@@ -71,8 +71,9 @@ Not merged; for review.
 
 ### Not done (depends on other tickets)
 
+- Appendix G empty states are in place; the Onboarding and Engineering tab actions are disabled until COPS-05 and COPS-06 ship.
+
 - 360 header `commercial_state`, `onboarding_pct`, `plan`, `renewal_at` are null until COPS-03, COPS-04 and COPS-05 provide the data.
-- Empty states follow the ticket's examples; the Appendix G wording itself is not in the repo and should be matched in review.
 
 ### Decisions for the reviewer
 
@@ -93,3 +94,7 @@ Not merged; for review.
 
 - When the session refresh fails (409), the app stays on "Checking workspace setup…" instead of returning to sign-in. Existing auth behaviour; needs its own ticket.
 - Local runs with `AUTH_MODE` in `.env` turned stub-auth tests into 401s; the api and crm test setups now ignore an `AUTH_MODE` that only comes from `.env`.
+
+### Bible p.10 ADRs (COPS-01 open item)
+
+All six decisions are recorded: `docs/adr/0013` to `0018` (internal CRM canonical, external sync opt-in, e-sign delegated, PSP references only, event-driven idempotent replayable workflows, AI recommends humans approve).
