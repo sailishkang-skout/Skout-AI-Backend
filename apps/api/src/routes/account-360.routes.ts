@@ -278,7 +278,7 @@ const SUMMARY_LIMIT = 5;
  * can still key rows; an unknown field is a 422 with the allowed list.
  */
 const LIST_FIELDS = {
-  account: ["id", "name", "owner_id", "created_at"],
+  account: ["id", "name", "owner_id", "created_at", "updated_at"],
   contact: ["id", "first_name", "last_name", "email", "company_id", "created_at"],
   opportunity: ["id", "name", "company_id", "pipeline_id", "stage_id", "status", "amount", "currency", "updated_at"],
   task: ["id", "title", "type", "status", "priority", "due_at", "assigned_to", "account_id", "created_at"],
@@ -516,7 +516,8 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       const updated = await db.transaction(async (tx) => {
         const rows = await tx
           .update(companies)
-          .set({ ownerId })
+          // An owner change is a change to the account: bump updated_at so it is no longer stale.
+          .set({ ownerId, updatedAt: new Date() })
           .where(and(eq(companies.workspaceId, workspaceId), inArray(companies.id, ids)))
           .returning({ id: companies.id });
         for (const row of rows) {
@@ -604,7 +605,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       }
 
       const rows = await db
-        .select({ id: companies.id, name: companies.name, ownerId: companies.ownerId, createdAt: companies.createdAt, createdAtText: tsText(companies.createdAt) })
+        .select({ id: companies.id, name: companies.name, ownerId: companies.ownerId, createdAt: companies.createdAt, updatedAt: companies.updatedAt, createdAtText: tsText(companies.createdAt) })
         .from(companies)
         .where(and(...conditions))
         .orderBy(...(sortDesc ? [desc(companies.createdAt), desc(companies.id)] : [asc(companies.name), asc(companies.id)]))
@@ -618,7 +619,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       const fieldList = parseListFields(request.query.fields, LIST_FIELDS.account);
       if (fieldList === "invalid") return fail("fields", `fields must be from: ${LIST_FIELDS.account.join(", ")}`);
       return {
-        data: pickFields(page.map((r) => ({ id: r.id, name: r.name, owner_id: r.ownerId, created_at: r.createdAt.toISOString() })), fieldList),
+        data: pickFields(page.map((r) => ({ id: r.id, name: r.name, owner_id: r.ownerId, created_at: r.createdAt.toISOString(), updated_at: r.updatedAt.toISOString() })), fieldList),
         next_cursor: cursorOut,
         applied_filters: filters,
       };

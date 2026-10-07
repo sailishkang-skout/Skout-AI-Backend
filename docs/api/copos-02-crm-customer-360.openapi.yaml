@@ -92,6 +92,7 @@ components:
         name: { type: string }
         owner_id: { type: string, format: uuid, nullable: true }
         created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time, description: Last change to the account; the CRM screen flags accounts untouched for 30 days as stale. }
     Contact:
       type: object
       required: [id, first_name, created_at]
