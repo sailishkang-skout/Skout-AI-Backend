@@ -21,7 +21,7 @@ export const prospectActivations = pgTable(
       .notNull()
       .references(() => workspaces.id),
     prospectId: text("prospect_id").notNull(),
-    companyId: text("company_id").notNull(),
+    companyId: text("company_id"),
     snapshot: jsonb("snapshot").notNull().default({}),
     recordVersion: integer("record_version").notNull().default(1),
     /** R17.3 — the SDR this account/prospect is routed to for signal alerts. Null = no owner yet, alerts broadcast workspace-wide. */
