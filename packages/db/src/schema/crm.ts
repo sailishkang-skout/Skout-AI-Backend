@@ -63,12 +63,6 @@ export const contacts = pgTable(
     phone: text("phone"),
     title: text("title"),
     linkedinUrl: text("linkedin_url"),
-    /**
-     * Employment verification status for enrichment feature:
-     * - discovery_candidate: Sales Nav/company search card (unverified)
-     * - verified_employment: Public LinkedIn profile or strong evidence
-     */
-    employmentStatus: text("employment_status", { enum: ["discovery_candidate", "verified_employment"] }).default("discovery_candidate"),
     ownerId: uuid("owner_id").references(() => users.id, { onDelete: "set null" }),
     lifecycleStage: text("lifecycle_stage").notNull().default("lead"),
     sourceProspectId: text("source_prospect_id"),

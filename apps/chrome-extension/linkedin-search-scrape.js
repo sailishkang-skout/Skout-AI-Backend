@@ -1,19 +1,5 @@
 /** Scrape visible LinkedIn people search / Sales Nav result cards on the current page. */
 (function initLinkedInSearchScraper() {
-  // Enrichment capture bounds - hard compliance limits
-  // cSpell:ignore componentkey artdeco
-const CAPTURE_CAPS = { MAX_PAGES: 10, MAX_LEADS: 250 };
-let capturedPages = 0;
-let capturedLeads = 0;
-let captureStopped = false;
-
-function stopCapture() {
-  if (!captureStopped) {
-    captureStopped = true;
-    console.warn("[Skout] Capture limits reached - stopping further scraping");
-  }
-}
-
   function clean(text) {
     return (text || "").replace(/\s+/g, " ").trim();
   }
@@ -83,19 +69,9 @@ function stopCapture() {
   }
 
   function scrapeSearchResults() {
-    if (captureStopped) {
-      return { results: [], count: 0, pageUrl: location.href.split("?")[0], captureStopped: true };
-    }
-
     const root = document.querySelector("main") || document.body;
     const results = [];
     const seen = new Set();
-
-    // Increment page counter when scraping a new page
-    capturedPages++;
-    if (capturedPages >= CAPTURE_CAPS.MAX_PAGES) {
-      stopCapture();
-    }
 
     for (const link of root.querySelectorAll('a[href*="/in/"]')) {
       const linkedinUrl = normalizeProfileUrl(link.href);
@@ -118,25 +94,14 @@ function stopCapture() {
       );
       const { title, companyName } = parseSubtitle(subtitleEl?.textContent || "");
 
-      // Check lead limit before adding
-      if (capturedLeads >= CAPTURE_CAPS.MAX_LEADS) {
-        stopCapture();
-        break;
-      }
-
       seen.add(linkedinUrl);
       results.push({ fullName, title, companyName, linkedinUrl });
-      capturedLeads++;
     }
 
     return {
       results,
       count: results.length,
       pageUrl: location.href.split("?")[0],
-      captureStopped,
-      capturedPages,
-      capturedLeads,
-      caps: CAPTURE_CAPS
     };
   }
 
