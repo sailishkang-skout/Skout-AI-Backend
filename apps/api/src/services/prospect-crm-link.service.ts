@@ -15,7 +15,19 @@ export interface ProspectCrmLinkResult {
 }
 
 /**
- * §5.2 — resolve or create a native CRM contact linked via `contacts.sourceProspectId`.
+ * §5.2 / §7.1 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) — see
+ * docs/adr/0003-read-model-exceptions.md. ENR-01 adds prospect↔CRM identity linkage.
+ *   - Tables touched directly: contacts, companies (both owned by apps/crm)
+ *     - read AND write
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: ensure prospect↔CRM identity consistency during activation and sequence
+ *     enrollment; required for source-truth identity tracking and account domain matching.
+ *     Future: migrate to apps/crm's internal HTTP API surface (Wave 2+).
+ *   - Review date: revisit once apps/crm's internal API surface fully shipped (Wave 2)
+ */
+
+/**
+ * Resolve or create a native CRM contact linked via `contacts.sourceProspectId`.
  * Used on sequence enroll / activation so prospect↔CRM identity is not left open.
  * Best-effort: never throws to callers that wrap it.
  */

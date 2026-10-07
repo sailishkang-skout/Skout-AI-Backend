@@ -1,3 +1,14 @@
+/**
+ * §5.2 / §7.1 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) — see
+ * docs/adr/0003-read-model-exceptions.md. ENR-01 test fixtures access prospect↔CRM linkage.
+ *   - Tables touched directly: contacts, companies (both owned by apps/crm)
+ *     - read AND write
+ *   - Owning service: apps/crm (test fixtures require direct access for setup)
+ *   - Reason: integration tests validate enrichment→CRM identity linking end-to-end;
+ *     required to assert cross-service state consistency in test fixtures.
+ *   - Review date: revisit once apps/crm's internal API surface fully shipped (Wave 2)
+ */
+
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { schema } from "@skout/db";
 import { and, desc, eq, isNull, like } from "drizzle-orm";
