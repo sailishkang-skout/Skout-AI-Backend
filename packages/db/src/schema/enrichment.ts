@@ -1,3 +1,11 @@
+/**
+ * §1 Architecture Gate: Fork-state compliance
+ * These are all new workspace-isolated tables exclusively for enrichment functionality.
+ * They store derived enrichment data (not copies of canonical entities). All tables have
+ * workspace_id foreign keys with ON DELETE CASCADE for multi-tenancy isolation.
+ * New tables: enrichmentJobs, enrichmentBatches, enrichedPeople, enrichedCompanies,
+ * jobChangeEvents, enrichmentCampaigns, enrichmentAttempts, enrichmentResults
+ */
 import {
   boolean,
   integer,
