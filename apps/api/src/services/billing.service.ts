@@ -1,10 +1,10 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, scopedTo } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { createWorkspaceService } from "./workspace.service.js";
+import { razorpayAuthHeader, verifyRazorpayHmac } from "./psp/razorpay.js";
 
 const log = createLogger("billing.service");
 
@@ -59,10 +59,6 @@ export function isRazorpayEnabled(config: Env): boolean {
   return Boolean(config.RAZORPAY_KEY_ID && config.RAZORPAY_KEY_SECRET);
 }
 
-function basicAuth(keyId: string, keySecret: string): string {
-  return `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`;
-}
-
 export function createBillingService(db: Db, config: Env) {
   const workspaceSvc = createWorkspaceService(db);
   const packs = parseCreditPacks(config.RAZORPAY_CREDIT_PACKS_JSON);
@@ -93,7 +89,7 @@ export function createBillingService(db: Db, config: Env) {
       const res = await fetch("https://api.razorpay.com/v1/orders", {
         method: "POST",
         headers: {
-          Authorization: basicAuth(config.RAZORPAY_KEY_ID!, config.RAZORPAY_KEY_SECRET!),
+          Authorization: razorpayAuthHeader(config.RAZORPAY_KEY_ID!, config.RAZORPAY_KEY_SECRET!),
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -148,12 +144,7 @@ export function createBillingService(db: Db, config: Env) {
     verifyWebhookSignature(rawBody: string, signature: string): boolean {
       const secret = config.RAZORPAY_WEBHOOK_SECRET;
       if (!secret) return true;
-      const expected = createHmac("sha256", secret).update(rawBody).digest("hex");
-      try {
-        return timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
-      } catch {
-        return false;
-      }
+      return verifyRazorpayHmac(secret, rawBody, signature);
     },
 
     /**
@@ -163,14 +154,7 @@ export function createBillingService(db: Db, config: Env) {
     verifyCheckoutSignature(orderId: string, paymentId: string, signature: string): boolean {
       const secret = config.RAZORPAY_KEY_SECRET;
       if (!secret) return false;
-      const expected = createHmac("sha256", secret)
-        .update(`${orderId}|${paymentId}`)
-        .digest("hex");
-      try {
-        return timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
-      } catch {
-        return false;
-      }
+      return verifyRazorpayHmac(secret, `${orderId}|${paymentId}`, signature);
     },
 
     /**

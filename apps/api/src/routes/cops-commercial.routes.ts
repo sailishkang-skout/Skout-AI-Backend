@@ -19,6 +19,9 @@ import {
   setProposalStatus,
   type CommercialContext,
 } from "../services/cops-commercial.service.js";
+import { createPaymentRequest, handlePaymentWebhook, loadPaymentRequests } from "../services/cops-payments.service.js";
+import { createRazorpayPaymentLinkAdapter } from "../services/psp/razorpay.js";
+import type { PspAdapter } from "../services/psp/psp-adapter.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -63,6 +66,20 @@ const createContractSchema = documentSchema
     proposal_id: z.string().regex(UUID).optional(),
   })
   .strict();
+const paymentRequestSchema = z
+  .object({
+    opportunity_id: z.string().regex(UUID, "Invalid id"),
+    proposal_id: z.string().regex(UUID, "Invalid id").optional(),
+    amount_minor: z.number().int().min(100).max(1_000_000_000_000).optional(),
+    currency: z.string().regex(/^[A-Z]{3}$/, "currency must be an ISO 4217 code").optional(),
+    description: z.string().trim().max(2000).optional(),
+    customer: z
+      .object({ name: z.string().trim().max(200).optional(), email: z.string().email().optional(), contact: z.string().trim().max(20).optional() })
+      .strict()
+      .optional(),
+    expires_at: z.string().datetime().optional(),
+  })
+  .strict();
 const contractStatusSchema = z
   .object({ status: z.enum(["signed", "declined", "expired"]), reason: reasonText, signed_at: z.string().datetime().optional() })
   .strict();
@@ -73,8 +90,9 @@ type Reply = CopsCapturingReply;
  * COPS-03 proposals and contracts (status-tracking scope). Contract: docs/api/copos-03-commercial.openapi.yaml.
  * Every write needs an Idempotency-Key; reads need commercial:read. Sent versions are immutable.
  */
-export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db }) {
+export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db; psp?: PspAdapter }) {
   const { db } = opts;
+  const psp = opts.psp ?? createRazorpayPaymentLinkAdapter(app.config);
   const perms = (ws: string, user: string) => getMemberPermissions(db, ws, user);
   const readGate = requireAnyCopsPermission(["commercial:read"], perms);
   const contractReadGate = requireAnyCopsPermission(["commercial:read", "legal:read"], perms);
@@ -82,6 +100,8 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db 
   const contractWriteGate = requireAnyCopsPermission(["commercial:write", "legal:write", "commercial:send"], perms);
   const sendGate = requireAnyCopsPermission(["commercial:send"], perms);
   const statusGate = requireAnyCopsPermission(["commercial:write", "legal:write"], perms);
+  const paymentWriteGate = requireAnyCopsPermission(["commercial:send", "billing:write"], perms);
+  const paymentReadGate = requireAnyCopsPermission(["commercial:read", "billing:read"], perms);
   const idempotency = copsIdempotencyStore(db);
 
   const ctxOf = (request: { workspaceId?: string; userId?: string; headers: Record<string, unknown> }): CommercialContext => ({
@@ -310,4 +330,55 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db 
       );
     })
   );
+
+  // ---- Payment requests ----
+
+  type PayBody = { Body: unknown };
+  app.post<PayBody>(
+    "/payment-requests",
+    { preHandler: paymentWriteGate },
+    withCopsIdempotentReply<PayBody>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const parsed = paymentRequestSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(
+        reply,
+        ctx.requestId,
+        async () => {
+          const id = await createPaymentRequest(db, psp, ctx, parsed.data);
+          return (await loadPaymentRequests(db, ctx.workspaceId, { id }))[0];
+        },
+        (paymentRequest) => reply.status(201).send({ data: paymentRequest })
+      );
+    })
+  );
+
+  app.get<{ Params: { id: string } }>("/payment-requests/:id", { preHandler: paymentReadGate }, async (request, reply) => {
+    const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+    const bad = checkId(reply as never, requestId, request.params.id);
+    if (bad) return bad;
+    const [paymentRequest] = await loadPaymentRequests(db, request.workspaceId!, { id: request.params.id });
+    if (!paymentRequest) {
+      return reply.status(404).send(copsErrorBody({ code: "NOT_FOUND", message: "Payment request not found", requestId }));
+    }
+    return { data: paymentRequest };
+  });
+
+  /**
+   * Provider webhook. Public under /billing/webhooks/ (plugins/auth.ts) and authenticated by the
+   * HMAC signature instead: missing secret, missing or bad signature -> 401.
+   */
+  app.post("/billing/webhooks/razorpay/payment-links", async (request, reply) => {
+    const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+    const rawBody = request.rawBody ?? JSON.stringify(request.body ?? {});
+    const result = await handlePaymentWebhook(db, psp, rawBody, request.headers);
+    if (result.kind === "unauthorized") {
+      return reply.status(401).send(copsErrorBody({ code: "UNAUTHENTICATED", message: "Invalid webhook signature", requestId }));
+    }
+    if (result.kind === "bad_request") {
+      return reply.status(400).send(copsErrorBody({ code: "VALIDATION_FAILED", message: "Unreadable webhook body", requestId }));
+    }
+    if (result.kind === "duplicate") return { ok: true, duplicate: true };
+    return { ok: true, duplicate: false, outcome: result.outcome, status: result.status ?? null };
+  });
 }
