@@ -30,6 +30,9 @@ const TABLES = [
   "payment_provider_events",
   "commercial_gate_policies",
   "commercial_gates",
+  // COPS-04
+  "cops_provisionings",
+  "cops_provisioning_steps",
 ] as const;
 
 maybe("COPS-02 tables are tenant-isolated (Postgres)", () => {
@@ -70,6 +73,8 @@ maybe("COPS-02 tables are tenant-isolated (Postgres)", () => {
     await sql`insert into payment_provider_events (workspace_id, provider, provider_event_id, event_type, payment_request_id, outcome) values (${ws}, 'test', ${"evt_" + label + stamp}, 'payment_link.paid', ${pq.id}, 'applied')`;
     await sql`insert into commercial_gate_policies (workspace_id, deal_type, policy) values (${ws}, '*', 'payment')`;
     await sql`insert into commercial_gates (workspace_id, opportunity_id) values (${ws}, ${deal.id})`;
+    const [pv2] = await sql`insert into cops_provisionings (workspace_id, account_id, opportunity_id, idempotency_key, request) values (${ws}, ${co.id}, ${deal.id}, ${"iso-" + label + stamp}, '{}'::jsonb) returning id`;
+    await sql`insert into cops_provisioning_steps (workspace_id, provisioning_id, step, position) values (${ws}, ${pv2.id}, 'create_workspace', 1)`;
   }
 
   it("each table holds rows for its own workspace only", async () => {
