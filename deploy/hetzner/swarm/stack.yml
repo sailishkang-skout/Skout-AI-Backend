@@ -104,7 +104,7 @@ services:
     env_file: ../env/scraper-orchestrator.env
     deploy:
       update_config: { failure_action: rollback, order: start-first }
-      replicas: ${OUTBOUND_REPLICAS:-0}
+      replicas: ${SCRAPER_REPLICAS:-0}
       resources: { limits: { memory: 512M } }
 
   scraper-cleaner:

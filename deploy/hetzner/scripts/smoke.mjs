@@ -48,15 +48,24 @@ await check("api -> email-intel-api over overlay DNS", () => internal("http://em
 await check("api -> warmup-tool-api over overlay DNS", () => internal("http://warmup-tool-api:3010/health"));
 await check("api -> clickhouse over overlay DNS", () => internal("http://clickhouse:8123/ping"));
 
-// Staging keeps outbound workers off. The deploy workflow passes the replica count it asked for, so a
-// deliberate non-zero deploy (e.g. production cutover) is checked against that number instead.
-const expected = process.env.EXPECT_OUTBOUND_REPLICAS || "0";
-await check(`outbound workers are at ${expected}/${expected}`, () => {
+// Outbound workers (email-intel worker, warm-up workers) stay off in staging; the scraper orchestrator has its
+// own switch. The deploy workflow passes the replica counts it asked for, so a deliberate change is checked
+// against those numbers.
+const expectedOutbound = process.env.EXPECT_OUTBOUND_REPLICAS || "0";
+const expectedScraper = process.env.EXPECT_SCRAPER_REPLICAS || "0";
+await check(`workers at expected replicas (outbound ${expectedOutbound}, scraper ${expectedScraper})`, () => {
   const out = sh(["service", "ls", "--format", "{{.Name}} {{.Replicas}}"]);
-  const outbound = ["scraper-orchestrator", "email-intel-worker", "warmup-tool-worker", "warmup-tool-inbound", "warmup-tool-classification", "warmup-tool-policy"];
-  for (const name of outbound) {
+  const want = {
+    "scraper-orchestrator": expectedScraper,
+    "email-intel-worker": expectedOutbound,
+    "warmup-tool-worker": expectedOutbound,
+    "warmup-tool-inbound": expectedOutbound,
+    "warmup-tool-classification": expectedOutbound,
+    "warmup-tool-policy": expectedOutbound,
+  };
+  for (const [name, n] of Object.entries(want)) {
     const line = out.split("\n").find((l) => l.startsWith(`skout_${name} `));
-    if (!line || !line.includes(` ${expected}/${expected}`)) throw new Error(`${name} not at ${expected}/${expected}: ${line}`);
+    if (!line || !line.includes(` ${n}/${n}`)) throw new Error(`${name} not at ${n}/${n}: ${line}`);
   }
 });
 

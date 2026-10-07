@@ -8,8 +8,11 @@ on:
   workflow_dispatch:
     inputs:
       outbound_replicas:
-        description: "Replicas for outbound workers (scrapers, email-intel worker, warm-up workers). Keep 0 for staging."
+        description: "Replicas for the email-intel worker and the warm-up workers (they send/poll real mail). Keep 0 for staging."
         default: "0"
+      scraper_replicas:
+        description: "Replicas for the scraper orchestrator (company-web, OpenCorporates, SEC EDGAR, ...). 1 = on, 0 = off."
+        default: "1"
 
 permissions:
   contents: read
@@ -162,6 +165,7 @@ jobs:
           ACME_EMAIL: ${{ vars.ACME_EMAIL }}
           DD_API_KEY: ${{ secrets.DD_API_KEY }}
           OUTBOUND_REPLICAS: ${{ inputs.outbound_replicas || '0' }}
+          SCRAPER_REPLICAS: ${{ inputs.scraper_replicas || '1' }}
         run: |
           set -euo pipefail
           # Swarm configs are immutable, so their names carry a content hash (see swarm/stack.yml).
@@ -188,6 +192,7 @@ jobs:
       - name: Smoke test
         env:
           EXPECT_OUTBOUND_REPLICAS: ${{ inputs.outbound_replicas || '0' }}
+          EXPECT_SCRAPER_REPLICAS: ${{ inputs.scraper_replicas || '1' }}
         run: node deploy/hetzner/scripts/smoke.mjs "${{ vars.STAGING_URL }}"
 
       - name: Roll back on failure
