@@ -1123,7 +1123,10 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
               occurredAt: new Date(),
             });
           }
-          await tx.update(deals).set({ stageId: stage.id, updatedAt: new Date() }).where(eq(deals.id, deal.id));
+          // Keep the deal status in step with the lifecycle: reports, the won filter and the open
+          // pipeline summary read deals.status, which a stage move alone used to leave as "open".
+          const status = state === "won" ? "won" : state === "lost" ? "lost" : "open";
+          await tx.update(deals).set({ stageId: stage.id, status, updatedAt: new Date() }).where(eq(deals.id, deal.id));
           await writeCopsAudit(tx, {
             tenantId: workspaceId,
             actor: { type: "user", id: request.userId ?? null },
