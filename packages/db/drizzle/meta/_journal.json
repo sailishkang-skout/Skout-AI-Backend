@@ -792,6 +792,13 @@
       "when": 1794200000000,
       "tag": "0111_cops03_commercial",
       "breakpoints": true
+    },
+    {
+      "idx": 113,
+      "version": "7",
+      "when": 1794300000000,
+      "tag": "0112_cops04_provisioning_ledger",
+      "breakpoints": true
     }
   ]
 }

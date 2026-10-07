@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
-import { schema, scopedTo, scopedById } from "@skout/db";
+import { schema, scopedTo, scopedById, postCreditTransaction, CreditLedgerError, type CreditKind } from "@skout/db";
 import type { FieldResult, AttemptLog, AttemptStatus } from "@skout/pal";
 import {
   InsufficientCreditsError,
@@ -16,7 +16,6 @@ import { trackCreditAdd, trackCreditSpend } from "../analytics-events.js";
 
 const {
   creditBalances,
-  creditTransactions,
   prospectActivations,
   lists,
   listMembers,
@@ -39,23 +38,42 @@ export class DbStore implements EnrichmentStore {
     return row?.balance ?? 0;
   }
 
+  /** Positive amounts are refunds of earlier spend (e.g. a failed export) unless they are grants. */
   async addCredits(workspaceId: string, amount: number, action: string, ref?: string): Promise<number> {
-    const current = await this.getCreditBalance(workspaceId);
-    const next = current + amount;
-    await this.db
-      .insert(creditBalances)
-      .values({ workspaceId, balance: next })
-      .onConflictDoUpdate({ target: creditBalances.workspaceId, set: { balance: next, updatedAt: new Date() } });
-    await this.db.insert(creditTransactions).values({ workspaceId, amount, action, referenceId: ref });
+    if (amount === 0) return this.getCreditBalance(workspaceId);
+    const kind: CreditKind = amount < 0 ? "consume" : action.endsWith("_refund") ? "refund" : "grant";
+    const { balance } = await postCreditTransaction(this.db, {
+      workspaceId,
+      amount,
+      kind,
+      action,
+      referenceId: ref ?? null,
+      allowNegativeBalance: true,
+    });
     if (amount > 0) trackCreditAdd(workspaceId, amount, action, ref);
     else if (amount < 0) trackCreditSpend(workspaceId, Math.abs(amount), action, ref);
-    return next;
+    return balance;
   }
 
+  /** The balance check and the write happen under the wallet lock, so two spends cannot overdraw. */
   async deductCredits(workspaceId: string, amount: number, action: string, ref?: string): Promise<number> {
-    const current = await this.getCreditBalance(workspaceId);
-    if (current < amount) throw new InsufficientCreditsError(amount, current);
-    return this.addCredits(workspaceId, -amount, action, ref);
+    if (amount <= 0) return this.getCreditBalance(workspaceId);
+    try {
+      const { balance } = await postCreditTransaction(this.db, {
+        workspaceId,
+        amount: -amount,
+        kind: "consume",
+        action,
+        referenceId: ref ?? null,
+      });
+      trackCreditSpend(workspaceId, amount, action, ref);
+      return balance;
+    } catch (error) {
+      if (error instanceof CreditLedgerError && error.code === "INSUFFICIENT_CREDITS") {
+        throw new InsufficientCreditsError(amount, Number(error.details.balance ?? 0));
+      }
+      throw error;
+    }
   }
 
   async upsertActivation(
