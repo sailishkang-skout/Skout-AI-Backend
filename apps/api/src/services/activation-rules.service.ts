@@ -254,8 +254,8 @@ async function buildSnapshotForActivate(
     const snap = existing.snapshot as Record<string, unknown>;
     return {
       prospectId,
-      companyId: existing.companyId,
-      companyDomain: typeof snap.companyDomain === "string" ? snap.companyDomain : existing.companyId,
+      companyId: existing.companyId ?? prospectId,
+      companyDomain: typeof snap.companyDomain === "string" ? snap.companyDomain : existing.companyId ?? prospectId,
       fullName: typeof snap.fullName === "string" ? snap.fullName : undefined,
       email: typeof snap.email === "string" ? snap.email : undefined,
       title: typeof snap.title === "string" ? snap.title : undefined,

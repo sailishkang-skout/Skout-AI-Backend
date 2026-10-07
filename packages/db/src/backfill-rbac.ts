@@ -38,6 +38,11 @@ const PERMISSION_CATALOG: Array<{ key: string; description: string; category: st
   { key: "identity:review_merges", description: "Approve or reject identity-merge proposals.", category: "data" },
   { key: "data:manage_retention", description: "Create and manage data-retention classification rules.", category: "data" },
   { key: "enrichment:capture", description: "Capture, view, and manage enrichment data including LinkedIn lead scraping.", category: "enrichment" },
+  { key: "enrichment:read", description: "Read captured people, companies, evidence, and change history.", category: "enrichment" },
+  { key: "enrichment:enrich", description: "Run or retry enrichment jobs.", category: "enrichment" },
+  { key: "enrichment:export", description: "Export workspace enrichment data.", category: "enrichment" },
+  { key: "enrichment:delete", description: "Delete workspace enrichment data.", category: "enrichment" },
+  { key: "enrichment:admin", description: "Manage enrichment provider connections and settings.", category: "enrichment" },
 ];
 
 const SYSTEM_ROLES: Array<{ key: string; name: string; description: string; permissionKeys: string[] }> = [
@@ -57,7 +62,7 @@ const SYSTEM_ROLES: Array<{ key: string; name: string; description: string; perm
     key: "member",
     name: "Member",
     description: "Runs outreach and works CRM records. Cannot manage team, billing, or automation.",
-    permissionKeys: ["sequences:send", "crm:manage", "enrichment:capture"],
+    permissionKeys: ["sequences:send", "crm:manage", "enrichment:capture", "enrichment:read", "enrichment:enrich"],
   },
 ];
 

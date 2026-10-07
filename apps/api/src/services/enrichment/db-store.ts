@@ -475,7 +475,7 @@ export class DbStore implements EnrichmentStore {
       id: row.id,
       workspaceId: row.workspaceId,
       prospectId: row.prospectId,
-      companyId: row.companyId,
+      companyId: row.companyId ?? row.prospectId,
       snapshot: (row.snapshot ?? {}) as Record<string, unknown>,
       activatedAt: row.activatedAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),

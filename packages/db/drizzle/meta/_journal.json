@@ -687,6 +687,27 @@
       "when": 1792700000000,
       "tag": "0096_auth_login_cohorts",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1792800000000,
+      "tag": "0097_enrichment_capture_boundary",
+      "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1792800000001,
+      "tag": "0098_workspace_enrichment_credits",
+      "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1792800000002,
+      "tag": "0099_contacts_employment_status",
+      "breakpoints": true
     }
   ]
 }

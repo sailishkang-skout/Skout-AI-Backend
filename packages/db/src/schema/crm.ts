@@ -45,6 +45,7 @@ export const companies = pgTable(
   },
   (table) => [
     index("companies_workspace_id_idx").on(table.workspaceId),
+    uniqueIndex("companies_workspace_entity_unique_idx").on(table.workspaceId, table.id),
     index("companies_workspace_owner_idx").on(table.workspaceId, table.ownerId),
   ]
 );
@@ -84,6 +85,7 @@ export const contacts = pgTable(
   },
   (table) => [
     index("contacts_workspace_id_idx").on(table.workspaceId),
+    uniqueIndex("contacts_workspace_entity_unique_idx").on(table.workspaceId, table.id),
     index("contacts_workspace_company_idx").on(table.workspaceId, table.companyId),
     index("contacts_workspace_email_idx").on(table.workspaceId, table.email),
   ]
