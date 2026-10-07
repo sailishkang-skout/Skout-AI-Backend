@@ -45,6 +45,12 @@ beforeAll(async () => {
   // Stub auth provisions its own workspace and ignores x-workspace-id. Local runs can
   // deplete that balance — top it up so credit-gated enrich/score tests stay green.
   if (app.db) {
+          // The fixed test workspace only exists where packages/db seed.ts ran (CI runs only
+          // seed-model-versions), so create it here; the role and credit rows reference it.
+          await app.db
+            .insert(schema.workspaces)
+            .values({ id: WORKSPACE, name: "Enrichment test workspace", slug: "enrichment-test-workspace" })
+            .onConflictDoNothing();
           // First create the test user in the users table to satisfy foreign key constraints
           await app.db
             .insert(schema.users)

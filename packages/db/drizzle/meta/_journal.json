@@ -778,6 +778,13 @@
       "when": 1794000000000,
       "tag": "0109_entity_tags",
       "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "7",
+      "when": 1794100000000,
+      "tag": "0110_enr01_enrichment_schema",
+      "breakpoints": true
     }
   ]
 }
