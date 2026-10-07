@@ -55,7 +55,8 @@
       "SMTP_PASSWORD": "${MAIL_SMTP_PASSWORD}"
     },
     "SCRAPE_SCHEDULE_QUEUE_URL": {
-      "SCRAPE_DAILY_SCHEDULE_ENABLED": "true"
+      "SCRAPE_DAILY_SCHEDULE_ENABLED": "true",
+      "SCRAPE_DAILY_CRON": "30 5 * * 1-5"
     },
     "API_PUBLIC_URL": {
       "API_PUBLIC_URL": "${PUBLIC_URL}"

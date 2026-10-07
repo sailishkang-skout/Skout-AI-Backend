@@ -2,11 +2,37 @@ import { describe, expect, it, vi } from "vitest";
 import {
   DAILY_SCRAPE_CRON,
   DAILY_SCRAPE_SCHEDULER_ID,
+  dailyScrapeCron,
   dailyScrapeSeeds,
   isDailyScheduleEnabled,
   startDailyScrapeSchedule,
   syncDailyScrapeSchedule,
 } from "./daily-schedule.js";
+
+describe("dailyScrapeCron", () => {
+  it("defaults to the historical Mon-Fri 03:00 UTC schedule", () => {
+    expect(dailyScrapeCron({})).toBe(DAILY_SCRAPE_CRON);
+    expect(dailyScrapeCron({ SCRAPE_DAILY_CRON: "   " })).toBe(DAILY_SCRAPE_CRON);
+  });
+
+  it("takes a custom five-field cron from SCRAPE_DAILY_CRON, trimmed", () => {
+    expect(dailyScrapeCron({ SCRAPE_DAILY_CRON: " 30 5 * * 1-5 " })).toBe("30 5 * * 1-5");
+  });
+
+  it("fails loudly on a malformed value instead of silently scraping at the wrong time", () => {
+    expect(() => dailyScrapeCron({ SCRAPE_DAILY_CRON: "every day" })).toThrow(/SCRAPE_DAILY_CRON/);
+    expect(() => dailyScrapeCron({ SCRAPE_DAILY_CRON: "30 5 * *" })).toThrow(/five fields/);
+    expect(() => dailyScrapeCron({ SCRAPE_DAILY_CRON: "30 5 * * 1-5 2026" })).toThrow(/five fields/);
+  });
+});
+
+describe("startDailyScrapeSchedule with a custom cron", () => {
+  it("registers the scheduler with the configured pattern", async () => {
+    const upsertJobScheduler = vi.fn().mockResolvedValue(undefined);
+    await startDailyScrapeSchedule({ upsertJobScheduler } as never, { SCRAPE_DAILY_CRON: "30 5 * * 1-5" });
+    expect(upsertJobScheduler.mock.calls[0]![1]).toEqual({ pattern: "30 5 * * 1-5", tz: "UTC" });
+  });
+});
 
 describe("isDailyScheduleEnabled", () => {
   it("is off by default, so local scrapers:dev does not schedule daily scrapes", () => {
