@@ -130,6 +130,8 @@ components:
         due_at: { type: string, format: date-time, nullable: true }
         assigned_to: { type: string, format: uuid, nullable: true }
         account_id: { type: string, format: uuid, nullable: true, description: Set when the task is linked to a company (related_entity_type = company). }
+        related_entity_type: { type: string, nullable: true }
+        related_entity_id: { type: string, format: uuid, nullable: true }
         created_at: { type: string, format: date-time }
     TimelineEvent:
       type: object
@@ -395,6 +397,7 @@ paths:
         - { name: status, in: query, schema: { type: string, enum: [open, done, skipped] } }
         - { name: assigned_to, in: query, schema: { type: string, format: uuid } }
         - { name: account_id, in: query, schema: { type: string, format: uuid } }
+        - { name: related_type, in: query, description: Only tasks on this kind of record., schema: { type: string, enum: [company, contact, deal] } }
         - { name: sort, in: query, schema: { type: string, enum: [created_at, -created_at] } }
         - { name: fields, in: query, description: 'Comma-separated fields to return; id is always included; unknown field is 422.', schema: { type: string } }
         - $ref: '#/components/parameters/Limit'

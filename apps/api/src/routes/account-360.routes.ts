@@ -281,7 +281,7 @@ const LIST_FIELDS = {
   account: ["id", "name", "owner_id", "created_at", "updated_at"],
   contact: ["id", "first_name", "last_name", "email", "company_id", "created_at"],
   opportunity: ["id", "name", "company_id", "pipeline_id", "stage_id", "status", "amount", "currency", "updated_at"],
-  task: ["id", "title", "type", "status", "priority", "due_at", "assigned_to", "account_id", "created_at"],
+  task: ["id", "title", "type", "status", "priority", "due_at", "assigned_to", "account_id", "related_entity_type", "related_entity_id", "created_at"],
 } as const;
 
 export function parseListFields(raw: string | undefined, allowed: readonly string[]): string[] | null | "invalid" {
@@ -853,7 +853,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
   // GET /tasks — task list: q (title contains), type, status, assigned_to, account_id (tasks
   // related to a company), sort (created_at | -created_at), exact-precision JSON cursor, and
   // view_id for saved views (object "task").
-  app.get<{ Querystring: { fields?: string; q?: string; type?: string; status?: string; assigned_to?: string; account_id?: string; sort?: string; limit?: string; cursor?: string; view_id?: string } }>(
+  app.get<{ Querystring: { fields?: string; related_type?: string; q?: string; type?: string; status?: string; assigned_to?: string; account_id?: string; sort?: string; limit?: string; cursor?: string; view_id?: string } }>(
     "/tasks",
     { preHandler: listGate },
     async (request, reply) => {
@@ -901,6 +901,11 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       if (filters.assigned_to) conditions.push(eq(tasks.assignedTo, filters.assigned_to));
       if (filters.account_id) {
         conditions.push(and(eq(tasks.relatedEntityType, "company"), eq(tasks.relatedEntityId, filters.account_id))!);
+      }
+      // related_type narrows to tasks on one kind of record, e.g. deal for the board's next actions.
+      if (qs.related_type) {
+        if (!["company", "contact", "deal"].includes(qs.related_type)) return fail("related_type", "related_type must be company, contact or deal");
+        conditions.push(eq(tasks.relatedEntityType, qs.related_type));
       }
 
       if (qs.cursor) {
@@ -956,6 +961,8 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
           due_at: r.dueDate ? r.dueDate.toISOString() : null,
           assigned_to: r.assignedTo,
           account_id: r.relatedEntityType === "company" ? r.relatedEntityId : null,
+          related_entity_type: r.relatedEntityType,
+          related_entity_id: r.relatedEntityId,
           created_at: r.createdAt.toISOString(),
         })), fieldList),
         next_cursor: cursorOut,
