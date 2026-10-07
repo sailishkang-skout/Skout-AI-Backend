@@ -110,22 +110,46 @@ jobs:
             -t "ghcr.io/$GHCR_OWNER/skout-web:$TAG" frontend
           docker push "ghcr.io/$GHCR_OWNER/skout-web:$TAG"
 
-      - name: Install sops and age
-        run: |
-          set -euo pipefail
-          sudo curl -fsSL -o /usr/local/bin/sops https://github.com/getsops/sops/releases/download/v3.9.0/sops-v3.9.0.linux.amd64
-          sudo chmod +x /usr/local/bin/sops
-          sudo apt-get update -qq && sudo apt-get install -y -qq age
-
-      - name: Decrypt env files
+      # The service env files are NOT in the repository (it is public). They are stored as environment secrets
+      # (ENV_<SERVICE>) by deploy/hetzner/scripts/publish-env-secrets.sh and written to disk only for this run.
+      - name: Write env files from secrets
         env:
-          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+          ENV_API: ${{ secrets.ENV_API }}
+          ENV_CRM: ${{ secrets.ENV_CRM }}
+          ENV_AI: ${{ secrets.ENV_AI }}
+          ENV_WEB: ${{ secrets.ENV_WEB }}
+          ENV_SCRAPER_ORCHESTRATOR: ${{ secrets.ENV_SCRAPER_ORCHESTRATOR }}
+          ENV_SCRAPER_CLEANER: ${{ secrets.ENV_SCRAPER_CLEANER }}
+          ENV_SCRAPER_INGESTOR: ${{ secrets.ENV_SCRAPER_INGESTOR }}
+          ENV_EMAIL_INTEL_API: ${{ secrets.ENV_EMAIL_INTEL_API }}
+          ENV_EMAIL_INTEL_WORKER: ${{ secrets.ENV_EMAIL_INTEL_WORKER }}
+          ENV_WARMUP_TOOL_API: ${{ secrets.ENV_WARMUP_TOOL_API }}
+          ENV_WARMUP_TOOL_WORKER: ${{ secrets.ENV_WARMUP_TOOL_WORKER }}
+          ENV_WARMUP_TOOL_INBOUND: ${{ secrets.ENV_WARMUP_TOOL_INBOUND }}
+          ENV_WARMUP_TOOL_CLASSIFICATION: ${{ secrets.ENV_WARMUP_TOOL_CLASSIFICATION }}
+          ENV_WARMUP_TOOL_POLICY: ${{ secrets.ENV_WARMUP_TOOL_POLICY }}
         run: |
           set -euo pipefail
+          umask 077
           mkdir -p deploy/hetzner/env
-          for f in deploy/hetzner/env-enc/staging/*.env; do
-            sops --decrypt --input-type dotenv --output-type dotenv "$f" > "deploy/hetzner/env/$(basename "$f")"
-          done
+          write() {
+            [ -n "$2" ] || { echo "secret for $1 is empty or missing" >&2; exit 1; }
+            printf '%s\n' "$2" > "deploy/hetzner/env/$1.env"
+          }
+          write api "$ENV_API"
+          write crm "$ENV_CRM"
+          write ai "$ENV_AI"
+          write web "$ENV_WEB"
+          write scraper-orchestrator "$ENV_SCRAPER_ORCHESTRATOR"
+          write scraper-cleaner "$ENV_SCRAPER_CLEANER"
+          write scraper-ingestor "$ENV_SCRAPER_INGESTOR"
+          write email-intel-api "$ENV_EMAIL_INTEL_API"
+          write email-intel-worker "$ENV_EMAIL_INTEL_WORKER"
+          write warmup-tool-api "$ENV_WARMUP_TOOL_API"
+          write warmup-tool-worker "$ENV_WARMUP_TOOL_WORKER"
+          write warmup-tool-inbound "$ENV_WARMUP_TOOL_INBOUND"
+          write warmup-tool-classification "$ENV_WARMUP_TOOL_CLASSIFICATION"
+          write warmup-tool-policy "$ENV_WARMUP_TOOL_POLICY"
 
       - name: Configure SSH to the Swarm manager
         env:
