@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import Fastify, { type FastifyInstance } from "fastify";
-import { ZodError } from "zod";
-import { prospectRoutes } from "./prospect.routes.js";
+import type { FastifyInstance } from "fastify";
 import type { Env } from "../config/env.js";
+import { buildApp } from "../app.js";
+import { loadEnv } from "../config/env.js";
 
 // ---------------------------------------------------------------------------
 // Mock @skout/opensearch
@@ -17,6 +17,24 @@ vi.mock("@skout/opensearch", async (importOriginal) => {
 
 import * as osModule from "@skout/opensearch";
 const mockedUpsert = vi.mocked(osModule.bulkUpsertProspects);
+
+const mockEnrichmentService = vi.hoisted(() => ({
+  activate: vi.fn(),
+  addListMembers: vi.fn(),
+  enrichProspect: vi.fn(),
+}));
+
+vi.mock("../services/enrichment/index.js", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../services/enrichment/index.js")>();
+  return {
+    ...real,
+    buildEnrichmentService: () => mockEnrichmentService,
+  };
+});
+
+vi.mock("../services/skout-event.service.js", () => ({
+  emitSkoutEvent: vi.fn().mockResolvedValue(undefined),
+}));
 
 // ---------------------------------------------------------------------------
 // Env stubs
@@ -37,29 +55,14 @@ const osEnv = {
 // Test app builder
 // ---------------------------------------------------------------------------
 async function buildTestApp(env: Env): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-
-  app.decorate("config", env);
-  app.decorate("db", null);
-
-  app.setErrorHandler((error, _req, reply) => {
-    if (error instanceof ZodError) {
-      return reply.code(400).send({
-        error: "validation_error",
-        issues: error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
-      });
-    }
-    const message = error instanceof Error ? error.message : "internal_server_error";
-    reply.code(500).send({ error: message });
+  const app = await buildApp({
+    ...loadEnv(),
+    ...env,
+    CLERK_SECRET_KEY: undefined,
+    LOG_LEVEL: "fatal",
+    AI_SERVICE_URL: undefined as unknown as string,
+    REDIS_URL: undefined as unknown as string,
   });
-
-  app.addHook("preHandler", async (req) => {
-    req.userId = "test-user-id";
-    req.workspaceId = "test-workspace-id";
-  });
-
-  await app.register(prospectRoutes);
-  await app.ready();
   return app;
 }
 
@@ -74,6 +77,18 @@ describe("POST /prospects/manual", () => {
     vi.clearAllMocks();
   });
 
+  beforeEach(() => {
+    mockEnrichmentService.activate.mockResolvedValue(undefined);
+    mockEnrichmentService.addListMembers.mockResolvedValue(true);
+    mockEnrichmentService.enrichProspect.mockResolvedValue({
+      id: "test-job",
+      status: "completed",
+      creditsUsed: 0,
+      results: {},
+      attempts: 1,
+    });
+  });
+
   describe("when OpenSearch is not configured", () => {
     beforeEach(async () => {
       app = await buildTestApp(noOsEnv);
@@ -82,7 +97,7 @@ describe("POST /prospects/manual", () => {
     it("returns 201 without OpenSearch index (activation only)", async () => {
       const res = await app.inject({
         method: "POST",
-        url: "/prospects/manual",
+        url: "/api/v1/prospects/manual",
         payload: { fullName: "Jane Smith", companyDomain: "acme.com" },
       });
       expect(res.statusCode).toBe(201);
@@ -100,7 +115,7 @@ describe("POST /prospects/manual", () => {
     it("returns 201 with prospectId, companyId and message", async () => {
       const res = await app.inject({
         method: "POST",
-        url: "/prospects/manual",
+        url: "/api/v1/prospects/manual",
         payload: { fullName: "Jane Smith", companyDomain: "acme.com" },
       });
       expect(res.statusCode).toBe(201);
@@ -114,7 +129,7 @@ describe("POST /prospects/manual", () => {
     it("calls bulkUpsertProspects with the correct document", async () => {
       await app.inject({
         method: "POST",
-        url: "/prospects/manual",
+        url: "/api/v1/prospects/manual",
         payload: {
           fullName: "Jane Smith",
           jobTitle: "VP Sales",
@@ -150,7 +165,7 @@ describe("POST /prospects/manual", () => {
     it("generates a stable prospectId from domain + email", async () => {
       const res1 = await app.inject({
         method: "POST",
-        url: "/prospects/manual",
+        url: "/api/v1/prospects/manual",
         payload: { fullName: "Jane Smith", email: "jane@acme.com", companyDomain: "acme.com" },
       });
       vi.clearAllMocks();
@@ -158,7 +173,7 @@ describe("POST /prospects/manual", () => {
 
       const res2 = await app.inject({
         method: "POST",
-        url: "/prospects/manual",
+        url: "/api/v1/prospects/manual",
         payload: { fullName: "Jane Smith", email: "jane@acme.com", companyDomain: "acme.com" },
       });
 
@@ -168,7 +183,7 @@ describe("POST /prospects/manual", () => {
     it("generates a stable prospectId from domain + name when no email", async () => {
       const res1 = await app.inject({
         method: "POST",
-        url: "/prospects/manual",
+        url: "/api/v1/prospects/manual",
         payload: { fullName: "John Doe", companyDomain: "example.com" },
       });
       vi.clearAllMocks();
@@ -176,7 +191,7 @@ describe("POST /prospects/manual", () => {
 
       const res2 = await app.inject({
         method: "POST",
-        url: "/prospects/manual",
+        url: "/api/v1/prospects/manual",
         payload: { fullName: "John Doe", companyDomain: "example.com" },
       });
 
@@ -186,7 +201,7 @@ describe("POST /prospects/manual", () => {
     it("returns 400 when companyDomain is omitted", async () => {
       const res = await app.inject({
         method: "POST",
-        url: "/prospects/manual",
+        url: "/api/v1/prospects/manual",
         payload: { fullName: "No Domain" },
       });
       expect(res.statusCode).toBe(400);
@@ -195,7 +210,7 @@ describe("POST /prospects/manual", () => {
     it("passes all optional fields through to the OpenSearch document", async () => {
       await app.inject({
         method: "POST",
-        url: "/prospects/manual",
+        url: "/api/v1/prospects/manual",
         payload: {
           fullName: "Alex Turner",
           companyDomain: "startup.io",
@@ -238,7 +253,7 @@ describe("POST /prospects/manual", () => {
     it("returns 400 when fullName is missing", async () => {
       const res = await app.inject({
         method: "POST",
-        url: "/prospects/manual",
+        url: "/api/v1/prospects/manual",
         payload: { companyDomain: "acme.com" },
       });
       expect(res.statusCode).toBe(400);
@@ -250,7 +265,7 @@ describe("POST /prospects/manual", () => {
     it("returns 400 when fullName is empty string", async () => {
       const res = await app.inject({
         method: "POST",
-        url: "/prospects/manual",
+        url: "/api/v1/prospects/manual",
         payload: { fullName: "", companyDomain: "acme.com" },
       });
       expect(res.statusCode).toBe(400);
@@ -260,7 +275,7 @@ describe("POST /prospects/manual", () => {
     it("returns 400 when email is invalid format", async () => {
       const res = await app.inject({
         method: "POST",
-        url: "/prospects/manual",
+        url: "/api/v1/prospects/manual",
         payload: { fullName: "Jane", email: "not-an-email", companyDomain: "acme.com" },
       });
       expect(res.statusCode).toBe(400);
@@ -270,7 +285,7 @@ describe("POST /prospects/manual", () => {
     it("returns 400 when linkedinUrl is not a valid URL", async () => {
       const res = await app.inject({
         method: "POST",
-        url: "/prospects/manual",
+        url: "/api/v1/prospects/manual",
         payload: { fullName: "Jane", linkedinUrl: "not-a-url", companyDomain: "acme.com" },
       });
       expect(res.statusCode).toBe(400);
@@ -280,7 +295,7 @@ describe("POST /prospects/manual", () => {
     it("returns 400 when employeeCount is less than 1", async () => {
       const res = await app.inject({
         method: "POST",
-        url: "/prospects/manual",
+        url: "/api/v1/prospects/manual",
         payload: { fullName: "Jane", employeeCount: 0, companyDomain: "acme.com" },
       });
       expect(res.statusCode).toBe(400);
@@ -289,7 +304,7 @@ describe("POST /prospects/manual", () => {
     it("returns 400 when yearsAtCompany is negative", async () => {
       const res = await app.inject({
         method: "POST",
-        url: "/prospects/manual",
+        url: "/api/v1/prospects/manual",
         payload: { fullName: "Jane", yearsAtCompany: -1, companyDomain: "acme.com" },
       });
       expect(res.statusCode).toBe(400);
@@ -298,7 +313,7 @@ describe("POST /prospects/manual", () => {
     it("returns 400 when body is completely empty", async () => {
       const res = await app.inject({
         method: "POST",
-        url: "/prospects/manual",
+        url: "/api/v1/prospects/manual",
         payload: {},
       });
       expect(res.statusCode).toBe(400);
@@ -315,7 +330,7 @@ describe("POST /prospects/manual", () => {
 
       const res = await app.inject({
         method: "POST",
-        url: "/prospects/manual",
+        url: "/api/v1/prospects/manual",
         payload: { fullName: "Jane Smith", companyDomain: "acme.com" },
       });
 

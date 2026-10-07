@@ -8,7 +8,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as dotenvConfig } from "dotenv";
 import { afterEach, beforeEach } from "vitest";
-import { ensureTestAuthHarness, resetTestAuthHarness } from "@skout/auth";
+import {
+  ensureTestAuthHarness,
+  grantSystemMemberRole,
+  resetTestAuthHarness,
+  resolveOrProvisionUser,
+} from "@skout/auth";
+import { createDb, schema } from "@skout/db";
+import { ensureDemoWorkspace } from "../services/demo-workspace.js";
 
 // Load project .env (without overriding any CI-supplied vars) so that
 // DATABASE_URL and other secrets are visible to route integration tests.
@@ -72,6 +79,25 @@ async function postgresReachable() {
 if (await postgresReachable()) {
   if (!process.env.DATABASE_URL) {
     process.env.DATABASE_URL = DEFAULT_TEST_DATABASE_URL;
+  }
+
+  const { db, sql } = createDb(process.env.DATABASE_URL!);
+  try {
+    const workspaceId = "00000000-0000-4000-8000-000000000001";
+    const stubEmail = process.env.AUTH_STUB_EMAIL ?? "stub@example.com";
+    await ensureDemoWorkspace(db, workspaceId);
+    const stubUser = await resolveOrProvisionUser(db, `stub:${stubEmail}`, stubEmail, "Stub User");
+    await db
+      .insert(schema.workspaceMembers)
+      .values({ workspaceId, userId: stubUser.userId, role: "owner" })
+      .onConflictDoUpdate({
+        target: [schema.workspaceMembers.workspaceId, schema.workspaceMembers.userId],
+        set: { role: "owner" },
+      });
+    const roleGranted = await grantSystemMemberRole(db, workspaceId, stubUser.userId, "owner");
+    if (!roleGranted) throw new Error("Test owner role is not seeded; run the RBAC backfill before tests");
+  } finally {
+    await sql.end();
   }
 } else {
   for (const key of dbEnvKeys) {

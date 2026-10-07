@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import Fastify, { type FastifyInstance } from "fastify";
-import type { Env } from "../config/env.js";
+import type { FastifyInstance } from "fastify";
+import { loadEnv } from "../config/env.js";
+
+const WORKSPACE = "00000000-0000-4000-8000-000000000001";
 
 // §7.3 — regression coverage for the event-spine audit: both the "activate + autoEnrich"
 // and the manual "/prospects/:id/enrich" paths must emit enrichment.completed. Before this
@@ -27,19 +29,16 @@ vi.mock("../services/skout-event.service.js", () => ({
   emitSkoutEvent: (...args: unknown[]) => mockEmitSkoutEvent(...args),
 }));
 
-const { prospectRoutes } = await import("./prospect.routes.js");
-
 async function buildTestApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  app.decorate("config", {} as Env);
-  app.decorate("db", null);
-  app.addHook("preHandler", async (req) => {
-    req.userId = "test-user-id";
-    req.workspaceId = "test-workspace-id";
+  const { buildApp } = await import("../app.js");
+  return buildApp({
+    ...loadEnv(),
+    CLERK_SECRET_KEY: undefined,
+    LOG_LEVEL: "fatal",
+    AI_SERVICE_URL: undefined as unknown as string,
+    REDIS_URL: undefined as unknown as string,
+    OPENSEARCH_URL: undefined,
   });
-  await app.register(prospectRoutes);
-  await app.ready();
-  return app;
 }
 
 describe("enrichment.completed emission (§7.3 event-spine audit)", () => {
@@ -61,15 +60,16 @@ describe("enrichment.completed emission (§7.3 event-spine audit)", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/prospects/manual",
+      url: "/api/v1/prospects/manual",
+      headers: { "x-workspace-id": WORKSPACE },
       payload: { fullName: "Jane Doe", companyDomain: "acme.com", autoEnrich: true },
     });
 
     expect(res.statusCode).toBe(201);
     expect(mockEmitSkoutEvent).toHaveBeenCalledWith(
-      null,
-      {},
-      expect.objectContaining({ type: "enrichment.completed", tenantId: "test-workspace-id" })
+      expect.any(Object),
+      expect.any(Object),
+      expect.objectContaining({ type: "enrichment.completed", tenantId: WORKSPACE })
     );
   });
 
@@ -78,15 +78,16 @@ describe("enrichment.completed emission (§7.3 event-spine audit)", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/prospects/p-1/enrich",
+      url: "/api/v1/prospects/p-1/enrich",
+      headers: { "x-workspace-id": WORKSPACE },
       payload: { prospect: { companyDomain: "acme.com" } },
     });
 
     expect(res.statusCode).toBe(202);
     expect(mockEmitSkoutEvent).toHaveBeenCalledWith(
-      null,
-      {},
-      expect.objectContaining({ type: "enrichment.completed", tenantId: "test-workspace-id", aggregateId: "p-1" })
+      expect.any(Object),
+      expect.any(Object),
+      expect.objectContaining({ type: "enrichment.completed", tenantId: WORKSPACE, aggregateId: "p-1" })
     );
   });
 });
