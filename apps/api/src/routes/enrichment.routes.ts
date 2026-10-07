@@ -14,6 +14,7 @@ import { assertEvidenced } from "@skout/shared";
 import { buildModelVersionsService } from "../services/model-versions.service.js";
 import { assertPermission, recordPrivilegedAction } from "@skout/auth";
 import { schema } from "@skout/db";
+import { auditEntityId } from "../utils/audit-entity-id.js";
 const { prospectActivations, companies, listMembers, asyncJobs, skoutEvents, evidenceLedger } = schema;
 
 const jobIdSchema = z.string().uuid();
@@ -169,8 +170,9 @@ export async function enrichmentRoutes(app: FastifyInstance) {
         actorId: request.userId,
         action: "enrichment.capture",
         entityType: "prospect",
-        entityId: body.prospect.prospectId ?? "anonymous",
-        afterState: { companyDomain: body.prospect.companyDomain, fullName: body.prospect.fullName, title: body.prospect.title }
+        // Prospect ids are text; audit_logs.entity_id is uuid (see auditEntityId). The real id is in after_state.
+        entityId: auditEntityId(body.prospect.prospectId ?? "anonymous"),
+        afterState: { prospectId: body.prospect.prospectId ?? null, companyDomain: body.prospect.companyDomain, fullName: body.prospect.fullName, title: body.prospect.title }
       });
 
       // §6.1 — pin score claim to evidence_ledger before returning (fail-closed when prospectId known)
