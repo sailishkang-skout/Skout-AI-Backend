@@ -155,6 +155,8 @@ export const deals = pgTable(
      * against; didn't exist anywhere on companies/deals before this. Nullable: most deals (open,
      * not-yet-won, or won-without-a-tracked-term) have no contract end date to report. */
     contractEndDate: date("contract_end_date"),
+    /** COPS-03: selects the commercial gate policy (commercial_gate_policies). Null uses the workspace default. */
+    dealType: text("deal_type"),
     /** R16.3 — per-field provenance for LLM-extracted deal fields (amount/closeDate), same
      * pattern R13.3 built for contacts/companies. "manual" wins forever. */
     fieldSources: jsonb("field_sources").notNull().default({}),

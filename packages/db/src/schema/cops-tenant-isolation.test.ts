@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import postgres from "postgres";
 
 /**
- * Tenant isolation for every COPS-02 table: rows written for workspace A are invisible when the
+ * Tenant isolation for every COPS-02 and COPS-03 table: rows written for workspace A are invisible when the
  * query is scoped to workspace B, and every table carries workspace_id. Runs only when
  * COPS_TEST_DATABASE_URL is set (real Postgres).
  */
@@ -20,6 +20,16 @@ const TABLES = [
   "cops_timeline_events",
   "cops_saved_views",
   "cops_account_merges",
+  // COPS-03
+  "proposals",
+  "proposal_versions",
+  "proposal_line_items",
+  "contracts",
+  "contract_versions",
+  "payment_requests",
+  "payment_provider_events",
+  "commercial_gate_policies",
+  "commercial_gates",
 ] as const;
 
 maybe("COPS-02 tables are tenant-isolated (Postgres)", () => {
@@ -51,6 +61,15 @@ maybe("COPS-02 tables are tenant-isolated (Postgres)", () => {
     await sql`insert into cops_timeline_events (workspace_id, account_id, type, occurred_at, actor_type, source_event_id, event_type, summary) values (${ws}, ${co.id}, 'workflow_action', now(), 'system', gen_random_uuid(), 'LifecycleTransitioned', ${label})`;
     await sql`insert into cops_saved_views (workspace_id, owner_user_id, name, object_type) values (${ws}, ${owner.id}, ${"view-" + label}, 'account')`;
     await sql`insert into cops_account_merges (workspace_id, survivor_id, duplicate_id, duplicate_name, reason) values (${ws}, ${co.id}, ${co2.id}, ${label}, 'iso check')`;
+    const [pr] = await sql`insert into proposals (workspace_id, opportunity_id, title) values (${ws}, ${deal.id}, ${label + " proposal"}) returning id`;
+    const [pv] = await sql`insert into proposal_versions (workspace_id, proposal_id, version, currency, billing_cadence, term_months, subtotal_minor, discount_minor, tax_minor, total_minor) values (${ws}, ${pr.id}, 1, 'INR', 'annual', 12, 100, 0, 0, 100) returning id`;
+    await sql`insert into proposal_line_items (workspace_id, version_id, position, kind, description, quantity, unit_amount_minor, gross_minor, discount_minor, net_minor) values (${ws}, ${pv.id}, 1, 'fee', ${label}, 1, 100, 100, 0, 100)`;
+    const [cn] = await sql`insert into contracts (workspace_id, opportunity_id, kind, title) values (${ws}, ${deal.id}, 'msa', ${label + " msa"}) returning id`;
+    await sql`insert into contract_versions (workspace_id, contract_id, version, document_url, file_sha256) values (${ws}, ${cn.id}, 1, 'https://x.test/msa.pdf', ${"0".repeat(64)})`;
+    const [pq] = await sql`insert into payment_requests (workspace_id, opportunity_id, amount_minor, currency, provider, provider_ref, checkout_url) values (${ws}, ${deal.id}, 100, 'INR', 'test', ${"plink_" + label + stamp}, 'https://pay.test') returning id`;
+    await sql`insert into payment_provider_events (workspace_id, provider, provider_event_id, event_type, payment_request_id, outcome) values (${ws}, 'test', ${"evt_" + label + stamp}, 'payment_link.paid', ${pq.id}, 'applied')`;
+    await sql`insert into commercial_gate_policies (workspace_id, deal_type, policy) values (${ws}, '*', 'payment')`;
+    await sql`insert into commercial_gates (workspace_id, opportunity_id) values (${ws}, ${deal.id})`;
   }
 
   it("each table holds rows for its own workspace only", async () => {

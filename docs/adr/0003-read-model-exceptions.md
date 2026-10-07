@@ -92,3 +92,14 @@ reassignment and merges must write the CRM row, lifecycle state, audit row and o
 transaction. The other three are workspace-ownership checks and an account lookup inside the event
 consumer. Each file carries the formal exception comment block.
 
+
+## COPS-03 additions (2026-10-07)
+
+| File | Tables touched | Read/write |
+|---|---|---|
+| `apps/api/src/services/cops-commercial.service.ts` | deals | read; write of `deals.deal_type` only |
+
+Proposals, contracts, payment requests and the provisioning gate are written in one transaction
+with the opportunity ownership check, the audit row and the outbox event. The file carries the
+formal exception comment block. The COPS-03 tables themselves (proposals, contracts,
+payment_requests, commercial gate tables) are owned by apps/api.

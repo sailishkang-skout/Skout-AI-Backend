@@ -785,6 +785,13 @@
       "when": 1794100000000,
       "tag": "0110_enr01_enrichment_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "7",
+      "when": 1794200000000,
+      "tag": "0111_cops03_commercial",
+      "breakpoints": true
     }
   ]
 }
