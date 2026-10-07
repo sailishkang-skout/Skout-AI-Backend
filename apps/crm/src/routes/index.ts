@@ -14,7 +14,6 @@ import { promotionRoutes } from "./promotion.routes.js";
 import { retentionRulesRoutes } from "./retention-rules.routes.js";
 import { tasksRoutes } from "./tasks.routes.js";
 import { internalCrmRoutes } from "./internal.routes.js";
-import { enrichmentRoutes } from "./enrichment.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoutes, { prefix: "/api/v1/crm" });
@@ -36,6 +35,5 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(dashboardRoutes);
     await v1.register(buyingCommitteeRoutes);
     await v1.register(retentionRulesRoutes);
-    await v1.register(enrichmentRoutes);
   }, { prefix: "/api/v1" });
 }
