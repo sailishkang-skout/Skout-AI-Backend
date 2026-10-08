@@ -38,7 +38,8 @@ paths:
       description: |
         Double click sends once: the same Idempotency-Key returns the same send. A second send for
         the same account and recipient is refused with 409 ALREADY_SENT unless resend=true, which
-        needs a reason and is audited. Needs onboarding:send.
+        needs a reason and is audited. A provider failure is 502 EMAIL_NOT_SENT (retryable): the same
+        key retries the same send. Needs onboarding:send or commercial:send (Sales send onboarding).
       parameters: [{ $ref: "#/components/parameters/Id" }, { $ref: "#/components/parameters/IdempotencyKey" }]
       requestBody:
         required: true
@@ -51,6 +52,23 @@ paths:
         "404": { description: Account not provisioned }
         "409": { description: "ALREADY_SENT (use resend with a reason) or CONTACT_BLOCKED (suppressed, no consent, hard bounce)" }
         "422": { description: Validation error with field paths (e.g. resend without reason) }
+  /accounts/{id}/onboarding/emails:
+    get:
+      summary: Onboarding emails of the account, newest first, with delivery status
+      description: Needs onboarding:read or commercial:read.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: "#/components/schemas/EmailSend" } } } } } } }
+  /billing/webhooks/resend/email-events:
+    post:
+      summary: Resend email events for onboarding sends (delivered, bounced, opened, clicked)
+      description: |
+        Public path. Svix-signed (svix-id, svix-timestamp, svix-signature) with RESEND_WEBHOOK_SECRET;
+        a missing secret or bad signature is 401. Only timestamps are stored. A permanent bounce marks
+        the contact's email channel hard (canContact then refuses it).
+      responses:
+        "200": { description: "outcome: applied | unchanged | unknown_email | ignored" }
+        "401": { description: Invalid webhook signature }
   /accounts/{id}/follow-up/enrollment:
     get:
       summary: The account's follow-up enrollment or enrollment task
@@ -103,15 +121,17 @@ paths:
       summary: Rep queue (Sales Follow-up screen), prioritised
       description: |
         Items: due task, stalled milestone, reply, high-intent usage, trial expiry, commercial blocker.
-        Each row has the account, active sequence, last touch, signals and one recommended next action.
-        Defaults to the caller's accounts; owner=all needs crm:manage.
+        Each row has the account, active sequence, last touch, signals and one recommended action.
+        Defaults to the caller's accounts; owner=all needs crm:admin or onboarding:admin. The gate is
+        onboarding:write or crm:write. `cursor` is the offset returned as next_cursor.
       parameters:
         - { name: owner, in: query, schema: { type: string, enum: [me, all], default: me } }
         - { name: reason, in: query, schema: { $ref: "#/components/schemas/QueueReason" } }
-        - { name: cursor, in: query, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: integer, minimum: 0 } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 25 } }
       responses:
         "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/QueueEnvelope" } } } }
+        "403": { description: owner=all without a manager permission }
   /follow-up/actions:
     post:
       summary: One-click call, email, meeting or task from the queue; always writes a timeline activity
@@ -228,7 +248,7 @@ components:
         activation: { $ref: "#/components/schemas/Activation" }
         follow_up: { $ref: "#/components/schemas/FollowUp" }
         emails: { type: array, items: { $ref: "#/components/schemas/EmailSend" } }
-        blockers: { type: array, items: { type: object, properties: { kind: { type: string }, detail: { type: string }, since: { type: string, format: date-time } } } }
+        blockers: { type: array, items: { type: object, properties: { kind: { type: string }, detail: { type: string }, since: { type: string, format: date-time }, task_id: { type: string, format: uuid, nullable: true } } } }
         handoff: { type: object, nullable: true, properties: { task_id: { type: string, format: uuid }, created_at: { type: string, format: date-time } } }
     OnboardingEnvelope: { type: object, properties: { data: { $ref: "#/components/schemas/Onboarding" } } }
     QueueReason:
@@ -247,11 +267,12 @@ components:
         signals: { type: array, items: { type: string } }
         recommended_action: { type: object, properties: { kind: { type: string, enum: [call, email, meeting, task] }, label: { type: string } } }
         due_at: { type: string, format: date-time, nullable: true }
+        detail: { type: string, description: What raised the item (task title, reply subject, ...) }
     QueueEnvelope:
       type: object
       properties:
         data: { type: array, items: { $ref: "#/components/schemas/QueueItem" } }
-        next_cursor: { type: string, nullable: true }
+        next_cursor: { type: integer, nullable: true }
     FollowUpAction:
       type: object
       required: [kind, account_id]
@@ -272,4 +293,5 @@ components:
           properties:
             activity_id: { type: string, format: uuid }
             task_id: { type: string, format: uuid, nullable: true }
-            email_send_id: { type: string, format: uuid, nullable: true }
+            email_send_id: { type: string, nullable: true, description: Provider message id of a one-click email }
+            meeting_id: { type: string, format: uuid, nullable: true }

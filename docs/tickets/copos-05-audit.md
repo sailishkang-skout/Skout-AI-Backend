@@ -56,33 +56,33 @@ BE, onboarding email
 - [x] Workspace link (invite link until accepted), activation steps, resources, booking link, support path
 - [x] One central `canContact()` gate (suppression, do-not-contact, hard bounce, eligibility; consent for outreach)
 - [x] Emit `WelcomeEmailSent`; explicit, audited re-send; double click sends once
-- [ ] Record delivery / bounce / open / click where privacy allows (columns exist; provider webhooks not wired)
+- [x] Record delivery / bounce / open / click where privacy allows (Resend webhook, Svix-signed; timestamps only)
 
 BE, follow-up sequence
 - [x] On `WelcomeEmailSent`: enroll the configured sequence, or create an enrollment task with the reason; never nothing (unique per event, worker retries are idempotent)
-- [ ] Sweep that completes the follow-up for any `WelcomeEmailSent` the worker missed (Redis down)
-- [ ] Default cadence as config (Day 0/1/3/5-7/10/14) seeded as the `cops_onboarding_followup` sequence
-- [ ] Signal triggers: no login 24h, first login, no activity 72h, trial ending
+- [x] Sweep that completes the follow-up for any `WelcomeEmailSent` the worker missed (Redis down)
+- [x] Default cadence as config (Day 0/1/3/5-7/10/14) seeded as the `cops_onboarding_followup` sequence
+- [x] Signal triggers: no login 24h, first login, no activity 72h, trial ending
 - [x] Enrollment stores the template version (existing engine: `sequence_version_id`)
-- [ ] Stop conditions: reply, meeting booked, activated, opportunity closed/lost, opt-out, hard bounce, rep stop, critical escalation (configurable)
+- [x] Stop conditions: reply, meeting booked, activated, opportunity closed/lost, opt-out, hard bounce, rep stop. Critical escalation: the stop reason exists; its trigger arrives with COPS-06 (TicketEscalated).
 - [x] Delayed steps survive deploys (existing engine: steps scheduled in Postgres)
-- [ ] Cancellation race-safe (activation mid-step cancels the pending step)
-- [ ] Each step updates timeline + next action
+- [x] Cancellation race-safe (activation mid-step cancels the pending step)
+- [x] Each step updates timeline + next action
 - [x] Reuse sequences.ts / the automation engine (no new sequence engine)
 
 BE, activation
 - [x] Tables: instances, milestones, milestone events (+ versioned templates)
-- [ ] Value-based weighted activation per template, stored rule version, `activation_pct`
-- [ ] Product analytics events satisfy milestones
-- [ ] Emit `FirstLogin`, `ActivationMilestoneCompleted`, `CustomerActivated`
+- [x] Value-based weighted activation per template, stored rule version, `activation_pct`
+- [x] Product analytics events satisfy milestones
+- [x] Emit `FirstLogin`, `ActivationMilestoneCompleted`, `CustomerActivated`
 
 BE, playbooks and handoff
-- [ ] Stalled triggers: no delivery, delivered/no login, logged in/no value, integration error, high usage/low credits -> task or escalation suggestion
-- [ ] CS handoff task on criteria, exactly once; Sales keeps visibility
+- [x] Stalled triggers: no delivery, delivered/no login, logged in/no value, integration error, high usage/low credits -> task or escalation suggestion
+- [x] CS handoff task on criteria, exactly once; Sales keeps visibility
 
 BE, rep queue
-- [ ] `GET /follow-up/queue` (due tasks, stalled milestones, replies, high-intent usage, trial expiry, commercial blockers) with active sequence, last touch, signals, recommended action
-- [ ] One-click call / email / meeting / task actions that always log an activity
+- [x] `GET /follow-up/queue` (due tasks, stalled milestones, replies, high-intent usage, trial expiry, commercial blockers) with active sequence, last touch, signals, recommended action
+- [x] One-click call / email / meeting / task actions that always log an activity
 
 FE
 - [ ] Onboarding Control screen: activation progress + trial timer, checklist with evidence, sequence card, usage/credit chart, integrations, blockers, escalation shortcuts
@@ -90,11 +90,11 @@ FE
 - [ ] Onboarding-email send dialog with template preview; sequence pause/stop controls
 
 Acceptance
-- [ ] 100% of WelcomeEmailSent events yield an enrollment or a task (handler done and tested; sweep open)
-- [ ] Each stop condition has a test proving no further step fires; activation mid-step cancels the pending step
-- [ ] Suppressed/bounced contacts never emailed (done for the onboarding email); hard bounce raises a rep task
-- [ ] Login alone never activates; rule change does not rewrite past activations; handoff created exactly once
-- [ ] Every one-click action writes a timeline activity
+- [x] 100% of WelcomeEmailSent events yield an enrollment or a task (handler + evaluator sweep)
+- [x] Each stop condition has a test proving no further step fires; activation mid-step cancels the pending step
+- [x] Suppressed/bounced contacts never emailed (done for the onboarding email); hard bounce raises a rep task
+- [x] Login alone never activates; rule change does not rewrite past activations; handoff created exactly once
+- [x] Every one-click action writes a timeline activity
 
 DoD: permissions + audit, contract before FE (done), events with schema tests, error/empty/loading/retry states, analytics, runbook, tests (unit, integration, tenant isolation, e2e).
 
