@@ -95,7 +95,7 @@ A pass over every COPS-01..04 acceptance item and the Definition of Done found t
 | Gap | Fix |
 |---|---|
 | CI architecture gates fail against develop (stacked PRs never ran CI) | ADR 0003 exception blocks on `cops-commercial.routes.ts` and `cops-gate.service.ts` (commit on the COPS-03 branch); §1 gate line answered on PRs #176 and #178. Both gates pass locally against develop. |
-| Commercial navigation (deferred from COPS-01 to COPS-03, never built) | `GET /api/v1/commercial/opportunities` (cross-account desk, state filter, cursor) and the FE `/commercial` page with a `commercial:read` nav entry. **Route test written; not yet run, the local test database was down.** |
+| Commercial navigation (deferred from COPS-01 to COPS-03, never built) | `GET /api/v1/commercial/opportunities` (cross-account desk, state filter, cursor) and the FE `/commercial` page with a `commercial:read` nav entry. Route test passes (commercial suite 11/11; all COPS API suites 87/87). |
 | `/cops` and `/commercial` reachable signed-out at the FE middleware | Added to the protected routes; a test now fails when a dashboard folder is missing from the list. |
 | FE e2e only covered COPS-01 | `e2e/cops-customer-ops.spec.ts`: 360 timeline, provision failure + retry (same key), grant with reason, Commercial Desk, permission-hidden nav. 7/7 with `cops-platform.spec.ts`. |
 | Every protected e2e page bounced to sign-in (AUTH-FE-18 dropped the middleware's E2E bypass; the e2e job on #110/#111 fails this way) | Bypass restored for non-production servers only. Needs review by the auth owner. |
@@ -104,5 +104,5 @@ A pass over every COPS-01..04 acceptance item and the Definition of Done found t
 Still open:
 
 - Q1-Q4 above (Q4: refunds of a credit purchase are not reversed automatically yet; Finance posts an adjustment).
-- COPS-01: authenticated 422/429 check against a real API response (only mocked so far) - needs the local database.
+- COPS-01 422 check: done against the real API (signed-in user, `GET /cops/audit?from=not-a-date` returns 422 `VALIDATION_FAILED` with `details.fields[{path: "from"}]`, `request_id`, `retryable: false`); the browser rendering of that envelope is covered by `cops-platform.spec.ts`. A real 429 was not triggered.
 - The full `apps/api` suite has not completed locally (30-minute limit); CI runs it once the stack is retargeted to develop.
