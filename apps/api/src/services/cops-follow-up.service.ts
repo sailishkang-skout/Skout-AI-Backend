@@ -270,3 +270,72 @@ export async function latestFollowUp(db: Db, workspaceId: string, accountId: str
     .limit(1);
   return row ? toDto(row) : null;
 }
+
+export interface FollowUpView {
+  mode: "sequence" | "task";
+  task_reason: string | null;
+  enrollment: {
+    id: string;
+    sequence_id: string;
+    template_version: number | null;
+    status: string;
+    stop_reason: string | null;
+    current_step: number | null;
+    next_action: { kind: string; scheduled_at: string | null } | null;
+  } | null;
+  task: { id: string; title: string; due_at: string | null; status: string } | null;
+}
+
+/** The account's latest follow-up as the contract's FollowUp (Onboarding Control sequence card). */
+export async function getFollowUpView(db: Db, workspaceId: string, accountId: string): Promise<FollowUpView | null> {
+  const fu = await latestFollowUp(db, workspaceId, accountId);
+  if (!fu) return null;
+  if (fu.mode === "task") {
+    const [t] = fu.task_id
+      ? await db
+          .select({ id: tasks.id, title: tasks.title, dueDate: tasks.dueDate, status: tasks.status })
+          .from(tasks)
+          .where(and(eq(tasks.workspaceId, workspaceId), eq(tasks.id, fu.task_id)))
+      : [];
+    return {
+      mode: "task",
+      task_reason: fu.task_reason,
+      enrollment: null,
+      task: t ? { id: t.id, title: t.title, due_at: t.dueDate?.toISOString() ?? null, status: t.status } : null,
+    };
+  }
+  const [e] = await db
+    .select({
+      id: sequenceEnrollments.id,
+      sequenceId: sequenceEnrollments.sequenceId,
+      status: sequenceEnrollments.status,
+      stopReason: sequenceEnrollments.stopReason,
+      version: sequenceVersions.version,
+    })
+    .from(sequenceEnrollments)
+    .leftJoin(sequenceVersions, eq(sequenceVersions.id, sequenceEnrollments.sequenceVersionId))
+    .where(and(eq(sequenceEnrollments.workspaceId, workspaceId), eq(sequenceEnrollments.id, fu.enrollment_id!)));
+  if (!e) return { mode: "sequence", task_reason: null, enrollment: null, task: null };
+  const steps = await db
+    .select({ status: schema.sequenceEnrollmentSteps.status, scheduledAt: schema.sequenceEnrollmentSteps.scheduledAt, order: schema.sequenceSteps.stepOrder, type: schema.sequenceSteps.stepType })
+    .from(schema.sequenceEnrollmentSteps)
+    .innerJoin(schema.sequenceSteps, eq(schema.sequenceSteps.id, schema.sequenceEnrollmentSteps.stepId))
+    .where(eq(schema.sequenceEnrollmentSteps.enrollmentId, e.id))
+    .orderBy(schema.sequenceSteps.stepOrder);
+  const next = steps.find((s) => s.status === "scheduled" || s.status === "executing") ?? null;
+  const done = steps.filter((s) => s.status === "executed").length;
+  return {
+    mode: "sequence",
+    task_reason: null,
+    enrollment: {
+      id: e.id,
+      sequence_id: e.sequenceId,
+      template_version: e.version ?? null,
+      status: e.status,
+      stop_reason: e.stopReason,
+      current_step: next ? next.order : done > 0 ? done : null,
+      next_action: next && (e.status === "active" || e.status === "paused") ? { kind: next.type, scheduled_at: next.scheduledAt?.toISOString() ?? null } : null,
+    },
+    task: null,
+  };
+}

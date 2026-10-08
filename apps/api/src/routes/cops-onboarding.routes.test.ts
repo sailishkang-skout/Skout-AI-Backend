@@ -123,10 +123,36 @@ maybe("COPS-05 onboarding email routes", () => {
     expect(res.json().details.fields[0].path).toBe("reason");
   });
 
+  it("the rep sees the follow-up and can pause (reason required), resume and stop it", async () => {
+    await asRole("sales");
+    const { accountId } = await provisioned();
+    await asRole("sales");
+    const [seq] = await sql`insert into sequences (workspace_id, name, status, template_key, current_version) values (${workspaceId}, 'FU', 'active', 'cops_onboarding_followup', 1) returning id`;
+    const [step] = await sql`insert into sequence_steps (sequence_id, step_order, step_type, delay_days) values (${seq.id}, 1, 'task', 1) returning id`;
+    const [ver] = await sql`insert into sequence_versions (sequence_id, version, snapshot) values (${seq.id}, 1, '{}'::jsonb) returning id`;
+    const [enr] = await sql`insert into sequence_enrollments (workspace_id, sequence_id, prospect_id, status, sequence_version_id) values (${workspaceId}, ${seq.id}, ${"p-" + randomUUID()}, 'active', ${ver.id}) returning id`;
+    await sql`insert into sequence_enrollment_steps (enrollment_id, step_id, status, scheduled_at) values (${enr.id}, ${step.id}, 'scheduled', now() + interval '1 day')`;
+    await sql`insert into cops_follow_ups (workspace_id, account_id, source_event_id, mode, enrollment_id) values (${workspaceId}, ${accountId}, gen_random_uuid(), 'sequence', ${enr.id})`;
+
+    const view = (await call("GET", `/accounts/${accountId}/follow-up/enrollment`)).json().data;
+    expect(view).toMatchObject({ mode: "sequence", enrollment: { id: enr.id, status: "active", template_version: 1, current_step: 1, next_action: { kind: "task" } } });
+
+    expect((await call("POST", `/follow-up/enrollments/${enr.id}/pause`, {})).statusCode).toBe(422);
+    expect((await call("POST", `/follow-up/enrollments/${enr.id}/pause`, { reason: "Customer on leave" })).statusCode).toBe(200);
+    expect((await call("POST", `/follow-up/enrollments/${enr.id}/pause`, { reason: "again" })).json().code).toBe("NOT_ACTIVE");
+    expect((await call("POST", `/follow-up/enrollments/${enr.id}/resume`, {})).statusCode).toBe(200);
+    expect((await call("POST", `/follow-up/enrollments/${enr.id}/stop`, { reason: "Closed by phone" })).statusCode).toBe(200);
+    const again = await call("POST", `/follow-up/enrollments/${enr.id}/stop`, { reason: "twice" });
+    expect(again.statusCode).toBe(409);
+    const after = (await call("GET", `/accounts/${accountId}/follow-up/enrollment`)).json().data;
+    expect(after.enrollment).toMatchObject({ status: "stopped", stop_reason: "REP_STOPPED", next_action: null });
+  });
+
   it("Engineering cannot send or read onboarding email", async () => {
     const { accountId } = await provisioned();
     await asRole("engineering");
     expect((await call("POST", `/accounts/${accountId}/onboarding/send`, {})).statusCode).toBe(403);
     expect((await call("GET", `/accounts/${accountId}/onboarding/emails`)).statusCode).toBe(403);
+    expect((await call("POST", `/follow-up/enrollments/${randomUUID()}/stop`, { reason: "x" })).statusCode).toBe(403);
   });
 });

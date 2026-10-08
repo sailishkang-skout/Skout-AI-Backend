@@ -13,6 +13,9 @@ import {
   sendOnboardingEmail,
   type OnboardingDeps,
 } from "../services/cops-onboarding.service.js";
+import { getFollowUpView } from "../services/cops-follow-up.service.js";
+import { EnrollmentControlFailure, pauseEnrollment, resumeEnrollment, stopEnrollment } from "../services/cops-stop.service.js";
+import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -25,6 +28,8 @@ const sendSchema = z
     reason: z.string().trim().max(1000).optional(),
   })
   .strict();
+
+const reasonSchema = z.object({ reason: z.string().trim().min(1, "reason is required").max(1000) }).strict();
 
 type Reply = CopsCapturingReply;
 
@@ -40,6 +45,8 @@ export async function copsOnboardingRoutes(app: FastifyInstance, opts: { db: Db;
   const perms = (ws: string, user: string) => getMemberPermissions(db, ws, user);
   const sendGate = requireAnyCopsPermission(["onboarding:send", "commercial:send"], perms);
   const readGate = requireAnyCopsPermission(["onboarding:read", "commercial:read"], perms);
+  // The rep owns the follow-up (Bible p.18, R/A); Sales hold crm:write, CS onboarding:write.
+  const followUpGate = requireAnyCopsPermission(["onboarding:write", "crm:write"], perms);
 
   const ctxOf = (request: { workspaceId?: string; userId?: string; headers: Record<string, unknown> }) => ({
     workspaceId: request.workspaceId!,
@@ -65,6 +72,9 @@ export async function copsOnboardingRoutes(app: FastifyInstance, opts: { db: Db;
         return reply
           .status(error.status)
           .send(copsErrorBody({ code: error.code, message: error.message, requestId, details: error.details, retryable: error.retryable }));
+      }
+      if (error instanceof EnrollmentControlFailure) {
+        return reply.status(error.status).send(copsErrorBody({ code: error.code, message: error.message, requestId }));
       }
       throw error;
     }
@@ -106,4 +116,51 @@ export async function copsOnboardingRoutes(app: FastifyInstance, opts: { db: Db;
     if (!UUID.test(request.params.id)) return invalid(reply, ctx.requestId, { path: "id", message: "Invalid id" });
     return { data: await listOnboardingEmails(db, ctx.workspaceId, request.params.id) };
   });
+
+  app.get<{ Params: { id: string } }>("/accounts/:id/follow-up/enrollment", { preHandler: readGate }, async (request, rawReply) => {
+    const reply = rawReply as unknown as Reply;
+    const ctx = ctxOf(request);
+    if (!UUID.test(request.params.id)) return invalid(reply, ctx.requestId, { path: "id", message: "Invalid id" });
+    return { data: await getFollowUpView(db, ctx.workspaceId, request.params.id) };
+  });
+
+  /** Pause and stop need a reason (audited); resume re-queues the next step. */
+  for (const action of ["pause", "resume", "stop"] as const) {
+    app.post<IdBody>(`/follow-up/enrollments/:id/${action}`, { preHandler: followUpGate }, async (request, rawReply) => {
+      const reply = rawReply as unknown as Reply;
+      const ctx = ctxOf(request);
+      if (!UUID.test(request.params.id)) return invalid(reply, ctx.requestId, { path: "id", message: "Invalid id" });
+      let reason = "";
+      if (action !== "resume") {
+        const parsed = reasonSchema.safeParse(request.body ?? {});
+        if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+        reason = parsed.data.reason;
+      }
+      const actor = { type: "user" as const, id: ctx.userId };
+      return run(
+        reply,
+        ctx.requestId,
+        async () => {
+          if (action === "pause") {
+            await pauseEnrollment(db, { workspaceId: ctx.workspaceId, enrollmentId: request.params.id, actor, reason, correlationId: ctx.requestId });
+          } else if (action === "resume") {
+            await resumeEnrollment(db, { workspaceId: ctx.workspaceId, enrollmentId: request.params.id, actor, correlationId: ctx.requestId }, (e) =>
+              enqueueSequenceAdvanceJob(app.config, e, 0)
+            );
+          } else {
+            const res = await stopEnrollment(db, {
+              workspaceId: ctx.workspaceId,
+              enrollmentId: request.params.id,
+              reason: "REP_STOPPED",
+              actor,
+              note: reason,
+              correlationId: ctx.requestId,
+            });
+            if (!res.stopped) throw new EnrollmentControlFailure("NOT_ACTIVE", "The follow-up already ended");
+          }
+        },
+        () => ({ data: { id: request.params.id, action } })
+      );
+    });
+  }
 }
