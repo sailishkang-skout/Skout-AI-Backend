@@ -48,9 +48,14 @@ maybe("COPS-05 onboarding signals (Postgres)", () => {
     return { accountId: company.id as string, dealId: deal.id as string, admin, contactId: contact.id as string, instanceId, customerWs: provisioning.provisioned_workspace_id! };
   }
 
+  let seq: { id: string; stepId: string } | null = null;
   async function withFollowUp(accountId: string) {
-    const [seq] = await sql`insert into sequences (workspace_id, name, status, template_key, current_version) values (${ctx.workspaceId}, 'FU', 'active', 'cops_onboarding_followup', 1) returning id`;
-    const [step] = await sql`insert into sequence_steps (sequence_id, step_order, step_type, delay_days) values (${seq.id}, 1, 'task', 3) returning id`;
+    if (!seq) {
+      const [row] = await sql`insert into sequences (workspace_id, name, status, template_key, current_version) values (${ctx.workspaceId}, 'FU', 'active', 'cops_onboarding_followup', 1) returning id`;
+      const [st] = await sql`insert into sequence_steps (sequence_id, step_order, step_type, delay_days) values (${row.id}, 1, 'task', 3) returning id`;
+      seq = { id: row.id, stepId: st.id };
+    }
+    const step = { id: seq.stepId };
     const [enr] = await sql`insert into sequence_enrollments (workspace_id, sequence_id, prospect_id, status) values (${ctx.workspaceId}, ${seq.id}, ${"p-" + randomUUID()}, 'active') returning id`;
     await sql`insert into sequence_enrollment_steps (enrollment_id, step_id, status, scheduled_at) values (${enr.id}, ${step.id}, 'scheduled', now() + interval '3 days')`;
     await sql`insert into cops_follow_ups (workspace_id, account_id, source_event_id, mode, enrollment_id, created_at) values (${ctx.workspaceId}, ${accountId}, gen_random_uuid(), 'sequence', ${enr.id}, now() - interval '2 hours')`;
@@ -121,7 +126,7 @@ maybe("COPS-05 onboarding signals (Postgres)", () => {
     await sql`update credit_balances set balance = 10 where workspace_id = ${a.customerWs}`;
     await sql`update cops_onboarding_instances set first_login_at = now() - interval '80 hours' where id = ${a.instanceId}`;
     const r = await run(a.instanceId);
-    expect(r.fired).toEqual(expect.arrayContaining(["trial_ending", "low_credits", "login_no_value", "no_activity_72h"]));
+    expect(r.fired).toEqual(expect.arrayContaining(["trial_ending", "low_credits", "first_login", "login_no_value", "no_activity_72h"]));
     expect((await run(a.instanceId)).fired).toEqual([]);
   });
 

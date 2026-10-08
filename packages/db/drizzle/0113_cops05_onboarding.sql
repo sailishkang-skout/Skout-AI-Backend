@@ -135,6 +135,10 @@ CREATE TABLE IF NOT EXISTS "cops_onboarding_signals" (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS "cops_onboarding_signals_once_uq" ON "cops_onboarding_signals" ("instance_id", "trigger");
 
+-- One onboarding follow-up sequence per workspace (the default cadence is created on first use).
+CREATE UNIQUE INDEX IF NOT EXISTS "sequences_cops_followup_uq"
+  ON "sequences" ("workspace_id") WHERE "template_key" = 'cops_onboarding_followup' AND "status" <> 'archived';
+
 -- System default activation template v1 (Bible p.45 example; weights pending Product, COPS-05 Q2).
 -- Login alone never activates: first_login has weight 0 and is not required.
 INSERT INTO "cops_activation_templates" ("workspace_id", "key", "version", "segment", "milestones")

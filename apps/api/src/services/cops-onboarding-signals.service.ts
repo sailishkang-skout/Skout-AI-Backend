@@ -57,6 +57,7 @@ export const PLAYBOOK_TRIGGERS = {
   low_credits: { title: "High usage, low credits: top-up or conversion conversation", type: "call" },
   trial_ending: { title: "Trial ends within 3 days: review call and conversion or extension", type: "meeting" },
   hard_bounce: { title: "Onboarding email hard-bounced: find a working contact", type: "email" },
+  first_login: { title: "Customer signed in for the first time: congratulate and guide them to the next milestone", type: "email" },
 } as const;
 export type PlaybookTrigger = keyof typeof PLAYBOOK_TRIGGERS;
 
@@ -222,6 +223,9 @@ export async function evaluateOnboarding(
       await fire("delivered_no_login", `Onboarding email sent ${sentAt.toISOString().slice(0, 10)}.`);
     }
   }
+
+  // Bible p.43 cadence: first login -> congratulate + guide to the next milestone.
+  if (!inst.activatedAt && inst.firstLoginAt) await fire("first_login", `First sign-in ${inst.firstLoginAt.toISOString().slice(0, 10)}.`);
 
   if (!inst.activatedAt && inst.firstLoginAt && now.getTime() - inst.firstLoginAt.getTime() > 72 * HOUR) {
     const [anyRequired] = await db

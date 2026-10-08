@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { createDb } from "@skout/db";
-import { FOLLOW_UP_SEQUENCE_TEMPLATE_KEY, startFollowUp, type FollowUpDeps } from "./cops-follow-up.service.js";
+import { startFollowUp, type FollowUpDeps } from "./cops-follow-up.service.js";
+import { DEFAULT_CADENCE, ensureFollowUpSequence } from "./cops-cadence.service.js";
 
 const postgres = createRequire(new URL("../../../../packages/db/package.json", import.meta.url))("postgres") as (url: string, options?: object) => any;
 
@@ -43,12 +44,6 @@ maybe("COPS-05 follow-up after WelcomeEmailSent (Postgres)", () => {
     };
   }
 
-  async function configureSequence() {
-    const [seq] = await sql`insert into sequences (workspace_id, name, status, template_key, current_version) values (${ws}, 'Onboarding follow-up', 'active', ${FOLLOW_UP_SEQUENCE_TEMPLATE_KEY}, 1) returning id`;
-    await sql`insert into sequence_steps (sequence_id, step_order, step_type, delay_days, subject, body_template) values (${seq.id}, 1, 'task', 1, 'Verify access', 'Check the customer logged in')`;
-    await sql`insert into sequence_versions (sequence_id, version, snapshot) values (${seq.id}, 1, '{}'::jsonb)`;
-    return seq.id as string;
-  }
 
   const eventsFor = async (accountId: string, type: string) =>
     (await sql`select count(*)::int as n from cops_outbox where event_type = ${type} and aggregate_id = ${accountId}`)[0].n as number;
@@ -63,11 +58,25 @@ maybe("COPS-05 follow-up after WelcomeEmailSent (Postgres)", () => {
     await dbSql.end();
   });
 
-  it("without a configured sequence the rep gets a task, assigned to the account owner, with the reason", async () => {
+  it("creates the default cadence once (Day 0/1/3/6/10/14, rep tasks and calls, published and active)", async () => {
+    const [a, b] = await Promise.all([ensureFollowUpSequence(db, ws), ensureFollowUpSequence(db, ws)]);
+    expect(a).toBeTruthy();
+    expect(b).toBe(a);
+    const [seq] = await sql`select status, current_version, mode from sequences where id = ${a}`;
+    expect(seq).toEqual({ status: "active", current_version: 1, mode: "A" });
+    const steps = await sql`select step_type, delay_days from sequence_steps where sequence_id = ${a} order by step_order`;
+    expect(steps.map((s: { step_type: string }) => s.step_type)).toEqual(DEFAULT_CADENCE.map((c) => c.stepType));
+    let day = 0;
+    expect(steps.map((s: { delay_days: number }) => (day += s.delay_days))).toEqual([0, 1, 3, 6, 10, 14]);
+    const [n] = await sql`select count(*)::int as n from sequences where workspace_id = ${ws} and template_key = 'cops_onboarding_followup'`;
+    expect(n.n).toBe(1);
+  });
+
+  it("without outreach consent the rep gets a task, assigned to the account owner, with the reason", async () => {
     const w = await sentWelcome({ prospect: true });
     const fu = await startFollowUp(db, w.event, deps);
     expect(fu).toMatchObject({ mode: "task", enrollment_id: null });
-    expect(fu.task_reason).toMatch(/^no_sequence_configured/);
+    expect(fu.task_reason).toMatch(/^contact_blocked/);
     const [task] = await sql`select assigned_to, type, related_entity_id, status from tasks where id = ${fu.task_id}`;
     expect(task).toMatchObject({ assigned_to: ownerId, type: "onboarding_check", related_entity_id: w.accountId, status: "open" });
     expect(await eventsFor(w.accountId, "TaskCreated")).toBe(1);
@@ -86,7 +95,7 @@ maybe("COPS-05 follow-up after WelcomeEmailSent (Postgres)", () => {
   describe("with the onboarding sequence configured", () => {
     let sequenceId = "";
     beforeAll(async () => {
-      sequenceId = await configureSequence();
+      sequenceId = (await ensureFollowUpSequence(db, ws))!;
     });
 
     it("enrolls a contact that maps to a prospect, stores the template version and schedules the first step", async () => {

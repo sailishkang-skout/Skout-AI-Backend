@@ -1,10 +1,11 @@
-import { and, desc, eq, gt } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
 import { appendCopsEvent, createCopsEvent } from "@skout/shared";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { canContact } from "./cops-can-contact.js";
 import { SequenceService } from "./sequence.service.js";
+import { ensureFollowUpSequence, FOLLOW_UP_TEMPLATE_KEY } from "./cops-cadence.service.js";
 
 /**
  * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
@@ -25,9 +26,9 @@ import { SequenceService } from "./sequence.service.js";
  * (unique source_event_id).
  */
 const log = createLogger("cops-follow-up");
-const { copsFollowUps, copsOnboardingEmailSends, contacts, companies, sequences, sequenceEnrollments, sequenceVersions, tasks } = schema;
+const { copsFollowUps, copsOnboardingEmailSends, contacts, companies, sequenceEnrollments, sequenceVersions, tasks } = schema;
 
-export const FOLLOW_UP_SEQUENCE_TEMPLATE_KEY = "cops_onboarding_followup";
+export const FOLLOW_UP_SEQUENCE_TEMPLATE_KEY = FOLLOW_UP_TEMPLATE_KEY;
 
 export type FollowUpTaskReason =
   | "no_sequence_configured"
@@ -92,19 +93,12 @@ export async function startFollowUp(db: Db, event: WelcomeEvent, deps: FollowUpD
       )[0]
     : undefined;
 
-  const [sequence] = await db
-    .select({ id: sequences.id })
-    .from(sequences)
-    .where(
-      and(
-        eq(sequences.workspaceId, ws),
-        eq(sequences.templateKey, FOLLOW_UP_SEQUENCE_TEMPLATE_KEY),
-        eq(sequences.status, "active"),
-        gt(sequences.currentVersion, 0)
-      )
-    )
-    .orderBy(desc(sequences.updatedAt))
-    .limit(1);
+  // The workspace's follow-up sequence; the default cadence is created on first use.
+  const sequenceId = await ensureFollowUpSequence(db, ws).catch((err) => {
+    log.warn("could not create the default follow-up sequence", { err, workspaceId: ws });
+    return null;
+  });
+  const sequence = sequenceId ? { id: sequenceId } : undefined;
 
   let taskReason: FollowUpTaskReason | null = null;
   let blockedBy: string | null = null;
