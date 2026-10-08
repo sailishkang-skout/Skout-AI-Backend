@@ -22,6 +22,7 @@ import { startSignalActivationSweepWorker } from "./workers/signal-activation-sw
 import { startAlertDigestSweepWorker } from "./workers/alert-digest-sweep.worker.js";
 import { startCopsOutboxRelayWorker } from "./workers/cops-outbox-relay.worker.js";
 import { startRiskDecaySweepWorker } from "./workers/risk-decay-sweep.worker.js";
+import { startCreditReconciliationWorker } from "./workers/credit-reconciliation.worker.js";
 import { startRetentionSignalsSweepWorker } from "./workers/retention-signals-sweep.worker.js";
 import { startWorkbookRunWorker } from "./workers/workbook-run.worker.js";
 import { startReportDeliverySweepWorker } from "./workers/report-delivery-sweep.worker.js";
@@ -69,6 +70,7 @@ async function main() {
   const stopSignalActivationSweepWorker = await startSignalActivationSweepWorker(config);
   const stopAlertDigestSweepWorker = await startAlertDigestSweepWorker(config);
   const stopRiskDecaySweepWorker = await startRiskDecaySweepWorker(config);
+  const stopCreditReconciliationWorker = await startCreditReconciliationWorker(config);
   const stopRetentionSignalsSweepWorker = await startRetentionSignalsSweepWorker(config);
   const stopWorkbookRunWorker = await startWorkbookRunWorker(config);
   const stopReportDeliverySweepWorker = await startReportDeliverySweepWorker(config);
@@ -104,6 +106,7 @@ async function main() {
     await stopCopsOutboxRelayWorker();
     await stopRetentionSignalsSweepWorker();
     await stopRiskDecaySweepWorker();
+    await stopCreditReconciliationWorker();
     await stopAlertDigestSweepWorker();
     await stopSignalActivationSweepWorker();
     await stopSignalAlertSweepWorker();

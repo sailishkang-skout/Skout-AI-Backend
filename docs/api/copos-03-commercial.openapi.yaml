@@ -286,6 +286,41 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/CommercialSummary' }
         '403': { $ref: '#/components/responses/Error' }
+  /commercial/opportunities:
+    get:
+      summary: Commercial Desk across accounts. Open and won opportunities, most recently changed first. Poll for live status.
+      x-permission: commercial:read
+      parameters:
+        - name: state
+          in: query
+          description: Commercial lifecycle state; `none` means no commercial work has started.
+          schema: { type: string, enum: [none, proposal_sent, msa_pending, payment_pending, complete] }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 25 } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: '#/components/schemas/CommercialSummary'
+                        - type: object
+                          properties:
+                            account:
+                              type: object
+                              nullable: true
+                              properties:
+                                id: { type: string, format: uuid }
+                                name: { type: string, nullable: true }
+                  next_cursor: { type: string, nullable: true }
+        '403': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
   /opportunities/{id}/proposals:
     post:
       summary: Create a proposal with version 1 (draft).

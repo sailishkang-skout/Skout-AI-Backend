@@ -48,3 +48,4 @@ export * from "./cops-crm.js";
 export * from "./cops-views.js";
 export * from "./cops-merges.js";
 export * from "./cops-commercial.js";
+export * from "./cops-provisioning.js";

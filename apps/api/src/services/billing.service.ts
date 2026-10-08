@@ -190,7 +190,13 @@ export function createBillingService(db: Db, config: Env) {
         return { handled: true as const, reason: "already_paid", credits: order.credits };
       }
 
-      await workspaceSvc.addCredits(order.workspaceId, order.credits, "razorpay_purchase", paymentId);
+      // Keyed on the payment id: a replayed webhook and the client-side verify racing each other
+      // credit the wallet once.
+      await workspaceSvc.addCredits(order.workspaceId, order.credits, "razorpay_purchase", paymentId, {
+        kind: "purchase",
+        idempotencyKey: `razorpay:${paymentId}`,
+        actor: { type: "integration", id: "razorpay" },
+      });
 
       await db
         .update(schema.paymentOrders)

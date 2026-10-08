@@ -1,4 +1,4 @@
-import { schema } from "@skout/db";
+import { schema, postCreditTransaction } from "@skout/db";
 import type { Db } from "@skout/db";
 import { providerForClerkUserId } from "@skout/db/schema";
 import { and, eq, gt, isNull } from "drizzle-orm";
@@ -32,6 +32,19 @@ type UserRow = {
 };
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
+/** The 500-credit welcome grant, through the COPS-04 ledger; the key makes it at most once per workspace. */
+async function grantWelcomeCredits(tx: Tx, workspaceId: string) {
+  await postCreditTransaction(tx as unknown as Db, {
+    workspaceId,
+    amount: 500,
+    kind: "grant",
+    action: "provision",
+    reason: "Welcome credits on first sign-in",
+    actor: { type: "system", id: "signup" },
+    idempotencyKey: "signup:welcome-grant",
+  });
+}
 
 function legacyClerkUserIdColumn(provider: string, subject: string): string | null {
   if (provider === "clerk" || provider === "stub") return subject;
@@ -258,12 +271,7 @@ export async function resolveOrProvisionUser(
         .limit(1);
 
       if (!balance) {
-        await tx.insert(schema.creditBalances).values({ workspaceId: membership.workspaceId, balance: 500 });
-        await tx.insert(schema.creditTransactions).values({
-          workspaceId: membership.workspaceId,
-          amount: 500,
-          action: "provision",
-        });
+        await grantWelcomeCredits(tx, membership.workspaceId);
       }
 
       await autoAcceptPendingInvites(tx, userId, userEmail, membership.workspaceId);
@@ -309,12 +317,7 @@ export async function resolveOrProvisionUser(
         .limit(1);
 
       if (!balance) {
-        await tx.insert(schema.creditBalances).values({ workspaceId: primary.workspaceId, balance: 500 });
-        await tx.insert(schema.creditTransactions).values({
-          workspaceId: primary.workspaceId,
-          amount: 500,
-          action: "provision",
-        });
+        await grantWelcomeCredits(tx, primary.workspaceId);
       }
 
       return { userId, userEmail, workspaceId: primary.workspaceId, role: primary.role };
@@ -338,16 +341,7 @@ export async function resolveOrProvisionUser(
     });
     await grantSystemMemberRole(tx, workspace.id, userId, "owner");
 
-    await tx.insert(schema.creditBalances).values({
-      workspaceId: workspace.id,
-      balance: 500,
-    });
-
-    await tx.insert(schema.creditTransactions).values({
-      workspaceId: workspace.id,
-      amount: 500,
-      action: "provision",
-    });
+    await grantWelcomeCredits(tx, workspace.id);
 
     return { userId, userEmail, workspaceId: workspace.id, role: "owner" };
   });

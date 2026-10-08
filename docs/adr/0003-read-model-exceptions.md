@@ -99,9 +99,22 @@ consumer. Each file carries the formal exception comment block.
 |---|---|---|
 | `apps/api/src/services/cops-commercial.service.ts` | deals | read; write of `deals.deal_type` only |
 | `apps/api/src/services/cops-gate.service.ts` | deals | write of `deals.deal_type` only (gate policy change) |
-| `apps/api/src/routes/cops-commercial.routes.ts` | deals | read (Commercial Desk list, payment webhook account) |
+| `apps/api/src/routes/cops-commercial.routes.ts` | deals, companies | read (Commercial Desk lists, payment webhook account) |
 
 Proposals, contracts, payment requests and the provisioning gate are written in one transaction
 with the opportunity ownership check, the audit row and the outbox event. Each file carries the
 formal exception comment block. The COPS-03 tables themselves (proposals, contracts,
 payment_requests, commercial gate tables) are owned by apps/api.
+
+## COPS-04 additions (2026-10-07)
+
+| File | Tables touched | Read/write |
+|---|---|---|
+| `apps/api/src/services/cops-provisioning.service.ts` | companies, deals | read (account lock, opportunity ownership) |
+| `apps/api/src/services/cops-credits.service.ts` | deals | read (account of a paid payment request) |
+| `apps/api/src/routes/account-360.routes.ts` | cops_provisionings | read (header plan / trial) |
+
+Each provisioning step writes the new workspace, invite, entitlements or ledger row in the same
+transaction as its saga status, audit row and outbox event, so a step is all-or-nothing. An HTTP call
+into apps/crm cannot take part in that transaction. The saga, wallet and ledger tables are owned by
+apps/api and packages/db.

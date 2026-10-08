@@ -14,3 +14,15 @@ export {
   type ClerkImportConflict,
   type ImportClerkUsersOptions,
 } from "./clerk-user-import.js";
+export {
+  postCreditTransaction,
+  reconcileCreditLedger,
+  latestReconciliationRuns,
+  CreditLedgerError,
+  CREDIT_KINDS,
+  type CreditKind,
+  type PostCreditInput,
+  type PostCreditResult,
+  type CreditMismatch,
+  type CreditTransactionRow,
+} from "./credit-ledger.js";
