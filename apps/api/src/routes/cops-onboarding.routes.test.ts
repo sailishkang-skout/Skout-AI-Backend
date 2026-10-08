@@ -169,6 +169,85 @@ maybe("COPS-05 onboarding email routes", () => {
     expect((await call("GET", `/accounts/${bare.id}/onboarding`)).statusCode).toBe(404);
   });
 
+  describe("rep queue and one-click actions", () => {
+    let acct = "";
+    let contactId = "";
+    let contactEmail = "";
+    let taskId = "";
+
+    beforeAll(async () => {
+      await asRole("sales");
+      const [co] = await sql`insert into companies (workspace_id, name, owner_id) values (${workspaceId}, ${"Queue Co " + RUN}, ${userId}) returning id`;
+      acct = co.id;
+      contactEmail = `champ-${RUN}@queue.test`;
+      [{ id: contactId }] = await sql`insert into contacts (workspace_id, company_id, first_name, email) values (${workspaceId}, ${acct}, 'Champ', ${contactEmail}) returning id`;
+      [{ id: taskId }] = await sql`insert into tasks (workspace_id, assigned_to, related_entity_type, related_entity_id, title, type, due_date) values (${workspaceId}, ${userId}, 'company', ${acct}, 'Send the security questionnaire', 'email', now()) returning id`;
+      const [inbox] = await sql`insert into inboxes (workspace_id, email_address) values (${workspaceId}, ${`rep-${RUN}@skout.test`}) returning id`;
+      const [thread] = await sql`insert into inbox_threads (workspace_id, inbox_id, subject) values (${workspaceId}, ${inbox.id}, 'Re: onboarding') returning id`;
+      await sql`insert into inbox_messages (thread_id, direction, from_address, to_address, subject) values (${thread.id}, 'inbound', ${contactEmail.toUpperCase()}, ${`rep-${RUN}@skout.test`}, 'Question about SSO')`;
+      const [pipeline] = await sql`insert into pipelines (workspace_id, name) values (${workspaceId}, 'Q') returning id`;
+      const [stage] = await sql`insert into pipeline_stages (pipeline_id, name, order_index) values (${pipeline.id}, 'S', 1) returning id`;
+      const [deal] = await sql`insert into deals (workspace_id, company_id, pipeline_id, stage_id, name) values (${workspaceId}, ${acct}, ${pipeline.id}, ${stage.id}, 'Q deal') returning id`;
+      await sql`insert into payment_requests (workspace_id, opportunity_id, amount_minor, currency, provider, provider_ref, checkout_url, status, status_changed_at)
+        values (${workspaceId}, ${deal.id}, 100, 'INR', 'test', ${"q-" + RUN}, 'https://pay.test', 'failed', now())`;
+    });
+
+    it("lists the rep's accounts by urgency with contact, signals and a recommended action", async () => {
+      const res = await call("GET", "/follow-up/queue?owner=me");
+      expect(res.statusCode).toBe(200);
+      const items = res.json().data.filter((i: { account: { id: string } }) => i.account.id === acct);
+      expect(items.map((i: { reason: string }) => i.reason)).toEqual(["reply", "commercial_blocker", "due_task"]);
+      expect(items[0]).toMatchObject({
+        contact: { id: contactId, email: contactEmail },
+        recommended_action: { kind: "email" },
+        detail: "Question about SSO",
+      });
+      expect(items[0].signals.sort()).toEqual(["commercial_blocker", "due_task", "reply"]);
+      const only = (await call("GET", "/follow-up/queue?owner=me&reason=due_task")).json().data;
+      expect(only.every((i: { reason: string }) => i.reason === "due_task")).toBe(true);
+      expect((await call("GET", "/follow-up/queue?owner=all")).statusCode).toBe(403);
+    });
+
+    it("a one-click call on a due task logs the activity, completes the task and replays on the same key", async () => {
+      const key = randomUUID();
+      const body = { kind: "call", account_id: acct, contact_id: contactId, queue_item_id: `task:${taskId}`, outcome: "Walked through SSO setup" };
+      const res = await call("POST", "/follow-up/actions", body, key);
+      expect(res.statusCode).toBe(201);
+      const { activity_id } = res.json().data;
+      const [act] = await sql`select activity_type, subject from activities where id = ${activity_id}`;
+      expect(act).toEqual({ activity_type: "call", subject: "Call with Champ: Walked through SSO setup" });
+      const [task] = await sql`select status from tasks where id = ${taskId}`;
+      expect(task.status).toBe("done");
+      const replay = await call("POST", "/follow-up/actions", body, key);
+      expect(replay.json().data.activity_id).toBe(activity_id);
+      const [n] = await sql`select count(*)::int as n from activities where entity_id = ${acct} and activity_type = 'call'`;
+      expect(n.n).toBe(1);
+      const [ev] = await sql`select count(*)::int as n from cops_outbox where event_type = 'ActivityRecorded' and envelope->'payload'->>'activity_id' = ${activity_id}`;
+      expect(ev.n).toBe(1);
+    });
+
+    it("task and meeting actions need a due date and land on the timeline", async () => {
+      expect((await call("POST", "/follow-up/actions", { kind: "meeting", account_id: acct, subject: "Kickoff" })).statusCode).toBe(422);
+      const due = new Date(Date.now() + 86_400_000).toISOString();
+      const t = await call("POST", "/follow-up/actions", { kind: "task", account_id: acct, subject: "Prepare ROI sheet", due_at: due });
+      expect(t.statusCode).toBe(201);
+      expect(t.json().data.task_id).toBeTruthy();
+      const m = await call("POST", "/follow-up/actions", { kind: "meeting", account_id: acct, contact_id: contactId, subject: "Kickoff", due_at: due });
+      expect(m.statusCode).toBe(201);
+      const [meeting] = await sql`select company_id, contact_id from meetings where id = ${m.json().data.meeting_id}`;
+      expect(meeting).toEqual({ company_id: acct, contact_id: contactId });
+    });
+
+    it("a one-click email to a suppressed contact is refused and writes nothing", async () => {
+      await sql`insert into suppressions (workspace_id, email) values (${workspaceId}, ${contactEmail})`;
+      const before = (await sql`select count(*)::int as n from activities where entity_id = ${acct}`)[0].n;
+      const res = await call("POST", "/follow-up/actions", { kind: "email", account_id: acct, contact_id: contactId, subject: "Hi", body: "Checking in" });
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({ code: "CONTACT_BLOCKED", details: { reason: "suppressed" } });
+      expect((await sql`select count(*)::int as n from activities where entity_id = ${acct}`)[0].n).toBe(before);
+    });
+  });
+
   it("Engineering cannot send or read onboarding email", async () => {
     const { accountId } = await provisioned();
     await asRole("engineering");

@@ -127,6 +127,8 @@ apps/api and packages/db.
 | `apps/api/src/services/cops-follow-up.service.ts` | contacts, companies, tasks | read (prospect link, owner); write of the enrollment task |
 | `apps/api/src/services/cops-onboarding-signals.service.ts` | companies, deals, meetings, tasks | read (owner, lost opportunities, booked meetings); write of playbook and handoff tasks |
 | `apps/api/src/services/cops-follow-up-timeline.ts` | activities | write (follow-up step and stop entries with ActivityRecorded) |
+| `apps/api/src/services/cops-follow-up-queue.service.ts` | companies, contacts, deals, tasks, activities | read (rep queue rows, owner, last touch) |
+| `apps/api/src/services/cops-follow-up-actions.service.ts` | companies, contacts, activities, tasks, meetings | read; write of the one-click action and its activity |
 
 The onboarding email's recipient check, first-send check and send row are written in one transaction
 with the account lock. The file carries the formal exception comment block. The COPS-05 tables

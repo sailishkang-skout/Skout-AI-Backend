@@ -3,8 +3,8 @@ import { z } from "zod";
 import type { Db } from "@skout/db";
 import { copsErrorBody, copsErrorStatus, isValidIdempotencyKey, resolveCorrelationId } from "@skout/shared";
 import { getMemberPermissions } from "@skout/auth";
-import { requireAnyCopsPermission } from "../services/cops-platform.service.js";
-import type { CopsCapturingReply } from "../services/cops-idempotent.js";
+import { copsIdempotencyStore, requireAnyCopsPermission } from "../services/cops-platform.service.js";
+import { withCopsIdempotentReply, type CopsCapturingReply } from "../services/cops-idempotent.js";
 import {
   defaultOnboardingDeps,
   listOnboardingEmails,
@@ -17,6 +17,9 @@ import { getFollowUpView } from "../services/cops-follow-up.service.js";
 import { ActivationError, completeManualMilestone, ensureActivationInstance, loadActivation } from "../services/cops-activation.service.js";
 import { loadProvisionings } from "../services/cops-provisioning.service.js";
 import { listBlockers, loadHandoff } from "../services/cops-onboarding-signals.service.js";
+import { loadFollowUpQueue, QUEUE_REASONS } from "../services/cops-follow-up-queue.service.js";
+import { FollowUpActionError, performFollowUpAction } from "../services/cops-follow-up-actions.service.js";
+import { sendMail } from "../services/mail.service.js";
 import { EnrollmentControlFailure, pauseEnrollment, resumeEnrollment, stopEnrollment } from "../services/cops-stop.service.js";
 import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.js";
 
@@ -33,6 +36,24 @@ const sendSchema = z
   .strict();
 
 const reasonSchema = z.object({ reason: z.string().trim().min(1, "reason is required").max(1000) }).strict();
+const queueSchema = z.object({
+  owner: z.enum(["me", "all"]).default("me"),
+  reason: z.enum(QUEUE_REASONS).optional(),
+  cursor: z.coerce.number().int().min(0).optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(25),
+});
+const actionSchema = z
+  .object({
+    kind: z.enum(["call", "email", "meeting", "task"]),
+    account_id: z.string().regex(UUID, "Invalid id"),
+    contact_id: z.string().regex(UUID, "Invalid id").optional(),
+    queue_item_id: z.string().max(80).optional(),
+    subject: z.string().trim().min(1).max(200).optional(),
+    body: z.string().max(20000).optional(),
+    due_at: z.string().datetime({ offset: true }).optional(),
+    outcome: z.string().trim().max(1000).optional(),
+  })
+  .strict();
 
 type Reply = CopsCapturingReply;
 
@@ -50,6 +71,7 @@ export async function copsOnboardingRoutes(app: FastifyInstance, opts: { db: Db;
   const readGate = requireAnyCopsPermission(["onboarding:read", "commercial:read"], perms);
   // The rep owns the follow-up (Bible p.18, R/A); Sales hold crm:write, CS onboarding:write.
   const followUpGate = requireAnyCopsPermission(["onboarding:write", "crm:write"], perms);
+  const idempotency = copsIdempotencyStore(db);
 
   const ctxOf = (request: { workspaceId?: string; userId?: string; headers: Record<string, unknown> }) => ({
     workspaceId: request.workspaceId!,
@@ -78,6 +100,11 @@ export async function copsOnboardingRoutes(app: FastifyInstance, opts: { db: Db;
       }
       if (error instanceof ActivationError) {
         return reply.status(error.status).send(copsErrorBody({ code: error.code, message: error.message, requestId }));
+      }
+      if (error instanceof FollowUpActionError) {
+        return reply
+          .status(error.status)
+          .send(copsErrorBody({ code: error.code, message: error.message, requestId, details: error.details, retryable: error.code === "EMAIL_NOT_SENT" }));
       }
       if (error instanceof EnrollmentControlFailure) {
         return reply.status(error.status).send(copsErrorBody({ code: error.code, message: error.message, requestId }));
@@ -235,4 +262,38 @@ export async function copsOnboardingRoutes(app: FastifyInstance, opts: { db: Db;
       },
     };
   });
+
+  /** Rep queue (Sales Follow-up screen). owner=all is for managers (crm:admin or onboarding:admin). */
+  app.get<{ Querystring: Record<string, string> }>("/follow-up/queue", { preHandler: followUpGate }, async (request, rawReply) => {
+    const reply = rawReply as unknown as Reply;
+    const ctx = ctxOf(request);
+    const parsed = queueSchema.safeParse(request.query ?? {});
+    if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+    if (parsed.data.owner === "all") {
+      const granted = await perms(ctx.workspaceId, ctx.userId);
+      if (!["crm:admin", "onboarding:admin"].some((k) => granted.includes(k))) {
+        return reply
+          .status(403)
+          .send(copsErrorBody({ code: "FORBIDDEN", message: "Only managers see every rep's queue", requestId: ctx.requestId, details: { required_permission: "crm:admin" } }));
+      }
+    }
+    return loadFollowUpQueue(db, { workspaceId: ctx.workspaceId, userId: ctx.userId, ...parsed.data });
+  });
+
+  /** One-click call / email / meeting / task; always writes a timeline activity. */
+  app.post<{ Body: unknown }>(
+    "/follow-up/actions",
+    { preHandler: followUpGate },
+    withCopsIdempotentReply<{ Body: unknown }>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const parsed = actionSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(
+        reply,
+        ctx.requestId,
+        () => performFollowUpAction(db, ctx, parsed.data, { config: app.config, send: (mail) => sendMail(app.config, mail) }),
+        (data) => reply.status(201).send({ data })
+      );
+    })
+  );
 }
