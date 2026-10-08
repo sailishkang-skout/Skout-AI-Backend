@@ -275,7 +275,7 @@ maybe("COPS-05 onboarding email routes", () => {
     expect((await post("email.opened")).json().outcome).toBe("applied");
     expect((await post("email.clicked")).json().outcome).toBe("applied");
     const list = (await call("GET", `/accounts/${accountId}/onboarding/emails`)).json().data;
-    const row = list.find((e: { to: string }) => e.to === admin && e.status !== "failed");
+    const row = list.find((e: { to: string; status: string }) => e.to === admin && e.status !== "failed");
     expect(row.status).toBe("delivered");
     expect(row.opened_at).not.toBeNull();
     expect(row.clicked_at).not.toBeNull();
