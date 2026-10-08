@@ -127,6 +127,9 @@ function formatApiError(status, body, webUrl) {
   if (status === 402) {
     return "Insufficient credits for this action.";
   }
+  if (body?.error === "validation_error") {
+    return "The captured data did not pass validation.";
+  }
   if (typeof body?.error === "string") {
     if (body.error === "ICP_NOT_CONFIGURED") {
       return "ICP not configured — open Skout and set your ICP under Settings.";
@@ -245,7 +248,11 @@ export async function skoutFetch(path, options = {}) {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     logError(`API error ${res.status} for ${method} ${path}:`, body);
-    throw new Error(formatApiError(res.status, body, config.webUrl));
+    const apiError = new Error(formatApiError(res.status, body, config.webUrl));
+    // Callers that need the stable error code or the recorded capture run read these.
+    apiError.status = res.status;
+    apiError.body = body;
+    throw apiError;
   }
 
   if (res.status === 204) return null;

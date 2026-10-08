@@ -54,3 +54,90 @@ body.side-panel {
   border-color: #b91c1c;
   color: #fca5a5;
 }
+
+.capture-notice,
+.capture-notes {
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #94a3b8;
+}
+
+.capture-notes {
+  padding-left: 16px;
+}
+
+.capture-banner {
+  margin: 0 0 8px;
+  padding: 8px;
+  border: 1px solid #b91c1c;
+  border-radius: 6px;
+  background: #450a0a;
+  color: #fecaca;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.capture-banner p {
+  margin: 0 0 6px;
+}
+
+.capture-error {
+  color: #fca5a5;
+}
+
+.capture-success {
+  color: #86efac;
+}
+
+.capture-result {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.capture-fields label {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+}
+
+.capture-fields input,
+.capture-fields textarea,
+#capture-review-json {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.capture-fields textarea {
+  min-height: 72px;
+}
+
+#capture-review-json {
+  min-height: 180px;
+  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.capture-leads {
+  max-height: 220px;
+  margin: 8px 0;
+  overflow-y: auto;
+  border: 1px solid #334155;
+  border-radius: 6px;
+}
+
+.capture-lead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  font-size: 11px;
+}
+
+.capture-lead span:first-of-type {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
