@@ -120,5 +120,10 @@ maybe("COPS-05 stop conditions (Postgres)", () => {
     await stopEnrollment(db, { workspaceId: ws, enrollmentId: f.enrollmentId, reason: "REP_STOPPED", actor: { type: "user", id: userId }, note: "Handled by phone", correlationId: randomUUID() });
     const [a] = await sql`select action, reason from audit_logs where entity_id = ${f.enrollmentId}`;
     expect(a).toEqual({ action: "follow_up.stopped", reason: "Handled by phone" });
+    // The stop lands on the account timeline (activity + ActivityRecorded).
+    const [act] = await sql`select subject from activities where entity_type = 'company' and entity_id = ${f.accountId}`;
+    expect(act.subject).toBe("Onboarding follow-up stopped: REP_STOPPED: Handled by phone");
+    const [ev] = await sql`select count(*)::int as n from cops_outbox where event_type = 'ActivityRecorded' and envelope->'payload'->>'account_id' = ${f.accountId}`;
+    expect(ev.n).toBe(1);
   });
 });

@@ -2,6 +2,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
 import { writeCopsAudit } from "./cops-platform.service.js";
 import { recordSequenceEvent } from "./sequence-events.js";
+import { recordFollowUpActivity } from "./cops-follow-up-timeline.js";
 
 /**
  * COPS-05 stop conditions for the onboarding follow-up (Bible Appendix C, p.42/74). A stop marks
@@ -105,6 +106,7 @@ export async function stopEnrollment(
       reason: input.reason,
       result: "stopped",
     });
+    await recordFollowUpActivity(db, { workspaceId: input.workspaceId, enrollmentId: outcome.enrollment.id, kind: "stopped", detail: input.note ? `${input.reason}: ${input.note}` : input.reason });
   }
   return { stopped: outcome.stopped, cancelledSteps: outcome.cancelledSteps };
 }

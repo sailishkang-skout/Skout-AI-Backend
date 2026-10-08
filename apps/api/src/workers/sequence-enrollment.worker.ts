@@ -2,6 +2,7 @@ import { Worker } from "bullmq";
 import { context as otelContext } from "@opentelemetry/api";
 import { and, asc, count, desc, eq, gte, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { claimScheduledStep, SIDE_EFFECT_STEP_TYPES, STALE_CLAIM_MS } from "../services/sequence-step-claim.js";
+import { recordFollowUpActivity } from "../services/cops-follow-up-timeline.js";
 import { createDb, scopedTo, scopedById } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger, extractTraceContext, withSpan } from "@skout/observability";
@@ -1673,7 +1674,11 @@ async function advanceEnrollment(
   if (SIDE_EFFECT_STEP_TYPES.has(step.stepType) && !(await claimScheduledStep(db, enrollmentId, pending.enrollmentStepId))) {
     log.info("Step not claimed (enrollment stopped or step taken) — skipping", { enrollmentId, enrollmentStepId: pending.enrollmentStepId });
     return;
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    }
+  }
+  if (SIDE_EFFECT_STEP_TYPES.has(step.stepType)) {
+    // COPS-05: an onboarding follow-up step lands on the account timeline (no-op for other sequences).
+    await recordFollowUpActivity(db, { workspaceId, enrollmentId, kind: "step_started", stepId: pending.stepId });
+  }
 
   // Execute the step
   if (step.stepType === "condition") {

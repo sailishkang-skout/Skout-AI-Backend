@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS "cops_follow_ups" (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS "cops_follow_ups_event_uq" ON "cops_follow_ups" ("workspace_id", "source_event_id");
 CREATE INDEX IF NOT EXISTS "cops_follow_ups_account_idx" ON "cops_follow_ups" ("workspace_id", "account_id");
+CREATE INDEX IF NOT EXISTS "cops_follow_ups_enrollment_idx" ON "cops_follow_ups" ("enrollment_id") WHERE "enrollment_id" IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS "cops_activation_templates" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
