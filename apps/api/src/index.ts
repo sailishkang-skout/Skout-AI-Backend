@@ -22,6 +22,7 @@ import { startSignalActivationSweepWorker } from "./workers/signal-activation-sw
 import { startAlertDigestSweepWorker } from "./workers/alert-digest-sweep.worker.js";
 import { startRiskDecaySweepWorker } from "./workers/risk-decay-sweep.worker.js";
 import { startRetentionSignalsSweepWorker } from "./workers/retention-signals-sweep.worker.js";
+import { startEnrichmentEvidenceRetentionWorker } from "./workers/enrichment-evidence-retention.worker.js";
 import { startWorkbookRunWorker } from "./workers/workbook-run.worker.js";
 import { startReportDeliverySweepWorker } from "./workers/report-delivery-sweep.worker.js";
 import { startIdentityMergeDiscoveryWorker } from "./workers/identity-merge-discovery.worker.js";
@@ -69,6 +70,7 @@ async function main() {
   const stopAlertDigestSweepWorker = await startAlertDigestSweepWorker(config);
   const stopRiskDecaySweepWorker = await startRiskDecaySweepWorker(config);
   const stopRetentionSignalsSweepWorker = await startRetentionSignalsSweepWorker(config);
+  const stopEnrichmentEvidenceRetentionWorker = await startEnrichmentEvidenceRetentionWorker(config);
   const stopWorkbookRunWorker = await startWorkbookRunWorker(config);
   const stopReportDeliverySweepWorker = await startReportDeliverySweepWorker(config);
   const stopIdentityMergeDiscoveryWorker = await startIdentityMergeDiscoveryWorker(config);
@@ -100,6 +102,7 @@ async function main() {
     await stopIdentityMergeDiscoveryWorker();
     await stopDexterEventWorker();
     await stopRetentionSignalsSweepWorker();
+    await stopEnrichmentEvidenceRetentionWorker();
     await stopRiskDecaySweepWorker();
     await stopAlertDigestSweepWorker();
     await stopSignalActivationSweepWorker();

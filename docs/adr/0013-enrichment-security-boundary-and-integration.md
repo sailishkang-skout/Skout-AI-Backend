@@ -109,3 +109,50 @@ enabling capture for production workspaces.
   A capture matches an existing company by LinkedIn id, then domain, then name plus
   industry/headquarters, or adopts the single name-only placeholder; it never deletes a CRM
   company.
+
+## ENR-03 addendum: identity resolution, evidence ledger, change detection, research API
+
+- **Evidence.** Every fact a capture stores is also written to `evidence_ledger`
+  (`capture-evidence.ts`): entity `prospect` (keyed by prospect id) or `company`, one row per
+  attribute, with `source`, the new `source_url` column, `observed_at`, `retrieved_at` (capture
+  time), `method`, `confidence`, and `validation` holding the state `verified` (read on the
+  subject's own page) or `discovery` (read on a search card).
+
+  | Source | Confidence | State |
+  | --- | --- | --- |
+  | `linkedin_public_profile` | 0.9 | verified |
+  | `linkedin_company_page` | 0.85 | verified |
+  | `sales_navigator_search_result`, `linkedin_company_people_result` | 0.5 | discovery |
+  | `manual_linkedin_url` (a teammate attached or entered the URL) | 1.0 | verified |
+
+  Values the extension infers from a title (`seniority`, `jobFunction`) are capped at 0.6 with
+  method `inferred_from_title`. No capture source is given confidence 1: LinkedIn content is
+  observed and often self-reported. Capturing an unchanged value refreshes its row
+  (`retrieved_at`, freshness, `corroboration_count`) instead of adding one.
+- **Employment is its own fact** (`employment`): `verified` only when read on the person's own
+  profile and matched to a saved company; a card match is `discovery`. An employer name shared
+  by several saved companies is recorded as `ambiguous_company_name` with no company link.
+- **Retention and purpose.** Rows carry `permitted_purpose = sales_research`,
+  `consent_basis = legitimate_interest`, `freshness_expires_at` (90 days) and `retention_until`
+  (365 days; entitlement `enrichment.evidence_retention_days`). A daily worker
+  (`enrichment-evidence-retention.worker.ts`) deletes capture-derived rows past
+  `retention_until`. Deleting a person or company deletes its capture-derived evidence at once.
+- **Identity.** A Sales lead is merged into a public-profile record only when a real public URL
+  is visible on a capture or attached by a person (`POST /enrichment/people/:id/public-url`);
+  each such merge writes an `identity_merge_events` row. A company capture that shares only its
+  name with saved companies is not merged: it becomes a pending `identity_merge_proposals` row
+  for the existing reviewed-merge flow. Company name matching compares normalized names, so
+  "Acme" and "Acme Inc." count as the same name (and as ambiguous when both are saved).
+- **Change detection.** `is_job_change` is set only when the set of current employer + title
+  pairs changes; tenure text, descriptions and headline edits do not count. Job changes have a
+  review state (`reviewed_at`, `reviewed_by`). Nothing is enrolled, messaged or queued by a
+  detected change.
+- **Read contract for sequence drafting (ENR-05).** `GET /enrichment/evidence/prospects/:id`
+  (`ProspectEvidence`) and `GET /enrichment/evidence/accounts/:id` (`AccountEvidence`),
+  `schemaVersion: 1`. Each fact has `source`, `sourceUrl`, `observedAt`, `capturedAt`,
+  `confidence`, `state`, `stale` and `usableForClaims` (verified and fresh). Per attribute the
+  verified observation wins over a discovery card, then the newest.
+- **Delete.** Person delete removes identity keys, evidence, snapshots, change events,
+  discovery edges, jobs and list memberships. The CRM contact is soft-deleted only when the
+  capture created it and it has no email, phone or lifecycle progress; otherwise it is kept and
+  unlinked. Company delete also clears the employer link and verified state of its people.

@@ -229,3 +229,18 @@ export function hashValue(value: unknown): string {
 export function hashRecord(record: Json): Record<string, string> {
   return Object.fromEntries(Object.entries(record).map(([key, value]) => [key, hashValue(value)]));
 }
+
+/**
+ * Who the person currently works for, and as what — nothing else. Tenure text ("2 yrs 3 mos"),
+ * descriptions and locations change without the job changing, so they are left out.
+ */
+export function currentEmployerSignature(currentCompanies: unknown): string {
+  return records(currentCompanies)
+    .map((role) => {
+      const title = typeof role.title === "string" ? role.title.replace(/\s+/g, " ").trim().toLowerCase() : "";
+      return `${normalizedCompanyName(typeof role.name === "string" ? role.name : undefined) ?? ""}|${title}`;
+    })
+    .filter((entry) => entry !== "|")
+    .sort()
+    .join(";");
+}

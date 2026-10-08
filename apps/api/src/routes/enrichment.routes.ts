@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
-import { and, count, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { searchFiltersSchema } from "@skout/shared";
 import { schema } from "@skout/db";
 import { buildEnrichmentService, InsufficientCreditsError, SCORE_CREDIT_COST } from "../services/enrichment/index.js";
@@ -16,19 +16,10 @@ import { assertEvidenced } from "@skout/shared";
 import { buildModelVersionsService } from "../services/model-versions.service.js";
 import { assertPermission, recordPrivilegedAction } from "@skout/auth";
 import { getCaptureStatus } from "../services/enrichment/capture-ingest.service.js";
+import { exportPeopleRows, PEOPLE_CSV_COLUMNS, toCsv } from "../services/enrichment/research.service.js";
 const {
-  prospectActivations,
   companies,
-  contacts,
   lists,
-  listMembers,
-  asyncJobs,
-  enrichmentJobs,
-  skoutEvents,
-  evidenceLedger,
-  enrichmentSnapshots,
-  enrichmentChangeEvents,
-  companyPersonDiscoveries,
   sequences,
 } = schema;
 
@@ -38,23 +29,6 @@ const exportSchema = z.object({
   ids: z.array(z.string().min(1)).max(1000).optional(),
   listId: z.string().uuid().optional(),
 });
-
-function csvCell(value: unknown): string {
-  const stringValue =
-    value === null || value === undefined
-      ? ""
-      : typeof value === "string"
-        ? value
-        : JSON.stringify(value);
-  return `"${stringValue.replace(/"/g, '""')}"`;
-}
-
-function toCsv(rows: Array<Record<string, unknown>>, columns: string[]): string {
-  return [
-    columns.map(csvCell).join(","),
-    ...rows.map((row) => columns.map((column) => csvCell(row[column])).join(",")),
-  ].join("\r\n");
-}
 
 const scoreBodySchema = z.object({
   prospect: z.object({
@@ -329,315 +303,7 @@ export async function enrichmentRoutes(app: FastifyInstance) {
   // ENR-01: Frontend-aligned enrichment routes to support dashboard integration
   // These routes map the LinkedIn EnrichmentTool's expected endpoints to Skout's existing backend functionality
 
-  // GET /enrichment/people - List all people/prospects for the workspace
-  app.get("/enrichment/people", async (request, reply) => {
-    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
-    const workspaceId = requireWorkspaceId(request);
-    if (!request.userId) throw new HttpError("unauthorized", 401);
-    await assertPermission(app.db, workspaceId, request.userId, "enrichment:read");
-    
-    const svc = buildEnrichmentService(app.db, app.config);
-    const data = await svc.listActivations(workspaceId);
-    return reply.send({ workspaceId, people: data, total: data.length });
-  });
-
-  // GET /enrichment/people/:id - Get a single person/prospect by ID
-  app.get("/enrichment/people/:id", async (request, reply) => {
-    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
-    const { id } = request.params as { id: string };
-    const workspaceId = requireWorkspaceId(request);
-    if (!request.userId) throw new HttpError("unauthorized", 401);
-    await assertPermission(app.db, workspaceId, request.userId, "enrichment:read");
-    
-    const svc = buildEnrichmentService(app.db, app.config);
-    const person = await svc.getActivation(workspaceId, id);
-    if (!person) return reply.status(404).send({ error: "person_not_found" });
-    return reply.send({ workspaceId, person });
-  });
-
-  // DELETE /enrichment/people/:id - Delete a person/prospect
-  app.delete("/enrichment/people/:id", { config: { rateLimit: { max: 20, timeWindow: 60000 } } }, async (request, reply) => {
-    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
-    const { id } = request.params as { id: string };
-    const workspaceId = requireWorkspaceId(request);
-    if (!request.userId) throw new HttpError("unauthorized", 401);
-    await assertPermission(app.db, workspaceId, request.userId, "enrichment:delete");
-    
-    // First verify the prospect belongs to this workspace
-    const prospectExists = await app.db.query.prospectActivations.findFirst({
-      where: (prospect, { eq, and }) => and(eq(prospect.prospectId, id), eq(prospect.workspaceId, workspaceId))
-    });
-    
-    if (!prospectExists) {
-      return reply.status(404).send({ error: "prospect_not_found", message: "The requested person does not exist in your workspace" });
-    }
-    
-    // Production-grade deletion - remove all related data
-    await app.db.transaction(async (tx) => {
-      const [linkedContact] = await tx
-        .select({ id: contacts.id })
-        .from(contacts)
-        .where(and(
-          eq(contacts.workspaceId, workspaceId),
-          eq(contacts.sourceProspectId, id),
-          isNull(contacts.deletedAt)
-        ))
-        .limit(1);
-      if (linkedContact) {
-        await tx.delete(companyPersonDiscoveries).where(and(
-          eq(companyPersonDiscoveries.workspaceId, workspaceId),
-          eq(companyPersonDiscoveries.contactId, linkedContact.id)
-        ));
-      }
-      // 1. Delete all evidence records for this prospect
-      await tx.delete(evidenceLedger).where(and(
-        eq(evidenceLedger.workspaceId, workspaceId),
-        eq(evidenceLedger.entityType, "prospect"),
-        eq(evidenceLedger.entityId, id)
-      ));
-      // 2. Delete all change events
-      await tx.delete(enrichmentChangeEvents).where(and(
-        eq(enrichmentChangeEvents.workspaceId, workspaceId),
-        eq(enrichmentChangeEvents.entityType, "person"),
-        eq(enrichmentChangeEvents.entityId, id)
-      ));
-      await tx.delete(enrichmentSnapshots).where(and(
-        eq(enrichmentSnapshots.workspaceId, workspaceId),
-        eq(enrichmentSnapshots.entityType, "person"),
-        eq(enrichmentSnapshots.entityId, id)
-      ));
-      await tx.delete(skoutEvents).where(and(
-        eq(skoutEvents.workspaceId, workspaceId),
-        eq(skoutEvents.aggregateId, id)
-      ));
-      // 3. Delete async jobs
-      await tx.delete(asyncJobs).where(and(
-        eq(asyncJobs.workspaceId, workspaceId),
-        eq(asyncJobs.entityType, "prospect"),
-        eq(asyncJobs.entityId, id)
-      ));
-      await tx.delete(enrichmentJobs).where(and(
-        eq(enrichmentJobs.workspaceId, workspaceId),
-        eq(enrichmentJobs.prospectId, id)
-      ));
-      // 4. Remove from lists owned by this workspace only.
-      const workspaceLists = await tx.select({ id: lists.id }).from(lists).where(eq(lists.workspaceId, workspaceId));
-      if (workspaceLists.length) {
-        await tx.delete(listMembers).where(and(
-          inArray(listMembers.listId, workspaceLists.map((list) => list.id)),
-          eq(listMembers.prospectId, id)
-        ));
-      }
-      // 5. Finally delete the prospect itself
-      await tx.delete(prospectActivations).where(and(eq(prospectActivations.prospectId, id), eq(prospectActivations.workspaceId, workspaceId)));
-      await recordPrivilegedAction(tx, {
-        workspaceId,
-        actorId: request.userId,
-        action: "enrichment.delete",
-        entityType: "person",
-        entityId: randomUUID(),
-        beforeState: { prospectId: id },
-        afterState: { deleted: true },
-      });
-    });
-    
-    return reply.send({ success: true, workspaceId, deletedId: id });
-  });
-
-// GET /enrichment/people/:id/evidence - Get all evidence for a person
-app.get("/enrichment/people/:id/evidence", async (request, reply) => {
-  if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
-  const { id } = request.params as { id: string };
-  const workspaceId = requireWorkspaceId(request);
-  if (!request.userId) throw new HttpError("unauthorized", 401);
-  await assertPermission(app.db, workspaceId, request.userId, "enrichment:read");
-  const service = buildEnrichmentService(app.db, app.config);
-  if (!(await service.getActivation(workspaceId, id))) {
-    return reply.status(404).send({ error: "person_not_found" });
-  }
-
-  // Fetch all evidence records for this prospect from the database
-  const evidence = await app.db.query.evidenceLedger.findMany({
-    where: (evidence, { eq, and }) => and(eq(evidence.entityType, "prospect"), eq(evidence.entityId, id), eq(evidence.workspaceId, workspaceId))
-  });
-  
-  return reply.send({ workspaceId, evidence });
-});
-
-// GET /enrichment/companies/:id/evidence - Get all evidence for a company
-app.get("/enrichment/companies/:id/evidence", async (request, reply) => {
-  if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
-  const { id } = request.params as { id: string };
-  const workspaceId = requireWorkspaceId(request);
-  if (!request.userId) throw new HttpError("unauthorized", 401);
-  await assertPermission(app.db, workspaceId, request.userId, "enrichment:read");
-  const [company] = await app.db
-    .select({ id: companies.id })
-    .from(companies)
-    .where(and(eq(companies.id, id), eq(companies.workspaceId, workspaceId), isNull(companies.deletedAt)))
-    .limit(1);
-  if (!company) return reply.status(404).send({ error: "company_not_found" });
-
-  // Fetch all evidence records for this company from the database
-  const evidence = await app.db.query.evidenceLedger.findMany({
-    where: (evidence, { eq, and }) => and(eq(evidence.entityType, "company"), eq(evidence.entityId, id), eq(evidence.workspaceId, workspaceId))
-  });
-  
-  return reply.send({ workspaceId, evidence });
-});
-
-  // GET /enrichment/companies - List all companies for the workspace
-  app.get("/enrichment/companies", async (request, reply) => {
-    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
-    const workspaceId = requireWorkspaceId(request);
-    if (!request.userId) throw new HttpError("unauthorized", 401);
-    await assertPermission(app.db, workspaceId, request.userId, "enrichment:read");
-    
-    const companyRows = await app.db
-      .select()
-      .from(companies)
-      .where(and(eq(companies.workspaceId, workspaceId), isNull(companies.deletedAt)))
-      .orderBy(desc(companies.updatedAt));
-    const companyIds = companyRows.map((company) => company.id);
-    const contactCounts = companyIds.length
-      ? await app.db
-          .select({ companyId: contacts.companyId, count: count() })
-          .from(contacts)
-          .where(and(eq(contacts.workspaceId, workspaceId), inArray(contacts.companyId, companyIds)))
-          .groupBy(contacts.companyId)
-      : [];
-    const countByCompanyId = new Map(contactCounts.map((row) => [row.companyId, row.count]));
-    const result = companyRows.map((company) => ({
-      ...company,
-      _count: { employees: countByCompanyId.get(company.id) ?? 0 },
-    }));
-    return reply.send({ workspaceId, companies: result, total: result.length });
-  });
-
-
-
-  // GET /enrichment/companies/:id - Get a single company by ID
-  app.get("/enrichment/companies/:id", async (request, reply) => {
-    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
-    const { id } = request.params as { id: string };
-    const workspaceId = requireWorkspaceId(request);
-    if (!request.userId) throw new HttpError("unauthorized", 401);
-    await assertPermission(app.db, workspaceId, request.userId, "enrichment:read");
-    
-    const [company] = await app.db
-      .select()
-      .from(companies)
-      .where(and(eq(companies.id, id), eq(companies.workspaceId, workspaceId), isNull(companies.deletedAt)))
-      .limit(1);
-    if (!company) return reply.status(404).send({ error: "company_not_found" });
-    return reply.send({ workspaceId, company });
-  });
-
-  // DELETE /enrichment/companies/:id - Delete a company
-  app.delete("/enrichment/companies/:id", { config: { rateLimit: { max: 20, timeWindow: 60000 } } }, async (request, reply) => {
-    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
-    const { id } = request.params as { id: string };
-    const workspaceId = requireWorkspaceId(request);
-    if (!request.userId) throw new HttpError("unauthorized", 401);
-    await assertPermission(app.db, workspaceId, request.userId, "enrichment:delete");
-    
-    // First verify the company belongs to this workspace
-    const [companyExists] = await app.db
-      .select()
-      .from(companies)
-      .where(and(eq(companies.id, id), eq(companies.workspaceId, workspaceId), isNull(companies.deletedAt)))
-      .limit(1);
-    
-    if (!companyExists) {
-      return reply.status(404).send({ error: "company_not_found", message: "The requested company does not exist in your workspace" });
-    }
-    
-    // Production-grade deletion - remove all related data
-    await app.db.transaction(async (tx) => {
-      // 1. First get all prospectIds associated with this company
-      const companyProspects = await tx
-        .select({ prospectId: prospectActivations.prospectId })
-        .from(prospectActivations)
-        .where(and(eq(prospectActivations.companyId, id), eq(prospectActivations.workspaceId, workspaceId)));
-      const prospectIds = companyProspects.map(p => p.prospectId);
-      
-      // 2. Delete all company evidence records
-      await tx.delete(evidenceLedger).where(and(
-        eq(evidenceLedger.workspaceId, workspaceId),
-        eq(evidenceLedger.entityType, "company"),
-        eq(evidenceLedger.entityId, id)
-      ));
-      // 3. Delete all change events for this company
-      await tx.delete(enrichmentChangeEvents).where(and(
-        eq(enrichmentChangeEvents.workspaceId, workspaceId),
-        eq(enrichmentChangeEvents.entityType, "company"),
-        eq(enrichmentChangeEvents.entityId, id)
-      ));
-      await tx.delete(enrichmentSnapshots).where(and(
-        eq(enrichmentSnapshots.workspaceId, workspaceId),
-        eq(enrichmentSnapshots.entityType, "company"),
-        eq(enrichmentSnapshots.entityId, id)
-      ));
-      await tx.delete(companyPersonDiscoveries).where(and(
-        eq(companyPersonDiscoveries.workspaceId, workspaceId),
-        eq(companyPersonDiscoveries.companyId, id)
-      ));
-      await tx.delete(skoutEvents).where(and(
-        eq(skoutEvents.workspaceId, workspaceId),
-        eq(skoutEvents.aggregateId, id)
-      ));
-      // 4. Delete async jobs
-      await tx.delete(asyncJobs).where(and(
-        eq(asyncJobs.workspaceId, workspaceId),
-        eq(asyncJobs.entityType, "company"),
-        eq(asyncJobs.entityId, id)
-      ));
-      // 5. Remove company's prospects from all lists (if any)
-      if (prospectIds.length > 0) {
-        const workspaceLists = await tx.select({ id: lists.id }).from(lists).where(eq(lists.workspaceId, workspaceId));
-        if (workspaceLists.length) {
-          await tx.delete(listMembers).where(and(
-            inArray(listMembers.listId, workspaceLists.map((list) => list.id)),
-            inArray(listMembers.prospectId, prospectIds)
-          ));
-        }
-      }
-      // 6. Remove company association from all prospects
-      await tx.update(prospectActivations).set({ companyId: null }).where(and(eq(prospectActivations.companyId, id), eq(prospectActivations.workspaceId, workspaceId)));
-      await recordPrivilegedAction(tx, {
-        workspaceId,
-        actorId: request.userId,
-        action: "enrichment.delete",
-        entityType: "company",
-        entityId: randomUUID(),
-        beforeState: { companyId: id },
-        afterState: { deleted: true },
-      });
-      // 7. Finally delete the company itself
-      await tx.delete(companies).where(and(
-        eq(companies.id, id),
-        eq(companies.workspaceId, workspaceId)
-      ));
-    });
-    
-    return reply.send({ success: true, workspaceId, deletedId: id });
-  });
-
-  // GET /enrichment/job-changes - Get job change events
-  app.get("/enrichment/job-changes", async (request, reply) => {
-    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
-    const workspaceId = requireWorkspaceId(request);
-    if (!request.userId) throw new HttpError("unauthorized", 401);
-    await assertPermission(app.db, workspaceId, request.userId, "enrichment:read");
-    
-    const jobChanges = await app.db
-      .select()
-      .from(enrichmentChangeEvents)
-      .where(eq(enrichmentChangeEvents.workspaceId, workspaceId))
-      .orderBy(desc(enrichmentChangeEvents.detectedAt))
-      .limit(100);
-    return reply.send({ workspaceId, jobChanges, total: jobChanges.length });
-  });
+  // People, companies, job changes, evidence and delete live in enrichment-research.routes.ts (ENR-03).
 
   // GET /enrichment/campaigns - Get all campaigns (maps to lists)
   app.get("/enrichment/campaigns", async (request, reply) => {
@@ -703,11 +369,11 @@ app.get("/enrichment/companies/:id/evidence", async (request, reply) => {
         if (!list) return reply.status(404).send({ error: "list_not_found" });
         ids = await service.getListMemberIds(workspaceId, body.listId);
       }
-      const people = await service.listActivations(workspaceId);
+      const people = await exportPeopleRows(app.db, workspaceId, {});
       rows = people
         .filter((person) => !ids || ids.includes(person.prospectId))
-        .map((person) => ({ id: person.prospectId, ...person.snapshot }));
-      columns = ["id", "fullName", "title", "email", "companyName", "companyDomain", "linkedinUrl"];
+        .map((person) => ({ id: person.prospectId, ...person }));
+      columns = ["id", ...PEOPLE_CSV_COLUMNS.filter((column) => column !== "prospectId")];
     } else {
       const companyRows = await app.db
         .select()
@@ -754,10 +420,11 @@ app.get("/enrichment/companies/:id/evidence", async (request, reply) => {
     reply
       .header("Content-Type", "text/csv; charset=utf-8")
       .header("Content-Disposition", `attachment; filename="person-${encodeURIComponent(id)}.csv"`);
+    const [row] = (await exportPeopleRows(app.db, workspaceId, {})).filter((entry) => entry.prospectId === id);
     return reply.send(
       toCsv(
-        [{ id: person.prospectId, ...person.snapshot }],
-        ["id", "fullName", "title", "email", "companyName", "companyDomain", "linkedinUrl"]
+        [{ id: person.prospectId, ...(row ?? person.snapshot) }],
+        ["id", ...PEOPLE_CSV_COLUMNS.filter((column) => column !== "prospectId")]
       )
     );
   });
