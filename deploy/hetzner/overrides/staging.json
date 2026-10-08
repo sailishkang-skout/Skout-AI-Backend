@@ -86,6 +86,9 @@
       "AWS_REQUEST_CHECKSUM_CALCULATION": "WHEN_REQUIRED",
       "AWS_RESPONSE_CHECKSUM_VALIDATION": "WHEN_REQUIRED"
     },
+    "GOOGLE_OAUTH_CLIENT_ID": {
+      "GOOGLE_OAUTH_REDIRECT_URI": "https://www.skoutai.io/app/api/auth/google/callback"
+    },
     "DD_AGENT_HOST": {
       "DD_AGENT_HOST": "datadog-agent"
     }
