@@ -20,6 +20,7 @@ import { listBlockers, loadHandoff } from "../services/cops-onboarding-signals.s
 import { loadFollowUpQueue, QUEUE_REASONS } from "../services/cops-follow-up-queue.service.js";
 import { FollowUpActionError, performFollowUpAction } from "../services/cops-follow-up-actions.service.js";
 import { sendMail } from "../services/mail.service.js";
+import { applyResendEvent, verifySvixSignature, type ResendEvent } from "../services/cops-email-events.service.js";
 import { EnrollmentControlFailure, pauseEnrollment, resumeEnrollment, stopEnrollment } from "../services/cops-stop.service.js";
 import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.js";
 
@@ -296,4 +297,26 @@ export async function copsOnboardingRoutes(app: FastifyInstance, opts: { db: Db;
       );
     })
   );
+
+  /**
+   * Resend email events for onboarding sends (delivered, bounced, opened, clicked). Public path
+   * (billing/webhooks prefix); a missing secret or a bad Svix signature is 401.
+   */
+  app.post("/billing/webhooks/resend/email-events", async (request, reply) => {
+    const requestId = resolveCorrelationId(request.headers["x-request-id"] as string | undefined);
+    const rawBody = (request as { rawBody?: string }).rawBody ?? JSON.stringify(request.body ?? {});
+    const h = (name: string) => {
+      const v = request.headers[name];
+      return Array.isArray(v) ? v[0] : (v as string | undefined);
+    };
+    const ok = verifySvixSignature(app.config.RESEND_WEBHOOK_SECRET, { id: h("svix-id"), timestamp: h("svix-timestamp"), signature: h("svix-signature") }, rawBody);
+    if (!ok) return reply.status(401).send(copsErrorBody({ code: "UNAUTHENTICATED", message: "Invalid webhook signature", requestId }));
+    let event: ResendEvent;
+    try {
+      event = JSON.parse(rawBody) as ResendEvent;
+    } catch {
+      return reply.status(400).send(copsErrorBody({ code: "VALIDATION_FAILED", message: "Unreadable webhook body", requestId }));
+    }
+    return { ok: true, outcome: await applyResendEvent(db, event) };
+  });
 }

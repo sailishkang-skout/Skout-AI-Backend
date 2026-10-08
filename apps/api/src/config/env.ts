@@ -322,6 +322,8 @@ const envSchema = z
     /** Resend (transactional email, decided 2026-10-06). Used when set; SMTP is the fallback. */
     RESEND_API_KEY: z.string().optional(),
     RESEND_FROM: z.string().optional(),
+    /** COPS-05: Svix signing secret (whsec_...) of the Resend webhook for onboarding email events. */
+    RESEND_WEBHOOK_SECRET: z.string().optional(),
     // --- Enrichment tunables. ---
     ENRICHMENT_REQUEST_TIMEOUT_MS: z.coerce.number().default(8000),
     ENRICHMENT_PHONE_SCORE_GATE: z.coerce.number().default(80),

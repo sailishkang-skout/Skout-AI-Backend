@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
@@ -16,6 +16,7 @@ const postgres = createRequire(new URL("../../../../packages/db/package.json", i
 
 const RUN = Date.now().toString(36);
 const OWNER = `onb-owner-${RUN}@example.test`;
+const WEBHOOK_SECRET = "whsec_" + Buffer.from("cops05-test-secret").toString("base64");
 
 maybe("COPS-05 onboarding email routes", () => {
   let app: FastifyInstance;
@@ -62,6 +63,7 @@ maybe("COPS-05 onboarding email routes", () => {
       LOG_LEVEL: "fatal",
       OPENSEARCH_URL: undefined,
       RESEND_API_KEY: undefined,
+      RESEND_WEBHOOK_SECRET: WEBHOOK_SECRET,
       SMTP_HOST: undefined,
     } as typeof config);
     sql = postgres(url as string, { max: 1, onnotice: () => {} });
@@ -246,6 +248,41 @@ maybe("COPS-05 onboarding email routes", () => {
       expect(res.json()).toMatchObject({ code: "CONTACT_BLOCKED", details: { reason: "suppressed" } });
       expect((await sql`select count(*)::int as n from activities where entity_id = ${acct}`)[0].n).toBe(before);
     });
+  });
+
+  it("Resend events record delivery, open, click and a hard bounce once; a bad signature is 401", async () => {
+    const { accountId, admin } = await provisioned();
+    const [contact] = await sql`select id from contacts where workspace_id = ${workspaceId} and company_id = ${accountId} limit 1`;
+    const contactId = contact?.id ?? (await sql`insert into contacts (workspace_id, company_id, first_name, email) values (${workspaceId}, ${accountId}, 'Ada', ${admin}) returning id`)[0].id;
+    const msgId = `re_${randomUUID()}`;
+    await sql`insert into cops_onboarding_email_sends (workspace_id, account_id, contact_id, to_email, template_key, template_version, subject, idempotency_key, status, provider_message_id, sent_at)
+      values (${workspaceId}, ${accountId}, ${contactId}, ${admin}, 'welcome_trial', 1, 'Welcome', ${"wh-" + randomUUID()}, 'sent', ${msgId}, now())`;
+    const post = (type: string, extra: Record<string, unknown> = {}, signature?: string) => {
+      const body = JSON.stringify({ type, created_at: new Date().toISOString(), data: { email_id: msgId, ...extra } });
+      const id = `msg_${randomUUID()}`;
+      const ts = String(Math.floor(Date.now() / 1000));
+      const sig = createHmac("sha256", Buffer.from("cops05-test-secret")).update(`${id}.${ts}.${body}`).digest("base64");
+      return app.inject({
+        method: "POST",
+        url: "/api/v1/billing/webhooks/resend/email-events",
+        headers: { "content-type": "application/json", "svix-id": id, "svix-timestamp": ts, "svix-signature": signature ?? `v1,${sig}` },
+        payload: body,
+      });
+    };
+    expect((await post("email.delivered", {}, "v1,bm90LXZhbGlk")).statusCode).toBe(401);
+    expect((await post("email.delivered")).json().outcome).toBe("applied");
+    expect((await post("email.delivered")).json().outcome).toBe("unchanged");
+    expect((await post("email.opened")).json().outcome).toBe("applied");
+    expect((await post("email.clicked")).json().outcome).toBe("applied");
+    const list = (await call("GET", `/accounts/${accountId}/onboarding/emails`)).json().data;
+    const row = list.find((e: { to: string }) => e.to === admin && e.status !== "failed");
+    expect(row.status).toBe("delivered");
+    expect(row.opened_at).not.toBeNull();
+    expect(row.clicked_at).not.toBeNull();
+    expect((await post("email.bounced", { bounce: { type: "Permanent" } })).json().outcome).toBe("applied");
+    const [ch] = await sql`select bounce_status from contact_channels where contact_id = ${contactId} and lower(value) = ${admin.toLowerCase()}`;
+    expect(ch.bounce_status).toBe("hard");
+    expect((await call("POST", `/accounts/${accountId}/onboarding/preview`, {})).json().data.blocked).toBe("hard_bounce");
   });
 
   it("Engineering cannot send or read onboarding email", async () => {
