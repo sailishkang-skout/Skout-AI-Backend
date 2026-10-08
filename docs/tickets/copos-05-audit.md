@@ -36,7 +36,7 @@ reused, and what is genuinely missing.
 - Stop conditions (Appendix C) map to `stop_reason` codes: reply, meeting booked, activated, opportunity closed/lost, opt-out, hard bounce, rep stop, critical escalation (configurable). A stop cancels pending `sequence_enrollment_steps` in the same transaction that records the stop, so an activation mid-step cancels the pending step (race-safe with a row lock on the enrollment).
 - Login alone never activates: the first-login milestone has weight 0 in the default template, and `CustomerActivated` needs every required milestone.
 - A template edit creates a new version; instances keep the version they started with, so past activations are never rewritten.
-- Permissions: send/re-send `onboarding:send`; queue and actions `onboarding:write` or `crm:manage`; reads `onboarding:read`. No new keys.
+- Permissions: send/re-send `onboarding:send` or `commercial:send` (Sales send onboarding, Bible p.12; the Sales role has no onboarding keys); queue and actions `onboarding:write` or `crm:write`; reads `onboarding:read` or `commercial:read`. No new keys.
 
 ## Open questions for the reviewer
 
@@ -45,6 +45,58 @@ reused, and what is genuinely missing.
 - Q3: Handoff criteria: activation, first payment, account tier, or a custom rule?
 - Q4: Which onboarding contacts are enrolled: the invited admin only, or every contact with the onboarding role?
 - Q5: Is "critical support escalation" a stop condition by default (Appendix C says "if configured")? Proposed: off by default, on per workspace.
+
+## Ticket checklist (every bullet of the COPS-05 ticket)
+
+Legend: done = built and tested; open = not built yet.
+
+BE, onboarding email
+- [x] `POST /accounts/:id/onboarding/send`, plus preview and the email list
+- [x] Template by trial type (`welcome_trial` / `welcome_paid`, versioned). Per-segment templates arrive with the COPS-07 admin config (no segment column on accounts today).
+- [x] Workspace link (invite link until accepted), activation steps, resources, booking link, support path
+- [x] One central `canContact()` gate (suppression, do-not-contact, hard bounce, eligibility; consent for outreach)
+- [x] Emit `WelcomeEmailSent`; explicit, audited re-send; double click sends once
+- [ ] Record delivery / bounce / open / click where privacy allows (columns exist; provider webhooks not wired)
+
+BE, follow-up sequence
+- [x] On `WelcomeEmailSent`: enroll the configured sequence, or create an enrollment task with the reason; never nothing (unique per event, worker retries are idempotent)
+- [ ] Sweep that completes the follow-up for any `WelcomeEmailSent` the worker missed (Redis down)
+- [ ] Default cadence as config (Day 0/1/3/5-7/10/14) seeded as the `cops_onboarding_followup` sequence
+- [ ] Signal triggers: no login 24h, first login, no activity 72h, trial ending
+- [x] Enrollment stores the template version (existing engine: `sequence_version_id`)
+- [ ] Stop conditions: reply, meeting booked, activated, opportunity closed/lost, opt-out, hard bounce, rep stop, critical escalation (configurable)
+- [x] Delayed steps survive deploys (existing engine: steps scheduled in Postgres)
+- [ ] Cancellation race-safe (activation mid-step cancels the pending step)
+- [ ] Each step updates timeline + next action
+- [x] Reuse sequences.ts / the automation engine (no new sequence engine)
+
+BE, activation
+- [x] Tables: instances, milestones, milestone events (+ versioned templates)
+- [ ] Value-based weighted activation per template, stored rule version, `activation_pct`
+- [ ] Product analytics events satisfy milestones
+- [ ] Emit `FirstLogin`, `ActivationMilestoneCompleted`, `CustomerActivated`
+
+BE, playbooks and handoff
+- [ ] Stalled triggers: no delivery, delivered/no login, logged in/no value, integration error, high usage/low credits -> task or escalation suggestion
+- [ ] CS handoff task on criteria, exactly once; Sales keeps visibility
+
+BE, rep queue
+- [ ] `GET /follow-up/queue` (due tasks, stalled milestones, replies, high-intent usage, trial expiry, commercial blockers) with active sequence, last touch, signals, recommended action
+- [ ] One-click call / email / meeting / task actions that always log an activity
+
+FE
+- [ ] Onboarding Control screen: activation progress + trial timer, checklist with evidence, sequence card, usage/credit chart, integrations, blockers, escalation shortcuts
+- [ ] Sales Follow-up screen: prioritised queue, last touch / signals / recommendation, one-click actions
+- [ ] Onboarding-email send dialog with template preview; sequence pause/stop controls
+
+Acceptance
+- [ ] 100% of WelcomeEmailSent events yield an enrollment or a task (handler done and tested; sweep open)
+- [ ] Each stop condition has a test proving no further step fires; activation mid-step cancels the pending step
+- [ ] Suppressed/bounced contacts never emailed (done for the onboarding email); hard bounce raises a rep task
+- [ ] Login alone never activates; rule change does not rewrite past activations; handoff created exactly once
+- [ ] Every one-click action writes a timeline activity
+
+DoD: permissions + audit, contract before FE (done), events with schema tests, error/empty/loading/retry states, analytics, runbook, tests (unit, integration, tenant isolation, e2e).
 
 ## PR plan
 

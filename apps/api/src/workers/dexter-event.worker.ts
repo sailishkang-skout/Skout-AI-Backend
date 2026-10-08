@@ -13,6 +13,8 @@ import {
 } from "../services/cops-notification-routing.js";
 import { deliverNotificationChannels } from "../services/notifications.service.js";
 import { projectCopsEventToTimelineRow } from "../services/cops-timeline.service.js";
+import { startFollowUp } from "../services/cops-follow-up.service.js";
+import { enqueueSequenceAdvanceJob } from "./sequence-enrollment.queue.js";
 
 const log = createLogger("dexter-event.worker");
 const { copsNotificationRoutes, copsProcessedEvents, notifications } = schema;
@@ -114,6 +116,17 @@ export async function handleDexterEvent(
       }
     }
     await projectCopsEventToTimelineRow(db, copsEvent);
+    // COPS-05: every WelcomeEmailSent yields an enrollment or a task. startFollowUp is idempotent on
+    // the event id, so a redelivery after a crash completes the follow-up without duplicating it.
+    if (copsEvent.event_type === "WelcomeEmailSent" && config) {
+      await startFollowUp(db, copsEvent as never, {
+        config,
+        scheduleFirstStep: async ({ enrollmentId, workspaceId, prospectId, sequenceId, firstStepAt }) => {
+          const delayMs = config.BYPASS_BUSINESS_HOURS || !firstStepAt ? 0 : Math.max(0, firstStepAt.getTime() - Date.now());
+          await enqueueSequenceAdvanceJob(config, { enrollmentId, workspaceId, prospectId, sequenceId }, delayMs);
+        },
+      });
+    }
     log.info("processed COPS event on the existing dexter event spine", {
       type: copsEvent.event_type,
       eventId: copsEvent.event_id,
