@@ -140,6 +140,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS "cops_onboarding_signals_once_uq" ON "cops_onb
 CREATE UNIQUE INDEX IF NOT EXISTS "sequences_cops_followup_uq"
   ON "sequences" ("workspace_id") WHERE "template_key" = 'cops_onboarding_followup' AND "status" <> 'archived';
 
+-- Per-workspace onboarding settings (Appendix C: "critical support escalation if configured").
+CREATE TABLE IF NOT EXISTS "cops_onboarding_settings" (
+  "workspace_id" uuid PRIMARY KEY REFERENCES "workspaces"("id") ON DELETE CASCADE,
+  "stop_on_critical_escalation" boolean NOT NULL DEFAULT false,
+  "updated_by" uuid,
+  "updated_at" timestamptz NOT NULL DEFAULT now()
+);
+
 -- System default activation template v1 (Bible p.45 example; weights pending Product, COPS-05 Q2).
 -- Login alone never activates: first_login has weight 0 and is not required.
 INSERT INTO "cops_activation_templates" ("workspace_id", "key", "version", "segment", "milestones")

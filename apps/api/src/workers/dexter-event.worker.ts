@@ -15,6 +15,7 @@ import { deliverNotificationChannels } from "../services/notifications.service.j
 import { projectCopsEventToTimelineRow } from "../services/cops-timeline.service.js";
 import { startFollowUp } from "../services/cops-follow-up.service.js";
 import { ensureActivationInstance } from "../services/cops-activation.service.js";
+import { handleTicketEscalated } from "../services/cops-onboarding-settings.service.js";
 import { enqueueSequenceAdvanceJob } from "./sequence-enrollment.queue.js";
 
 const log = createLogger("dexter-event.worker");
@@ -122,6 +123,10 @@ export async function handleDexterEvent(
     // COPS-05: a provisioned account starts its activation instance (idempotent per account).
     if (copsEvent.event_type === "WorkspaceProvisioned") {
       await ensureActivationInstance(db, copsEvent.tenant_id, copsEvent.aggregate_id);
+    }
+    // COPS-05 Appendix C: a critical escalation stops the onboarding follow-up, if the workspace opted in.
+    if (copsEvent.event_type === "TicketEscalated") {
+      await handleTicketEscalated(db, copsEvent as never);
     }
     if (copsEvent.event_type === "WelcomeEmailSent" && config) {
       await startFollowUp(db, copsEvent as never, {

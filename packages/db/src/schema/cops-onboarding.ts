@@ -152,3 +152,13 @@ export const copsOnboardingSignals = pgTable("cops_onboarding_signals", {
   taskId: uuid("task_id").references(() => tasks.id, { onDelete: "set null" }),
   firedAt: timestamp("fired_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** Per-workspace onboarding settings. Appendix C: stop the follow-up on a critical escalation, if configured (default off). */
+export const copsOnboardingSettings = pgTable("cops_onboarding_settings", {
+  workspaceId: uuid("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  stopOnCriticalEscalation: boolean("stop_on_critical_escalation").notNull().default(false),
+  updatedBy: uuid("updated_by"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

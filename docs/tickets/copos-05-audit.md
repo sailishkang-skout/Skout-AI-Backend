@@ -64,7 +64,7 @@ BE, follow-up sequence
 - [x] Default cadence as config (Day 0/1/3/5-7/10/14) seeded as the `cops_onboarding_followup` sequence
 - [x] Signal triggers: no login 24h, first login, no activity 72h, trial ending
 - [x] Enrollment stores the template version (existing engine: `sequence_version_id`)
-- [x] Stop conditions: reply, meeting booked, activated, opportunity closed/lost, opt-out, hard bounce, rep stop. Critical escalation: the stop reason exists; its trigger arrives with COPS-06 (TicketEscalated).
+- [x] Stop conditions: reply, meeting booked, activated, opportunity closed/lost, opt-out, hard bounce, rep stop, critical escalation (opt-in per workspace via `PUT /onboarding/settings`, off by default; consumes TicketEscalated, which COPS-06 emits).
 - [x] Delayed steps survive deploys (existing engine: steps scheduled in Postgres)
 - [x] Cancellation race-safe (activation mid-step cancels the pending step)
 - [x] Each step updates timeline + next action

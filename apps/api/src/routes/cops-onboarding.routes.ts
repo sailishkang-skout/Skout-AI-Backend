@@ -20,6 +20,7 @@ import { listBlockers, loadHandoff } from "../services/cops-onboarding-signals.s
 import { loadFollowUpQueue, QUEUE_REASONS } from "../services/cops-follow-up-queue.service.js";
 import { FollowUpActionError, performFollowUpAction } from "../services/cops-follow-up-actions.service.js";
 import { sendMail } from "../services/mail.service.js";
+import { getOnboardingSettings, setOnboardingSettings } from "../services/cops-onboarding-settings.service.js";
 import { applyResendEvent, verifySvixSignature, type ResendEvent } from "../services/cops-email-events.service.js";
 import { EnrollmentControlFailure, pauseEnrollment, resumeEnrollment, stopEnrollment } from "../services/cops-stop.service.js";
 import { enqueueSequenceAdvanceJob } from "../workers/sequence-enrollment.queue.js";
@@ -318,5 +319,19 @@ export async function copsOnboardingRoutes(app: FastifyInstance, opts: { db: Db;
       return reply.status(400).send(copsErrorBody({ code: "VALIDATION_FAILED", message: "Unreadable webhook body", requestId }));
     }
     return { ok: true, outcome: await applyResendEvent(db, event) };
+  });
+
+  const adminGate = requireAnyCopsPermission(["admin:admin", "onboarding:admin"], perms);
+  const settingsSchema = z.object({ stop_on_critical_escalation: z.boolean(), reason: z.string().trim().min(1, "reason is required").max(1000) }).strict();
+
+  app.get("/onboarding/settings", { preHandler: readGate }, async (request) => ({ data: await getOnboardingSettings(db, request.workspaceId!) }));
+
+  /** Admin-only, audited with a reason (Appendix C "critical escalation if configured"). */
+  app.put<{ Body: unknown }>("/onboarding/settings", { preHandler: adminGate }, async (request, rawReply) => {
+    const reply = rawReply as unknown as Reply;
+    const ctx = ctxOf(request);
+    const parsed = settingsSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+    return { data: await setOnboardingSettings(db, ctx, parsed.data) };
   });
 }

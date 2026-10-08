@@ -110,7 +110,7 @@ maybe("COPS-02 tables are tenant-isolated (Postgres)", () => {
   });
 
   it("every COPS-02 table has a workspace_id column", async () => {
-    for (const table of [...TABLES, "cops_activation_templates"]) {
+    for (const table of [...TABLES, "cops_activation_templates", "cops_onboarding_settings"]) {
       const [col] = await sql`select count(*)::int as n from information_schema.columns where table_name = ${table} and column_name = 'workspace_id'`;
       expect(col.n, `${table}.workspace_id`).toBe(1);
     }
