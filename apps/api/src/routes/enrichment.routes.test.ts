@@ -45,6 +45,12 @@ beforeAll(async () => {
   // Stub auth provisions its own workspace and ignores x-workspace-id. Local runs can
   // deplete that balance — top it up so credit-gated enrich/score tests stay green.
   if (app.db) {
+          // The fixed test workspace only exists where packages/db seed.ts ran (CI runs only
+          // seed-model-versions), so create it here; the role and credit rows reference it.
+          await app.db
+            .insert(schema.workspaces)
+            .values({ id: WORKSPACE, name: "Enrichment test workspace", slug: "enrichment-test-workspace" })
+            .onConflictDoNothing();
           // First create the test user in the users table to satisfy foreign key constraints
           await app.db
             .insert(schema.users)
@@ -421,9 +427,15 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
       },
     });
     expect(get.statusCode).toBe(404);
-    // The app-wide onSend hook (app.ts) normalizes every {error} reply into {error, message,
-    // statusCode} — this asserts the real response shape, not just this route's own .send() call.
-    expect(get.json()).toEqual({ error: "job_not_found", message: "job_not_found", statusCode: 404 });
+    // The app-wide onSend hook adds the standard error envelope to legacy route responses.
+    expect(get.json()).toMatchObject({
+      error: "job_not_found",
+      code: "job_not_found",
+      message: "job_not_found",
+      statusCode: 404,
+      retryable: false,
+    });
+    expect(get.json().request_id).toEqual(expect.any(String));
   });
 
   it("returns 404 for a retry against a non-uuid job id", async () => {
@@ -436,7 +448,14 @@ describe("enrichment API (strategy §5–§9, Tier 2 activation)", () => {
       },
     });
     expect(retry.statusCode).toBe(404);
-    expect(retry.json()).toEqual({ error: "job_not_found", message: "job_not_found", statusCode: 404 });
+    expect(retry.json()).toMatchObject({
+      error: "job_not_found",
+      code: "job_not_found",
+      message: "job_not_found",
+      statusCode: 404,
+      retryable: false,
+    });
+    expect(retry.json().request_id).toEqual(expect.any(String));
   });
 
   it("does not persist unverified email on activation snapshot (E4.3)", async () => {

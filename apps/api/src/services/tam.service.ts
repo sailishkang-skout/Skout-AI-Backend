@@ -224,7 +224,8 @@ async function computeCoverage(db: Db, workspaceId: string, filterConfig: TamFil
   if (inTam.length === 0) return { ...EMPTY_COVERAGE, total: totalCount };
 
   const prospectIds = inTam.map((a) => a.prospectId);
-  const companyIds = [...new Set(inTam.map((a) => a.companyId))];
+  // company_id is nullable since ENR-01; activations without a company cannot match a deal.
+  const companyIds = [...new Set(inTam.map((a) => a.companyId).filter((id): id is string => id !== null))];
 
   const [enrichedRows, sequencedRows, threadRows, dealCompanyRows] = await Promise.all([
     db
@@ -259,7 +260,7 @@ async function computeCoverage(db: Db, workspaceId: string, filterConfig: TamFil
     enriched: inTam.filter((a) => enrichedSet.has(a.prospectId)).length,
     contacted: inTam.filter((a) => contactedSet.has(a.prospectId)).length,
     replied: inTam.filter((a) => repliedSet.has(a.prospectId)).length,
-    deal: inTam.filter((a) => dealCompanySet.has(a.companyId)).length,
+    deal: inTam.filter((a) => a.companyId !== null && dealCompanySet.has(a.companyId)).length,
   };
 }
 

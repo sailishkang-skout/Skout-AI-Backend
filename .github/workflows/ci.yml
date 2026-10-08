@@ -72,6 +72,11 @@ jobs:
       - name: Run database migrations
         run: pnpm db:migrate
 
+      # Roles and permissions live in data, not migrations (roles / role_permissions); every
+      # environment runs this idempotent backfill after migrating, so the test database does too.
+      - name: Seed RBAC roles and permissions
+        run: pnpm --filter @skout/db backfill-rbac
+
       - name: Seed model versions (required by §10 journey E2E AI-pin assertions)
         run: pnpm --filter @skout/db seed-model-versions
 

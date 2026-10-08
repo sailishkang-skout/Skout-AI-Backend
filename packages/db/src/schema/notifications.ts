@@ -1,4 +1,5 @@
-import { boolean, index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { boolean, index, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { users } from "./users.js";
 import { workspaces } from "./workspaces.js";
 
@@ -27,6 +28,8 @@ export const notifications = pgTable(
     entityId: text("entity_id"),
     /** Which channels this notification was actually delivered through — for debugging/audit, not preference. */
     deliveredChannels: jsonb("delivered_channels").notNull().default([]),
+    /** COPS event source used to deduplicate routed in-app notifications across event replay. */
+    sourceEventId: uuid("source_event_id"),
     readAt: timestamp("read_at", { withTimezone: true }),
     /** R17.3 digest delivery — set once this row has been folded into a daily digest email, so the sweep doesn't re-send it. Null for real-time-delivered or not-yet-digested rows. */
     digestedAt: timestamp("digested_at", { withTimezone: true }),
@@ -37,6 +40,9 @@ export const notifications = pgTable(
     index("notifications_workspace_user_unread_idx").on(table.workspaceId, table.userId, table.readAt),
     index("notifications_workspace_type_idx").on(table.workspaceId, table.type),
     index("notifications_entity_idx").on(table.entityType, table.entityId),
+    uniqueIndex("notifications_cops_event_recipient_idx")
+      .on(table.workspaceId, table.userId, table.sourceEventId)
+      .where(sql`${table.sourceEventId} is not null`),
   ]
 );
 
@@ -64,4 +70,22 @@ export const notificationPreferences = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex("notification_preferences_workspace_user_type_idx").on(table.workspaceId, table.userId, table.type)]
+);
+
+/** Workspace-specific event-to-role overrides. An empty role_keys array intentionally disables routing. */
+export const copsNotificationRoutes = pgTable(
+  "cops_notification_routes",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    eventType: text("event_type").notNull(),
+    roleKeys: jsonb("role_keys").$type<string[]>().notNull().default([]),
+    updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.eventType] }),
+    index("cops_notification_routes_workspace_idx").on(table.workspaceId),
+  ]
 );

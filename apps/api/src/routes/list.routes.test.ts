@@ -342,27 +342,27 @@ describe("list routes — 404 and validation", () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it("POST /lists rejects an empty name with 400", async () => {
+  it("POST /lists rejects an empty name with 422", async () => {
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/lists",
       headers: { ...asUser("validation@test.com"), "content-type": "application/json" },
       payload: { name: "" },
     });
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(422);
   });
 
-  it("POST /lists rejects a missing name with 400", async () => {
+  it("POST /lists rejects a missing name with 422", async () => {
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/lists",
       headers: { ...asUser("validation-missing@test.com"), "content-type": "application/json" },
       payload: {},
     });
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(422);
   });
 
-  it("POST /lists/:id/members rejects empty prospectIds array with 400", async () => {
+  it("POST /lists/:id/members rejects empty prospectIds array with 422", async () => {
     const email = "validation-members@test.com";
 
     const created = await app.inject({
@@ -379,7 +379,7 @@ describe("list routes — 404 and validation", () => {
       headers: { ...asUser(email), "content-type": "application/json" },
       payload: { prospectIds: [] },
     });
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(422);
   });
 });
 

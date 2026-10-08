@@ -1,4 +1,5 @@
 import { schema } from "@skout/db";
+import { appendActivityRecorded } from "@skout/shared";
 import { HttpError } from "../../utils/http.js";
 import type { NodeHandler } from "./types.js";
 
@@ -46,17 +47,29 @@ export const crmWritebackActionNodeHandler: NodeHandler = async (ctx) => {
     return { output: { simulated: true, entityType, entityId, activityType } };
   }
 
-  const [row] = await ctx.db
-    .insert(activities)
-    .values({
+  // COPS-02: the activity and its ActivityRecorded event commit together, so it reaches the timeline.
+  const row = await ctx.db.transaction(async (tx) => {
+    const [inserted] = await tx
+      .insert(activities)
+      .values({
+        workspaceId: ctx.workspaceId,
+        entityType,
+        entityId,
+        activityType,
+        subject: subject ?? `Workflow action: ${activityType}`,
+        body: body ?? `Triggered by workflow run ${ctx.runId}`,
+      })
+      .returning();
+    await appendActivityRecorded(tx, {
       workspaceId: ctx.workspaceId,
+      activityId: inserted!.id,
+      activityType,
       entityType,
       entityId,
-      activityType,
-      subject: subject ?? `Workflow action: ${activityType}`,
-      body: body ?? `Triggered by workflow run ${ctx.runId}`,
-    })
-    .returning();
+      subject: inserted!.subject,
+    });
+    return inserted;
+  });
 
   return { output: { activityId: row!.id } };
 };

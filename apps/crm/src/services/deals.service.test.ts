@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { schema } from "@skout/db";
 
 vi.mock("./skout-event.service.js", () => ({
   emitSkoutEvent: vi.fn(async (_db: unknown, _config: unknown, input: unknown) => ({
@@ -36,15 +37,52 @@ const EXISTING_ROW = {
   updatedAt: new Date(),
 };
 
-function makeUpdateDb(updatedRow: Record<string, unknown>) {
-  return {
-    select: vi.fn().mockReturnValue({
-      from: vi.fn().mockReturnValue({ where: vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue([EXISTING_ROW]) }) }),
-    }),
+function makeUpdateDb(updatedRow: Record<string, unknown>, stageNames: string[] = []) {
+  let stageIndex = 0;
+  const outboxRows: Record<string, unknown>[] = [];
+  const tx = {
     update: vi.fn().mockReturnValue({
       set: vi.fn().mockReturnValue({ where: vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([updatedRow]) }) }),
     }),
+    insert: vi.fn((table: unknown) => ({
+      values: vi.fn((value: Record<string, unknown>) => {
+        if (table === schema.copsOutbox) {
+          outboxRows.push(value);
+          return Promise.resolve();
+        }
+          if (table === schema.copsLifecycleStates) {
+            return { onConflictDoNothing: vi.fn().mockResolvedValue(undefined) };
+          }
+        return {
+          returning: vi.fn().mockResolvedValue([{
+            id: "audit-1",
+            workspaceId: "ws-1",
+            actorId: "user-1",
+            action: "update",
+            entityType: "deal",
+            entityId: "deal-1",
+            beforeState: null,
+            afterState: null,
+            createdAt: new Date(),
+          }]),
+        };
+      }),
+    })),
+    select: vi.fn().mockReturnValue({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({
+          limit: vi.fn(async () => [{ name: stageNames[stageIndex++] }]),
+        }),
+      }),
+    }),
   };
+  const db = {
+    select: vi.fn().mockReturnValue({
+      from: vi.fn().mockReturnValue({ where: vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue([EXISTING_ROW]) }) }),
+    }),
+    transaction: vi.fn(async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx)),
+  };
+  return { ...db, tx, outboxRows };
 }
 
 function buildService(db: unknown, config?: unknown) {
@@ -133,5 +171,27 @@ describe("DealsService.update — event spine", () => {
     await svc.update("ws-1", "deal-1", { amount: 2000 } as any, "user-1");
 
     expect(emitSkoutEvent).not.toHaveBeenCalled();
+  });
+
+  it("writes OpportunityQualified to the outbox in the stage-change transaction", async () => {
+    const updatedRow = { ...EXISTING_ROW, stageId: "stage-2" };
+    const db = makeUpdateDb(updatedRow, ["New", "Qualified"]);
+    const svc = buildService(db);
+
+    await svc.update("ws-1", "deal-1", { stageId: "stage-2" } as any, "user-1");
+
+    expect(db.transaction).toHaveBeenCalledTimes(1);
+    expect(db.tx.insert).toHaveBeenCalledWith(schema.copsOutbox);
+    expect(db.tx.insert).toHaveBeenCalledWith(schema.copsLifecycleStates);
+    expect(db.outboxRows[0]).toMatchObject({
+      eventType: "OpportunityQualified",
+      tenantId: "ws-1",
+      aggregateType: "opportunity",
+      aggregateId: "deal-1",
+      envelope: {
+        event_type: "OpportunityQualified",
+        payload: { opportunity_id: "deal-1", account_id: "company-1" },
+      },
+    });
   });
 });

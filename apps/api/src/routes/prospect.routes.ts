@@ -12,6 +12,7 @@ import { HttpError, requireWorkspaceId } from "../utils/http.js";
 import { emitSkoutEvent } from "../services/skout-event.service.js";
 import { createLogger } from "@skout/observability";
 import { assertPermission, recordPrivilegedAction } from "@skout/auth";
+import { auditEntityId } from "../utils/audit-entity-id.js";
 
 const log = createLogger("prospect.routes");
 
@@ -278,8 +279,9 @@ export async function prospectRoutes(app: FastifyInstance) {
         actorId: request.userId,
         action: "enrichment.capture",
         entityType: "prospect",
-        entityId: body.prospect.prospectId ?? id,
-        afterState: { jobId: job.id, companyDomain: body.prospect.companyDomain, fullName: body.prospect.fullName, title: body.prospect.title }
+        // Prospect ids are text; audit_logs.entity_id is uuid (see auditEntityId). The real id is in after_state.
+        entityId: auditEntityId(body.prospect.prospectId ?? id),
+        afterState: { prospectId: body.prospect.prospectId ?? id, jobId: job.id, companyDomain: body.prospect.companyDomain, fullName: body.prospect.fullName, title: body.prospect.title }
       });
       
       return reply.status(202).send({

@@ -5,6 +5,8 @@ import { createDb, type Db } from "@skout/db";
 declare module "fastify" {
   interface FastifyInstance {
     db: Db | null;
+    /** Test hook: called for every SQL statement. Null in production. */
+    onDbQuery: ((query: string) => void) | null;
   }
 }
 
@@ -17,7 +19,7 @@ export const dbPlugin = fp(async (app: FastifyInstance) => {
     return;
   }
 
-  const { db, sql } = createDb(url);
+  const { db, sql } = createDb(url, { onQuery: app.onDbQuery ?? undefined });
 
   try {
     await sql`SELECT 1`;

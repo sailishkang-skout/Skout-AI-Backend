@@ -25,6 +25,7 @@ export function createWorkspaceService(db: Db) {
           createdAt: schema.workspaces.createdAt,
           balance: schema.creditBalances.balance,
           slackWebhookUrl: schema.workspaces.slackWebhookUrl,
+          teamsWebhookUrl: schema.workspaces.teamsWebhookUrl,
           meetingBotAutoJoinDefault: schema.workspaces.meetingBotAutoJoinDefault,
           dealPromotionThreshold: schema.workspaces.dealPromotionThreshold,
         })
@@ -42,6 +43,16 @@ export function createWorkspaceService(db: Db) {
         .set({ slackWebhookUrl, updatedAt: new Date() })
         .where(eq(schema.workspaces.id, workspaceId))
         .returning({ id: schema.workspaces.id, slackWebhookUrl: schema.workspaces.slackWebhookUrl });
+      return row ?? null;
+    },
+
+    /** COPS-01 — per-workspace Teams Workflows incoming-webhook URL. Pass null to disconnect. */
+    async setTeamsWebhook(workspaceId: string, teamsWebhookUrl: string | null) {
+      const [row] = await db
+        .update(schema.workspaces)
+        .set({ teamsWebhookUrl, updatedAt: new Date() })
+        .where(eq(schema.workspaces.id, workspaceId))
+        .returning({ id: schema.workspaces.id, teamsWebhookUrl: schema.workspaces.teamsWebhookUrl });
       return row ?? null;
     },
 

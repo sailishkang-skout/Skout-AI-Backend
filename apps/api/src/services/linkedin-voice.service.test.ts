@@ -93,7 +93,7 @@ function makeDb(opts: {
     return opts.contacts ?? [];
   });
 
-  return {
+  const db: any = {
     select: vi.fn().mockReturnValue(selectChain),
     insert: vi.fn().mockImplementation((table: { name?: string } | unknown) => {
       const tableName = String((table as { name?: string })?.name ?? "");
@@ -124,7 +124,10 @@ function makeDb(opts: {
       }),
     }),
     _select: selectChain,
-  } as any;
+  };
+  // Activity + ActivityRecorded event now commit in one transaction.
+  db.transaction = async (fn: (tx: unknown) => unknown) => fn(db);
+  return db;
 }
 
 describe("normalizeVoiceChoice", () => {
