@@ -1,0 +1,275 @@
+openapi: 3.0.3
+info:
+  title: COPS-05 Onboarding email, follow-up sequence, activation, rep queue
+  version: 0.1.0
+  description: |
+    Contract for COPS-05. Errors use the COPS-01 envelope {code, message, details, request_id, retryable}.
+    Every POST needs an Idempotency-Key header. Status: draft, pending reviewer sign-off.
+    Every send and enrollment goes through one canContact() gate (suppression, consent, hard bounce,
+    send eligibility); a blocked contact returns 409 CONTACT_BLOCKED with the reason, never a send.
+servers:
+  - url: /api/v1
+paths:
+  /accounts/{id}/onboarding:
+    get:
+      summary: Onboarding state of the account (Onboarding Control screen)
+      description: |
+        Activation progress and trial timer, milestone checklist with evidence, the follow-up enrollment
+        (current step, next scheduled action) or the enrollment task, onboarding emails with delivery
+        status, open blockers. Needs onboarding:read.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/OnboardingEnvelope" } } } }
+        "404": { description: Account not provisioned (NOT_PROVISIONED) }
+  /accounts/{id}/onboarding/preview:
+    post:
+      summary: Render the onboarding email for this account without sending it
+      description: Template chosen by segment and trial type unless template_key is given. Needs onboarding:send.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OnboardingSendRequest" }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/EmailPreviewEnvelope" } } } }
+  /accounts/{id}/onboarding/send:
+    post:
+      summary: Send the onboarding email (emits WelcomeEmailSent, which starts the follow-up)
+      description: |
+        Double click sends once: the same Idempotency-Key returns the same send. A second send for
+        the same account and recipient is refused with 409 ALREADY_SENT unless resend=true, which
+        needs a reason and is audited. Needs onboarding:send.
+      parameters: [{ $ref: "#/components/parameters/Id" }, { $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OnboardingSendRequest" }
+      responses:
+        "201": { description: Sent, content: { application/json: { schema: { $ref: "#/components/schemas/EmailSendEnvelope" } } } }
+        "200": { description: Same key replayed }
+        "404": { description: Account not provisioned }
+        "409": { description: "ALREADY_SENT (use resend with a reason) or CONTACT_BLOCKED (suppressed, no consent, hard bounce)" }
+        "422": { description: Validation error with field paths (e.g. resend without reason) }
+  /accounts/{id}/follow-up/enrollment:
+    get:
+      summary: The account's follow-up enrollment or enrollment task
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/FollowUpEnvelope" } } } }
+  /follow-up/enrollments/{id}/pause:
+    post:
+      summary: Pause the follow-up sequence (rep). Pending steps keep their schedule.
+      parameters: [{ $ref: "#/components/parameters/Id" }, { $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody: { $ref: "#/components/requestBodies/Reason" }
+      responses:
+        "200": { description: Paused }
+        "409": { description: Not active }
+  /follow-up/enrollments/{id}/resume:
+    post:
+      summary: Resume a paused follow-up sequence; steps whose time passed run on the next tick
+      parameters: [{ $ref: "#/components/parameters/Id" }, { $ref: "#/components/parameters/IdempotencyKey" }]
+      responses:
+        "200": { description: Resumed }
+        "409": { description: Not paused, or a stop condition already ended it }
+  /follow-up/enrollments/{id}/stop:
+    post:
+      summary: Stop the follow-up sequence (stop_reason REP_STOPPED). Cancels every pending step.
+      parameters: [{ $ref: "#/components/parameters/Id" }, { $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody: { $ref: "#/components/requestBodies/Reason" }
+      responses:
+        "200": { description: Stopped }
+        "409": { description: Already ended }
+  /accounts/{id}/activation:
+    get:
+      summary: Activation instance, template version, milestones with timestamps and evidence, activation_pct
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/ActivationEnvelope" } } } }
+  /accounts/{id}/activation/milestones/{key}/complete:
+    post:
+      summary: Mark a manual milestone complete (e.g. success review). Reason required, audited.
+      description: Milestones fed by product analytics events cannot be completed by hand (409). Needs onboarding:write.
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { name: key, in: path, required: true, schema: { type: string } }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody: { $ref: "#/components/requestBodies/Reason" }
+      responses:
+        "200": { description: Completed (emits ActivationMilestoneCompleted; CustomerActivated when the rule is met) }
+        "409": { description: Already complete, or the milestone is event-driven }
+  /follow-up/queue:
+    get:
+      summary: Rep queue (Sales Follow-up screen), prioritised
+      description: |
+        Items: due task, stalled milestone, reply, high-intent usage, trial expiry, commercial blocker.
+        Each row has the account, active sequence, last touch, signals and one recommended next action.
+        Defaults to the caller's accounts; owner=all needs crm:manage.
+      parameters:
+        - { name: owner, in: query, schema: { type: string, enum: [me, all], default: me } }
+        - { name: reason, in: query, schema: { $ref: "#/components/schemas/QueueReason" } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 25 } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/QueueEnvelope" } } } }
+  /follow-up/actions:
+    post:
+      summary: One-click call, email, meeting or task from the queue; always writes a timeline activity
+      description: Email goes through canContact(). Needs onboarding:write or crm:manage.
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FollowUpAction" }
+      responses:
+        "201": { description: Done, content: { application/json: { schema: { $ref: "#/components/schemas/FollowUpActionEnvelope" } } } }
+        "409": { description: CONTACT_BLOCKED for an email to a blocked contact }
+components:
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    IdempotencyKey: { name: Idempotency-Key, in: header, required: true, schema: { type: string, maxLength: 200 } }
+  requestBodies:
+    Reason:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [reason]
+            properties: { reason: { type: string, minLength: 1, maxLength: 1000 } }
+  schemas:
+    OnboardingSendRequest:
+      type: object
+      properties:
+        contact_id: { type: string, format: uuid, description: Defaults to the provisioned admin's contact }
+        template_key: { type: string, description: Defaults to the template for the account segment and trial type }
+        booking_url: { type: string, format: uri }
+        resend: { type: boolean, default: false }
+        reason: { type: string, maxLength: 1000, description: Required when resend is true }
+    EmailPreview:
+      type: object
+      properties:
+        template_key: { type: string }
+        template_version: { type: integer }
+        to: { type: string }
+        subject: { type: string }
+        html: { type: string }
+        text: { type: string }
+        blocked: { type: string, nullable: true, description: "canContact() reason when the send would be refused" }
+    EmailPreviewEnvelope: { type: object, properties: { data: { $ref: "#/components/schemas/EmailPreview" } } }
+    EmailSend:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        contact_id: { type: string, format: uuid }
+        to: { type: string }
+        template_key: { type: string }
+        template_version: { type: integer }
+        status: { type: string, enum: [queued, sent, delivered, bounced, failed] }
+        opened_at: { type: string, format: date-time, nullable: true }
+        clicked_at: { type: string, format: date-time, nullable: true }
+        is_resend: { type: boolean }
+        sent_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+    EmailSendEnvelope: { type: object, properties: { data: { $ref: "#/components/schemas/EmailSend" } } }
+    StopReason:
+      type: string
+      enum: [REPLIED, MEETING_BOOKED, ACTIVATED, OPPORTUNITY_CLOSED, OPTED_OUT, HARD_BOUNCE, REP_STOPPED, CRITICAL_ESCALATION, SEQUENCE_COMPLETED]
+    FollowUp:
+      type: object
+      description: Exactly one of enrollment or task is set after WelcomeEmailSent (never neither).
+      properties:
+        mode: { type: string, enum: [sequence, task] }
+        enrollment:
+          type: object
+          nullable: true
+          properties:
+            id: { type: string, format: uuid }
+            sequence_id: { type: string, format: uuid }
+            template_version: { type: integer }
+            status: { type: string, enum: [active, paused, stopped, completed] }
+            stop_reason: { allOf: [{ $ref: "#/components/schemas/StopReason" }], nullable: true }
+            current_step: { type: integer, nullable: true }
+            next_action: { type: object, nullable: true, properties: { kind: { type: string }, scheduled_at: { type: string, format: date-time } } }
+        task:
+          type: object
+          nullable: true
+          properties: { id: { type: string, format: uuid }, title: { type: string }, due_at: { type: string, format: date-time }, status: { type: string } }
+    FollowUpEnvelope: { type: object, properties: { data: { $ref: "#/components/schemas/FollowUp", nullable: true } } }
+    Milestone:
+      type: object
+      properties:
+        key: { type: string, example: first_search }
+        label: { type: string }
+        weight: { type: integer, minimum: 0 }
+        required: { type: boolean }
+        source: { type: string, enum: [event, manual] }
+        completed_at: { type: string, format: date-time, nullable: true }
+        evidence: { type: object, nullable: true, description: "Event type and id (or actor and reason for manual)" }
+    Activation:
+      type: object
+      properties:
+        instance_id: { type: string, format: uuid }
+        template_key: { type: string }
+        template_version: { type: integer }
+        activation_pct: { type: integer, minimum: 0, maximum: 100 }
+        activated_at: { type: string, format: date-time, nullable: true }
+        first_login_at: { type: string, format: date-time, nullable: true }
+        milestones: { type: array, items: { $ref: "#/components/schemas/Milestone" } }
+    ActivationEnvelope: { type: object, properties: { data: { $ref: "#/components/schemas/Activation" } } }
+    Onboarding:
+      type: object
+      properties:
+        account_id: { type: string, format: uuid }
+        trial_ends_at: { type: string, format: date-time, nullable: true }
+        trial_days_left: { type: integer, nullable: true }
+        activation: { $ref: "#/components/schemas/Activation" }
+        follow_up: { $ref: "#/components/schemas/FollowUp" }
+        emails: { type: array, items: { $ref: "#/components/schemas/EmailSend" } }
+        blockers: { type: array, items: { type: object, properties: { kind: { type: string }, detail: { type: string }, since: { type: string, format: date-time } } } }
+        handoff: { type: object, nullable: true, properties: { task_id: { type: string, format: uuid }, created_at: { type: string, format: date-time } } }
+    OnboardingEnvelope: { type: object, properties: { data: { $ref: "#/components/schemas/Onboarding" } } }
+    QueueReason:
+      type: string
+      enum: [due_task, stalled_milestone, reply, high_intent_usage, trial_expiry, commercial_blocker]
+    QueueItem:
+      type: object
+      properties:
+        id: { type: string }
+        reason: { $ref: "#/components/schemas/QueueReason" }
+        priority: { type: integer, description: Lower is more urgent }
+        account: { type: object, properties: { id: { type: string, format: uuid }, name: { type: string } } }
+        contact: { type: object, nullable: true, properties: { id: { type: string, format: uuid }, name: { type: string }, email: { type: string, nullable: true } } }
+        active_sequence: { type: object, nullable: true, properties: { enrollment_id: { type: string, format: uuid }, current_step: { type: integer } } }
+        last_touch_at: { type: string, format: date-time, nullable: true }
+        signals: { type: array, items: { type: string } }
+        recommended_action: { type: object, properties: { kind: { type: string, enum: [call, email, meeting, task] }, label: { type: string } } }
+        due_at: { type: string, format: date-time, nullable: true }
+    QueueEnvelope:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/QueueItem" } }
+        next_cursor: { type: string, nullable: true }
+    FollowUpAction:
+      type: object
+      required: [kind, account_id]
+      properties:
+        kind: { type: string, enum: [call, email, meeting, task] }
+        account_id: { type: string, format: uuid }
+        contact_id: { type: string, format: uuid }
+        queue_item_id: { type: string }
+        subject: { type: string, maxLength: 200 }
+        body: { type: string, maxLength: 20000 }
+        due_at: { type: string, format: date-time, description: For task and meeting }
+        outcome: { type: string, maxLength: 1000, description: For a logged call }
+    FollowUpActionEnvelope:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            activity_id: { type: string, format: uuid }
+            task_id: { type: string, format: uuid, nullable: true }
+            email_send_id: { type: string, format: uuid, nullable: true }
