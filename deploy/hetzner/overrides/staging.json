@@ -3,6 +3,10 @@
     [
       "clickhouse.skoutdev.local",
       "clickhouse"
+    ],
+    [
+      "https://www.skoutai.io/app",
+      "https://stg.skoutai.io/app"
     ]
   ],
   "remove": [
