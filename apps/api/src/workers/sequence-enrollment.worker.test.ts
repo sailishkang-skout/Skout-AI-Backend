@@ -1,6 +1,13 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 // Hoisted mocks — must appear before any imports that transitively load these modules
+// The COPS-05 step claim runs one SQL UPDATE; these unit tests mock the DB, so the claim always
+// wins here. The claim and the stop race are tested against Postgres in cops-stop.service.test.ts.
+vi.mock("../services/sequence-step-claim.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../services/sequence-step-claim.js")>()),
+  claimScheduledStep: vi.fn(async () => true),
+}));
+
 vi.mock("../lib/redis.js", () => ({
   isRedisAvailable: vi.fn().mockResolvedValue(true),
   redisBullMqConnection: vi.fn().mockReturnValue({ host: "localhost", port: 6379 }),

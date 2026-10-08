@@ -1,6 +1,7 @@
 import { Worker } from "bullmq";
 import { context as otelContext } from "@opentelemetry/api";
-import { and, asc, count, desc, eq, gte, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { claimScheduledStep, SIDE_EFFECT_STEP_TYPES, STALE_CLAIM_MS } from "../services/sequence-step-claim.js";
 import { createDb, scopedTo, scopedById } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger, extractTraceContext, withSpan } from "@skout/observability";
@@ -1593,7 +1594,14 @@ async function advanceEnrollment(
     .where(
       and(
         eq(sequenceEnrollmentSteps.enrollmentId, enrollmentId),
-        eq(sequenceEnrollmentSteps.status, "scheduled")
+        or(
+          eq(sequenceEnrollmentSteps.status, "scheduled"),
+          // A step claimed by a worker that died mid-step (see sequence-step-claim.ts).
+          and(
+            eq(sequenceEnrollmentSteps.status, "executing"),
+            lt(sequenceEnrollmentSteps.executedAt, new Date(Date.now() - STALE_CLAIM_MS))
+          )
+        )
       )
     )
     .orderBy(asc(sequenceSteps.stepOrder))
@@ -1659,6 +1667,13 @@ async function advanceEnrollment(
       };
     }
   }
+
+  // COPS-05 race-safe cancellation: claim a side-effecting step only while the enrollment is
+  // still active, so a stop that committed first means this step never runs.
+  if (SIDE_EFFECT_STEP_TYPES.has(step.stepType) && !(await claimScheduledStep(db, enrollmentId, pending.enrollmentStepId))) {
+    log.info("Step not claimed (enrollment stopped or step taken) — skipping", { enrollmentId, enrollmentStepId: pending.enrollmentStepId });
+    return;
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    }
 
   // Execute the step
   if (step.stepType === "condition") {
