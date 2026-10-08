@@ -99,7 +99,7 @@ consumer. Each file carries the formal exception comment block.
 |---|---|---|
 | `apps/api/src/services/cops-commercial.service.ts` | deals | read; write of `deals.deal_type` only |
 | `apps/api/src/services/cops-gate.service.ts` | deals | write of `deals.deal_type` only (gate policy change) |
-| `apps/api/src/routes/cops-commercial.routes.ts` | deals | read (Commercial Desk list, payment webhook account) |
+| `apps/api/src/routes/cops-commercial.routes.ts` | deals, companies | read (Commercial Desk lists, payment webhook account) |
 
 Proposals, contracts, payment requests and the provisioning gate are written in one transaction
 with the opportunity ownership check, the audit row and the outbox event. Each file carries the

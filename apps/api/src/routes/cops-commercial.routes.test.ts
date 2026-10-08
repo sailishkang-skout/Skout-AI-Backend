@@ -207,6 +207,29 @@ maybe("COPS-03 proposals and contracts", () => {
     expect((await call("POST", `/opportunities/${opportunityId}/proposals`, terms, OTHER)).statusCode).toBe(404);
   });
 
+  it("Commercial Desk lists open opportunities across accounts, filters by state and pages by cursor", async () => {
+    const [second] = await sql`insert into deals (workspace_id, company_id, pipeline_id, stage_id, name, amount, currency)
+      select workspace_id, company_id, pipeline_id, stage_id, 'Second deal', 500, 'INR' from deals where id = ${opportunityId} returning id`;
+    const first = await call("GET", "/commercial/opportunities?limit=1");
+    expect(first.statusCode).toBe(200);
+    const page1 = first.json();
+    expect(page1.data).toHaveLength(1);
+    expect(page1.data[0].account).toEqual({ id: companyId, name: expect.stringContaining("Commercial Co") });
+    expect(page1.next_cursor).toBeTruthy();
+    const page2 = (await call("GET", `/commercial/opportunities?limit=1&cursor=${page1.next_cursor}`)).json();
+    expect(page2.data[0].opportunity.id).not.toBe(page1.data[0].opportunity.id);
+
+    // The first deal has sent proposals and a contract (msa_pending); the new one has no commercial work yet.
+    const none = (await call("GET", "/commercial/opportunities?state=none&limit=50")).json().data.map((d: { opportunity: { id: string } }) => d.opportunity.id);
+    expect(none).toContain(second.id);
+    expect(none).not.toContain(opportunityId);
+
+    expect((await call("GET", "/commercial/opportunities?state=bogus")).statusCode).toBe(422);
+    expect((await call("GET", "/commercial/opportunities?cursor=nope")).statusCode).toBe(422);
+    const other = (await call("GET", "/commercial/opportunities?limit=50", undefined, OTHER)).json().data.map((d: { opportunity: { id: string } }) => d.opportunity.id);
+    expect(other).not.toContain(opportunityId);
+  });
+
   it("a role without commercial permissions gets 403", async () => {
     const [other] = await sql`select u.id as user_id, wm.workspace_id from users u join workspace_members wm on wm.user_id = u.id where u.email = ${OTHER}`;
     const [member] = await sql`select id from roles where key = 'member' and workspace_id is null`;

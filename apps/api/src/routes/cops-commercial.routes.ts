@@ -1,13 +1,14 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { schema, type Db } from "@skout/db";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 
 /**
  * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
  * docs/adr/0003-read-model-exceptions.md (COPS-03 additions).
  *   - Tables touched directly: deals - read only (opportunity name, amount, currency, deal type, status and
- *     company for the Commercial Desk list and the payment webhook) (owned by apps/crm)
+ *     company for the Commercial Desk list and the payment webhook); companies - read only (account name on
+ *     the cross-account Commercial Desk) (owned by apps/crm)
  *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
  *   - Reason: the Commercial Desk lists opportunities next to their proposals, contracts and gate in one
  *     query, and the payment webhook resolves the account inside its own transaction.
@@ -605,4 +606,80 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
       .limit(20);
     return { data: await summaries(request.workspaceId!, opps.map((o) => o.id)) };
   });
+
+  // Commercial Desk across accounts: every open and won opportunity, most recently changed first.
+  app.get<{ Querystring: { state?: string; cursor?: string; limit?: string } }>(
+    "/commercial/opportunities",
+    { preHandler: readGate },
+    async (request, reply) => {
+      const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+      const parsed = deskQuerySchema.safeParse(request.query ?? {});
+      if (!parsed.success) return invalid(reply as never, requestId, parsed.error);
+      const { state, limit } = parsed.data;
+      const after = parsed.data.cursor ? decodeDeskCursor(parsed.data.cursor) : null;
+      if (parsed.data.cursor && !after) {
+        return reply.status(422).send(
+          copsErrorBody({
+            code: "VALIDATION_FAILED",
+            message: "Invalid cursor",
+            requestId,
+            details: { fields: [{ path: "cursor", code: "invalid_cursor", message: "Invalid cursor" }] },
+          })
+        );
+      }
+      const { deals, companies, copsLifecycleStates } = schema;
+      const updatedText = sql<string>`${deals.updatedAt}::text`;
+      const conditions = [eq(deals.workspaceId, request.workspaceId!), isNull(deals.deletedAt), inArray(deals.status, ["open", "won"])];
+      if (state === "none") conditions.push(isNull(copsLifecycleStates.state));
+      else if (state) conditions.push(eq(copsLifecycleStates.state, state));
+      if (after) conditions.push(sql`(${deals.updatedAt}, ${deals.id}) < (${after.updatedAt}::timestamptz, ${after.id}::uuid)`);
+      const rows = await db
+        .select({ id: deals.id, updatedAt: updatedText, companyId: deals.companyId, companyName: companies.name })
+        .from(deals)
+        .leftJoin(companies, and(eq(companies.id, deals.companyId), eq(companies.workspaceId, deals.workspaceId)))
+        .leftJoin(
+          copsLifecycleStates,
+          and(
+            eq(copsLifecycleStates.workspaceId, deals.workspaceId),
+            eq(copsLifecycleStates.dimension, "commercial"),
+            eq(copsLifecycleStates.entityId, deals.id)
+          )
+        )
+        .where(and(...conditions))
+        .orderBy(desc(deals.updatedAt), desc(deals.id))
+        .limit(limit + 1);
+      const page = rows.slice(0, limit);
+      const byId = new Map((await summaries(request.workspaceId!, page.map((r) => r.id))).map((s) => [s.opportunity.id, s]));
+      const last = page[page.length - 1];
+      return {
+        data: page.flatMap((r) => {
+          const summary = byId.get(r.id);
+          return summary ? [{ ...summary, account: r.companyId ? { id: r.companyId, name: r.companyName } : null }] : [];
+        }),
+        next_cursor: rows.length > limit && last ? encodeDeskCursor(last.updatedAt, last.id) : null,
+      };
+    }
+  );
+}
+
+const DESK_STATES = ["none", "proposal_sent", "msa_pending", "payment_pending", "complete"] as const;
+const deskQuerySchema = z.object({
+  state: z.enum(DESK_STATES).optional(),
+  cursor: z.string().max(200).optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(25),
+});
+const deskCursorSchema = z.object({ updated_at: z.string().min(10).max(40), id: z.string().uuid() });
+
+/** `updatedAt` is the exact Postgres timestamp text (microseconds), so a page boundary never drops rows. */
+export function encodeDeskCursor(updatedAt: string, id: string): string {
+  return Buffer.from(JSON.stringify({ updated_at: updatedAt, id }), "utf8").toString("base64url");
+}
+
+export function decodeDeskCursor(cursor: string): { updatedAt: string; id: string } | null {
+  try {
+    const parsed = deskCursorSchema.safeParse(JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")));
+    return parsed.success ? { updatedAt: parsed.data.updated_at, id: parsed.data.id } : null;
+  } catch {
+    return null;
+  }
 }
