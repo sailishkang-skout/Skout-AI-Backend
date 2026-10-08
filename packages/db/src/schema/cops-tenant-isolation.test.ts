@@ -33,6 +33,13 @@ const TABLES = [
   // COPS-04
   "cops_provisionings",
   "cops_provisioning_steps",
+  // COPS-05 (cops_activation_templates is global or per workspace and is checked for the column only)
+  "cops_onboarding_email_sends",
+  "cops_follow_ups",
+  "cops_onboarding_instances",
+  "cops_onboarding_milestones",
+  "cops_milestone_events",
+  "cops_onboarding_signals",
 ] as const;
 
 maybe("COPS-02 tables are tenant-isolated (Postgres)", () => {
@@ -75,6 +82,14 @@ maybe("COPS-02 tables are tenant-isolated (Postgres)", () => {
     await sql`insert into commercial_gates (workspace_id, opportunity_id) values (${ws}, ${deal.id})`;
     const [pv2] = await sql`insert into cops_provisionings (workspace_id, account_id, opportunity_id, idempotency_key, request) values (${ws}, ${co.id}, ${deal.id}, ${"iso-" + label + stamp}, '{}'::jsonb) returning id`;
     await sql`insert into cops_provisioning_steps (workspace_id, provisioning_id, step, position) values (${ws}, ${pv2.id}, 'create_workspace', 1)`;
+    const [es] = await sql`insert into cops_onboarding_email_sends (workspace_id, account_id, to_email, template_key, template_version, subject, idempotency_key) values (${ws}, ${co.id}, ${label + "." + stamp + "@example.test"}, 'welcome_trial', 1, 'Welcome', ${"iso-" + label + stamp}) returning id`;
+    const [task] = await sql`insert into tasks (workspace_id, title) values (${ws}, ${label + " enrollment task"}) returning id`;
+    await sql`insert into cops_follow_ups (workspace_id, account_id, source_event_id, email_send_id, mode, task_id, task_reason) values (${ws}, ${co.id}, gen_random_uuid(), ${es.id}, 'task', ${task.id}, 'iso')`;
+    const [tpl] = await sql`select id from cops_activation_templates where workspace_id is null and key = 'default_trial' and version = 1`;
+    const [inst] = await sql`insert into cops_onboarding_instances (workspace_id, account_id, template_id, template_key, template_version) values (${ws}, ${co.id}, ${tpl.id}, 'default_trial', 1) returning id`;
+    const [ms] = await sql`insert into cops_onboarding_milestones (workspace_id, instance_id, key, label, weight, source) values (${ws}, ${inst.id}, 'first_search', 'First search', 30, 'event') returning id`;
+    await sql`insert into cops_milestone_events (workspace_id, milestone_id, source_ref, source_type) values (${ws}, ${ms.id}, ${"iso-" + label + stamp}, 'product.search')`;
+    await sql`insert into cops_onboarding_signals (workspace_id, instance_id, trigger) values (${ws}, ${inst.id}, 'no_login_24h')`;
   }
 
   it("each table holds rows for its own workspace only", async () => {
@@ -95,7 +110,7 @@ maybe("COPS-02 tables are tenant-isolated (Postgres)", () => {
   });
 
   it("every COPS-02 table has a workspace_id column", async () => {
-    for (const table of TABLES) {
+    for (const table of [...TABLES, "cops_activation_templates"]) {
       const [col] = await sql`select count(*)::int as n from information_schema.columns where table_name = ${table} and column_name = 'workspace_id'`;
       expect(col.n, `${table}.workspace_id`).toBe(1);
     }
