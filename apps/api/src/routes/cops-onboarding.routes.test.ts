@@ -148,6 +148,27 @@ maybe("COPS-05 onboarding email routes", () => {
     expect(after.enrollment).toMatchObject({ status: "stopped", stop_reason: "REP_STOPPED", next_action: null });
   });
 
+  it("Onboarding Control loads in one call; manual milestones need a reason, event ones refuse", async () => {
+    await asRole("cs");
+    const { accountId } = await provisioned();
+    const res = await call("GET", `/accounts/${accountId}/onboarding`);
+    expect(res.statusCode).toBe(200);
+    const data = res.json().data;
+    expect(data).toMatchObject({ account_id: accountId, trial_days_left: 14, follow_up: null, emails: [], blockers: [], handoff: null });
+    expect(data.activation).toMatchObject({ template_key: "default_trial", activation_pct: 0 });
+
+    const path = `/accounts/${accountId}/activation/milestones`;
+    expect((await call("POST", `${path}/success_review/complete`, {})).statusCode).toBe(422);
+    const ok = await call("POST", `${path}/success_review/complete`, { reason: "Success review held" });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().data.milestones.find((m: { key: string }) => m.key === "success_review").completed_at).not.toBeNull();
+    const ev = await call("POST", `${path}/first_search/complete`, { reason: "trust me" });
+    expect(ev.statusCode).toBe(409);
+    expect((await call("POST", `${path}/nope/complete`, { reason: "x" })).statusCode).toBe(404);
+    const [bare] = await sql`insert into companies (workspace_id, name) values (${workspaceId}, 'Bare 2') returning id`;
+    expect((await call("GET", `/accounts/${bare.id}/onboarding`)).statusCode).toBe(404);
+  });
+
   it("Engineering cannot send or read onboarding email", async () => {
     const { accountId } = await provisioned();
     await asRole("engineering");
