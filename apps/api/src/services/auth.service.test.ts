@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+
 import { resolveOrProvisionUser } from "./auth.service.js";
 import { HttpError } from "../utils/http.js";
 
@@ -74,6 +75,10 @@ function makeTx(overrides: {
     select: vi.fn(),
     insert: vi.fn(),
     update: vi.fn(),
+    // COPS-04: the welcome grant runs postCreditTransaction, which opens its own (nested)
+    // transaction on tx. Stubbed here; amount/kind/key are covered by the real-Postgres ledger and
+    // auth route tests.
+    transaction: vi.fn().mockResolvedValue({ transaction: {}, balance: 500, replayed: false }),
   };
 
   for (const result of overrides.selects ?? []) {
@@ -164,11 +169,7 @@ describe("resolveOrProvisionUser", () => {
           [],                // credit_balance → MISSING → heal
           [],                // autoAcceptPendingInvites → no pending invites
         ],
-        inserts: [
-          AUTH_IDENTITY_UPSERT,
-          { mode: "void" }, // INSERT credit_balances
-          { mode: "void" }, // INSERT credit_transactions
-        ],
+        inserts: [AUTH_IDENTITY_UPSERT],
         withUpdate: true,
       });
       const db = makeDb(tx);
@@ -176,7 +177,8 @@ describe("resolveOrProvisionUser", () => {
       const result = await resolveOrProvisionUser(db as any, "clerk_new", "test@example.com", "Test User");
 
       expect(result.workspaceId).toBe("ws-1");
-      expect(tx.insert).toHaveBeenCalledTimes(3);
+      expect(tx.insert).toHaveBeenCalledTimes(1);
+      expect(tx.transaction).toHaveBeenCalledTimes(1); // welcome grant through the ledger
     });
   });
 
@@ -197,8 +199,6 @@ describe("resolveOrProvisionUser", () => {
           { mode: "returning",          result: [NEW_WORKSPACE] }, // insert workspace
           { mode: "void" },                                       // insert workspace_member
           { mode: "conflict-nothing" },                           // insert workspace_member_roles
-          { mode: "void" },                                       // insert credit_balance
-          { mode: "void" },                                       // insert credit_transaction
         ],
       });
       const db = makeDb(tx);
@@ -211,11 +211,11 @@ describe("resolveOrProvisionUser", () => {
         workspaceId: "ws-new",
         role: "owner",
       });
-      expect(tx.insert).toHaveBeenCalledTimes(7);
+      expect(tx.insert).toHaveBeenCalledTimes(5);
       expect(tx.update).not.toHaveBeenCalled();
     });
 
-    it("grants 500 credits in the credit_transactions insert", async () => {
+    it("grants the welcome credits once through the ledger", async () => {
       const tx = makeTx({
         selects: [[], [], [], [], [], [{ id: "role-owner" }]],  // identity, clerk, email, membership, pendingInvites, owner role
         inserts: [
@@ -224,19 +224,14 @@ describe("resolveOrProvisionUser", () => {
           { mode: "returning",          result: [NEW_WORKSPACE] },
           { mode: "void" },
           { mode: "conflict-nothing" },
-          { mode: "void" },
-          { mode: "void" },
         ],
       });
       const db = makeDb(tx);
       await resolveOrProvisionUser(db as any, "clerk_x", "new@example.com", "New User");
 
-      // 7th insert call is credit_transactions — check .values() arg
-      const ctInsertCall = (tx.insert.mock.results[6].value as ReturnType<typeof insertChain>);
-      const valuesFn = (ctInsertCall as { values: ReturnType<typeof vi.fn> }).values;
-      expect(valuesFn).toHaveBeenCalledWith(
-        expect.objectContaining({ amount: 500, action: "provision" })
-      );
+      expect(tx.transaction).toHaveBeenCalledTimes(1);
+      // No direct ledger inserts any more (user, identity, workspace, member, member role only).
+      expect(tx.insert).toHaveBeenCalledTimes(5);
     });
   });
 
@@ -255,8 +250,6 @@ describe("resolveOrProvisionUser", () => {
           { mode: "returning", result: [NEW_WORKSPACE] },
           { mode: "void" },
           { mode: "conflict-nothing" },
-          { mode: "void" },
-          { mode: "void" },
         ],
       });
       const db = makeDb(tx);
@@ -265,7 +258,7 @@ describe("resolveOrProvisionUser", () => {
 
       expect(result.workspaceId).toBe("ws-new");
       expect(result.role).toBe("owner");
-      expect(tx.insert).toHaveBeenCalledTimes(6);
+      expect(tx.insert).toHaveBeenCalledTimes(4);
     });
   });
 
