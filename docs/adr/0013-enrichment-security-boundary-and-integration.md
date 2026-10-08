@@ -79,3 +79,33 @@ Apply the additive migration, run the idempotent RBAC backfill to seed the enric
 role grants, then deploy API, dashboard, and extension updates. Verify workspace-isolation,
 unauthenticated access, permission denials, audit writes, and extension host permissions before
 enabling capture for production workspaces.
+
+## ENR-02 addendum: capture pipeline
+
+- Reviewed captures enter through `POST /api/v1/enrichment/ingest/{person,company,sales-search}`
+  (Zod-validated, strict shape, 1 MB body limit, `enrichment:capture`). The older
+  `/prospects/activate` path stays for the extension's add-to-list actions.
+- **Canonical identity** lives in `enrichment_identities` (`workspace_id`, entity kind, key →
+  `contacts.id` / `companies.id`): `in:<public-id>`, `sales-lead:<opaque-id>`,
+  `company:<public-id>`, `company-member:<member-id>`. Several keys may point at one record, so a
+  Sales lead that later shows its public link, or a company seen by slug and by numeric id,
+  resolves to the same row. A key is never derived from another key. CRM tables gain no columns.
+- A search or discovery card never overwrites fields from a full profile capture, never creates a
+  company, and leaves `employment_status` as `discovery_candidate`. Only a capture of the person's
+  own profile sets `verified_employment`.
+- **Capture runs** (`enrichment_capture_runs`) record who, when, source, page and lead counts, and
+  a terminal status (`completed`, `stopped`, `failed`, `halted`, `rejected`). A single-request
+  ingest is its own run and returns it already terminal; multi-request runs use
+  `POST /enrichment/capture/runs` and `…/finish`. Runs left `running` for two hours are closed as
+  `failed/abandoned`. One audit-log entry is written per run.
+- **Limits**, enforced before anything is written: 10 pages and 250 leads per run, and a per-user
+  daily lead limit (default 1,000; entitlement `enrichment.capture_daily_lead_limit`).
+- **Kill switch**: entitlement `enrichment.capture_kill_switch`, set through
+  `PUT /enrichment/capture/settings` (`enrichment:admin`, audited). It is read from the database
+  on every capture request, so the next request after it is turned on is refused with
+  `403 capture_disabled` and its run is closed as `halted`. `/prospects/activate` refuses
+  LinkedIn-sourced prospects while it is on.
+- Not carried over from the prototype: automatic merging/deletion of duplicate company rows.
+  A capture matches an existing company by LinkedIn id, then domain, then name plus
+  industry/headquarters, or adopts the single name-only placeholder; it never deletes a CRM
+  company.

@@ -15,6 +15,7 @@ import { recordEvidence } from "../services/evidence.service.js";
 import { assertEvidenced } from "@skout/shared";
 import { buildModelVersionsService } from "../services/model-versions.service.js";
 import { assertPermission, recordPrivilegedAction } from "@skout/auth";
+import { getCaptureStatus } from "../services/enrichment/capture-ingest.service.js";
 const {
   prospectActivations,
   companies,
@@ -675,7 +676,8 @@ app.get("/enrichment/companies/:id/evidence", async (request, reply) => {
     return reply.send({
       workspaceId,
       balance: await service.getCredits(workspaceId),
-      captureEndpoint: "/api/v1/prospects/activate",
+      captureEndpoint: "/api/v1/enrichment/ingest",
+      capture: await getCaptureStatus(app.db, { workspaceId, userId: request.userId }),
     });
   });
 

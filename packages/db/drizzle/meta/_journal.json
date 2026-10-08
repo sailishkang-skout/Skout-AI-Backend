@@ -708,6 +708,13 @@
       "when": 1792800000002,
       "tag": "0099_contacts_employment_status",
       "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1792800000003,
+      "tag": "0100_enrichment_capture_runs",
+      "breakpoints": true
     }
   ]
 }

@@ -16,6 +16,7 @@ import { emitSkoutEvent } from "../services/skout-event.service.js";
 import { createLogger } from "@skout/observability";
 import { assertPermission, recordPrivilegedAction } from "@skout/auth";
 import { ensureContactLinkedToProspect } from "../services/prospect-crm-link.service.js";
+import { assertCaptureEnabled, CaptureError } from "../services/enrichment/capture-ingest.service.js";
 
 const log = createLogger("prospect.routes");
 const { companyPersonDiscoveries, enrichmentSnapshots, enrichmentChangeEvents } = schema;
@@ -416,6 +417,17 @@ export async function prospectRoutes(app: FastifyInstance) {
     await assertPermission(app.db!, workspaceId, request.userId, "enrichment:capture");
     const body = activateBodySchema.parse(request.body ?? {});
     request.log.info({ workspaceId, count: body.prospects.length }, "prospects/activate");
+    // ENR-02 — the workspace capture kill switch also covers the extension's add-to-list path.
+    if (body.prospects.some((prospect) => prospect.linkedinUrl)) {
+      try {
+        await assertCaptureEnabled(app.db!, workspaceId);
+      } catch (error) {
+        if (error instanceof CaptureError) {
+          return reply.status(error.statusCode).send({ ok: false, error: error.message, code: error.code });
+        }
+        throw error;
+      }
+    }
     const svc = buildEnrichmentService(app.db, app.config);
     const activated = await svc.activate(workspaceId, body.prospects);
     for (const prospect of body.prospects) {
