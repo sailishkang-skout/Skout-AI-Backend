@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { createDb } from "@skout/db";
-import { claimScheduledStep } from "./sequence-step-claim.js";
+import { claimScheduledStep, releaseStepClaim } from "./sequence-step-claim.js";
 import { pauseEnrollment, resumeEnrollment, stopAccountFollowUps, stopEnrollment, STOP_REASONS } from "./cops-stop.service.js";
 
 const postgres = createRequire(new URL("../../../../packages/db/package.json", import.meta.url))("postgres") as (url: string, options?: object) => any;
@@ -91,6 +91,24 @@ maybe("COPS-05 stop conditions (Postgres)", () => {
       expect(s.status).toBe(claimed ? "executing" : "cancelled");
       expect(stop.cancelledSteps).toBe(claimed ? 2 : 3);
     }
+  });
+
+  it("a step that is waiting, deferred or threw is released back to scheduled, or cancelled if the follow-up stopped", async () => {
+    const f = await followUp();
+    expect(await claimScheduledStep(db, f.enrollmentId, f.steps[0]!)).toBe(true);
+    await releaseStepClaim(db, f.enrollmentId, f.steps[0]!);
+    expect((await sql`select status, executed_at from sequence_enrollment_steps where id = ${f.steps[0]}`)[0]).toEqual({ status: "scheduled", executed_at: null });
+    // The next tick can claim it again (a poll or a BullMQ retry runs the step as before).
+    expect(await claimScheduledStep(db, f.enrollmentId, f.steps[0]!)).toBe(true);
+    await stopEnrollment(db, { workspaceId: ws, enrollmentId: f.enrollmentId, reason: "REPLIED", actor: { type: "system", id: null }, correlationId: randomUUID() });
+    await releaseStepClaim(db, f.enrollmentId, f.steps[0]!);
+    expect((await sql`select status from sequence_enrollment_steps where id = ${f.steps[0]}`)[0].status).toBe("cancelled");
+    // A step that reached a terminal status is never touched by a release.
+    const g = await followUp();
+    await claimScheduledStep(db, g.enrollmentId, g.steps[0]!);
+    await sql`update sequence_enrollment_steps set status = 'executed' where id = ${g.steps[0]}`;
+    await releaseStepClaim(db, g.enrollmentId, g.steps[0]!);
+    expect((await sql`select status from sequence_enrollment_steps where id = ${g.steps[0]}`)[0].status).toBe("executed");
   });
 
   it("a second stop keeps the first reason; a stopped follow-up cannot be paused or resumed", async () => {

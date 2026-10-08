@@ -6,6 +6,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 vi.mock("../services/sequence-step-claim.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../services/sequence-step-claim.js")>()),
   claimScheduledStep: vi.fn(async () => true),
+  releaseStepClaim: vi.fn(async () => {}),
 }));
 
 vi.mock("../lib/redis.js", () => ({

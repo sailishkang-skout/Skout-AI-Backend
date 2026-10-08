@@ -1,7 +1,7 @@
 import { Worker } from "bullmq";
 import { context as otelContext } from "@opentelemetry/api";
 import { and, asc, count, desc, eq, gte, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
-import { claimScheduledStep, SIDE_EFFECT_STEP_TYPES, STALE_CLAIM_MS } from "../services/sequence-step-claim.js";
+import { claimScheduledStep, releaseStepClaim, SIDE_EFFECT_STEP_TYPES, STALE_CLAIM_MS } from "../services/sequence-step-claim.js";
 import { recordFollowUpActivity } from "../services/cops-follow-up-timeline.js";
 import { createDb, scopedTo, scopedById } from "@skout/db";
 import { schema } from "@skout/db";
@@ -1488,10 +1488,33 @@ async function createTaskFromSequenceStep(
 // Core advance logic
 // ---------------------------------------------------------------------------
 
+/**
+ * One advance tick. COPS-05: a step claimed in this tick (see sequence-step-claim.ts) that is still
+ * `executing` when the tick ends (waiting on an external job, deferred, or thrown) is released back,
+ * so retries and polls behave exactly as before the claim.
+ */
 async function advanceEnrollment(
   db: ReturnType<typeof createDb>["db"],
   config: Env,
   payload: SeqAdvanceJobPayload
+): Promise<void> {
+  const claims: string[] = [];
+  try {
+    await advanceEnrollmentTick(db, config, payload, claims);
+  } finally {
+    for (const stepId of claims) {
+      await releaseStepClaim(db, payload.enrollmentId, stepId).catch((err: unknown) =>
+        log.error("Failed to release step claim", err, { enrollmentId: payload.enrollmentId, enrollmentStepId: stepId })
+      );
+    }
+  }
+}
+
+async function advanceEnrollmentTick(
+  db: ReturnType<typeof createDb>["db"],
+  config: Env,
+  payload: SeqAdvanceJobPayload,
+  claims: string[]
 ): Promise<void> {
   const { enrollmentId, workspaceId, prospectId, sequenceId } = payload;
 
@@ -1675,6 +1698,7 @@ async function advanceEnrollment(
     log.info("Step not claimed (enrollment stopped or step taken) — skipping", { enrollmentId, enrollmentStepId: pending.enrollmentStepId });
     return;
   }
+  if (SIDE_EFFECT_STEP_TYPES.has(step.stepType)) claims.push(pending.enrollmentStepId);
   if (SIDE_EFFECT_STEP_TYPES.has(step.stepType)) {
     // COPS-05: an onboarding follow-up step lands on the account timeline (no-op for other sequences).
     await recordFollowUpActivity(db, { workspaceId, enrollmentId, kind: "step_started", stepId: pending.stepId });

@@ -31,3 +31,18 @@ export async function claimScheduledStep(db: Pick<Db, "execute">, enrollmentId: 
   const rows = (result as unknown as { rows?: unknown[] }).rows ?? (result as unknown as unknown[]);
   return Array.isArray(rows) && rows.length > 0;
 }
+
+/**
+ * Ends a claim the tick did not turn into a terminal or waiting status: a step that is waiting on an
+ * external job (LinkedIn, WhatsApp), deferred (email draft in review) or that threw (BullMQ retries
+ * the job) goes back to `scheduled`, exactly as before the claim existed, so the next tick runs it
+ * again. If the enrollment stopped meanwhile, the step is cancelled instead of left scheduled.
+ */
+export async function releaseStepClaim(db: Pick<Db, "execute">, enrollmentId: string, enrollmentStepId: string): Promise<void> {
+  await db.execute(sql`
+    update sequence_enrollment_steps s
+       set status = case when exists (select 1 from sequence_enrollments e where e.id = ${enrollmentId} and e.status in ('active', 'paused'))
+                         then 'scheduled' else 'cancelled' end,
+           executed_at = null
+     where s.id = ${enrollmentStepId} and s.status = 'executing'`);
+}
