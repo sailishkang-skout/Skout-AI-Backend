@@ -9,6 +9,17 @@ import { canContact, CAN_CONTACT_MESSAGE, type CanContactBlock } from "./cops-ca
 import { chooseOnboardingTemplate } from "./cops-onboarding-templates.js";
 
 /**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md (COPS-05 additions).
+ *   - Tables touched directly: contacts - read (recipient email and first name of the account's contact);
+ *     companies - row lock only (serialises the first send per account) (owned by apps/crm)
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: the recipient check, the first-send check and the send row are one transaction with the
+ *     account lock; an HTTP call into apps/crm cannot take part in it.
+ *   - Review date: revisit when apps/crm's internal API covers transactional reads
+ */
+
+/**
  * COPS-05 onboarding email (Bible p.41): rendered from the account's provisioning, refused by the
  * canContact() gate when the recipient must not be emailed, sent once per Idempotency-Key, and a
  * second send for the same recipient only as an explicit, audited re-send. A sent email emits

@@ -118,3 +118,13 @@ Each provisioning step writes the new workspace, invite, entitlements or ledger 
 transaction as its saga status, audit row and outbox event, so a step is all-or-nothing. An HTTP call
 into apps/crm cannot take part in that transaction. The saga, wallet and ledger tables are owned by
 apps/api and packages/db.
+
+## COPS-05 additions (2026-10-08)
+
+| File | Tables touched | Read/write |
+|---|---|---|
+| `apps/api/src/services/cops-onboarding.service.ts` | contacts, companies | read (recipient); row lock on the account |
+
+The onboarding email's recipient check, first-send check and send row are written in one transaction
+with the account lock. The file carries the formal exception comment block. The COPS-05 tables
+(onboarding email sends, follow-ups, activation templates, instances, milestones, signals) are owned by apps/api.
