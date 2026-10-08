@@ -109,7 +109,7 @@ Not merged; for review. Frontend (PR 5) follows as a separate PR against this co
 | Gate fires exactly once under duplicate/concurrent events | Done | `cops-gate.routes.test.ts`: four concurrent paid events on two links emit one `ProvisioningRequested`. |
 | Later payment failure does not delete the workspace | Done | Refund after firing keeps `fired_at` and the single event; nothing in this ticket deletes or suspends a workspace. |
 | Manual override needs permission + reason + audit | Done | 422 without reason, 403 for Sales, audit row with `is_override = true` and the reason, second override 409. |
-| FE: status visible from the account record without refresh | Pending (FE PR) | `GET /accounts/:id/commercial` and `/opportunities/:id/commercial` return everything in one call for polling. |
+| FE: status visible from the account record without refresh | Done (FE PR #112) | The account Commercial tab polls `GET /accounts/:id/commercial` every 10 s; the cross-account Commercial Desk (added in the COPS-04 PRs, see copos-04-audit.md) polls `GET /commercial/opportunities`. |
 
 ### Decisions for the reviewer
 

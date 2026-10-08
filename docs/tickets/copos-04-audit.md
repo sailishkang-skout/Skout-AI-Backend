@@ -82,7 +82,27 @@ Decisions taken while building:
 3. Post `POST /accounts/:id/credits/adjustments` with the signed amount, a reason, and `compensates_id` of the wrong entry. It is audited as an override.
 4. If only `credit_balances` drifted (ledger is right), the fix is an engineering ticket: the balance row is restored to the ledger sum in a reviewed migration, since the adjustment API moves both together.
 
-## Still open
+## Frontend (Skout-AI-Frontend PR #114)
 
-- Q1-Q3 above. Q4: refunds of a credit purchase (COPS-08 finance ops) are not reversed automatically yet; Finance posts an adjustment.
-- Frontend (separate PR).
+- Onboarding tab: provision-trial flow with step-by-step progress, retry from the failed step (same Idempotency-Key), trial info, admin invite status, extend trial.
+- Billing tab: balance, ledger table, 30-day usage chart, grant/adjust dialogs (reason required), extend trial, add credits.
+- Browser-verified against the local API with a real user: 7/7 steps, 6.9 s; grant of 100 moved the balance 500 -> 600.
+
+## COPS-01..04 completeness pass (2026-10-08)
+
+A pass over every COPS-01..04 acceptance item and the Definition of Done found these gaps; all are closed in the COPS-04 PRs unless marked.
+
+| Gap | Fix |
+|---|---|
+| CI architecture gates fail against develop (stacked PRs never ran CI) | ADR 0003 exception blocks on `cops-commercial.routes.ts` and `cops-gate.service.ts` (commit on the COPS-03 branch); §1 gate line answered on PRs #176 and #178. Both gates pass locally against develop. |
+| Commercial navigation (deferred from COPS-01 to COPS-03, never built) | `GET /api/v1/commercial/opportunities` (cross-account desk, state filter, cursor) and the FE `/commercial` page with a `commercial:read` nav entry. **Route test written; not yet run, the local test database was down.** |
+| `/cops` and `/commercial` reachable signed-out at the FE middleware | Added to the protected routes; a test now fails when a dashboard folder is missing from the list. |
+| FE e2e only covered COPS-01 | `e2e/cops-customer-ops.spec.ts`: 360 timeline, provision failure + retry (same key), grant with reason, Commercial Desk, permission-hidden nav. 7/7 with `cops-platform.spec.ts`. |
+| Every protected e2e page bounced to sign-in (AUTH-FE-18 dropped the middleware's E2E bypass; the e2e job on #110/#111 fails this way) | Bypass restored for non-production servers only. Needs review by the auth owner. |
+| Analytics instrumentation (DoD) missing in all four tickets | `lib/cops-analytics.ts`: canonical, versioned PostHog events for the COPS-01..04 writes; ids and counts only. |
+
+Still open:
+
+- Q1-Q4 above (Q4: refunds of a credit purchase are not reversed automatically yet; Finance posts an adjustment).
+- COPS-01: authenticated 422/429 check against a real API response (only mocked so far) - needs the local database.
+- The full `apps/api` suite has not completed locally (30-minute limit); CI runs it once the stack is retargeted to develop.
