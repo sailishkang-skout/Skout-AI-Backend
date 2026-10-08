@@ -2,6 +2,17 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { schema, type Db } from "@skout/db";
 import { and, eq, inArray, isNull } from "drizzle-orm";
+
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md (COPS-03 additions).
+ *   - Tables touched directly: deals - read only (opportunity name, amount, currency, deal type, status and
+ *     company for the Commercial Desk list and the payment webhook) (owned by apps/crm)
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: the Commercial Desk lists opportunities next to their proposals, contracts and gate in one
+ *     query, and the payment webhook resolves the account inside its own transaction.
+ *   - Review date: revisit when apps/crm's internal API covers batched reads
+ */
 import { BILLING_CADENCES, COMMERCIAL_GATE_POLICIES, COMMERCIAL_LINE_KINDS, copsErrorBody, copsErrorStatus, resolveCorrelationId } from "@skout/shared";
 import { getMemberPermissions } from "@skout/auth";
 import { copsIdempotencyStore, requireAnyCopsPermission } from "../services/cops-platform.service.js";

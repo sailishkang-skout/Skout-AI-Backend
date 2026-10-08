@@ -1,5 +1,15 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
+
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md (COPS-03 additions).
+ *   - Tables touched directly: deals - write of deals.deal_type only, when the gate policy changes (owned by apps/crm)
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: the deal type selects the gate policy, so it changes in the same transaction as the gate
+ *     lock, the audit row and the outbox event. An HTTP call into apps/crm cannot take part in it.
+ *   - Review date: revisit when apps/crm's internal API covers transactional writes
+ */
 import {
   appendCopsEvent,
   COMMERCIAL_GATE_POLICIES,
