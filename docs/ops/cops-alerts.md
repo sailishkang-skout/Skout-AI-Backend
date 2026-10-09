@@ -56,5 +56,9 @@ Real: routes, commercial gate, provisioning, credit ledger, SMTP send (to a catc
 and signed payment webhooks. Stood in: the Razorpay API and the event worker (the test calls the
 worker's consumers with the outbox event).
 
-Still not met: a browser-driven spec per golden path against a live backend, and the frontend
-Playwright suite as a whole is red on `develop`.
+In the browser, `e2e/cops-golden-paths.spec.ts` in the frontend repo walks the same five paths
+through the rep's screens against a stateful mock of the API (the paid-deal test waits for the gate
+to open by polling, with no reload). No test drives a browser against a live backend.
+
+Still not met: the frontend Playwright suite as a whole is red on `develop` because of older specs.
+All 26 CustomerOps specs pass together when run in CI mode locally.
