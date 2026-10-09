@@ -35,6 +35,9 @@ jobs:
       - name: "§7.1 Read-model exceptions (no undocumented cross-service table reads)"
         run: node scripts/check-read-model-exceptions.mjs
 
+      - name: "COPS-07 canContact() gate (no new direct consent/suppression checks)"
+        run: node scripts/check-can-contact-gate.mjs
+
   test-and-build:
     runs-on: ubuntu-latest
     services:
