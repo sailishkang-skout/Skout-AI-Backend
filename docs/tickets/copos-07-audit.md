@@ -95,3 +95,26 @@ dry-run-first runs; ops metrics endpoint; the two CI gates.
 Not done yet: runbooks for payment reconciliation and credit-ledger correction, `docs/ops` alert
 definitions, the provision dialog reading trial templates, and all frontend work (admin screens,
 retention/privacy page, empty/loading/error audit, five golden-path specs).
+
+## 8. Phase 1 gap list against the epic document (COPS-01 to COPS-07)
+
+Basis: the per-ticket audit docs and what was run in the COPS-05/06/07 work. It is not a fresh
+line-by-line re-read of the COPS-01 to COPS-04 code, so treat those rows as "known open items",
+not as proof that nothing else is open.
+
+| Ticket | Open against the epic text |
+|---|---|
+| COPS-01 | A real 429 has never been triggered end to end (retry/backoff code exists). Slack/Teams webhook adapters and per-user notification preferences: not re-checked here. `cops_processed_events` has no `workspace_id` (keyed by event id; listed in the scoping guard with its reason). |
+| COPS-02 | Customer 360 "Usage" and "Success" tabs are still placeholders (Success belongs to COPS-11). Not re-checked: kanban 409 inline messages, account merge. |
+| COPS-03 | Not re-checked in this pass. The live run skipped it: the deal and fired gate were inserted in the database. Paid-deal and failed-payment paths have no live browser run. |
+| COPS-04 | Fixed here: the dialog said "Invitation sent" when the invite email had failed. The frontend message for that fix was type-checked, not opened in a browser. |
+| COPS-05 | Fixed here: a failed first onboarding email could not be sent again from the UI. Still open: calendar integration shows "not tracked" (no calendar connection model); delivery/open/click tracking was not exercised live (no provider webhook locally); questions Q1 to Q5 in the COPS-05 audit. The signal-trigger playbooks (no login 24h, no activity 72h, trial ending) were not exercised live. |
+| COPS-06 | PRs open, not merged. Create ticket from an onboarding blocker was run live without a blocker present, so the blocker prefill was only covered by tests. SLA, incident linking and release tracking are COPS-12 by design. |
+| COPS-07 | See section 7. All frontend work is open. "Five golden paths green in CI", "dashboards live" and "pilot sign-off" cannot be closed by code alone (section 6). |
+
+Cross-cutting, from the Definition of Done:
+
+- **Analytics instrumentation**: added on the frontend for COPS-03 to COPS-06 actions; none yet for COPS-07.
+- **Runbooks**: platform, onboarding, and payments/credits/provisioning now exist. No runbook yet for tickets.
+- **e2e**: per-ticket Playwright specs use a mocked API. The frontend suite as a whole is red on `develop` (older specs).
+- **Local email**: SES credentials in the local `.env` are rejected (`535`), so every email path was tested against a local catcher, not a real provider.
