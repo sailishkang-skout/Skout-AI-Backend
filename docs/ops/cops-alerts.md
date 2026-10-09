@@ -34,5 +34,11 @@ to applied. Measuring latency needs a `processed_at` column.
 | Stalled onboarding | onboarding signal tests | Mocked Playwright spec (`cops-onboarding.spec.ts`) |
 | Ticket escalation | ticket service and route tests | Run live once (2026-10-09) and mocked spec (`cops-tickets.spec.ts`) |
 
-There is no single end-to-end spec per golden path against a live backend, and the frontend
-Playwright suite as a whole is red on `develop`. "All five golden paths green in CI" is not met.
+All five paths now also run end to end through the HTTP API on a real Postgres in
+`apps/api/src/routes/cops-golden-paths.routes.test.ts` (part of `pnpm test`, so part of backend CI).
+Real: routes, commercial gate, provisioning, credit ledger, SMTP send (to a catcher the test starts)
+and signed payment webhooks. Stood in: the Razorpay API and the event worker (the test calls the
+worker's consumers with the outbox event).
+
+Still not met: a browser-driven spec per golden path against a live backend, and the frontend
+Playwright suite as a whole is red on `develop`.
