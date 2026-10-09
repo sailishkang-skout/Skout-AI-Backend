@@ -24,6 +24,8 @@ module "compute" {
   running        = var.running
   boot_disk_gb   = var.boot_disk_gb
 
+  resource_policies = google_compute_resource_policy.working_hours[*].id
+
   depends_on = [google_project_service.apis]
 }
 
@@ -71,6 +73,11 @@ resource "google_sql_database_instance" "pg" {
         }
       }
     }
+  }
+
+  # Cloud Scheduler starts and stops the database (schedule.tf); do not let apply undo that.
+  lifecycle {
+    ignore_changes = [settings[0].activation_policy]
   }
 
   depends_on = [google_project_service.apis]
