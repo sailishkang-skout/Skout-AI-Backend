@@ -4,9 +4,15 @@ Source of every number: `GET /api/v1/admin/ops/metrics` (needs `admin:read`), al
 CustomerOps admin page under Operations. Each metric carries its own `warn_at`, `critical_at`,
 `status` and `runbook`, so a monitor only has to read `status`.
 
-Status: the metrics and thresholds below are implemented. **No monitor or dashboard has been created
-in Datadog yet.** That is an operations task: poll the endpoint per workspace (or run the same SQL
-platform-wide) and alert on `status`.
+Status: the metrics and thresholds below are implemented. The same numbers are computed
+platform-wide every 10 minutes by the onboarding evaluator worker and written as one structured log
+line per metric (`cops_metric`, `value`, `metric_status`, `runbook`), at info, warn or error level.
+`docs/ops/cops-monitors.json` holds four Datadog log monitors that read those lines.
+
+**The monitors have not been imported into Datadog and no dashboard has been created.** That is an
+operations task. Until it is done, "dashboards and alerting live" is not met. Two limits to know:
+the report runs every 10 minutes, so an outbox lag alert can be up to 10 minutes late; and the
+report needs Redis and the worker, so the "health report has stopped" monitor matters most.
 
 | Metric | Warn | Critical | Runbook |
 |---|---|---|---|
@@ -17,12 +23,22 @@ platform-wide) and alert on `status`.
 | `provisioning_within_target_pct` (30 days, lower is worse) | below 95 | below 80 | `runbooks/cops-commercial-credits.md` |
 | `provisioning_failed` (30 days) | 1 | 5 | `runbooks/cops-commercial-credits.md` |
 | `payment_webhooks_rejected_24h` (unmatched or never processed) | 1 | 10 | `runbooks/cops-commercial-credits.md` |
+| `payment_webhook_latency_p95_seconds` (provider send time to receipt, 24 hours) | 60 s | 300 s | `runbooks/cops-commercial-credits.md` |
+| `payment_webhook_processing_p95_ms` (receipt to outcome, 24 hours) | 2000 | 10000 | `runbooks/cops-commercial-credits.md` |
 | `workflow_steps_stuck` (executing over 15 minutes) | 1 | 10 | `runbooks/cops-onboarding.md` |
 | `workflow_steps_failed_24h` | 5 | 25 | `runbooks/cops-onboarding.md` |
 
-Known limit: **webhook latency is not measured.** `payment_provider_events` stores only `received_at`,
-so the endpoint reports webhook volume and the count that was not applied, not the time from provider
-to applied. Measuring latency needs a `processed_at` column.
+Webhook latency is measured from migration 0117 on: `provider_created_at` (the provider's own
+event time) and `processed_at` are stored per event. Events received before that migration have
+neither value and are left out of the two latency metrics. Events that match no payment request have
+no workspace, so they appear only in the platform-wide report, not on a workspace's admin page.
+
+## Migrations in this release
+
+`0114` (tickets), `0115` (admin config), `0116` (retention runs) and `0117` (webhook latency) only
+add tables and nullable columns; no existing row is rewritten, so there is no backfill. Each file
+was applied twice in a row to the local test database without error. They have not been run
+against a copy of production data.
 
 ## Golden paths (Bible p.90) and where they are covered today
 

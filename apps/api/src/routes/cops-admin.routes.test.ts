@@ -133,6 +133,6 @@ maybe("COPS-07 admin routes", () => {
     expect(runs.json().data.length).toBeGreaterThanOrEqual(2);
     expect(runs.json().targets.map((t: { table: string }) => t.table)).toContain("audit_logs");
     expect((await call("GET", "/admin/data-inventory")).json().data.length).toBeGreaterThan(100);
-    expect((await call("GET", "/admin/ops/metrics")).json().data.metrics.length).toBe(10);
+    expect((await call("GET", "/admin/ops/metrics")).json().data.metrics.length).toBe(12);
   });
 });

@@ -5,7 +5,7 @@ import { createDb } from "@skout/db";
 import { saveConfig } from "./cops-admin-config.service.js";
 import { loadCopsModules } from "./cops-feature-flags.js";
 import { classifyTable, listRetentionRuns, loadDataInventory, RETENTION_TARGETS, startRetentionRun } from "./cops-retention.service.js";
-import { loadOpsMetrics, metricStatus } from "./cops-ops-metrics.service.js";
+import { loadOpsMetrics, metricStatus, reportPlatformOpsMetrics } from "./cops-ops-metrics.service.js";
 
 const postgres = createRequire(new URL("../../../../packages/db/package.json", import.meta.url))("postgres") as (url: string, options?: object) => any;
 
@@ -143,6 +143,33 @@ maybe("COPS-07 retention, flags and metrics (Postgres)", () => {
     expect(by.outbox_lag_seconds!.status).toBe("critical");
     expect(by.provisioning_p95_ms).toMatchObject({ value: null, status: "ok" });
     expect(metrics.every((m) => m.runbook.startsWith("docs/runbooks/"))).toBe(true);
+    // Payment webhook latency: provider send time to receipt, and receipt to outcome.
+    for (const [late, ms] of [[4, 150], [8, 300], [400, 900]] as const) {
+      await sql`insert into payment_provider_events (workspace_id, provider, provider_event_id, event_type, outcome, provider_created_at, received_at, processed_at)
+                values (${ctx.workspaceId}, 'razorpay', ${"evt-" + randomUUID()}, 'payment_link.paid', 'applied',
+                        now() - make_interval(secs => ${late + 60}), now() - interval '60 seconds', now() - interval '60 seconds' + make_interval(secs => ${ms / 1000}))`;
+    }
+    const withWebhooks = Object.fromEntries((await loadOpsMetrics(db, ctx.workspaceId)).metrics.map((m) => [m.key, m]));
+    expect(withWebhooks.payment_webhooks_24h!.value).toBe(3);
+    expect(withWebhooks.payment_webhook_latency_p95_seconds!.value).toBeGreaterThan(300);
+    expect(withWebhooks.payment_webhook_latency_p95_seconds!.status).toBe("critical");
+    expect(withWebhooks.payment_webhook_processing_p95_ms!.value).toBeGreaterThan(300);
+    expect(withWebhooks.payment_webhook_processing_p95_ms!.status).toBe("ok");
+
+    // The scheduled report covers every workspace and logs each metric at the level of its status.
+    const lines: Array<{ level: string; fields: Record<string, unknown> }> = [];
+    const logger = {
+      info: (_m: string, fields?: Record<string, unknown>) => lines.push({ level: "info", fields: fields ?? {} }),
+      warn: (_m: string, fields?: Record<string, unknown>) => lines.push({ level: "warn", fields: fields ?? {} }),
+      error: (_m: string, fields?: Record<string, unknown>) => lines.push({ level: "error", fields: fields ?? {} }),
+    };
+    const notOk = await reportPlatformOpsMetrics(db, logger);
+    expect(lines).toHaveLength(12);
+    expect(notOk.map((m) => m.key)).toContain("outbox_dead_lettered");
+    const dead = lines.find((l) => l.fields.cops_metric === "outbox_dead_lettered")!;
+    expect(["warn", "error"]).toContain(dead.level);
+    expect(dead.fields.runbook).toContain("docs/runbooks/");
+
     // Another workspace sees none of it.
     const quiet = Object.fromEntries((await loadOpsMetrics(db, other)).metrics.map((m) => [m.key, m.value]));
     expect(quiet).toMatchObject({ outbox_dead_lettered: 0, outbox_pending: 0 });

@@ -108,6 +108,7 @@ maybe("COPS-07 Phase 1 golden paths", () => {
   };
   const paid = (linkId: string) => ({
     event: "payment_link.paid",
+    created_at: Math.floor(Date.now() / 1000) - 3,
     payload: {
       payment_link: { entity: { id: linkId, status: "paid", amount: 50_000, amount_paid: 50_000, currency: "INR" } },
       payment: { entity: { id: `pay_${randomUUID().slice(0, 8)}`, status: "captured", amount: 50_000, currency: "INR" } },
@@ -227,6 +228,10 @@ maybe("COPS-07 Phase 1 golden paths", () => {
     expect((await call("GET", `/payment-requests/${pr.id}`)).json().data.status).toBe("paid");
     expect((await gate(a.opportunityId)).fired_at).not.toBeNull();
     expect(await events("PaymentSucceeded", pr.id)).toHaveLength(1);
+    // Webhook latency is measurable: the provider's send time and our processing time are stored.
+    const [timing] = await sql`select provider_created_at, processed_at, received_at from payment_provider_events where payment_request_id = ${pr.id} and outcome = 'applied'`;
+    expect(timing.provider_created_at).not.toBeNull();
+    expect(new Date(timing.processed_at).getTime()).toBeGreaterThanOrEqual(new Date(timing.received_at).getTime());
     expect((await provision(a)).json().data.status).toBe("succeeded");
   });
 

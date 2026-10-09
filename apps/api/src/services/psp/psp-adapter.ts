@@ -23,6 +23,8 @@ export interface PspWebhookEvent {
   referenceId: string | null;
   /** Ids, status and amounts kept for reconciliation. Never card data. */
   refs: Record<string, unknown>;
+  /** When the provider created the event, if it says so. Used only to measure webhook latency. */
+  providerCreatedAt?: Date | null;
 }
 
 export interface PspAdapter {
