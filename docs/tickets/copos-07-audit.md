@@ -125,3 +125,24 @@ Cross-cutting, from the Definition of Done:
 - **Runbooks**: platform, onboarding, and payments/credits/provisioning now exist. No runbook yet for tickets.
 - **e2e**: per-ticket Playwright specs use a mocked API. The frontend suite as a whole is red on `develop` (older specs).
 - **Local email**: SES credentials in the local `.env` are rejected (`535`), so every email path was tested against a local catcher, not a real provider.
+
+## 9. Empty / loading / error states across Phase 1 screens (Appendix G)
+
+Method: a code scan of each screen for a loading state (skeleton or spinner), an error state (error
+alert) and an empty state (dashed empty box or "No ... yet" text). It is not a visual review of every
+screen in a browser.
+
+| Screen | Loading | Error | Empty |
+|---|---|---|---|
+| Commercial Desk (`/commercial`) | yes | yes | yes |
+| Customer 360 shell, timeline, deals table | yes | yes | yes |
+| Commercial tab, Billing tab | yes | yes | yes |
+| Onboarding tab and Onboarding Control | yes | yes | yes ("No onboarding yet", "No open blockers") |
+| Sales Follow-up (`/follow-up`) | yes | yes | yes (Appendix G: next recommended action) |
+| Engineering queue, ticket drawer, account Engineering tab | yes | yes | yes (Appendix G: healthy state + create button) |
+| Audit log (`/cops/audit`) | yes | yes | yes (in `AuditViewer`) |
+| Notification routing panel | yes | yes | not needed: it always lists every event type |
+| CustomerOps admin: every tab | yes | yes | yes |
+
+Fixed while doing this: Engineering and Follow-up showed "this queue is for other roles" when the
+module was turned off; they now say the module is off. No other gap was found by the scan.
