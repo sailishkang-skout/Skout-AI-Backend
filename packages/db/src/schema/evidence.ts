@@ -29,6 +29,8 @@ export const evidenceLedger = pgTable(
     attribute: text("attribute").notNull(),
     value: jsonb("value").notNull(),
     source: text("source").notNull(),
+    /** ENR-03 — the page the fact was observed on (LinkedIn profile, company tab, Sales Navigator search). */
+    sourceUrl: text("source_url"),
     observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
     retrievedAt: timestamp("retrieved_at", { withTimezone: true }).notNull().defaultNow(),
     method: text("method"),

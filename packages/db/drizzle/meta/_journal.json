@@ -806,6 +806,27 @@
       "when": 1794400000000,
       "tag": "0113_cops05_onboarding",
       "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "7",
+      "when": 1794500000000,
+      "tag": "0114_enrichment_capture_boundary",
+      "breakpoints": true
+    },
+    {
+      "idx": 116,
+      "version": "7",
+      "when": 1794600000000,
+      "tag": "0115_enrichment_capture_runs",
+      "breakpoints": true
+    },
+    {
+      "idx": 117,
+      "version": "7",
+      "when": 1794700000000,
+      "tag": "0116_enrichment_evidence_source_and_review",
+      "breakpoints": true
     }
   ]
 }
