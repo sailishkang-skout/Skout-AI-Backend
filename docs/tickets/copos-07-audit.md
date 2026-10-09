@@ -92,9 +92,16 @@ Backend done and tested: versioned config store and API; onboarding email wordin
 versions; feature flags gating each module's routes; data inventory; retention policy with
 dry-run-first runs; ops metrics endpoint; the two CI gates.
 
-Not done yet: runbooks for payment reconciliation and credit-ledger correction, `docs/ops` alert
-definitions, the provision dialog reading trial templates, and all frontend work (admin screens,
-retention/privacy page, empty/loading/error audit, five golden-path specs).
+Frontend done and tested (component tests): CustomerOps admin page with trial templates, credit
+packages, email templates (version history and restore), activation definitions, gate policy,
+notification routing, module switches, retention policy with dry-run-first runs, data inventory and
+operations metrics; the provision dialog offers the trial templates. Runbooks and alert thresholds
+are written (`docs/runbooks/cops-commercial-credits.md`, `docs/ops/cops-alerts.md`).
+
+Not done: the admin screens were not opened in a browser; no Playwright spec for them; the
+empty/loading/error audit across all Phase 1 screens; live end-to-end specs for the five golden
+paths; Datadog monitors; the navigation does not yet hide a module that is turned off (the API
+refuses it). The release gates that need people (pilot sign-off, dashboards live) are open.
 
 ## 8. Phase 1 gap list against the epic document (COPS-01 to COPS-07)
 
