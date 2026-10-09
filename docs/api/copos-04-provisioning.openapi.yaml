@@ -1,0 +1,172 @@
+openapi: 3.0.3
+info:
+  title: COPS-04 Trial provisioning + credit ledger
+  version: 0.1.0
+  description: |
+    Contract for COPS-04. Errors use the COPS-01 envelope {code, message, details, request_id, retryable}.
+    Every POST needs an Idempotency-Key header. Status: draft, pending reviewer sign-off.
+servers:
+  - url: /api/v1
+paths:
+  /accounts/{id}/provision:
+    post:
+      summary: Provision a trial workspace for the account (saga)
+      description: |
+        Idempotency key = sha256(account id + Idempotency-Key). The same key returns the same
+        provisioning and resumes it when it failed. 409 when the account already has a workspace.
+        Needs onboarding:write or commercial:send.
+      parameters: [{ $ref: "#/components/parameters/Id" }, { $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProvisionRequest" }
+      responses:
+        "201": { description: Provisioned, content: { application/json: { schema: { $ref: "#/components/schemas/ProvisioningEnvelope" } } } }
+        "200": { description: Same key replayed, content: { application/json: { schema: { $ref: "#/components/schemas/ProvisioningEnvelope" } } } }
+        "409": { description: "Gate not fired (GATE_CLOSED), or account already provisioned" }
+        "422": { description: Validation error with field paths }
+        "502": { description: "A step failed; body has the provisioning with per-step status (retryable)" }
+  /accounts/{id}/provisioning:
+    get:
+      summary: Provisionings of the account, newest first, with steps
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: OK }
+  /provisionings/{id}/retry:
+    post:
+      summary: Resume a failed provisioning from its failed step
+      parameters: [{ $ref: "#/components/parameters/Id" }, { $ref: "#/components/parameters/IdempotencyKey" }]
+      responses:
+        "200": { description: Resumed, content: { application/json: { schema: { $ref: "#/components/schemas/ProvisioningEnvelope" } } } }
+        "409": { description: Already succeeded }
+  /accounts/{id}/credits:
+    get:
+      summary: Wallet of the account's provisioned workspace (balance, ledger page, 30-day usage)
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Wallet" } } } }
+        "404": { description: Account not provisioned }
+  /accounts/{id}/credits/grants:
+    post:
+      summary: Complimentary credit grant (credits:adjust). Reason required.
+      parameters: [{ $ref: "#/components/parameters/Id" }, { $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount, reason]
+              properties:
+                amount: { type: integer, minimum: 1, maximum: 1000000 }
+                reason: { type: string, minLength: 1, maxLength: 1000 }
+      responses:
+        "201": { description: Posted, content: { application/json: { schema: { $ref: "#/components/schemas/LedgerEntry" } } } }
+  /accounts/{id}/credits/adjustments:
+    post:
+      summary: Manual adjustment (credits:adjust). Positive or negative; reason required; optional row it compensates.
+      parameters: [{ $ref: "#/components/parameters/Id" }, { $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount, reason]
+              properties:
+                amount: { type: integer, description: "Non-zero" }
+                reason: { type: string, minLength: 1, maxLength: 1000 }
+                compensates_id: { type: string, format: uuid }
+      responses:
+        "201": { description: Posted }
+        "409": { description: Would take the balance below zero (INSUFFICIENT_CREDITS) }
+  /accounts/{id}/trial/extend:
+    post:
+      summary: Extend the trial end date (onboarding:write or commercial:send). Reason required.
+      parameters: [{ $ref: "#/components/parameters/Id" }, { $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [days, reason]
+              properties:
+                days: { type: integer, minimum: 1, maximum: 90 }
+                reason: { type: string, minLength: 1 }
+      responses:
+        "200": { description: New trial dates }
+  /credits/reconciliation:
+    get:
+      summary: Latest reconciliation runs and mismatches (credits:adjust)
+      responses:
+        "200": { description: OK }
+components:
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    IdempotencyKey: { name: Idempotency-Key, in: header, required: true, schema: { type: string, maxLength: 200 } }
+  schemas:
+    ProvisionRequest:
+      type: object
+      required: [opportunity_id, admin_email]
+      properties:
+        opportunity_id: { type: string, format: uuid }
+        admin_email: { type: string, format: email }
+        workspace_name: { type: string, maxLength: 120 }
+        plan: { type: string, default: trial }
+        trial_days: { type: integer, minimum: 1, maximum: 90, default: 14 }
+        credits: { type: integer, minimum: 0, maximum: 1000000, default: 500 }
+        integrations: { type: array, items: { type: string, enum: [crm, email, calendar] }, default: [crm, email] }
+    ProvisioningStep:
+      type: object
+      properties:
+        step: { type: string, enum: [create_workspace, default_roles, entitlements, credit_wallet, integration_placeholders, admin_invite, link_crm] }
+        status: { type: string, enum: [pending, running, succeeded, failed] }
+        attempts: { type: integer }
+        error: { type: string, nullable: true }
+        duration_ms: { type: integer, nullable: true }
+    Provisioning:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        opportunity_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, running, succeeded, failed] }
+        provisioned_workspace_id: { type: string, format: uuid, nullable: true }
+        invite_id: { type: string, format: uuid, nullable: true }
+        plan: { type: string }
+        trial_starts_at: { type: string, format: date-time }
+        trial_ends_at: { type: string, format: date-time }
+        credits: { type: integer }
+        duration_ms: { type: integer, nullable: true }
+        within_target: { type: boolean, nullable: true, description: "duration_ms <= 120000" }
+        steps: { type: array, items: { $ref: "#/components/schemas/ProvisioningStep" } }
+    ProvisioningEnvelope:
+      type: object
+      properties:
+        data: { $ref: "#/components/schemas/Provisioning" }
+    LedgerEntry:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [grant, purchase, consume, refund, expire, adjustment] }
+        amount: { type: integer }
+        balance_after: { type: integer, nullable: true }
+        action: { type: string }
+        reason: { type: string, nullable: true }
+        actor_type: { type: string, nullable: true }
+        actor_id: { type: string, nullable: true }
+        compensates_id: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+    Wallet:
+      type: object
+      properties:
+        workspace_id: { type: string, format: uuid }
+        balance: { type: integer }
+        trial_ends_at: { type: string, format: date-time, nullable: true }
+        ledger: { type: array, items: { $ref: "#/components/schemas/LedgerEntry" } }
+        next_cursor: { type: string, nullable: true }
+        usage: { type: array, items: { type: object, properties: { day: { type: string, format: date }, consumed: { type: integer } } } }

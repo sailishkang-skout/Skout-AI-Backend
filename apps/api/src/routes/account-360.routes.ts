@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { and, asc, desc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { schema, scopedTo, scopedById, type Db } from "@skout/db";
 import { appendCopsEvent, copsErrorBody, copsErrorStatus, createCopsEvent, resolveCorrelationId } from "@skout/shared";
@@ -25,7 +25,7 @@ import { AccountLinkError, linkAccounts } from "../services/cops-account-relatio
  *   - Review date: revisit when apps/crm's internal API covers transactional writes
  */
 
-const { companies, contacts, deals, activities, signals, copsLifecycleStates, copsTimelineEvents, tasks, workspaceMembers, copsSavedViews, pipelineStages, copsAccountMerges, accountRelationships, crmNativeLinks } = schema;
+const { companies, contacts, deals, activities, signals, copsLifecycleStates, copsTimelineEvents, tasks, workspaceMembers, copsSavedViews, pipelineStages, copsAccountMerges, accountRelationships, crmNativeLinks, copsProvisionings } = schema;
 
 const LOW_CONFIDENCE_THRESHOLD = 0.5;
 
@@ -377,15 +377,61 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       const data: Record<string, unknown> = {};
 
       if (want.has("header")) {
+        // COPS-03: commercial state of the account's most recently updated open or won opportunity.
+        // Commercial content is hidden from roles without commercial:read (e.g. Engineering, COPS-01).
+        let commercialState: string | null = null;
+        if (permissions.includes("commercial:read")) {
+          const [row] = await db
+            .select({ state: copsLifecycleStates.state })
+            .from(copsLifecycleStates)
+            .innerJoin(deals, eq(deals.id, copsLifecycleStates.entityId))
+            .where(
+              and(
+                eq(copsLifecycleStates.workspaceId, workspaceId),
+                eq(copsLifecycleStates.dimension, "commercial"),
+                eq(deals.workspaceId, workspaceId),
+                eq(deals.companyId, accountId),
+                isNull(deals.deletedAt),
+                inArray(deals.status, ["open", "won"])
+              )
+            )
+            .orderBy(desc(copsLifecycleStates.updatedAt))
+            .limit(1);
+          commercialState = row?.state ?? null;
+        }
+        // COPS-04: the provisioned trial workspace (Bible p.28 provisioning fields).
+        const [provisioned] = await db
+          .select({
+            workspaceId: copsProvisionings.provisionedWorkspaceId,
+            request: copsProvisionings.request,
+            trialStartsAt: copsProvisionings.trialStartsAt,
+            trialEndsAt: copsProvisionings.trialEndsAt,
+          })
+          .from(copsProvisionings)
+          .where(
+            and(
+              eq(copsProvisionings.workspaceId, workspaceId),
+              eq(copsProvisionings.accountId, accountId),
+              eq(copsProvisionings.status, "succeeded")
+            )
+          )
+          .limit(1);
         data.header = {
           id: account.id,
           name: account.name,
           owner_id: account.ownerId,
           lifecycle: { account: life.account ?? null, health: life.health ?? null, support: life.support ?? null },
           health: life.health ?? null,
-          commercial_state: null,
+          commercial_state: commercialState,
           onboarding_pct: null,
-          plan: null,
+          plan: provisioned ? ((provisioned.request as { plan?: string }).plan ?? null) : null,
+          provisioning: provisioned
+            ? {
+                workspace_id: provisioned.workspaceId,
+                trial_starts_at: provisioned.trialStartsAt?.toISOString() ?? null,
+                trial_ends_at: provisioned.trialEndsAt?.toISOString() ?? null,
+              }
+            : null,
           renewal_at: null,
         };
       }

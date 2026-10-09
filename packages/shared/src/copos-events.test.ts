@@ -14,9 +14,10 @@ const base = {
 };
 
 describe("COPS Phase 1 event contract", () => {
-  it("registers the 17 Phase 1 business events plus the shared lifecycle transition event", () => {
-    expect(Object.keys(COPS_PHASE1_EVENTS)).toHaveLength(20);
+  it("registers the 17 Phase 1 business events, LifecycleTransitioned, the COPS-02 task/activity events and COPS-03 ProvisioningRequested", () => {
+    expect(Object.keys(COPS_PHASE1_EVENTS)).toHaveLength(21);
     expect(COPS_PHASE1_EVENTS).toHaveProperty("LifecycleTransitioned");
+    expect(COPS_PHASE1_EVENTS).toHaveProperty("ProvisioningRequested");
   });
 
   it("accepts a valid envelope with a matching payload", () => {

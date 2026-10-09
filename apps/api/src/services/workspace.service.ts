@@ -1,5 +1,5 @@
 import type { Db } from "@skout/db";
-import { schema, scopedTo } from "@skout/db";
+import { schema, scopedTo, postCreditTransaction, type CreditKind } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import { eq, desc, sql } from "drizzle-orm";
 
@@ -155,23 +155,28 @@ export function createWorkspaceService(db: Db) {
       };
     },
 
-    async addCredits(workspaceId: string, amount: number, action = "admin_topup", referenceId?: string) {
-      const current = await this.getCreditBalance(workspaceId);
-      const next = current.balance + amount;
-
-      await db
-        .insert(schema.creditBalances)
-        .values({ workspaceId, balance: next })
-        .onConflictDoUpdate({
-          target: schema.creditBalances.workspaceId,
-          set: { balance: next, updatedAt: new Date() },
-        });
-
-      await db.insert(schema.creditTransactions).values({
+    /**
+     * Credits a workspace through the COPS-04 ledger. `idempotencyKey` makes a retried call (e.g. a
+     * replayed payment webhook) a no-op instead of a second credit.
+     */
+    async addCredits(
+      workspaceId: string,
+      amount: number,
+      action = "admin_topup",
+      referenceId?: string,
+      opts: { kind?: CreditKind; idempotencyKey?: string; actor?: { type: "user" | "system" | "integration"; id: string | null }; reason?: string } = {}
+    ) {
+      const kind: CreditKind = opts.kind ?? (amount < 0 ? "consume" : action === "razorpay_purchase" ? "purchase" : "grant");
+      const result = await postCreditTransaction(db, {
         workspaceId,
         amount,
+        kind,
         action,
         referenceId: referenceId ?? null,
+        idempotencyKey: opts.idempotencyKey ?? null,
+        actor: opts.actor,
+        reason: opts.reason ?? null,
+        allowNegativeBalance: amount < 0,
       });
 
       log.info("credits adjusted", {
@@ -179,10 +184,11 @@ export function createWorkspaceService(db: Db) {
         amount,
         action,
         referenceId,
-        balance: next,
+        balance: result.balance,
+        replayed: result.replayed,
       });
 
-      return next;
+      return result.balance;
     },
   };
 }

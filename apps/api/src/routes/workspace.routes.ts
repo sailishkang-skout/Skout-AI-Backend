@@ -207,7 +207,11 @@ export async function workspaceRoutes(app: FastifyInstance) {
     const body = (request.body ?? {}) as { amount?: number };
     const maxAmount = app.config.NODE_ENV === "production" ? 500 : 10_000;
     const amount = Math.min(Math.max(Number(body.amount) || 100, 1), maxAmount);
-    const balance = await svc.addCredits(request.workspaceId, amount, "admin_topup");
+    const balance = await svc.addCredits(request.workspaceId, amount, "admin_topup", undefined, {
+      kind: "grant",
+      actor: { type: "user", id: request.userId ?? null },
+      reason: "Manual top-up from workspace settings (non-production or Razorpay disabled)",
+    });
     return reply.send({ data: { balance, amount } });
   });
 
