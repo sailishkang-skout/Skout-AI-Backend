@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Db } from "@skout/db";
-import { copsErrorBody, copsErrorStatus, isCopsConfigKind, resolveCorrelationId, type CopsConfigKind } from "@skout/shared";
+import { copsErrorBody, copsErrorStatus, isCopsConfigKind, resolveCorrelationId } from "@skout/shared";
 import { getMemberPermissions } from "@skout/auth";
 import { copsIdempotencyStore, requireAnyCopsPermission } from "../services/cops-platform.service.js";
 import { withCopsIdempotentReply, type CopsCapturingReply } from "../services/cops-idempotent.js";
@@ -48,11 +48,7 @@ export async function copsAdminConfigRoutes(app: FastifyInstance, opts: { db: Db
       .send(copsErrorBody({ code: "VALIDATION_FAILED", message: fields[0]?.message ?? "Invalid request", requestId, details: { fields } }));
   }
 
-  const kindOf = (reply: Reply, requestId: string, kind: string): CopsConfigKind | null => {
-    if (isCopsConfigKind(kind)) return kind;
-    invalid(reply, requestId, { path: "kind", message: "Unknown configuration kind" });
-    return null;
-  };
+  const badKind = (reply: Reply, requestId: string) => invalid(reply, requestId, { path: "kind", message: "Unknown configuration kind" });
 
   async function run<T>(reply: Reply, requestId: string, fn: () => Promise<T>, onOk: (value: T) => unknown) {
     try {
@@ -68,16 +64,16 @@ export async function copsAdminConfigRoutes(app: FastifyInstance, opts: { db: Db
   app.get<KindParams>("/admin/config/:kind", { preHandler: readGate }, async (request, rawReply) => {
     const reply = rawReply as unknown as Reply;
     const ctx = ctxOf(request);
-    const kind = kindOf(reply, ctx.requestId, request.params.kind);
-    if (!kind) return;
+    const kind = request.params.kind;
+    if (!isCopsConfigKind(kind)) return badKind(reply, ctx.requestId);
     return run(reply, ctx.requestId, () => listConfig(db, ctx.workspaceId, kind), (data) => ({ data }));
   });
 
   app.get<KeyParams>("/admin/config/:kind/:key/versions", { preHandler: readGate }, async (request, rawReply) => {
     const reply = rawReply as unknown as Reply;
     const ctx = ctxOf(request);
-    const kind = kindOf(reply, ctx.requestId, request.params.kind);
-    if (!kind) return;
+    const kind = request.params.kind;
+    if (!isCopsConfigKind(kind)) return badKind(reply, ctx.requestId);
     return run(reply, ctx.requestId, () => listConfigVersions(db, ctx.workspaceId, kind, request.params.key), (data) => ({ data }));
   });
 
@@ -86,8 +82,8 @@ export async function copsAdminConfigRoutes(app: FastifyInstance, opts: { db: Db
     { preHandler: writeGate },
     withCopsIdempotentReply<KeyParams>(idempotency, async (request, reply) => {
       const ctx = ctxOf(request);
-      const kind = kindOf(reply, ctx.requestId, request.params.kind);
-      if (!kind) return;
+      const kind = request.params.kind;
+      if (!isCopsConfigKind(kind)) return badKind(reply, ctx.requestId);
       const parsed = saveSchema.safeParse(request.body ?? {});
       if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
       return run(reply, ctx.requestId, () => saveConfig(db, ctx, kind, request.params.key, parsed.data), (data) => reply.status(201).send({ data }));
@@ -99,8 +95,8 @@ export async function copsAdminConfigRoutes(app: FastifyInstance, opts: { db: Db
     { preHandler: writeGate },
     withCopsIdempotentReply<KeyParams>(idempotency, async (request, reply) => {
       const ctx = ctxOf(request);
-      const kind = kindOf(reply, ctx.requestId, request.params.kind);
-      if (!kind) return;
+      const kind = request.params.kind;
+      if (!isCopsConfigKind(kind)) return badKind(reply, ctx.requestId);
       const parsed = rollbackSchema.safeParse(request.body ?? {});
       if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
       return run(reply, ctx.requestId, () => rollbackConfig(db, ctx, kind, request.params.key, parsed.data), (data) => reply.status(201).send({ data }));

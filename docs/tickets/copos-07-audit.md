@@ -17,7 +17,7 @@ This is the audit-and-extend pass: what exists, what is reused, what is missing,
 | Follow-up templates | `sequences` + `sequence_versions` (frozen snapshot per enrollment); default cadence in `cops-cadence.service.ts` | Reuse the sequence engine: an edit publishes a new version, running enrollments keep theirs (already true). Admin screen over the existing sequence. |
 | Credit packages | None | Gap. Versioned config store. |
 | Trial templates | None; plan, days and credits are typed into the provision dialog | Gap. Versioned config store; the dialog reads defaults from it. |
-| Notification routing | `services/cops-notification-routing.ts` (config in code) + FE read-only panel | Gap. Versioned config store overrides the code default. |
+| Notification routing | `cops_notification_routes` + `GET|PUT /notifications/cops-routes` (COPS-01, admin-only, audited) + FE panel | Reuse. (An earlier draft of this audit called it code-only; that was wrong.) |
 | Onboarding settings | `cops_onboarding_settings` + `GET|PUT /onboarding/settings` | Reuse. |
 
 **Decision: one versioned config store for the gaps, not one table per config.**
@@ -64,7 +64,7 @@ have their own versioned table (activation templates, sequences, gate policies) 
 
 1. Audit, contract, the two CI gates (this commit).
 2. Versioned config store + admin config API (credit packages, trial templates, email templates,
-   notification routing), audited, admin-only.
+   retention policy, feature flags), audited, admin-only. **Done.**
 3. Consumers: provision dialog defaults, notification routing override, onboarding email template.
 4. Retention: classification map, policy, dry-run job.
 5. Feature flags per module; ops metrics endpoint; runbooks.
@@ -84,3 +84,14 @@ have their own versioned table (activation templates, sequences, gate policies) 
    tickets, admin) per workspace. Enough?
 5. Are credit packages only a catalog for the grant dialog, or do they tie to PSP prices (COPS-08)?
 6. Local dev: the SES credentials in `.env` are rejected (`535`), so no email can be sent locally.
+
+## 7. Status (2026-10-09)
+
+Backend done and tested: versioned config store and API; onboarding email wording from the
+`email_template` config; trial-template and credit-package catalogs; activation definitions as new
+versions; feature flags gating each module's routes; data inventory; retention policy with
+dry-run-first runs; ops metrics endpoint; the two CI gates.
+
+Not done yet: runbooks for payment reconciliation and credit-ledger correction, `docs/ops` alert
+definitions, the provision dialog reading trial templates, and all frontend work (admin screens,
+retention/privacy page, empty/loading/error audit, five golden-path specs).

@@ -117,7 +117,7 @@ components:
   schemas:
     ConfigKind:
       type: string
-      enum: [credit_package, trial_template, email_template, notification_routing, retention_policy, feature_flags]
+      enum: [credit_package, trial_template, email_template, retention_policy, feature_flags]
     ConfigVersion:
       type: object
       properties:

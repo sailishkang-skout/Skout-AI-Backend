@@ -3,9 +3,10 @@ import { z } from "zod";
 /**
  * COPS-07 admin configuration (Bible p.16): the config kinds kept in the versioned config store,
  * their schemas and the built-in defaults shown when a workspace has saved nothing. Config that
- * already has its own versioned table (activation templates, sequences, gate policies) is not here.
+ * already has its own store (activation templates, sequences, gate policies, notification routes)
+ * is not here.
  */
-export const COPS_CONFIG_KINDS = ["credit_package", "trial_template", "email_template", "notification_routing", "retention_policy", "feature_flags"] as const;
+export const COPS_CONFIG_KINDS = ["credit_package", "trial_template", "email_template", "retention_policy", "feature_flags"] as const;
 export type CopsConfigKind = (typeof COPS_CONFIG_KINDS)[number];
 
 /** Appendix F retention categories. */
@@ -38,15 +39,10 @@ export const COPS_CONFIG_SCHEMAS = {
     .strict(),
   email_template: z
     .object({
+      /** {{workspace}} is replaced with the customer workspace name. */
       subject: text(200),
       intro: text(2000),
       closing: z.string().trim().max(2000).optional(),
-    })
-    .strict(),
-  notification_routing: z
-    .object({
-      /** Event type -> role keys that are notified. */
-      routes: z.record(z.string().min(1).max(64), z.array(z.string().min(1).max(64)).max(12)),
     })
     .strict(),
   retention_policy: z

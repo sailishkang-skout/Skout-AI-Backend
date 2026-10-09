@@ -7,6 +7,7 @@ import { writeCopsAudit } from "./cops-platform.service.js";
 import { loadProvisionings, type ProvisioningDto } from "./cops-provisioning.service.js";
 import { canContact, CAN_CONTACT_MESSAGE, type CanContactBlock } from "./cops-can-contact.js";
 import { chooseOnboardingTemplate, segmentOf } from "./cops-onboarding-templates.js";
+import { getConfig } from "./cops-admin-config.service.js";
 
 /**
  * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
@@ -216,7 +217,12 @@ async function render(db: Db, ctx: OnboardingContext, accountId: string, input: 
   if (!template) {
     throw new OnboardingError("VALIDATION_FAILED", "Unknown template", { fields: [{ path: "template_key", message: "Unknown template" }] });
   }
+  // COPS-07: an admin-edited template replaces the built-in wording. The version recorded on the
+  // send is WORKSPACE_TEMPLATE_VERSION_BASE + the config version, so a send always names what it used.
+  const custom = await getConfig(db, ctx.workspaceId, "email_template", template.key);
+  const override = custom && !custom.is_system_default ? (custom.value as { subject: string; intro: string; closing?: string }) : null;
   const mail = template.render({
+    override,
     to: target.to,
     customerName: target.customerName,
     workspaceName: target.workspaceName,
@@ -228,8 +234,11 @@ async function render(db: Db, ctx: OnboardingContext, accountId: string, input: 
     resourcesUrl: deps.resourcesUrl,
     supportEmail: deps.supportEmail,
   });
-  return { target, template, mail };
+  return { target, template: override ? { ...template, version: WORKSPACE_TEMPLATE_VERSION_BASE + custom!.version } : template, mail };
 }
+
+/** Template versions from this number up are workspace versions (base + admin config version). */
+export const WORKSPACE_TEMPLATE_VERSION_BASE = 1000;
 
 export async function previewOnboardingEmail(db: Db, ctx: OnboardingContext, accountId: string, input: OnboardingSendInput, deps: OnboardingDeps) {
   const { target, template, mail } = await render(db, ctx, accountId, input, deps);
