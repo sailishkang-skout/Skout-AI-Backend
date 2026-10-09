@@ -372,10 +372,12 @@ export async function listWorkspaceAccountSignals(
   workspaceId: string,
   opts: { limit?: number } = {}
 ): Promise<AccountSignalSummary[]> {
-  const activations = await db
+  const rows = await db
     .select({ companyId: prospectActivations.companyId, snapshot: prospectActivations.snapshot })
     .from(prospectActivations)
     .where(scopedTo(prospectActivations, workspaceId));
+  // Company-level signals need a company; activations without one (allowed since ENR-01) are skipped.
+  const activations = rows.filter((a): a is typeof a & { companyId: string } => a.companyId !== null);
 
   if (activations.length === 0) return [];
 

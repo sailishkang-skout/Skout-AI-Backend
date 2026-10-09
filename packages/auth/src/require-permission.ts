@@ -3,7 +3,7 @@ import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { HttpError } from "./http.js";
 
-const { workspaceMemberRoles, rolePermissions } = schema;
+const { workspaceMemberRoles, workspaceMembers, rolePermissions } = schema;
 
 /**
  * §5.1 / §11.1 (Enterprise Completion Plan) — the opt-in Role/Permission check that consumes
@@ -99,8 +99,16 @@ export async function enforcePermission(
  * §11.1 — refuse RBAC_ENFORCEMENT_ENABLED=true when workspace_member_roles is empty
  * (backfill never run). Prevents locking every user out at boot.
  */
-export async function assertRbacBackfillReady(db: Db): Promise<{ ready: boolean; sampleGrantExists: boolean }> {
+export async function assertRbacBackfillReady(
+  db: Db
+): Promise<{ ready: boolean; sampleGrantExists: boolean; freshDatabase: boolean }> {
   const [row] = await db.select({ userId: workspaceMemberRoles.userId }).from(workspaceMemberRoles).limit(1);
-  const sampleGrantExists = Boolean(row);
-  return { ready: sampleGrantExists, sampleGrantExists };
+  if (row) return { ready: true, sampleGrantExists: true, freshDatabase: false };
+
+  // No grants yet. If there are no members either (a brand-new database) there is nobody to lock out, and the
+  // API must be able to start so the first member can be provisioned (which grants their role). Members
+  // without any grant means the backfill was never run, so that case still refuses to start.
+  const [member] = await db.select({ userId: workspaceMembers.userId }).from(workspaceMembers).limit(1);
+  const freshDatabase = !member;
+  return { ready: freshDatabase, sampleGrantExists: false, freshDatabase };
 }

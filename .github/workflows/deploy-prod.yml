@@ -1,8 +1,8 @@
 name: Deploy Production
 
+# AWS has been shut off, so this workflow can no longer deploy anything. The push trigger is removed so a push
+# to main does not start a run that can only fail. Production will get a new workflow when the provider is chosen.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:

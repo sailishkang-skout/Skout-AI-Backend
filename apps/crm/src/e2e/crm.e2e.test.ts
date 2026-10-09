@@ -377,7 +377,7 @@ describe.skipIf(!hasDatabase)("CRM service E2E", () => {
     expect((dealAsB.json() as { error: string }).error).toBe("company_not_found");
   });
 
-  it("pipelines: a brand-new workspace gets exactly one default pipeline with 6 stages", async () => {
+  it("pipelines: a brand-new workspace gets exactly one default pipeline with 8 stages", async () => {
     const headers = asUser("crm-default-pipeline@test.com");
 
     const pipelines = await app.inject({ method: "GET", url: "/api/v1/pipelines", headers });
@@ -385,7 +385,7 @@ describe.skipIf(!hasDatabase)("CRM service E2E", () => {
     const body = pipelines.json() as { data: { isDefault: boolean; stages: unknown[] }[]; total: number };
     expect(body.total).toBe(1);
     expect(body.data[0].isDefault).toBe(true);
-    expect(body.data[0].stages).toHaveLength(6);
+    expect(body.data[0].stages).toHaveLength(8);
 
     const pipelinesAgain = await app.inject({ method: "GET", url: "/api/v1/pipelines", headers });
     expect((pipelinesAgain.json() as { total: number }).total).toBe(1);
@@ -410,7 +410,7 @@ describe.skipIf(!hasDatabase)("CRM service E2E", () => {
     };
     const defaultPipeline = pipelineBody.data.find((p) => p.id === dealBody.pipelineId);
     const firstStage = defaultPipeline?.stages.find((s) => s.orderIndex === 0);
-    expect(firstStage?.name).toBe("New");
+    expect(firstStage?.name).toBe("Qualified");
     expect(dealBody.stageId).toBe(firstStage?.id);
   });
 
@@ -531,10 +531,12 @@ describe.skipIf(!hasDatabase)("CRM service E2E", () => {
     expect(pipeline.name).toBe("EU Pipeline");
     expect(pipeline.isDefault).toBe(false);
     expect(pipeline.stages.map((s) => s.name)).toEqual([
-      "New",
       "Qualified",
-      "Proposal",
-      "Negotiation",
+      "Discovery",
+      "Demo",
+      "Commercial",
+      "Contracting",
+      "Payment/Procurement",
       "Closed Won",
       "Closed Lost",
     ]);
@@ -1004,7 +1006,7 @@ describe.skipIf(!hasDatabase)("CRM service E2E", () => {
       method: "POST",
       url: `/api/v1/pipelines/${pipeline.id}/stages`,
       headers,
-      payload: { name: "Stage A", orderIndex: 6 },
+      payload: { name: "Stage A", orderIndex: 8 },
     });
     expect(addStage.statusCode).toBe(201);
 
@@ -1049,7 +1051,7 @@ describe.skipIf(!hasDatabase)("CRM service E2E", () => {
       method: "POST",
       url: `/api/v1/pipelines/${pipeline.id}/stages`,
       headers,
-      payload: { name: "Stage A", orderIndex: 6 },
+      payload: { name: "Stage A", orderIndex: 8 },
     });
     expect(first.statusCode).toBe(201);
 
@@ -1057,7 +1059,7 @@ describe.skipIf(!hasDatabase)("CRM service E2E", () => {
       method: "POST",
       url: `/api/v1/pipelines/${pipeline.id}/stages`,
       headers,
-      payload: { name: "Stage B", orderIndex: 6 },
+      payload: { name: "Stage B", orderIndex: 8 },
     });
     expect(duplicate.statusCode).toBe(409);
     expect((duplicate.json() as { error: string }).error).toBe("stage_order_conflict");

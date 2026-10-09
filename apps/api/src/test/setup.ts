@@ -20,9 +20,14 @@ import { ensureDemoWorkspace } from "../services/demo-workspace.js";
 // Load project .env (without overriding any CI-supplied vars) so that
 // DATABASE_URL and other secrets are visible to route integration tests.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../");
+// Tests authenticate with the stub header. A developer .env that sets AUTH_MODE (e.g. dual for
+// local real-login testing) would turn every request into a 401, so only an AUTH_MODE set
+// before the .env files load (CI, the command line, or vi.stubEnv) is kept.
+const authModeBeforeDotenv = process.env.AUTH_MODE;
 for (const candidate of [path.join(root, ".env"), path.join(root, ".env.local")]) {
   dotenvConfig({ path: candidate, override: false });
 }
+if (authModeBeforeDotenv === undefined) delete process.env.AUTH_MODE;
 
 // analytics-events.ts has a module-level loadEnv() cache that bypasses
 // per-test app config overrides. Clear external service URLs so that cache

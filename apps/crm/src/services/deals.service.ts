@@ -1,12 +1,12 @@
 import { and, eq, gte, ilike, isNull, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, recordEvidence, getLatestEvidenceByAttribute } from "@skout/db";
-import type { DealCreateInput, DealUpdateInput } from "@skout/shared";
+import { appendCopsEvent, createCopsEvent, type DealCreateInput, type DealUpdateInput } from "@skout/shared";
 import { HttpError } from "@skout/auth";
 import type { CompaniesService } from "./companies.service.js";
 import type { PipelinesService } from "./pipelines.service.js";
 import type { ActivitiesService } from "./activities.service.js";
-import type { AuditService } from "./audit.service.js";
+import { buildAuditService, type AuditService } from "./audit.service.js";
 import { serviceLog } from "../lib/obs.js";
 import {
   asFieldSourcesMap,
@@ -78,6 +78,41 @@ function toDto(row: typeof deals.$inferSelect): DealDto {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+function isQualifiedStage(stageName: string | undefined): boolean {
+  return stageName?.trim().toLowerCase() === "qualified";
+}
+
+async function appendOpportunityQualified(
+  tx: Parameters<Parameters<Db["transaction"]>[0]>[0],
+  input: { workspaceId: string; opportunityId: string; companyId: string | null; actorId?: string }
+): Promise<void> {
+  if (!input.companyId) {
+    log.warn("qualified opportunity has no linked company; COPS event was not created", {
+      workspaceId: input.workspaceId,
+      opportunityId: input.opportunityId,
+    });
+    return;
+  }
+  await tx
+    .insert(schema.copsLifecycleStates)
+    .values({
+      workspaceId: input.workspaceId,
+      dimension: "opportunity",
+      entityId: input.opportunityId,
+      state: "qualified",
+    })
+    .onConflictDoNothing();
+  const event = createCopsEvent({
+    eventType: "OpportunityQualified",
+    tenantId: input.workspaceId,
+    aggregateType: "opportunity",
+    aggregateId: input.opportunityId,
+    actor: { type: input.actorId ? "user" : "system", id: input.actorId ?? null },
+    payload: { opportunity_id: input.opportunityId, account_id: input.companyId },
+  });
+  await appendCopsEvent(tx as never, event);
 }
 
 export class DealsService {
@@ -222,25 +257,42 @@ export class DealsService {
     }
     if (!stageId) throw new HttpError("pipeline_stage_required", 400);
 
-    const [row] = await this.db
-      .insert(deals)
-      .values({
-        workspaceId,
-        companyId: input.companyId,
-        pipelineId,
-        stageId,
-        ownerId: input.ownerId ?? ownerId,
-        name: input.name,
-        amount: input.amount?.toString(),
-        currency: input.currency,
-        closeDate: input.closeDate,
-        probability: input.probability,
-      })
-      .returning();
+    const dto = await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(deals)
+        .values({
+          workspaceId,
+          companyId: input.companyId,
+          pipelineId,
+          stageId,
+          ownerId: input.ownerId ?? ownerId,
+          name: input.name,
+          amount: input.amount?.toString(),
+          currency: input.currency,
+          closeDate: input.closeDate,
+          probability: input.probability,
+        })
+        .returning();
 
-    const dto = toDto(row);
-    await this.auditService.record(workspaceId, ownerId, "create", "deal", dto.id, null, dto);
-    log.info("deal created", { workspaceId, dealId: row.id });
+      const created = toDto(row);
+      const txAuditService = buildAuditService(tx as never);
+      await txAuditService?.record(workspaceId, ownerId, "create", "deal", created.id, null, created);
+      const [stage] = await tx
+        .select({ name: pipelineStages.name })
+        .from(pipelineStages)
+        .where(and(eq(pipelineStages.id, stageId), eq(pipelineStages.pipelineId, pipelineId)))
+        .limit(1);
+      if (isQualifiedStage(stage?.name)) {
+        await appendOpportunityQualified(tx, {
+          workspaceId,
+          opportunityId: created.id,
+          companyId: created.companyId,
+          actorId: ownerId,
+        });
+      }
+      return created;
+    });
+    log.info("deal created", { workspaceId, dealId: dto.id });
 
     if (this.config) {
       await emitSkoutEvent(this.db, this.config, {
@@ -283,29 +335,53 @@ export class DealsService {
           )
         : undefined;
 
-    const [row] = await this.db
-      .update(deals)
-      .set({
-        ...(input.name !== undefined ? { name: input.name } : {}),
-        ...(input.companyId !== undefined ? { companyId: input.companyId } : {}),
-        ...(input.pipelineId !== undefined ? { pipelineId: input.pipelineId } : {}),
-        ...(input.stageId !== undefined ? { stageId: input.stageId } : {}),
-        ...(input.ownerId !== undefined ? { ownerId: input.ownerId } : {}),
-        ...(input.amount !== undefined ? { amount: input.amount.toString() } : {}),
-        ...(input.currency !== undefined ? { currency: input.currency } : {}),
-        ...(input.closeDate !== undefined ? { closeDate: input.closeDate } : {}),
-        ...(input.probability !== undefined ? { probability: input.probability } : {}),
-        ...(input.status !== undefined ? { status: input.status } : {}),
-        ...(nextFieldSources !== undefined ? { fieldSources: nextFieldSources } : {}),
-        updatedAt: new Date(),
-      })
-      .where(and(eq(deals.id, id), eq(deals.workspaceId, workspaceId)))
-      .returning();
+    const dto = await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(deals)
+        .set({
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.companyId !== undefined ? { companyId: input.companyId } : {}),
+          ...(input.pipelineId !== undefined ? { pipelineId: input.pipelineId } : {}),
+          ...(input.stageId !== undefined ? { stageId: input.stageId } : {}),
+          ...(input.ownerId !== undefined ? { ownerId: input.ownerId } : {}),
+          ...(input.amount !== undefined ? { amount: input.amount.toString() } : {}),
+          ...(input.currency !== undefined ? { currency: input.currency } : {}),
+          ...(input.closeDate !== undefined ? { closeDate: input.closeDate } : {}),
+          ...(input.probability !== undefined ? { probability: input.probability } : {}),
+          ...(input.status !== undefined ? { status: input.status } : {}),
+          ...(nextFieldSources !== undefined ? { fieldSources: nextFieldSources } : {}),
+          updatedAt: new Date(),
+        })
+        .where(and(eq(deals.id, id), eq(deals.workspaceId, workspaceId)))
+        .returning();
 
-    const dto = row ? toDto(row) : null;
-    if (dto) {
-      await this.auditService.record(workspaceId, actorId, "update", "deal", id, existing, dto);
-    }
+      if (!row) return null;
+      const updated = toDto(row);
+      const txAuditService = buildAuditService(tx as never);
+      await txAuditService?.record(workspaceId, actorId, "update", "deal", id, existing, updated);
+
+      if (input.stageId && input.stageId !== existing.stageId) {
+        const [oldStage] = await tx
+          .select({ name: pipelineStages.name })
+          .from(pipelineStages)
+          .where(eq(pipelineStages.id, existing.stageId))
+          .limit(1);
+        const [newStage] = await tx
+          .select({ name: pipelineStages.name })
+          .from(pipelineStages)
+          .where(eq(pipelineStages.id, input.stageId))
+          .limit(1);
+        if (!isQualifiedStage(oldStage?.name) && isQualifiedStage(newStage?.name)) {
+          await appendOpportunityQualified(tx, {
+            workspaceId,
+            opportunityId: updated.id,
+            companyId: updated.companyId,
+            actorId,
+          });
+        }
+      }
+      return updated;
+    });
     // §5.3 — dual-write manual amount/closeDate into evidence_ledger (confidence 1.0). Best-effort.
     if (dto && editedAutoFillable.length > 0) {
       for (const field of editedAutoFillable) {
@@ -334,7 +410,7 @@ export class DealsService {
       }
     }
 
-    if (row && input.stageId && input.stageId !== existing.stageId) {
+    if (dto && input.stageId && input.stageId !== existing.stageId) {
       const [oldStage] = await this.db
         .select({ name: pipelineStages.name })
         .from(pipelineStages)
@@ -357,7 +433,7 @@ export class DealsService {
       );
     }
 
-    if (row) log.info("deal updated", { workspaceId, dealId: id });
+    if (dto) log.info("deal updated", { workspaceId, dealId: id });
 
     if (dto && this.config) {
       await emitSkoutEvent(this.db, this.config, {

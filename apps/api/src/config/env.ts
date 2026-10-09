@@ -300,6 +300,11 @@ const envSchema = z
     RAZORPAY_CREDIT_PACKS_JSON: z.string().optional(),
     /** Prefix for per-workspace CRM OAuth secrets in AWS Secrets Manager. */
     CRM_SECRETS_PREFIX: z.string().default("SkoutDev/crm"),
+    /**
+     * Where per-workspace CRM OAuth tokens live: `aws` = AWS Secrets Manager (default),
+     * `inline` = AES-encrypted in the connection row's credentials_ref (no AWS dependency).
+     */
+    CRM_CREDENTIALS_BACKEND: z.enum(["aws", "inline"]).default("aws"),
     /** When true, store CRM OAuth tokens in local `.crm-secrets/` instead of AWS. */
     CRM_CREDENTIALS_LOCAL: z
       .string()
@@ -319,6 +324,9 @@ const envSchema = z
     SMTP_PORT: z.coerce.number().default(587),
     SMTP_USERNAME: z.string().optional(),
     SMTP_PASSWORD: z.string().optional(),
+    /** Resend (transactional email, decided 2026-10-06). Used when set; SMTP is the fallback. */
+    RESEND_API_KEY: z.string().optional(),
+    RESEND_FROM: z.string().optional(),
     // --- Enrichment tunables. ---
     ENRICHMENT_REQUEST_TIMEOUT_MS: z.coerce.number().default(8000),
     ENRICHMENT_PHONE_SCORE_GATE: z.coerce.number().default(80),

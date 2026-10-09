@@ -143,7 +143,7 @@ describe("§8.1/SS-09 — onboarding autonomy mode reaches the Policy Gateway", 
     Object.values(modeByKey).forEach(mode => expect(mode).toBe("auto"));
   });
 
-  // EDGE CASE 2: invalid autonomyMode value is rejected with 400
+  // EDGE CASE 2: invalid autonomyMode value is rejected with 422
   it("rejects onboarding submission with invalid autonomyMode value", async () => {
     const stubEmail = `ss09-invalid-${Date.now()}@test.com`;
 
@@ -158,7 +158,7 @@ describe("§8.1/SS-09 — onboarding autonomy mode reaches the Policy Gateway", 
         },
       },
     });
-    expect(put.statusCode).toBe(400); // validation fails
+    expect(put.statusCode).toBe(422); // validation fails
   });
 
   // EDGE CASE 3: re-completing onboarding updates existing policies (not duplicates)
@@ -214,6 +214,6 @@ describe("§8.1/SS-09 — onboarding autonomy mode reaches the Policy Gateway", 
         },
       },
     });
-    expect(put.statusCode).toBe(400);
+    expect(put.statusCode).toBe(422);
   });
 });

@@ -5,7 +5,12 @@ function makeDb() {
   const returning = vi.fn().mockResolvedValue([{ id: "activity-1" }]);
   const values = vi.fn().mockReturnValue({ returning });
   const insert = vi.fn().mockReturnValue({ values });
-  return { insert } as any;
+  // The node now writes the activity and its ActivityRecorded event in one transaction; the
+  // account lookup for a contact returns no company here.
+  const select = vi.fn().mockReturnValue({ from: () => ({ where: () => ({ limit: async () => [] }) }) });
+  const db: any = { insert, select };
+  db.transaction = async (fn: (tx: unknown) => unknown) => fn(db);
+  return db;
 }
 
 describe("crmWritebackActionNodeHandler", () => {

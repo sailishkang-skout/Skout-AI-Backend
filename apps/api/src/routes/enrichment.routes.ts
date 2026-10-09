@@ -15,6 +15,7 @@ import { recordEvidence } from "../services/evidence.service.js";
 import { assertEvidenced } from "@skout/shared";
 import { buildModelVersionsService } from "../services/model-versions.service.js";
 import { assertPermission, recordPrivilegedAction } from "@skout/auth";
+import { auditEntityId } from "../utils/audit-entity-id.js";
 const {
   prospectActivations,
   companies,
@@ -206,7 +207,8 @@ export async function enrichmentRoutes(app: FastifyInstance) {
         actorId: request.userId,
         action: "enrichment.score",
         entityType: "prospect",
-        entityId: randomUUID(),
+        // Prospect ids are text; audit_logs.entity_id is uuid (see auditEntityId). The real id is in after_state.
+        entityId: auditEntityId(body.prospect.prospectId ?? "anonymous"),
         afterState: { prospectId: body.prospect.prospectId ?? null, companyDomain: body.prospect.companyDomain }
       });
 

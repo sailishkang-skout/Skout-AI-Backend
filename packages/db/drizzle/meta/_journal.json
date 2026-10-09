@@ -565,7 +565,7 @@
     {
       "idx": 80,
       "version": "7",
-      "when": 1791300000000,
+      "when": 1793200000000,
       "tag": "0079_whatsapp_outreach_jobs",
       "breakpoints": true
     },
@@ -692,21 +692,105 @@
       "idx": 98,
       "version": "7",
       "when": 1792800000000,
-      "tag": "0097_enrichment_capture_boundary",
+      "tag": "0097_cops_outbox",
       "breakpoints": true
     },
     {
       "idx": 99,
       "version": "7",
-      "when": 1792800000001,
-      "tag": "0098_workspace_enrichment_credits",
+      "when": 1792900000000,
+      "tag": "0098_cops_platform",
       "breakpoints": true
     },
     {
       "idx": 100,
       "version": "7",
-      "when": 1792800000002,
-      "tag": "0099_contacts_employment_status",
+      "when": 1793000000000,
+      "tag": "0099_cops_outbox_workspace_fk",
+      "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1793100000000,
+      "tag": "0100_cops_lifecycle_states",
+      "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1793200000000,
+      "tag": "0101_cops_notification_routing",
+      "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1793300000000,
+      "tag": "0102_teams_workflows_notification_webhook",
+      "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1793400000000,
+      "tag": "0103_cops_timeline_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1793500000000,
+      "tag": "0104_cops_crm_gap_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "7",
+      "when": 1793600000000,
+      "tag": "0105_cops_saved_views",
+      "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "7",
+      "when": 1793700000000,
+      "tag": "0106_cops_account_merges",
+      "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "7",
+      "when": 1793800000000,
+      "tag": "0107_pipeline_stage_lifecycle_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "7",
+      "when": 1793900000000,
+      "tag": "0108_activities_visibility",
+      "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "7",
+      "when": 1794000000000,
+      "tag": "0109_entity_tags",
+      "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "7",
+      "when": 1794100000000,
+      "tag": "0110_enr01_enrichment_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "7",
+      "when": 1794200000000,
+      "tag": "0111_enrichment_capture_boundary",
       "breakpoints": true
     }
   ]

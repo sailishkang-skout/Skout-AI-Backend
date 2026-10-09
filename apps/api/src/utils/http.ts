@@ -1,13 +1,36 @@
+import { randomUUID } from "node:crypto";
 import { HttpError } from "@skout/auth";
 import type { FastifyRequest } from "fastify";
 
+/**
+ * Global error envelope (Bible p.81, COPS-01 decision: Option A). Every API error uses
+ * { code, message, details, request_id, retryable }. `code` is a stable machine code; `message`
+ * is human-readable. `statusCode` is not in the body; the HTTP status carries it.
+ */
 export function errorResponse(message: string, statusCode = 400, details?: unknown) {
-  return {
-    ok: false,
-    error: message,
+  return apiError(
+    defaultCodeForStatus(statusCode),
+    message,
     statusCode,
-    details: details ?? null,
-  };
+    details === undefined || details === null ? undefined : { details }
+  );
+}
+
+export function defaultCodeForStatus(statusCode: number): string {
+  if (statusCode === 400) return "BAD_REQUEST";
+  if (statusCode === 401) return "UNAUTHORIZED";
+  if (statusCode === 403) return "FORBIDDEN";
+  if (statusCode === 404) return "NOT_FOUND";
+  if (statusCode === 409) return "BUSINESS_STATE_CONFLICT";
+  if (statusCode === 415) return "UNSUPPORTED_MEDIA_TYPE";
+  if (statusCode === 422) return "VALIDATION_FAILED";
+  if (statusCode === 429) return "RATE_LIMITED";
+  return statusCode >= 500 ? "INTERNAL_ERROR" : "REQUEST_FAILED";
+}
+
+/** Only transient throttling and gateway failures are marked retryable by default. */
+function isRetryableStatus(statusCode: number): boolean {
+  return statusCode === 429 || statusCode === 503 || statusCode === 504;
 }
 
 /** §3 auth failures — stable `code` plus legacy `error` message text (AUTH-BE-08). */
@@ -58,6 +81,21 @@ export function isDatabaseError(error: unknown): boolean {
  * handlers so every API error has the same shape: { error, message, statusCode }.
  * `error` is a stable machine code; `message` is human-readable.
  */
-export function apiError(code: string, message: string, statusCode: number, extra?: Record<string, unknown>) {
-  return { error: code, message, statusCode, ...(extra ?? {}) };
+export function apiError(
+  code: string,
+  message: string,
+  statusCode: number,
+  extra?: Record<string, unknown>
+) {
+  const { requestId, details, retryable, ...rest } = (extra ?? {}) as Record<string, unknown>;
+  return {
+    ok: false,
+    error: code,
+    code,
+    message,
+    statusCode,
+    details: (details as unknown) ?? (Object.keys(rest).length ? rest : null),
+    request_id: typeof requestId === "string" ? requestId : randomUUID(),
+    retryable: typeof retryable === "boolean" ? retryable : isRetryableStatus(statusCode),
+  };
 }
