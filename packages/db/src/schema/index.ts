@@ -51,3 +51,4 @@ export * from "./cops-commercial.js";
 export * from "./cops-provisioning.js";
 export * from "./cops-onboarding.js";
 export * from "./cops-tickets.js";
+export * from "./cops-admin.js";

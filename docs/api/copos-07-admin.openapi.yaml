@@ -5,7 +5,7 @@ info:
   description: >
     Contract for COPS-07, published before the implementation. All paths are under /api/v1, use the
     COPS error envelope, and need admin:admin unless stated. Every write is audited with a reason.
-    Status: proposed. Nothing in this file is implemented yet.
+    Status: the /admin/config paths are implemented; retention, data inventory, feature-flag enforcement and ops metrics are proposed.
 paths:
   /admin/config/{kind}:
     get:
