@@ -475,7 +475,8 @@ export class DbStore implements EnrichmentStore {
       id: row.id,
       workspaceId: row.workspaceId,
       prospectId: row.prospectId,
-      companyId: row.companyId ?? row.prospectId,
+      // company_id is nullable since ENR-01; ActivationRecord keeps a string, empty when unknown.
+      companyId: row.companyId ?? "",
       snapshot: (row.snapshot ?? {}) as Record<string, unknown>,
       activatedAt: row.activatedAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),

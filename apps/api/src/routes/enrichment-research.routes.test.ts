@@ -458,7 +458,7 @@ describe("ENR-03 lists, pagination, export and delete", () => {
     // A candidate is associated with the company without being counted as verified there.
     expect((await get(`/enrichment/people?companyId=${companyId}`)).json().total).toBe(20);
     expect((await get(`/enrichment/people?companyId=${companyId}&state=verified`)).json().total).toBe(0);
-    expect((await get("/enrichment/people?pageSize=500")).statusCode).toBe(400);
+    expect((await get("/enrichment/people?pageSize=500")).statusCode).toBe(422);
     expect((await get("/enrichment/people", outsider)).json().total).toBe(0);
     const companies = (await get("/enrichment/companies?q=paginate")).json();
     expect(companies.companies).toHaveLength(1);

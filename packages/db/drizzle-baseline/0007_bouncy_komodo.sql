@@ -1,0 +1,1 @@
+ALTER TABLE "cops_outbox" ADD CONSTRAINT "cops_outbox_tenant_id_workspaces_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "public"."workspaces"("id") ON DELETE cascade ON UPDATE no action;

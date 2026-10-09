@@ -127,7 +127,7 @@ function formatApiError(status, body, webUrl) {
   if (status === 402) {
     return "Insufficient credits for this action.";
   }
-  if (body?.error === "validation_error") {
+  if (body?.error === "VALIDATION_FAILED" || body?.error === "validation_error") {
     return "The captured data did not pass validation.";
   }
   if (typeof body?.error === "string") {

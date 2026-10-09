@@ -20,7 +20,14 @@ describe("GET /api/v1/unsubscribe/:token", () => {
     const res = await app.inject({ method: "GET", url: "/api/v1/unsubscribe/not-a-real-token" });
 
     expect(res.statusCode).toBe(400);
-    expect(res.json()).toEqual({ error: "invalid_token", message: "invalid_token", statusCode: 400 });
+    expect(res.json()).toMatchObject({
+      error: "invalid_token",
+      code: "invalid_token",
+      message: "invalid_token",
+      statusCode: 400,
+      retryable: false,
+    });
+    expect(res.json().request_id).toEqual(expect.any(String));
 
     await app.close();
   });

@@ -59,6 +59,13 @@ import { modelVersionsRoutes } from "./model-versions.routes.js";
 import { regionalBriefRoutes } from "./regional-brief.routes.js";
 import { dexterPlatformRoutes } from "./dexter-platform.routes.js";
 import { account360Routes } from "./account-360.routes.js";
+import { copsAuditRoutes } from "./cops-audit.routes.js";
+import { copsTimelineRoutes } from "./cops-timeline.routes.js";
+import { copsAccount360Routes } from "./account-360.routes.js";
+import { copsSavedViewsRoutes } from "./cops-saved-views.routes.js";
+import { copsCrmObjectsRoutes } from "./cops-crm-objects.routes.js";
+import { copsOutboxRoutes } from "./cops-outbox.routes.js";
+import { copsLifecycleRoutes } from "./cops-lifecycle.routes.js";
 import { ssoScimRoutes } from "./sso-scim.routes.js";
 import { automationRoutes } from "./automation.routes.js";
 import { complianceRoutes } from "./compliance.routes.js";
@@ -140,6 +147,17 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(regionalBriefRoutes);
     await v1.register(dexterPlatformRoutes);
     await v1.register(account360Routes);
+    if (app.db) {
+      await v1.register(copsAuditRoutes, { db: app.db });
+      await v1.register(copsTimelineRoutes, { db: app.db });
+      await v1.register(copsAccount360Routes, { db: app.db });
+      await v1.register(copsSavedViewsRoutes, { db: app.db });
+      await v1.register(copsCrmObjectsRoutes, { db: app.db });
+      await v1.register(copsOutboxRoutes, { db: app.db });
+      await v1.register(copsLifecycleRoutes, { db: app.db });
+    } else {
+      app.log.warn("COPS audit and outbox routes disabled because DATABASE_URL is not configured");
+    }
     await v1.register(ssoScimRoutes);
     await v1.register(automationRoutes);
     await v1.register(complianceRoutes);

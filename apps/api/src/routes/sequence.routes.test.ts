@@ -446,7 +446,7 @@ describe("sequence routes — status lifecycle", () => {
     await app.close();
   });
 
-  it("PATCH with unknown status value returns 400 (Zod validation)", async () => {
+  it("PATCH with unknown status value returns 422 (Zod validation)", async () => {
     const app = await buildTestApp();
     const email = "seq-status-invalid-c@test.com";
 
@@ -457,7 +457,7 @@ describe("sequence routes — status lifecycle", () => {
       payload: { status: "flying" },
     });
 
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(422);
 
     await app.close();
   });
@@ -894,7 +894,7 @@ describe("sequence routes — 404 and validation", () => {
     await app.close();
   });
 
-  it("POST /sequences rejects an empty name with 400", async () => {
+  it("POST /sequences rejects an empty name with 422", async () => {
     const app = await buildTestApp();
     const res = await app.inject({
       method: "POST",
@@ -902,11 +902,11 @@ describe("sequence routes — 404 and validation", () => {
       headers: json("seq-val-empty@test.com"),
       payload: { name: "" },
     });
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(422);
     await app.close();
   });
 
-  it("POST /sequences rejects missing name with 400", async () => {
+  it("POST /sequences rejects missing name with 422", async () => {
     const app = await buildTestApp();
     const res = await app.inject({
       method: "POST",
@@ -914,11 +914,11 @@ describe("sequence routes — 404 and validation", () => {
       headers: json("seq-val-missing@test.com"),
       payload: {},
     });
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(422);
     await app.close();
   });
 
-  it("POST /sequences/:id/steps rejects invalid stepType with 400", async () => {
+  it("POST /sequences/:id/steps rejects invalid stepType with 422", async () => {
     const app = await buildTestApp();
     const res = await app.inject({
       method: "POST",
@@ -926,11 +926,11 @@ describe("sequence routes — 404 and validation", () => {
       headers: json("seq-val-type@test.com"),
       payload: { stepType: "sms", delayDays: 0 },
     });
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(422);
     await app.close();
   });
 
-  it("POST /sequences/:id/steps rejects negative delayDays with 400", async () => {
+  it("POST /sequences/:id/steps rejects negative delayDays with 422", async () => {
     const app = await buildTestApp();
     const res = await app.inject({
       method: "POST",
@@ -938,11 +938,11 @@ describe("sequence routes — 404 and validation", () => {
       headers: json("seq-val-delay@test.com"),
       payload: { stepType: "email", delayDays: -1 },
     });
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(422);
     await app.close();
   });
 
-  it("PATCH /sequences/:id returns 400 when neither name nor status is provided", async () => {
+  it("PATCH /sequences/:id returns 422 when neither name nor status is provided", async () => {
     const app = await buildTestApp();
     const res = await app.inject({
       method: "PATCH",
@@ -950,7 +950,7 @@ describe("sequence routes — 404 and validation", () => {
       headers: json("seq-val-patch@test.com"),
       payload: {},
     });
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(422);
     await app.close();
   });
 
@@ -962,7 +962,7 @@ describe("sequence routes — 404 and validation", () => {
       headers: json("seq-val-reorder@test.com"),
       payload: { stepIds: [] },
     });
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(422);
     await app.close();
   });
 });
@@ -992,7 +992,7 @@ describe("sequence routes — auth stub", () => {
 // ---------------------------------------------------------------------------
 
 describe("sequence routes — enroll validation (no DB)", () => {
-  it("POST /enroll with empty body returns 400", async () => {
+  it("POST /enroll with empty body returns 422", async () => {
     const app = await buildTestApp();
     const res = await app.inject({
       method: "POST",
@@ -1000,11 +1000,11 @@ describe("sequence routes — enroll validation (no DB)", () => {
       headers: json("enroll-val-empty@test.com"),
       payload: {},
     });
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(422);
     await app.close();
   });
 
-  it("POST /enroll with empty prospectIds array returns 400", async () => {
+  it("POST /enroll with empty prospectIds array returns 422", async () => {
     const app = await buildTestApp();
     const res = await app.inject({
       method: "POST",
@@ -1012,11 +1012,11 @@ describe("sequence routes — enroll validation (no DB)", () => {
       headers: json("enroll-val-array@test.com"),
       payload: { prospectIds: [] },
     });
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(422);
     await app.close();
   });
 
-  it("POST /enroll with invalid listId (not a UUID) returns 400", async () => {
+  it("POST /enroll with invalid listId (not a UUID) returns 422", async () => {
     const app = await buildTestApp();
     const res = await app.inject({
       method: "POST",
@@ -1024,7 +1024,7 @@ describe("sequence routes — enroll validation (no DB)", () => {
       headers: json("enroll-val-uuid@test.com"),
       payload: { listId: "not-a-uuid" },
     });
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(422);
     await app.close();
   });
 });

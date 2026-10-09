@@ -4,6 +4,7 @@ import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import { ZodError } from "zod";
 import { buildPinoOptions, captureException } from "@skout/observability";
+import { resolveCorrelationId } from "@skout/shared";
 import type { Env } from "./config/env.js";
 import { authPlugin } from "./plugins/auth.js";
 import { configPlugin } from "./plugins/config.js";
@@ -11,9 +12,9 @@ import { dbPlugin } from "./plugins/db.js";
 import { loggingPlugin } from "./plugins/logging.js";
 import { securityPlugin } from "./plugins/security.js";
 import { registerRoutes } from "./routes/index.js";
-import { apiError, HttpError, isDatabaseError } from "./utils/http.js";
+import { apiError, defaultCodeForStatus, HttpError, isDatabaseError } from "./utils/http.js";
 
-export async function buildApp(config: Env) {
+export async function buildApp(config: Env, options: { onDbQuery?: (query: string) => void } = {}) {
   const app = Fastify({
     logger: buildPinoOptions({
       service: config.SERVICE_NAME,
@@ -75,9 +76,12 @@ export async function buildApp(config: Env) {
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof ZodError) {
-      return reply.code(400).send(
-        apiError("validation_error", "Request validation failed", 400, {
-          issues: error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
+      return reply.code(422).send(
+        apiError("VALIDATION_FAILED", "Request validation failed", 422, {
+          requestId: request.id,
+          details: {
+            fields: error.issues.map((i) => ({ path: i.path.join("."), code: i.code, message: i.message })),
+          },
         })
       );
     }
@@ -90,7 +94,10 @@ export async function buildApp(config: Env) {
       return reply
         .code(error.statusCode)
         .send(
-          apiError(error.message, error.message, error.statusCode, error.details ? { details: error.details } : undefined)
+          apiError(defaultCodeForStatus(error.statusCode), error.message, error.statusCode, {
+            requestId: request.id,
+            details: error.details ?? undefined,
+          })
         );
     }
 
@@ -114,7 +121,7 @@ export async function buildApp(config: Env) {
       // Generic message for all server errors — no raw error/SQL text to clients.
       return reply
         .code(statusCode)
-        .send(apiError("internal_server_error", "An internal server error occurred. Please try again.", statusCode));
+        .send(apiError("INTERNAL_ERROR", "An internal server error occurred. Please try again.", statusCode, { requestId: request.id }));
     }
 
     request.log.warn({ err: error }, "request error");
@@ -125,7 +132,7 @@ export async function buildApp(config: Env) {
   // Normalize every error response to a consistent shape: { error, message,
   // statusCode, ...extra }. Routes historically returned a mix of
   // { error }, { error, message }, { ok, error, statusCode } etc.
-  app.addHook("onSend", async (_request, reply, payload) => {
+  app.addHook("onSend", async (request, reply, payload) => {
     if (reply.statusCode < 400 || typeof payload !== "string") return payload;
     const contentType = String(reply.getHeader("content-type") ?? "");
     if (!contentType.includes("application/json")) return payload;
@@ -135,9 +142,15 @@ export async function buildApp(config: Env) {
         const code = typeof body.error === "string" ? body.error : "error";
         const normalized = {
           ...body,
+          code: typeof body.code === "string" ? body.code : code,
           error: code,
           message: typeof body.message === "string" ? body.message : code,
           statusCode: typeof body.statusCode === "number" ? body.statusCode : reply.statusCode,
+          request_id: resolveCorrelationId(request.headers["x-request-id"]),
+          retryable:
+            typeof body.retryable === "boolean"
+              ? body.retryable
+              : [429, 503, 504].includes(reply.statusCode),
         };
         return JSON.stringify(normalized);
       }
@@ -148,6 +161,7 @@ export async function buildApp(config: Env) {
   });
 
   await app.register(configPlugin, config);
+  app.decorate("onDbQuery", options.onDbQuery ?? null);
   await app.register(dbPlugin);
   await app.register(authPlugin);
 

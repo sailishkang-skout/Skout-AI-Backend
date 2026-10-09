@@ -465,7 +465,8 @@ async function sendCapture(message) {
     const payload = buildCapturePayload(draft, message.data || draft.data);
     body = await deps.skoutFetch(`${API}/ingest/${path}`, { method: 'POST', body: JSON.stringify(payload), timeoutMs: 60_000 });
   } catch (error) {
-    const issues = (error?.body?.issues || []).slice(0, 5).map(issue => `${issue.path}: ${issue.message}`);
+    // The API lists the fields that failed validation under details.fields.
+    const issues = (error?.body?.details?.fields || []).slice(0, 5).map(issue => `${issue.path}: ${issue.message}`);
     return {
       ok: false,
       error: [error?.message || 'The capture could not be saved.', ...issues].join(' · '),

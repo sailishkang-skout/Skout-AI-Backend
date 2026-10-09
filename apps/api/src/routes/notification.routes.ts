@@ -1,5 +1,21 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { and, eq } from "drizzle-orm";
+import { z } from "zod";
+import { getMemberPermissions } from "@skout/auth";
+import { schema } from "@skout/db";
+import {
+  COPS_PHASE1_EVENTS,
+  copsErrorBody,
+  copsErrorStatus,
+  resolveCorrelationId,
+  type CopsPhase1EventType,
+} from "@skout/shared";
 import { errorResponse, HttpError } from "../utils/http.js";
+import {
+  COPS_NOTIFICATION_ROLE_KEYS,
+  type CopsNotificationRoleKey,
+} from "../services/cops-notification-routing.js";
+import { requireCopsPermission, writeCopsAudit } from "../services/cops-platform.service.js";
 import {
   createNotification,
   listNotifications,
@@ -12,6 +28,36 @@ import {
 } from "../services/notifications.service.js";
 
 const VALID_CHANNELS: NotificationChannel[] = ["in_app", "email", "both", "sms"];
+const { copsNotificationRoutes } = schema;
+const COPS_EVENT_TYPES = Object.keys(COPS_PHASE1_EVENTS);
+const copsRouteBodySchema = z.object({
+  event_type: z.string().refine((value) => COPS_EVENT_TYPES.includes(value), "Unknown COPS event type"),
+  role_keys: z.array(z.enum(COPS_NOTIFICATION_ROLE_KEYS)).max(COPS_NOTIFICATION_ROLE_KEYS.length),
+  reason: z.string().trim().min(8).max(500),
+}).strict();
+const copsRouteResetSchema = z.object({
+  params: z.object({
+    eventType: z.string().refine((value) => COPS_EVENT_TYPES.includes(value), "Unknown COPS event type"),
+  }).strict(),
+  body: z.object({ reason: z.string().trim().min(8).max(500) }).strict(),
+});
+
+function sendInvalidCopsRoute(reply: FastifyReply, requestId: string, error: z.ZodError) {
+  return reply.status(copsErrorStatus("VALIDATION_FAILED")).send(
+    copsErrorBody({
+      code: "VALIDATION_FAILED",
+      message: "Invalid COPS notification route",
+      requestId,
+      details: {
+        fields: error.issues.map((issue) => ({
+          path: issue.path.join("."),
+          code: issue.code,
+          message: issue.message,
+        })),
+      },
+    })
+  );
+}
 
 /** R17.1 — notification center + R17.4 — email/Slack delivery channel preferences. */
 export async function notificationRoutes(app: FastifyInstance) {
@@ -19,6 +65,146 @@ export async function notificationRoutes(app: FastifyInstance) {
     if (!app.db) throw new HttpError("Database not available", 500);
     return app.db;
   }
+
+  const copsAdminGate = async (request: FastifyRequest, reply: FastifyReply) => {
+    const database = app.db;
+    if (!database) return reply.code(503).send(errorResponse("Database unavailable", 503));
+    return requireCopsPermission("admin", "admin", (workspaceId, userId) =>
+      getMemberPermissions(database, workspaceId, userId)
+    )(request, reply);
+  };
+
+  // COPS event routing configuration is part of the existing notification API and admin surface.
+  app.get("/notifications/cops-routes", { preHandler: copsAdminGate }, async (request, reply) => {
+    if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    const rows = await db()
+      .select({
+        eventType: copsNotificationRoutes.eventType,
+        roleKeys: copsNotificationRoutes.roleKeys,
+        updatedAt: copsNotificationRoutes.updatedAt,
+      })
+      .from(copsNotificationRoutes)
+      .where(eq(copsNotificationRoutes.workspaceId, request.workspaceId));
+    return reply.send({ data: rows });
+  });
+
+  app.put("/notifications/cops-routes", { preHandler: copsAdminGate }, async (request, reply) => {
+    const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+    const parsed = copsRouteBodySchema.safeParse(request.body);
+    if (!parsed.success) return sendInvalidCopsRoute(reply, requestId, parsed.error);
+    if (!request.workspaceId || !request.userId) {
+      return reply.code(401).send(errorResponse("Unauthorized", 401));
+    }
+
+    const workspaceId = request.workspaceId;
+    const userId = request.userId;
+    const eventType = parsed.data.event_type as CopsPhase1EventType;
+    const roleKeys = parsed.data.role_keys as CopsNotificationRoleKey[];
+    const occurredAt = new Date();
+    const result = await db().transaction(async (tx) => {
+      const [before] = await tx
+        .select({ roleKeys: copsNotificationRoutes.roleKeys })
+        .from(copsNotificationRoutes)
+        .where(
+          and(
+            eq(copsNotificationRoutes.workspaceId, workspaceId),
+            eq(copsNotificationRoutes.eventType, eventType)
+          )
+        )
+        .limit(1);
+
+      const [updated] = await tx
+        .insert(copsNotificationRoutes)
+        .values({
+          workspaceId,
+          eventType,
+          roleKeys,
+          updatedBy: userId,
+          updatedAt: occurredAt,
+        })
+        .onConflictDoUpdate({
+          target: [copsNotificationRoutes.workspaceId, copsNotificationRoutes.eventType],
+          set: { roleKeys, updatedBy: userId, updatedAt: occurredAt },
+        })
+        .returning({
+          eventType: copsNotificationRoutes.eventType,
+          roleKeys: copsNotificationRoutes.roleKeys,
+          updatedAt: copsNotificationRoutes.updatedAt,
+        });
+
+      await writeCopsAudit(tx, {
+        tenantId: workspaceId,
+        actor: { type: "user", id: userId },
+        entityType: "cops_notification_route",
+        entityId: workspaceId,
+        action: "notification_route.updated",
+        before: { event_type: eventType, role_keys: before?.roleKeys ?? null },
+        after: { event_type: eventType, role_keys: roleKeys },
+        reason: parsed.data.reason,
+        correlationId: requestId,
+        sourceChannel: "api",
+        occurredAt,
+      });
+      return updated;
+    });
+    return reply.send({ data: result, request_id: requestId });
+  });
+
+  app.delete<{ Params: { eventType: string } }>(
+    "/notifications/cops-routes/:eventType",
+    { preHandler: copsAdminGate },
+    async (request, reply) => {
+      const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+      const parsed = copsRouteResetSchema.safeParse({ params: request.params, body: request.body });
+      if (!parsed.success) return sendInvalidCopsRoute(reply, requestId, parsed.error);
+      if (!request.workspaceId || !request.userId) {
+        return reply.code(401).send(errorResponse("Unauthorized", 401));
+      }
+
+      const workspaceId = request.workspaceId;
+      const userId = request.userId;
+      const eventType = parsed.data.params.eventType as CopsPhase1EventType;
+      const occurredAt = new Date();
+      const reset = await db().transaction(async (tx) => {
+        const [before] = await tx
+          .select({ roleKeys: copsNotificationRoutes.roleKeys })
+          .from(copsNotificationRoutes)
+          .where(
+            and(
+              eq(copsNotificationRoutes.workspaceId, workspaceId),
+              eq(copsNotificationRoutes.eventType, eventType)
+            )
+          )
+          .limit(1);
+
+        if (!before) return false;
+
+        await tx
+          .delete(copsNotificationRoutes)
+          .where(
+            and(
+              eq(copsNotificationRoutes.workspaceId, workspaceId),
+              eq(copsNotificationRoutes.eventType, eventType)
+            )
+          );
+        await writeCopsAudit(tx, {
+          tenantId: workspaceId,
+          actor: { type: "user", id: userId },
+          entityType: "cops_notification_route",
+          entityId: workspaceId,
+          action: "notification_route.reset",
+          before: { event_type: eventType, role_keys: before.roleKeys },
+          after: { event_type: eventType, role_keys: null },
+          reason: parsed.data.body.reason,
+          correlationId: requestId,
+          sourceChannel: "api",
+          occurredAt,
+        });
+        return true;
+      });
+      return reply.send({ data: { eventType, reset }, request_id: requestId });
+    }
+  );
 
   // GET /notifications?unread=true&type=activation_rule
   app.get<{ Querystring: { unread?: string; type?: string; limit?: string } }>(

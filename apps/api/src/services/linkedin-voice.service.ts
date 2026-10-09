@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { appendActivityRecorded } from "@skout/shared";
 import { desc, eq } from "drizzle-orm";
 import OpenAI from "openai";
 import type { Db } from "@skout/db";
@@ -502,7 +503,9 @@ export async function confirmLinkedinVoiceSent(
   const contactId = await resolveTimelineContactId(db, opts.workspaceId, handoff.prospectId);
   if (contactId && UUID_RE.test(contactId)) {
     try {
-      const [activity] = await db
+      // COPS-02: activity and its ActivityRecorded event commit together, so it reaches the timeline.
+      const activity = await db.transaction(async (tx) => {
+      const [inserted] = await tx
         .insert(activities)
         .values({
           workspaceId: opts.workspaceId,
@@ -524,6 +527,19 @@ export async function confirmLinkedinVoiceSent(
           occurredAt: new Date(),
         })
         .returning();
+      if (inserted) {
+        await appendActivityRecorded(tx, {
+          workspaceId: opts.workspaceId,
+          activityId: inserted.id,
+          activityType: "linkedin_voice_sent",
+          entityType: "contact",
+          entityId: contactId,
+          subject: inserted.subject,
+          actorUserId: opts.userId ?? null,
+        });
+      }
+      return inserted;
+      });
       activityId = activity?.id;
     } catch (err) {
       log.warn("linkedin-voice: timeline activity insert skipped", { err });

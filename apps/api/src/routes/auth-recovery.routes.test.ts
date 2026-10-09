@@ -381,7 +381,7 @@ describe("auth-recovery.routes (AUTH-BE-15)", () => {
       payload: { email: "anyone@example.test" },
     });
     expect(res.statusCode).toBe(503);
-    expect(JSON.stringify(res.json())).not.toMatch(/\d{6}/);
+    expect(JSON.stringify({ ...res.json(), request_id: undefined })).not.toMatch(/\d{6}/);
     expect(JSON.stringify(res.json())).not.toMatch(/token=/);
     expect(sentMails.length).toBe(before);
     await prodApp.close();

@@ -77,3 +77,18 @@ Same rationale as `reminder-sweep.worker.ts`/`risk-decay-sweep.worker.ts`: a per
 (§8.12 CRM Intelligence retention signals, SS-02) — HTTP round trips per workspace per sweep tick
 would add latency/failure modes for a read-only scan. Carries the formal exception comment block
 at its top, matching this ADR's template.
+
+## COPS-02 additions (2026-10-07)
+
+| File | Tables touched | Read/write |
+|---|---|---|
+| `apps/api/src/routes/account-360.routes.ts` | companies, contacts, deals, tasks, activities, pipeline_stages | read + write |
+| `apps/api/src/routes/cops-crm-objects.routes.ts` | companies, contacts, deals, tasks | read |
+| `apps/api/src/services/cops-account-relationships.service.ts` | companies | read |
+| `apps/api/src/services/cops-timeline.service.ts` | deals | read |
+
+Customer 360 needs one-request loading with an asserted query count, and stage moves, bulk
+reassignment and merges must write the CRM row, lifecycle state, audit row and outbox event in one
+transaction. The other three are workspace-ownership checks and an account lookup inside the event
+consumer. Each file carries the formal exception comment block.
+

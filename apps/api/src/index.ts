@@ -20,6 +20,7 @@ import { startReminderSweepWorker } from "./workers/reminder-sweep.worker.js";
 import { startSignalAlertSweepWorker } from "./workers/signal-alert-sweep.worker.js";
 import { startSignalActivationSweepWorker } from "./workers/signal-activation-sweep.worker.js";
 import { startAlertDigestSweepWorker } from "./workers/alert-digest-sweep.worker.js";
+import { startCopsOutboxRelayWorker } from "./workers/cops-outbox-relay.worker.js";
 import { startRiskDecaySweepWorker } from "./workers/risk-decay-sweep.worker.js";
 import { startRetentionSignalsSweepWorker } from "./workers/retention-signals-sweep.worker.js";
 import { startEnrichmentEvidenceRetentionWorker } from "./workers/enrichment-evidence-retention.worker.js";
@@ -75,6 +76,7 @@ async function main() {
   const stopReportDeliverySweepWorker = await startReportDeliverySweepWorker(config);
   const stopIdentityMergeDiscoveryWorker = await startIdentityMergeDiscoveryWorker(config);
   const stopDexterEventWorker = await startDexterEventWorker(config);
+  const stopCopsOutboxRelayWorker = await startCopsOutboxRelayWorker(config);
   const stopBounceAnomalySweepWorker = await startBounceAnomalySweepWorker(config);
   const stopCrmOutboundWriteWorker = await startCrmOutboundWriteWorker(config);
   const stopGtmLearningSweepWorker = await startGtmLearningSweepWorker(config);
@@ -90,7 +92,11 @@ async function main() {
       );
       process.exit(1);
     }
-    app.log.info("RBAC fail-closed enforcement enabled (backfill verified)");
+    app.log.info(
+      gate.freshDatabase
+        ? "RBAC fail-closed enforcement enabled (new database: the first provisioned member receives their role)"
+        : "RBAC fail-closed enforcement enabled (backfill verified)"
+    );
   }
 
   const shutdown = async () => {
@@ -101,6 +107,7 @@ async function main() {
     await stopWorkbookRunWorker();
     await stopIdentityMergeDiscoveryWorker();
     await stopDexterEventWorker();
+    await stopCopsOutboxRelayWorker();
     await stopRetentionSignalsSweepWorker();
     await stopEnrichmentEvidenceRetentionWorker();
     await stopRiskDecaySweepWorker();

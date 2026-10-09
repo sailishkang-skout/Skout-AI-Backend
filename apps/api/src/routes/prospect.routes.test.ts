@@ -198,13 +198,13 @@ describe("POST /prospects/manual", () => {
       expect(res1.json().prospectId).toBe(res2.json().prospectId);
     });
 
-    it("returns 400 when companyDomain is omitted", async () => {
+    it("returns 422 when companyDomain is omitted", async () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/prospects/manual",
         payload: { fullName: "No Domain" },
       });
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(422);
     });
 
     it("passes all optional fields through to the OpenSearch document", async () => {
@@ -250,73 +250,73 @@ describe("POST /prospects/manual", () => {
       app = await buildTestApp(osEnv);
     });
 
-    it("returns 400 when fullName is missing", async () => {
+    it("returns 422 when fullName is missing", async () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/prospects/manual",
         payload: { companyDomain: "acme.com" },
       });
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(422);
       const body = res.json();
-      expect(body.error).toBe("validation_error");
-      expect(body.issues[0].path).toContain("fullName");
+      expect(body.error).toBe("VALIDATION_FAILED");
+      expect(body.details.fields[0].path).toContain("fullName");
     });
 
-    it("returns 400 when fullName is empty string", async () => {
+    it("returns 422 when fullName is empty string", async () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/prospects/manual",
         payload: { fullName: "", companyDomain: "acme.com" },
       });
-      expect(res.statusCode).toBe(400);
-      expect(res.json().error).toBe("validation_error");
+      expect(res.statusCode).toBe(422);
+      expect(res.json().error).toBe("VALIDATION_FAILED");
     });
 
-    it("returns 400 when email is invalid format", async () => {
+    it("returns 422 when email is invalid format", async () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/prospects/manual",
         payload: { fullName: "Jane", email: "not-an-email", companyDomain: "acme.com" },
       });
-      expect(res.statusCode).toBe(400);
-      expect(res.json().issues[0].path).toContain("email");
+      expect(res.statusCode).toBe(422);
+      expect(res.json().details.fields[0].path).toContain("email");
     });
 
-    it("returns 400 when linkedinUrl is not a valid URL", async () => {
+    it("returns 422 when linkedinUrl is not a valid URL", async () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/prospects/manual",
         payload: { fullName: "Jane", linkedinUrl: "not-a-url", companyDomain: "acme.com" },
       });
-      expect(res.statusCode).toBe(400);
-      expect(res.json().issues[0].path).toContain("linkedinUrl");
+      expect(res.statusCode).toBe(422);
+      expect(res.json().details.fields[0].path).toContain("linkedinUrl");
     });
 
-    it("returns 400 when employeeCount is less than 1", async () => {
+    it("returns 422 when employeeCount is less than 1", async () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/prospects/manual",
         payload: { fullName: "Jane", employeeCount: 0, companyDomain: "acme.com" },
       });
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(422);
     });
 
-    it("returns 400 when yearsAtCompany is negative", async () => {
+    it("returns 422 when yearsAtCompany is negative", async () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/prospects/manual",
         payload: { fullName: "Jane", yearsAtCompany: -1, companyDomain: "acme.com" },
       });
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(422);
     });
 
-    it("returns 400 when body is completely empty", async () => {
+    it("returns 422 when body is completely empty", async () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/prospects/manual",
         payload: {},
       });
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(422);
     });
   });
 
