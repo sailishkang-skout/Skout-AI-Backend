@@ -294,7 +294,7 @@ export async function sendOnboardingEmail(
       await tx.execute(sql`select id from companies where id = ${accountId} and workspace_id = ${ctx.workspaceId} for update`);
       if (!resend) {
         const [first] = await tx
-          .select({ id: copsOnboardingEmailSends.id, status: copsOnboardingEmailSends.status })
+          .select()
           .from(copsOnboardingEmailSends)
           .where(
             and(
@@ -304,6 +304,16 @@ export async function sendOnboardingEmail(
               eq(copsOnboardingEmailSends.isResend, false)
             )
           );
+        // A first send that never left (provider failure) is not "already sent": a new attempt with
+        // a new key takes over that row, so the email can be sent after the dialog was reopened.
+        if (first && first.status === "failed") {
+          const [adopted] = await tx
+            .update(copsOnboardingEmailSends)
+            .set({ idempotencyKey, actorId: ctx.userId })
+            .where(and(eq(copsOnboardingEmailSends.id, first.id), eq(copsOnboardingEmailSends.status, "failed")))
+            .returning();
+          if (adopted) return adopted;
+        }
         if (first) {
           throw new OnboardingError("ALREADY_SENT", "The onboarding email was already sent to this recipient; re-send with a reason", {
             email_send_id: first.id,

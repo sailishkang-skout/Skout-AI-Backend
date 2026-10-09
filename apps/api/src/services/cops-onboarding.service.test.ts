@@ -140,4 +140,20 @@ maybe("COPS-05 onboarding email (Postgres)", () => {
     expect(ok.send.status).toBe("sent");
     expect(await welcomeEvents(a.accountId)).toBe(1);
   });
+
+  it("a failed first send can be sent again with a new key (reopened dialog), without a re-send reason", async () => {
+    const a = await provisionedAccount();
+    send.mockRejectedValueOnce(new Error("535 Authentication Credentials Invalid"));
+    const failed = await sendOnboardingEmail(db, ctx, a.accountId, randomUUID(), {}, deps).catch((e) => e);
+    expect(failed).toMatchObject({ code: "EMAIL_NOT_SENT" });
+    const newKey = randomUUID();
+    const ok = await sendOnboardingEmail(db, ctx, a.accountId, newKey, {}, deps);
+    expect(ok.send).toMatchObject({ id: failed.details.email_send_id, status: "sent", is_resend: false });
+    // The new key now owns the row: a double click replays it, and a third key is a real "already sent".
+    expect(await sendOnboardingEmail(db, ctx, a.accountId, newKey, {}, deps)).toMatchObject({ replayed: true });
+    await expect(sendOnboardingEmail(db, ctx, a.accountId, randomUUID(), {}, deps)).rejects.toMatchObject({ code: "ALREADY_SENT" });
+    expect(await welcomeEvents(a.accountId)).toBe(1);
+    const [rows] = await sql`select count(*)::int as n from cops_onboarding_email_sends where account_id = ${a.accountId}`;
+    expect(rows.n).toBe(1);
+  });
 });
