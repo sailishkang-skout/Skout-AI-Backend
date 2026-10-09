@@ -28,6 +28,11 @@ run skout-api api.env node /app/node_modules/@skout/db/dist/migrate.js
 echo "== core (rbac seed) =="
 run skout-api api.env node /app/node_modules/@skout/db/dist/backfill-rbac.js
 
+# The Regional Selling Brief content (facts for 250 markets) is also data, not a migration; the page is empty
+# without it. The seed upserts, so running it on every deploy is safe.
+echo "== core (regional brief seed) =="
+run skout-api api.env node /app/node_modules/@skout/db/dist/seed-regional-brief.js
+
 echo "== email-intel =="
 run skout-email-intel email-intel-api.env node dist/db/ensureDatabase.js
 run skout-email-intel email-intel-api.env node dist/db/migrate.js
