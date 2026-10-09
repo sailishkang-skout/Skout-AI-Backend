@@ -21,3 +21,4 @@ export * from "./action-preview.js";
 export * from "./execution-intent/index.js";
 export * from "./crm-sync-fields.js";export * from "./cops-timeline.js";
 export * from "./cops-activity.js";
+export * from "./cops-commercial.js";

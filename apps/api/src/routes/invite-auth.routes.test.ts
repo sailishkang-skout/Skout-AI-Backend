@@ -90,7 +90,6 @@ describe("invite-auth.routes (AUTH-BE-26)", () => {
       await db.delete(workspaceInvites).where(eq(workspaceInvites.workspaceId, wsId));
       await db.delete(workspaceMembers).where(eq(workspaceMembers.workspaceId, wsId));
       await db.delete(schema.creditBalances).where(eq(schema.creditBalances.workspaceId, wsId));
-      await db.delete(schema.creditTransactions).where(eq(schema.creditTransactions.workspaceId, wsId));
       await db.delete(workspaces).where(eq(workspaces.id, wsId));
     }
     createdWorkspaceIds.length = 0;

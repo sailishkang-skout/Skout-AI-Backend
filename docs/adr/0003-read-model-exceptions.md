@@ -92,3 +92,45 @@ reassignment and merges must write the CRM row, lifecycle state, audit row and o
 transaction. The other three are workspace-ownership checks and an account lookup inside the event
 consumer. Each file carries the formal exception comment block.
 
+
+## COPS-03 additions (2026-10-07)
+
+| File | Tables touched | Read/write |
+|---|---|---|
+| `apps/api/src/services/cops-commercial.service.ts` | deals | read; write of `deals.deal_type` only |
+| `apps/api/src/services/cops-gate.service.ts` | deals | write of `deals.deal_type` only (gate policy change) |
+| `apps/api/src/routes/cops-commercial.routes.ts` | deals, companies | read (Commercial Desk lists, payment webhook account) |
+
+Proposals, contracts, payment requests and the provisioning gate are written in one transaction
+with the opportunity ownership check, the audit row and the outbox event. Each file carries the
+formal exception comment block. The COPS-03 tables themselves (proposals, contracts,
+payment_requests, commercial gate tables) are owned by apps/api.
+
+## COPS-04 additions (2026-10-07)
+
+| File | Tables touched | Read/write |
+|---|---|---|
+| `apps/api/src/services/cops-provisioning.service.ts` | companies, deals | read (account lock, opportunity ownership) |
+| `apps/api/src/services/cops-credits.service.ts` | deals | read (account of a paid payment request) |
+| `apps/api/src/routes/account-360.routes.ts` | cops_provisionings | read (header plan / trial) |
+
+Each provisioning step writes the new workspace, invite, entitlements or ledger row in the same
+transaction as its saga status, audit row and outbox event, so a step is all-or-nothing. An HTTP call
+into apps/crm cannot take part in that transaction. The saga, wallet and ledger tables are owned by
+apps/api and packages/db.
+
+## COPS-05 additions (2026-10-08)
+
+| File | Tables touched | Read/write |
+|---|---|---|
+| `apps/api/src/services/cops-onboarding.service.ts` | contacts, companies | read (recipient); row lock on the account |
+| `apps/api/src/services/cops-follow-up.service.ts` | contacts, companies, tasks | read (prospect link, owner); write of the enrollment task |
+| `apps/api/src/services/cops-onboarding-signals.service.ts` | companies, deals, meetings, tasks | read (owner, lost opportunities, booked meetings); write of playbook and handoff tasks |
+| `apps/api/src/services/cops-follow-up-timeline.ts` | activities | write (follow-up step and stop entries with ActivityRecorded) |
+| `apps/api/src/services/cops-follow-up-queue.service.ts` | companies, contacts, deals, tasks, activities | read (rep queue rows, owner, last touch) |
+| `apps/api/src/services/cops-follow-up-actions.service.ts` | companies, contacts, activities, tasks, meetings | read; write of the one-click action and its activity |
+| `apps/api/src/services/cops-activation.service.ts` | companies | read (employee_count for the segment) |
+
+The onboarding email's recipient check, first-send check and send row are written in one transaction
+with the account lock. The file carries the formal exception comment block. The COPS-05 tables
+(onboarding email sends, follow-ups, activation templates, instances, milestones, signals) are owned by apps/api.

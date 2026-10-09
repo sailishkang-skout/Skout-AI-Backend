@@ -16,7 +16,10 @@ export interface LifecycleTransitionInput {
   dimension: CopsDimension;
   entityId: string;
   to: string;
-  actorId: string;
+  /** Null for system and integration actors (e.g. a provider webhook). */
+  actorId: string | null;
+  /** Defaults to "user". */
+  actorType?: "user" | "system" | "integration";
   source: string;
   reason: string;
   requestId: string;
@@ -31,6 +34,7 @@ export interface LifecycleTransitionInput {
  */
 export async function runLifecycleTransition(tx: Db, input: LifecycleTransitionInput) {
   const { workspaceId, dimension, entityId, to, actorId, source, reason, requestId, occurredAt } = input;
+  const actorType = input.actorType ?? "user";
       await tx
         .insert(copsLifecycleStates)
         .values({ workspaceId, dimension, entityId, state: COPS_INITIAL_STATES[dimension] })
@@ -54,7 +58,7 @@ export async function runLifecycleTransition(tx: Db, input: LifecycleTransitionI
         dimension,
         from: current.state,
         to: to,
-        actor: { type: "user", id: actorId },
+        actor: { type: actorType, id: actorId },
         source: source,
         reason: reason,
         at: occurredAt,
@@ -80,7 +84,7 @@ export async function runLifecycleTransition(tx: Db, input: LifecycleTransitionI
         after: { state: transition.to },
         reason: transition.reason,
         correlationId: requestId,
-        sourceChannel: source === "web" ? "web" : "api",
+        sourceChannel: source === "web" ? "web" : actorType === "integration" ? "webhook" : "api",
         occurredAt: transition.at,
       });
 

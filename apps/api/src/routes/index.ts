@@ -63,6 +63,9 @@ import { copsTimelineRoutes } from "./cops-timeline.routes.js";
 import { copsAccount360Routes } from "./account-360.routes.js";
 import { copsSavedViewsRoutes } from "./cops-saved-views.routes.js";
 import { copsCrmObjectsRoutes } from "./cops-crm-objects.routes.js";
+import { copsCommercialRoutes } from "./cops-commercial.routes.js";
+import { copsProvisioningRoutes } from "./cops-provisioning.routes.js";
+import { copsOnboardingRoutes } from "./cops-onboarding.routes.js";
 import { copsOutboxRoutes } from "./cops-outbox.routes.js";
 import { copsLifecycleRoutes } from "./cops-lifecycle.routes.js";
 import { ssoScimRoutes } from "./sso-scim.routes.js";
@@ -151,6 +154,9 @@ export async function registerRoutes(app: FastifyInstance) {
       await v1.register(copsAccount360Routes, { db: app.db });
       await v1.register(copsSavedViewsRoutes, { db: app.db });
       await v1.register(copsCrmObjectsRoutes, { db: app.db });
+      await v1.register(copsCommercialRoutes, { db: app.db });
+      await v1.register(copsProvisioningRoutes, { db: app.db });
+      await v1.register(copsOnboardingRoutes, { db: app.db });
       await v1.register(copsOutboxRoutes, { db: app.db });
       await v1.register(copsLifecycleRoutes, { db: app.db });
     } else {
