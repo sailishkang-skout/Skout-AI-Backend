@@ -22,21 +22,21 @@ export async function ensureDemoWorkspace(db: Db, workspaceId: string): Promise<
     })
     .onConflictDoNothing({ target: workspaces.id });
 
-  // Keeps the demo wallet at 500 credits, as before, but through the ledger so the balance always
-  // equals the sum of its entries (COPS-04 reconciliation).
+  // Keeps the demo wallet at 500 credits on first provision through the ledger
+  // so the balance equals the sum of its entries (COPS-04 reconciliation).
   const [wallet] = await db
     .select({ balance: creditBalances.balance })
     .from(creditBalances)
     .where(eq(creditBalances.workspaceId, DEMO_WORKSPACE_ID))
     .limit(1);
-  const delta = DEMO_CREDITS - (wallet?.balance ?? 0);
-  if (delta !== 0) {
+
+  if (!wallet) {
     await postCreditTransaction(db, {
       workspaceId: DEMO_WORKSPACE_ID,
-      amount: delta,
-      kind: "adjustment",
-      action: "demo_reset",
-      reason: `Demo workspace reset to ${DEMO_CREDITS} credits`,
+      amount: DEMO_CREDITS,
+      kind: "grant",
+      action: "demo_provision",
+      reason: `Initial demo workspace grant of ${DEMO_CREDITS} credits`,
       actor: { type: "system", id: "demo-workspace" },
       allowNegativeBalance: false,
     });
