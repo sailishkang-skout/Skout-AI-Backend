@@ -6,6 +6,15 @@ import { stopAccountFollowUps } from "./cops-stop.service.js";
 import { segmentOf } from "./cops-onboarding-templates.js";
 
 /**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md (COPS-05 additions).
+ *   - Tables touched directly: companies - read (employee_count, for the account's segment) (owned by apps/crm)
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: the activation template is chosen inside the instance-creation flow; one column read.
+ *   - Review date: revisit when apps/crm's internal API covers account reads
+ */
+
+/**
  * COPS-05 activation (Bible p.44-45): value-based, weighted milestones per template version.
  * - An instance is created per provisioned account and pinned to the template version it started
  *   with, so a template change never rewrites past activations.
