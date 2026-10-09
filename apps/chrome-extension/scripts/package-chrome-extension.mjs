@@ -39,6 +39,7 @@ const ROOT_MODULES = [
   "debug.js",
   "lists-cache.js",
   "skout-urls.js",
+  "skout-web-bridge.js",
   "tab-utils.js",
   "linkedin-profile.js",
   "storage-throttle.js",
@@ -106,6 +107,7 @@ if (!existsSync(join(store, "dist", "panel-app.js"))) {
 }
 
 const zipName = `skout-extension-v${manifest.version}.zip`;
+rmSync(join(root, zipName), { force: true });
 execSync(`cd "${store}" && zip -r "../${zipName}" .`, { stdio: "inherit" });
 console.log(`Created ${join(root, zipName)}`);
 console.log("Store defaults:", PRODUCTION_DEFAULTS);

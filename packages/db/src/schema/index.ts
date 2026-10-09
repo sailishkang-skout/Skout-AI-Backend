@@ -7,6 +7,7 @@ export * from "./jobs.js";
 export * from "./scrape.js";
 export * from "./prospects.js";
 export * from "./enrichment.js";
+export * from "./enrichment-capture.js";
 export * from "./sequences.js";
 export * from "./inbox.js";
 export * from "./integrations.js";

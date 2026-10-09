@@ -16,7 +16,7 @@
     "https://linkedin.com/*",
     "https://www.skoutai.io/*",
     "https://skoutai.io/*",
-    "https://*.execute-api.us-east-1.amazonaws.com/*"
+    "https://ckoy6iywm0.execute-api.us-east-1.amazonaws.com/*"
   ],
   "action": {
     "default_title": "Open Skout AI panel"
@@ -31,8 +31,7 @@
   "externally_connectable": {
     "matches": [
       "https://www.skoutai.io/*",
-      "https://skoutai.io/*",
-      "https://*.execute-api.us-east-1.amazonaws.com/*"
+      "https://skoutai.io/*"
     ]
   },
   "content_scripts": [
@@ -52,8 +51,7 @@
     {
       "matches": [
         "https://www.skoutai.io/*",
-        "https://skoutai.io/*",
-        "https://*.execute-api.us-east-1.amazonaws.com/*"
+        "https://skoutai.io/*"
       ],
       "js": [
         "dist/skout-web-bridge.js"

@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import Fastify, { type FastifyInstance } from "fastify";
-import type { Env } from "../config/env.js";
+import type { FastifyInstance } from "fastify";
+import { loadEnv } from "../config/env.js";
+
+const WORKSPACE = "00000000-0000-4000-8000-000000000001";
 
 // §7.3 — regression coverage for the event-spine audit: both the "activate + autoEnrich"
 // and the manual "/prospects/:id/enrich" paths must emit enrichment.completed. Before this
@@ -27,28 +29,16 @@ vi.mock("../services/skout-event.service.js", () => ({
   emitSkoutEvent: (...args: unknown[]) => mockEmitSkoutEvent(...args),
 }));
 
-// The enrich route checks enrichment:capture and writes an audit row (ENR-01); both need a db.
-// They are stubbed here so this test stays about event emission.
-vi.mock("@skout/auth", async (importOriginal) => {
-  const real = await importOriginal<typeof import("@skout/auth")>();
-  return { ...real, assertPermission: vi.fn().mockResolvedValue(undefined), recordPrivilegedAction: vi.fn().mockResolvedValue(undefined) };
-});
-
-const { prospectRoutes } = await import("./prospect.routes.js");
-
-const STUB_DB = {};
-
-async function buildTestApp(db: unknown = null): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
-  app.decorate("config", {} as Env);
-  app.decorate("db", db as never);
-  app.addHook("preHandler", async (req) => {
-    req.userId = "test-user-id";
-    req.workspaceId = "test-workspace-id";
+async function buildTestApp(): Promise<FastifyInstance> {
+  const { buildApp } = await import("../app.js");
+  return buildApp({
+    ...loadEnv(),
+    CLERK_SECRET_KEY: undefined,
+    LOG_LEVEL: "fatal",
+    AI_SERVICE_URL: undefined as unknown as string,
+    REDIS_URL: undefined as unknown as string,
+    OPENSEARCH_URL: undefined,
   });
-  await app.register(prospectRoutes);
-  await app.ready();
-  return app;
 }
 
 describe("enrichment.completed emission (§7.3 event-spine audit)", () => {
@@ -70,34 +60,34 @@ describe("enrichment.completed emission (§7.3 event-spine audit)", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/prospects/manual",
+      url: "/api/v1/prospects/manual",
+      headers: { "x-workspace-id": WORKSPACE },
       payload: { fullName: "Jane Doe", companyDomain: "acme.com", autoEnrich: true },
     });
 
     expect(res.statusCode).toBe(201);
     expect(mockEmitSkoutEvent).toHaveBeenCalledWith(
-      null,
-      {},
-      expect.objectContaining({ type: "enrichment.completed", tenantId: "test-workspace-id" })
+      expect.any(Object),
+      expect.any(Object),
+      expect.objectContaining({ type: "enrichment.completed", tenantId: WORKSPACE })
     );
   });
 
   it("emits enrichment.completed on POST /prospects/:id/enrich (manual enrich flow)", async () => {
     mockEnrichProspect.mockResolvedValue({ id: "job-2", status: "completed", creditsUsed: 2, results: {}, attempts: 1 });
-    await app.close();
-    app = await buildTestApp(STUB_DB);
 
     const res = await app.inject({
       method: "POST",
-      url: "/prospects/p-1/enrich",
+      url: "/api/v1/prospects/p-1/enrich",
+      headers: { "x-workspace-id": WORKSPACE },
       payload: { prospect: { companyDomain: "acme.com" } },
     });
 
     expect(res.statusCode).toBe(202);
     expect(mockEmitSkoutEvent).toHaveBeenCalledWith(
-      STUB_DB,
-      {},
-      expect.objectContaining({ type: "enrichment.completed", tenantId: "test-workspace-id", aggregateId: "p-1" })
+      expect.any(Object),
+      expect.any(Object),
+      expect.objectContaining({ type: "enrichment.completed", tenantId: WORKSPACE, aggregateId: "p-1" })
     );
   });
 });

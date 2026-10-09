@@ -8,18 +8,16 @@
     "http://localhost:3000/*",
     "http://127.0.0.1:3000/*",
     "http://localhost:3001/*",
-    "http://127.0.0.1:3001/*"
+    "http://127.0.0.1:3001/*",
+    "http://localhost:4000/*",
+    "http://127.0.0.1:4000/*"
   ],
   "host_permissions": [
     "https://www.linkedin.com/*",
     "https://linkedin.com/*",
     "https://www.skoutai.io/*",
     "https://skoutai.io/*",
-    "https://*.execute-api.us-east-1.amazonaws.com/*",
-    "http://localhost:3000/*",
-    "http://127.0.0.1:3000/*",
-    "http://localhost:3001/*",
-    "http://127.0.0.1:3001/*"
+    "https://ckoy6iywm0.execute-api.us-east-1.amazonaws.com/*"
   ],
   "action": {
     "default_title": "Open Skout AI panel"
@@ -36,8 +34,7 @@
       "http://localhost:3000/*",
       "http://127.0.0.1:3000/*",
       "https://www.skoutai.io/*",
-      "https://skoutai.io/*",
-      "https://*.execute-api.us-east-1.amazonaws.com/*"
+      "https://skoutai.io/*"
     ]
   },
   "content_scripts": [
@@ -51,8 +48,7 @@
         "http://localhost:3000/*",
         "http://127.0.0.1:3000/*",
         "https://www.skoutai.io/*",
-        "https://skoutai.io/*",
-        "https://*.execute-api.us-east-1.amazonaws.com/*"
+        "https://skoutai.io/*"
       ],
       "js": ["skout-web-bridge.js"],
       "run_at": "document_start"

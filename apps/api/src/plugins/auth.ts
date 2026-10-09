@@ -1,4 +1,4 @@
-import type { FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 import { and, eq, gt } from "drizzle-orm";
 import { timingSafeEqual } from "node:crypto";
@@ -76,6 +76,33 @@ function acceptEmailIntelApiKey(request: FastifyRequest, secret: string | undefi
   if (!secret || !isEmailIntelExternalRoute(request.url)) return false;
   const provided = emailIntelApiKeyFromRequest(request);
   return Boolean(provided) && timingSafeEqualStrings(provided, secret);
+}
+
+async function selectWorkspaceForMember(
+  db: NonNullable<FastifyInstance["db"]>,
+  request: FastifyRequest,
+  userId: string,
+  fallback: { workspaceId: string; role: string },
+  reply: FastifyReply
+): Promise<{ workspaceId: string; role: string } | null> {
+  const requested = request.headers["x-workspace-id"];
+  if (requested === undefined) return fallback;
+  if (typeof requested !== "string" || !/^[0-9a-f-]{36}$/i.test(requested)) {
+    reply.code(400).send(errorResponse("Invalid workspace selection", 400));
+    return null;
+  }
+  if (requested === fallback.workspaceId) return fallback;
+
+  const [membership] = await db
+    .select({ workspaceId: schema.workspaceMembers.workspaceId, role: schema.workspaceMembers.role })
+    .from(schema.workspaceMembers)
+    .where(and(eq(schema.workspaceMembers.workspaceId, requested), eq(schema.workspaceMembers.userId, userId)))
+    .limit(1);
+  if (!membership) {
+    reply.code(403).send(errorResponse("Workspace access denied", 403));
+    return null;
+  }
+  return membership;
 }
 
 function evidenceIngestWorkspaceId(request: FastifyRequest, fallback: string | undefined): string | undefined {
@@ -201,10 +228,12 @@ export const authPlugin = fp(async (app) => {
       }
       try {
         const result = await resolveOrProvisionUser(db, `stub:${stubEmail}`, stubEmail, "Stub User");
+        const workspace = await selectWorkspaceForMember(db, request, result.userId, result, reply);
+        if (!workspace) return;
         request.userId = result.userId;
         request.userEmail = result.userEmail;
-        request.workspaceId = result.workspaceId;
-        request.role = result.role;
+        request.workspaceId = workspace.workspaceId;
+        request.role = workspace.role;
       } catch (err) {
         app.log.error({ err }, "Stub user provisioning failed");
         return reply.code(500).send(errorResponse("Stub user provisioning failed", 500));
@@ -316,11 +345,13 @@ export const authPlugin = fp(async (app) => {
     try {
       const identity = await resolveAuth(token, resolveAuthConfig);
       const result = await resolveOrProvisionUser(db, identity);
+      const workspace = await selectWorkspaceForMember(db, request, result.userId, result, reply);
+      if (!workspace) return;
 
       request.userId = result.userId;
       request.userEmail = result.userEmail;
-      request.workspaceId = result.workspaceId;
-      request.role = result.role;
+      request.workspaceId = workspace.workspaceId;
+      request.role = workspace.role;
     } catch (error) {
       app.log.error({ err: error }, "Auth failed");
       if (error instanceof AuthTokenInvalidError) {
