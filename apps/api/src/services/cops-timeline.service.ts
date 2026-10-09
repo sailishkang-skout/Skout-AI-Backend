@@ -34,11 +34,19 @@ export async function accountIdForEvent(db: Db, event: TimelineSourceEvent): Pro
   if (typeof p.account_id === "string" && UUID.test(p.account_id)) return p.account_id;
   if (p.dimension === "account" && typeof p.entity_id === "string" && UUID.test(p.entity_id)) return p.entity_id;
   // Opportunity events: the entity is a deal; its timeline belongs to the deal's company, if it has one.
-  if (p.dimension === "opportunity" && typeof p.entity_id === "string" && UUID.test(p.entity_id)) {
+  // Commercial lifecycle rows are keyed by the opportunity too (COPS-03), and commercial events
+  // (ProposalSent, ContractSigned, PaymentSucceeded, ...) carry opportunity_id.
+  const opportunityId =
+    (p.dimension === "opportunity" || p.dimension === "commercial") && typeof p.entity_id === "string"
+      ? p.entity_id
+      : typeof p.opportunity_id === "string"
+        ? p.opportunity_id
+        : null;
+  if (opportunityId && UUID.test(opportunityId)) {
     const [deal] = await db
       .select({ companyId: deals.companyId })
       .from(deals)
-      .where(and(eq(deals.id, p.entity_id), eq(deals.workspaceId, event.tenant_id)))
+      .where(and(eq(deals.id, opportunityId), eq(deals.workspaceId, event.tenant_id)))
       .limit(1);
     return deal?.companyId ?? null;
   }

@@ -1,4 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
+
+// The welcome grant goes through the COPS-04 credit ledger (its own transaction and row locks),
+// which this mocked-DB unit test does not model; the ledger itself is tested against Postgres.
+const ledger = vi.hoisted(() => ({ postCreditTransaction: vi.fn(async () => ({ replayed: false })) }));
+vi.mock("@skout/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@skout/db")>()),
+  postCreditTransaction: ledger.postCreditTransaction,
+}));
+
 import { resolveOrProvisionUser } from "./auth.service.js";
 
 function selectChain(result: unknown[]) {
@@ -95,6 +104,10 @@ describe("resolveOrProvisionUser — unverified email (AUTH-BE-03)", () => {
     });
 
     expect(tx.select).toHaveBeenCalledTimes(5);
+    expect(ledger.postCreditTransaction).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ workspaceId: "ws-new", amount: 500, kind: "grant", idempotencyKey: "signup:welcome-grant" })
+    );
   });
 });
 
