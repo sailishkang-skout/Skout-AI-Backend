@@ -1,0 +1,131 @@
+openapi: 3.0.3
+info:
+  title: CustomerOps COPS-07 admin configuration, privacy and operations
+  version: 0.1.0
+  description: >
+    Contract for COPS-07, published before the implementation. All paths are under /api/v1, use the
+    COPS error envelope, and need admin:admin unless stated. Every write is audited with a reason.
+    Status: proposed. Nothing in this file is implemented yet.
+paths:
+  /admin/config/{kind}:
+    get:
+      summary: Current version of every key of one config kind
+      parameters:
+        - { name: kind, in: path, required: true, schema: { $ref: "#/components/schemas/ConfigKind" } }
+      responses:
+        "200":
+          description: Latest version per key
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/ConfigVersion" } }
+  /admin/config/{kind}/{key}:
+    put:
+      summary: Save a config value as a new version
+      description: Never edits a version in place. Validated against the schema of the kind.
+      parameters:
+        - { name: kind, in: path, required: true, schema: { $ref: "#/components/schemas/ConfigKind" } }
+        - { name: key, in: path, required: true, schema: { type: string, maxLength: 64 } }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value, reason]
+              properties:
+                value: { type: object, additionalProperties: true }
+                reason: { type: string, maxLength: 1000 }
+                expected_version: { type: integer, description: "Optional optimistic lock: the version the editor loaded" }
+      responses:
+        "201": { description: The new version }
+        "409": { description: expected_version is not the current version }
+        "422": { description: The value does not match the schema of the kind }
+  /admin/config/{kind}/{key}/versions:
+    get:
+      summary: Version history of one key, newest first
+      responses:
+        "200": { description: Versions with author, reason and time }
+  /admin/config/{kind}/{key}/rollback:
+    post:
+      summary: Restore an earlier version as a new version
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version, reason]
+              properties:
+                version: { type: integer }
+                reason: { type: string }
+      responses:
+        "201": { description: The new version, with the restored value }
+        "404": { description: That version does not exist }
+  /admin/retention/policy:
+    get:
+      summary: Retention period per data category (Appendix F)
+      responses:
+        "200": { description: The current retention_policy config version }
+  /admin/retention/runs:
+    get:
+      summary: Retention runs, newest first
+      responses:
+        "200": { description: Runs with mode, counts per category and status }
+    post:
+      summary: Start a retention run
+      description: >
+        mode=dry_run only counts what would be removed. mode=apply needs the id of a dry run of the
+        same policy version that finished in the last 24 hours, and a reason.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode]
+              properties:
+                mode: { type: string, enum: [dry_run, apply] }
+                dry_run_id: { type: string, format: uuid }
+                reason: { type: string }
+      responses:
+        "202": { description: Run accepted }
+        "409": { description: apply without a matching recent dry run }
+  /admin/data-inventory:
+    get:
+      summary: Tables with their data category and classification tags
+      responses:
+        "200": { description: One row per table }
+  /admin/feature-flags:
+    get:
+      summary: Module flags of this workspace
+      responses:
+        "200": { description: One boolean per COPS module }
+  /admin/ops/metrics:
+    get:
+      summary: Operational health numbers for dashboards and alerts
+      description: >
+        Outbox lag (oldest unpublished event age), dead-lettered events, provisioning latency
+        (p50/p95 and share within the 2-minute target), payment webhook latency, workflow steps stuck
+        in executing. Needs admin:read.
+      responses:
+        "200": { description: Metrics with the alert threshold next to each value }
+components:
+  schemas:
+    ConfigKind:
+      type: string
+      enum: [credit_package, trial_template, email_template, notification_routing, retention_policy, feature_flags]
+    ConfigVersion:
+      type: object
+      properties:
+        kind: { $ref: "#/components/schemas/ConfigKind" }
+        key: { type: string }
+        version: { type: integer }
+        value: { type: object, additionalProperties: true }
+        reason: { type: string, nullable: true }
+        created_by: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+        is_system_default: { type: boolean, description: "true when no workspace version exists and the built-in default is shown" }
