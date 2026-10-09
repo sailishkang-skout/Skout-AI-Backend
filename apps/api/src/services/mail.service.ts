@@ -35,7 +35,7 @@ function getTransport(config: Env): ReturnType<typeof nodemailer.createTransport
   return _transport;
 }
 
-function escapeHtml(value: string): string {
+export function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -51,7 +51,7 @@ function fromAddress(config: Env): string {
   return `Skout AI <${email}>`;
 }
 
-function renderTransactionalLayout(opts: {
+export function renderTransactionalLayout(opts: {
   preheader: string;
   title: string;
   bodyHtml: string;

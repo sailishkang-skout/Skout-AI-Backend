@@ -1,0 +1,702 @@
+openapi: 3.0.3
+info:
+  title: Skout CustomerOps COPS-03 - Commercial workspace, payment links, provisioning gate
+  version: 0.3.0-draft
+  description: |
+    Contract for COPS-03, published before implementation (see docs/tickets/copos-03-audit.md).
+    Builds on COPS-01 (error envelope, Idempotency-Key, lifecycle, audit, outbox) and COPS-02
+    (Opportunity = deals, timeline, Customer 360).
+
+    Every write route requires Idempotency-Key, except the provider webhook (deduplicated on the
+    provider event id instead). Errors use the COPS envelope. 409 BUSINESS_STATE_CONFLICT is
+    returned for a state the action does not allow (e.g. sending an already sent version).
+
+    Money is integer minor units (e.g. paise, cents) with an ISO 4217 currency.
+    No card data is accepted, stored or returned by any route.
+    Status: implemented on feature/copos-03-commercial (backend); pending reviewer sign-off.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    razorpaySignature:
+      type: apiKey
+      in: header
+      name: X-Razorpay-Signature
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 8, maxLength: 128 }
+    OpportunityId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ProposalId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ContractId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    AccountId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    Error:
+      description: COPS error envelope
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required: [code, message, request_id, retryable]
+      properties:
+        code: { type: string, example: BUSINESS_STATE_CONFLICT }
+        message: { type: string }
+        details: { type: object, additionalProperties: true }
+        request_id: { type: string }
+        retryable: { type: boolean }
+    Currency:
+      type: string
+      pattern: '^[A-Z]{3}$'
+      example: INR
+    LineItemInput:
+      type: object
+      required: [kind, description, quantity, unit_amount_minor]
+      properties:
+        kind: { type: string, enum: [product, seats, credits, fee] }
+        description: { type: string, minLength: 1, maxLength: 500 }
+        quantity: { type: integer, minimum: 1 }
+        unit_amount_minor: { type: integer, minimum: 0 }
+        discount_pct: { type: number, minimum: 0, maximum: 100, default: 0 }
+    LineItem:
+      allOf:
+        - $ref: '#/components/schemas/LineItemInput'
+        - type: object
+          required: [id, position, gross_minor, discount_minor, net_minor]
+          properties:
+            id: { type: string, format: uuid }
+            position: { type: integer }
+            gross_minor: { type: integer }
+            discount_minor: { type: integer }
+            net_minor: { type: integer }
+    ProposalTermsInput:
+      type: object
+      required: [currency, billing_cadence, term_months, line_items]
+      properties:
+        currency: { $ref: '#/components/schemas/Currency' }
+        billing_cadence: { type: string, enum: [one_time, monthly, quarterly, annual] }
+        term_months: { type: integer, minimum: 1, maximum: 120 }
+        discount_pct: { type: number, minimum: 0, maximum: 100, default: 0, description: Header discount, applied after line discounts. }
+        tax_pct: { type: number, minimum: 0, maximum: 100, default: 0 }
+        notes: { type: string, maxLength: 5000 }
+        line_items:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items: { $ref: '#/components/schemas/LineItemInput' }
+    Totals:
+      type: object
+      required: [subtotal_minor, discount_minor, tax_minor, total_minor]
+      properties:
+        subtotal_minor: { type: integer, description: Sum of line gross amounts. }
+        discount_minor: { type: integer, description: Line discounts plus header discount. }
+        tax_minor: { type: integer }
+        total_minor: { type: integer }
+    ProposalVersion:
+      type: object
+      required: [id, version, currency, billing_cadence, term_months, totals, line_items, sent_at, content_hash, hash_valid]
+      properties:
+        id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        currency: { $ref: '#/components/schemas/Currency' }
+        billing_cadence: { type: string }
+        term_months: { type: integer }
+        discount_pct: { type: number }
+        tax_pct: { type: number }
+        notes: { type: string, nullable: true }
+        totals: { $ref: '#/components/schemas/Totals' }
+        line_items:
+          type: array
+          items: { $ref: '#/components/schemas/LineItem' }
+        sent_at: { type: string, format: date-time, nullable: true }
+        sent_by: { type: string, format: uuid, nullable: true }
+        content_hash:
+          type: string
+          nullable: true
+          description: SHA-256 of the canonical version content, set when the version is sent.
+        hash_valid:
+          type: boolean
+          nullable: true
+          description: Recomputed on read. false means the stored content no longer matches the sent hash.
+        created_at: { type: string, format: date-time }
+        created_by: { type: string, format: uuid, nullable: true }
+    Proposal:
+      type: object
+      required: [id, opportunity_id, title, status, current_version, versions]
+      properties:
+        id: { type: string, format: uuid }
+        opportunity_id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid, nullable: true }
+        title: { type: string }
+        status: { type: string, enum: [draft, sent, accepted, declined, expired] }
+        current_version: { type: integer }
+        status_reason: { type: string, nullable: true }
+        status_changed_at: { type: string, format: date-time, nullable: true }
+        status_changed_by: { type: string, format: uuid, nullable: true }
+        versions:
+          type: array
+          items: { $ref: '#/components/schemas/ProposalVersion' }
+        created_at: { type: string, format: date-time }
+    ContractVersion:
+      type: object
+      required: [id, version, document_url, file_sha256, sent_at]
+      properties:
+        id: { type: string, format: uuid }
+        version: { type: integer }
+        document_url: { type: string }
+        file_name: { type: string, nullable: true }
+        file_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        sent_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+    Contract:
+      type: object
+      required: [id, opportunity_id, kind, status, current_version, versions]
+      properties:
+        id: { type: string, format: uuid }
+        opportunity_id: { type: string, format: uuid }
+        proposal_id: { type: string, format: uuid, nullable: true }
+        kind: { type: string, enum: [msa, order_form, dpa] }
+        title: { type: string }
+        status: { type: string, enum: [draft, sent, signed, declined, expired] }
+        current_version: { type: integer }
+        status_reason: { type: string, nullable: true }
+        signed_at: { type: string, format: date-time, nullable: true }
+        versions:
+          type: array
+          items: { $ref: '#/components/schemas/ContractVersion' }
+    PaymentRequest:
+      type: object
+      required: [id, opportunity_id, amount_minor, currency, status, provider, checkout_url]
+      properties:
+        id: { type: string, format: uuid }
+        opportunity_id: { type: string, format: uuid }
+        proposal_id: { type: string, format: uuid, nullable: true }
+        amount_minor: { type: integer, minimum: 1 }
+        currency: { $ref: '#/components/schemas/Currency' }
+        description: { type: string }
+        status: { type: string, enum: [requested, paid, failed, expired, cancelled, refunded] }
+        provider: { type: string, example: razorpay }
+        provider_ref: { type: string, description: Provider payment link id. }
+        checkout_url: { type: string, description: Provider-hosted checkout URL. Share this with the customer. }
+        paid_at: { type: string, format: date-time, nullable: true }
+        expires_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+    GatePolicy:
+      type: string
+      enum: [trial_approval_only, signature, payment, signature+payment, manual_override]
+    Gate:
+      type: object
+      required: [opportunity_id, policy, policy_source, conditions, open, fired_at]
+      properties:
+        opportunity_id: { type: string, format: uuid }
+        deal_type: { type: string, nullable: true }
+        policy: { $ref: '#/components/schemas/GatePolicy' }
+        policy_source: { type: string, enum: [deal_type, workspace_default, system_default] }
+        conditions:
+          type: object
+          properties:
+            trial_approved: { type: boolean }
+            signature_complete: { type: boolean }
+            payment_complete: { type: boolean }
+            overridden: { type: boolean }
+        open: { type: boolean, description: True once the policy's conditions are met or overridden. }
+        fired_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When ProvisioningRequested was emitted. Set once and never cleared.
+        override:
+          type: object
+          nullable: true
+          properties:
+            by: { type: string, format: uuid }
+            reason: { type: string }
+            at: { type: string, format: date-time }
+    CommercialSummary:
+      type: object
+      description: One opportunity's commercial picture for the Commercial Desk and the 360 Commercial tab.
+      properties:
+        opportunity:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+            amount: { type: string, nullable: true }
+            currency: { type: string }
+            deal_type: { type: string, nullable: true }
+            commercial_state: { type: string, nullable: true, enum: [proposal_sent, msa_pending, payment_pending, complete, null] }
+        proposals: { type: array, items: { $ref: '#/components/schemas/Proposal' } }
+        contracts: { type: array, items: { $ref: '#/components/schemas/Contract' } }
+        payment_requests: { type: array, items: { $ref: '#/components/schemas/PaymentRequest' } }
+        gate: { $ref: '#/components/schemas/Gate' }
+paths:
+  /opportunities/{id}/commercial:
+    get:
+      summary: Commercial summary for one opportunity (Commercial Desk). Poll for live status.
+      x-permission: commercial:read
+      parameters: [{ $ref: '#/components/parameters/OpportunityId' }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/CommercialSummary' } }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /accounts/{id}/commercial:
+    get:
+      summary: Commercial summaries for every open and won opportunity on an account (360 Commercial tab).
+      x-permission: commercial:read
+      parameters: [{ $ref: '#/components/parameters/AccountId' }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/CommercialSummary' }
+        '403': { $ref: '#/components/responses/Error' }
+  /commercial/opportunities:
+    get:
+      summary: Commercial Desk across accounts. Open and won opportunities, most recently changed first. Poll for live status.
+      x-permission: commercial:read
+      parameters:
+        - name: state
+          in: query
+          description: Commercial lifecycle state; `none` means no commercial work has started.
+          schema: { type: string, enum: [none, proposal_sent, msa_pending, payment_pending, complete] }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 25 } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: '#/components/schemas/CommercialSummary'
+                        - type: object
+                          properties:
+                            account:
+                              type: object
+                              nullable: true
+                              properties:
+                                id: { type: string, format: uuid }
+                                name: { type: string, nullable: true }
+                  next_cursor: { type: string, nullable: true }
+        '403': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /opportunities/{id}/proposals:
+    post:
+      summary: Create a proposal with version 1 (draft).
+      x-permission: commercial:send or commercial:write
+      parameters:
+        - { $ref: '#/components/parameters/OpportunityId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - type: object
+                  required: [title]
+                  properties: { title: { type: string, minLength: 1, maxLength: 200 } }
+                - $ref: '#/components/schemas/ProposalTermsInput'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/Proposal' } }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /proposals/{id}:
+    get:
+      summary: Proposal with all versions, line items and hash check.
+      x-permission: commercial:read
+      parameters: [{ $ref: '#/components/parameters/ProposalId' }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/Proposal' } }
+        '404': { $ref: '#/components/responses/Error' }
+  /proposals/{id}/versions:
+    post:
+      summary: Edit a proposal. Always creates a new version; existing versions are never changed.
+      x-permission: commercial:send or commercial:write
+      parameters:
+        - { $ref: '#/components/parameters/ProposalId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProposalTermsInput' }
+      responses:
+        '201':
+          description: New version created; proposal status returns to draft.
+        '409':
+          description: Proposal is accepted, declined or expired.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  /proposals/{id}/send:
+    post:
+      summary: Send the latest version. Freezes it (content hash + sent_at) and emits ProposalSent.
+      x-permission: commercial:send
+      x-events: [ProposalSent, LifecycleTransitioned]
+      parameters:
+        - { $ref: '#/components/parameters/ProposalId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                recipient_contact_ids: { type: array, items: { type: string, format: uuid } }
+                message: { type: string, maxLength: 5000 }
+      responses:
+        '200': { description: Sent }
+        '409':
+          description: Latest version already sent, or proposal closed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  /proposals/{id}/status:
+    post:
+      summary: Manual status update with actor and reason.
+      x-permission: commercial:write or legal:write
+      parameters:
+        - { $ref: '#/components/parameters/ProposalId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, reason]
+              properties:
+                status: { type: string, enum: [accepted, declined, expired] }
+                reason: { type: string, minLength: 1, maxLength: 1000 }
+      responses:
+        '200': { description: Updated }
+        '409': { description: Proposal not in sent state. }
+        '422': { description: Reason missing. }
+  /opportunities/{id}/contracts:
+    post:
+      summary: Create a contract (MSA, order form or DPA) with version 1.
+      x-permission: commercial:write, legal:write or commercial:send
+      parameters:
+        - { $ref: '#/components/parameters/OpportunityId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, document_url, file_sha256]
+              properties:
+                kind: { type: string, enum: [msa, order_form, dpa] }
+                title: { type: string, maxLength: 200 }
+                proposal_id: { type: string, format: uuid }
+                document_url: { type: string, minLength: 1, maxLength: 2000 }
+                file_name: { type: string, maxLength: 300 }
+                file_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+      responses:
+        '201': { description: Created }
+  /contracts/{id}:
+    get:
+      summary: Contract with versions.
+      x-permission: commercial:read or legal:read
+      parameters: [{ $ref: '#/components/parameters/ContractId' }]
+      responses:
+        '200': { description: OK }
+        '404': { $ref: '#/components/responses/Error' }
+  /contracts/{id}/versions:
+    post:
+      summary: New contract version (e.g. redline). Existing versions are never changed.
+      x-permission: commercial:write or legal:write
+      parameters:
+        - { $ref: '#/components/parameters/ContractId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [document_url, file_sha256]
+              properties:
+                document_url: { type: string }
+                file_name: { type: string }
+                file_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+      responses:
+        '201': { description: Created }
+        '409': { description: Contract signed, declined or expired. }
+  /contracts/{id}/send:
+    post:
+      summary: Send the latest version (freeze it) and emit ContractSent.
+      x-permission: commercial:send
+      x-events: [ContractSent, LifecycleTransitioned]
+      parameters:
+        - { $ref: '#/components/parameters/ContractId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200': { description: Sent }
+        '409': { description: Already sent or closed. }
+  /contracts/{id}/status:
+    post:
+      summary: Manual status (signed, declined, expired) with actor and reason. Signed emits ContractSigned and re-evaluates the gate.
+      x-permission: commercial:write or legal:write
+      x-events: [ContractSigned, ProvisioningRequested]
+      parameters:
+        - { $ref: '#/components/parameters/ContractId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, reason]
+              properties:
+                status: { type: string, enum: [signed, declined, expired] }
+                reason: { type: string, minLength: 1, maxLength: 1000 }
+                signed_at: { type: string, format: date-time, description: Defaults to now. }
+      responses:
+        '200': { description: Updated }
+        '409': { description: Contract not in sent state. }
+  /payment-requests:
+    post:
+      summary: Create a provider-hosted payment link for an opportunity. Emits PaymentRequested.
+      x-permission: commercial:send or billing:write
+      x-events: [PaymentRequested, LifecycleTransitioned]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [opportunity_id]
+              properties:
+                opportunity_id: { type: string, format: uuid }
+                proposal_id:
+                  type: string
+                  format: uuid
+                  description: When given and amount is omitted, the amount is the sent version's total.
+                amount_minor: { type: integer, minimum: 100 }
+                currency: { $ref: '#/components/schemas/Currency' }
+                description: { type: string, maxLength: 2000 }
+                customer:
+                  type: object
+                  properties:
+                    name: { type: string }
+                    email: { type: string, format: email }
+                    contact: { type: string }
+                expires_at: { type: string, format: date-time }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/PaymentRequest' } }
+        '502': { description: Provider rejected the request (retryable true). }
+        '503': { description: PSP not configured. }
+  /payment-requests/{id}:
+    get:
+      summary: One payment request.
+      x-permission: commercial:read or billing:read
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: OK }
+        '404': { $ref: '#/components/responses/Error' }
+  /billing/webhooks/razorpay/payment-links:
+    post:
+      summary: Razorpay webhook for payment links. Public route; authenticated by HMAC signature.
+      description: |
+        Missing or bad signature, or no webhook secret configured: 401.
+        Deduplicated on X-Razorpay-Event-Id: a replay returns 200 with duplicate true and changes nothing.
+        Handled: payment_link.paid -> paid (emits PaymentSucceeded, re-evaluates gate),
+        payment.failed -> failed, payment_link.expired -> expired, payment_link.cancelled -> cancelled,
+        refund.processed -> refunded. Status only moves forward; a late event is stored but ignored.
+      security: [{ razorpaySignature: [] }]
+      x-events: [PaymentSucceeded, ProvisioningRequested]
+      parameters:
+        - name: X-Razorpay-Event-Id
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Processed, ignored or duplicate.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  duplicate: { type: boolean }
+                  outcome: { type: string }
+        '401': { $ref: '#/components/responses/Error' }
+  /opportunities/{id}/gate:
+    get:
+      summary: Gate status for an opportunity.
+      x-permission: commercial:read
+      parameters: [{ $ref: '#/components/parameters/OpportunityId' }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/Gate' } }
+  /opportunities/{id}/gate/approve-trial:
+    post:
+      summary: Approve a trial (satisfies trial_approval_only).
+      x-permission: commercial:approve
+      x-events: [ProvisioningRequested]
+      parameters:
+        - { $ref: '#/components/parameters/OpportunityId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties: { reason: { type: string, minLength: 1, maxLength: 1000 } }
+      responses:
+        '200': { description: Approved; gate re-evaluated. }
+  /opportunities/{id}/gate/override:
+    post:
+      summary: Manual override. Opens the gate whatever the policy; reason required; audited as an override.
+      x-permission: commercial:approve
+      x-events: [ProvisioningRequested]
+      parameters:
+        - { $ref: '#/components/parameters/OpportunityId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties: { reason: { type: string, minLength: 1, maxLength: 1000 } }
+      responses:
+        '200': { description: Overridden; gate fired if it had not already. }
+        '409': { description: Gate already fired. }
+        '422': { description: Reason missing. }
+  /commercial/gate-policies:
+    get:
+      summary: Gate policy per deal type, plus the workspace default.
+      x-permission: commercial:read
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        deal_type: { type: string, description: '"*" is the workspace default.' }
+                        policy: { $ref: '#/components/schemas/GatePolicy' }
+                        updated_at: { type: string, format: date-time }
+    put:
+      summary: Set the gate policy for one deal type ("*" for the workspace default). Audited.
+      x-permission: commercial:admin
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [deal_type, policy]
+              properties:
+                deal_type: { type: string, minLength: 1, maxLength: 64 }
+                policy: { $ref: '#/components/schemas/GatePolicy' }
+      responses:
+        '200': { description: Saved }
+  /opportunities/{id}/deal-type:
+    put:
+      summary: Set the opportunity's deal type (selects the gate policy). Re-evaluates the gate.
+      x-permission: commercial:write or commercial:send
+      parameters:
+        - { $ref: '#/components/parameters/OpportunityId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [deal_type]
+              properties: { deal_type: { type: string, minLength: 1, maxLength: 64 } }
+      responses:
+        '200': { description: Saved }
+        '409': { description: Gate already fired; the deal type can no longer change the policy. }

@@ -104,7 +104,6 @@ describe("auth-recovery.routes (AUTH-BE-15)", () => {
       await db.delete(users).where(eq(users.id, user.id));
       for (const m of memberships) {
         await db.delete(creditBalances).where(eq(creditBalances.workspaceId, m.workspaceId));
-        await db.delete(schema.creditTransactions).where(eq(schema.creditTransactions.workspaceId, m.workspaceId));
         await db.delete(workspaces).where(eq(workspaces.id, m.workspaceId));
       }
     }

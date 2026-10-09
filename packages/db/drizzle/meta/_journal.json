@@ -791,6 +791,21 @@
       "version": "7",
       "when": 1794200000000,
       "tag": "0111_enrichment_capture_boundary",
+      "tag": "0111_cops03_commercial",
+      "breakpoints": true
+    },
+    {
+      "idx": 113,
+      "version": "7",
+      "when": 1794300000000,
+      "tag": "0112_cops04_provisioning_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "7",
+      "when": 1794400000000,
+      "tag": "0113_cops05_onboarding",
       "breakpoints": true
     }
   ]

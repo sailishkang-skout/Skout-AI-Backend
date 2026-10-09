@@ -58,7 +58,6 @@ describe("auth-core.routes (AUTH-BE-14)", () => {
         await db.delete(users).where(eq(users.id, user.id));
         for (const m of memberships) {
           await db.delete(creditBalances).where(eq(creditBalances.workspaceId, m.workspaceId));
-          await db.delete(schema.creditTransactions).where(eq(schema.creditTransactions.workspaceId, m.workspaceId));
           await db.delete(workspaces).where(eq(workspaces.id, m.workspaceId));
         }
       }
@@ -199,7 +198,6 @@ describe("auth-core.routes (AUTH-BE-14)", () => {
         await db.delete(schema.workspaceInvites).where(eq(schema.workspaceInvites.workspaceId, inviteWorkspace!.id));
         await db.delete(workspaceMembers).where(eq(workspaceMembers.workspaceId, inviteWorkspace!.id));
         await db.delete(creditBalances).where(eq(creditBalances.workspaceId, inviteWorkspace!.id));
-        await db.delete(schema.creditTransactions).where(eq(schema.creditTransactions.workspaceId, inviteWorkspace!.id));
         await db.delete(workspaces).where(eq(workspaces.id, inviteWorkspace!.id));
         await db.delete(users).where(eq(users.id, inviter!.id));
       }
