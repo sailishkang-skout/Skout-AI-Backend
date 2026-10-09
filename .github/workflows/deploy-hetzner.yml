@@ -216,6 +216,17 @@ jobs:
           done
           echo "services did not converge" >&2; exit 1
 
+      # `docker stack deploy` exits 0 even when a service fails to start and Swarm rolls it back to the previous
+      # image, and the old image is healthy, so convergence and the smoke test would still pass. Fail instead.
+      - name: Fail if any service rolled back
+        run: |
+          bad=""
+          for svc in $(docker service ls --format '{{.Name}}'); do
+            state="$(docker service inspect "$svc" --format '{{if .UpdateStatus}}{{.UpdateStatus.State}}{{end}}')"
+            case "$state" in rollback_*|paused) bad="$bad $svc($state)";; esac
+          done
+          [ -z "$bad" ] || { echo "services rolled back or paused:$bad" >&2; exit 1; }
+
       - name: Smoke test
         env:
           EXPECT_OUTBOUND_REPLICAS: ${{ inputs.outbound_replicas || '0' }}

@@ -23,6 +23,11 @@ run() { # image env-file entrypoint|default args...
 echo "== core (drizzle) =="
 run skout-api api.env node /app/node_modules/@skout/db/dist/migrate.js
 
+# Roles, permissions and member grants live in data, not migrations. Every environment runs this
+# idempotent backfill after migrating (CI does too); without it the API refuses to start once a member exists.
+echo "== core (rbac seed) =="
+run skout-api api.env node /app/node_modules/@skout/db/dist/backfill-rbac.js
+
 echo "== email-intel =="
 run skout-email-intel email-intel-api.env node dist/db/ensureDatabase.js
 run skout-email-intel email-intel-api.env node dist/db/migrate.js
