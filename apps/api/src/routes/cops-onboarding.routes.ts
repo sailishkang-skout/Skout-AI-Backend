@@ -16,7 +16,7 @@ import {
 import { getFollowUpView } from "../services/cops-follow-up.service.js";
 import { ActivationError, completeManualMilestone, ensureActivationInstance, loadActivation } from "../services/cops-activation.service.js";
 import { loadProvisionings } from "../services/cops-provisioning.service.js";
-import { listBlockers, loadHandoff } from "../services/cops-onboarding-signals.service.js";
+import { listBlockers, loadHandoff, loadIntegrations } from "../services/cops-onboarding-signals.service.js";
 import { loadFollowUpQueue, QUEUE_REASONS } from "../services/cops-follow-up-queue.service.js";
 import { FollowUpActionError, performFollowUpAction } from "../services/cops-follow-up-actions.service.js";
 import { sendMail } from "../services/mail.service.js";
@@ -243,12 +243,13 @@ export async function copsOnboardingRoutes(app: FastifyInstance, opts: { db: Db;
       return reply.status(404).send(copsErrorBody({ code: "NOT_PROVISIONED", message: "The account has no provisioned workspace yet", requestId: ctx.requestId }));
     }
     await ensureActivationInstance(db, ctx.workspaceId, accountId);
-    const [activation, followUp, emails, blockers, handoff] = await Promise.all([
+    const [activation, followUp, emails, blockers, handoff, integrations] = await Promise.all([
       loadActivation(db, ctx.workspaceId, accountId),
       getFollowUpView(db, ctx.workspaceId, accountId),
       listOnboardingEmails(db, ctx.workspaceId, accountId),
       listBlockers(db, ctx.workspaceId, accountId),
       loadHandoff(db, ctx.workspaceId, accountId),
+      loadIntegrations(db, provisioning.provisioned_workspace_id),
     ]);
     const endsAt = provisioning.trial_ends_at ? new Date(provisioning.trial_ends_at) : null;
     return {
@@ -261,6 +262,7 @@ export async function copsOnboardingRoutes(app: FastifyInstance, opts: { db: Db;
         emails,
         blockers,
         handoff,
+        integrations,
       },
     };
   });

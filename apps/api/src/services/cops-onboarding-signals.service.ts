@@ -369,3 +369,44 @@ export async function loadHandoff(db: Db, workspaceId: string, accountId: string
     .where(and(eq(copsOnboardingInstances.workspaceId, workspaceId), eq(copsOnboardingInstances.accountId, accountId)));
   return row?.taskId ? { task_id: row.taskId, created_at: row.createdAt?.toISOString() ?? null } : null;
 }
+
+export interface IntegrationStatusDto {
+  key: "crm" | "email" | "calendar";
+  status: "connected" | "error" | "not_connected" | "not_available";
+  detail: string | null;
+}
+
+/**
+ * Integration state of the provisioned customer workspace for Onboarding Control: CRM from
+ * crm_connections, email from the workspace's sending mailboxes (inboxes). There is no calendar
+ * connection model yet, so calendar reports not_available instead of a guessed state.
+ */
+export async function loadIntegrations(db: Db, customerWorkspaceId: string | null): Promise<IntegrationStatusDto[]> {
+  if (!customerWorkspaceId) {
+    return (["crm", "email", "calendar"] as const).map((key) => ({ key, status: key === "calendar" ? "not_available" : "not_connected", detail: null }));
+  }
+  const crm = await db
+    .select({ provider: crmConnections.provider, status: crmConnections.status })
+    .from(crmConnections)
+    .where(eq(crmConnections.workspaceId, customerWorkspaceId));
+  const boxes = await db
+    .select({ address: schema.inboxes.emailAddress, provider: schema.inboxes.provider, status: schema.inboxes.status })
+    .from(schema.inboxes)
+    .where(eq(schema.inboxes.workspaceId, customerWorkspaceId));
+  const okCrm = crm.find((c) => c.status === "connected");
+  const badCrm = crm.find((c) => ["error", "expired", "revoked"].includes(c.status));
+  const okBox = boxes.find((b) => b.status === "active");
+  return [
+    okCrm
+      ? { key: "crm", status: "connected", detail: okCrm.provider }
+      : badCrm
+        ? { key: "crm", status: "error", detail: `${badCrm.provider} ${badCrm.status}` }
+        : { key: "crm", status: "not_connected", detail: null },
+    okBox
+      ? { key: "email", status: "connected", detail: okBox.address }
+      : boxes[0]
+        ? { key: "email", status: "error", detail: `${boxes[0].address} ${boxes[0].status}` }
+        : { key: "email", status: "not_connected", detail: null },
+    { key: "calendar", status: "not_available", detail: "Calendar connections are not tracked yet" },
+  ];
+}

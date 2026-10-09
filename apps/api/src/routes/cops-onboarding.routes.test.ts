@@ -158,6 +158,19 @@ maybe("COPS-05 onboarding email routes", () => {
     const data = res.json().data;
     expect(data).toMatchObject({ account_id: accountId, trial_days_left: 14, follow_up: null, emails: [], blockers: [], handoff: null });
     expect(data.activation).toMatchObject({ template_key: "default_trial", activation_pct: 0 });
+    expect(data.integrations).toEqual([
+      { key: "crm", status: "not_connected", detail: null },
+      { key: "email", status: "not_connected", detail: null },
+      { key: "calendar", status: "not_available", detail: "Calendar connections are not tracked yet" },
+    ]);
+    const [prov] = await sql`select provisioned_workspace_id as id from cops_provisionings where account_id = ${accountId}`;
+    await sql`insert into inboxes (workspace_id, email_address) values (${prov.id}, ${"sales-" + RUN + "@cust.test"})`;
+    await sql`insert into crm_connections (workspace_id, provider, status) values (${prov.id}, 'hubspot', 'connected')`;
+    const again = (await call("GET", `/accounts/${accountId}/onboarding`)).json().data.integrations;
+    expect(again.slice(0, 2)).toEqual([
+      { key: "crm", status: "connected", detail: "hubspot" },
+      { key: "email", status: "connected", detail: `sales-${RUN}@cust.test` },
+    ]);
 
     const path = `/accounts/${accountId}/activation/milestones`;
     expect((await call("POST", `${path}/success_review/complete`, {})).statusCode).toBe(422);
