@@ -155,3 +155,17 @@ module was turned off; they now say the module is off. No other gap was found by
 - `PATCH /pipelines/:id/stages/:stageId` in apps/crm; the admin page edits a stage name and probability.
 - Golden paths end to end through the API (`cops-golden-paths.routes.test.ts`).
 - Migrations 0114 to 0117 applied twice each on the local test database.
+
+## 11. The red frontend Playwright suite (not caused by CustomerOps)
+
+Last completed E2E run looked at: run 37912867554 on `feature/copos-06-eng-tickets`, 2026-10-09:
+54 failed, 15 flaky, 20 skipped, 80 passed, in 2.1 hours. The failures are spread over 15 older spec
+files and have no single cause. Lines mentioning each file in the failure log, most first:
+`ss10-ss11-ss12`, `compliance`, `lists`, `crm-deals`, `sequences`, `dashboard`, `real-token-handling`,
+`email-editor`, `crm-companies`, `sp16-gtm-learning-manual`, `smoke`, `auth-error-codes`, `crm-tasks`,
+`crm-meetings`, `crm-contacts`. No `cops-*` spec is among them.
+
+The usual errors are an element that never appears (`toBeVisible` failed) and `fill` / `click`
+timing out after 60 seconds. This needs an owner per feature area; it is not fixed in this ticket.
+Until it is, the gate "all five golden paths green in CI" can only be read from the CustomerOps
+specs themselves: the 26 `cops-*` specs pass together in CI mode.
