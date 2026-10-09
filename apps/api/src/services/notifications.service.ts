@@ -1,7 +1,7 @@
 import { and, desc, eq, isNull, or } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, scopedTo } from "@skout/db";
-import { createLogger } from "@skout/observability";
+import { captureException, createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { sendMail } from "./mail.service.js";
 import { isSmsConfigured, sendSms } from "./telecom.service.js";
@@ -9,6 +9,7 @@ import { isSmsConfigured, sendSms } from "./telecom.service.js";
 const { notifications, notificationPreferences, users, workspaces } = schema;
 
 const log = createLogger("notifications.service");
+const PROVIDER_DELIVERY_ATTEMPTS = 3;
 
 /** "in_app" | "email" | "both" | "sms" — R17.4 per-type channel preference. */
 export type NotificationChannel = "in_app" | "email" | "both" | "sms";
@@ -200,20 +201,90 @@ async function resolvePreference(
   return { channel: "in_app", digest: false };
 }
 
-async function deliverSlack(config: Env, db: Db, workspaceId: string, title: string, body: string | null): Promise<boolean> {
+export async function retryNotificationDelivery<T>(
+  channel: string,
+  context: Record<string, unknown>,
+  deliver: () => Promise<T>,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+): Promise<T | null> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= PROVIDER_DELIVERY_ATTEMPTS; attempt++) {
+    try {
+      return await deliver();
+    } catch (err) {
+      lastError = err;
+      log.warn("Notification provider attempt failed", { channel, attempt, ...context, err });
+      if (attempt < PROVIDER_DELIVERY_ATTEMPTS) await sleep(100 * 2 ** (attempt - 1));
+    }
+  }
+  log.error("Notification provider delivery exhausted retries; in-app notification remains available", {
+    channel,
+    attempts: PROVIDER_DELIVERY_ATTEMPTS,
+    ...context,
+  });
+  if (lastError) captureException(lastError, { module: "notifications.service", channel, ...context });
+  return null;
+}
+
+function isMailDeliveryConfigured(config: Env): boolean {
+  return Boolean(
+    config.SMTP_HOST &&
+      config.SMTP_USERNAME &&
+      config.SMTP_USERNAME !== "replace-me" &&
+      config.SMTP_PASSWORD &&
+      config.SMTP_PASSWORD !== "replace-me"
+  );
+}
+
+async function deliverSlack(
+  config: Env,
+  db: Db,
+  workspaceId: string,
+  title: string,
+  body: string | null,
+  context: Record<string, unknown> = {}
+): Promise<boolean | "disabled"> {
   const [ws] = await db.select({ slackWebhookUrl: workspaces.slackWebhookUrl }).from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
-  if (!ws?.slackWebhookUrl) return false;
-  try {
-    const res = await fetch(ws.slackWebhookUrl, {
+  const webhookUrl = ws?.slackWebhookUrl;
+  if (!webhookUrl) return "disabled";
+  const delivered = await retryNotificationDelivery("slack", { workspaceId, ...context }, async () => {
+    const res = await fetch(webhookUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: body ? `*${title}*\n${body}` : title }),
     });
-    return res.ok;
-  } catch (err) {
-    log.warn("Slack notification delivery failed", { err, workspaceId });
-    return false;
-  }
+    if (!res.ok) throw new Error(`Slack webhook returned HTTP ${res.status}`);
+    return true;
+  });
+  return delivered === true;
+}
+
+async function deliverTeams(
+  db: Db,
+  workspaceId: string,
+  title: string,
+  body: string | null,
+  context: Record<string, unknown> = {}
+): Promise<boolean | "disabled"> {
+  const [ws] = await db
+    .select({ teamsWebhookUrl: workspaces.teamsWebhookUrl })
+    .from(workspaces)
+    .where(eq(workspaces.id, workspaceId))
+    .limit(1);
+  const webhookUrl = ws?.teamsWebhookUrl;
+  if (!webhookUrl) return "disabled";
+
+  const delivered = await retryNotificationDelivery("teams", { workspaceId, ...context }, async () => {
+    const res = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: body ? `${title}\n${body}` : title }),
+      redirect: "error",
+    });
+    if (!res.ok) throw new Error(`Teams webhook returned HTTP ${res.status}`);
+    return true;
+  });
+  return delivered === true;
 }
 
 export interface CreateNotificationInput {
@@ -224,11 +295,13 @@ export interface CreateNotificationInput {
   body?: string;
   entityType?: string;
   entityId?: string;
+  sourceEventId?: string;
 }
 
 /**
- * R17.1 create + R17.4 deliver. Delivery failures (email/Slack) never block in-app creation —
- * the notification row is always inserted first; delivery is best-effort after.
+ * R17.1 create + R17.4 deliver. Provider delivery failures never block in-app creation —
+ * the notification row is always inserted first; COPS event consumers may request a throw
+ * after bounded provider retries so BullMQ can resume undelivered channels.
  */
 export async function createNotification(db: Db, config: Env, input: CreateNotificationInput): Promise<NotificationDto> {
   const [row] = await db
@@ -241,62 +314,130 @@ export async function createNotification(db: Db, config: Env, input: CreateNotif
       body: input.body,
       entityType: input.entityType,
       entityId: input.entityId,
+      sourceEventId: input.sourceEventId,
       deliveredChannels: ["in_app"],
     })
     .returning();
 
-  const delivered = new Set<string>(["in_app"]);
-  const { channel, digest } = input.userId
-    ? await resolvePreference(db, input.workspaceId, input.userId, input.type)
+  return deliverNotificationChannels(db, config, {
+    ...toDto(row),
+    type: input.type,
+    title: input.title,
+    body: input.body ?? null,
+    entityType: input.entityType ?? null,
+    entityId: input.entityId ?? null,
+  });
+}
+
+/** Deliver non-in-app channels for an already-persisted notification. */
+export async function deliverNotificationChannels(
+  db: Db,
+  config: Env,
+  notification: NotificationDto,
+  context: Record<string, unknown> = {},
+  options: { retryFailedDelivery?: boolean } = {}
+): Promise<NotificationDto> {
+  const delivered = new Set<string>(notification.deliveredChannels);
+  delivered.add("in_app");
+  const persistDelivered = async () => {
+    await db
+      .update(notifications)
+      .set({ deliveredChannels: Array.from(delivered) })
+      .where(eq(notifications.id, notification.id));
+  };
+  const { channel, digest } = notification.userId
+    ? await resolvePreference(db, notification.workspaceId, notification.userId, notification.type)
     : { channel: "in_app" as NotificationChannel, digest: false };
 
   // R17.3 — digest-preferring users get their email folded into the daily digest sweep instead
   // of a real-time send; the in-app row above is still created immediately either way.
-  if (input.userId && !digest && (channel === "email" || channel === "both")) {
-    try {
-      const [user] = await db.select({ email: users.email }).from(users).where(eq(users.id, input.userId)).limit(1);
-      if (user?.email) {
+  if (
+    notification.userId &&
+    !delivered.has("email") &&
+    !digest &&
+    isMailDeliveryConfigured(config) &&
+    (channel === "email" || channel === "both")
+  ) {
+    const userId = notification.userId;
+    const [user] = await db.select({ email: users.email }).from(users).where(eq(users.id, userId)).limit(1);
+    if (user?.email) {
+      const emailDelivered = await retryNotificationDelivery("email", { userId, workspaceId: notification.workspaceId, ...context }, async () => {
         const mail = await sendMail(config, {
           to: user.email,
-          subject: input.title,
-          text: input.body ?? input.title,
-          html: `<p><strong>${input.title}</strong></p>${input.body ? `<p>${input.body}</p>` : ""}`,
+          subject: notification.title,
+          text: notification.body ?? notification.title,
+          html: `<p><strong>${notification.title}</strong></p>${notification.body ? `<p>${notification.body}</p>` : ""}`,
         });
-        if (mail.sent) delivered.add("email");
+        if (!mail.sent) throw new Error("Email provider did not confirm delivery");
+        return true;
+      });
+      if (emailDelivered) {
+        delivered.add("email");
+        await persistDelivered();
+      } else if (options.retryFailedDelivery) {
+        throw new Error("Email notification delivery failed after retries");
       }
-    } catch (err) {
-      log.warn("Email notification delivery failed", { err, userId: input.userId });
     }
   }
 
   // SMS — separate opt-in channel (not folded into "both", which is in-app + email only).
   // Delivery failures never block notification creation, same as email above.
-  if (input.userId && !digest && channel === "sms" && isSmsConfigured(config)) {
-    try {
-      const [user] = await db.select({ phone: users.phone }).from(users).where(eq(users.id, input.userId)).limit(1);
-      if (user?.phone) {
+  if (notification.userId && !delivered.has("sms") && !digest && channel === "sms" && isSmsConfigured(config)) {
+    const userId = notification.userId;
+    const [user] = await db.select({ phone: users.phone }).from(users).where(eq(users.id, userId)).limit(1);
+    const phone = user?.phone;
+    if (phone) {
+      const smsDelivered = await retryNotificationDelivery("sms", { userId, workspaceId: notification.workspaceId, ...context }, async () => {
         const sms = await sendSms(config, {
-          to: user.phone,
-          body: input.body ? `${input.title}\n${input.body}` : input.title,
+          to: phone,
+          body: notification.body ? `${notification.title}\n${notification.body}` : notification.title,
         });
-        if (sms.messageSid) delivered.add("sms");
+        if (!sms.messageSid) throw new Error("SMS provider did not confirm delivery");
+        return true;
+      });
+      if (smsDelivered) {
+        delivered.add("sms");
+        await persistDelivered();
+      } else if (options.retryFailedDelivery) {
+        throw new Error("SMS notification delivery failed after retries");
       }
-    } catch (err) {
-      log.warn("SMS notification delivery failed", { err, userId: input.userId });
     }
   }
 
   // Slack is workspace-level (single webhook), so it fires for "both"/"email" workspace-critical
   // alerts too when connected — gated purely on the workspace having a webhook configured.
-  const slackOk = await deliverSlack(config, db, input.workspaceId, input.title, input.body ?? null);
-  if (slackOk) delivered.add("slack");
-
-  if (delivered.size > 1) {
-    await db
-      .update(notifications)
-      .set({ deliveredChannels: Array.from(delivered) })
-      .where(eq(notifications.id, row.id));
+  if (!delivered.has("slack")) {
+    const slackOk = await deliverSlack(
+      config,
+      db,
+      notification.workspaceId,
+      notification.title,
+      notification.body,
+      context
+    );
+    if (slackOk === true) {
+      delivered.add("slack");
+      await persistDelivered();
+    } else if (slackOk === false && options.retryFailedDelivery) {
+      throw new Error("Slack notification delivery failed after retries");
+    }
   }
 
-  return toDto({ ...row, deliveredChannels: Array.from(delivered) });
+  if (!delivered.has("teams")) {
+    const teamsOk = await deliverTeams(
+      db,
+      notification.workspaceId,
+      notification.title,
+      notification.body,
+      context
+    );
+    if (teamsOk === true) {
+      delivered.add("teams");
+      await persistDelivered();
+    } else if (teamsOk === false && options.retryFailedDelivery) {
+      throw new Error("Teams notification delivery failed after retries");
+    }
+  }
+
+  return { ...notification, deliveredChannels: Array.from(delivered) };
 }

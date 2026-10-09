@@ -39,7 +39,8 @@
     "test:ss07": "cd workers/scrapers/cleaner && npx vitest run src/signals.test.ts --reporter verbose",
     "test:ss08": "cd apps/api && npx vitest run src/workers/signal-activation-sweep.worker.test.ts src/routes/dexter-lifecycle.e2e.test.ts --reporter verbose",
     "test:ss09": "cd apps/api && npx vitest run src/routes/onboarding-autonomy.e2e.test.ts --reporter verbose",
-    "local:tickets": "pnpm docker:up && sleep 10 && pnpm docker:seed && pnpm scrapers:dev & pnpm dev & pnpm dev:crm"
+    "local:tickets": "pnpm docker:up && sleep 10 && pnpm docker:seed && pnpm scrapers:dev & pnpm dev & pnpm dev:crm",
+    "test:hetzner": "node --test deploy/hetzner/scripts/*.test.mjs"
   },
   "engines": {
     "node": ">=20"

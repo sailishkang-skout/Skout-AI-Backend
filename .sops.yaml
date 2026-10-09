@@ -1,0 +1,3 @@
+creation_rules:
+  - path_regex: deploy/hetzner/env-enc/.*\.env$
+    age: age1jd0447gem9hzllesutncgqxqx2fq3qh9yay0zuc3ulc9wy2sffusl5m53f

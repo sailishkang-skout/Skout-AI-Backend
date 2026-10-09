@@ -1,0 +1,656 @@
+openapi: 3.0.3
+info:
+  title: Skout CustomerOps COPS-02 - Internal CRM, Customer 360, Timeline
+  version: 0.2.0-draft
+  description: |
+    Every COPS-02 write route except saved views requires Idempotency-Key; a replay returns the
+    stored result, and the same key on a different path or body is 422 IDEMPOTENCY_KEY_REUSED.
+    Contract for COPS-02, aligned with the implementation on feature/copos-02-internal-crm-360.
+    Routes marked "implemented" exist and were verified live against a local database.
+    Routes marked "planned" are not built yet. Builds on the COPS-01 platform foundation
+    (error envelope, idempotency keys, lifecycle transitions, audit, outbox).
+    Existing CRM tables are reused: companies (Account), deals (Opportunity), pipelines,
+    pipeline_stages (Stage), tasks, activities, meetings, crmNativeLinks (external references).
+    Status: draft, pending reviewer sign-off.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    AccountId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque base64url JSON cursor from next_cursor. Pass it back unchanged.
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+    Fields:
+      name: fields
+      in: query
+      description: Comma-separated block list for the 360 view, e.g. header,risks.
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, maxLength: 200 }
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required: [code, message, request_id, retryable]
+      properties:
+        code: { type: string, example: BUSINESS_STATE_CONFLICT }
+        message: { type: string }
+        details:
+          type: object
+          additionalProperties: true
+        request_id: { type: string }
+        retryable: { type: boolean }
+    FieldErrors:
+      allOf:
+        - $ref: '#/components/schemas/ErrorEnvelope'
+        - type: object
+          properties:
+            details:
+              type: object
+              properties:
+                fields:
+                  type: array
+                  items:
+                    type: object
+                    required: [path, code, message]
+                    properties:
+                      path: { type: string, example: "child_account_id" }
+                      code: { type: string }
+                      message: { type: string }
+    Provenance:
+      type: object
+      description: Where a value came from. An enriched or inferred value never overwrites a verified one.
+      required: [source, confidence, verified]
+      properties:
+        source: { type: string, enum: [user, import, enrichment, crm_sync, inferred] }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        verified: { type: boolean }
+        observed_at: { type: string, format: date-time }
+    Account:
+      type: object
+      required: [id, name, created_at]
+      properties:
+        id: { type: string, format: uuid, description: Immutable Skout ID }
+        name: { type: string }
+        owner_id: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time, description: Last change to the account; the CRM screen flags accounts untouched for 30 days as stale. }
+    Contact:
+      type: object
+      required: [id, first_name, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        first_name: { type: string }
+        last_name: { type: string, nullable: true }
+        email: { type: string, nullable: true }
+        company_id: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+    Opportunity:
+      type: object
+      required: [id, name, status, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        company_id: { type: string, format: uuid, nullable: true }
+        pipeline_id: { type: string, format: uuid }
+        stage_id: { type: string, format: uuid }
+        status: { type: string }
+        amount: { type: string, nullable: true, description: Decimal as a string. }
+        currency: { type: string, nullable: true }
+        owner_id: { type: string, format: uuid, nullable: true }
+        updated_at: { type: string, format: date-time }
+    Task:
+      type: object
+      required: [id, title, type, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        type:
+          type: string
+          description: call, email, meeting, review, approval, onboarding_check, renewal, ticket_follow_up, or custom.
+        status: { type: string, enum: [open, done, skipped], description: Matches the tasks table. Only open can be completed. }
+        priority: { type: string }
+        due_at: { type: string, format: date-time, nullable: true }
+        assigned_to: { type: string, format: uuid, nullable: true }
+        account_id: { type: string, format: uuid, nullable: true, description: Set when the task is linked to a company (related_entity_type = company). }
+        related_entity_type: { type: string, nullable: true }
+        related_entity_id: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+    TimelineEvent:
+      type: object
+      required: [id, type, occurred_at, actor, source_event_id, visibility, summary]
+      properties:
+        id: { type: string, format: uuid }
+        type:
+          type: string
+          enum: [email, call, meeting, note, proposal, contract, payment, provisioning, product_milestone, ticket, workflow_action]
+        occurred_at: { type: string, format: date-time }
+        actor:
+          type: object
+          required: [type]
+          properties:
+            type: { type: string, enum: [user, system, ai, integration] }
+            id: { type: string, nullable: true }
+        source_event_id: { type: string, format: uuid }
+        visibility: { type: string, enum: [public, internal], description: Internal rows need crm:admin. }
+        summary: { type: string }
+    Account360:
+      type: object
+      description: Header plus summary blocks. Fields outside header are returned only when selected.
+      properties:
+        header:
+          type: object
+          properties:
+            name: { type: string }
+            owner_id: { type: string, nullable: true }
+            lifecycle:
+              type: object
+              properties:
+                account: { type: string, nullable: true }
+                health: { type: string, nullable: true }
+                support: { type: string, nullable: true }
+            health: { type: string, nullable: true }
+            commercial_state: { type: string, nullable: true, description: Null until COPS-03 ships. }
+            onboarding_pct: { type: number, nullable: true, description: Null until COPS-05 ships. }
+            plan: { type: string, nullable: true, description: Null until COPS-04 ships. }
+            renewal_at: { type: string, format: date-time, nullable: true, description: Null until COPS-08 ships. }
+        contacts: { type: array, items: { $ref: '#/components/schemas/Contact' } }
+        timeline: { type: array, items: { $ref: '#/components/schemas/TimelineEvent' } }
+        next_actions: { type: array, items: { $ref: '#/components/schemas/Task' } }
+        risks:
+          type: array
+          items:
+            type: object
+            properties:
+              dimension: { type: string }
+              state: { type: string }
+    SavedView:
+      type: object
+      required: [name, object, filters]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        object: { type: string, enum: [account, contact, opportunity, task] }
+        filters: { type: object, additionalProperties: true }
+        sort: { type: string, nullable: true }
+        shared: { type: boolean, default: false }
+paths:
+  /accounts:
+    get:
+      summary: Account list (implemented)
+      description: q (name contains), owner_id, sort (name or -created_at), limit, cursor, view_id (saved view for object account).
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: owner_id, in: query, schema: { type: string, format: uuid } }
+        - { name: sort, in: query, schema: { type: string, enum: [name, -created_at] } }
+        - { name: fields, in: query, description: 'Comma-separated fields to return; id is always included; unknown field is 422.', schema: { type: string } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - { name: view_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Page of accounts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Account' } }
+                  next_cursor: { type: string, nullable: true }
+                  applied_filters: { type: object }
+        '422':
+          description: Validation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FieldErrors' }
+  /accounts/bulk-reassign:
+    post:
+      summary: Set the owner of up to 500 accounts (implemented)
+      description: Owner must be a workspace member. Ids from other workspaces are skipped and reported in skipped_ids, not an error. Each changed account writes one audit row (owner.reassigned). Gated on crm:write or crm:manage.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids, owner_id, reason]
+              properties:
+                ids: { type: array, minItems: 1, maxItems: 500, items: { type: string, format: uuid } }
+                owner_id: { type: string, format: uuid }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        '200':
+          description: Result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      updated: { type: integer }
+                      updated_ids: { type: array, items: { type: string } }
+                      skipped_ids: { type: array, items: { type: string } }
+        '422':
+          description: Validation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FieldErrors' }
+  /accounts/{id}/360:
+    get:
+      summary: Customer 360 header and summary blocks (implemented; one request, fixed query count)
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '#/components/parameters/Fields'
+      responses:
+        '200':
+          description: Account 360
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Account360' }
+        '404':
+          description: Account not found in this tenant
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '422':
+          description: Unknown field
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FieldErrors' }
+  /accounts/{id}/relationships:
+    post:
+      summary: Link this account to another account in the same workspace (implemented)
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [child_account_id, relationship]
+              properties:
+                child_account_id: { type: string, format: uuid }
+                relationship: { type: string, minLength: 1, maxLength: 60 }
+      responses:
+        '201':
+          description: Linked
+        '422':
+          description: Self-link, or an account outside this workspace (field path child_account_id)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FieldErrors' }
+  /accounts/{id}/timeline:
+    get:
+      summary: Cursor-paginated timeline with type filter (implemented)
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: type
+          in: query
+          description: Comma-separated timeline types.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Timeline page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/TimelineEvent' } }
+                  next_cursor: { type: string, nullable: true }
+        '422':
+          description: Bad type or cursor
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FieldErrors' }
+  /contacts:
+    get:
+      summary: Contact list (implemented)
+      description: q (first name, last name or email contains), company_id, sort (name or -created_at), limit, cursor, view_id (saved view for object contact).
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: company_id, in: query, schema: { type: string, format: uuid } }
+        - { name: sort, in: query, schema: { type: string, enum: [name, -created_at] } }
+        - { name: fields, in: query, description: 'Comma-separated fields to return; id is always included; unknown field is 422.', schema: { type: string } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - { name: view_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Page of contacts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Contact' } }
+                  next_cursor: { type: string, nullable: true }
+        '422':
+          description: Validation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FieldErrors' }
+  /opportunities:
+    get:
+      summary: Opportunity list (implemented)
+      description: q (name), company_id, pipeline_id, stage_id, status, sort (updated_at or -updated_at), limit, cursor, view_id (saved view for object opportunity).
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: company_id, in: query, schema: { type: string, format: uuid } }
+        - { name: pipeline_id, in: query, schema: { type: string, format: uuid } }
+        - { name: stage_id, in: query, schema: { type: string, format: uuid } }
+        - { name: status, in: query, schema: { type: string } }
+        - { name: owner_id, in: query, schema: { type: string, format: uuid } }
+        - { name: sort, in: query, schema: { type: string, enum: [updated_at, -updated_at] } }
+        - { name: fields, in: query, description: 'Comma-separated fields to return; id is always included; unknown field is 422.', schema: { type: string } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - { name: view_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Page of opportunities
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Opportunity' } }
+                  next_cursor: { type: string, nullable: true }
+        '422':
+          description: Validation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FieldErrors' }
+  /tasks:
+    get:
+      summary: Task list (implemented)
+      description: q (title), type, status, assigned_to, account_id (tasks linked to a company), sort (created_at or -created_at), limit, cursor, view_id (saved view for object task).
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: type, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [open, done, skipped] } }
+        - { name: assigned_to, in: query, schema: { type: string, format: uuid } }
+        - { name: account_id, in: query, schema: { type: string, format: uuid } }
+        - { name: related_type, in: query, description: Only tasks on this kind of record., schema: { type: string, enum: [company, contact, deal] } }
+        - { name: sort, in: query, schema: { type: string, enum: [created_at, -created_at] } }
+        - { name: fields, in: query, description: 'Comma-separated fields to return; id is always included; unknown field is 422.', schema: { type: string } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - { name: view_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Page of tasks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Task' } }
+                  next_cursor: { type: string, nullable: true }
+        '422':
+          description: Validation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FieldErrors' }
+  /tasks/{id}/complete:
+    post:
+      summary: Complete an open task; emits TaskCompleted through the outbox in the same transaction (implemented)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      status: { type: string, enum: [done] }
+                      completed_at: { type: string, format: date-time }
+        '404':
+          description: Task not found in this tenant
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '409':
+          description: Already done or skipped (BUSINESS_STATE_CONFLICT)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  /saved-views:
+    get:
+      summary: Saved views visible to the caller, own plus shared (implemented)
+      parameters:
+        - { name: object, in: query, schema: { type: string, enum: [account, contact, opportunity, task] } }
+      responses:
+        '200':
+          description: Saved views
+        '422':
+          description: Unknown object
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FieldErrors' }
+    post:
+      summary: Create a saved view; private unless shared (implemented)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SavedView' }
+      responses:
+        '201':
+          description: Created
+        '422':
+          description: Validation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FieldErrors' }
+  /saved-views/{id}:
+    delete:
+      summary: Delete a saved view; only its owner can (implemented)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: Deleted
+        '403':
+          description: Not the owner
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  /opportunities/{id}/stage:
+    post:
+      summary: Stage change through the lifecycle transition service (implemented). Same-state moves change the stage only; pipeline_stages.lifecycle_state configures the mapping.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '409':
+          description: Illegal stage transition
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  /accounts/merge:
+    post:
+      summary: Account merge with conflict review (implemented). Without confirm returns review_required; needs crm:admin.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Merge result
+  /tags:
+    get:
+      summary: Tags in this workspace (implemented)
+      responses:
+        '200': { description: Tags }
+    post:
+      summary: Create a tag; an existing name returns the existing tag (implemented)
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [name], properties: { name: { type: string, minLength: 1, maxLength: 60 } } }
+      responses:
+        '201': { description: Created }
+        '200': { description: Already existed }
+  /tags/{id}/assign:
+    post:
+      summary: Tag a record in this workspace (implemented)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [entity_type, entity_id], properties: { entity_type: { type: string, enum: [account, contact, opportunity, task] }, entity_id: { type: string, format: uuid } } }
+      responses:
+        '200': { description: Assigned }
+        '422': { description: Record not in this workspace, content: { application/json: { schema: { $ref: '#/components/schemas/FieldErrors' } } } }
+  /tags/{id}/unassign:
+    post:
+      summary: Remove a tag from a record (implemented)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200': { description: Removed count }
+  /records/{type}/{id}/tags:
+    get:
+      summary: Tags on one record (implemented)
+      parameters:
+        - { name: type, in: path, required: true, schema: { type: string, enum: [account, contact, opportunity, task] } }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Tags }
+  /opportunities/{id}/contacts:
+    get:
+      summary: Contacts on an opportunity with their role (implemented)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Opportunity contacts }
+    post:
+      summary: Add or update a contact's role on an opportunity (implemented)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [contact_id], properties: { contact_id: { type: string, format: uuid }, role: { type: string, default: stakeholder } } }
+      responses:
+        '201': { description: Linked }
+        '404': { description: Opportunity not found }
+  /opportunities/{id}/contacts/{contactId}:
+    delete:
+      summary: Remove a contact from an opportunity (implemented)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: contactId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200': { description: Removed count }
+  /contacts/{id}/channels:
+    get:
+      summary: Contact channels with verification, confidence, suppression and bounce status (implemented)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Channels }
+    post:
+      summary: Record a channel value; an unverified or lower-confidence write never replaces a verified value (implemented)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [channel, value], properties: { channel: { type: string, enum: [email, phone, linkedin] }, value: { type: string }, verified: { type: boolean }, confidence: { type: number, minimum: 0, maximum: 1 }, source: { type: string } } }
+      responses:
+        '200': { description: 'outcome: inserted, updated, kept_verified or kept_higher_confidence' }
+  /contacts/{id}/channels/{channelId}/status:
+    post:
+      summary: Set suppression or bounce status; reason required and audited (implemented)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: channelId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [reason], properties: { suppressed: { type: boolean }, bounce_status: { type: string, enum: [none, soft, hard] }, reason: { type: string, minLength: 1, maxLength: 500 } } }
+      responses:
+        '200': { description: Updated }
+        '422': { description: Missing reason, content: { application/json: { schema: { $ref: '#/components/schemas/FieldErrors' } } } }
+  /opportunities/bulk-reassign:
+    post:
+      summary: Set the owner of up to 500 opportunities; same rules as /accounts/bulk-reassign (implemented)
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids, owner_id, reason]
+              properties:
+                ids: { type: array, minItems: 1, maxItems: 500, items: { type: string, format: uuid } }
+                owner_id: { type: string, format: uuid }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        '200': { description: 'updated, updated_ids, skipped_ids' }
+        '422': { description: Validation, content: { application/json: { schema: { $ref: '#/components/schemas/FieldErrors' } } } }

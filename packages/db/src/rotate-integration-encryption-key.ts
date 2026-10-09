@@ -12,13 +12,13 @@
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHash, createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { eq, isNotNull } from "drizzle-orm";
 import { createDb } from "./client.js";
 import { resolveDatabaseUrl } from "./database-url.js";
 import { inboxes } from "./schema/inbox.js";
-import { workspaceIntegrations } from "./schema/integrations.js";
+import { crmConnections, workspaceIntegrations } from "./schema/integrations.js";
 import { calendarConnections } from "./schema/crm.js";
+import { reencrypt, reencryptInlineRef } from "./rotate-crypto.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 try {
@@ -26,50 +26,6 @@ try {
   config({ path: path.resolve(__dirname, "../../../.env") });
 } catch {
   // env may be injected
-}
-
-const ALGO = "aes-256-gcm";
-const IV_BYTES = 12;
-
-function deriveKey(secret: string): Buffer {
-  return createHash("sha256").update(secret).digest();
-}
-
-function encryptSecret(plaintext: string, secret: string): string {
-  const key = deriveKey(secret);
-  const iv = randomBytes(IV_BYTES);
-  const cipher = createCipheriv(ALGO, key, iv);
-  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return [iv.toString("base64"), tag.toString("base64"), encrypted.toString("base64")].join(":");
-}
-
-function decryptSecret(payload: string, secret: string): string {
-  const [ivB64, tagB64, dataB64] = payload.split(":");
-  if (!ivB64 || !tagB64 || !dataB64) throw new Error("invalid_encrypted_payload");
-  const key = deriveKey(secret);
-  const decipher = createDecipheriv(ALGO, key, Buffer.from(ivB64, "base64"));
-  decipher.setAuthTag(Buffer.from(tagB64, "base64"));
-  return Buffer.concat([
-    decipher.update(Buffer.from(dataB64, "base64")),
-    decipher.final(),
-  ]).toString("utf8");
-}
-
-/** Decrypt preferring old key; if already on new key, return null (= skip). */
-function reencrypt(payload: string | null | undefined, oldKey: string, newKey: string): string | null {
-  if (!payload) return null;
-  try {
-    const plain = decryptSecret(payload, oldKey);
-    return encryptSecret(plain, newKey);
-  } catch {
-    try {
-      decryptSecret(payload, newKey);
-      return null;
-    } catch {
-      throw new Error("ciphertext decrypts with neither old nor new key");
-    }
-  }
 }
 
 const oldKey = process.env.OLD_INTEGRATION_ENCRYPTION_KEY ?? process.env.INTEGRATION_ENCRYPTION_KEY_PREVIOUS;
@@ -180,6 +136,28 @@ try {
     if (Object.keys(patch).length) {
       await db.update(calendarConnections).set(patch).where(eq(calendarConnections.id, row.id));
       updated += Object.keys(patch).length;
+    }
+  }
+
+  // HubSpot tokens carried inside credentials_ref (CRM_CREDENTIALS_BACKEND=inline). Without this, removing
+  // INTEGRATION_ENCRYPTION_KEY_PREVIOUS would strand every connection that was not refreshed meanwhile.
+  const crmRows = await db
+    .select({ id: crmConnections.id, ref: crmConnections.credentialsRef })
+    .from(crmConnections)
+    .where(isNotNull(crmConnections.credentialsRef));
+
+  for (const row of crmRows) {
+    try {
+      const next = reencryptInlineRef(row.ref, oldKey, newKey);
+      if (next) {
+        await db.update(crmConnections).set({ credentialsRef: next }).where(eq(crmConnections.id, row.id));
+        updated++;
+      } else if (row.ref?.startsWith("enc:v1:")) {
+        skipped++;
+      }
+    } catch (err) {
+      failed++;
+      console.error(`[crm_connections.credentials_ref] failed id=${row.id}`, err);
     }
   }
 

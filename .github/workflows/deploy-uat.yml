@@ -1,8 +1,8 @@
 name: Deploy UAT
 
+# AWS has been shut off, so this workflow can no longer deploy anything. The push trigger is removed so a push
+# to uat does not start a run that can only fail.
 on:
-  push:
-    branches: [uat]
   workflow_dispatch:
 
 permissions:

@@ -17,6 +17,7 @@ import { createLogger } from "@skout/observability";
 import { assertPermission, recordPrivilegedAction } from "@skout/auth";
 import { ensureContactLinkedToProspect } from "../services/prospect-crm-link.service.js";
 import { assertCaptureEnabled, CaptureError } from "../services/enrichment/capture-ingest.service.js";
+import { auditEntityId } from "../utils/audit-entity-id.js";
 
 const log = createLogger("prospect.routes");
 const { companyPersonDiscoveries, enrichmentSnapshots, enrichmentChangeEvents } = schema;
@@ -478,7 +479,8 @@ export async function prospectRoutes(app: FastifyInstance) {
         actorId: request.userId,
         action: "enrichment.enrich",
         entityType: "prospect",
-        entityId: randomUUID(),
+        // Prospect ids are text; audit_logs.entity_id is uuid (see auditEntityId). The real id is in after_state.
+        entityId: auditEntityId(body.prospect.prospectId ?? id),
         afterState: { prospectId: body.prospect.prospectId ?? id, jobId: job.id },
       });
       

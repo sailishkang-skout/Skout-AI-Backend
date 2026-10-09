@@ -114,7 +114,14 @@ function ctaButton(href: string, label: string): string {
  * still return invite/OTP payloads and surface a copyable link in the UI.
  * Throws when SMTP is configured but delivery fails.
  */
+/**
+ * Sends through Resend when RESEND_API_KEY is set (decided 2026-10-06), otherwise through SMTP.
+ * Every caller (invites, notifications, COPS) goes through here, so the provider is swapped in one place.
+ */
 export async function sendMail(config: Env, opts: MailOptions): Promise<SendMailResult> {
+  if (config.RESEND_API_KEY) {
+    return sendViaResendApi(config, opts);
+  }
   const transport = getTransport(config);
   if (!transport) {
     log.warn("SMTP_HOST not set — email not sent", { to: opts.to, subject: opts.subject });
@@ -313,4 +320,26 @@ export function buildAuthLinkEmail(opts: {
       footerNote: "If you didn't request this, you can safely ignore this email.",
     }),
   };
+}
+
+async function sendViaResendApi(config: Env, opts: MailOptions): Promise<SendMailResult> {
+  const from = config.RESEND_FROM ?? config.SES_FROM_EMAIL;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ from, to: [opts.to], subject: opts.subject, text: opts.text, html: opts.html }),
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`resend responded ${res.status}`);
+    const body = (await res.json()) as { id?: string };
+    return { sent: true, messageId: body.id };
+  } finally {
+    clearTimeout(timer);
+  }
 }

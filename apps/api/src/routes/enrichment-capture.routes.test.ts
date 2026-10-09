@@ -135,8 +135,8 @@ describe("ENR-02 capture ingest", () => {
   });
 
   it("enforces the 10-page and 250-lead caps", async () => {
-    expect((await post("/enrichment/ingest/sales-search", salesPayload(251))).statusCode).toBe(400);
-    expect((await post("/enrichment/ingest/sales-search", salesPayload(1, { pagesRead: 11 }))).statusCode).toBe(400);
+    expect((await post("/enrichment/ingest/sales-search", salesPayload(251))).statusCode).toBe(422);
+    expect((await post("/enrichment/ingest/sales-search", salesPayload(1, { pagesRead: 11 }))).statusCode).toBe(422);
 
     const started = await post("/enrichment/capture/runs", { kind: "sales_search", sourceUrl: SALES_URL, clientRunId: `caps-${randomUUID()}` });
     expect(started.statusCode).toBe(201);
@@ -162,12 +162,12 @@ describe("ENR-02 capture ingest", () => {
       ...salesPayload(0),
       peopleProfiles: [salesLead(900, { publicId: "lead900", sourceUrl: "https://www.linkedin.com/sales/lead/lead900,NAME_SEARCH,x" })],
     });
-    expect(fabricated.statusCode).toBe(400);
+    expect(fabricated.statusCode).toBe(422);
     const mismatched = await post("/enrichment/ingest/sales-search", {
       ...salesPayload(0),
       peopleProfiles: [salesLead(901, { publicId: "someone-else", sourceUrl: "https://www.linkedin.com/in/real-person/" })],
     });
-    expect(mismatched.statusCode).toBe(400);
+    expect(mismatched.statusCode).toBe(422);
 
     const [identity] = await app.db!
       .select()
@@ -248,9 +248,9 @@ describe("ENR-02 capture ingest", () => {
     expect(chrome.statusCode).toBe(422);
     expect(chrome.json().code).toBe("profile_not_readable");
     const mismatch = await post("/enrichment/ingest/person", person({ publicId: "someone-else" }));
-    expect(mismatch.statusCode).toBe(400);
+    expect(mismatch.statusCode).toBe(422);
     const unknownField = await post("/enrichment/ingest/person", person({ email: "jane@example.com" }));
-    expect(unknownField.statusCode).toBe(400);
+    expect(unknownField.statusCode).toBe(422);
   });
 
   it("is idempotent on the canonical profile key and records a job change", async () => {

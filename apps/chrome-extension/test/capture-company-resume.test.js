@@ -246,3 +246,25 @@ describe("saving a reviewed capture", () => {
     expect(storage[CAPTURE_DRAFT_KEY]).toBeDefined();
   });
 });
+
+describe("validation failures from the API", () => {
+  it("names the fields the API rejected", async () => {
+    const failure = Object.assign(new Error("The captured data did not pass validation."), {
+      status: 422,
+      body: { error: "VALIDATION_FAILED", details: { fields: [{ path: "peopleProfiles.0.publicId", code: "custom", message: "Public LinkedIn URL does not match person ID." }] } },
+    });
+    harness(1, {
+      api: () => {
+        throw failure;
+      },
+    });
+    await handleCaptureMessage(
+      { type: "SKOUT_CAPTURE_REVIEW", kind: "sales", data: { sourceUrl: "https://www.linkedin.com/sales/search/people", peopleProfiles: [] }, sourceUrl: "https://www.linkedin.com/sales/search/people" },
+      companyTab
+    );
+    const result = await handleCaptureMessage({ type: "capture-send" }, sidePanel);
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("The captured data did not pass validation. · peopleProfiles.0.publicId: Public LinkedIn URL does not match person ID.");
+    expect(result.code).toBe("VALIDATION_FAILED");
+  });
+});

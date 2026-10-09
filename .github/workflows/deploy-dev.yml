@@ -1,8 +1,8 @@
 name: Deploy Dev
 
+# AWS has been shut off, so this workflow can no longer deploy anything. The push trigger is removed so a push
+# to develop does not start a run that can only fail. Staging now deploys with deploy-hetzner.yml (Google Cloud).
 on:
-  push:
-    branches: [develop]
   workflow_dispatch:
 
 permissions:

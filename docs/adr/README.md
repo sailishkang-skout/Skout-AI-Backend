@@ -12,4 +12,10 @@
 | [0008](./0008-dod-retroactivity.md) | §15 DoD applies forward-only from 2026-08-24 |
 | [0009](./0009-i18n-sales-comp-deferred.md) | i18n / Regional TAM / territory — in scope (onboarding + LLM) |
 | [0012](./0012-competitive-positioning-proposed-until-validated.md) | §2 positioning proposed until win/loss validated |
-| [0013](./0013-enrichment-security-boundary-and-integration.md) | Enrichment integration, tenancy, and security boundary (ENR-01) |
+| [0013](./0013-internal-crm-canonical.md) | Skout Internal CRM is canonical for CustomerOps |
+| [0014](./0014-external-crm-sync-opt-in.md) | External CRM sync is opt-in per workspace/account |
+| [0015](./0015-commercial-docs-esign-delegated.md) | Skout generates commercial docs; signatures delegated to e-sign |
+| [0016](./0016-payments-via-psp-references-only.md) | PSP handles payments; Skout stores references/status only |
+| [0017](./0017-event-driven-idempotent-replayable-workflows.md) | Event-driven workflows with idempotency and replay |
+| [0018](./0018-ai-recommends-humans-approve.md) | AI recommendations require permissioned human approval |
+| [0019](./0019-enrichment-security-boundary-and-integration.md) | Enrichment integration, tenancy, and security boundary (ENR-01) |

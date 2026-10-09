@@ -1,4 +1,4 @@
-# ADR 0013: Enrichment integration, tenancy, and security boundary
+# ADR 0019: Enrichment integration, tenancy, and security boundary
 
 ## Status
 

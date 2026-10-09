@@ -1,0 +1,96 @@
+{
+  "rewrite": [
+    [
+      "clickhouse.skoutdev.local",
+      "clickhouse"
+    ],
+    [
+      "https://www.skoutai.io/app",
+      "https://stg.skoutai.io/app"
+    ]
+  ],
+  "remove": [
+    "SCRAPE_SCHEDULE_QUEUE_URL"
+  ],
+  "whenPresent": {
+    "DATABASE_HOST": {
+      "DATABASE_HOST": "${PG_HOST}",
+      "DATABASE_PORT": "${PG_PORT}",
+      "DATABASE_USER": "${PG_USER}",
+      "DATABASE_PASSWORD": "${PG_PASSWORD}",
+      "DATABASE_SSL": "true"
+    },
+    "REDIS_URL": {
+      "REDIS_URL": "redis://redis:6379"
+    },
+    "AI_SERVICE_URL": {
+      "AI_SERVICE_URL": "http://ai:8000",
+      "EMAIL_INTEL_SERVICE_URL": "http://email-intel-api:3001",
+      "WARMUP_TOOL_SERVICE_URL": "http://warmup-tool-api:3010"
+    },
+    "EXPORTS_BUCKET": {
+      "EXPORTS_BUCKET": "${BUCKET_EXPORTS}",
+      "SCRAPE_BUCKET": "${BUCKET_SCRAPE}",
+      "S3_ENDPOINT": "${OBJECT_STORE_ENDPOINT}",
+      "S3_FORCE_PATH_STYLE": "true",
+      "AWS_REGION": "auto",
+      "AWS_ACCESS_KEY_ID": "${OBJECT_STORE_ACCESS_KEY_ID}",
+      "AWS_SECRET_ACCESS_KEY": "${OBJECT_STORE_SECRET_ACCESS_KEY}",
+      "AWS_REQUEST_CHECKSUM_CALCULATION": "WHEN_REQUIRED",
+      "AWS_RESPONSE_CHECKSUM_VALIDATION": "WHEN_REQUIRED"
+    },
+    "SCRAPE_BUCKET": {
+      "SCRAPE_BUCKET": "${BUCKET_SCRAPE}",
+      "S3_ENDPOINT": "${OBJECT_STORE_ENDPOINT}",
+      "S3_FORCE_PATH_STYLE": "true",
+      "AWS_REGION": "auto",
+      "AWS_ACCESS_KEY_ID": "${OBJECT_STORE_ACCESS_KEY_ID}",
+      "AWS_SECRET_ACCESS_KEY": "${OBJECT_STORE_SECRET_ACCESS_KEY}",
+      "AWS_REQUEST_CHECKSUM_CALCULATION": "WHEN_REQUIRED",
+      "AWS_RESPONSE_CHECKSUM_VALIDATION": "WHEN_REQUIRED"
+    },
+    "CRM_SECRETS_PREFIX": {
+      "CRM_CREDENTIALS_BACKEND": "inline"
+    },
+    "SMTP_HOST": {
+      "SMTP_HOST": "${MAIL_SMTP_HOST}",
+      "SMTP_PORT": "${MAIL_SMTP_PORT}",
+      "SMTP_USERNAME": "${MAIL_SMTP_USERNAME}",
+      "SMTP_PASSWORD": "${MAIL_SMTP_PASSWORD}"
+    },
+    "SCRAPE_SCHEDULE_QUEUE_URL": {
+      "SCRAPE_DAILY_SCHEDULE_ENABLED": "true",
+      "SCRAPE_DAILY_CRON": "30 5 * * 1-5"
+    },
+    "API_PUBLIC_URL": {
+      "API_PUBLIC_URL": "${PUBLIC_URL}"
+    },
+    "CORS_ORIGIN": {
+      "CORS_ORIGIN": "${PUBLIC_URL},https://www.skoutai.io,https://skoutai.io"
+    },
+    "NEXT_PUBLIC_API_URL": {
+      "NEXT_PUBLIC_API_URL": "${PUBLIC_URL}"
+    },
+    "GOOGLE_REDIRECT_URI": {
+      "GOOGLE_REDIRECT_URI": "${PUBLIC_URL}/api/v1/warmup-tool/oauth/google/callback",
+      "WARMUP_OAUTH_GOOGLE_CALLBACK": "${PUBLIC_URL}/api/v1/warmup-tool/oauth/google/callback",
+      "WARMUP_OAUTH_MICROSOFT_CALLBACK": "${PUBLIC_URL}/api/v1/warmup-tool/oauth/microsoft/callback"
+    },
+    "STORAGE_BUCKET": {
+      "STORAGE_BUCKET": "${BUCKET_EMAIL_INTEL}",
+      "STORAGE_ENDPOINT": "${OBJECT_STORE_ENDPOINT}",
+      "STORAGE_REGION": "auto",
+      "STORAGE_FORCE_PATH_STYLE": "true",
+      "STORAGE_ACCESS_KEY_ID": "${OBJECT_STORE_ACCESS_KEY_ID}",
+      "STORAGE_SECRET_ACCESS_KEY": "${OBJECT_STORE_SECRET_ACCESS_KEY}",
+      "AWS_REQUEST_CHECKSUM_CALCULATION": "WHEN_REQUIRED",
+      "AWS_RESPONSE_CHECKSUM_VALIDATION": "WHEN_REQUIRED"
+    },
+    "GOOGLE_OAUTH_CLIENT_ID": {
+      "GOOGLE_OAUTH_REDIRECT_URI": "https://www.skoutai.io/app/api/auth/google/callback"
+    },
+    "DD_AGENT_HOST": {
+      "DD_AGENT_HOST": "datadog-agent"
+    }
+  }
+}

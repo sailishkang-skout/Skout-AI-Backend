@@ -36,7 +36,8 @@
     "push": "drizzle-kit push",
     "studio": "drizzle-kit studio",
     "truncate": "tsx src/truncate.ts",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "backfill-deal-closed-status": "tsx src/backfill-deal-closed-status.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.44.2",

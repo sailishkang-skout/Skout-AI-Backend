@@ -6,9 +6,14 @@ import { afterEach, beforeEach } from "vitest";
 import { ensureTestAuthHarness, resetTestAuthHarness } from "@skout/auth";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../");
+// Tests authenticate with the stub header. A developer .env that sets AUTH_MODE (e.g. dual for
+// local real-login testing) would turn every request into a 401, so only an AUTH_MODE set
+// before the .env files load (CI, the command line, or vi.stubEnv) is kept.
+const authModeBeforeDotenv = process.env.AUTH_MODE;
 for (const candidate of [path.join(root, ".env"), path.join(root, ".env.local")]) {
   dotenvConfig({ path: candidate, override: false });
 }
+if (authModeBeforeDotenv === undefined) delete process.env.AUTH_MODE;
 
 const DEFAULT_TEST_DATABASE_URL = "postgresql://skout:skout@localhost:5434/skout";
 
