@@ -40,6 +40,11 @@ const TABLES = [
   "cops_onboarding_milestones",
   "cops_milestone_events",
   "cops_onboarding_signals",
+  // COPS-06
+  "engineering_tickets",
+  "ticket_comments",
+  "ticket_status_history",
+  "ticket_account_summaries",
 ] as const;
 
 maybe("COPS-02 tables are tenant-isolated (Postgres)", () => {
@@ -90,6 +95,10 @@ maybe("COPS-02 tables are tenant-isolated (Postgres)", () => {
     const [ms] = await sql`insert into cops_onboarding_milestones (workspace_id, instance_id, key, label, weight, source) values (${ws}, ${inst.id}, 'first_search', 'First search', 30, 'event') returning id`;
     await sql`insert into cops_milestone_events (workspace_id, milestone_id, source_ref, source_type) values (${ws}, ${ms.id}, ${"iso-" + label + stamp}, 'product.search')`;
     await sql`insert into cops_onboarding_signals (workspace_id, instance_id, trigger) values (${ws}, ${inst.id}, 'no_login_24h')`;
+    const [tk] = await sql`insert into engineering_tickets (workspace_id, account_id, milestone_id, title) values (${ws}, ${co.id}, ${ms.id}, ${label + " ticket"}) returning id`;
+    await sql`insert into ticket_comments (workspace_id, ticket_id, body) values (${ws}, ${tk.id}, 'iso note')`;
+    await sql`insert into ticket_status_history (workspace_id, ticket_id, to_status) values (${ws}, ${tk.id}, 'new')`;
+    await sql`insert into ticket_account_summaries (workspace_id, account_id, open_count, max_severity) values (${ws}, ${co.id}, 1, 'medium')`;
   }
 
   it("each table holds rows for its own workspace only", async () => {
