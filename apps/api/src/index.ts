@@ -90,7 +90,11 @@ async function main() {
       );
       process.exit(1);
     }
-    app.log.info("RBAC fail-closed enforcement enabled (backfill verified)");
+    app.log.info(
+      gate.freshDatabase
+        ? "RBAC fail-closed enforcement enabled (new database: the first provisioned member receives their role)"
+        : "RBAC fail-closed enforcement enabled (backfill verified)"
+    );
   }
 
   const shutdown = async () => {

@@ -1,0 +1,234 @@
+name: Deploy Hetzner (staging)
+
+on:
+  # Manual runs only work once this file is on the default branch (main is a stub), so the staging
+  # branch also deploys on push. Both paths target the same GitHub environment (hetzner-staging).
+  push:
+    branches: [infra/hetzner-migration]
+  workflow_dispatch:
+    inputs:
+      outbound_replicas:
+        description: "Replicas for the email-intel worker and the warm-up workers (they send/poll real mail). Keep 0 for staging."
+        default: "0"
+      scraper_replicas:
+        description: "Replicas for the scraper orchestrator (company-web, OpenCorporates, SEC EDGAR, ...). 1 = on, 0 = off."
+        default: "1"
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: deploy-hetzner-staging
+  cancel-in-progress: false
+
+env:
+  GHCR_OWNER: ${{ github.repository_owner }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: hetzner-staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set image tag
+        id: meta
+        run: echo "tag=stg-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend images
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          push() { docker push "ghcr.io/$GHCR_OWNER/$1:$TAG"; }
+          docker build -f apps/api/Dockerfile -t "ghcr.io/$GHCR_OWNER/skout-api:$TAG" . && push skout-api
+          docker build -f apps/crm/Dockerfile -t "ghcr.io/$GHCR_OWNER/skout-crm:$TAG" . && push skout-crm
+          docker build -f apps/ai/Dockerfile -t "ghcr.io/$GHCR_OWNER/skout-ai:$TAG" apps/ai && push skout-ai
+          for pair in orchestrator:@skout/scraper-orchestrator cleaner:@skout/scraper-cleaner ingestor:@skout/scraper-ingestor; do
+            sub="${pair%%:*}"; pkg="${pair#*:}"
+            docker build --platform linux/amd64 -f workers/scrapers/Dockerfile \
+              --build-arg WORKER_SUBPATH="$sub" --build-arg WORKER_PACKAGE="$pkg" \
+              -t "ghcr.io/$GHCR_OWNER/skout-scraper-$sub:$TAG" .
+            push "skout-scraper-$sub"
+          done
+
+      - name: Checkout Email Intelligence Tool
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/Skout-Email-Intelligence-Tool
+          ref: main
+          path: email-intel
+
+      - name: Build and push Email Intelligence image
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          docker build -f email-intel/Dockerfile -t "ghcr.io/$GHCR_OWNER/skout-email-intel:$TAG" email-intel
+          docker push "ghcr.io/$GHCR_OWNER/skout-email-intel:$TAG"
+
+      - name: Checkout Warm-Up Tool
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/Skout-Warm-Up-Tool
+          ref: main
+          path: warmup-tool
+
+      - name: Build and push Warm-Up Tool image
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          docker build -f warmup-tool/Dockerfile -t "ghcr.io/$GHCR_OWNER/skout-warmup-tool:$TAG" warmup-tool
+          docker push "ghcr.io/$GHCR_OWNER/skout-warmup-tool:$TAG"
+
+      - name: Checkout frontend
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/Skout-AI-Frontend
+          ref: develop
+          path: frontend
+
+      - name: Build and push Web image
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          WEB_URL: ${{ vars.STAGING_URL }}
+          # Origin browsers actually use. Sign-in is reached through the marketing site, so the frontend must
+          # accept that origin on POSTs (its same-origin check); defaults to the staging host itself.
+          APP_PUBLIC_URL: ${{ vars.APP_PUBLIC_URL || vars.STAGING_URL }}
+        run: |
+          docker build -f frontend/Dockerfile \
+            --build-arg NEXT_PUBLIC_API_URL="${WEB_URL}" \
+            --build-arg NEXT_PUBLIC_APP_URL="${APP_PUBLIC_URL}/app" \
+            --build-arg NEXT_PUBLIC_CRM_API_URL="${WEB_URL}" \
+            --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}" \
+            --build-arg NEXT_PUBLIC_AUTH_MODE="${{ vars.NEXT_PUBLIC_AUTH_MODE || 'clerk' }}" \
+            --build-arg CLERK_SECRET_KEY="${{ secrets.CLERK_SECRET_KEY }}" \
+            --build-arg GATE_TOKEN="${{ secrets.GATE_TOKEN }}" \
+            -t "ghcr.io/$GHCR_OWNER/skout-web:$TAG" frontend
+          docker push "ghcr.io/$GHCR_OWNER/skout-web:$TAG"
+
+      # The service env files are NOT in the repository (it is public). They are stored as environment secrets
+      # (ENV_<SERVICE>) by deploy/hetzner/scripts/publish-env-secrets.sh and written to disk only for this run.
+      - name: Write env files from secrets
+        env:
+          ENV_API: ${{ secrets.ENV_API }}
+          ENV_CRM: ${{ secrets.ENV_CRM }}
+          ENV_AI: ${{ secrets.ENV_AI }}
+          ENV_WEB: ${{ secrets.ENV_WEB }}
+          ENV_SCRAPER_ORCHESTRATOR: ${{ secrets.ENV_SCRAPER_ORCHESTRATOR }}
+          ENV_SCRAPER_CLEANER: ${{ secrets.ENV_SCRAPER_CLEANER }}
+          ENV_SCRAPER_INGESTOR: ${{ secrets.ENV_SCRAPER_INGESTOR }}
+          ENV_EMAIL_INTEL_API: ${{ secrets.ENV_EMAIL_INTEL_API }}
+          ENV_EMAIL_INTEL_WORKER: ${{ secrets.ENV_EMAIL_INTEL_WORKER }}
+          ENV_WARMUP_TOOL_API: ${{ secrets.ENV_WARMUP_TOOL_API }}
+          ENV_WARMUP_TOOL_WORKER: ${{ secrets.ENV_WARMUP_TOOL_WORKER }}
+          ENV_WARMUP_TOOL_INBOUND: ${{ secrets.ENV_WARMUP_TOOL_INBOUND }}
+          ENV_WARMUP_TOOL_CLASSIFICATION: ${{ secrets.ENV_WARMUP_TOOL_CLASSIFICATION }}
+          ENV_WARMUP_TOOL_POLICY: ${{ secrets.ENV_WARMUP_TOOL_POLICY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p deploy/hetzner/env
+          write() {
+            [ -n "$2" ] || { echo "secret for $1 is empty or missing" >&2; exit 1; }
+            printf '%s\n' "$2" > "deploy/hetzner/env/$1.env"
+          }
+          write api "$ENV_API"
+          write crm "$ENV_CRM"
+          write ai "$ENV_AI"
+          write web "$ENV_WEB"
+          write scraper-orchestrator "$ENV_SCRAPER_ORCHESTRATOR"
+          write scraper-cleaner "$ENV_SCRAPER_CLEANER"
+          write scraper-ingestor "$ENV_SCRAPER_INGESTOR"
+          write email-intel-api "$ENV_EMAIL_INTEL_API"
+          write email-intel-worker "$ENV_EMAIL_INTEL_WORKER"
+          write warmup-tool-api "$ENV_WARMUP_TOOL_API"
+          write warmup-tool-worker "$ENV_WARMUP_TOOL_WORKER"
+          write warmup-tool-inbound "$ENV_WARMUP_TOOL_INBOUND"
+          write warmup-tool-classification "$ENV_WARMUP_TOOL_CLASSIFICATION"
+          write warmup-tool-policy "$ENV_WARMUP_TOOL_POLICY"
+
+      - name: Configure SSH to the Swarm manager
+        env:
+          SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HETZNER_KNOWN_HOSTS }}
+          MANAGER_IP: ${{ vars.MANAGER_IP }}
+          # Hetzner logs in as root; GCP does not allow root SSH, so set the variable SSH_USER=deploy there.
+          SSH_USER: ${{ vars.SSH_USER || 'root' }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          echo "DOCKER_HOST=ssh://${SSH_USER}@${MANAGER_IP}" >> "$GITHUB_ENV"
+
+      # --with-registry-auth forwards this login to the cluster, so it must outlive the job: GITHUB_TOKEN
+      # expires when the run ends and nodes would then fail to pull images after a reschedule or reboot.
+      # Use a long-lived classic PAT with read:packages only (secret GHCR_PULL_TOKEN, variable GHCR_PULL_USER).
+      - name: Registry login on the cluster
+        env:
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          GHCR_PULL_USER: ${{ vars.GHCR_PULL_USER }}
+        run: echo "$GHCR_PULL_TOKEN" | docker login ghcr.io -u "$GHCR_PULL_USER" --password-stdin
+
+      - name: Note time for point-in-time restore
+        run: echo "Managed Postgres keeps PITR backups; restore point if needed is before $(date -u +%FT%TZ)"
+
+      - name: Run migrations
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+        run: bash deploy/hetzner/scripts/run-migrations.sh
+
+      - name: Deploy stack
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+          ACME_EMAIL: ${{ vars.ACME_EMAIL }}
+          DD_API_KEY: ${{ secrets.DD_API_KEY }}
+          OUTBOUND_REPLICAS: ${{ inputs.outbound_replicas || '0' }}
+          SCRAPER_REPLICAS: ${{ inputs.scraper_replicas || '1' }}
+        run: |
+          set -euo pipefail
+          # Swarm configs are immutable, so their names carry a content hash (see swarm/stack.yml).
+          CADDYFILE_HASH="$(sha256sum deploy/hetzner/swarm/Caddyfile | cut -c1-12)"
+          UNESCAPE_HASH="$(sha256sum deploy/hetzner/swarm/unescape-env.sh | cut -c1-12)"
+          export CADDYFILE_HASH UNESCAPE_HASH
+          # Caddy serves HTTPS for this host name (from the STAGING_URL variable, scheme stripped).
+          PUBLIC_HOST="${{ vars.STAGING_URL }}"
+          PUBLIC_HOST="${PUBLIC_HOST#https://}"
+          export PUBLIC_HOST
+          # --detach=false blocks until every service converges (or rolls back), so the checks below
+          # never run against the old version.
+          docker stack deploy --detach=false --with-registry-auth --prune -c deploy/hetzner/swarm/stack.yml skout
+
+      - name: Wait for services to converge
+        run: |
+          for _ in $(seq 1 30); do
+            pending="$(docker service ls --format '{{.Name}} {{.Replicas}}' | awk '{split($2,a,"/"); if (a[1]!=a[2]) print $1}')"
+            [ -z "$pending" ] && exit 0
+            echo "waiting for: $pending"; sleep 10
+          done
+          echo "services did not converge" >&2; exit 1
+
+      - name: Smoke test
+        env:
+          EXPECT_OUTBOUND_REPLICAS: ${{ inputs.outbound_replicas || '0' }}
+          EXPECT_SCRAPER_REPLICAS: ${{ inputs.scraper_replicas || '1' }}
+        run: node deploy/hetzner/scripts/smoke.mjs "${{ vars.STAGING_URL }}"
+
+      - name: Roll back on failure
+        if: failure()
+        run: |
+          for svc in $(docker service ls --format '{{.Name}}'); do
+            docker service rollback "$svc" || true
+          done
+
+      - name: Remove decrypted env files
+        if: always()
+        run: rm -rf deploy/hetzner/env

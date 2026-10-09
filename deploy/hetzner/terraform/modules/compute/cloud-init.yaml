@@ -1,0 +1,17 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+packages:
+  - unattended-upgrades
+  - fail2ban
+  - ca-certificates
+  - curl
+write_files:
+  - path: /etc/docker/daemon.json
+    content: |
+      {"log-driver":"json-file","log-opts":{"max-size":"20m","max-file":"5"}}
+runcmd:
+  - curl -fsSL https://get.docker.com | sh
+  - systemctl enable --now docker
+  - systemctl enable --now unattended-upgrades
+  - systemctl enable --now fail2ban
