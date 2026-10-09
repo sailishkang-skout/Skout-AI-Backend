@@ -30,13 +30,22 @@ export interface PipelineDto {
   stages: PipelineStageDto[];
 }
 
-const DEFAULT_STAGES: Omit<PipelineStageCreateInput, "orderIndex">[] = [
-  { name: "New", probability: 10, isClosedWon: false, isClosedLost: false },
-  { name: "Qualified", probability: 25, isClosedWon: false, isClosedLost: false },
-  { name: "Proposal", probability: 50, isClosedWon: false, isClosedLost: false },
-  { name: "Negotiation", probability: 75, isClosedWon: false, isClosedLost: false },
-  { name: "Closed Won", probability: 100, isClosedWon: true, isClosedLost: false },
-  { name: "Closed Lost", probability: 0, isClosedWon: false, isClosedLost: true },
+/**
+ * COPS-02 default pipeline (Product Bible): Qualified -> Discovery -> Demo -> Commercial ->
+ * Contracting -> Payment/Procurement -> Closed. "Closed" is split into won and lost because the
+ * opportunity lifecycle needs both. Each stage declares its lifecycle state, so a stage move goes
+ * through the transition service without guessing from the name. Applies to new pipelines only;
+ * existing pipelines keep their stages.
+ */
+const DEFAULT_STAGES: Array<Omit<PipelineStageCreateInput, "orderIndex"> & { lifecycleState: string }> = [
+  { name: "Qualified", probability: 10, isClosedWon: false, isClosedLost: false, lifecycleState: "qualified" },
+  { name: "Discovery", probability: 20, isClosedWon: false, isClosedLost: false, lifecycleState: "qualified" },
+  { name: "Demo", probability: 35, isClosedWon: false, isClosedLost: false, lifecycleState: "demo" },
+  { name: "Commercial", probability: 50, isClosedWon: false, isClosedLost: false, lifecycleState: "commercial" },
+  { name: "Contracting", probability: 70, isClosedWon: false, isClosedLost: false, lifecycleState: "commercial" },
+  { name: "Payment/Procurement", probability: 85, isClosedWon: false, isClosedLost: false, lifecycleState: "commercial" },
+  { name: "Closed Won", probability: 100, isClosedWon: true, isClosedLost: false, lifecycleState: "won" },
+  { name: "Closed Lost", probability: 0, isClosedWon: false, isClosedLost: true, lifecycleState: "lost" },
 ];
 
 function stageToDto(row: typeof pipelineStages.$inferSelect): PipelineStageDto {
@@ -113,6 +122,7 @@ export class PipelinesService {
             probability: stage.probability,
             isClosedWon: stage.isClosedWon,
             isClosedLost: stage.isClosedLost,
+            lifecycleState: stage.lifecycleState,
           }))
         )
         .returning();

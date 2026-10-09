@@ -1,4 +1,4 @@
-CREATE TABLE whatsapp_outreach_jobs (
+CREATE TABLE IF NOT EXISTS whatsapp_outreach_jobs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   enrollment_id UUID NOT NULL REFERENCES sequence_enrollments(id) ON DELETE CASCADE,

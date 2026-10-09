@@ -9,6 +9,31 @@ import { getSetupChecklist } from "../services/workspace-setup.service.js";
 import { seedDemoData } from "../services/demo-seed.service.js";
 import { HttpError, errorResponse } from "../utils/http.js";
 
+const TEAMS_WEBHOOK_HOSTS = [
+  "logic.azure.com",
+  "powerplatform.com",
+  "webhook.office.com",
+  "outlook.office.com",
+] as const;
+
+export function isTeamsWorkflowWebhookUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    const approvedHost = TEAMS_WEBHOOK_HOSTS.some(
+      (domain) => parsed.hostname === domain || parsed.hostname.endsWith(`.${domain}`)
+    );
+    return (
+      parsed.protocol === "https:" &&
+      approvedHost &&
+      !parsed.username &&
+      !parsed.password &&
+      (!parsed.port || parsed.port === "443")
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function workspaceRoutes(app: FastifyInstance) {
   if (!app.db) {
     app.log.warn("Database not available — workspace routes disabled");
@@ -76,6 +101,30 @@ export async function workspaceRoutes(app: FastifyInstance) {
       }
     }
     const updated = await svc.setSlackWebhook(request.workspaceId, url && url.trim() ? url.trim() : null);
+    if (!updated) return reply.code(404).send(errorResponse("Workspace not found", 404));
+    return reply.send({ data: updated });
+  });
+
+  // PUT /api/v1/workspaces/current/teams-webhook — Teams Workflows webhook (owner/admin only)
+  app.put("/workspaces/current/teams-webhook", async (request, reply) => {
+    if (!request.workspaceId) {
+      return reply.code(401).send(errorResponse("Not authenticated", 401));
+    }
+    if (!request.role || !["owner", "admin"].includes(request.role)) {
+      return reply.code(403).send(errorResponse("Requires role: owner or admin", 403));
+    }
+    await shadowWorkspaceManage(request.workspaceId, request.userId, "teams-webhook");
+    const { url } = (request.body ?? {}) as { url?: string | null };
+    if (url !== null && url !== undefined && typeof url !== "string") {
+      return reply.code(400).send(errorResponse("url must be an HTTPS Teams Workflows webhook URL or null", 400));
+    }
+    const normalized = typeof url === "string" && url.trim() ? url.trim() : null;
+    if (normalized && !isTeamsWorkflowWebhookUrl(normalized)) {
+      return reply.code(400).send(
+        errorResponse("Teams webhook URL must be an HTTPS Microsoft Workflows webhook URL", 400)
+      );
+    }
+    const updated = await svc.setTeamsWebhook(request.workspaceId, normalized);
     if (!updated) return reply.code(404).send(errorResponse("Workspace not found", 404));
     return reply.send({ data: updated });
   });

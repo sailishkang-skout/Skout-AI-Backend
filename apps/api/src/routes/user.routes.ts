@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { eq } from "drizzle-orm";
 import { schema } from "@skout/db";
+import { getMemberPermissions } from "@skout/auth";
 import { errorResponse } from "../utils/http.js";
 
 const PHONE_RE = /^\+[1-9]\d{6,14}$/;
@@ -8,6 +9,7 @@ const PHONE_RE = /^\+[1-9]\d{6,14}$/;
 export async function userRoutes(app: FastifyInstance) {
   app.get("/me", async (request, reply) => {
     let phone: string | null = null;
+    let permissions: string[] = [];
     if (app.db && request.userId) {
       const [row] = await app.db
         .select({ phone: schema.users.phone })
@@ -15,12 +17,16 @@ export async function userRoutes(app: FastifyInstance) {
         .where(eq(schema.users.id, request.userId))
         .limit(1);
       phone = row?.phone ?? null;
+      if (request.workspaceId) {
+        permissions = await getMemberPermissions(app.db, request.workspaceId, request.userId);
+      }
     }
     return reply.send({
       userId: request.userId,
       email: request.userEmail,
       workspaceId: request.workspaceId,
       role: request.role,
+      permissions,
       phone,
     });
   });

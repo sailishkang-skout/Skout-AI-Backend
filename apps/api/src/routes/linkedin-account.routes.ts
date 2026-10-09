@@ -3,12 +3,16 @@ import { z } from "zod";
 import { buildLinkedinAccountService } from "../services/linkedin-account.service.js";
 import { UnipileError } from "../services/unipile.client.js";
 import { HttpError, requireWorkspaceId } from "../utils/http.js";
+import { assertPermission, recordPrivilegedAction } from "@skout/auth";
 
 const channelSchema = z.enum(["linkedin", "whatsapp"]);
 
 export async function linkedinAccountRoutes(app: FastifyInstance) {
   app.get("/linkedin/accounts", async (request, reply) => {
+    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const workspaceId = requireWorkspaceId(request);
+    if (!request.userId) throw new HttpError("unauthorized", 401);
+    await assertPermission(app.db, workspaceId, request.userId, "enrichment:capture");
     const svc = buildLinkedinAccountService(app.db, app.config);
     if (!svc) return reply.send({ workspaceId, data: [], total: 0, unipileConfigured: false });
     const query = z.object({ channel: channelSchema.optional() }).parse(request.query ?? {});
@@ -22,7 +26,10 @@ export async function linkedinAccountRoutes(app: FastifyInstance) {
   });
 
   app.post("/linkedin/accounts", async (request, reply) => {
+    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const workspaceId = requireWorkspaceId(request);
+    if (!request.userId) throw new HttpError("unauthorized", 401);
+    await assertPermission(app.db, workspaceId, request.userId, "enrichment:capture");
     const svc = buildLinkedinAccountService(app.db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const body = z
@@ -35,11 +42,22 @@ export async function linkedinAccountRoutes(app: FastifyInstance) {
       })
       .parse(request.body ?? {});
     const account = await svc.connect(workspaceId, body);
+    await recordPrivilegedAction(app.db, {
+      workspaceId,
+      actorId: request.userId,
+      action: "linkedin_account.connect",
+      entityType: "linkedin_account",
+      entityId: account.id,
+      afterState: { displayName: body.displayName, channel: body.channel, unipileAccountId: body.unipileAccountId }
+    });
     return reply.status(201).send(account);
   });
 
-  app.post("/linkedin/accounts/hosted-auth", async (request, reply) => {
+  app.post("/linkedin/accounts/hosted-auth", { config: { rateLimit: { max: 5, timeWindow: 60000 } } }, async (request, reply) => {
+    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const workspaceId = requireWorkspaceId(request);
+    if (!request.userId) throw new HttpError("unauthorized", 401);
+    await assertPermission(app.db, workspaceId, request.userId, "enrichment:capture");
     const svc = buildLinkedinAccountService(app.db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const body = z
@@ -56,9 +74,13 @@ export async function linkedinAccountRoutes(app: FastifyInstance) {
     return reply.send(link);
   });
 
-  /** Pull accounts already linked in Unipile into this workspace (webhook fallback). */
+  /** Pull accounts already linked in Unipile into th
+   * kspace (webhook fallback). */
   app.post("/linkedin/accounts/sync", async (request, reply) => {
+    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const workspaceId = requireWorkspaceId(request);
+    if (!request.userId) throw new HttpError("unauthorized", 401);
+    await assertPermission(app.db, workspaceId, request.userId, "enrichment:capture");
     const svc = buildLinkedinAccountService(app.db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const body = z.object({ channel: channelSchema.optional() }).parse(request.body ?? {});
@@ -71,34 +93,61 @@ export async function linkedinAccountRoutes(app: FastifyInstance) {
         unipileConfigured: true,
       });
     } catch (err) {
-      const status = err instanceof HttpError ? err.statusCode : err instanceof UnipileError ? err.status : 500;
-      const message =
-        err instanceof HttpError
-          ? err.message
-          : err instanceof UnipileError
-            ? err.message
-            : "unipile_sync_failed";
+      let status = 500;
+      let message = "unipile_sync_failed";
+      
+      if (err instanceof HttpError) {
+        status = err.statusCode;
+        message = err.message;
+      } else if (err instanceof UnipileError) {
+        status = err.status;
+        message = err.message;
+      } else if (err instanceof Error) {
+        message = err.message;
+      }
+      
       return reply.status(status >= 400 && status < 600 ? status : 500).send({ error: message });
     }
   });
 
   app.patch("/linkedin/accounts/:id", async (request, reply) => {
+    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const { id } = request.params as { id: string };
     const workspaceId = requireWorkspaceId(request);
+    if (!request.userId) throw new HttpError("unauthorized", 401);
+    await assertPermission(app.db, workspaceId, request.userId, "enrichment:capture");
     const svc = buildLinkedinAccountService(app.db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const body = z.object({ status: z.enum(["active", "paused"]) }).parse(request.body ?? {});
     const account = await svc.setStatus(workspaceId, id, body.status);
     if (!account) return reply.status(404).send({ error: "linkedin_account_not_found" });
+    await recordPrivilegedAction(app.db, {
+      workspaceId,
+      actorId: request.userId,
+      action: "linkedin_account.status_update",
+      entityType: "linkedin_account",
+      entityId: id,
+      afterState: { status: body.status }
+    });
     return reply.send(account);
   });
 
   app.delete("/linkedin/accounts/:id", async (request, reply) => {
+    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const { id } = request.params as { id: string };
     const workspaceId = requireWorkspaceId(request);
+    if (!request.userId) throw new HttpError("unauthorized", 401);
+    await assertPermission(app.db, workspaceId, request.userId, "enrichment:capture");
     const svc = buildLinkedinAccountService(app.db, app.config);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     await svc.disconnect(workspaceId, id);
+    await recordPrivilegedAction(app.db, {
+      workspaceId,
+      actorId: request.userId,
+      action: "linkedin_account.disconnect",
+      entityType: "linkedin_account",
+      entityId: id
+    });
     return reply.status(204).send();
   });
 }

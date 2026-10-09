@@ -324,6 +324,9 @@ const envSchema = z
     SMTP_PORT: z.coerce.number().default(587),
     SMTP_USERNAME: z.string().optional(),
     SMTP_PASSWORD: z.string().optional(),
+    /** Resend (transactional email, decided 2026-10-06). Used when set; SMTP is the fallback. */
+    RESEND_API_KEY: z.string().optional(),
+    RESEND_FROM: z.string().optional(),
     // --- Enrichment tunables. ---
     ENRICHMENT_REQUEST_TIMEOUT_MS: z.coerce.number().default(8000),
     ENRICHMENT_PHONE_SCORE_GATE: z.coerce.number().default(80),

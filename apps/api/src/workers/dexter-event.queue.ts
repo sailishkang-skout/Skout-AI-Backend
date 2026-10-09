@@ -1,5 +1,5 @@
 import { Queue } from "bullmq";
-import type { SkoutEvent } from "@skout/shared";
+import type { CopsEnvelope, SkoutEvent } from "@skout/shared";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { redisBullMqConnection } from "../lib/redis.js";
@@ -7,7 +7,7 @@ import { redisBullMqConnection } from "../lib/redis.js";
 export const DEXTER_EVENT_QUEUE = "skout-dexter-event";
 
 export interface DexterEventJobPayload {
-  event: SkoutEvent;
+  event: SkoutEvent | CopsEnvelope;
 }
 
 /**
@@ -43,11 +43,14 @@ export function getDexterEventQueue(config: Env): Queue<DexterEventJobPayload> {
 }
 
 export async function enqueueDexterEventJob(config: Env, payload: DexterEventJobPayload): Promise<void> {
+  const eventType = "type" in payload.event ? payload.event.type : payload.event.event_type;
+  const eventId = "id" in payload.event ? payload.event.id : payload.event.event_id;
+  const jobOptions = "event_type" in payload.event ? { attempts: 8 } : {};
   const addPromise = getDexterEventQueue(config)
-    .add("process-event", payload, { jobId: payload.event.id })
+    .add("process-event", payload, { jobId: eventId, ...jobOptions })
     .then(() => "added" as const)
     .catch((err: unknown) => {
-      log.warn("dexter event enqueue failed", { eventType: payload.event.type, eventId: payload.event.id, err });
+      log.warn("dexter event enqueue failed", { eventType, eventId, err });
       return "failed" as const;
     });
 
@@ -61,8 +64,8 @@ export async function enqueueDexterEventJob(config: Env, payload: DexterEventJob
 
   if (outcome === "timeout") {
     log.warn("dexter event enqueue timed out — Redis unreachable or slow; event dropped", {
-      eventType: payload.event.type,
-      eventId: payload.event.id,
+      eventType,
+      eventId,
       timeoutMs: ENQUEUE_TIMEOUT_MS,
     });
   }

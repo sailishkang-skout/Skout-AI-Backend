@@ -15,6 +15,11 @@ const BASE_OVERRIDES = {
 let app: FastifyInstance;
 
 beforeAll(async () => {
+  // Stub auth is what these tests authenticate with. A local .env with AUTH_MODE set turns it off
+  // and every request becomes a 401, so pin stub mode for the config load (same as workspace routes).
+  delete process.env.AUTH_MODE;
+  process.env.AUTH_STUB = "true";
+  process.env.CLERK_SECRET_KEY = "";
   const config = loadEnv();
   app = await buildApp({ ...config, ...BASE_OVERRIDES });
 });

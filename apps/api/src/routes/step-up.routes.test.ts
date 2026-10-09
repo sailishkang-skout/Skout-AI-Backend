@@ -145,7 +145,7 @@ describe("POST /api/v1/auth/step-up", () => {
       });
 
       expect(res.statusCode).toBe(400);
-      expect(res.json().error).toBe("Invalid step-up payload");
+      expect(res.json().message).toBe("Invalid step-up payload");
       await app.close();
     });
 

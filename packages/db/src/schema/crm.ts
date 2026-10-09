@@ -63,6 +63,12 @@ export const contacts = pgTable(
     phone: text("phone"),
     title: text("title"),
     linkedinUrl: text("linkedin_url"),
+    /**
+     * Employment verification status for enrichment feature:
+     * - discovery_candidate: Sales Nav/company search card (unverified)
+     * - verified_employment: Public LinkedIn profile or strong evidence
+     */
+    employmentStatus: text("employment_status", { enum: ["discovery_candidate", "verified_employment"] }).default("discovery_candidate"),
     ownerId: uuid("owner_id").references(() => users.id, { onDelete: "set null" }),
     lifecycleStage: text("lifecycle_stage").notNull().default("lead"),
     sourceProspectId: text("source_prospect_id"),
@@ -116,6 +122,8 @@ export const pipelineStages = pgTable(
     probability: integer("probability").notNull().default(0),
     isClosedWon: boolean("is_closed_won").notNull().default(false),
     isClosedLost: boolean("is_closed_lost").notNull().default(false),
+    /** COPS-02 configurable stage rule: the opportunity lifecycle state this stage represents. Null = derived from the stage name. */
+    lifecycleState: text("lifecycle_state"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -224,6 +232,8 @@ export const activities = pgTable(
     entityType: text("entity_type").notNull(),
     entityId: uuid("entity_id").notNull(),
     activityType: text("activity_type").notNull(),
+    /** COPS-02: internal notes are distinct from customer-facing history; internal rows need crm:admin to read. */
+    visibility: text("visibility").notNull().default("public"),
     subject: text("subject"),
     body: text("body"),
     ownerId: uuid("owner_id").references(() => users.id, { onDelete: "set null" }),
