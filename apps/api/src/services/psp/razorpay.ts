@@ -107,7 +107,10 @@ export function createRazorpayPaymentLinkAdapter(config: Env, fetchImpl: FetchLi
       const payment = body.payload?.payment?.entity;
       const refund = body.payload?.refund?.entity;
       const notes = payment?.notes ?? {};
+      // Razorpay puts the event creation time (unix seconds) at the top level of the webhook body.
+      const createdAt = (body as { created_at?: unknown }).created_at;
       return {
+        providerCreatedAt: typeof createdAt === "number" && Number.isFinite(createdAt) && createdAt > 0 ? new Date(createdAt * 1000) : null,
         eventId,
         eventType,
         status: STATUS_BY_EVENT[eventType] ?? null,

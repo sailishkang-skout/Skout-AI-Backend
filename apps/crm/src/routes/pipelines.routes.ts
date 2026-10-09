@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { pipelineCreateSchema, pipelineStageCreateSchema, pipelineUpdateSchema } from "@skout/shared";
+import { pipelineCreateSchema, pipelineStageCreateSchema, pipelineStageUpdateSchema, pipelineUpdateSchema } from "@skout/shared";
 import { HttpError, enforcePermission } from "@skout/auth";
 import { parseIdParam } from "../utils/http.js";
 import { requireRole } from "../utils/require-role.js";
@@ -56,6 +56,22 @@ export async function pipelinesRoutes(app: FastifyInstance) {
     const input = pipelineStageCreateSchema.parse(request.body);
     const stage = await svc.addStage(workspaceId, id, input, request.userId);
     return reply.code(201).send(stage);
+  });
+
+  app.patch("/pipelines/:id/stages/:stageId", async (request, reply) => {
+    requireRole(request, ["owner", "admin", "member"]);
+    await shadowCrmManage(request, "update pipeline stage");
+    const id = parseIdParam(request);
+    const stageId = (request.params as { stageId?: string }).stageId ?? "";
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(stageId)) throw new HttpError("invalid_id", 400);
+    const workspaceId = request.workspaceId ?? "unknown";
+    const svc = service();
+    if (!svc) throw new HttpError("database_unavailable", 503);
+
+    const input = pipelineStageUpdateSchema.parse(request.body);
+    const stage = await svc.updateStage(workspaceId, id, stageId, input, request.userId);
+    if (!stage) throw new HttpError("pipeline_stage_not_found", 404);
+    return reply.send(stage);
   });
 
   app.patch("/pipelines/:id", async (request, reply) => {

@@ -233,6 +233,8 @@ maybe("COPS-04 provisioning saga (Postgres)", () => {
     expect(provisioning.status).toBe("succeeded");
     const [step] = await sql`select result from cops_provisioning_steps where provisioning_id = ${provisioning.id} and step = 'admin_invite'`;
     expect(step.result).toMatchObject({ email_sent: false, email_error: "send_failed" });
+    // The API says so, so the UI does not claim the invitation was sent.
+    expect(provisioning.admin_invite).toMatchObject({ email_sent: false });
   });
 
   it("zero trial credits still creates the wallet, with no ledger row and no CreditsGranted", async () => {

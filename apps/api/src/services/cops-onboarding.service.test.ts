@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { createDb } from "@skout/db";
 import { startProvisioning, type ProvisioningContext } from "./cops-provisioning.service.js";
 import { OnboardingError, previewOnboardingEmail, sendOnboardingEmail, type OnboardingDeps } from "./cops-onboarding.service.js";
+import { saveConfig } from "./cops-admin-config.service.js";
 
 const postgres = createRequire(new URL("../../../../packages/db/package.json", import.meta.url))("postgres") as (url: string, options?: object) => any;
 
@@ -139,5 +140,42 @@ maybe("COPS-05 onboarding email (Postgres)", () => {
     expect(ok.send.id).toBe(err.details.email_send_id);
     expect(ok.send.status).toBe("sent");
     expect(await welcomeEvents(a.accountId)).toBe(1);
+  });
+
+  it("a failed first send can be sent again with a new key (reopened dialog), without a re-send reason", async () => {
+    const a = await provisionedAccount();
+    send.mockRejectedValueOnce(new Error("535 Authentication Credentials Invalid"));
+    const failed = await sendOnboardingEmail(db, ctx, a.accountId, randomUUID(), {}, deps).catch((e) => e);
+    expect(failed).toMatchObject({ code: "EMAIL_NOT_SENT" });
+    const newKey = randomUUID();
+    const ok = await sendOnboardingEmail(db, ctx, a.accountId, newKey, {}, deps);
+    expect(ok.send).toMatchObject({ id: failed.details.email_send_id, status: "sent", is_resend: false });
+    // The new key now owns the row: a double click replays it, and a third key is a real "already sent".
+    expect(await sendOnboardingEmail(db, ctx, a.accountId, newKey, {}, deps)).toMatchObject({ replayed: true });
+    await expect(sendOnboardingEmail(db, ctx, a.accountId, randomUUID(), {}, deps)).rejects.toMatchObject({ code: "ALREADY_SENT" });
+    expect(await welcomeEvents(a.accountId)).toBe(1);
+    const [rows] = await sql`select count(*)::int as n from cops_onboarding_email_sends where account_id = ${a.accountId}`;
+    expect(rows.n).toBe(1);
+  });
+
+  it("COPS-07: admin wording replaces the built-in template and the send records which version it used", async () => {
+    const a = await provisionedAccount();
+    const before = await previewOnboardingEmail(db, ctx, a.accountId, {}, deps);
+    expect(before.template_version).toBe(1);
+    await saveConfig(db, ctx, "email_template", "welcome_trial", {
+      value: { subject: "{{workspace}} is ready for you", intro: "Welcome to {{ workspace }}. Here is how to start.", closing: "Your account manager is Priya." },
+      reason: "Friendlier welcome",
+    });
+    const p = await previewOnboardingEmail(db, ctx, a.accountId, {}, deps);
+    expect(p.subject).toMatch(/ is ready for you$/);
+    expect(p.subject).not.toContain("{{");
+    expect(p.text).toContain("Here is how to start.");
+    expect(p.text).toContain("Your account manager is Priya.");
+    expect(p.text).not.toContain("{{");
+    // Still the operational content: workspace link and activation steps.
+    expect(p.text).toContain("CRM connected");
+    expect(p.template_version).toBe(1001);
+    const sent = await sendOnboardingEmail(db, ctx, a.accountId, randomUUID(), {}, deps);
+    expect(sent.send).toMatchObject({ template_key: "welcome_trial", template_version: 1001, status: "sent" });
   });
 });

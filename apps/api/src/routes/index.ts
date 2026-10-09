@@ -65,6 +65,10 @@ import { copsCrmObjectsRoutes } from "./cops-crm-objects.routes.js";
 import { copsCommercialRoutes } from "./cops-commercial.routes.js";
 import { copsProvisioningRoutes } from "./cops-provisioning.routes.js";
 import { copsOnboardingRoutes } from "./cops-onboarding.routes.js";
+import { copsTicketsRoutes } from "./cops-tickets.routes.js";
+import { copsAdminConfigRoutes } from "./cops-admin-config.routes.js";
+import { copsAdminOpsRoutes } from "./cops-admin-ops.routes.js";
+import { requireCopsModule } from "../services/cops-feature-flags.js";
 import { copsOutboxRoutes } from "./cops-outbox.routes.js";
 import { copsLifecycleRoutes } from "./cops-lifecycle.routes.js";
 import { ssoScimRoutes } from "./sso-scim.routes.js";
@@ -147,14 +151,21 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(dexterPlatformRoutes);
     await v1.register(account360Routes);
     if (app.db) {
+      const db = app.db;
+      // COPS-07 feature flags: each module's routes sit behind its workspace switch.
+      const gated = (module: Parameters<typeof requireCopsModule>[1], plugins: Array<(scope: FastifyInstance, opts: { db: typeof db }) => Promise<void>>) =>
+        v1.register(async (scope) => {
+          scope.addHook("preHandler", requireCopsModule(db, module));
+          for (const plugin of plugins) await scope.register(plugin, { db });
+        });
       await v1.register(copsAuditRoutes, { db: app.db });
-      await v1.register(copsTimelineRoutes, { db: app.db });
-      await v1.register(copsAccount360Routes, { db: app.db });
-      await v1.register(copsSavedViewsRoutes, { db: app.db });
-      await v1.register(copsCrmObjectsRoutes, { db: app.db });
-      await v1.register(copsCommercialRoutes, { db: app.db });
-      await v1.register(copsProvisioningRoutes, { db: app.db });
-      await v1.register(copsOnboardingRoutes, { db: app.db });
+      await gated("crm", [copsTimelineRoutes, copsAccount360Routes, copsSavedViewsRoutes, copsCrmObjectsRoutes]);
+      await gated("commercial", [copsCommercialRoutes]);
+      await gated("provisioning", [copsProvisioningRoutes]);
+      await gated("onboarding", [copsOnboardingRoutes]);
+      await gated("tickets", [copsTicketsRoutes]);
+      await v1.register(copsAdminConfigRoutes, { db: app.db });
+      await v1.register(copsAdminOpsRoutes, { db: app.db });
       await v1.register(copsOutboxRoutes, { db: app.db });
       await v1.register(copsLifecycleRoutes, { db: app.db });
     } else {

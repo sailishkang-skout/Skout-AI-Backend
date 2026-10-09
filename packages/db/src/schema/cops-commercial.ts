@@ -190,6 +190,9 @@ export const paymentProviderEvents = pgTable(
     outcome: text("outcome").notNull(),
     refs: jsonb("refs").$type<Record<string, unknown>>().notNull().default({}),
     receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    /** COPS-07: when the provider created the event, and when we reached its outcome (latency metrics). */
+    providerCreatedAt: timestamp("provider_created_at", { withTimezone: true }),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
   },
   (t) => [unique("payment_provider_events_provider_event_unique").on(t.provider, t.providerEventId)]
 );
