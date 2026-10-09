@@ -102,3 +102,15 @@ variable "storage_location" {
   type    = string
   default = "US-EAST1"
 }
+
+variable "schedule_enabled" {
+  type        = bool
+  default     = true
+  description = "Run the VM and the database only during working hours (see schedule_days and the times in schedule.tf). Disks and the static IP still bill while stopped."
+}
+
+variable "schedule_days" {
+  type        = string
+  default     = "1-5"
+  description = "Cron day-of-week field for the schedule: \"1-5\" = Monday to Friday, \"*\" = every day."
+}

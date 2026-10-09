@@ -99,7 +99,8 @@ resource "google_compute_instance" "node" {
     block-project-ssh-keys = "true"
   }
 
-  desired_status = var.running ? "RUNNING" : "TERMINATED"
+  desired_status    = var.running ? "RUNNING" : "TERMINATED"
+  resource_policies = var.resource_policies
 
   scheduling {
     provisioning_model          = var.spot ? "SPOT" : "STANDARD"
