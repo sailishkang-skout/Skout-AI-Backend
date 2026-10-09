@@ -1,10 +1,10 @@
 import type { Db } from "@skout/db";
-import { schema } from "@skout/db";
 import { schema, postCreditTransaction } from "@skout/db";
 import { eq } from "drizzle-orm";
 
 /** Demo tenant used by the frontend until Clerk workspace provisioning lands. */
 export const DEMO_WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
+const DEMO_CREDITS = 500;
 
 const { workspaces, creditBalances } = schema;
 
@@ -42,5 +42,3 @@ export async function ensureDemoWorkspace(db: Db, workspaceId: string): Promise<
     });
   }
 }
-
-const DEMO_CREDITS = 500;
