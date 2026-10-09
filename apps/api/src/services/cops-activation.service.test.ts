@@ -136,6 +136,20 @@ maybe("COPS-05 activation (Postgres)", () => {
     expect((await loadActivation(db, ctx.workspaceId, b.accountId))!.template_version).toBe(2);
   });
 
+  it("an enterprise account takes the enterprise activation template when one exists", async () => {
+    const [sys] = await sql`select milestones from cops_activation_templates where workspace_id is null and key = 'default_trial' and version = 1`;
+    await sql`insert into cops_activation_templates (workspace_id, key, version, segment, milestones) values (${ctx.workspaceId}, 'default_trial', 1, 'enterprise', ${sql.json(sys.milestones)})`;
+    const a = await provisioned();
+    await sql`update companies set employee_count = 5000 where id = ${a.accountId}`;
+    await sql`delete from cops_onboarding_instances where id = ${a.instanceId}`;
+    await ensureActivationInstance(db, ctx.workspaceId, a.accountId);
+    const [inst] = await sql`select t.segment from cops_onboarding_instances i join cops_activation_templates t on t.id = i.template_id where i.account_id = ${a.accountId}`;
+    expect(inst.segment).toBe("enterprise");
+    const b = await provisioned();
+    const [smb] = await sql`select t.segment from cops_onboarding_instances i join cops_activation_templates t on t.id = i.template_id where i.account_id = ${b.accountId}`;
+    expect(smb.segment).toBeNull();
+  });
+
   it("a manual milestone needs a reason-bearing person; event milestones cannot be completed by hand", async () => {
     const a = await provisioned();
     const act = await completeManualMilestone(db, ctx, a.accountId, "success_review", "Reviewed goals with the champion", randomUUID());

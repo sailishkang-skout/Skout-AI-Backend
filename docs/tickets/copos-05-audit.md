@@ -52,7 +52,7 @@ Legend: done = built and tested; open = not built yet.
 
 BE, onboarding email
 - [x] `POST /accounts/:id/onboarding/send`, plus preview and the email list
-- [x] Template by trial type (`welcome_trial` / `welcome_paid`, versioned). Per-segment templates arrive with the COPS-07 admin config (no segment column on accounts today).
+- [x] Template by segment and trial type: trial vs paid, plus enterprise variants; segment from company size (SMB < 200, mid-market < 1000, enterprise), since accounts have no segment field. Activation templates also pick the account's segment first.
 - [x] Workspace link (invite link until accepted), activation steps, resources, booking link, support path
 - [x] One central `canContact()` gate (suppression, do-not-contact, hard bounce, eligibility; consent for outreach)
 - [x] Emit `WelcomeEmailSent`; explicit, audited re-send; double click sends once
@@ -95,6 +95,8 @@ Acceptance
 - [x] Suppressed/bounced contacts never emailed (done for the onboarding email); hard bounce raises a rep task
 - [x] Login alone never activates; rule change does not rewrite past activations; handoff created exactly once
 - [x] Every one-click action writes a timeline activity
+
+Runbook: `docs/runbooks/cops-onboarding.md` (re-send onboarding safely, missing follow-up, stuck step, activation, tracking).
 
 DoD: permissions + audit, contract before FE (done), events with schema tests, error/empty/loading/retry states, analytics, runbook, tests (unit, integration, tenant isolation, e2e).
 

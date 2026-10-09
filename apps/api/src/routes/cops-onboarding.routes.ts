@@ -14,7 +14,8 @@ import {
   type OnboardingDeps,
 } from "../services/cops-onboarding.service.js";
 import { getFollowUpView } from "../services/cops-follow-up.service.js";
-import { ActivationError, completeManualMilestone, ensureActivationInstance, loadActivation } from "../services/cops-activation.service.js";
+import { ActivationError, applyProductEvent, completeManualMilestone, ensureActivationInstance, loadActivation } from "../services/cops-activation.service.js";
+import { timingSafeEqual } from "node:crypto";
 import { loadProvisionings } from "../services/cops-provisioning.service.js";
 import { listBlockers, loadHandoff, loadIntegrations } from "../services/cops-onboarding-signals.service.js";
 import { loadFollowUpQueue, QUEUE_REASONS } from "../services/cops-follow-up-queue.service.js";
@@ -335,5 +336,31 @@ export async function copsOnboardingRoutes(app: FastifyInstance, opts: { db: Db;
     const parsed = settingsSchema.safeParse(request.body ?? {});
     if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
     return { data: await setOnboardingSettings(db, ctx, parsed.data) };
+  });
+
+  const productEventSchema = z
+    .object({
+      workspace_id: z.string().regex(UUID, "Invalid id"),
+      event_type: z.string().trim().min(1).max(120),
+      event_id: z.string().trim().min(1).max(200),
+      occurred_at: z.string().datetime({ offset: true }).optional(),
+      properties: z.record(z.unknown()).optional(),
+    })
+    .strict();
+
+  /**
+   * Product analytics events (service to service): satisfies activation milestones whose template
+   * lists the event type. Bearer INTERNAL_SERVICE_TOKEN; missing token config or a wrong token is 401.
+   */
+  app.post<{ Body: unknown }>("/internal/product-events", async (request, rawReply) => {
+    const reply = rawReply as unknown as Reply;
+    const requestId = resolveCorrelationId(request.headers["x-request-id"] as string | undefined);
+    const expected = app.config.INTERNAL_SERVICE_TOKEN;
+    const given = String(request.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
+    const ok = Boolean(expected) && given.length === expected!.length && timingSafeEqual(Buffer.from(given), Buffer.from(expected!));
+    if (!ok) return reply.status(401).send(copsErrorBody({ code: "UNAUTHENTICATED", message: "Invalid service token", requestId }));
+    const parsed = productEventSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return invalid(reply, requestId, parsed.error);
+    return { data: await applyProductEvent(db, parsed.data, requestId) };
   });
 }

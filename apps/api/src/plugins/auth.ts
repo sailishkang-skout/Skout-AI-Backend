@@ -113,6 +113,8 @@ function isPublicRoute(url: string, method?: string): boolean {
     pathname.startsWith("/api/v1/crm/hubspot/callback") ||
     pathname.startsWith("/api/v1/crm/hubspot/webhook") ||
     pathname.startsWith("/api/v1/billing/webhooks/") ||
+    // COPS-05: product analytics events; the route checks INTERNAL_SERVICE_TOKEN itself.
+    pathname === "/api/v1/internal/product-events" ||
     pathname.startsWith("/api/v1/webhooks/unipile/") ||
     pathname.startsWith("/api/v1/track/") ||
     pathname.startsWith("/api/v1/unsubscribe/") ||

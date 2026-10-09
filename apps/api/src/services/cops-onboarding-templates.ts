@@ -18,6 +18,8 @@ export interface OnboardingTemplateInput {
   bookingUrl: string | null;
   resourcesUrl: string;
   supportEmail: string;
+  /** Enterprise variant adds the kickoff / success-plan paragraph. */
+  enterprise?: boolean;
 }
 
 interface OnboardingTemplate {
@@ -26,6 +28,16 @@ interface OnboardingTemplate {
   label: string;
   render(input: OnboardingTemplateInput): MailOptions;
 }
+
+export type Segment = "smb" | "mid_market" | "enterprise";
+
+/** Account segment from company size (accounts have no segment field yet). Unknown size counts as SMB. */
+export function segmentOf(employeeCount: number | null | undefined): Segment {
+  if (!employeeCount || employeeCount < 200) return "smb";
+  return employeeCount < 1000 ? "mid_market" : "enterprise";
+}
+
+const ENTERPRISE_NOTE = "Your account team will reach out to schedule a kickoff with your stakeholders and agree the success plan.";
 
 function body(input: OnboardingTemplateInput, intro: string): { html: string; text: string } {
   const start = input.inviteUrl ?? input.workspaceUrl;
@@ -37,6 +49,7 @@ function body(input: OnboardingTemplateInput, intro: string): { html: string; te
     <p style="margin:0 0 24px;"><a href="${escapeHtml(start)}" style="display:inline-block;padding:12px 22px;background:#09090b;color:#fafafa;text-decoration:none;border-radius:8px;font-weight:600;font-size:14px;">Open ${escapeHtml(input.workspaceName)}</a></p>
     <p style="margin:0 0 8px;font-weight:600;">Get to your first result</p>
     <ol style="margin:0 0 20px;padding-left:20px;">${steps.map((s) => `<li style="margin:0 0 6px;">${escapeHtml(s)}</li>`).join("")}</ol>
+    ${input.enterprise ? `<p style="margin:0 0 16px;">${escapeHtml(ENTERPRISE_NOTE)}</p>` : ""}
     ${trial ? `<p style="margin:0 0 16px;">Your trial runs until <strong>${escapeHtml(trial)}</strong>.</p>` : ""}
     <p style="margin:0 0 8px;">Guides and how-tos: <a href="${escapeHtml(input.resourcesUrl)}" style="color:#3f3f46;">${escapeHtml(input.resourcesUrl)}</a></p>
     ${input.bookingUrl ? `<p style="margin:0 0 8px;">Book a guided onboarding session: <a href="${escapeHtml(input.bookingUrl)}" style="color:#3f3f46;">${escapeHtml(input.bookingUrl)}</a></p>` : ""}
@@ -52,6 +65,7 @@ function body(input: OnboardingTemplateInput, intro: string): { html: string; te
     "Get to your first result:",
     ...steps.map((s, i) => `${i + 1}. ${s}`),
     "",
+    ...(input.enterprise ? [ENTERPRISE_NOTE, ""] : []),
     ...(trial ? [`Your trial runs until ${trial}.`, ""] : []),
     `Guides and how-tos: ${input.resourcesUrl}`,
     ...(input.bookingUrl ? [`Book a guided onboarding session: ${input.bookingUrl}`] : []),
@@ -61,7 +75,11 @@ function body(input: OnboardingTemplateInput, intro: string): { html: string; te
   return { html, text };
 }
 
-export const ONBOARDING_TEMPLATES: Record<string, OnboardingTemplate> = {
+function enterpriseVariant(base: OnboardingTemplate, key: string, label: string): OnboardingTemplate {
+  return { key, version: 1, label, render: (input) => base.render({ ...input, enterprise: true }) };
+}
+
+const BASE_TEMPLATES: Record<string, OnboardingTemplate> = {
   welcome_trial: {
     key: "welcome_trial",
     version: 1,
@@ -92,8 +110,19 @@ export const ONBOARDING_TEMPLATES: Record<string, OnboardingTemplate> = {
   },
 };
 
-/** Trial plans get the trial welcome; any other plan the customer welcome. */
-export function chooseOnboardingTemplate(plan: string | null | undefined, override?: string | null): OnboardingTemplate | null {
+export const ONBOARDING_TEMPLATES: Record<string, OnboardingTemplate> = {
+  ...BASE_TEMPLATES,
+  welcome_trial_enterprise: enterpriseVariant(BASE_TEMPLATES.welcome_trial!, "welcome_trial_enterprise", "Trial welcome (enterprise)"),
+  welcome_paid_enterprise: enterpriseVariant(BASE_TEMPLATES.welcome_paid!, "welcome_paid_enterprise", "Customer welcome (enterprise)"),
+};
+
+/** Template by trial type and segment (Bible p.41): trial vs paid, and the enterprise variant for enterprise accounts. */
+export function chooseOnboardingTemplate(
+  plan: string | null | undefined,
+  override?: string | null,
+  segment: Segment = "smb"
+): OnboardingTemplate | null {
   if (override) return ONBOARDING_TEMPLATES[override] ?? null;
-  return (plan ?? "trial").toLowerCase().includes("trial") ? ONBOARDING_TEMPLATES.welcome_trial! : ONBOARDING_TEMPLATES.welcome_paid!;
+  const kind = (plan ?? "trial").toLowerCase().includes("trial") ? "welcome_trial" : "welcome_paid";
+  return ONBOARDING_TEMPLATES[segment === "enterprise" ? `${kind}_enterprise` : kind]!;
 }

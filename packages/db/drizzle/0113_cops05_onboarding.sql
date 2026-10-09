@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS "cops_activation_templates" (
   "created_at" timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS "cops_activation_templates_version_uq"
-  ON "cops_activation_templates" (coalesce("workspace_id", '00000000-0000-0000-0000-000000000000'::uuid), "key", "version");
+  ON "cops_activation_templates" (coalesce("workspace_id", '00000000-0000-0000-0000-000000000000'::uuid), "key", coalesce("segment", ''), "version");
 
 -- Templates are versioned: a row is never edited, a change inserts the next version.
 CREATE OR REPLACE FUNCTION cops_activation_templates_immutable() RETURNS trigger AS $$

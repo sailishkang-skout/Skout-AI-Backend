@@ -3,6 +3,7 @@ import { schema, type Db } from "@skout/db";
 import { appendCopsEvent, createCopsEvent } from "@skout/shared";
 import { writeCopsAudit } from "./cops-platform.service.js";
 import { stopAccountFollowUps } from "./cops-stop.service.js";
+import { segmentOf } from "./cops-onboarding-templates.js";
 
 /**
  * COPS-05 activation (Bible p.44-45): value-based, weighted milestones per template version.
@@ -66,17 +67,28 @@ export async function ensureActivationInstance(db: Db, workspaceId: string, acco
     .limit(1);
   if (!prov?.customerWs) return null;
 
-  // A workspace's own template wins over the system default; the newest version is used.
+  // Most specific first: this segment, then any segment; the workspace's own over the system
+  // default; the newest version.
+  const [company] = await db
+    .select({ employeeCount: schema.companies.employeeCount })
+    .from(schema.companies)
+    .where(and(eq(schema.companies.workspaceId, workspaceId), eq(schema.companies.id, accountId)));
+  const segment = segmentOf(company?.employeeCount);
   const [template] = await db
     .select()
     .from(copsActivationTemplates)
     .where(
       and(
         eq(copsActivationTemplates.key, DEFAULT_ACTIVATION_TEMPLATE),
-        or(eq(copsActivationTemplates.workspaceId, workspaceId), isNull(copsActivationTemplates.workspaceId))
+        or(eq(copsActivationTemplates.workspaceId, workspaceId), isNull(copsActivationTemplates.workspaceId)),
+        or(eq(copsActivationTemplates.segment, segment), isNull(copsActivationTemplates.segment))
       )
     )
-    .orderBy(sql`${copsActivationTemplates.workspaceId} is null`, desc(copsActivationTemplates.version))
+    .orderBy(
+      sql`${copsActivationTemplates.segment} is null`,
+      sql`${copsActivationTemplates.workspaceId} is null`,
+      desc(copsActivationTemplates.version)
+    )
     .limit(1);
   if (!template) return null;
 
@@ -426,3 +438,50 @@ export async function openInstances(db: Db, limit = 200) {
     .limit(limit);
 }
 
+
+export interface ProductEventInput {
+  /** The provisioned customer workspace the event happened in. */
+  workspace_id: string;
+  /** Analytics event name, matched against the template's milestone event_types (e.g. product.export). */
+  event_type: string;
+  /** Unique id of the analytics event; a repeat is a no-op. */
+  event_id: string;
+  occurred_at?: string;
+  properties?: Record<string, unknown>;
+}
+
+/**
+ * Product analytics events satisfy milestones automatically (Bible p.45): the event is matched to
+ * the open milestones of every onboarding instance for that customer workspace whose template
+ * lists the event type. The instance keeps the template version it started with.
+ */
+export async function applyProductEvent(db: Db, input: ProductEventInput, correlationId: string) {
+  const instances = await db
+    .select({ id: copsOnboardingInstances.id, workspaceId: copsOnboardingInstances.workspaceId, templateId: copsOnboardingInstances.templateId })
+    .from(copsOnboardingInstances)
+    .where(eq(copsOnboardingInstances.customerWorkspaceId, input.workspace_id));
+  let completed = 0;
+  let activated = false;
+  for (const inst of instances) {
+    const [tpl] = await db.select({ milestones: copsActivationTemplates.milestones }).from(copsActivationTemplates).where(eq(copsActivationTemplates.id, inst.templateId));
+    const keys = ((tpl?.milestones ?? []) as TemplateMilestone[]).filter((m) => m.source === "event" && m.event_types.includes(input.event_type)).map((m) => m.key);
+    for (const key of keys) {
+      const r = await completeMilestone(db, {
+        workspaceId: inst.workspaceId,
+        instanceId: inst.id,
+        signal: {
+          key,
+          sourceRef: `analytics:${input.event_id}`,
+          sourceType: input.event_type,
+          occurredAt: input.occurred_at ? new Date(input.occurred_at) : new Date(),
+          evidence: { analytics_event_id: input.event_id },
+        },
+        actor: { type: "system", id: null },
+        correlationId,
+      });
+      if (r.outcome === "completed") completed += 1;
+      activated ||= r.activated;
+    }
+  }
+  return { matched_instances: instances.length, completed, activated };
+}

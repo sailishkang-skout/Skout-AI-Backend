@@ -59,6 +59,27 @@ paths:
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
         "200": { description: OK, content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: "#/components/schemas/EmailSend" } } } } } } }
+  /internal/product-events:
+    post:
+      summary: Product analytics event (service to service) that can satisfy activation milestones
+      description: |
+        Bearer INTERNAL_SERVICE_TOKEN (401 otherwise). The event is matched to open milestones whose
+        template lists the event_type (for example product.export); a repeated event_id is a no-op.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workspace_id, event_type, event_id]
+              properties:
+                workspace_id: { type: string, format: uuid, description: The provisioned customer workspace }
+                event_type: { type: string }
+                event_id: { type: string }
+                occurred_at: { type: string, format: date-time }
+                properties: { type: object }
+      responses:
+        "200": { description: "{ matched_instances, completed, activated }" }
+        "401": { description: Invalid service token }
   /billing/webhooks/resend/email-events:
     post:
       summary: Resend email events for onboarding sends (delivered, bounced, opened, clicked)
@@ -248,6 +269,14 @@ components:
         activation: { $ref: "#/components/schemas/Activation" }
         follow_up: { $ref: "#/components/schemas/FollowUp" }
         emails: { type: array, items: { $ref: "#/components/schemas/EmailSend" } }
+        integrations:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string, enum: [crm, email, calendar] }
+              status: { type: string, enum: [connected, error, not_connected, not_available] }
+              detail: { type: string, nullable: true }
         blockers: { type: array, items: { type: object, properties: { kind: { type: string }, detail: { type: string }, since: { type: string, format: date-time }, task_id: { type: string, format: uuid, nullable: true } } } }
         handoff: { type: object, nullable: true, properties: { task_id: { type: string, format: uuid }, created_at: { type: string, format: date-time } } }
     OnboardingEnvelope: { type: object, properties: { data: { $ref: "#/components/schemas/Onboarding" } } }

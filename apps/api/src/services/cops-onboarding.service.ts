@@ -6,7 +6,7 @@ import { sendMail, type MailOptions, type SendMailResult } from "./mail.service.
 import { writeCopsAudit } from "./cops-platform.service.js";
 import { loadProvisionings, type ProvisioningDto } from "./cops-provisioning.service.js";
 import { canContact, CAN_CONTACT_MESSAGE, type CanContactBlock } from "./cops-can-contact.js";
-import { chooseOnboardingTemplate } from "./cops-onboarding-templates.js";
+import { chooseOnboardingTemplate, segmentOf } from "./cops-onboarding-templates.js";
 
 /**
  * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
@@ -208,7 +208,11 @@ async function activationSteps(db: Db, ctx: OnboardingContext, accountId: string
 
 async function render(db: Db, ctx: OnboardingContext, accountId: string, input: OnboardingSendInput, deps: OnboardingDeps) {
   const target = await loadTarget(db, ctx, accountId, input, deps);
-  const template = chooseOnboardingTemplate(target.provisioning.plan, input.template_key);
+  const [company] = await db
+    .select({ employeeCount: schema.companies.employeeCount })
+    .from(schema.companies)
+    .where(and(eq(schema.companies.workspaceId, ctx.workspaceId), eq(schema.companies.id, accountId)));
+  const template = chooseOnboardingTemplate(target.provisioning.plan, input.template_key, segmentOf(company?.employeeCount));
   if (!template) {
     throw new OnboardingError("VALIDATION_FAILED", "Unknown template", { fields: [{ path: "template_key", message: "Unknown template" }] });
   }

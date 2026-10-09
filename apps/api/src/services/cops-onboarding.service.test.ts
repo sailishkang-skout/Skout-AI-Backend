@@ -78,6 +78,14 @@ maybe("COPS-05 onboarding email (Postgres)", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("chooses the template by trial type and segment: an enterprise trial gets the enterprise welcome", async () => {
+    const a = await provisionedAccount();
+    await sql`update companies set employee_count = 2500 where id = ${a.accountId}`;
+    const p = await previewOnboardingEmail(db, ctx, a.accountId, {}, deps);
+    expect(p.template_key).toBe("welcome_trial_enterprise");
+    expect(p.text).toContain("schedule a kickoff");
+  });
+
   it("sends once per key: a replay and a concurrent double click send nothing more; one WelcomeEmailSent", async () => {
     const a = await provisionedAccount();
     send.mockClear();

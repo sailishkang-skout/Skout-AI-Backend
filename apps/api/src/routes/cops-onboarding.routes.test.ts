@@ -16,6 +16,7 @@ const postgres = createRequire(new URL("../../../../packages/db/package.json", i
 
 const RUN = Date.now().toString(36);
 const OWNER = `onb-owner-${RUN}@example.test`;
+const SERVICE_TOKEN = "cops05-internal-service-token";
 const WEBHOOK_SECRET = "whsec_" + Buffer.from("cops05-test-secret").toString("base64");
 
 maybe("COPS-05 onboarding email routes", () => {
@@ -64,6 +65,7 @@ maybe("COPS-05 onboarding email routes", () => {
       OPENSEARCH_URL: undefined,
       RESEND_API_KEY: undefined,
       RESEND_WEBHOOK_SECRET: WEBHOOK_SECRET,
+      INTERNAL_SERVICE_TOKEN: SERVICE_TOKEN,
       SMTP_HOST: undefined,
     } as typeof config);
     sql = postgres(url as string, { max: 1, onnotice: () => {} });
@@ -296,6 +298,26 @@ maybe("COPS-05 onboarding email routes", () => {
     const [ch] = await sql`select bounce_status from contact_channels where contact_id = ${contactId} and lower(value) = ${admin.toLowerCase()}`;
     expect(ch.bounce_status).toBe("hard");
     expect((await call("POST", `/accounts/${accountId}/onboarding/preview`, {})).json().data.blocked).toBe("hard_bounce");
+  });
+
+  it("a product analytics event completes the matching milestone once; a bad service token is 401", async () => {
+    await asRole("cs");
+    const { accountId } = await provisioned();
+    await call("GET", `/accounts/${accountId}/activation`);
+    const [prov] = await sql`select provisioned_workspace_id as id from cops_provisionings where account_id = ${accountId}`;
+    const send = (token: string, body: object) =>
+      app.inject({ method: "POST", url: "/api/v1/internal/product-events", headers: { authorization: `Bearer ${token}` }, payload: body });
+    const body = { workspace_id: prov.id, event_type: "product.export", event_id: `ph-${RUN}-1` };
+    expect((await send("wrong-token-wrong-token", body)).statusCode).toBe(401);
+    const first = await send(SERVICE_TOKEN, body);
+    expect(first.statusCode).toBe(200);
+    expect(first.json().data).toMatchObject({ matched_instances: 1, completed: 1 });
+    expect((await send(SERVICE_TOKEN, body)).json().data.completed).toBe(0);
+    const act = (await call("GET", `/accounts/${accountId}/activation`)).json().data;
+    const m = act.milestones.find((x: { key: string }) => x.key === "first_export");
+    expect(m.completed_at).not.toBeNull();
+    expect(m.evidence).toMatchObject({ source_type: "product.export", analytics_event_id: `ph-${RUN}-1` });
+    expect(act.activation_pct).toBe(35);
   });
 
   it("Engineering cannot send or read onboarding email", async () => {
