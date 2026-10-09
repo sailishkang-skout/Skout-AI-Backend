@@ -10,6 +10,15 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
+function runRbacBackfill(databaseUrl) {
+  return spawnSync("pnpm", ["--filter", "@skout/db", "backfill-rbac"], {
+    cwd: repoRoot,
+    stdio: "inherit",
+    shell: true,
+    env: { ...process.env, DATABASE_URL: databaseUrl },
+  });
+}
+
 if (process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true") {
   // In CI, the database is already running, but we still need to run migrations
   const migrate = spawnSync("pnpm", ["db:migrate"], {
@@ -29,8 +38,9 @@ if (process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true") {
     shell: true,
     env: { ...process.env },
   });
-  
-  process.exit(applyPending.status === 0 ? 0 : applyPending.status ?? 1);
+  if (applyPending.status !== 0) process.exit(applyPending.status ?? 1);
+  const backfill = runRbacBackfill(process.env.DATABASE_URL);
+  process.exit(backfill.status === 0 ? 0 : backfill.status ?? 1);
 }
 const DATABASE_URL = "postgresql://skout:skout@localhost:5434/skout";
 
@@ -76,4 +86,6 @@ const applyPending = spawnSync("pnpm", ["--filter", "@skout/db", "exec", "tsx", 
   env: { ...process.env, DATABASE_URL },
 });
 
-process.exit(applyPending.status === 0 ? 0 : applyPending.status ?? 1);
+if (applyPending.status !== 0) process.exit(applyPending.status ?? 1);
+const backfill = runRbacBackfill(DATABASE_URL);
+process.exit(backfill.status === 0 ? 0 : backfill.status ?? 1);
