@@ -351,6 +351,27 @@ Background enrichment of a LinkedIn profile or company URL runs as a durable job
   [docs/enrichment-provider-policy.md](docs/enrichment-provider-policy.md). Until then a job
   ends `action_required` / `PROVIDER_NOT_PERMITTED`.
 
+## Evidence campaigns (ENR-05)
+
+Audience → composed draft → recorded approval → launch through the existing sequence path.
+
+- **Audiences:** `POST /api/v1/enrichment/audiences/preview` `{ "filters": { "role": "…",
+  "department": "…", "seniority": "…", "location": "…", "industry": "…", "evidenceState":
+  "verified|discovery", "freshness": "fresh|stale" } }` returns live counts and a sample.
+  `POST /enrichment/audiences` saves one and writes its members to a list.
+- **Campaigns:** `POST /enrichment/campaigns` `{ "name", "audienceId" | "prospectIds" }` builds a
+  draft. `GET /enrichment/campaigns/:id` returns the copy, each recipient's eligibility and
+  exclusion reason, and their claims — every claim with its evidence id, source, capture time,
+  confidence and verified/discovery state.
+- **Review:** `PUT …/draft`, `PUT …/recipients/:prospectId`, `POST …/submit`, then
+  `POST …/review` `{ "decision": "approved" | "rejected", "comment", "consentBasis" }`
+  (`sequences:send`). `POST …/launch` returns `409 approval_required` without a recorded
+  approval and `409 re_review_required` when evidence changed after it.
+- **Job changes:** `GET /enrichment/campaigns/review-queue` lists suggested one-person drafts.
+  Nothing in it is sent until a person submits, approves and launches it.
+- **Non-production sending:** set `ENRICHMENT_CAMPAIGN_SANDBOX_RECIPIENTS` to the addresses or
+  `@domain`s campaign emails may go to. Unset, campaigns send nothing outside production.
+
 ## Pre-commit hooks
 
 ```bash

@@ -307,31 +307,7 @@ export async function enrichmentRoutes(app: FastifyInstance) {
 
   // People, companies, job changes, evidence and delete live in enrichment-research.routes.ts (ENR-03).
 
-  // GET /enrichment/campaigns - Get all campaigns (maps to lists)
-  app.get("/enrichment/campaigns", async (request, reply) => {
-    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
-    const workspaceId = requireWorkspaceId(request);
-    if (!request.userId) throw new HttpError("unauthorized", 401);
-    await assertPermission(app.db, workspaceId, request.userId, "enrichment:read");
-    
-    const campaigns = await app.db
-      .select({
-        id: sequences.id,
-        name: sequences.name,
-        status: sequences.status,
-        createdAt: sequences.createdAt,
-        updatedAt: sequences.updatedAt,
-      })
-      .from(sequences)
-      .where(eq(sequences.workspaceId, workspaceId))
-      .orderBy(desc(sequences.updatedAt));
-    return reply.send({
-      workspaceId,
-      campaigns,
-      total: campaigns.length,
-      source: "sequences",
-    });
-  });
+  // Campaigns (audiences, composer, approval) live in enrichment-campaign.routes.ts (ENR-05).
 
   // GET /enrichment/capture - Get capture interface data (credits)
   app.get("/enrichment/capture", async (request, reply) => {

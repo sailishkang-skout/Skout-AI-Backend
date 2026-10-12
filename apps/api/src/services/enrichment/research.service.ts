@@ -138,7 +138,7 @@ export interface PersonSummary {
 
 const text = (value: unknown): string | null => (typeof value === "string" && value.trim() ? value : null);
 
-function toPersonSummary(row: {
+export function toPersonSummary(row: {
   prospectId: string;
   snapshot: unknown;
   updatedAt: Date;
@@ -192,7 +192,7 @@ const snap = (key: string) => sql`${prospectActivations.snapshot}->>${key}`;
 const PUBLIC_URL_SQL = sql`(${contacts.linkedinUrl} ~* 'linkedin\\.com/in/[^/]+' or ${snap("linkedinUrl")} ~* 'linkedin\\.com/in/[^/]+')`;
 const VERIFIED_SQL = sql`(${contacts.employmentStatus} = 'verified_employment' and ${contacts.companyId} is not null)`;
 
-function personFilters(filters: Omit<PeopleFilters, "page" | "pageSize">): SQL[] {
+export function personFilters(filters: Omit<PeopleFilters, "page" | "pageSize">): SQL[] {
   const where: SQL[] = [];
   if (filters.q?.trim()) {
     const pattern = like(filters.q);
@@ -218,7 +218,7 @@ function personFilters(filters: Omit<PeopleFilters, "page" | "pageSize">): SQL[]
   return where;
 }
 
-const personColumns = {
+export const personColumns = {
   prospectId: prospectActivations.prospectId,
   snapshot: prospectActivations.snapshot,
   updatedAt: prospectActivations.updatedAt,
@@ -231,7 +231,7 @@ const personColumns = {
 };
 
 /** People = workspace prospect activations, joined to their CRM contact and current company. */
-function peopleFrom<T extends { from: (table: typeof prospectActivations) => any }>(query: T) {
+export function peopleFrom<T extends { from: (table: typeof prospectActivations) => any }>(query: T) {
   return query
     .from(prospectActivations)
     .leftJoin(

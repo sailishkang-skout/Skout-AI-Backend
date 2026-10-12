@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { suggestForJobChanges } from "../services/enrichment/campaign.service.js";
 import { z } from "zod";
 import type { Db } from "@skout/db";
 import { assertPermission } from "@skout/auth";
@@ -139,6 +140,11 @@ export async function enrichmentCaptureRoutes(app: FastifyInstance) {
     const body = personIngestSchema.parse(request.body ?? {});
     try {
       const { run, person, ...counts } = await ingestPersonCapture(db, actor, body);
+      // ENR-05 — a detected job change becomes a review item (a draft for a person to look at).
+      // It is never submitted or sent from here, and a failure never fails the capture.
+      await suggestForJobChanges(db, app.config, actor.workspaceId).catch((error: unknown) =>
+        request.log.warn({ err: error }, "job-change suggestion failed")
+      );
       return reply.status(201).send({ run: runDto(run), person, ...counts });
     } catch (error) {
       return sendCaptureError(reply, error);
