@@ -1,90 +1,13 @@
-/** Shared LinkedIn profile scraper — loaded before bridge + panel scripts. */
+/**
+ * Shared LinkedIn profile scraper — loaded before bridge + panel scripts.
+ *
+ * ENR-02 compliance: fields come from rendered page content only (visible DOM, plus the
+ * page title / Open Graph title as a name fallback). The earlier reads of LinkedIn's inline
+ * page JSON (embedded API payloads and JSON-LD) were removed; see README "Compliance review".
+ */
 (function initLinkedInScraper() {
   function clean(text) {
     return (text || "").replace(/\s+/g, " ").trim();
-  }
-
-  function unescapeJsonString(value) {
-    try {
-      return JSON.parse(`"${value}"`);
-    } catch {
-      return value.replace(/\\"/g, '"').replace(/\\\\/g, "\\");
-    }
-  }
-
-  function pickFirstMatch(html, patterns) {
-    for (const pattern of patterns) {
-      const match = html.match(pattern);
-      if (match?.[1]) return unescapeJsonString(match[1]);
-    }
-    return "";
-  }
-
-  /** Profile-scoped fields from inline JSON — avoid first random companyName on the page. */
-  function fieldsFromPageSource(linkedinUrl) {
-    const html = document.documentElement.innerHTML;
-    const slugMatch = linkedinUrl.match(/linkedin\.com\/(?:in|pub)\/([^/?#]+)/i);
-    const publicId = slugMatch ? decodeURIComponent(slugMatch[1]).replace(/\/$/, "") : "";
-
-    const firstNames = [...html.matchAll(/"firstName"\s*:\s*"((?:\\.|[^"\\])*)"/g)].map((m) =>
-      unescapeJsonString(m[1])
-    );
-    const lastNames = [...html.matchAll(/"lastName"\s*:\s*"((?:\\.|[^"\\])*)"/g)].map((m) =>
-      unescapeJsonString(m[1])
-    );
-
-    let fullName = "";
-    const pairs = Math.max(firstNames.length, lastNames.length);
-    for (let i = 0; i < pairs; i += 1) {
-      const candidate = [firstNames[i], lastNames[i]].filter(Boolean).join(" ").trim();
-      if (candidate.length > fullName.length) fullName = candidate;
-    }
-
-    let headline = "";
-    if (publicId) {
-      const escaped = publicId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const block = html.match(
-        new RegExp(`"publicIdentifier"\\s*:\\s*"${escaped}"[\\s\\S]{0,8000}?"headline"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`)
-      );
-      if (block?.[1]) headline = unescapeJsonString(block[1]);
-    }
-    if (!headline) {
-      headline = pickFirstMatch(html, [
-        /"headline"\s*:\s*"((?:\\.|[^"\\])*)"/,
-        /"occupation"\s*:\s*"((?:\\.|[^"\\])*)"/,
-      ]);
-    }
-
-    let companyName = "";
-    if (publicId) {
-      const escaped = publicId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const block = html.match(
-        new RegExp(
-          `"publicIdentifier"\\s*:\\s*"${escaped}"[\\s\\S]{0,12000}?"companyName"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`
-        )
-      );
-      if (block?.[1]) companyName = unescapeJsonString(block[1]);
-    }
-
-    const location = pickFirstMatch(html, [
-      /"geoLocationName"\s*:\s*"((?:\\.|[^"\\])*)"/,
-      /"locationName"\s*:\s*"((?:\\.|[^"\\])*)"/,
-      /"defaultLocalizedName"\s*:\s*"((?:\\.|[^"\\])*)"/,
-    ]);
-
-    let about = "";
-    if (publicId) {
-      const escaped = publicId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const block = html.match(
-        new RegExp(`"publicIdentifier"\\s*:\\s*"${escaped}"[\\s\\S]{0,12000}?"summary"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`)
-      );
-      if (block?.[1]) about = unescapeJsonString(block[1]);
-    }
-    if (!about) {
-      about = pickFirstMatch(html, [/"summary"\s*:\s*"((?:\\.|[^"\\])*)"/]);
-    }
-
-    return { fullName, headline, companyName, location, about };
   }
 
   function nameFromDocumentTitle() {
@@ -145,22 +68,6 @@
     // Single-word vanity slugs (e.g. winforthegipper) are often not real names.
     if (words.length === 1 && words[0].length < 20) return "";
     return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
-  }
-
-  function nameFromJsonLd() {
-    for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
-      try {
-        const data = JSON.parse(script.textContent || "");
-        const items = Array.isArray(data) ? data : [data];
-        for (const item of items) {
-          if (item?.["@type"] === "Person" && item.name) return clean(item.name);
-          if (item?.author?.name) return clean(item.author.name);
-        }
-      } catch {
-        // ignore malformed JSON-LD
-      }
-    }
-    return "";
   }
 
   function nameFromOg() {
@@ -257,32 +164,22 @@
       .trim();
   }
 
-  function companiesMatch(a, b) {
-    if (!a || !b) return false;
-    const left = a.toLowerCase();
-    const right = b.toLowerCase();
-    return left === right || left.includes(right) || right.includes(left);
-  }
-
   function isValidCompanyLabel(text) {
     if (!text || text.length < 2 || text.length > 120) return false;
     return !/followers|employees|\bpresent\b|\b\d+\s*(mo|yr)s?\b|full-time|part-time|contract/i.test(text);
   }
 
-  function resolveCompanyName({ headline, parsed, topCard, experience, embedded }) {
+  function resolveCompanyName({ headline, parsed, topCard, experience }) {
     const fromHeadline = normalizeCompanyName(parsed.companyName);
     const fromExp = normalizeCompanyName(experience);
     const fromTop = normalizeCompanyName(topCard);
-    const fromEmbed = normalizeCompanyName(embedded);
 
     if (fromHeadline && /\s(?:at|@)\s/i.test(headline)) return fromHeadline;
 
     // Current role: first entry under Experience (most reliable after headline).
     if (fromExp) return fromExp;
 
-    if (fromTop && fromEmbed && companiesMatch(fromTop, fromEmbed)) return fromTop;
     if (fromTop) return fromTop;
-    if (fromEmbed) return fromEmbed;
     if (fromHeadline) return fromHeadline;
 
     return "";
@@ -547,18 +444,15 @@
       return { error: "not_a_profile", linkedinUrl };
     }
 
-    const embedded = fieldsFromPageSource(linkedinUrl);
     const fullName =
       nameFromDom() ||
-      embedded.fullName ||
-      nameFromJsonLd() ||
       nameFromOg() ||
       nameFromDocumentTitle() ||
       nameFromUrl(linkedinUrl) ||
       nameFromUrlVanity(linkedinUrl) ||
       "";
 
-    const headline = headlineFromDom() || embedded.headline || "";
+    const headline = headlineFromDom();
     const parsed = parseHeadline(headline);
     const experience = parseTopExperience();
 
@@ -572,7 +466,6 @@
       parsed,
       topCard: companyFromTopCard(),
       experience: experience.companyName,
-      embedded: embedded.companyName,
     });
 
     if (!title && experience.title) title = experience.title;
@@ -586,9 +479,9 @@
       companyName = merged.companyName;
     }
 
-    const profileLocation = locationFromDom() || clean(embedded.location);
+    const profileLocation = locationFromDom();
     const { city, state, country } = splitLocation(profileLocation);
-    const about = aboutFromDom() || clean(embedded.about);
+    const about = aboutFromDom();
     const connections = connectionsFromDom();
     const followers = followersFromDom();
     const photoUrl = photoFromDom();
@@ -630,28 +523,19 @@
       return { error: "not_a_company_page", linkedinUrl };
     }
 
-    const html = document.documentElement.innerHTML;
     const slugMatch = linkedinUrl.match(/linkedin\.com\/company\/([^/?#]+)/i);
     const slug = slugMatch ? decodeURIComponent(slugMatch[1]).replace(/\/$/, "") : "";
 
     const nameEl = document.querySelector(
       "h1.org-top-card-summary__title, h1[class*='org-top'], main h1"
     );
-    const name =
-      clean(nameEl?.textContent) ||
-      pickFirstMatch(html, [
-        /"localizedName"\s*:\s*"((?:\\.|[^"\\])*)"/,
-        /"name"\s*:\s*"((?:\\.|[^"\\])*)"/,
-      ]) ||
-      clean(document.title.split("|")[0]?.split(":")[0]) ||
-      "";
+    const name = clean(nameEl?.textContent) || clean(document.title.split("|")[0]?.split(":")[0]) || "";
 
     const websiteAnchor = document.querySelector(
       'a[data-tracking-control-name*="website"]'
     );
-    let website =
-      clean(websiteAnchor?.getAttribute("href") || websiteAnchor?.textContent) ||
-      pickFirstMatch(html, [/"websiteUrl"\s*:\s*"((?:\\.|[^"\\])*)"/]);
+    const website =
+      clean(websiteAnchor?.getAttribute("href") || websiteAnchor?.textContent) || domTextNear("^website$");
     let domain = "";
     try {
       if (website) {
@@ -660,31 +544,16 @@
       }
     } catch {}
 
-    const industry =
-      pickFirstMatch(html, [
-        /"localizedIndustryName"\s*:\s*"((?:\\.|[^"\\])*)"/,
-        /"industryName"\s*:\s*"((?:\\.|[^"\\])*)"/,
-      ]) ||
-      domTextNear("industry") ||
-      "";
+    const industry = domTextNear("^industry$");
+    const employeeCount = (domTextNear("^company size$") || domTextNear("employees"))
+      .replace(/\s*employees?$/i, "")
+      .trim();
 
-    let employeeCount = "";
-    const staffRangeMatch = html.match(/"staffCountRange"\s*:\s*\{\s*"start"\s*:\s*(\d+)[^}]*"end"\s*:\s*(\d+)/);
-    if (staffRangeMatch) {
-      employeeCount = `${staffRangeMatch[1]}-${staffRangeMatch[2]}`;
-    } else {
-      employeeCount =
-        pickFirstMatch(html, [/"staffCount"\s*:\s*"?([\d,]+)"?/]) ||
-        domTextNear("employees") ||
-        "";
-    }
-
-    const description =
-      pickFirstMatch(html, [/"description"\s*:\s*"((?:\\.|[^"\\])*)"/]) ||
-      clean(document.querySelector(
-        ".org-about-us-organization-description__text, .break-words.whitespace-pre-wrap"
-      )?.textContent) ||
-      "";
+    const description = clean(
+      document.querySelector(
+        ".org-about-us-organization-description__text, .org-about-module__description, .break-words.whitespace-pre-wrap"
+      )?.textContent
+    );
 
     const followers = statFromDom(/([\d,]+\+?)\s+followers?/i);
 

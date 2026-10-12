@@ -12,8 +12,10 @@ import {
   resolveProspectId,
   listSequences,
   enrollInSequence,
+  skoutFetch,
 } from "./api.js";
 import { friendlyTabError, isUsableTab, isUsableTabUrl, nameFromLinkedInUrl } from "./tab-utils.js";
+import { registerCaptureBackground } from "./capture-background.js";
 import { getLists, prefetchLists, saveLastListId, getLastListId } from "./lists-cache.js";
 import { log, logError, timeStep, withTimeout } from "./debug.js";
 import {
@@ -161,6 +163,9 @@ async function ensureAuthForApi() {
     await ensureSession(config.webUrl || DEFAULT_WEB_URL, { focus: false });
   }
 }
+
+// ENR-02 — reviewed LinkedIn capture (person, company, Sales Navigator results).
+registerCaptureBackground({ skoutFetch });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "ping") {

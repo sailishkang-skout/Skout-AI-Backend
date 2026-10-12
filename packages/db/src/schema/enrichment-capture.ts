@@ -1,4 +1,5 @@
-import { boolean, foreignKey, index, jsonb, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { boolean, foreignKey, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { users } from "./users.js";
 import { workspaces } from "./workspaces.js";
 import { companies, contacts } from "./crm.js";
@@ -88,5 +89,72 @@ export const enrichmentChangeEvents = pgTable(
       table.entityType,
       table.entityId
     ),
+  ]
+);
+
+/**
+ * ENR-02 — canonical LinkedIn identity keys for workspace CRM records. Several keys may point
+ * at one record (a Sales Navigator lead that later exposes its public `/in/` URL keeps both;
+ * a company keeps its vanity slug and its numeric member id), which is what makes repeated
+ * captures idempotent without deriving one key from another.
+ *   person keys:  `in:<public-id>` | `sales-lead:<opaque-id>`
+ *   company keys: `company:<public-id>` | `company-member:<member-id>`
+ */
+export const enrichmentIdentities = pgTable(
+  "enrichment_identities",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    entityType: text("entity_type", { enum: ["person", "company"] }).notNull(),
+    canonicalKey: text("canonical_key").notNull(),
+    /** contacts.id for a person, companies.id for a company. */
+    entityId: uuid("entity_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.entityType, table.canonicalKey] }),
+    index("enrichment_identities_workspace_entity_idx").on(table.workspaceId, table.entityType, table.entityId),
+  ]
+);
+
+/**
+ * ENR-02 — one row per user-started capture (who, when, source, counts, terminal status).
+ * The extension only reports success once a run reaches a terminal status here.
+ */
+export const enrichmentCaptureRuns = pgTable(
+  "enrichment_capture_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+    kind: text("kind", { enum: ["person", "company", "sales_search"] }).notNull(),
+    sourceUrl: text("source_url"),
+    /** Client-generated id; a retried start returns the same run instead of a second one. */
+    clientRunId: text("client_run_id"),
+    status: text("status", {
+      enum: ["running", "completed", "stopped", "failed", "halted", "rejected"],
+    })
+      .notNull()
+      .default("running"),
+    pagesRead: integer("pages_read").notNull().default(0),
+    leadsReceived: integer("leads_received").notNull().default(0),
+    leadsCreated: integer("leads_created").notNull().default(0),
+    leadsMerged: integer("leads_merged").notNull().default(0),
+    leadsRejected: integer("leads_rejected").notNull().default(0),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("enrichment_capture_runs_workspace_started_idx").on(table.workspaceId, table.startedAt),
+    index("enrichment_capture_runs_workspace_user_started_idx").on(table.workspaceId, table.userId, table.startedAt),
+    uniqueIndex("enrichment_capture_runs_client_run_unique_idx")
+      .on(table.workspaceId, table.userId, table.clientRunId)
+      .where(sql`${table.clientRunId} IS NOT NULL`),
   ]
 );

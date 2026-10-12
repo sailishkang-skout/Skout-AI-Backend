@@ -1,9 +1,16 @@
 {
   "manifest_version": 3,
   "name": "Skout AI Prospector",
-  "version": "0.8.3",
-  "description": "Capture LinkedIn profiles into Skout lists, enrich contacts, and send sequence connection requests/messages.",
-  "permissions": ["storage", "activeTab", "scripting", "sidePanel", "tabs", "alarms"],
+  "version": "0.9.0",
+  "description": "Capture reviewed LinkedIn profiles, companies and Sales Navigator results into Skout, and enrich contacts.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "sidePanel",
+    "tabs",
+    "alarms"
+  ],
   "optional_host_permissions": [
     "http://localhost:3000/*",
     "http://127.0.0.1:3000/*",
@@ -39,8 +46,35 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://www.linkedin.com/*", "https://linkedin.com/*"],
-      "js": ["linkedin-scrape.js", "linkedin-search-scrape.js", "linkedin-bridge.js", "content-script.js"],
+      "matches": [
+        "https://www.linkedin.com/*",
+        "https://linkedin.com/*"
+      ],
+      "js": [
+        "linkedin-scrape.js",
+        "linkedin-search-scrape.js",
+        "linkedin-bridge.js",
+        "content-script.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.linkedin.com/*"
+      ],
+      "js": [
+        "capture/extract-common.js",
+        "capture/company-sections.js",
+        "capture/page-extract.js",
+        "capture/restriction-detect.js",
+        "capture/capture-ui.js",
+        "capture/company-capture.js",
+        "capture/person-capture.js",
+        "capture/sales-navigator-capture.js",
+        "capture/sales-lead-link-reader.js",
+        "capture/company-people-search.js",
+        "capture/capture-content.js"
+      ],
       "run_at": "document_idle"
     },
     {
@@ -50,7 +84,9 @@
         "https://www.skoutai.io/*",
         "https://skoutai.io/*"
       ],
-      "js": ["skout-web-bridge.js"],
+      "js": [
+        "skout-web-bridge.js"
+      ],
       "run_at": "document_start"
     }
   ],

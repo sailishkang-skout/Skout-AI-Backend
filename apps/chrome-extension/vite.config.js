@@ -10,6 +10,7 @@ export default defineConfig({
       input: {
         background: resolve(__dirname, "background.js"),
         "panel-app": resolve(__dirname, "panel-app.js"),
+        sidepanel: resolve(__dirname, "sidepanel.js"),
         "content-script": resolve(__dirname, "content-script.js"),
         "linkedin-scrape": resolve(__dirname, "linkedin-scrape.js"),
         "linkedin-bridge": resolve(__dirname, "linkedin-bridge.js"),
