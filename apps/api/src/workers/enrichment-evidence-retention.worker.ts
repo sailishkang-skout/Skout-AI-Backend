@@ -4,6 +4,7 @@ import { createLogger, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
 import { purgeExpiredCaptureEvidence } from "../services/enrichment/capture-evidence.js";
+import { purgeExpiredProviderResponses } from "../services/enrichment/provider-jobs.service.js";
 
 const log = createLogger("enrichment-evidence-retention.worker");
 
@@ -36,6 +37,9 @@ export async function startEnrichmentEvidenceRetentionWorker(config: Env) {
       await withSpan("enrichment-evidence-retention.tick", async () => {
         const removed = await purgeExpiredCaptureEvidence(db);
         log.info("expired capture evidence removed", { removed });
+        // ENR-04 — raw provider responses have their own, shorter retention.
+        const responses = await purgeExpiredProviderResponses(db);
+        log.info("expired provider responses removed", { removed: responses });
       });
     },
     { connection }
