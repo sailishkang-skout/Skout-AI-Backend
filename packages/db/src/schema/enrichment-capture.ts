@@ -76,6 +76,9 @@ export const enrichmentChangeEvents = pgTable(
     isJobChange: boolean("is_job_change").notNull().default(false),
     detectedAt: timestamp("detected_at", { withTimezone: true }).notNull().defaultNow(),
     notifiedAt: timestamp("notified_at", { withTimezone: true }),
+    /** ENR-03 — a job change is surfaced for human review; it never triggers outreach by itself. */
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    reviewedBy: uuid("reviewed_by").references(() => users.id, { onDelete: "set null" }),
   },
   (table) => [
     index("enrichment_change_events_workspace_detected_idx").on(table.workspaceId, table.detectedAt),
