@@ -25,6 +25,16 @@ describe("chrome extension identity", () => {
     expect(optional.some((h) => h === "http://*/*" || h === "https://*/*")).toBe(false);
   });
 
+  it("keeps local development API hosts optional and scopes the required API host", () => {
+    const hosts = manifest.host_permissions ?? [];
+    const optional = manifest.optional_host_permissions ?? [];
+    expect(hosts).toContain("https://ckoy6iywm0.execute-api.us-east-1.amazonaws.com/*");
+    expect(hosts.some((h) => h.includes("localhost") || h.includes("127.0.0.1"))).toBe(false);
+    expect(hosts.some((h) => h.includes("*.execute-api"))).toBe(false);
+    expect(optional).toContain("http://localhost:4000/*");
+    expect(optional).toContain("http://127.0.0.1:4000/*");
+  });
+
   it("includes production Skout web origins", () => {
     const hosts = manifest.host_permissions ?? [];
     expect(hosts).toContain("https://www.skoutai.io/*");
@@ -37,6 +47,8 @@ describe("chrome extension identity", () => {
     );
     expect(bridge?.matches).toContain("https://www.skoutai.io/*");
     expect(bridge?.matches).toContain("https://skoutai.io/*");
+    expect(bridge?.matches?.some((h) => h.includes("execute-api"))).toBe(false);
+    expect(manifest.externally_connectable?.matches?.some((h) => h.includes("execute-api"))).toBe(false);
   });
 
   it("includes alarms permission for proactive auth refresh", () => {

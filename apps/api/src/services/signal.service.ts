@@ -384,6 +384,7 @@ export async function listWorkspaceAccountSignals(
   const companyNameById = new Map<string, string>();
   const reachableDecisionMakerByCompany = new Set<string>();
   for (const a of activations) {
+    if (!a.companyId) continue;
     const snapshot = (a.snapshot as Record<string, unknown>) ?? {};
     const companyName = typeof snapshot.companyName === "string" ? snapshot.companyName : undefined;
     if (companyName && !companyNameById.has(a.companyId)) companyNameById.set(a.companyId, companyName);
@@ -391,7 +392,7 @@ export async function listWorkspaceAccountSignals(
     if (DECISION_MAKER_SENIORITIES.has(seniority)) reachableDecisionMakerByCompany.add(a.companyId);
   }
 
-  const companyIds = [...new Set(activations.map((a) => a.companyId))];
+  const companyIds = [...new Set(activations.map((a) => a.companyId).filter((id): id is string => id !== null))];
   const byEntity = await listSignalsForEntities(db, companyIds);
   const weights = signalStackWeightsFromEnv(config);
 

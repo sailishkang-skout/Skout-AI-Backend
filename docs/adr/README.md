@@ -18,3 +18,4 @@
 | [0016](./0016-payments-via-psp-references-only.md) | PSP handles payments; Skout stores references/status only |
 | [0017](./0017-event-driven-idempotent-replayable-workflows.md) | Event-driven workflows with idempotency and replay |
 | [0018](./0018-ai-recommends-humans-approve.md) | AI recommendations require permissioned human approval |
+| [0019](./0019-enrichment-security-boundary-and-integration.md) | Enrichment integration, tenancy, and security boundary (ENR-01) |
