@@ -27,6 +27,12 @@ export const CAPTURE_EVIDENCE_SOURCES = {
   companyPeopleCard: { source: "linkedin_company_people_result", confidence: 0.5, state: "discovery" },
   /** A reviewer attached or entered the URL themselves. */
   manual: { source: "manual_linkedin_url", confidence: 1, state: "verified" },
+  /**
+   * ENR-04 — a field read from a provider's profile response through a mapping that has been
+   * verified against a live payload. A third party retrieved it, so it stays "discovery" and
+   * is not usable for claims until the subject's own page has been captured.
+   */
+  providerProfile: { source: "linkedin_provider_profile", confidence: 0.8, state: "discovery" },
 } as const satisfies Record<string, { source: string; confidence: number; state: EvidenceState }>;
 
 export type CaptureEvidenceSource = keyof typeof CAPTURE_EVIDENCE_SOURCES;
@@ -142,7 +148,14 @@ export async function recordObservedFacts(db: Executor, input: ObservedFactsInpu
       sourceUrl: input.sourceUrl,
       observedAt: input.observedAt,
       retrievedAt: now,
-      method: input.origin === "manual" ? "manual_entry" : inferred ? EVIDENCE_POLICY.inferredMethod : EVIDENCE_POLICY.method,
+      method:
+        input.origin === "manual"
+          ? "manual_entry"
+          : input.origin === "providerProfile"
+            ? "provider_api"
+            : inferred
+              ? EVIDENCE_POLICY.inferredMethod
+              : EVIDENCE_POLICY.method,
       confidence: inferred ? Math.min(origin.confidence, EVIDENCE_POLICY.inferredConfidence) : origin.confidence,
       validation: state,
       authority: state === "verified" ? "subject_page" : "search_result",

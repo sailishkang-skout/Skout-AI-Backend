@@ -1,5 +1,6 @@
 import {
   boolean,
+  index,
   integer,
   jsonb,
   numeric,
@@ -11,19 +12,56 @@ import {
 } from "drizzle-orm/pg-core";
 import { lists, prospectActivations } from "./prospects.js";
 import { asyncJobs } from "./jobs.js";
+import { users } from "./users.js";
 import { workspaces } from "./workspaces.js";
+
+/**
+ * ENR-04 — a workspace's link to an external provider account that background enrichment may
+ * use. Only the provider's account id and a reference into the server-side secret store are
+ * kept here; the secret itself never is. `credential_ref` values:
+ *   `workspace_integration:<provider>` — the workspace's own key in `workspace_integrations`
+ *   `platform:<provider>`              — the platform key from server configuration
+ */
+export const enrichmentProviderConnections = pgTable(
+  "enrichment_provider_connections",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    externalAccountId: text("external_account_id").notNull(),
+    credentialRef: text("credential_ref").notNull(),
+    /** "active" | "paused" | "revoked" */
+    status: text("status").notNull().default("active"),
+    capabilities: jsonb("capabilities").notNull().default({}),
+    lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
+    lastErrorCode: text("last_error_code"),
+    connectedBy: uuid("connected_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("enrichment_provider_connections_account_unique").on(table.workspaceId, table.provider, table.externalAccountId),
+    index("enrichment_provider_connections_workspace_status_idx").on(table.workspaceId, table.provider, table.status),
+  ]
+);
 
 export const enrichmentJobs = pgTable("enrichment_jobs", {
   id: uuid("id").primaryKey().defaultRandom(),
   workspaceId: uuid("workspace_id")
     .notNull()
     .references(() => workspaces.id, { onDelete: "cascade" }),
+  /** The prospect id for a person; the `companies.id` for a company-profile job. */
   prospectId: text("prospect_id").notNull(),
-  activationId: uuid("activation_id")
-    .notNull()
-    .references(() => prospectActivations.id, { onDelete: "cascade" }),
+  /** Null for a company-profile job, which has no prospect activation. */
+  activationId: uuid("activation_id").references(() => prospectActivations.id, { onDelete: "cascade" }),
   asyncJobId: uuid("async_job_id").references(() => asyncJobs.id, { onDelete: "set null" }),
   batchId: uuid("batch_id"),
+  /**
+   * "queued" | "running" | "partial" | "action_required" | "failed" | "completed".
+   * Every status except queued and running is terminal.
+   */
   status: text("status").notNull().default("pending"),
   trigger: text("trigger").notNull().default("manual"),
   fieldsRequested: text("fields_requested").array().notNull().default(["email", "company", "validation"]),
@@ -32,6 +70,32 @@ export const enrichmentJobs = pgTable("enrichment_jobs", {
   queuedAt: timestamp("queued_at", { withTimezone: true }).notNull().defaultNow(),
   startedAt: timestamp("started_at", { withTimezone: true }),
   completedAt: timestamp("completed_at", { withTimezone: true }),
+  // ── ENR-04: durable provider jobs ──────────────────────────────────────────
+  /** "contact_waterfall" (email/phone/company waterfall) | "linkedin_profile" (provider profile job). */
+  kind: text("kind").notNull().default("contact_waterfall"),
+  /** "person" | "company" — set for linkedin_profile jobs. */
+  targetType: text("target_type"),
+  sourceUrl: text("source_url"),
+  normalizedUrl: text("normalized_url"),
+  provider: text("provider"),
+  providerConnectionId: uuid("provider_connection_id").references(() => enrichmentProviderConnections.id, {
+    onDelete: "set null",
+  }),
+  /** Follows one job through logs, attempts, audit entries and the UI. */
+  correlationId: uuid("correlation_id").notNull().defaultRandom(),
+  /** Client-supplied; a repeated create with the same key returns the same job. */
+  idempotencyKey: text("idempotency_key"),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  maxAttempts: integer("max_attempts").notNull().default(3),
+  /** A queued job is not picked up before this time (retry backoff). */
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+  /** While running, the worker holds the job until this time; past it the job is recoverable. */
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  errorCode: text("error_code"),
+  result: jsonb("result"),
+  requestedBy: uuid("requested_by").references(() => users.id, { onDelete: "set null" }),
+  testMode: boolean("test_mode").notNull().default(false),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const enrichmentBatches = pgTable("enrichment_batches", {

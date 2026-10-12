@@ -885,6 +885,10 @@ export async function deleteCompany(db: Db, actor: CaptureActor, companyId: stri
     await tx
       .delete(asyncJobs)
       .where(and(eq(asyncJobs.workspaceId, workspaceId), eq(asyncJobs.entityType, "company"), eq(asyncJobs.entityId, companyId)));
+    // Provider jobs for the company go with it, and their attempts (raw responses) cascade.
+    await tx
+      .delete(enrichmentJobs)
+      .where(and(eq(enrichmentJobs.workspaceId, workspaceId), eq(enrichmentJobs.targetType, "company"), eq(enrichmentJobs.prospectId, companyId)));
     // Nobody stays "verified" at a company that no longer exists.
     await tx
       .update(contacts)

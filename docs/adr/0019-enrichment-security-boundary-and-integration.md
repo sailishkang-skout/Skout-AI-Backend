@@ -156,3 +156,42 @@ enabling capture for production workspaces.
   discovery edges, jobs and list memberships. The CRM contact is soft-deleted only when the
   capture created it and it has no email, phone or lifecycle progress; otherwise it is kept and
   unlinked. Company delete also clears the employer link and verified state of its people.
+
+## ENR-04 addendum: provider jobs, provider connections, contact data
+
+- **Jobs are rows.** A LinkedIn provider job is an `enrichment_jobs` row with
+  `kind = linkedin_profile`; the contact waterfall keeps `kind = contact_waterfall`. New columns
+  carry the correlation id, idempotency key, attempt count and limit, next attempt time, worker
+  lease, error code and result. `activation_id` is nullable because a company job has no
+  prospect activation. Statuses: `queued`, `running`, `partial`, `action_required`, `failed`,
+  `completed` (shown as `done`); all but the first two are terminal.
+- **Durability.** The queue message only asks a worker to look at a job. A worker claims the
+  row with one conditional update, holds a five-minute lease, and writes the terminal status
+  itself; a write is refused once the lease has been lost. A recovery pass (every 30 seconds and
+  at start-up) re-queues running jobs whose lease ran out, fails them as `WORKER_LOST` when no
+  attempt is left, hands over queued jobs the queue dropped, and fails waterfall jobs left
+  unfinished for 30 minutes by a process that died. Without Redis the same pass runs jobs
+  in-process.
+- **Retries.** At most three attempts per job, with exponential backoff from 30 seconds (or the
+  provider's `Retry-After`), and only for timeouts, 5xx and rate limits. A rejected credential,
+  an unreadable account, a missing connection and a provider that is not permitted end
+  `action_required` with the reason; a missing profile ends `failed`.
+- **Provider connections** are `enrichment_provider_connections` rows: provider, external
+  account id and a `credential_ref` (`workspace_integration:<provider>` or
+  `platform:<provider>`) pointing at the existing secret boundary. This is a new table rather
+  than a reuse of `linkedin_accounts`, which models outreach sending (daily send limits, default
+  sender): connecting an account for messaging is not consent to use it for profile retrieval.
+  Connect, check and disconnect need `enrichment:admin` and are audited. Disconnect keeps the
+  row as `revoked` so past jobs still name it.
+- **Evidence.** The provider's raw response is stored on the attempt and read back only through
+  an audited `enrichment:admin` endpoint. Fields reach the Evidence Ledger only through a
+  mapping verified against a recorded live payload, as source `linkedin_provider_profile`
+  (confidence 0.8, state `discovery`). No mapping is verified yet.
+- **Contact data** is a read model over `enrichment_results`, `email_verifications` and the CRM
+  contact: each value has a provider, provenance and a verification status, or the field is
+  absent. Verification goes through the Email Intelligence service when configured, otherwise
+  the workspace's verifier from the waterfall; the stub verifier is refused.
+- **Test mode.** `LINKEDIN_ENRICHMENT_TEST_MODE=true` runs a job to a terminal `partial`,
+  recording the submitted URL and nothing else. It is ignored when `NODE_ENV=production`.
+- **Provider policy** is in `docs/enrichment-provider-policy.md` and
+  `services/enrichment/provider-policy.ts`. No provider is approved yet.
