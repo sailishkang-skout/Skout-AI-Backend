@@ -27,6 +27,8 @@ import { startCopsOnboardingEvaluatorWorker } from "./workers/cops-onboarding-ev
 import { startRetentionSignalsSweepWorker } from "./workers/retention-signals-sweep.worker.js";
 import { startEnrichmentEvidenceRetentionWorker } from "./workers/enrichment-evidence-retention.worker.js";
 import { startEnrichmentProviderJobWorker } from "./workers/enrichment-provider-job.worker.js";
+import { startEnrichmentOpsWorker } from "./workers/enrichment-ops.worker.js";
+import { describeRelease } from "./services/enrichment/release-gate.js";
 import { startWorkbookRunWorker } from "./workers/workbook-run.worker.js";
 import { startReportDeliverySweepWorker } from "./workers/report-delivery-sweep.worker.js";
 import { startIdentityMergeDiscoveryWorker } from "./workers/identity-merge-discovery.worker.js";
@@ -78,6 +80,7 @@ async function main() {
   const stopRetentionSignalsSweepWorker = await startRetentionSignalsSweepWorker(config);
   const stopEnrichmentEvidenceRetentionWorker = await startEnrichmentEvidenceRetentionWorker(config);
   const stopEnrichmentProviderJobWorker = await startEnrichmentProviderJobWorker(config);
+  const stopEnrichmentOpsWorker = await startEnrichmentOpsWorker(config);
   const stopWorkbookRunWorker = await startWorkbookRunWorker(config);
   const stopReportDeliverySweepWorker = await startReportDeliverySweepWorker(config);
   const stopIdentityMergeDiscoveryWorker = await startIdentityMergeDiscoveryWorker(config);
@@ -117,6 +120,7 @@ async function main() {
     await stopRetentionSignalsSweepWorker();
     await stopEnrichmentEvidenceRetentionWorker();
     await stopEnrichmentProviderJobWorker();
+    await stopEnrichmentOpsWorker();
     await stopRiskDecaySweepWorker();
     await stopCreditReconciliationWorker();
     await stopCopsOnboardingEvaluatorWorker();
@@ -144,6 +148,8 @@ async function main() {
 
   try {
     await app.listen({ port: config.PORT, host: config.HOST });
+    const release = describeRelease(config);
+    app.log[release.level]({ enrichmentRelease: release.state }, release.message);
     app.log.info(
       { host: config.HOST, port: config.PORT, service: config.SERVICE_NAME },
       "Skout API listening"
