@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { guardWithReleaseGate } from "../services/enrichment/release-gate.js";
 import { z } from "zod";
 import type { Db } from "@skout/db";
 import { assertPermission, recordPrivilegedAction } from "@skout/auth";
@@ -19,6 +20,7 @@ import {
   listProviderJobs,
 } from "../services/enrichment/provider-jobs.service.js";
 import { listProviderPolicies } from "../services/enrichment/provider-policy.js";
+import { enrichmentOpsSnapshot, evaluateAlerts } from "../services/enrichment/ops.service.js";
 import { enqueueEnrichmentProviderJob } from "../workers/enrichment-provider-job.queue.js";
 
 const uuid = z.string().uuid();
@@ -42,6 +44,7 @@ type Permission = "enrichment:read" | "enrichment:enrich" | "enrichment:admin";
  * id and a credential reference — no endpoint here accepts, stores or returns a secret.
  */
 export async function enrichmentProviderRoutes(app: FastifyInstance) {
+  guardWithReleaseGate(app);
   async function authorize(request: FastifyRequest, permission: Permission): Promise<{ db: Db; actor: CaptureActor }> {
     if (!app.db) throw new HttpError("database_unavailable", 503);
     const workspaceId = requireWorkspaceId(request);
@@ -149,6 +152,16 @@ export async function enrichmentProviderRoutes(app: FastifyInstance) {
     const connection = uuid.safeParse(id).success ? await disconnectProviderConnection(db, actor, id) : null;
     if (!connection) return reply.status(404).send({ error: "provider_connection_not_found" });
     return reply.send({ workspaceId: actor.workspaceId, connection });
+  });
+
+  // ── Operations ──────────────────────────────────────────────────────────────
+
+  // Capture-run, job, provider-error and queue-lag numbers for this workspace, with the alerts
+  // they trip and what to do about each.
+  app.get("/enrichment/ops", async (request, reply) => {
+    const { db, actor } = await authorize(request, "enrichment:admin");
+    const snapshot = await enrichmentOpsSnapshot(db, actor.workspaceId);
+    return reply.send({ workspaceId: actor.workspaceId, snapshot, alerts: evaluateAlerts(snapshot) });
   });
 
   // ── Contact data ────────────────────────────────────────────────────────────

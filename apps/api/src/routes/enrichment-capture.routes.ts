@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { guardWithReleaseGate } from "../services/enrichment/release-gate.js";
 import { suggestForJobChanges } from "../services/enrichment/campaign.service.js";
 import { z } from "zod";
 import type { Db } from "@skout/db";
@@ -57,6 +58,7 @@ function runDto(run: CaptureRun) {
  * workspace kill switch.
  */
 export async function enrichmentCaptureRoutes(app: FastifyInstance) {
+  guardWithReleaseGate(app);
   async function authorize(
     request: FastifyRequest,
     permission: "enrichment:capture" | "enrichment:read" | "enrichment:admin"

@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { formatJourneyMetricsPrometheus } from "../services/journey-metrics.js";
+import { enrichmentMetricsPrometheus } from "../services/enrichment/ops.service.js";
 
 /** §11.2 — published SLO targets (see docs/slo-targets.md). */
 const SLO_TARGETS = {
@@ -64,6 +65,8 @@ export async function healthRoutes(app: FastifyInstance) {
       "# TYPE skout_slo_crud_p95_ms gauge",
       `skout_slo_crud_p95_ms ${SLO_TARGETS.authenticatedCrud.p95Ms}`,
       formatJourneyMetricsPrometheus(),
+      // ENR-06 — capture-run, job, provider-error and queue-lag gauges.
+      await enrichmentMetricsPrometheus(app.db),
       "",
     ].join("\n");
     return reply.type("text/plain; version=0.0.4").send(body);

@@ -241,3 +241,18 @@ enabling capture for production workspaces.
 - **Job changes** create a one-person draft campaign with `trigger = job_change`, listed in the
   review queue. It is created unsubmitted and unapproved; only a person can take it further.
 
+## ENR-06 addendum: release gate, observability, CI
+
+- **Release gate.** Capture, research, provider and campaign routes sit behind
+  `guardWithReleaseGate`. In production with `ENRICHMENT_RELEASE_STAGE=internal` (the default) a
+  workspace needs the `enrichment.internal_access` entitlement; `general` applies only when
+  `ENRICHMENT_LEGAL_APPROVAL_REF` is set. The gate is not enforced outside production. The older
+  enrichment features (credits, scoring, the contact waterfall) are not gated. Gates and sign-off
+  are in `docs/ops/enrichment-release-gates.md`.
+- **Observability** is read from the database, so it is identical on every instance and
+  survives restarts: `ops.service.ts` produces one bounded snapshot (statuses and error codes
+  only), exported as gauges on `/metrics` and evaluated into named alerts by
+  `enrichment-ops.worker.ts`, which also closes capture runs nobody finished.
+- **CI** gained migration validation (`scripts/check-migrations.mjs`), a secret and data-leak
+  scan, a dependency audit and Chrome package validation. Runbook: `docs/runbooks/enrichment.md`.
+

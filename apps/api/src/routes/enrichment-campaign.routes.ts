@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { guardWithReleaseGate } from "../services/enrichment/release-gate.js";
 import { z } from "zod";
 import type { Db } from "@skout/db";
 import { assertPermission } from "@skout/auth";
@@ -68,6 +69,7 @@ type Permission = "enrichment:read" | "enrichment:enrich" | typeof CAMPAIGN_APPR
  * the service and again by the sequence worker at send time, not by which buttons are shown.
  */
 export async function enrichmentCampaignRoutes(app: FastifyInstance) {
+  guardWithReleaseGate(app);
   async function authorize(request: FastifyRequest, permission: Permission): Promise<{ db: Db; actor: CaptureActor }> {
     if (!app.db) throw new HttpError("database_unavailable", 503);
     const workspaceId = requireWorkspaceId(request);
