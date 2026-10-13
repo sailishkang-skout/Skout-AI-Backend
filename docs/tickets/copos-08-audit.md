@@ -275,3 +275,6 @@ Things a reviewer should know:
   through the credit spend, so an enrichment that costs no credits is not blocked.
 - `cops-onboarding.routes.test.ts` has one test that times out on my machine with or without this
   branch's changes; CI is the reference for it.
+- Runbook: `docs/runbooks/cops-commercial-advanced.md`.
+- The currency of an opportunity is locked once a proposal has been sent. The currency is still
+  read from the opportunity; there is no currency field on the account record itself.
