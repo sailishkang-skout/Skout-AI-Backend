@@ -112,4 +112,12 @@ resource "google_compute_instance" "node" {
 
   metadata_startup_script   = templatefile("${path.module}/startup.sh", { ssh_user = var.ssh_user })
   allow_stopping_for_update = true
+
+  # Changing either of these forces Terraform to destroy and recreate the VM, which wipes the boot disk
+  # (Swarm state, certificates, Redis and ClickHouse data). The startup script only matters on first boot and
+  # the image family moves to a newer image over time, so neither should ever trigger a rebuild. To rebuild
+  # on purpose use `terraform apply -replace=module.compute.google_compute_instance.node[0]`.
+  lifecycle {
+    ignore_changes = [metadata_startup_script, boot_disk[0].initialize_params[0].image]
+  }
 }
