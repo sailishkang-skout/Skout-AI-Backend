@@ -1,5 +1,5 @@
 // Generated from docs/ops/cops-commercial-policy.default.json by scripts/sync-cops-commercial-policy.mjs. Do not edit by hand.
-export const COMMERCIAL_POLICY_DEFAULT_DATA: Record<"approval_policy" | "dunning_policy" | "price_book", unknown> = {
+export const COMMERCIAL_POLICY_DEFAULT_DATA: Record<"approval_policy" | "dunning_policy" | "price_book" | "currency_policy", unknown> = {
   "approval_policy": {
     "expires_after_days": 14,
     "discount_pct": [
@@ -240,5 +240,21 @@ export const COMMERCIAL_POLICY_DEFAULT_DATA: Record<"approval_policy" | "dunning
         "status": "suggested"
       }
     }
+  },
+  "currency_policy": {
+    "supported": [
+      "USD",
+      "EUR",
+      "GBP",
+      "INR"
+    ],
+    "default_by_country": {
+      "US": "USD",
+      "IN": "INR",
+      "GB": "GBP",
+      "DE": "EUR",
+      "FR": "EUR"
+    },
+    "fallback": "USD"
   }
 };

@@ -6,6 +6,9 @@ import {
   APPROVER_DECIDED_BY,
   COMMERCIAL_POLICY_DEFAULTS,
   approvalPolicySchema,
+  currencyPolicySchema,
+  defaultCurrencyFor,
+  priceBookSchema,
   contractValueMinor,
   dunningDay,
   dunningPolicySchema,
@@ -44,11 +47,34 @@ describe("COPS-08 commercial policy defaults", () => {
   });
 
   it("is the default of the three admin config kinds and passes their schemas", () => {
-    for (const kind of ["approval_policy", "dunning_policy", "price_book"] as const) {
+    for (const kind of ["approval_policy", "dunning_policy", "price_book", "currency_policy"] as const) {
       const value = COPS_CONFIG_DEFAULTS[kind]?.default;
       expect(value).toEqual(COMMERCIAL_POLICY_DEFAULTS[kind]);
       expect(COPS_CONFIG_SCHEMAS[kind].safeParse(value).success).toBe(true);
     }
+  });
+
+  it("a bad edit to the policy fails loudly instead of changing approvals", () => {
+    const good = COMMERCIAL_POLICY_DEFAULT_DATA.approval_policy as Record<string, unknown>;
+    // A typo in a key, a missing rule, a threshold as text, an approver that does not exist.
+    expect(() => approvalPolicySchema.parse({ ...good, discount_pc: good.discount_pct })).toThrow();
+    expect(() => approvalPolicySchema.parse({ ...good, seats: undefined })).toThrow();
+    expect(() => approvalPolicySchema.parse({ ...good, expires_after_days: "14" })).toThrow();
+    expect(() => approvalPolicySchema.parse({ ...good, custom_clauses: { approvers: ["legal"] } })).toThrow();
+    expect(() => priceBookSchema.parse({ month_to_month_surcharge_pct: 20, currencies: { USD: { seat_month_annual_minor: 79.5, status: "benchmarked" } } })).toThrow();
+    expect(() => currencyPolicySchema.parse({ supported: ["USD"], default_by_country: { IN: "INR" }, fallback: "USD" })).toThrow();
+  });
+
+  it("every supported currency has a price and contract-value thresholds; a country picks its currency, else the fallback", () => {
+    const { currency_policy, price_book, approval_policy } = COMMERCIAL_POLICY_DEFAULTS;
+    for (const currency of currency_policy.supported) {
+      expect(price_book.currencies[currency]).toBeDefined();
+      expect(approval_policy.contract_value_minor[currency]).toBeTruthy();
+    }
+    expect(defaultCurrencyFor(currency_policy, "in")).toBe("INR");
+    expect(defaultCurrencyFor(currency_policy, "DE")).toBe("EUR");
+    expect(defaultCurrencyFor(currency_policy, "BR")).toBe("USD");
+    expect(defaultCurrencyFor(currency_policy, null)).toBe("USD");
   });
 
   it("an Admin decides the executive slot", () => {

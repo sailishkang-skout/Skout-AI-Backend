@@ -9,11 +9,24 @@
     "Currency is set per account, locked once a proposal is sent, and never converted.",
     "A seat change takes effect on the next billing cycle; there is no immediate proration."
   ],
+  "_status": "DEFAULT_PENDING_FINANCE_REVIEW, effective from 2026-10-13",
+  "_basis": {
+    "note": "Where the defaults came from. Benchmarks are published vendor and agency material, not Skout margin data. Finance confirms against gross margin before launch. Carried over from the first version of this file (develop, commit 4d408a70).",
+    "per_seat_list_price": "Mid-point of published paid tiers of comparable sales tools (about 49 / 79 / 119 USD per seat per month on annual billing).",
+    "discount_bands": "Published approval frameworks cluster at about 10% rep, 15-20% manager, 25-35% VP or Finance, above about 35% CFO or CEO.",
+    "deal_size_bands": "2026 benchmark segments: SMB under 10K USD, mid-market 25K-75K, enterprise 200K and over.",
+    "sources": [
+      "https://www.apollo.io/insights/salesloft-alternatives",
+      "https://www.hyperline.co/resources/glossary/discount-limits",
+      "https://www.getmonetizely.com/articles/the-pricing-approval-workflow-streamlining-decision-making-in-saas-deal-management",
+      "https://www.growthspreeofficial.com/blogs/b2b-saas-discount-rate-benchmarks-2026-deal-discount-by-acv-stage-end-of-quarter-impact",
+      "https://razorpay.com/blog/accept-international-payments-razorpay/"
+    ]
+  },
   "_open": [
-    "Contract-value thresholds for EUR, GBP and INR are taken from Aditya's file on develop (commit 4d408a70).",
-    "free_credits: provisional thresholds by credit count, set by engineering on 2026-10-13. Aditya's file instead has 'complimentary value over 10% of TCV needs the Sales Manager'. That needs a money value per credit, which is a Finance question; until it is answered the count rule stands.",
+    "free_credits is an interim rule by credit count. It is replaced by the dormant rule below once Finance gives the money value of one credit.",
     "price_book EUR, GBP and INR are suggestions, not benchmarked.",
-    "This file and Aditya's file on develop have the same path and different shapes. This one is shaped like the admin config kinds the code reads. The two must be reconciled before this branch merges."
+    "Contract value is TCV: recurring lines x term in months + whole-term lines + one-time fees, after discount, before tax."
   ],
   "approval_policy": {
     "_readme": "A band matches a value over `over` and at most `up_to` (null: no upper limit). So a 10% discount needs no approval and 10.01% needs the Sales Manager.",
@@ -212,6 +225,15 @@
         "legal_revops",
         "finance"
       ]
+    },
+    "_dormant_complimentary_value_rule": {
+      "status": "dormant: not read by any code",
+      "rule": "Complimentary value over 10% of TCV needs the Sales Manager.",
+      "over_pct_of_tcv": 10,
+      "approvers": [
+        "sales_manager"
+      ],
+      "switch_on_when": "Finance gives the money value of one credit. The free_credits count rule is then removed."
     }
   },
   "dunning_policy": {
@@ -258,5 +280,22 @@
         "status": "suggested"
       }
     }
+  },
+  "currency_policy": {
+    "_readme": "The currency of an account defaults from its country. A deal currency is locked once a proposal is sent and is never converted (fixed rules above).",
+    "supported": [
+      "USD",
+      "EUR",
+      "GBP",
+      "INR"
+    ],
+    "default_by_country": {
+      "US": "USD",
+      "IN": "INR",
+      "GB": "GBP",
+      "DE": "EUR",
+      "FR": "EUR"
+    },
+    "fallback": "USD"
   }
 }

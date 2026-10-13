@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { COMMERCIAL_POLICY_DEFAULTS, approvalPolicySchema, dunningPolicySchema, priceBookSchema } from "./cops-commercial-policy.js";
+import { COMMERCIAL_POLICY_DEFAULTS, approvalPolicySchema, currencyPolicySchema, dunningPolicySchema, priceBookSchema } from "./cops-commercial-policy.js";
 
 /**
  * COPS-07 admin configuration (Bible p.16): the config kinds kept in the versioned config store,
@@ -16,6 +16,7 @@ export const COPS_CONFIG_KINDS = [
   "approval_policy",
   "dunning_policy",
   "price_book",
+  "currency_policy",
 ] as const;
 export type CopsConfigKind = (typeof COPS_CONFIG_KINDS)[number];
 
@@ -73,6 +74,7 @@ export const COPS_CONFIG_SCHEMAS = {
   approval_policy: approvalPolicySchema,
   dunning_policy: dunningPolicySchema,
   price_book: priceBookSchema,
+  currency_policy: currencyPolicySchema,
 } as const satisfies Record<CopsConfigKind, z.ZodTypeAny>;
 
 /**
@@ -93,6 +95,7 @@ export const COPS_CONFIG_DEFAULTS: Partial<Record<CopsConfigKind, Record<string,
   approval_policy: { default: COMMERCIAL_POLICY_DEFAULTS.approval_policy },
   dunning_policy: { default: COMMERCIAL_POLICY_DEFAULTS.dunning_policy },
   price_book: { default: COMMERCIAL_POLICY_DEFAULTS.price_book },
+  currency_policy: { default: COMMERCIAL_POLICY_DEFAULTS.currency_policy },
 };
 
 export const COPS_CONFIG_KEY = /^[a-z0-9][a-z0-9_-]{0,63}$/;

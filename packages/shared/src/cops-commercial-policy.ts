@@ -211,8 +211,36 @@ export function contractValueMinor(seats: number, seatMonthPriceMinor: number, t
   return seats * seatMonthPriceMinor * termMonths;
 }
 
-/** The seed values, validated. Generated from the policy file by scripts/sync-cops-commercial-policy.mjs. */
+// --- currency --------------------------------------------------------------------------------------
+
+export const currencyPolicySchema = z
+  .object({
+    supported: z.array(currencyCode).min(1).max(30),
+    /** ISO 3166-1 alpha-2 country to the currency a new account in that country starts with. */
+    default_by_country: z.record(z.string().regex(/^[A-Z]{2}$/, "Two-letter country code"), currencyCode),
+    fallback: currencyCode,
+  })
+  .strict()
+  .superRefine((v, ctx) => {
+    if (!v.supported.includes(v.fallback)) ctx.addIssue({ code: "custom", message: "The fallback currency must be supported", path: ["fallback"] });
+    for (const [country, currency] of Object.entries(v.default_by_country)) {
+      if (!v.supported.includes(currency)) ctx.addIssue({ code: "custom", message: `${currency} is not a supported currency`, path: ["default_by_country", country] });
+    }
+  });
+export type CurrencyPolicy = z.infer<typeof currencyPolicySchema>;
+
+/** The currency a new account starts with. There is no conversion: this only picks the price book. */
+export function defaultCurrencyFor(policy: CurrencyPolicy, country: string | null | undefined): string {
+  return (country && policy.default_by_country[country.toUpperCase()]) || policy.fallback;
+}
+
+/**
+ * The seed values, validated when this module loads: a bad edit to the policy file stops the build
+ * and the app instead of quietly changing who approves what. Generated from the policy file by
+ * scripts/sync-cops-commercial-policy.mjs.
+ */
 export const COMMERCIAL_POLICY_DEFAULTS = {
+  currency_policy: currencyPolicySchema.parse(COMMERCIAL_POLICY_DEFAULT_DATA.currency_policy),
   approval_policy: approvalPolicySchema.parse(COMMERCIAL_POLICY_DEFAULT_DATA.approval_policy),
   dunning_policy: dunningPolicySchema.parse(COMMERCIAL_POLICY_DEFAULT_DATA.dunning_policy),
   price_book: priceBookSchema.parse(COMMERCIAL_POLICY_DEFAULT_DATA.price_book),

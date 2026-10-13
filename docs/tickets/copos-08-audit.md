@@ -200,3 +200,38 @@ unsupported, those accounts are `invoiced` and nothing is rebuilt.
 
 Sources: https://razorpay.com/docs/payments/international-payments ,
 https://razorpay.com/accept-international-payments/ , https://razorpay.com/subscriptions/
+
+## 10. Decisions from Aditya (2026-10-13, third round) and what was built
+
+| Topic | Decision | State |
+|---|---|---|
+| Policy file | Keep this structure (the code reads it); carry over the content of the file on develop; validate on load | Done. Sources, benchmarks and country defaults carried over. The file is parsed by the config schemas when the app loads and a test covers bad edits |
+| Free credits | Count rule stays for now (over 500 Sales Manager, over 2,000 plus Finance), in config. Keep "complimentary value over 10% of TCV" in the file, dormant | Done. The dormant rule is under `_dormant_complimentary_value_rule`; no code reads it. Switch when Finance gives the value of one credit |
+| Contract value | TCV, not the raw proposal amount | Done, see below |
+| Deals already in flight | Do not block them. Sent, signed or paid deals are grandfathered; drafts follow the new rules. Report for Finance | Done: migration 0126 and `GET /approvals/grandfathered` |
+| Secrets | SOPS + age encrypted env files (`deploy/hetzner/env-enc/*.env`), not AWS Secrets Manager | Applies to the Dropbox Sign keys and the Datadog webhook secret |
+| Notifications | In-app notification center (COPS-01), routed by role from config. No Slack | Next |
+| Datadog alerts | Datadog webhook to a signed internal endpoint that creates in-app notifications for Admin and Engineering, plus a team email as fallback | Next. The team email address is still to be given |
+| Razorpay | Aditya is checking the merchant account. Build payment-link-per-period billing now; count failed-payment days from the invoice due date, because the halted event never fires without auto-debit | With subscriptions |
+| PR #193 | Do not merge until `RAZORPAY_WEBHOOK_SECRET` is in the encrypted env file for every environment | Aditya |
+
+### Definition of total contract value (TCV)
+
+TCV = recurring line items x term in months + whole-term line items + one-time fees, after line and
+header discounts, before tax.
+
+- Each proposal line says what its amount covers: `per_month`, `per_term` or `one_time`
+  (`price_basis`, migration 0125). Every line is brought to the full term before summing, so ten
+  seats at 79 a month for 12 months and ten seats at 948 for the term both give 9,480.
+- A line with no basis (written before COPS-08) is a whole-term amount, or a single charge when its
+  kind is `fee`. Existing proposals therefore keep the contract value they had.
+- The discount the rules read is the effective discount on the same basis: (gross TCV - TCV) / gross
+  TCV. A discount placed on line items counts exactly like a header discount.
+- Code: `proposalTcv` in `packages/shared/src/cops-commercial.ts`. Tests cover both line styles.
+
+### Grandfathered deals
+
+When migration 0126 runs, an opportunity is marked if it has a sent proposal version, a signed
+contract or a paid payment request. The mark is on `commercial_gates`. The engine still shows which
+rules such a deal matches, but requires nothing, and the gate ignores approvals for it. The backfill
+runs once: a second run marks nothing, so deals sent later are never grandfathered.
