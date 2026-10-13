@@ -1,0 +1,60 @@
+{
+  "_readme": "Default commercial policy for CustomerOps (COPS-08). Seed data for the versioned admin config: loaded once per workspace, then edited by an Admin without a deploy. Nothing in code may hard-code these numbers. Source: Aditya's COPS-08 kickoff decisions, 2026-10-13. The branch docs/cops-commercial-policy named there was not on the remote when this file was written, so values that were only 'in the file' are null here and listed in docs/tickets/copos-08-audit.md. The amounts are benchmark defaults, not margins; Finance reviews before launch.",
+  "version": 1,
+  "approval_rules": {
+    "_readme": "Every matching rule applies and the deal needs every approver named by any of them. Bands are (over, up_to]: 'over 10, up to 20' means more than 10% and at most 20%.",
+    "expires_after_days": 14,
+    "material_change_voids": true,
+    "discount_pct": [
+      { "over": 10, "up_to": 20, "approvers": ["sales_manager"] },
+      { "over": 20, "up_to": 30, "approvers": ["sales_manager", "finance"] },
+      { "over": 30, "up_to": null, "approvers": ["sales_manager", "finance", "executive"] }
+    ],
+    "seats": [
+      { "over": 25, "up_to": 100, "approvers": ["sales_manager"] },
+      { "over": 100, "up_to": null, "approvers": ["sales_manager", "finance"] }
+    ],
+    "contract_value_minor": {
+      "USD": [
+        { "over": 2500000, "up_to": 7500000, "approvers": ["sales_manager"] },
+        { "over": 7500000, "up_to": 20000000, "approvers": ["sales_manager", "finance"] },
+        { "over": 20000000, "up_to": null, "approvers": ["sales_manager", "finance", "executive"] }
+      ],
+      "EUR": null,
+      "GBP": null,
+      "INR": null
+    },
+    "term_months_over": { "over": 24, "approvers": ["finance"] },
+    "payment_terms_net_days_over": { "over": 30, "approvers": ["finance"] },
+    "custom_clauses": { "approvers": ["legal_revops"] },
+    "non_standard_sla": { "approvers": ["legal_revops", "finance"] }
+  },
+  "dunning": {
+    "_readme": "Day 0 is the first failed charge. A successful payment restores access at any point before 'closed'. Data is never deleted because a payment failed.",
+    "stages": [
+      { "state": "past_due", "from_day": 0, "to_day": 7, "access": "full", "actions": ["reminders", "provider_retries"] },
+      { "state": "restricted", "from_day": 8, "to_day": 14, "access": "no_new_credit_use_enrichment_or_outreach", "login": true, "payment": true },
+      { "state": "suspended", "from_day": 15, "to_day": 44, "access": "billing_page_only", "data": "retained", "also_when": "provider_halted" },
+      { "state": "closed", "from_day": 45, "to_day": null, "per": "retention_policy" }
+    ],
+    "invoiced_enterprise_accounts": { "auto_suspend": false, "handled_by": "finance" },
+    "delete_data_on_payment_failure": false
+  },
+  "billing": {
+    "seat_changes_take_effect": "next_billing_cycle",
+    "immediate_proration": false,
+    "month_to_month_surcharge_pct": 20,
+    "currency_locked_when": "proposal_sent",
+    "implicit_currency_conversion": false
+  },
+  "price_book": {
+    "_readme": "Per seat, per month, on annual billing, in minor units. Only USD is benchmarked; the others are suggestions for Finance to confirm.",
+    "USD": { "seat_month_annual_minor": 7900, "status": "benchmarked" },
+    "EUR": { "seat_month_annual_minor": 7500, "status": "suggested" },
+    "GBP": { "seat_month_annual_minor": 6500, "status": "suggested" },
+    "INR": { "seat_month_annual_minor": 599900, "status": "suggested" }
+  },
+  "esign": {
+    "provider": "dropbox_sign"
+  }
+}

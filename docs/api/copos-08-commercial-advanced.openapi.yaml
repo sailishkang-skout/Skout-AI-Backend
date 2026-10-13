@@ -1,0 +1,228 @@
+openapi: 3.0.3
+info:
+  title: CustomerOps COPS-08 approvals, e-sign, subscriptions and finance
+  version: 0.1.0
+  description: >
+    Contract for COPS-08, published before the implementation. All paths are under /api/v1 and use
+    the COPS error envelope. Mutating paths take an Idempotency-Key. Status: proposed. Nothing in
+    this file is implemented yet. Policy values (thresholds, dunning days, prices) come from the
+    versioned admin config, seeded from docs/ops/cops-commercial-policy.default.json.
+paths:
+  /proposals/{id}/approvals/evaluate:
+    get:
+      summary: Which approvals the current version of a proposal needs
+      description: >
+        Pure evaluation, no write. Returns every matching rule and the union of approvers. An empty
+        list means the deal is under every threshold and needs no approval step.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Required approvers and the rules that named them
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalEvaluation" }
+  /proposals/{id}/approvals:
+    post:
+      summary: Request the approvals the current version needs
+      description: Needs commercial:send. 409 if the version needs none, or an open request already exists for it.
+      responses:
+        "201": { description: The approval request with one pending decision per approver role }
+        "409": { description: Nothing to approve, or already requested for this version }
+    get:
+      summary: Approval requests of a proposal, newest first
+      responses:
+        "200": { description: Requests with their decisions and status }
+  /approvals:
+    get:
+      summary: Approval queue
+      description: Pending decisions the caller's role can take. Needs commercial:approve or legal:approve.
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, approved, rejected, voided, expired] } }
+        - { name: role, in: query, schema: { $ref: "#/components/schemas/ApproverRole" } }
+      responses:
+        "200": { description: Decisions with the proposal, account, amounts and the rules that apply }
+  /approvals/{id}/decisions:
+    post:
+      summary: Approve or reject as one approver role
+      description: >
+        The caller must hold the role. Records decision, actor, time and comment. A comment is
+        required to reject. 409 if the request is voided or expired.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role, decision]
+              properties:
+                role: { $ref: "#/components/schemas/ApproverRole" }
+                decision: { type: string, enum: [approved, rejected] }
+                comment: { type: string, maxLength: 2000 }
+      responses:
+        "200": { description: The request after the decision }
+        "403": { description: The caller does not hold that approver role }
+        "409": { description: The request is voided, expired or already decided for that role }
+  /contracts/{id}/envelopes:
+    post:
+      summary: Send a contract version for signature
+      description: >
+        Needs commercial:send. Refused with 409 while required approvals are missing. The template
+        is chosen from the esign_templates config by region, segment, legal entity and deal type.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [signers]
+              properties:
+                version: { type: integer, description: "Defaults to the current version" }
+                signers:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [name, email]
+                    properties:
+                      name: { type: string }
+                      email: { type: string, format: email }
+                      role: { type: string }
+      responses:
+        "201": { description: The envelope with provider reference and status sent }
+        "409": { description: Approvals missing, or the version is already out for signature }
+        "502": { description: The e-sign provider refused or timed out; retryable }
+    get:
+      summary: Envelopes of a contract with their event timeline
+      responses:
+        "200": { description: Envelopes, newest first }
+  /contracts/{id}/negotiated-versions:
+    post:
+      summary: Attach an externally negotiated version and set the redline status
+      responses:
+        "201": { description: A new immutable contract version with its file hash }
+  /esign/webhooks/dropbox-sign:
+    post:
+      summary: Dropbox Sign event callback
+      description: >
+        No session. The signature is verified, the provider event id is deduplicated, and events are
+        applied by rank, not arrival order, so a late "viewed" never undoes "signed". ContractSigned
+        is emitted once. A bad signature is 401.
+      responses:
+        "200": { description: Accepted (also for duplicates and events that change nothing) }
+        "401": { description: Bad or missing signature }
+  /accounts/{id}/subscription:
+    get:
+      summary: The account's subscription with items, dunning stage and next renewal
+      responses:
+        "200":
+          description: Subscription or null
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Subscription" }
+    post:
+      summary: Create the subscription from a signed, paid opportunity
+      description: Needs billing:write. Creates the provider plan and subscription with quantity = seats.
+      responses:
+        "201": { description: The subscription }
+        "409": { description: The account already has an active subscription }
+  /subscriptions/{id}/amendments:
+    post:
+      summary: Change seats or term
+      description: >
+        Appends an amendment; the original contract and earlier amendments are never changed. A seat
+        change takes effect on the next billing cycle.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                seats: { type: integer, minimum: 1 }
+                term_months: { type: integer, minimum: 1 }
+                reason: { type: string }
+      responses:
+        "201": { description: The amendment with its effective date }
+    get:
+      summary: Amendments of a subscription, oldest first
+      responses:
+        "200": { description: Amendments }
+  /billing/webhooks/razorpay/subscriptions:
+    post:
+      summary: Razorpay subscription events
+      description: >
+        Signature verified, event id deduplicated. subscription.charged -> active;
+        subscription.pending -> past_due; subscription.halted -> restricted or suspended by day;
+        subscription.cancelled / completed -> closed.
+      responses:
+        "200": { description: Accepted }
+        "401": { description: Bad or missing signature }
+  /finance/failed-payments:
+    get:
+      summary: Accounts in dunning, worst first
+      description: Needs billing:read. Stage, day number, amount due and the next automatic step.
+      responses:
+        "200": { description: Rows with next_cursor }
+  /finance/reconciliation:
+    get:
+      summary: Where the provider and Skout disagree
+      description: >
+        Needs billing:read. Unmatched and unprocessed provider events, subscriptions whose provider
+        status differs from ours, and wallets that differ from their ledger.
+      responses:
+        "200": { description: Issues grouped by kind }
+  /finance/credit-activity:
+    get:
+      summary: Credit purchases and manual adjustments with actor and reason
+      responses:
+        "200": { description: Rows with next_cursor }
+components:
+  schemas:
+    ApproverRole:
+      type: string
+      enum: [sales_manager, finance, legal_revops, executive]
+      description: "executive has no matching workspace role yet; see the audit, question 2."
+    ApprovalEvaluation:
+      type: object
+      properties:
+        proposal_version: { type: integer }
+        currency: { type: string }
+        required_approvers: { type: array, items: { $ref: "#/components/schemas/ApproverRole" } }
+        matched_rules:
+          type: array
+          items:
+            type: object
+            properties:
+              rule: { type: string, enum: [discount_pct, seats, contract_value, term_months, payment_terms, custom_clauses, non_standard_sla] }
+              value: { type: number, nullable: true }
+              approvers: { type: array, items: { $ref: "#/components/schemas/ApproverRole" } }
+        unevaluated:
+          type: array
+          description: "Rules that could not be evaluated, for example contract value in a currency with no thresholds configured."
+          items: { type: string }
+        policy_version: { type: integer }
+    Subscription:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        status: { type: string, enum: [active, past_due, restricted, suspended, closed] }
+        currency: { type: string }
+        billing: { type: string, enum: [provider, invoiced] }
+        provider_subscription_id: { type: string, nullable: true }
+        provider_plan_id: { type: string, nullable: true }
+        seats: { type: integer }
+        cadence: { type: string, enum: [annual, monthly] }
+        term_months: { type: integer }
+        current_period_end: { type: string, format: date-time, nullable: true }
+        renews_at: { type: string, format: date-time, nullable: true }
+        dunning:
+          type: object
+          nullable: true
+          properties:
+            first_failed_at: { type: string, format: date-time }
+            day: { type: integer }
+            next_stage: { type: string, nullable: true }
+            next_stage_at: { type: string, format: date-time, nullable: true }
