@@ -263,11 +263,8 @@ Things a reviewer should know:
 
 - `cops-renewals.service.ts` inserts into `deals`, an apps/crm-owned table, so that the renewal is
   opened exactly once. ADR 0003 has the new entry and the reason.
-- The contract in `docs/api/copos-08-commercial-advanced.openapi.yaml` was written before the code.
-  Paths that changed while building: the approval and subscription paths match; the e-sign webhook
-  is `/esign/webhooks/{provider}`; `payment_link` is a third billing mode; bills are
-  `/subscription-invoices/{id}/payment-link` and `/mark-paid`; `/approvals/grandfathered` is new;
-  `/billing/webhooks/razorpay/subscriptions` is not built.
+- The contract in `docs/api/copos-08-commercial-advanced.openapi.yaml` now describes the endpoints as
+  built (version 1.0.0). Not built: `/billing/webhooks/razorpay/subscriptions` (provider auto-debit).
 - The worker file `cops-onboarding-evaluator.worker.ts` is also changed by PR #194, a few lines
   away; whichever merges second may need a small conflict resolved.
 - Restrictions read one entitlement on the customer's workspace (`subscription`). If that read
