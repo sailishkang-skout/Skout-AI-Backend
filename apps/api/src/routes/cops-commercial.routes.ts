@@ -46,6 +46,8 @@ import {
   setGatePolicy,
 } from "../services/cops-gate.service.js";
 import type { PspAdapter } from "../services/psp/psp-adapter.js";
+import { createMockEsignAdapter, type EsignAdapter } from "../services/esign/esign-adapter.js";
+import { handleEsignWebhook, listEnvelopes, sendEnvelope } from "../services/cops-esign.service.js";
 import { applyPaidCreditPurchases } from "../services/cops-credits.service.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -128,6 +130,18 @@ const contractStatusSchema = z
   .object({ status: z.enum(["signed", "declined", "expired"]), reason: reasonText, signed_at: z.string().datetime().optional() })
   .strict();
 
+const envelopeSchema = z
+  .object({
+    signers: z
+      .array(z.object({ name: z.string().trim().min(1).max(200), email: z.string().trim().email().max(320), role: z.string().trim().max(100).optional() }).strict())
+      .min(1)
+      .max(10),
+    merge_fields: z.record(z.string().regex(/^[a-z0-9_]{1,64}$/), z.string().max(2000)).optional(),
+    template_context: z.object({ region: z.string().trim().max(64).optional(), segment: z.string().trim().max(64).optional(), legal_entity: z.string().trim().max(64).optional() }).strict().optional(),
+    message: z.string().max(5000).optional(),
+  })
+  .strict();
+
 const approvalDecisionSchema = z
   .object({ role: z.enum(APPROVER_ROLES), decision: z.enum(["approved", "rejected"]), comment: z.string().trim().max(2000).nullable().optional() })
   .strict();
@@ -141,8 +155,10 @@ type Reply = CopsCapturingReply;
  * COPS-03 proposals and contracts (status-tracking scope). Contract: docs/api/copos-03-commercial.openapi.yaml.
  * Every write needs an Idempotency-Key; reads need commercial:read. Sent versions are immutable.
  */
-export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db; psp?: PspAdapter }) {
+export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db; psp?: PspAdapter; esign?: EsignAdapter }) {
   const { db } = opts;
+  // Dropbox Sign is the chosen provider; until its adapter and keys exist, the mock serves development and tests only.
+  const esign = opts.esign ?? createMockEsignAdapter({ secret: app.config.ESIGN_MOCK_WEBHOOK_SECRET, enabled: app.config.NODE_ENV !== "production" });
   const psp = opts.psp ?? createRazorpayPaymentLinkAdapter(app.config);
   const perms = (ws: string, user: string) => getMemberPermissions(db, ws, user);
   const readGate = requireAnyCopsPermission(["commercial:read"], perms);
@@ -260,6 +276,61 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
       return run(reply, ctx.requestId, () => decideApproval(db, ctx, request.params.id, parsed.data), (approval) => ({ data: approval }));
     })
   );
+
+  // ---- E-signature (COPS-08) ----
+
+  app.post<IdOnly>(
+    "/contracts/:id/envelopes",
+    { preHandler: sendGate },
+    withCopsIdempotentReply<IdOnly>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      const parsed = envelopeSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(
+        reply,
+        ctx.requestId,
+        async () => {
+          await assertContractApproved(db, ctx.workspaceId, request.params.id);
+          return sendEnvelope(db, ctx, esign, request.params.id, parsed.data);
+        },
+        (envelope) => reply.status(201).send({ data: envelope })
+      );
+    })
+  );
+
+  app.get<IdOnly>("/contracts/:id/envelopes", { preHandler: contractReadGate }, async (request, reply) => {
+    const ctx = ctxOf(request);
+    const bad = checkId(reply as unknown as Reply, ctx.requestId, request.params.id);
+    if (bad) return bad;
+    return { data: await listEnvelopes(db, ctx.workspaceId, { contractId: request.params.id }) };
+  });
+
+  app.post<{ Params: { provider: string } }>("/esign/webhooks/:provider", async (request, reply) => {
+    const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+    if (request.params.provider !== esign.provider) {
+      return reply.status(404).send(copsErrorBody({ code: "NOT_FOUND", message: "Unknown e-sign provider", requestId }));
+    }
+    const rawBody = request.rawBody ?? JSON.stringify(request.body ?? {});
+    const result = await handleEsignWebhook(db, esign, rawBody, request.headers, requestId, async (tx, signed) => {
+      await evaluateGate(tx as unknown as Db, {
+        workspaceId: signed.workspaceId,
+        opportunityId: signed.opportunityId,
+        trigger: "signature",
+        actor: { type: "integration", id: esign.provider },
+        requestId,
+      });
+    });
+    if (result.kind === "unauthorized") {
+      return reply.status(401).send(copsErrorBody({ code: "UNAUTHENTICATED", message: "Invalid webhook signature", requestId }));
+    }
+    if (result.kind === "bad_request") {
+      return reply.status(400).send(copsErrorBody({ code: "VALIDATION_FAILED", message: "Unreadable webhook body", requestId }));
+    }
+    if (result.kind === "duplicate") return { ok: true, duplicate: true };
+    return { ok: true, duplicate: false, outcome: result.outcome, status: result.status };
+  });
 
   // ---- Proposals ----
 

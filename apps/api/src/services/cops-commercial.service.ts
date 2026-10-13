@@ -706,8 +706,11 @@ export async function setContractStatus(
   ctx: CommercialContext,
   contractId: string,
   input: { status: "signed" | "declined" | "expired"; reason: string; signedAt?: Date },
-  onSigned?: (tx: Tx, contract: { opportunityId: string; kind: string }) => Promise<void>
+  onSigned?: (tx: Tx, contract: { opportunityId: string; kind: string }) => Promise<void>,
+  /** COPS-08: set when an e-sign provider event, not a person, changes the status. */
+  integration?: { type: "integration"; id: string }
 ) {
+  const actor = integration ?? { type: "user" as const, id: ctx.userId };
   return db.transaction(async (tx) => {
     const contract = await lockContract(tx as unknown as Tx, ctx.workspaceId, contractId);
     if (contract.status !== "sent") {
@@ -724,14 +727,14 @@ export async function setContractStatus(
         status: input.status,
         statusReason: input.reason,
         statusChangedAt: at,
-        statusChangedBy: ctx.userId,
+        statusChangedBy: integration ? null : ctx.userId,
         signedAt,
         updatedAt: at,
       })
       .where(eq(contracts.id, contractId));
     await writeCopsAudit(tx, {
       tenantId: ctx.workspaceId,
-      actor: { type: "user", id: ctx.userId },
+      actor,
       entityType: "contract",
       entityId: contractId,
       action: `contract.${input.status}`,
@@ -739,7 +742,7 @@ export async function setContractStatus(
       after: { status: input.status, signed_at: signedAt?.toISOString() ?? null },
       reason: input.reason,
       correlationId: ctx.requestId,
-      sourceChannel: "api",
+      sourceChannel: integration ? "webhook" : "api",
       occurredAt: at,
     });
     if (input.status === "signed") {
@@ -750,7 +753,7 @@ export async function setContractStatus(
           tenantId: ctx.workspaceId,
           aggregateType: "contract",
           aggregateId: contractId,
-          actor: { type: "user", id: ctx.userId },
+          actor,
           correlationId: ctx.requestId,
           payload: { contract_id: contractId, opportunity_id: contract.opportunityId },
           occurredAt: at,

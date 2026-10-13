@@ -296,6 +296,8 @@ const envSchema = z
     RAZORPAY_KEY_ID: z.string().optional(),
     RAZORPAY_KEY_SECRET: z.string().optional(),
     RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
+    /** COPS-08: signs the events posted to the mock e-sign provider. Development and tests only. */
+    ESIGN_MOCK_WEBHOOK_SECRET: z.string().min(16).optional(),
     /** JSON array of { id, label, credits, amountInr }. */
     RAZORPAY_CREDIT_PACKS_JSON: z.string().optional(),
     /** Prefix for per-workspace CRM OAuth secrets in AWS Secrets Manager. */
