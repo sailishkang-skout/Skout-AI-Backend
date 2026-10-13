@@ -276,6 +276,41 @@ maybe("COPS-08 subscriptions", () => {
     expect(audit.map((r: { reason: string }) => r.reason)).toEqual(["Five more reps joined", "Two year commitment"]);
   });
 
+  it("Finance sees where a provider and Skout disagree, and the lists of subscriptions and payment links", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    const sub = (await subscribe(accountId, opportunityId)).json().data;
+    const link = (await call("POST", `/subscription-invoices/${sub.invoices[0].id}/payment-link`)).json().data;
+    const reconciliation = async (email = OWNER) => (await call("GET", "/finance/reconciliation", undefined, email)).json().data;
+
+    // The customer has paid at the provider; our bill still reads open until the billing pass runs.
+    await sql`update payment_requests set status = 'paid', paid_at = now() where id = ${link.payment_request_id}`;
+    const before = await reconciliation();
+    expect(before.issues.find((i: { entity_id: string }) => i.entity_id === sub.invoices[0].id)).toMatchObject({ kind: "bill_paid_at_provider_open_here", provider_state: "paid", skout_state: "open" });
+    expect(before.counts.bill_paid_at_provider_open_here).toBeGreaterThan(0);
+    // Once the pass has run, the two agree and the issue is gone.
+    await billAt(sub.invoices[0].due_at, 1);
+    expect((await reconciliation()).issues.find((i: { entity_id: string }) => i.entity_id === sub.invoices[0].id)).toBeUndefined();
+
+    // The e-sign provider says signed; the contract is still out.
+    const contract = (await call("POST", `/opportunities/${opportunityId}/contracts`, { kind: "msa", document_url: "https://docs.example.test/msa.pdf", file_sha256: "d".repeat(64) })).json().data;
+    await call("POST", `/contracts/${contract.id}/send`, {});
+    const [envelope] = await sql`insert into signature_envelopes (workspace_id, contract_id, contract_version, provider, provider_ref, status, signers)
+      values (${workspaceId}, ${contract.id}, 1, 'mock', ${"mock_" + randomUUID()}, 'signed', '[]'::jsonb) returning id`;
+    const [stuck] = await sql`insert into signature_envelopes (workspace_id, contract_id, contract_version, provider, status, signers, created_at)
+      values (${workspaceId}, ${contract.id}, 2, 'mock', 'pending_send', '[]'::jsonb, now() - interval '1 hour') returning id`;
+    const after = await reconciliation();
+    expect(after.issues.find((i: { entity_id: string }) => i.entity_id === envelope.id)).toMatchObject({ kind: "envelope_contract_mismatch", provider_state: "signed", skout_state: "sent" });
+    expect(after.issues.find((i: { entity_id: string }) => i.entity_id === stuck.id)).toMatchObject({ kind: "envelope_never_confirmed" });
+    expect((await reconciliation(OTHER)).issues).toEqual([]);
+
+    const subs = (await call("GET", "/finance/subscriptions?renewing_within_days=400")).json().data as Array<{ id: string; seats: number; status: string }>;
+    expect(subs.find((x) => x.id === sub.id)).toMatchObject({ seats: 10, status: "active" });
+    expect((await call("GET", "/finance/subscriptions?renewing_within_days=30")).json().data.find((x: { id: string }) => x.id === sub.id)).toBeUndefined();
+    const payments = (await call("GET", "/finance/payment-requests?status=paid")).json().data as Array<{ id: string; opportunity_name: string; amount_minor: number }>;
+    expect(payments.find((x) => x.id === link.payment_request_id)).toMatchObject({ opportunity_name: "Subscription deal", amount_minor: 94_800, account_id: accountId });
+    expect((await call("GET", "/finance/payment-requests", undefined, OTHER)).json().data).toEqual([]);
+  });
+
   it("another workspace cannot see or change a subscription", async () => {
     const { accountId, opportunityId } = await newAccount();
     const sub = (await subscribe(accountId, opportunityId)).json().data;

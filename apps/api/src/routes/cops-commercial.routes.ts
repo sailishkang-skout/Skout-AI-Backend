@@ -48,6 +48,7 @@ import {
 import type { PspAdapter } from "../services/psp/psp-adapter.js";
 import { createMockEsignAdapter, type EsignAdapter } from "../services/esign/esign-adapter.js";
 import { handleEsignWebhook, listEnvelopes, sendEnvelope } from "../services/cops-esign.service.js";
+import { listSubscriptionsForFinance, loadReconciliation } from "../services/cops-finance.service.js";
 import { amendSubscription, createSubscription, getAccountSubscription, issueInvoicePaymentLink, listFailedPayments, markInvoicePaid } from "../services/cops-subscriptions.service.js";
 import { applyPaidCreditPurchases } from "../services/cops-credits.service.js";
 
@@ -158,6 +159,10 @@ const subscriptionSchema = z
 const amendmentSchema = z
   .object({ seats: z.number().int().min(1).max(100_000).optional(), term_months: z.number().int().min(1).max(120).optional(), reason: z.string().trim().min(1, "reason is required").max(1000) })
   .strict();
+const financeSubscriptionsQuery = z
+  .object({ status: z.enum(["active", "past_due", "restricted", "suspended", "closed"]).optional(), renewing_within_days: z.coerce.number().int().min(1).max(730).optional() })
+  .strict();
+const financePaymentsQuery = z.object({ status: z.enum(["requested", "paid", "failed", "expired", "cancelled", "refunded"]).optional() }).strict();
 const markPaidSchema = z.object({ reason: z.string().trim().min(1, "reason is required").max(1000) }).strict();
 
 const approvalDecisionSchema = z
@@ -370,6 +375,52 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
   app.get("/finance/failed-payments", { preHandler: requireAnyCopsPermission(["billing:read"], perms) }, async (request) => {
     const ctx = ctxOf(request);
     return { data: await listFailedPayments(db, ctx.workspaceId) };
+  });
+
+  const financeReadGate = requireAnyCopsPermission(["billing:read"], perms);
+
+  /** Finance: where a provider and Skout disagree. */
+  app.get("/finance/reconciliation", { preHandler: financeReadGate }, async (request) => {
+    const ctx = ctxOf(request);
+    return { data: await loadReconciliation(db, ctx.workspaceId) };
+  });
+
+  app.get<{ Querystring: unknown }>("/finance/subscriptions", { preHandler: financeReadGate }, async (request, reply) => {
+    const ctx = ctxOf(request);
+    const parsed = financeSubscriptionsQuery.safeParse(request.query ?? {});
+    if (!parsed.success) return invalid(reply as unknown as Reply, ctx.requestId, parsed.error);
+    return { data: await listSubscriptionsForFinance(db, ctx.workspaceId, parsed.data) };
+  });
+
+  /** Finance: payment links across accounts, newest first, with the opportunity they belong to. */
+  app.get<{ Querystring: unknown }>("/finance/payment-requests", { preHandler: financeReadGate }, async (request, reply) => {
+    const ctx = ctxOf(request);
+    const parsed = financePaymentsQuery.safeParse(request.query ?? {});
+    if (!parsed.success) return invalid(reply as unknown as Reply, ctx.requestId, parsed.error);
+    const rows = await db
+      .select({
+        id: schema.paymentRequests.id,
+        opportunity_id: schema.paymentRequests.opportunityId,
+        opportunity_name: schema.deals.name,
+        account_id: schema.deals.companyId,
+        amount_minor: schema.paymentRequests.amountMinor,
+        currency: schema.paymentRequests.currency,
+        description: schema.paymentRequests.description,
+        status: schema.paymentRequests.status,
+        provider: schema.paymentRequests.provider,
+        provider_ref: schema.paymentRequests.providerRef,
+        due_at: schema.paymentRequests.expiresAt,
+        paid_at: schema.paymentRequests.paidAt,
+        created_at: schema.paymentRequests.createdAt,
+      })
+      .from(schema.paymentRequests)
+      .innerJoin(schema.deals, eq(schema.deals.id, schema.paymentRequests.opportunityId))
+      .where(and(eq(schema.paymentRequests.workspaceId, ctx.workspaceId), parsed.data.status ? eq(schema.paymentRequests.status, parsed.data.status) : undefined))
+      .orderBy(desc(schema.paymentRequests.createdAt))
+      .limit(500);
+    return {
+      data: rows.map((r) => ({ ...r, amount_minor: Number(r.amount_minor), due_at: r.due_at?.toISOString() ?? null, paid_at: r.paid_at?.toISOString() ?? null, created_at: r.created_at.toISOString() })),
+    };
   });
 
   // ---- E-signature (COPS-08) ----
