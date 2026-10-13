@@ -17,6 +17,7 @@ import {
   type MaterialTerms,
 } from "./cops-commercial-policy.js";
 import { COPS_CONFIG_DEFAULTS, COPS_CONFIG_SCHEMAS } from "./cops-admin-config.js";
+import { proposalApprovalTerms, proposalContentHash } from "./cops-commercial.js";
 
 const policy = COMMERCIAL_POLICY_DEFAULTS.approval_policy;
 /** A deal under every threshold. */
@@ -175,5 +176,33 @@ describe("price book", () => {
 
   it("TCV is seats x per-seat price x term", () => {
     expect(contractValueMinor(10, 7900, 12)).toBe(948_000);
+  });
+});
+
+describe("proposal terms the approval rules read", () => {
+  const base = {
+    currency: "USD",
+    billing_cadence: "annual",
+    term_months: 12,
+    discount_pct: 0,
+    tax_pct: 0,
+    notes: null,
+    line_items: [{ position: 1, kind: "seats" as const, description: "Seats", quantity: 10, unit_amount_minor: 7900, discount_pct: 0 }],
+    totals: { subtotal_minor: 79_000, discount_minor: 0, tax_minor: 0, total_minor: 79_000 },
+  };
+
+  it("left out, they are the standard terms", () => {
+    expect(proposalApprovalTerms({})).toEqual({ payment_terms_net_days: 30, free_credits: 0, custom_clauses: false, non_standard_sla: false });
+  });
+
+  it("standard terms leave the content hash as it was before COPS-08, so sent versions stay valid", () => {
+    expect(proposalContentHash({ ...base, approval_terms: proposalApprovalTerms({}) })).toBe(proposalContentHash(base));
+  });
+
+  it("any non-standard term changes the hash", () => {
+    const standard = proposalContentHash(base);
+    for (const terms of [{ payment_terms_net_days: 60 }, { free_credits: 100 }, { custom_clauses: true }, { non_standard_sla: true }]) {
+      expect(proposalContentHash({ ...base, approval_terms: terms })).not.toBe(standard);
+    }
   });
 });

@@ -5,8 +5,10 @@ import {
   computeProposalTotals,
   COPS_TRANSITIONS,
   createCopsEvent,
+  proposalApprovalTerms,
   proposalContentHash,
   type CommercialLineKind,
+  type ProposalApprovalTerms,
   type ProposalTermsInput,
 } from "@skout/shared";
 import { writeCopsAudit } from "./cops-platform.service.js";
@@ -158,6 +160,7 @@ async function insertProposalVersion(
       fields: [{ path: "line_items", code: "invalid", message: error instanceof Error ? error.message : "Invalid" }],
     });
   }
+  const approvalTerms = proposalApprovalTerms(input.terms);
   const [version] = await tx
     .insert(proposalVersions)
     .values({
@@ -170,6 +173,10 @@ async function insertProposalVersion(
       discountPct: String(input.terms.discount_pct ?? 0),
       taxPct: String(input.terms.tax_pct ?? 0),
       notes: input.terms.notes ?? null,
+      paymentTermsNetDays: approvalTerms.payment_terms_net_days,
+      freeCredits: approvalTerms.free_credits,
+      customClauses: approvalTerms.custom_clauses,
+      nonStandardSla: approvalTerms.non_standard_sla,
       subtotalMinor: computed.totals.subtotal_minor,
       discountMinor: computed.totals.discount_minor,
       taxMinor: computed.totals.tax_minor,
@@ -383,6 +390,15 @@ export async function setProposalStatus(
 type VersionRow = typeof proposalVersions.$inferSelect;
 type LineRow = typeof proposalLineItems.$inferSelect;
 
+export function storedApprovalTerms(version: VersionRow): ProposalApprovalTerms {
+  return {
+    payment_terms_net_days: version.paymentTermsNetDays,
+    free_credits: version.freeCredits,
+    custom_clauses: version.customClauses,
+    non_standard_sla: version.nonStandardSla,
+  };
+}
+
 function hashOfStoredVersion(version: VersionRow, lines: LineRow[]): string {
   return proposalContentHash({
     currency: version.currency,
@@ -391,6 +407,7 @@ function hashOfStoredVersion(version: VersionRow, lines: LineRow[]): string {
     discount_pct: Number(version.discountPct),
     tax_pct: Number(version.taxPct),
     notes: version.notes,
+    approval_terms: storedApprovalTerms(version),
     line_items: lines.map((l) => ({
       position: l.position,
       kind: l.kind as CommercialLineKind,
@@ -418,6 +435,7 @@ function versionDto(version: VersionRow, lines: LineRow[]) {
     discount_pct: Number(version.discountPct),
     tax_pct: Number(version.taxPct),
     notes: version.notes,
+    ...storedApprovalTerms(version),
     totals: {
       subtotal_minor: Number(version.subtotalMinor),
       discount_minor: Number(version.discountMinor),

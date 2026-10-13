@@ -869,6 +869,13 @@
       "when": 1795300000000,
       "tag": "0122_cops07_webhook_latency",
       "breakpoints": true
+    },
+    {
+      "idx": 124,
+      "version": "7",
+      "when": 1795400000000,
+      "tag": "0123_cops08_proposal_approval_terms",
+      "breakpoints": true
     }
   ]
 }

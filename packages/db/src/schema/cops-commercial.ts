@@ -1,4 +1,4 @@
-import { bigint, index, integer, jsonb, numeric, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { bigint, boolean, index, integer, jsonb, numeric, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { workspaces } from "./workspaces.js";
 import { users } from "./users.js";
 import { deals } from "./crm.js";
@@ -50,6 +50,11 @@ export const proposalVersions = pgTable(
     discountPct: numeric("discount_pct", { precision: 5, scale: 2 }).notNull().default("0"),
     taxPct: numeric("tax_pct", { precision: 5, scale: 2 }).notNull().default("0"),
     notes: text("notes"),
+    /** COPS-08: terms the approval rules read. The defaults are the standard terms. */
+    paymentTermsNetDays: integer("payment_terms_net_days").notNull().default(30),
+    freeCredits: integer("free_credits").notNull().default(0),
+    customClauses: boolean("custom_clauses").notNull().default(false),
+    nonStandardSla: boolean("non_standard_sla").notNull().default(false),
     subtotalMinor: bigint("subtotal_minor", { mode: "number" }).notNull(),
     discountMinor: bigint("discount_minor", { mode: "number" }).notNull(),
     taxMinor: bigint("tax_minor", { mode: "number" }).notNull(),

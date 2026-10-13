@@ -26,7 +26,25 @@ export interface ProposalTermsInput {
   discount_pct?: number;
   tax_pct?: number;
   notes?: string | null;
+  /** COPS-08 terms the approval rules read. Left out, they take the standard values. */
+  payment_terms_net_days?: number;
+  free_credits?: number;
+  custom_clauses?: boolean;
+  non_standard_sla?: boolean;
   line_items: ProposalLineInput[];
+}
+
+/** Standard terms: net 30, no complimentary credits, no custom clauses, standard SLA. */
+export const STANDARD_PROPOSAL_TERMS = { payment_terms_net_days: 30, free_credits: 0, custom_clauses: false, non_standard_sla: false } as const;
+export type ProposalApprovalTerms = { -readonly [K in keyof typeof STANDARD_PROPOSAL_TERMS]: (typeof STANDARD_PROPOSAL_TERMS)[K] extends number ? number : boolean };
+
+export function proposalApprovalTerms(terms: Partial<ProposalApprovalTerms>): ProposalApprovalTerms {
+  return {
+    payment_terms_net_days: terms.payment_terms_net_days ?? STANDARD_PROPOSAL_TERMS.payment_terms_net_days,
+    free_credits: terms.free_credits ?? STANDARD_PROPOSAL_TERMS.free_credits,
+    custom_clauses: terms.custom_clauses ?? STANDARD_PROPOSAL_TERMS.custom_clauses,
+    non_standard_sla: terms.non_standard_sla ?? STANDARD_PROPOSAL_TERMS.non_standard_sla,
+  };
 }
 
 export interface ComputedLine extends ProposalLineInput {
@@ -132,7 +150,11 @@ export function proposalContentHash(input: {
   notes: string | null;
   line_items: Array<Pick<ComputedLine, "position" | "kind" | "description" | "quantity" | "unit_amount_minor" | "discount_pct">>;
   totals: ProposalTotals;
+  approval_terms?: Partial<ProposalApprovalTerms>;
 }): string {
+  // Only non-standard terms enter the hash, so versions sent before COPS-08 keep a valid hash.
+  const extra = proposalApprovalTerms(input.approval_terms ?? {});
+  const nonStandard = (Object.keys(STANDARD_PROPOSAL_TERMS) as Array<keyof ProposalApprovalTerms>).some((k) => extra[k] !== STANDARD_PROPOSAL_TERMS[k]);
   return sha256Hex(
     canonicalJson({
       currency: input.currency,
@@ -152,6 +174,7 @@ export function proposalContentHash(input: {
           discount_pct: Number(l.discount_pct),
         })),
       totals: input.totals,
+      ...(nonStandard ? { approval_terms: extra } : {}),
     })
   );
 }

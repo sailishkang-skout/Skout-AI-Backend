@@ -67,6 +67,10 @@ const termsSchema = z
     discount_pct: pct.default(0),
     tax_pct: pct.default(0),
     notes: z.string().max(5000).nullable().optional(),
+    payment_terms_net_days: z.number().int().min(0).max(365).optional(),
+    free_credits: z.number().int().min(0).max(10_000_000).optional(),
+    custom_clauses: z.boolean().optional(),
+    non_standard_sla: z.boolean().optional(),
     line_items: z.array(lineItemSchema).min(1).max(200),
   })
   .strict();
