@@ -18,6 +18,7 @@ import { assertPermission, recordPrivilegedAction } from "@skout/auth";
 import { getCaptureStatus } from "../services/enrichment/capture-ingest.service.js";
 import { exportPeopleRows, PEOPLE_CSV_COLUMNS, toCsv } from "../services/enrichment/research.service.js";
 import { auditEntityId } from "../utils/audit-entity-id.js";
+import { assertReleased, workspaceReleaseAccess } from "../services/enrichment/release-gate.js";
 const {
   companies,
   lists,
@@ -326,8 +327,19 @@ export async function enrichmentRoutes(app: FastifyInstance) {
   });
 
   // POST /enrichment/export - Export enriched data (maps to list export)
+  // ENR-06 — whether LinkedIn enrichment is released to this workspace. Not itself gated, so the
+  // dashboard can explain why the feature is unavailable.
+  app.get("/enrichment/release", async (request, reply) => {
+    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
+    const workspaceId = requireWorkspaceId(request);
+    if (!request.userId) throw new HttpError("unauthorized", 401);
+    const access = await workspaceReleaseAccess(app.db, app.config, workspaceId);
+    return reply.send({ workspaceId, enabled: access.enabled, stage: access.stage, reason: access.reason });
+  });
+
   app.post("/enrichment/export", { config: { rateLimit: { max: 10, timeWindow: 60000 } } }, async (request, reply) => {
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
+    if (!(await assertReleased(app, request, reply))) return reply;
     const workspaceId = requireWorkspaceId(request);
     if (!request.userId) throw new HttpError("unauthorized", 401);
     await assertPermission(app.db, workspaceId, request.userId, "enrichment:export");
@@ -380,6 +392,7 @@ export async function enrichmentRoutes(app: FastifyInstance) {
   // GET /enrichment/people/:id/export.csv - Export single person data
   app.get("/enrichment/people/:id/export.csv", { config: { rateLimit: { max: 10, timeWindow: 60000 } } }, async (request, reply) => {
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
+    if (!(await assertReleased(app, request, reply))) return reply;
     const { id } = request.params as { id: string };
     const workspaceId = requireWorkspaceId(request);
     if (!request.userId) throw new HttpError("unauthorized", 401);

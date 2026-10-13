@@ -35,6 +35,14 @@ jobs:
       - name: "§7.1 Read-model exceptions (no undocumented cross-service table reads)"
         run: node scripts/check-read-model-exceptions.mjs
 
+      # ENR-06 — a merged journal can be valid JSON and still skip a migration; and a new
+      # migration must be appended and additive.
+      - name: Migration validation (journal integrity, additive new migrations)
+        run: node scripts/check-migrations.mjs
+
+      - name: Secret scan (no env files, dumps, captured data or pasted credentials)
+        run: node scripts/check-no-secrets.mjs
+
   test-and-build:
     runs-on: ubuntu-latest
     services:
@@ -88,6 +96,22 @@ jobs:
 
       - name: Build API and CRM
         run: pnpm --filter @skout/api build && pnpm --filter @skout/crm build
+
+      # ENR-06 — dependency audit. Critical advisories in production dependencies block the
+      # build; high ones are listed without blocking until the existing backlog is cleared.
+      - name: Dependency audit (critical blocks)
+        run: pnpm audit --prod --audit-level=critical
+
+      - name: Dependency audit (high, report only)
+        continue-on-error: true
+        run: pnpm audit --prod --audit-level=high
+
+      # ENR-06 — build the Chrome store package and validate its version, permissions and
+      # origins on every change, so a release never starts from an unchecked package.
+      - name: Build and validate the Chrome extension package
+        run: |
+          pnpm --filter @skout/chrome-extension package:store
+          node scripts/check-extension-package.mjs
 
   docker-build:
     runs-on: ubuntu-latest

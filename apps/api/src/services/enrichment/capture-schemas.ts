@@ -380,5 +380,12 @@ export function sanitizePersonCapture(input: PersonIngestInput): SanitizedPerson
 
 /** A discovery card is only usable when its name is a person's name. */
 export function isUsableCardName(value: unknown): boolean {
-  return typeof value === "string" && value.trim().length > 0 && !isPageChrome(value) && !isEndorsementHelperText(value);
+  return (
+    typeof value === "string" &&
+    value.trim().length > 0 &&
+    !isPageChrome(value) &&
+    !isEndorsementHelperText(value) &&
+    // LinkedIn's stand-in for a profile the viewer cannot see. It names nobody.
+    !/^linkedin member$/i.test(value.trim())
+  );
 }
