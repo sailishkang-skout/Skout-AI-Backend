@@ -12,6 +12,7 @@ import {
   type ProposalTermsInput,
 } from "@skout/shared";
 import { writeCopsAudit } from "./cops-platform.service.js";
+import { carryOrVoidApprovals } from "./cops-approvals.service.js";
 import { runLifecycleTransition } from "./cops-lifecycle.service.js";
 
 /**
@@ -37,6 +38,7 @@ const {
 
 export type CommercialErrorCode =
   | "NOT_FOUND"
+  | "FORBIDDEN"
   | "BUSINESS_STATE_CONFLICT"
   | "VALIDATION_FAILED"
   | "PROVIDER_UNAVAILABLE"
@@ -57,6 +59,8 @@ export class CommercialError extends Error {
     switch (this.code) {
       case "NOT_FOUND":
         return 404;
+      case "FORBIDDEN":
+        return 403;
       case "BUSINESS_STATE_CONFLICT":
         return 409;
       case "VALIDATION_FAILED":
@@ -269,6 +273,8 @@ export async function addProposalVersion(db: Db, ctx: CommercialContext, proposa
       .update(proposals)
       .set({ currentVersion: next, status: "draft", updatedAt: new Date() })
       .where(eq(proposals.id, proposalId));
+    // COPS-08: an approval given for other terms does not survive a material change.
+    await carryOrVoidApprovals(tx as unknown as Parameters<typeof carryOrVoidApprovals>[0], ctx, proposalId);
     await writeCopsAudit(tx, {
       tenantId: ctx.workspaceId,
       actor: { type: "user", id: ctx.userId },

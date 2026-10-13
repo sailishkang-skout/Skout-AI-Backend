@@ -1,0 +1,333 @@
+import { and, desc, eq, inArray, lt } from "drizzle-orm";
+import { schema, type Db } from "@skout/db";
+import {
+  APPROVER_DECIDED_BY,
+  approvalPolicySchema,
+  canonicalJson,
+  evaluateApprovals,
+  materialChanges,
+  sha256Hex,
+  type ApprovalEvaluation,
+  type ApproverRole,
+  type MaterialTerms,
+} from "@skout/shared";
+import { writeCopsAudit } from "./cops-platform.service.js";
+import { getConfig } from "./cops-admin-config.service.js";
+import { CommercialError, storedApprovalTerms, type CommercialContext } from "./cops-commercial.service.js";
+
+/**
+ * COPS-08 approval engine (Bible p.34). A proposal version over a threshold needs every approver
+ * its matching rules name. Thresholds come from the approval_policy admin config. An approval
+ * belongs to the terms it was given for: a material change voids it, and it lapses after the
+ * configured number of days. Deals under every threshold never get an approval row.
+ */
+const { proposals, proposalVersions, proposalLineItems, approvals, approvalDecisions, workspaceMemberRoles, roles } = schema;
+
+type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+type Reader = Pick<Db, "select">;
+type VersionRow = typeof proposalVersions.$inferSelect;
+type LineRow = typeof proposalLineItems.$inferSelect;
+type ApprovalRow = typeof approvals.$inferSelect;
+type DecisionRow = typeof approvalDecisions.$inferSelect;
+
+/** An approval that still counts: waiting for decisions, or granted. */
+const OPEN_STATUSES = ["pending", "approved"];
+/** Role keys that may decide the executive slot. */
+const ADMIN_ROLE_KEYS = ["admin", "owner"];
+
+/**
+ * The terms the rules read, from a stored version. The discount is the effective one (line and
+ * header discounts together), so a discount cannot be hidden in line items. Contract value is the
+ * amount after discount and before tax.
+ */
+export function approvalTermsOf(version: VersionRow, lines: LineRow[]): MaterialTerms {
+  const subtotal = Number(version.subtotalMinor);
+  const discount = Number(version.discountMinor);
+  return {
+    currency: version.currency,
+    discount_pct: subtotal > 0 ? Math.round((discount * 10_000) / subtotal) / 100 : 0,
+    seats: lines.filter((l) => l.kind === "seats").reduce((sum, l) => sum + l.quantity, 0),
+    contract_value_minor: subtotal - discount,
+    term_months: version.termMonths,
+    ...storedApprovalTerms(version),
+    billing_cadence: version.billingCadence,
+    line_items_key: sha256Hex(
+      canonicalJson(
+        [...lines]
+          .sort((a, b) => a.position - b.position)
+          .map((l) => ({ kind: l.kind, description: l.description, quantity: l.quantity, unit_amount_minor: Number(l.unitAmountMinor), discount_pct: Number(l.discountPct) }))
+      )
+    ),
+  };
+}
+
+async function loadCurrent(db: Reader, workspaceId: string, proposalId: string) {
+  const [proposal] = await db
+    .select()
+    .from(proposals)
+    .where(and(eq(proposals.id, proposalId), eq(proposals.workspaceId, workspaceId)))
+    .limit(1);
+  if (!proposal) throw new CommercialError("NOT_FOUND", "Proposal not found");
+  const [version] = await db
+    .select()
+    .from(proposalVersions)
+    .where(and(eq(proposalVersions.proposalId, proposalId), eq(proposalVersions.version, proposal.currentVersion)))
+    .limit(1);
+  if (!version) throw new CommercialError("NOT_FOUND", "Proposal version not found");
+  const lines = await db.select().from(proposalLineItems).where(eq(proposalLineItems.versionId, version.id));
+  return { proposal, version, terms: approvalTermsOf(version, lines) };
+}
+
+async function loadPolicy(db: Db, workspaceId: string) {
+  const config = await getConfig(db, workspaceId, "approval_policy", "default");
+  const parsed = approvalPolicySchema.safeParse(config?.value);
+  if (!parsed.success) throw new CommercialError("BUSINESS_STATE_CONFLICT", "The approval policy is not configured", { config: "approval_policy" });
+  return { policy: parsed.data, policyVersion: config?.is_system_default ? 0 : (config?.version ?? 0) };
+}
+
+function approvalDto(row: ApprovalRow, decisions: DecisionRow[]) {
+  return {
+    id: row.id,
+    opportunity_id: row.opportunityId,
+    proposal_id: row.proposalId,
+    proposal_version: row.proposalVersion,
+    status: row.status,
+    required_approvers: row.requiredApprovers as ApproverRole[],
+    matched_rules: row.matchedRules as ApprovalEvaluation["matched_rules"],
+    terms: row.terms as MaterialTerms,
+    policy_version: row.policyVersion,
+    requested_by: row.requestedBy,
+    requested_at: row.requestedAt.toISOString(),
+    expires_at: row.expiresAt.toISOString(),
+    status_reason: row.statusReason,
+    resolved_at: row.resolvedAt?.toISOString() ?? null,
+    decisions: decisions
+      .filter((d) => d.approvalId === row.id)
+      .map((d) => ({ role: d.approverRole as ApproverRole, decision: d.decision, decided_by: d.decidedBy, decided_at: d.decidedAt?.toISOString() ?? null, comment: d.comment })),
+  };
+}
+export type ApprovalDto = ReturnType<typeof approvalDto>;
+
+/** Marks approvals past their expiry. Called before any read that depends on status. */
+export async function expireDueApprovals(db: Pick<Db, "update">, workspaceId: string, now: Date = new Date()): Promise<number> {
+  const rows = await db
+    .update(approvals)
+    .set({ status: "expired", statusReason: "The approval period ended", resolvedAt: now })
+    .where(and(eq(approvals.workspaceId, workspaceId), inArray(approvals.status, OPEN_STATUSES), lt(approvals.expiresAt, now)))
+    .returning({ id: approvals.id });
+  return rows.length;
+}
+
+export async function listApprovals(db: Db, workspaceId: string, where: { proposalId?: string; status?: string; role?: ApproverRole; id?: string } = {}): Promise<ApprovalDto[]> {
+  await expireDueApprovals(db, workspaceId);
+  const rows = await db
+    .select()
+    .from(approvals)
+    .where(
+      and(
+        eq(approvals.workspaceId, workspaceId),
+        where.proposalId ? eq(approvals.proposalId, where.proposalId) : undefined,
+        where.status ? eq(approvals.status, where.status) : undefined,
+        where.id ? eq(approvals.id, where.id) : undefined
+      )
+    )
+    .orderBy(desc(approvals.requestedAt))
+    .limit(200);
+  if (rows.length === 0) return [];
+  const decisions = await db.select().from(approvalDecisions).where(inArray(approvalDecisions.approvalId, rows.map((r) => r.id)));
+  const list = rows.map((r) => approvalDto(r, decisions));
+  return where.role ? list.filter((a) => a.decisions.some((d) => d.role === where.role && d.decision === "pending")) : list;
+}
+
+/**
+ * What the current version needs, and whether it has it. `satisfied` is true when nothing is
+ * needed or an approval for exactly these terms is granted. Rules that cannot be evaluated (no
+ * contract-value thresholds for the currency) are reported and do not block.
+ */
+export async function evaluateProposalApprovals(db: Db, workspaceId: string, proposalId: string) {
+  const { proposal, terms } = await loadCurrent(db, workspaceId, proposalId);
+  const { policy, policyVersion } = await loadPolicy(db, workspaceId);
+  const evaluation = evaluateApprovals(policy, terms);
+  const open = (await listApprovals(db, workspaceId, { proposalId })).find((a) => OPEN_STATUSES.includes(a.status) && a.proposal_version === proposal.currentVersion) ?? null;
+  const required = evaluation.required_approvers.length > 0;
+  return {
+    proposal_id: proposalId,
+    proposal_version: proposal.currentVersion,
+    currency: terms.currency,
+    terms,
+    ...evaluation,
+    policy_version: policyVersion,
+    required,
+    satisfied: !required || (open?.status === "approved" && evaluation.required_approvers.every((r) => open.required_approvers.includes(r))),
+    approval: open,
+  };
+}
+
+/** Throws 409 unless the current version needs no approval or has one. Used before a send and by the gate. */
+export async function assertApproved(db: Db, workspaceId: string, proposalId: string): Promise<void> {
+  const state = await evaluateProposalApprovals(db, workspaceId, proposalId);
+  if (!state.satisfied) {
+    throw new CommercialError("BUSINESS_STATE_CONFLICT", "This proposal needs approval before it can go out", {
+      required_approvers: state.required_approvers,
+      approval_status: state.approval?.status ?? "not_requested",
+    });
+  }
+}
+
+export async function requestApproval(db: Db, ctx: CommercialContext, proposalId: string): Promise<ApprovalDto> {
+  const state = await evaluateProposalApprovals(db, ctx.workspaceId, proposalId);
+  if (!state.required) throw new CommercialError("BUSINESS_STATE_CONFLICT", "This proposal is under every threshold and needs no approval", { required_approvers: [] });
+  if (state.approval) throw new CommercialError("BUSINESS_STATE_CONFLICT", `An approval for this version is already ${state.approval.status}`, { approval_id: state.approval.id });
+  const { policy } = await loadPolicy(db, ctx.workspaceId);
+
+  const id = await db.transaction(async (tx) => {
+    // The lock makes two concurrent requests for one version take turns; the second sees the first.
+    const [proposal] = await tx.select().from(proposals).where(eq(proposals.id, proposalId)).for("update").limit(1);
+    if (!proposal || proposal.currentVersion !== state.proposal_version) {
+      throw new CommercialError("BUSINESS_STATE_CONFLICT", "The proposal changed while approval was being requested; try again");
+    }
+    const [existing] = await tx
+      .select({ id: approvals.id })
+      .from(approvals)
+      .where(and(eq(approvals.proposalId, proposalId), eq(approvals.proposalVersion, state.proposal_version), inArray(approvals.status, OPEN_STATUSES)))
+      .limit(1);
+    if (existing) throw new CommercialError("BUSINESS_STATE_CONFLICT", "An approval for this version already exists", { approval_id: existing.id });
+    const now = new Date();
+    const [row] = await tx
+      .insert(approvals)
+      .values({
+        workspaceId: ctx.workspaceId,
+        opportunityId: proposal.opportunityId,
+        proposalId,
+        proposalVersion: state.proposal_version,
+        requiredApprovers: state.required_approvers,
+        matchedRules: state.matched_rules,
+        terms: state.terms,
+        policyVersion: state.policy_version,
+        requestedBy: ctx.userId,
+        requestedAt: now,
+        expiresAt: new Date(now.getTime() + policy.expires_after_days * 86_400_000),
+      })
+      .returning({ id: approvals.id });
+    await tx.insert(approvalDecisions).values(state.required_approvers.map((role) => ({ workspaceId: ctx.workspaceId, approvalId: row!.id, approverRole: role })));
+    await writeCopsAudit(tx, {
+      tenantId: ctx.workspaceId,
+      actor: { type: "user", id: ctx.userId },
+      entityType: "approval",
+      entityId: row!.id,
+      action: "approval.requested",
+      after: { proposal_id: proposalId, version: state.proposal_version, required_approvers: state.required_approvers, rules: state.matched_rules.map((m) => m.rule) },
+      correlationId: ctx.requestId,
+      sourceChannel: "api",
+    });
+    return row!.id;
+  });
+  return (await listApprovals(db, ctx.workspaceId, { id }))[0]!;
+}
+
+async function memberRoleKeys(db: Reader, workspaceId: string, userId: string): Promise<string[]> {
+  const rows = await db
+    .select({ key: roles.key })
+    .from(workspaceMemberRoles)
+    .innerJoin(roles, eq(roles.id, workspaceMemberRoles.roleId))
+    .where(and(eq(workspaceMemberRoles.workspaceId, workspaceId), eq(workspaceMemberRoles.userId, userId)));
+  return rows.map((r) => r.key);
+}
+
+/** True when the member may decide that approver slot. An Admin (or the owner) decides the executive slot. */
+export function mayDecide(roleKeys: string[], slot: ApproverRole): boolean {
+  const needed = APPROVER_DECIDED_BY[slot];
+  return needed === "admin" ? roleKeys.some((k) => ADMIN_ROLE_KEYS.includes(k)) : roleKeys.includes(needed);
+}
+
+export async function decideApproval(
+  db: Db,
+  ctx: CommercialContext,
+  approvalId: string,
+  input: { role: ApproverRole; decision: "approved" | "rejected"; comment?: string | null }
+): Promise<ApprovalDto> {
+  const comment = input.comment?.trim() || null;
+  if (input.decision === "rejected" && !comment) {
+    throw new CommercialError("VALIDATION_FAILED", "A comment is required to reject", { fields: [{ path: "comment", code: "required", message: "A comment is required to reject" }] });
+  }
+  await expireDueApprovals(db, ctx.workspaceId);
+  if (!mayDecide(await memberRoleKeys(db, ctx.workspaceId, ctx.userId), input.role)) {
+    throw new CommercialError("FORBIDDEN", `Only ${APPROVER_DECIDED_BY[input.role] === "admin" ? "an Admin" : `the ${input.role} role`} can decide this approval`, { role: input.role });
+  }
+
+  await db.transaction(async (tx) => {
+    const [approval] = await tx
+      .select()
+      .from(approvals)
+      .where(and(eq(approvals.id, approvalId), eq(approvals.workspaceId, ctx.workspaceId)))
+      .for("update")
+      .limit(1);
+    if (!approval) throw new CommercialError("NOT_FOUND", "Approval not found");
+    if (approval.status !== "pending") throw new CommercialError("BUSINESS_STATE_CONFLICT", `This approval is ${approval.status}`, { status: approval.status });
+    const now = new Date();
+    const [decided] = await tx
+      .update(approvalDecisions)
+      .set({ decision: input.decision, decidedBy: ctx.userId, decidedAt: now, comment })
+      .where(and(eq(approvalDecisions.approvalId, approvalId), eq(approvalDecisions.approverRole, input.role), eq(approvalDecisions.decision, "pending")))
+      .returning({ id: approvalDecisions.id });
+    if (!decided) throw new CommercialError("BUSINESS_STATE_CONFLICT", `The ${input.role} decision is not pending on this approval`, { role: input.role });
+
+    const all = await tx.select({ decision: approvalDecisions.decision }).from(approvalDecisions).where(eq(approvalDecisions.approvalId, approvalId));
+    const status = input.decision === "rejected" ? "rejected" : all.every((d) => d.decision === "approved") ? "approved" : "pending";
+    if (status !== "pending") {
+      await tx
+        .update(approvals)
+        .set({ status, resolvedAt: now, statusReason: status === "rejected" ? `Rejected by ${input.role}` : null })
+        .where(eq(approvals.id, approvalId));
+    }
+    await writeCopsAudit(tx, {
+      tenantId: ctx.workspaceId,
+      actor: { type: "user", id: ctx.userId },
+      entityType: "approval",
+      entityId: approvalId,
+      action: `approval.${input.decision}`,
+      before: { status: approval.status },
+      after: { status, role: input.role, proposal_id: approval.proposalId, version: approval.proposalVersion },
+      reason: comment ?? undefined,
+      correlationId: ctx.requestId,
+      sourceChannel: "api",
+    });
+  });
+  return (await listApprovals(db, ctx.workspaceId, { id: approvalId }))[0]!;
+}
+
+/**
+ * Called in the transaction that adds a proposal version. An open approval is voided when the new
+ * version differs in a material term; otherwise (title or notes only) it moves to the new version.
+ */
+export async function carryOrVoidApprovals(tx: Tx, ctx: CommercialContext, proposalId: string): Promise<void> {
+  const open = await tx
+    .select()
+    .from(approvals)
+    .where(and(eq(approvals.proposalId, proposalId), eq(approvals.workspaceId, ctx.workspaceId), inArray(approvals.status, OPEN_STATUSES)))
+    .for("update");
+  if (open.length === 0) return;
+  const { proposal, terms } = await loadCurrent(tx, ctx.workspaceId, proposalId);
+  for (const approval of open) {
+    const changed = materialChanges(approval.terms as MaterialTerms, terms);
+    if (changed.length === 0) {
+      await tx.update(approvals).set({ proposalVersion: proposal.currentVersion }).where(eq(approvals.id, approval.id));
+      continue;
+    }
+    await tx
+      .update(approvals)
+      .set({ status: "voided", statusReason: `The terms changed: ${changed.join(", ")}`, resolvedAt: new Date() })
+      .where(eq(approvals.id, approval.id));
+    await writeCopsAudit(tx, {
+      tenantId: ctx.workspaceId,
+      actor: { type: "user", id: ctx.userId },
+      entityType: "approval",
+      entityId: approval.id,
+      action: "approval.voided",
+      before: { status: approval.status, version: approval.proposalVersion },
+      after: { status: "voided", version: proposal.currentVersion, changed },
+      correlationId: ctx.requestId,
+      sourceChannel: "api",
+    });
+  }
+}

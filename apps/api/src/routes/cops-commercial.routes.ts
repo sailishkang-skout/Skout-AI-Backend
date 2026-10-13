@@ -14,7 +14,7 @@ import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
  *     query, and the payment webhook resolves the account inside its own transaction.
  *   - Review date: revisit when apps/crm's internal API covers batched reads
  */
-import { BILLING_CADENCES, COMMERCIAL_GATE_POLICIES, COMMERCIAL_LINE_KINDS, copsErrorBody, copsErrorStatus, resolveCorrelationId } from "@skout/shared";
+import { APPROVER_ROLES, BILLING_CADENCES, COMMERCIAL_GATE_POLICIES, COMMERCIAL_LINE_KINDS, copsErrorBody, copsErrorStatus, resolveCorrelationId } from "@skout/shared";
 import { getMemberPermissions } from "@skout/auth";
 import { copsIdempotencyStore, requireAnyCopsPermission } from "../services/cops-platform.service.js";
 import { withCopsIdempotentReply, type CopsCapturingReply } from "../services/cops-idempotent.js";
@@ -34,6 +34,7 @@ import {
   type CommercialContext,
 } from "../services/cops-commercial.service.js";
 import { createPaymentRequest, handlePaymentWebhook, loadPaymentRequests } from "../services/cops-payments.service.js";
+import { decideApproval, evaluateProposalApprovals, listApprovals, requestApproval } from "../services/cops-approvals.service.js";
 import { createRazorpayPaymentLinkAdapter } from "../services/psp/razorpay.js";
 import {
   approveTrial,
@@ -126,6 +127,13 @@ const contractStatusSchema = z
   .object({ status: z.enum(["signed", "declined", "expired"]), reason: reasonText, signed_at: z.string().datetime().optional() })
   .strict();
 
+const approvalDecisionSchema = z
+  .object({ role: z.enum(APPROVER_ROLES), decision: z.enum(["approved", "rejected"]), comment: z.string().trim().max(2000).nullable().optional() })
+  .strict();
+const approvalQuerySchema = z
+  .object({ status: z.enum(["pending", "approved", "rejected", "voided", "expired"]).optional(), role: z.enum(APPROVER_ROLES).optional() })
+  .strict();
+
 type Reply = CopsCapturingReply;
 
 /**
@@ -178,6 +186,56 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
 
   const checkId = (reply: Reply, requestId: string, id: string, path = "id") =>
     UUID.test(id) ? null : invalid(reply, requestId, { path, message: "Invalid id" });
+
+  // ---- Approvals (COPS-08). Contract: docs/api/copos-08-commercial-advanced.openapi.yaml ----
+
+  const approvalDecideGate = requireAnyCopsPermission(["commercial:approve", "legal:approve"], perms);
+  type IdOnly = { Params: { id: string }; Body: unknown; Querystring: unknown };
+
+  app.get<IdOnly>("/proposals/:id/approvals/evaluate", { preHandler: readGate }, async (request, reply) => {
+    const ctx = ctxOf(request);
+    const bad = checkId(reply as unknown as Reply, ctx.requestId, request.params.id);
+    if (bad) return bad;
+    return run(reply as unknown as Reply, ctx.requestId, () => evaluateProposalApprovals(db, ctx.workspaceId, request.params.id), (data) => ({ data }));
+  });
+
+  app.get<IdOnly>("/proposals/:id/approvals", { preHandler: readGate }, async (request, reply) => {
+    const ctx = ctxOf(request);
+    const bad = checkId(reply as unknown as Reply, ctx.requestId, request.params.id);
+    if (bad) return bad;
+    return { data: await listApprovals(db, ctx.workspaceId, { proposalId: request.params.id }) };
+  });
+
+  app.post<IdOnly>(
+    "/proposals/:id/approvals",
+    { preHandler: sendGate },
+    withCopsIdempotentReply<IdOnly>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      return run(reply, ctx.requestId, () => requestApproval(db, ctx, request.params.id), (approval) => reply.status(201).send({ data: approval }));
+    })
+  );
+
+  app.get<{ Querystring: unknown }>("/approvals", { preHandler: approvalDecideGate }, async (request, reply) => {
+    const ctx = ctxOf(request);
+    const parsed = approvalQuerySchema.safeParse(request.query ?? {});
+    if (!parsed.success) return invalid(reply as unknown as Reply, ctx.requestId, parsed.error);
+    return { data: await listApprovals(db, ctx.workspaceId, parsed.data) };
+  });
+
+  app.post<IdOnly>(
+    "/approvals/:id/decisions",
+    { preHandler: approvalDecideGate },
+    withCopsIdempotentReply<IdOnly>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      const parsed = approvalDecisionSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(reply, ctx.requestId, () => decideApproval(db, ctx, request.params.id, parsed.data), (approval) => ({ data: approval }));
+    })
+  );
 
   // ---- Proposals ----
 
