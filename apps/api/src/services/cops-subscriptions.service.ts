@@ -4,6 +4,8 @@ import { schema, type Db } from "@skout/db";
 import {
   addMonthsUtc,
   appendCopsEvent,
+  canonicalJson,
+  CopsIllegalTransitionError,
   createCopsEvent,
   dunningPolicySchema,
   effectiveSeats,
@@ -21,6 +23,7 @@ import {
 } from "@skout/shared";
 import { writeCopsAudit } from "./cops-platform.service.js";
 import { getConfig } from "./cops-admin-config.service.js";
+import { runLifecycleTransition } from "./cops-lifecycle.service.js";
 import { CommercialError, getOpportunity, type CommercialContext } from "./cops-commercial.service.js";
 import { createPaymentRequest } from "./cops-payments.service.js";
 import type { PspAdapter } from "./psp/psp-adapter.js";
@@ -32,7 +35,15 @@ import type { PspAdapter } from "./psp/psp-adapter.js";
  * auto-debit. `invoiced` accounts are never suspended automatically. Status comes only from the
  * oldest unpaid bill, so paying it restores access with no extra step, and nothing here deletes data.
  */
-const { subscriptions, subscriptionItems, subscriptionInvoices, subscriptionAmendments, paymentRequests } = schema;
+const { subscriptions, subscriptionItems, subscriptionInvoices, subscriptionAmendments, paymentRequests, copsLifecycleStates, copsProvisionings, entitlements } = schema;
+
+/** The entitlement key the customer workspace carries; product code reads the subscription from it. */
+export const SUBSCRIPTION_ENTITLEMENT_KEY = "subscription";
+/**
+ * Account lifecycle state (COPS-01) for each subscription status. The failed-payment stages before
+ * suspension stay on the subscription: the account is still a paying customer until it is suspended.
+ */
+const ACCOUNT_STATE: Record<SubscriptionStatus, "paid" | "suspended" | "closed"> = { active: "paid", past_due: "paid", restricted: "paid", suspended: "suspended", closed: "closed" };
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type SubscriptionRow = typeof subscriptions.$inferSelect;
@@ -113,6 +124,63 @@ export async function getAccountSubscription(db: Db, workspaceId: string, accoun
     .limit(20);
   const row = rows.find((r) => r.status !== "closed") ?? rows[0];
   return row ? loadDto(db, row, now) : null;
+}
+
+/**
+ * Keeps what follows from a subscription in step with it, in the caller's transaction:
+ *  - the account's lifecycle state (paid, suspended, closed), through the COPS-01 transition service;
+ *  - the `subscription` entitlement on the customer's own workspace (status, seats, renewal date),
+ *    which is what the product reads to know what the customer is entitled to.
+ * Safe to call on every pass: it writes only when something differs.
+ */
+async function syncAccountFromSubscription(tx: Tx, sub: SubscriptionRow, status: SubscriptionStatus, seats: number, now: Date, requestId: string): Promise<void> {
+  const target = ACCOUNT_STATE[status];
+  const [state] = await tx
+    .select({ state: copsLifecycleStates.state })
+    .from(copsLifecycleStates)
+    .where(and(eq(copsLifecycleStates.workspaceId, sub.workspaceId), eq(copsLifecycleStates.dimension, "account"), eq(copsLifecycleStates.entityId, sub.accountId)))
+    .limit(1);
+  if ((state?.state ?? "trial") !== target) {
+    try {
+      // A savepoint: a move the state model does not allow (for example out of closed) is left alone
+      // without undoing the subscription change it came with.
+      await tx.transaction(async (sp) => {
+        await runLifecycleTransition(sp as unknown as Db, {
+          workspaceId: sub.workspaceId,
+          dimension: "account",
+          entityId: sub.accountId,
+          to: target,
+          actorId: null,
+          actorType: "system",
+          source: "subscription",
+          reason: `Subscription is ${status}`,
+          requestId,
+          occurredAt: now,
+        });
+      });
+    } catch (error) {
+      if (!(error instanceof CopsIllegalTransitionError)) throw error;
+    }
+  }
+
+  const [provisioned] = await tx
+    .select({ workspaceId: copsProvisionings.provisionedWorkspaceId })
+    .from(copsProvisionings)
+    .where(and(eq(copsProvisionings.workspaceId, sub.workspaceId), eq(copsProvisionings.accountId, sub.accountId), isNotNull(copsProvisionings.provisionedWorkspaceId)))
+    .orderBy(desc(copsProvisionings.createdAt))
+    .limit(1);
+  if (!provisioned?.workspaceId) return;
+  const value = { subscription_id: sub.id, status, seats, billing: sub.billing, cadence: sub.cadence, currency: sub.currency, renews_at: sub.termEnd.toISOString() };
+  const [existing] = await tx
+    .select({ value: entitlements.value })
+    .from(entitlements)
+    .where(and(eq(entitlements.workspaceId, provisioned.workspaceId), eq(entitlements.key, SUBSCRIPTION_ENTITLEMENT_KEY)))
+    .limit(1);
+  if (existing && canonicalJson(existing.value) === canonicalJson(value)) return;
+  await tx
+    .insert(entitlements)
+    .values({ workspaceId: provisioned.workspaceId, key: SUBSCRIPTION_ENTITLEMENT_KEY, value, source: "cops-subscription", updatedAt: now })
+    .onConflictDoUpdate({ target: [entitlements.workspaceId, entitlements.key], set: { value, source: "cops-subscription", updatedAt: now } });
 }
 
 /** One bill per period that has started. Safe to call again: a period is billed once. */
@@ -200,6 +268,7 @@ export async function createSubscription(db: Db, ctx: CommercialContext, account
       .returning();
     const [item] = await tx.insert(subscriptionItems).values({ workspaceId: ctx.workspaceId, subscriptionId: sub!.id, kind: "seats", quantity: input.seats, unitAmountMinor: unit! }).returning();
     await ensurePeriodInvoices(tx, sub!, [item!], now);
+    await syncAccountFromSubscription(tx, sub!, "active", input.seats, now, ctx.requestId);
     await writeCopsAudit(tx, {
       tenantId: ctx.workspaceId,
       actor: { type: "user", id: ctx.userId },
@@ -323,6 +392,7 @@ export async function runSubscriptionBilling(db: Db, now: Date = new Date(), sco
         .limit(1);
       const next = subscriptionStatusFor(policy, { billing: sub.billing as SubscriptionBilling, oldest_overdue_due_at: overdue?.dueAt ?? null, now });
       const from = sub.status as SubscriptionStatus;
+      await syncAccountFromSubscription(tx, sub, next.status, effectiveSeats(originalSeats(items), seatChanges(amendments), now), now, requestId);
       if (next.status === from) return;
 
       await tx.update(subscriptions).set({ status: next.status, statusChangedAt: now, updatedAt: now }).where(eq(subscriptions.id, sub.id));
@@ -403,6 +473,9 @@ export async function amendSubscription(db: Db, ctx: CommercialContext, subscrip
       termEnd = addMonthsUtc(sub.termStart, input.term_months);
       if (termEnd.getTime() <= now.getTime()) throw new CommercialError("VALIDATION_FAILED", "The new term would already be over", { fields: [{ path: "term_months", code: "too_short", message: "The new term would already be over" }] });
       await tx.update(subscriptions).set({ termMonths: input.term_months, termEnd, updatedAt: now }).where(eq(subscriptions.id, sub.id));
+    }
+    if (termEnd.getTime() !== sub.termEnd.getTime()) {
+      await syncAccountFromSubscription(tx, { ...sub, termEnd }, sub.status as SubscriptionStatus, effectiveSeats(originalSeats(items), seatChanges(earlier), now), now, ctx.requestId);
     }
     const before = { seats: seatsBefore, term_months: sub.termMonths, renews_at: sub.termEnd.toISOString() };
     const after = { seats: input.seats ?? seatsBefore, term_months: input.term_months ?? sub.termMonths, renews_at: termEnd.toISOString() };

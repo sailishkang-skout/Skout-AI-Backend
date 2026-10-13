@@ -311,6 +311,46 @@ maybe("COPS-08 subscriptions", () => {
     expect((await call("GET", "/finance/payment-requests", undefined, OTHER)).json().data).toEqual([]);
   });
 
+  it("the account's lifecycle state and the customer workspace's entitlement follow the subscription", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    // The customer's own workspace, as provisioning records it.
+    const [customer] = await sql`insert into workspaces (name, slug) values ('Customer workspace', ${"cust-" + randomUUID().slice(0, 12)}) returning id`;
+    await sql`insert into cops_provisionings (workspace_id, account_id, opportunity_id, idempotency_key, status, request, provisioned_workspace_id)
+      values (${workspaceId}, ${accountId}, ${opportunityId}, ${randomUUID()}, 'succeeded', '{}'::jsonb, ${customer.id})`;
+    const accountState = async () => (await sql`select state from cops_lifecycle_states where workspace_id = ${workspaceId} and dimension = 'account' and entity_id = ${accountId}`)[0]?.state;
+    const entitlement = async () => (await sql`select value, source from entitlements where workspace_id = ${customer.id} and key = 'subscription'`)[0];
+
+    const sub = (await subscribe(accountId, opportunityId)).json().data;
+    expect(await accountState()).toBe("paid");
+    expect(await entitlement()).toMatchObject({ source: "cops-subscription", value: { subscription_id: sub.id, status: "active", seats: 10, currency: "USD" } });
+
+    const due = sub.invoices[0].due_at as string;
+    // Past due and restricted are stages of the subscription; the account is still a paying customer.
+    await billAt(due, 9);
+    expect(await accountState()).toBe("paid");
+    expect((await entitlement()).value.status).toBe("restricted");
+    await billAt(due, 15);
+    expect(await accountState()).toBe("suspended");
+    expect((await entitlement()).value.status).toBe("suspended");
+
+    // Paying restores both, with no extra step.
+    await sql`update subscription_invoices set status = 'paid', paid_at = now() where subscription_id = ${sub.id}`;
+    await billAt(due, 16);
+    expect(await accountState()).toBe("paid");
+    expect((await entitlement()).value).toMatchObject({ status: "active", seats: 10 });
+
+    // A seat amendment reaches the entitlement when it takes effect, and a longer term moves the renewal date at once.
+    await call("POST", `/subscriptions/${sub.id}/amendments`, { seats: 15, term_months: 24, reason: "Growth" });
+    expect((await entitlement()).value).toMatchObject({ seats: 10 });
+    expect(new Date((await entitlement()).value.renews_at).getUTCFullYear()).toBe(new Date(sub.term_start).getUTCFullYear() + 2);
+    await sql`update subscription_invoices set status = 'paid', paid_at = now() where subscription_id = ${sub.id}`;
+    await billAt(sub.invoices[0].period_end, 0);
+    expect((await entitlement()).value).toMatchObject({ seats: 15 });
+    // Every account-state change went through the transition service, so each has its event.
+    const moves = await sql`select envelope->'payload' as payload from cops_outbox where event_type = 'LifecycleTransitioned' and aggregate_id = ${accountId} order by created_at`;
+    expect(moves.map((m: { payload: { from: string; to: string } }) => `${m.payload.from}>${m.payload.to}`)).toEqual(["trial>paid", "paid>suspended", "suspended>paid"]);
+  });
+
   it("another workspace cannot see or change a subscription", async () => {
     const { accountId, opportunityId } = await newAccount();
     const sub = (await subscribe(accountId, opportunityId)).json().data;
