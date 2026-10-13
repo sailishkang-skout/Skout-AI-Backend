@@ -162,3 +162,41 @@ event schema tests; analytics instrumentation; a runbook and alerts for the dunn
 job and the e-sign webhook; tenant-isolation tests on every new table; Playwright for the FE flows.
 Phase 2 golden paths (COPS-13) include e-sign delay and renewal, so both are built to be testable
 end to end.
+
+## 9. Decisions from Aditya on the open questions (2026-10-13, second round)
+
+| Question | Decision | Effect |
+|---|---|---|
+| Policy file (6.1) | Aditya is updating it | Until it lands, the file in this branch stands. EUR, GBP and INR contract-value thresholds stay `null` |
+| Free credits (6.11) | Set a threshold for now; take Finance questions to the meeting with Sailish | Provisional: over 500 credits Sales Manager, over 2,000 plus Finance. 500 is the standard trial grant, so a normal trial needs no approval. Marked provisional in the file |
+| Executive approver (6.2) | An Admin decides | `APPROVER_DECIDED_BY.executive = "admin"`; no new role |
+| `RAZORPAY_WEBHOOK_SECRET` in environments | Aditya is checking | PR #193 waits on it |
+| Account states (6.4) | Agreed | The dunning stage lives on the subscription; the account moves only to `suspended` and `closed` |
+| Razorpay (section 5) | Look for a solution, or discuss with Sailish | See below |
+| Alert destination | "notifications" | To confirm: which Datadog handle this is. Not needed until PR #194 is deployed |
+| Start of Phase 2 code | Start now | Done: config kinds, approval evaluator, dunning stages, price book |
+
+Still for the Finance meeting: contract-value thresholds outside USD; the free-credit thresholds;
+prices outside USD; how the 20% month-to-month surcharge is shown; the band edges (6.3).
+
+### Razorpay: what public documentation says, and the fallback
+
+Read on 2026-10-13, not confirmed for this merchant account:
+
+- Razorpay says international payments cover Subscriptions as well as Payment Links, in 100+
+  currencies including USD, EUR and GBP.
+- An Indian business has to apply for international payments (Account & Settings > International
+  payments). It is not on by default.
+- Card subscriptions have been paused and re-enabled in the past, and the international
+  subscription pages are written for businesses outside India. Whether USD recurring charges on
+  foreign cards are enabled for this entity is something only Razorpay support, or a test on the
+  account, can answer. Retry and halted timing and proration were not found in what was read.
+
+Design consequence, so the build does not wait: every subscription has `billing: provider | invoiced`.
+`invoiced` uses the COPS-03 payment-link flow, one payment request per billing period, which already
+works in any currency Razorpay accepts for links. Renewals, dunning, amendments and the finance
+screens are the same in both modes; only the charge differs. If USD recurring turns out to be
+unsupported, those accounts are `invoiced` and nothing is rebuilt.
+
+Sources: https://razorpay.com/docs/payments/international-payments ,
+https://razorpay.com/accept-international-payments/ , https://razorpay.com/subscriptions/
