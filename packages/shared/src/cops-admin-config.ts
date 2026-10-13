@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { esignTemplateSchema } from "./cops-esign.js";
 import { COMMERCIAL_POLICY_DEFAULTS, approvalPolicySchema, currencyPolicySchema, dunningPolicySchema, priceBookSchema } from "./cops-commercial-policy.js";
 
 /**
@@ -17,6 +18,7 @@ export const COPS_CONFIG_KINDS = [
   "dunning_policy",
   "price_book",
   "currency_policy",
+  "esign_template",
 ] as const;
 export type CopsConfigKind = (typeof COPS_CONFIG_KINDS)[number];
 
@@ -75,6 +77,7 @@ export const COPS_CONFIG_SCHEMAS = {
   dunning_policy: dunningPolicySchema,
   price_book: priceBookSchema,
   currency_policy: currencyPolicySchema,
+  esign_template: esignTemplateSchema,
 } as const satisfies Record<CopsConfigKind, z.ZodTypeAny>;
 
 /**
