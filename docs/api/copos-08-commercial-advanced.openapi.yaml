@@ -25,7 +25,10 @@ paths:
   /proposals/{id}/approvals:
     post:
       summary: Request the approvals the current version needs
-      description: Needs commercial:send. 409 if the version needs none, or an open request already exists for it.
+      description: >
+        Needs commercial:send. 409 if the version needs none, or an open request already exists for
+        it. While required approvals are missing, the opportunity cannot move into the contracting
+        stage and the contract cannot be sent for signature (409 BUSINESS_STATE_CONFLICT).
       responses:
         "201": { description: The approval request with one pending decision per approver role }
         "409": { description: Nothing to approve, or already requested for this version }
@@ -78,6 +81,10 @@ paths:
               required: [signers]
               properties:
                 version: { type: integer, description: "Defaults to the current version" }
+                merge_fields:
+                  type: object
+                  additionalProperties: { type: string }
+                  description: "Overrides for the customer and commercial fields merged into the template. Defaults come from the account and the proposal version."
                 signers:
                   type: array
                   minItems: 1
@@ -128,10 +135,11 @@ paths:
         "409": { description: The account already has an active subscription }
   /subscriptions/{id}/amendments:
     post:
-      summary: Change seats or term
+      summary: Change seats, credits or term
       description: >
         Appends an amendment; the original contract and earlier amendments are never changed. A seat
-        change takes effect on the next billing cycle.
+        change takes effect on the next billing cycle. Each amendment stores the entitlement set it
+        produced, so entitlements have a history. Modules are not supported yet (no module catalogue).
       requestBody:
         required: true
         content:
@@ -141,6 +149,7 @@ paths:
               required: [reason]
               properties:
                 seats: { type: integer, minimum: 1 }
+                credits: { type: integer, minimum: 0, description: "Credits included per billing cycle" }
                 term_months: { type: integer, minimum: 1 }
                 reason: { type: string }
       responses:
@@ -163,6 +172,24 @@ paths:
     get:
       summary: Accounts in dunning, worst first
       description: Needs billing:read. Stage, day number, amount due and the next automatic step.
+      responses:
+        "200": { description: Rows with next_cursor }
+  /finance/payment-requests:
+    get:
+      summary: Invoices and payment links
+      description: Needs billing:read. Amount, currency, due date, status and provider reference, across accounts.
+      parameters:
+        - { name: status, in: query, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200": { description: Rows with next_cursor }
+  /finance/subscriptions:
+    get:
+      summary: Subscription state and upcoming renewals
+      description: Needs billing:read. Filter by status or by renewals due within a number of days.
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [active, past_due, restricted, suspended, closed] } }
+        - { name: renewing_within_days, in: query, schema: { type: integer, minimum: 1 } }
       responses:
         "200": { description: Rows with next_cursor }
   /finance/reconciliation:
@@ -195,7 +222,7 @@ components:
           items:
             type: object
             properties:
-              rule: { type: string, enum: [discount_pct, seats, contract_value, term_months, payment_terms, custom_clauses, non_standard_sla] }
+              rule: { type: string, enum: [discount_pct, seats, contract_value, term_months, free_credits, payment_terms, custom_clauses, non_standard_sla] }
               value: { type: number, nullable: true }
               approvers: { type: array, items: { $ref: "#/components/schemas/ApproverRole" } }
         unevaluated:
