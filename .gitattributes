@@ -1,3 +1,5 @@
 
 # deploy files run on Linux: keep LF even on Windows checkouts
 deploy/hetzner/** text eol=lf
+deploy/gcp/** text eol=lf
+*.sh text eol=lf
