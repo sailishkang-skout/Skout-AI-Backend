@@ -41,6 +41,8 @@ const DEFAULT_EVENT_ROLES: Partial<Record<CopsPhase1EventType, readonly CopsNoti
   ApprovalDecided: ["sales", "sales_manager"],
   // COPS-08: a failed payment, a restriction or a suspension is for Finance and the account's CS owner.
   SubscriptionStatusChanged: ["finance", "cs"],
+  // COPS-08: a renewal is a sales opportunity that CS prepares the ground for.
+  RenewalOpened: ["sales", "sales_manager", "cs"],
 };
 
 /** Approver slot to the roles that can decide it. An Admin or the owner decides the executive slot. */

@@ -297,5 +297,9 @@
       "FR": "EUR"
     },
     "fallback": "USD"
+  },
+  "renewal_policy": {
+    "_readme": "A renewal opportunity is opened this many days before the end of a subscription term, once per term. 90 is an engineering default; Sales and CS to confirm.",
+    "lead_days": 90
   }
 }

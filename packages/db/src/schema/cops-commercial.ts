@@ -371,6 +371,9 @@ export const subscriptions = pgTable(
     /** Provider ids are references, set only for provider billing. */
     providerSubscriptionId: text("provider_subscription_id"),
     providerPlanId: text("provider_plan_id"),
+    /** The renewal opportunity opened for this term; set once. */
+    renewalOpportunityId: uuid("renewal_opportunity_id").references(() => deals.id, { onDelete: "set null" }),
+    renewalOpenedAt: timestamp("renewal_opened_at", { withTimezone: true }),
     statusChangedAt: timestamp("status_changed_at", { withTimezone: true }).notNull().defaultNow(),
     createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

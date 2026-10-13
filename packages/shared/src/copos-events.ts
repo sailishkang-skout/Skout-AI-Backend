@@ -108,6 +108,15 @@ export const SubscriptionStatusChangedPayload = z.object({
   day: z.number().int().min(0).nullable(),
 });
 
+/** COPS-08 (Bible p.73): a renewal opportunity was opened ahead of the end of a term. Once per term. */
+export const RenewalOpenedPayload = z.object({
+  subscription_id: z.string().uuid(),
+  account_id: z.string().uuid(),
+  opportunity_id: z.string().uuid(),
+  original_opportunity_id: z.string().uuid(),
+  term_end: z.string().datetime(),
+});
+
 /** Event type → payload schema. The single registry consumers and outbox writers use. */
 export const COPS_PHASE1_EVENTS = {
   OpportunityQualified: OpportunityQualifiedPayload,
@@ -134,6 +143,7 @@ export const COPS_PHASE1_EVENTS = {
   ApprovalRequested: ApprovalRequestedPayload,
   ApprovalDecided: ApprovalDecidedPayload,
   SubscriptionStatusChanged: SubscriptionStatusChangedPayload,
+  RenewalOpened: RenewalOpenedPayload,
 } as const;
 
 export type CopsPhase1EventType = keyof typeof COPS_PHASE1_EVENTS;

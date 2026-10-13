@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createDb } from "@skout/db";
 import { createLogger, withSpan } from "@skout/observability";
 import { runSubscriptionBilling } from "../services/cops-subscriptions.service.js";
+import { runRenewals } from "../services/cops-renewals.service.js";
 import type { Env } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
 import { runOnboardingEvaluator } from "../services/cops-onboarding-signals.service.js";
@@ -50,6 +51,9 @@ export async function startCopsOnboardingEvaluatorWorker(config: Env) {
         await runSubscriptionBilling(db)
           .then((billing) => log.info("subscription billing pass finished", { ...billing, status_changes: billing.status_changes.length }))
           .catch((err) => log.error("subscription billing pass failed", { err }));
+        await runRenewals(db)
+          .then((opened) => opened.length > 0 && log.info("renewal opportunities opened", { count: opened.length }))
+          .catch((err) => log.error("renewal pass failed", { err }));
       });
       // COPS-07: the same tick reports the platform health numbers that the log monitors alert on.
       // A failure here must not fail the evaluator job.

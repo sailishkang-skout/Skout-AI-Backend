@@ -234,6 +234,16 @@ export function defaultCurrencyFor(policy: CurrencyPolicy, country: string | nul
   return (country && policy.default_by_country[country.toUpperCase()]) || policy.fallback;
 }
 
+// --- renewals --------------------------------------------------------------------------------------
+
+export const renewalPolicySchema = z
+  .object({
+    /** A renewal opportunity is opened this many days before the end of a term. */
+    lead_days: z.number().int().min(1).max(365),
+  })
+  .strict();
+export type RenewalPolicy = z.infer<typeof renewalPolicySchema>;
+
 /**
  * The seed values, validated when this module loads: a bad edit to the policy file stops the build
  * and the app instead of quietly changing who approves what. Generated from the policy file by
@@ -241,6 +251,7 @@ export function defaultCurrencyFor(policy: CurrencyPolicy, country: string | nul
  */
 export const COMMERCIAL_POLICY_DEFAULTS = {
   currency_policy: currencyPolicySchema.parse(COMMERCIAL_POLICY_DEFAULT_DATA.currency_policy),
+  renewal_policy: renewalPolicySchema.parse(COMMERCIAL_POLICY_DEFAULT_DATA.renewal_policy),
   approval_policy: approvalPolicySchema.parse(COMMERCIAL_POLICY_DEFAULT_DATA.approval_policy),
   dunning_policy: dunningPolicySchema.parse(COMMERCIAL_POLICY_DEFAULT_DATA.dunning_policy),
   price_book: priceBookSchema.parse(COMMERCIAL_POLICY_DEFAULT_DATA.price_book),

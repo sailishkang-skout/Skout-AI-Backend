@@ -47,7 +47,7 @@ describe("COPS-08 commercial policy defaults", () => {
   });
 
   it("is the default of the three admin config kinds and passes their schemas", () => {
-    for (const kind of ["approval_policy", "dunning_policy", "price_book", "currency_policy"] as const) {
+    for (const kind of ["approval_policy", "dunning_policy", "price_book", "currency_policy", "renewal_policy"] as const) {
       const value = COPS_CONFIG_DEFAULTS[kind]?.default;
       expect(value).toEqual(COMMERCIAL_POLICY_DEFAULTS[kind]);
       expect(COPS_CONFIG_SCHEMAS[kind].safeParse(value).success).toBe(true);

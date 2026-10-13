@@ -7,6 +7,7 @@ import type { Db } from "@skout/db";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
 import { getAccountSubscription, runSubscriptionBilling } from "../services/cops-subscriptions.service.js";
+import { runRenewals } from "../services/cops-renewals.service.js";
 
 /**
  * COPS-08 subscriptions against a real Postgres (COPS_TEST_DATABASE_URL): payment-link billing per
@@ -202,6 +203,38 @@ maybe("COPS-08 subscriptions", () => {
     const [audit] = await sql`select reason from audit_logs where entity_id = ${sub.invoices[0].id} and action = 'subscription_invoice.marked_paid'`;
     expect(audit.reason).toBe("Wire received, ref 4471");
     expect((await call("POST", `/subscription-invoices/${sub.invoices[0].id}/mark-paid`, { reason: "again" })).statusCode).toBe(409);
+  });
+
+  it("opens one renewal opportunity per term, 90 days before it ends, however the pass is run", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    const sub = (await subscribe(accountId, opportunityId, { payment_terms_net_days: 30 })).json().data;
+    const before = (days: number) => new Date(new Date(sub.renews_at).getTime() - days * DAY);
+
+    expect(await runRenewals(db, before(91), { workspaceId })).toEqual([]);
+    // Two passes at the same moment, then a third: still one opportunity.
+    const runs = await Promise.all([runRenewals(db, before(90), { workspaceId }), runRenewals(db, before(90), { workspaceId })]);
+    expect(runs.flat().filter((r) => r.subscription_id === sub.id)).toHaveLength(1);
+    expect((await runRenewals(db, before(10), { workspaceId })).filter((r) => r.subscription_id === sub.id)).toEqual([]);
+
+    const renewals = await sql`select id, name, amount, currency, deal_type, close_date, pipeline_id from deals where company_id = ${accountId} and id <> ${opportunityId}`;
+    expect(renewals).toHaveLength(1);
+    // One more term of the current seats: 10 seats x USD 94.80 a month x 12 months.
+    expect(renewals[0]).toMatchObject({ name: "Renewal: Subscription deal", currency: "USD", deal_type: "renewal", pipeline_id: pipelineId });
+    expect(Number(renewals[0].amount)).toBe(11_376);
+    const events = await sql`select envelope->'payload' as payload from cops_outbox where event_type = 'RenewalOpened' and aggregate_id = ${renewals[0].id}`;
+    expect(events).toHaveLength(1);
+    expect(events[0].payload).toMatchObject({ subscription_id: sub.id, account_id: accountId, original_opportunity_id: opportunityId });
+    expect(await current(accountId)).toMatchObject({ renewal_opportunity_id: renewals[0].id });
+    // The renewal is its own opportunity: the original is untouched.
+    expect((await sql`select name from deals where id = ${opportunityId}`)[0].name).toBe("Subscription deal");
+  });
+
+  it("opens no renewal for a closed subscription", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    const sub = (await subscribe(accountId, opportunityId)).json().data;
+    await billAt(sub.invoices[0].due_at, 45);
+    await runRenewals(db, new Date(new Date(sub.renews_at).getTime() - 10 * DAY), { workspaceId });
+    expect((await sql`select count(*)::int as n from deals where company_id = ${accountId}`)[0].n).toBe(1);
   });
 
   it("another workspace cannot see or change a subscription", async () => {

@@ -1,5 +1,5 @@
 // Generated from docs/ops/cops-commercial-policy.default.json by scripts/sync-cops-commercial-policy.mjs. Do not edit by hand.
-export const COMMERCIAL_POLICY_DEFAULT_DATA: Record<"approval_policy" | "dunning_policy" | "price_book" | "currency_policy", unknown> = {
+export const COMMERCIAL_POLICY_DEFAULT_DATA: Record<"approval_policy" | "dunning_policy" | "price_book" | "currency_policy" | "renewal_policy", unknown> = {
   "approval_policy": {
     "expires_after_days": 14,
     "discount_pct": [
@@ -256,5 +256,8 @@ export const COMMERCIAL_POLICY_DEFAULT_DATA: Record<"approval_policy" | "dunning
       "FR": "EUR"
     },
     "fallback": "USD"
+  },
+  "renewal_policy": {
+    "lead_days": 90
   }
 };

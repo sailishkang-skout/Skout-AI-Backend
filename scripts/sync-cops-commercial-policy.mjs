@@ -22,6 +22,6 @@ const data = stripNotes(JSON.parse(readFileSync(SOURCE, "utf8")));
 writeFileSync(
   TARGET,
   `// Generated from ${SOURCE} by scripts/sync-cops-commercial-policy.mjs. Do not edit by hand.\n` +
-    `export const COMMERCIAL_POLICY_DEFAULT_DATA: Record<"approval_policy" | "dunning_policy" | "price_book" | "currency_policy", unknown> = ${JSON.stringify(data, null, 2)};\n`
+    `export const COMMERCIAL_POLICY_DEFAULT_DATA: Record<"approval_policy" | "dunning_policy" | "price_book" | "currency_policy" | "renewal_policy", unknown> = ${JSON.stringify(data, null, 2)};\n`
 );
 console.log(`Wrote ${TARGET}`);

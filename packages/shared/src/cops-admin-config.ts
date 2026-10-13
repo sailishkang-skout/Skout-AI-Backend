@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { esignTemplateSchema } from "./cops-esign.js";
-import { COMMERCIAL_POLICY_DEFAULTS, approvalPolicySchema, currencyPolicySchema, dunningPolicySchema, priceBookSchema } from "./cops-commercial-policy.js";
+import { COMMERCIAL_POLICY_DEFAULTS, approvalPolicySchema, currencyPolicySchema, dunningPolicySchema, priceBookSchema, renewalPolicySchema } from "./cops-commercial-policy.js";
 
 /**
  * COPS-07 admin configuration (Bible p.16): the config kinds kept in the versioned config store,
@@ -19,6 +19,7 @@ export const COPS_CONFIG_KINDS = [
   "price_book",
   "currency_policy",
   "esign_template",
+  "renewal_policy",
 ] as const;
 export type CopsConfigKind = (typeof COPS_CONFIG_KINDS)[number];
 
@@ -78,6 +79,7 @@ export const COPS_CONFIG_SCHEMAS = {
   price_book: priceBookSchema,
   currency_policy: currencyPolicySchema,
   esign_template: esignTemplateSchema,
+  renewal_policy: renewalPolicySchema,
 } as const satisfies Record<CopsConfigKind, z.ZodTypeAny>;
 
 /**
@@ -99,6 +101,7 @@ export const COPS_CONFIG_DEFAULTS: Partial<Record<CopsConfigKind, Record<string,
   dunning_policy: { default: COMMERCIAL_POLICY_DEFAULTS.dunning_policy },
   price_book: { default: COMMERCIAL_POLICY_DEFAULTS.price_book },
   currency_policy: { default: COMMERCIAL_POLICY_DEFAULTS.currency_policy },
+  renewal_policy: { default: COMMERCIAL_POLICY_DEFAULTS.renewal_policy },
 };
 
 export const COPS_CONFIG_KEY = /^[a-z0-9][a-z0-9_-]{0,63}$/;

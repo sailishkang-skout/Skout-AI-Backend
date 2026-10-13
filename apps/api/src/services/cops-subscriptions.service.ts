@@ -63,6 +63,8 @@ function subscriptionDto(row: SubscriptionRow, items: ItemRow[], invoices: Invoi
     payment_terms_net_days: row.paymentTermsNetDays,
     provider_subscription_id: row.providerSubscriptionId,
     provider_plan_id: row.providerPlanId,
+    renewal_opportunity_id: row.renewalOpportunityId,
+    renewal_opened_at: row.renewalOpenedAt?.toISOString() ?? null,
     status_changed_at: row.statusChangedAt.toISOString(),
     items: items.map((i) => ({ id: i.id, kind: i.kind, quantity: i.quantity, unit_amount_minor: Number(i.unitAmountMinor) })),
     seats: items.filter((i) => i.kind === "seats").reduce((sum, i) => sum + i.quantity, 0),
