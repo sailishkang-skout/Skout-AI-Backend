@@ -4,7 +4,7 @@ import { workspaces } from "./workspaces.js";
 /**
  * COPS-07 versioned admin configuration (credit packages, trial templates, email templates,
  * retention policy, feature flags). An edit inserts the next version; rows are
- * immutable (trigger in migration 0115), so anything that pinned a version keeps reading it.
+ * immutable (trigger in migration 0120), so anything that pinned a version keeps reading it.
  */
 export const copsConfigVersions = pgTable(
   "cops_config_versions",
@@ -28,7 +28,7 @@ export const copsConfigVersions = pgTable(
 
 /**
  * COPS-07 retention runs. A dry run records what would be removed; an apply run records what was,
- * and always points at the dry run it followed (CHECK in migration 0116).
+ * and always points at the dry run it followed (CHECK in migration 0121).
  */
 export const copsRetentionRuns = pgTable(
   "cops_retention_runs",

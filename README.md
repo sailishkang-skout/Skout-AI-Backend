@@ -324,6 +324,54 @@ POST /api/v1/crm/hubspot/import
 GET  /api/v1/integrations
 ```
 
+## Enrichment provider jobs (ENR-04)
+
+Background enrichment of a LinkedIn profile or company URL runs as a durable job.
+
+- **Create:** `POST /api/v1/enrichment/provider-jobs` `{ "url": "https://www.linkedin.com/in/…" }`
+  (`enrichment:enrich`; optional `Idempotency-Key` header). Returns `202` with the job. A URL
+  with an unfinished job gets that job back.
+- **Follow:** `GET /api/v1/enrichment/provider-jobs/:id`. Statuses: `queued`, `running`,
+  `partial`, `action_required`, `failed`, `done`. `terminal: true` means it will not change.
+  `errorCode` and `errorMessage` say why and what to do (for example
+  `PROVIDER_CONNECTION_REQUIRED`).
+- **Provider connections:** `GET /api/v1/enrichment/providers`,
+  `POST /api/v1/enrichment/provider-connections/unipile` `{ "externalAccountId": "…" }`,
+  `POST …/:id/check`, `DELETE …/:id` (`enrichment:admin`). The Unipile key itself is stored
+  under Settings → Integrations; these endpoints never accept or return a secret.
+- **Contact data:** `GET /api/v1/enrichment/people/:id/contact-data` returns email and phone
+  with provider, provenance, verification status and freshness, or `null` when there is none.
+  `POST …/contact-data/verify-email` verifies the current email through the Email Intelligence
+  service (`EMAIL_INTEL_SERVICE_URL`) or, failing that, the workspace's verifier.
+- **Worker:** `enrichment-provider-job.worker.ts` starts with the API. Jobs survive a restart:
+  an interrupted job is queued again or failed with `WORKER_LOST`, never left running.
+- **Test mode:** `LINKEDIN_ENRICHMENT_TEST_MODE=true` runs jobs end to end without calling a
+  provider; only the submitted URL is recorded. Ignored in production.
+- **Permitted providers:** none until Legal approves one — see
+  [docs/enrichment-provider-policy.md](docs/enrichment-provider-policy.md). Until then a job
+  ends `action_required` / `PROVIDER_NOT_PERMITTED`.
+
+## Evidence campaigns (ENR-05)
+
+Audience → composed draft → recorded approval → launch through the existing sequence path.
+
+- **Audiences:** `POST /api/v1/enrichment/audiences/preview` `{ "filters": { "role": "…",
+  "department": "…", "seniority": "…", "location": "…", "industry": "…", "evidenceState":
+  "verified|discovery", "freshness": "fresh|stale" } }` returns live counts and a sample.
+  `POST /enrichment/audiences` saves one and writes its members to a list.
+- **Campaigns:** `POST /enrichment/campaigns` `{ "name", "audienceId" | "prospectIds" }` builds a
+  draft. `GET /enrichment/campaigns/:id` returns the copy, each recipient's eligibility and
+  exclusion reason, and their claims — every claim with its evidence id, source, capture time,
+  confidence and verified/discovery state.
+- **Review:** `PUT …/draft`, `PUT …/recipients/:prospectId`, `POST …/submit`, then
+  `POST …/review` `{ "decision": "approved" | "rejected", "comment", "consentBasis" }`
+  (`sequences:send`). `POST …/launch` returns `409 approval_required` without a recorded
+  approval and `409 re_review_required` when evidence changed after it.
+- **Job changes:** `GET /enrichment/campaigns/review-queue` lists suggested one-person drafts.
+  Nothing in it is sent until a person submits, approves and launches it.
+- **Non-production sending:** set `ENRICHMENT_CAMPAIGN_SANDBOX_RECIPIENTS` to the addresses or
+  `@domain`s campaign emails may go to. Unset, campaigns send nothing outside production.
+
 ## Pre-commit hooks
 
 ```bash

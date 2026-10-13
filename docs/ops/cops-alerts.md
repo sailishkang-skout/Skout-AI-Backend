@@ -28,14 +28,14 @@ report needs Redis and the worker, so the "health report has stopped" monitor ma
 | `workflow_steps_stuck` (executing over 15 minutes) | 1 | 10 | `runbooks/cops-onboarding.md` |
 | `workflow_steps_failed_24h` | 5 | 25 | `runbooks/cops-onboarding.md` |
 
-Webhook latency is measured from migration 0117 on: `provider_created_at` (the provider's own
+Webhook latency is measured from migration 0122 on: `provider_created_at` (the provider's own
 event time) and `processed_at` are stored per event. Events received before that migration have
 neither value and are left out of the two latency metrics. Events that match no payment request have
 no workspace, so they appear only in the platform-wide report, not on a workspace's admin page.
 
 ## Migrations in this release
 
-`0114` (tickets), `0115` (admin config), `0116` (retention runs) and `0117` (webhook latency) only
+`0119` (tickets), `0120` (admin config), `0121` (retention runs) and `0122` (webhook latency) only
 add tables and nullable columns; no existing row is rewritten, so there is no backfill. Each file
 was applied twice in a row to the local test database without error. They have not been run
 against a copy of production data.

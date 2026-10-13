@@ -11,7 +11,8 @@ import { loadEnv } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
 import { isBusinessHour, nextBusinessHour } from "../utils/scheduling.js";
 import { resolveProspectFields } from "../services/prospect-resolver.service.js";
-import { isSuppressed } from "../services/suppression.service.js";
+import { addSuppression, isSuppressed } from "../services/suppression.service.js";
+import { campaignSendGate, recordCampaignOutcome } from "../services/enrichment/campaign-gate.js";
 import { buildUnsubscribeUrl } from "../services/suppression.service.js";
 import { isSendBlockedByEligibility } from "../services/send-eligibility-guard.service.js";
 import { pickNextInbox, markInboxUsed } from "../services/inbox-rotation.service.js";
@@ -555,6 +556,25 @@ async function executeEmailStep(
     return { status: "skipped", reason: "not_send_eligible" };
   }
 
+  // ENR-05 — an enrollment that came from an evidence campaign is sent only while its recorded
+  // approval still stands (and, outside production, only to a sandbox recipient). Enrollments
+  // from anywhere else pass straight through.
+  const campaignGate = await campaignSendGate(db, config, workspaceId, enrollmentId, prospect.email);
+  if (!campaignGate.allowed) {
+    if (campaignGate.retry) {
+      const deferUntil = new Date(now.getTime() + 60 * 60 * 1000);
+      await db
+        .update(sequenceEnrollmentSteps)
+        .set({ scheduledAt: deferUntil, failureReason: campaignGate.reason })
+        .where(eq(sequenceEnrollmentSteps.id, pending.enrollmentStepId));
+      log.info("Email step deferred — campaign awaiting re-review", { enrollmentId, reason: campaignGate.reason, deferUntil });
+      return { status: "deferred" };
+    }
+    await markStepTerminal(db, pending.enrollmentStepId, "skipped", campaignGate.reason, now);
+    log.info("Email step skipped — campaign gate", { enrollmentId, reason: campaignGate.reason });
+    return { status: "skipped", reason: campaignGate.reason };
+  }
+
   // Golden rule (condition-engine spec §48.1): never continue automated outreach after a
   // confirmed positive reply anywhere in the account. Previously this was only checked when a
   // sequence author explicitly added an "account_has_positive_reply" condition step — most
@@ -694,6 +714,9 @@ async function executeEmailStep(
 
   await markInboxUsed(db, inbox.id);
   log.info("Email sent", { enrollmentId, enrollmentStepId: pending.enrollmentStepId, inboxId: inbox.id });
+  await recordCampaignOutcome(db, workspaceId, enrollmentId, "sent", now).catch((err: unknown) =>
+    log.warn("campaign outcome hook failed", { err, enrollmentId, outcome: "sent" })
+  );
 
   dispatchWebhookEvent(db, config, "sequence.step.completed", workspaceId, {
     enrollmentId,
@@ -1563,6 +1586,18 @@ async function advanceEnrollmentTick(
       result: newStatus,
     });
     log.info("Cadence stopped", { enrollmentId, reason: newStatus });
+    // A hard bounce suppresses the address for the whole workspace, whatever enrolled it.
+    if (signal === "bounced") {
+      const bounced = await resolveProspectFields(config, db, workspaceId, prospectId).catch(() => null);
+      if (bounced?.email) {
+        await addSuppression(db, workspaceId, bounced.email, "hard_bounce").catch((err: unknown) =>
+          log.warn("bounce suppression failed", { err, enrollmentId })
+        );
+      }
+    }
+    await recordCampaignOutcome(db, workspaceId, enrollmentId, signal === "bounced" ? "bounced" : "replied").catch((err: unknown) =>
+      log.warn("campaign outcome hook failed", { err, enrollmentId, outcome: signal })
+    );
     return;
   }
 

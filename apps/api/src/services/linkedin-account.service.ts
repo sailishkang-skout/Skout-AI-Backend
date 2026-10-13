@@ -184,9 +184,11 @@ export class LinkedinAccountService {
   }
 
   async disconnect(workspaceId: string, id: string) {
-    await this.db
+    const [deleted] = await this.db
       .delete(linkedinAccounts)
-      .where(scopedById(linkedinAccounts, workspaceId, id));
+      .where(scopedById(linkedinAccounts, workspaceId, id))
+      .returning({ id: linkedinAccounts.id });
+    return Boolean(deleted);
   }
 
   /** Reset daily counters when the UTC day rolls over, then pick least-recently-used account. */

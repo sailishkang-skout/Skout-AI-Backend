@@ -19,7 +19,7 @@ Branch: `feature/copos-06-eng-tickets` (from `develop`). Owner: SahilPreet. Revi
 
 ## Gaps (new in this ticket)
 
-1. Tables `engineering_tickets`, `ticket_comments` (visibility column with a CHECK), `ticket_status_history`, `ticket_account_summaries` (migration 0114).
+1. Tables `engineering_tickets`, `ticket_comments` (visibility column with a CHECK), `ticket_status_history`, `ticket_account_summaries` (migration 0119).
 2. State machine and visibility rules in `packages/shared/src/cops-tickets.ts`.
 3. `services/cops-tickets.service.ts` and `routes/cops-tickets.routes.ts`.
 

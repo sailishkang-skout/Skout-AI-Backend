@@ -110,3 +110,49 @@ Service worker logs: `chrome://extensions` → Skout AI Prospector → **Service
 | Buttons seem dead | Reload extension; hard-refresh LinkedIn + Skout tabs |
 
 After code changes: `chrome://extensions` → **Reload** → hard-refresh open tabs.
+
+## Reviewed capture (ENR-02)
+
+The side panel's **Capture** section saves a LinkedIn person profile, a company page, or a
+Sales Navigator people search to Skout after the user reviews it.
+
+| Step | Where | What happens |
+| --- | --- | --- |
+| Start | Side panel → `capture-background.js` → `capture/capture-content.js` | The user clicks Capture on the open tab. The API's capture status (kill switch, daily limit) is checked first. |
+| Read | `capture/*.js` in the LinkedIn tab, temporary tabs opened by `capture-background.js` | Rendered content only. A person capture reads that profile's own detail pages; a company capture reads its tabs and up to 10 pages of its people results; a Sales capture reads at most 10 rendered result pages or 250 leads, then looks up each lead page, one at a time, for a public link LinkedIn shows there. |
+| Review | Side panel (`capture-panel.js`) | Summary, editable fields, a tick list of people, and the full JSON. Nothing has been saved yet. |
+| Save | `POST /api/v1/enrichment/ingest/{person,company,sales-search}` | The panel reports success only when the API returns a capture run with the terminal status `completed`; any other outcome is shown as a failure with its reason. |
+
+Rules the code keeps (covered by `test/capture-*.test.js`):
+
+- The extension never sets filters, submits a search, sends a message or connection request, or
+  calls a hidden/private LinkedIn API. `linkedin-outreach.js` stays unwired.
+- A Sales Navigator lead without a visible public link is saved as `sales-lead:<opaque-id>` with
+  its `/sales/lead/…` URL. An `/in/` URL is never built from a lead id.
+- Company people discovery is resumable: each reviewed batch commits a page cursor in
+  `chrome.storage.local` (`company-people-capture:<company-id>`). **Pause** keeps the unsaved
+  batch, **Stop** drops it; starting the capture again continues from the saved page.
+- If LinkedIn renders a warning, verification or restriction during a capture
+  (`capture/restriction-detect.js`), every reader stops, temporary tabs close, and the side
+  panel shows a banner that must be acknowledged before another capture can start.
+- The 10-page / 250-lead cap, the per-user daily limit and the workspace kill switch are
+  enforced by the API as well. They are workload controls, not a LinkedIn safety guarantee.
+
+Not ported from the prototype: the background queue that opened every discovered profile and
+saved it without review. Full profile capture stays one reviewed profile at a time.
+
+### Compliance review: inline page JSON in `linkedin-scrape.js`
+
+The prototype's rule is rendered content only, with no hidden/private API access. Each read of
+inline page JSON in the existing scraper was reviewed for ENR-02:
+
+| Read (v0.8.3) | What it was | Decision |
+| --- | --- | --- |
+| `fieldsFromPageSource()`: regexes over `document.documentElement.innerHTML` for `firstName`/`lastName`, `headline`/`occupation`, `companyName`, `geoLocationName`/`locationName`, `summary` | LinkedIn's embedded API payloads (the data its own app boots from), not content shown to the user | **Replaced** with the rendered DOM readers that already existed (`nameFromDom`, `headlineFromDom`, `companyFromTopCard`/`parseTopExperience`, `locationFromDom`, `aboutFromDom`). A field that is not rendered is left empty. |
+| `nameFromJsonLd()`: `<script type="application/ld+json">` | Inline structured-data JSON | **Removed.** The rendered `<h1>` is the source; the page title / Open Graph title remain as a name-only fallback. |
+| `scrapeLinkedInCompany()`: `localizedName`/`name`, `websiteUrl`, `localizedIndustryName`/`industryName`, `staffCountRange`/`staffCount`, `description` from `innerHTML` | Embedded API payloads | **Replaced** with the rendered top card and About list (`h1`, website link, `Industry` / `Company size` rows, description block). |
+| `nameFromOg()`, `nameFromDocumentTitle()` | Page metadata the browser itself displays (tab title, share title), not an API payload | **Kept** as a name-only fallback, the same allowance the prototype makes. |
+| `nameFromUrl()`, `nameFromUrlVanity()` | Not inline JSON: a display name guessed from the URL slug | **Kept, unchanged** (out of scope here). The new capture path does not use it; it requires a rendered name. Worth removing in a follow-up. |
+
+`test/capture-compliance.test.js` fails if `innerHTML`, JSON-LD or `JSON.parse` returns to
+`linkedin-scrape.js`, or if any capture script gains a network call or a private-API reference.

@@ -149,12 +149,12 @@ module was turned off; they now say the module is off. No other gap was found by
 
 ## 10. Added after the first review pass
 
-- Webhook latency is measured (migration 0117; two metrics). See `docs/ops/cops-alerts.md`.
+- Webhook latency is measured (migration 0122; two metrics). See `docs/ops/cops-alerts.md`.
 - Platform-wide health report every 10 minutes as structured log lines, and Datadog log monitor
   definitions in `docs/ops/cops-monitors.json` (not imported).
 - `PATCH /pipelines/:id/stages/:stageId` in apps/crm; the admin page edits a stage name and probability.
 - Golden paths end to end through the API (`cops-golden-paths.routes.test.ts`).
-- Migrations 0114 to 0117 applied twice each on the local test database.
+- Migrations 0119 to 0122 (numbered 0114 to 0117 before `develop` took those numbers for enrichment) applied twice each on the local test database.
 
 ## 11. The red frontend Playwright suite (not caused by CustomerOps)
 

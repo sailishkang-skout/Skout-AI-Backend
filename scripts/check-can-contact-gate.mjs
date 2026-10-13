@@ -31,6 +31,9 @@ const BASELINE = {
   "apps/api/src/services/inbox.service.ts": 1,
   "apps/api/src/services/reply-tag-actions.service.ts": 1,
   "apps/api/src/workers/sequence-enrollment.worker.ts": 5,
+  // ENR-05 was written in parallel with this gate and merged first. Its bulk enrolment records
+  // consent with gateEnrollConsent() next to canContact(); listed so it cannot grow.
+  "apps/api/src/services/enrichment/campaign.service.ts": 1,
 };
 
 function walk(dir, out = []) {

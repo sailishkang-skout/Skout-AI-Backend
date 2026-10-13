@@ -1,5 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { createHash, randomUUID } from "node:crypto";
+import { and, desc, eq } from "drizzle-orm";
+import { schema, type Db } from "@skout/db";
 import { generateCompanyId, generateProspectId, normalizeDomain } from "@skout/shared";
 import {
   bulkUpsertProspects,
@@ -12,9 +15,14 @@ import { HttpError, requireWorkspaceId } from "../utils/http.js";
 import { emitSkoutEvent } from "../services/skout-event.service.js";
 import { createLogger } from "@skout/observability";
 import { assertPermission, recordPrivilegedAction } from "@skout/auth";
+import { ensureContactLinkedToProspect } from "../services/prospect-crm-link.service.js";
+import { assertCaptureEnabled, CaptureError } from "../services/enrichment/capture-ingest.service.js";
 import { auditEntityId } from "../utils/audit-entity-id.js";
 
 const log = createLogger("prospect.routes");
+const { companyPersonDiscoveries, enrichmentSnapshots, enrichmentChangeEvents } = schema;
+
+const captureArraySchema = z.array(z.unknown()).max(100);
 
 function osConfig(env: Env): OpenSearchConfig | null {
   if (!env.OPENSEARCH_URL) return null;
@@ -24,6 +32,134 @@ function osConfig(env: Env): OpenSearchConfig | null {
     password: env.OPENSEARCH_PASSWORD,
     index: env.OPENSEARCH_INDEX,
   };
+}
+
+async function recordCaptureHistory(
+  db: Db,
+  workspaceId: string,
+  actorId: string,
+  entityId: string,
+  rawData: Record<string, unknown>,
+  crmLink: { contactId: string | null; companyId: string | null },
+  capturedVia: "EXTENSION" | "ENRICHMENT_API" | "MANUAL_IMPORT",
+  discoverySource: string
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    const recordSnapshot = async (
+      entityType: "person" | "company",
+      snapshotEntityId: string,
+      snapshotData: Record<string, unknown>
+    ) => {
+      const capturedData = Object.fromEntries(
+        Object.entries(snapshotData).filter(([, value]) => value !== undefined)
+      );
+      const fieldHashes = Object.fromEntries(
+        Object.entries(capturedData).map(([field, value]) => [
+          field,
+          createHash("sha256").update(JSON.stringify(value)).digest("hex"),
+        ])
+      );
+      const [previous] = await tx
+        .select()
+        .from(enrichmentSnapshots)
+        .where(
+          and(
+            eq(enrichmentSnapshots.workspaceId, workspaceId),
+            eq(enrichmentSnapshots.entityType, entityType),
+            eq(enrichmentSnapshots.entityId, snapshotEntityId)
+          )
+        )
+        .orderBy(desc(enrichmentSnapshots.capturedAt))
+        .limit(1);
+
+      await tx.insert(enrichmentSnapshots).values({
+        workspaceId,
+        entityType,
+        entityId: snapshotEntityId,
+        fieldHashes,
+        rawData: capturedData,
+        capturedVia,
+        capturedBy: actorId,
+      });
+
+      if (!previous) return;
+      const oldHashes = previous.fieldHashes as Record<string, string>;
+      const oldData = previous.rawData as Record<string, unknown>;
+      const changes = Object.entries(capturedData)
+        .filter(([field]) => oldHashes[field] !== fieldHashes[field])
+        .map(([field, newValue]) => ({
+          workspaceId,
+          entityType,
+          entityId: snapshotEntityId,
+          field,
+          changeType: Object.hasOwn(oldHashes, field) ? ("FIELD_UPDATED" as const) : ("FIELD_ADDED" as const),
+          oldValue: oldData[field] ?? null,
+          newValue,
+          isJobChange: entityType === "person" && ["title", "headline", "currentCompanies", "companyName"].includes(field),
+        }));
+      if (changes.length) await tx.insert(enrichmentChangeEvents).values(changes);
+    };
+
+    await recordSnapshot("person", entityId, rawData);
+    if (crmLink.companyId && crmLink.contactId) {
+      await tx.insert(companyPersonDiscoveries).values({
+        workspaceId,
+        companyId: crmLink.companyId,
+        contactId: crmLink.contactId,
+        source: discoverySource,
+      }).onConflictDoNothing();
+
+      await recordSnapshot("company", crmLink.companyId, {
+        name: rawData.companyName ?? rawData.companyDomain,
+        domain: rawData.companyDomain,
+        industry: rawData.industry,
+        employeeCount: rawData.employeeCount,
+      });
+    }
+
+    await recordPrivilegedAction(tx, {
+      workspaceId,
+      actorId,
+      action: "enrichment.capture",
+      entityType: crmLink.contactId ? "contact" : "person",
+      entityId: crmLink.contactId ?? randomUUID(),
+      afterState: {
+        prospectId: entityId,
+        contactId: crmLink.contactId,
+        companyId: crmLink.companyId,
+        source: discoverySource,
+      },
+    });
+  });
+}
+
+async function recordProspectCapture(
+  db: Db,
+  workspaceId: string,
+  actorId: string,
+  prospectId: string,
+  rawData: Record<string, unknown>,
+  capturedVia: "EXTENSION" | "ENRICHMENT_API" | "MANUAL_IMPORT",
+  discoverySource: string
+): Promise<void> {
+  const companyDomain = typeof rawData.companyDomain === "string"
+    ? normalizeDomain(rawData.companyDomain)
+    : null;
+  const companyName = typeof rawData.companyName === "string" && rawData.companyName.trim()
+    ? rawData.companyName.trim()
+    : companyDomain;
+  const fullName = typeof rawData.fullName === "string"
+    ? rawData.fullName
+    : [rawData.firstName, rawData.lastName].filter((value): value is string => typeof value === "string").join(" ");
+  const crmLink = await ensureContactLinkedToProspect(db, workspaceId, prospectId, {
+    email: typeof rawData.email === "string" ? rawData.email : null,
+    fullName: fullName || null,
+    companyDomain,
+    companyName,
+    title: typeof rawData.title === "string" ? rawData.title : null,
+    linkedinUrl: typeof rawData.linkedinUrl === "string" ? rawData.linkedinUrl : null,
+  });
+  await recordCaptureHistory(db, workspaceId, actorId, prospectId, rawData, crmLink, capturedVia, discoverySource);
 }
 
 
@@ -94,6 +230,33 @@ const snapshotSchema = z.object({
   connections: z.string().optional(),
   followers: z.string().optional(),
   photoUrl: z.string().url().optional(),
+  publicId: z.string().max(300).optional(),
+  urn: z.string().max(500).optional(),
+  firstName: z.string().max(300).optional(),
+  lastName: z.string().max(300).optional(),
+  summary: z.string().max(20_000).optional(),
+  locationCountry: z.string().max(300).optional(),
+  relationshipContext: z.record(z.unknown()).optional(),
+  currentCompanies: captureArraySchema.optional(),
+  previousCompanies: captureArraySchema.optional(),
+  educations: captureArraySchema.optional(),
+  volunteerExperiences: captureArraySchema.optional(),
+  skills: captureArraySchema.optional(),
+  pronoun: z.string().max(100).optional(),
+  related: captureArraySchema.optional(),
+  languages: captureArraySchema.optional(),
+  recommendations: captureArraySchema.optional(),
+  certifications: captureArraySchema.optional(),
+  courses: captureArraySchema.optional(),
+  honors: captureArraySchema.optional(),
+  organizations: captureArraySchema.optional(),
+  patents: captureArraySchema.optional(),
+  projects: captureArraySchema.optional(),
+  publications: captureArraySchema.optional(),
+  jobFunction: z.string().max(300).optional(),
+  openToWork: z.boolean().optional(),
+  hiring: z.boolean().optional(),
+  lastUpdated: z.string().datetime().optional(),
 });
 
 const enrichBodySchema = z.object({
@@ -102,14 +265,16 @@ const enrichBodySchema = z.object({
 });
 
 const activateBodySchema = z.object({
-  prospects: z.array(snapshotSchema).min(1),
+  prospects: z.array(snapshotSchema).min(1).max(250),
 });
 
 export async function prospectRoutes(app: FastifyInstance) {
   // Manual lead entry — OpenSearch index + workspace activation + optional enrich/list add.
-  app.post("/prospects/manual", async (request, reply) => {
+  app.post("/prospects/manual", { config: { rateLimit: { max: 20, timeWindow: 60000 } } }, async (request, reply) => {
     const body = manualProspectSchema.parse(request.body ?? {});
     const workspaceId = requireWorkspaceId(request);
+    if (!request.userId) throw new HttpError("unauthorized", 401);
+    await assertPermission(app.db!, workspaceId, request.userId, "enrichment:enrich");
 
     const domain = normalizeDomain(body.companyDomain);
     const companyId = generateCompanyId(domain);
@@ -171,6 +336,15 @@ export async function prospectRoutes(app: FastifyInstance) {
 
     const svc = buildEnrichmentService(app.db, app.config);
     await svc.activate(workspaceId, [snapshot]);
+    await recordProspectCapture(
+      app.db!,
+      workspaceId,
+      request.userId,
+      prospectId,
+      snapshot,
+      "MANUAL_IMPORT",
+      "manual_prospect_capture"
+    );
 
     if (body.listId) {
       const added = await svc.addListMembers(workspaceId, body.listId, [snapshot]);
@@ -230,31 +404,57 @@ export async function prospectRoutes(app: FastifyInstance) {
 
   app.get("/prospects", async (request, reply) => {
     const workspaceId = requireWorkspaceId(request);
+    if (!request.userId) throw new HttpError("unauthorized", 401);
+    await assertPermission(app.db!, workspaceId, request.userId, "enrichment:read");
     const svc = buildEnrichmentService(app.db, app.config);
     const data = await svc.listActivations(workspaceId);
     return reply.send({ workspaceId, data, total: data.length });
   });
 
   // Add corpus prospects to the workspace (activation, no external spend).
-  app.post("/prospects/activate", async (request, reply) => {
+  app.post("/prospects/activate", { config: { rateLimit: { max: 15, timeWindow: 60000 } } }, async (request, reply) => {
     const workspaceId = requireWorkspaceId(request);
+    if (!request.userId) throw new HttpError("unauthorized", 401);
+    await assertPermission(app.db!, workspaceId, request.userId, "enrichment:capture");
     const body = activateBodySchema.parse(request.body ?? {});
-    const names = body.prospects.map((p) => p.fullName).filter(Boolean);
-    request.log.info(
-      { workspaceId, count: body.prospects.length, names },
-      "prospects/activate"
-    );
+    request.log.info({ workspaceId, count: body.prospects.length }, "prospects/activate");
+    // ENR-02 — the workspace capture kill switch also covers the extension's add-to-list path.
+    if (body.prospects.some((prospect) => prospect.linkedinUrl)) {
+      try {
+        await assertCaptureEnabled(app.db!, workspaceId);
+      } catch (error) {
+        if (error instanceof CaptureError) {
+          return reply.status(error.statusCode).send({ ok: false, error: error.message, code: error.code });
+        }
+        throw error;
+      }
+    }
     const svc = buildEnrichmentService(app.db, app.config);
     const activated = await svc.activate(workspaceId, body.prospects);
+    for (const prospect of body.prospects) {
+      const companyId = prospect.companyId ?? generateCompanyId(prospect.companyDomain);
+      const prospectId =
+        prospect.prospectId ??
+        (prospect.email
+          ? generateProspectId(prospect.companyDomain, prospect.email)
+          : generateCompanyId(`${prospect.companyDomain}:${prospect.fullName ?? ""}`));
+      const companyDomain = normalizeDomain(prospect.companyDomain);
+      await recordProspectCapture(app.db!, workspaceId, request.userId, prospectId, {
+        ...prospect,
+        prospectId,
+        companyId,
+        companyDomain,
+      }, "EXTENSION", "linkedin_profile_capture");
+    }
     return reply.status(201).send({ activated });
   });
 
-  app.post("/prospects/:id/enrich", async (request, reply) => {
+  app.post("/prospects/:id/enrich", { config: { rateLimit: { max: 15, timeWindow: 60000 } } }, async (request, reply) => {
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const { id } = request.params as { id: string };
     const workspaceId = requireWorkspaceId(request);
     if (!request.userId) throw new HttpError("unauthorized", 401);
-    await assertPermission(app.db, workspaceId, request.userId, "enrichment:capture");
+    await assertPermission(app.db, workspaceId, request.userId, "enrichment:enrich");
     const body = enrichBodySchema.parse(request.body ?? {});
     const svc = buildEnrichmentService(app.db, app.config);
 
@@ -277,11 +477,11 @@ export async function prospectRoutes(app: FastifyInstance) {
       await recordPrivilegedAction(app.db, {
         workspaceId,
         actorId: request.userId,
-        action: "enrichment.capture",
+        action: "enrichment.enrich",
         entityType: "prospect",
         // Prospect ids are text; audit_logs.entity_id is uuid (see auditEntityId). The real id is in after_state.
         entityId: auditEntityId(body.prospect.prospectId ?? id),
-        afterState: { prospectId: body.prospect.prospectId ?? id, jobId: job.id, companyDomain: body.prospect.companyDomain, fullName: body.prospect.fullName, title: body.prospect.title }
+        afterState: { prospectId: body.prospect.prospectId ?? id, jobId: job.id },
       });
       
       return reply.status(202).send({

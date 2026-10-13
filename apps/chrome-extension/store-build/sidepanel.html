@@ -46,6 +46,54 @@
       <button id="connect-skout" type="button" class="primary">Connect Skout account</button>
     </section>
 
+    <section class="card capture-card" id="capture-section" aria-label="Capture">
+      <p class="vision-kicker">Capture</p>
+      <p class="capture-notice">
+        Capture reads only what LinkedIn has already rendered on the page you opened, after you start it here. It
+        never sets filters, submits searches or sends messages, and nothing is saved until you review it. LinkedIn
+        prohibits scraping or automating activity with browser extensions: the 10-page / 250-lead cap is a workload
+        control, not a safety guarantee. Stop if LinkedIn warns or restricts your account.
+      </p>
+      <div id="capture-halt" class="capture-banner hidden" role="alert">
+        <p id="capture-halt-text"></p>
+        <button id="capture-halt-ack" type="button">I have reviewed this — allow capture again</button>
+      </div>
+      <p id="capture-limits" class="vision-desc">Checking capture status…</p>
+      <div id="capture-company-options" class="hidden">
+        <label class="checkbox-row">
+          <input id="capture-include-people" type="checkbox" checked />
+          Include visible associated people (discovery candidates)
+        </label>
+        <label for="capture-departments">Department keywords (optional)</label>
+        <input id="capture-departments" type="text" placeholder="Sales, engineering, marketing" />
+        <label for="capture-seniorities">Seniority or title keywords (optional)</label>
+        <input id="capture-seniorities" type="text" placeholder="Director, VP, founder" />
+      </div>
+      <p id="capture-checkpoint" class="vision-desc hidden"></p>
+      <button id="capture-start" type="button" class="primary" disabled>
+        Open a LinkedIn profile, company or Sales Navigator search
+      </button>
+      <div id="capture-progress" class="hidden" role="status" aria-live="polite">
+        <p id="capture-progress-text" class="vision-desc"></p>
+        <button id="capture-pause" type="button" class="hidden">Pause (keep this batch)</button>
+        <button id="capture-stop" type="button" class="hidden">Stop</button>
+      </div>
+      <div id="capture-review" class="hidden">
+        <p id="capture-review-title" class="vision-title"></p>
+        <ul id="capture-review-notes" class="capture-notes"></ul>
+        <div id="capture-review-fields" class="capture-fields"></div>
+        <div id="capture-review-leads" class="capture-leads hidden"></div>
+        <details class="dev-details">
+          <summary>Review or edit all captured data</summary>
+          <textarea id="capture-review-json" spellcheck="false"></textarea>
+          <p id="capture-review-json-error" class="capture-error"></p>
+        </details>
+        <button id="capture-send" type="button" class="primary">Save to Skout</button>
+        <button id="capture-discard" type="button">Discard</button>
+      </div>
+      <p id="capture-result" class="hidden" role="status" aria-live="polite"></p>
+    </section>
+
     <section class="card">
       <label for="list-select">Target list</label>
       <select id="list-select">
@@ -108,6 +156,6 @@
 
     <p id="status" role="status" aria-live="polite"></p>
 
-    <script type="module" src="sidepanel.js"></script>
+    <script type="module" src="dist/sidepanel.js"></script>
   </body>
 </html>

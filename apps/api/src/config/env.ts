@@ -333,6 +333,30 @@ const envSchema = z
     ENRICHMENT_REQUEST_TIMEOUT_MS: z.coerce.number().default(8000),
     ENRICHMENT_PHONE_SCORE_GATE: z.coerce.number().default(80),
     ENRICHMENT_AI_TIMEOUT_MS: z.coerce.number().default(15000),
+    // --- ENR-05: evidence campaigns. ---
+    /**
+     * Outside production, an evidence-campaign email is sent only to these addresses or
+     * `@domain`s (comma-separated). Empty = campaigns send nothing outside production.
+     */
+    ENRICHMENT_CAMPAIGN_SANDBOX_RECIPIENTS: z.string().optional(),
+    // --- ENR-04: provider enrichment jobs. ---
+    /**
+     * Comma-separated provider ids background enrichment may call in this environment (e.g.
+     * "unipile"). A provider must also be approved in provider-policy.ts. Empty = none.
+     */
+    ENRICHMENT_PERMITTED_PROVIDERS: z.string().optional(),
+    /** One provider profile request may take this long before it counts as a failed attempt. */
+    ENRICHMENT_PROVIDER_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
+    /** Base URL for Unipile API v2 when it differs from the account DSN (UNIPILE_DSN). */
+    UNIPILE_V2_BASE_URL: z.string().url().optional(),
+    /**
+     * Runs provider jobs through their whole lifecycle without calling a provider: only the
+     * submitted URL is recorded and no profile field is created. Ignored in production.
+     */
+    LINKEDIN_ENRICHMENT_TEST_MODE: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
     // --- Signal stacking score (D5) — tunable until real conversion data can calibrate these. ---
     SIGNAL_STACK_DEFAULT_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.6),
     SIGNAL_STACK_RECENCY_HALF_LIFE_DAYS: z.coerce.number().positive().default(14),

@@ -59,7 +59,7 @@ export const engineeringTickets = pgTable(
 );
 
 /**
- * Ticket comments. Visibility is a column with a CHECK (migration 0114), not a UI flag: every
+ * Ticket comments. Visibility is a column with a CHECK (migration 0119), not a UI flag: every
  * customer-safe read path filters on it. A derived comment (AI summary) records its sources and
  * inherits their visibility.
  */

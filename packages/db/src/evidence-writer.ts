@@ -8,6 +8,8 @@ export interface RecordEvidenceInput {
   attribute: string;
   value: unknown;
   source: string;
+  /** Where the fact was observed, when it has a URL. */
+  sourceUrl?: string;
   observedAt: Date;
   /** Required — no evidence row may exist without a confidence value (§6.1 anti-hallucination contract). */
   confidence: number;
@@ -54,6 +56,7 @@ export async function recordEvidence(db: Db, input: RecordEvidenceInput) {
       attribute: input.attribute,
       value: input.value as object,
       source: input.source,
+      sourceUrl: input.sourceUrl,
       observedAt: input.observedAt,
       confidence: input.confidence,
       method: input.method,

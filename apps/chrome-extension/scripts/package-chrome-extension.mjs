@@ -39,6 +39,7 @@ const ROOT_MODULES = [
   "debug.js",
   "lists-cache.js",
   "skout-urls.js",
+  "skout-web-bridge.js",
   "tab-utils.js",
   "linkedin-profile.js",
   "storage-throttle.js",
@@ -73,7 +74,8 @@ execSync("pnpm build", { cwd: root, stdio: "inherit" });
 rmSync(store, { recursive: true, force: true });
 mkdirSync(store, { recursive: true });
 
-for (const file of ["sidepanel.html", "manifest.json", "panel.css", "icons"]) {
+// `capture/` holds the ENR-02 page readers: plain content scripts, shipped unbundled.
+for (const file of ["sidepanel.html", "manifest.json", "panel.css", "popup.css", "icons", "capture"]) {
   cpSync(join(root, file), join(store, file), { recursive: true });
 }
 for (const js of ROOT_MODULES) {
@@ -94,6 +96,15 @@ manifest.externally_connectable = {
 delete manifest.optional_host_permissions;
 manifest.side_panel.default_path = "sidepanel.html";
 
+// The side panel loads its bundled entry: the unbundled sidepanel.js imports modules
+// (panel-app.js, capture-panel.js) that are not copied to the store root.
+const sidepanelHtml = readFileSync(join(store, "sidepanel.html"), "utf8");
+const storeSidepanelHtml = sidepanelHtml.replace('src="sidepanel.js"', 'src="dist/sidepanel.js"');
+if (storeSidepanelHtml === sidepanelHtml) {
+  throw new Error("Failed to point store sidepanel.html at dist/sidepanel.js.");
+}
+writeFileSync(join(store, "sidepanel.html"), storeSidepanelHtml);
+
 writeFileSync(join(store, "manifest.json"), JSON.stringify(manifest, null, 2));
 
 cpSync(dist, join(store, "dist"), { recursive: true });
@@ -101,11 +112,14 @@ cpSync(dist, join(store, "dist"), { recursive: true });
 const bundledBackground = readFileSync(join(dist, "background.js"), "utf8");
 writeFileSync(join(store, "dist", "background.js"), patchStoreBackground(bundledBackground));
 
-if (!existsSync(join(store, "dist", "panel-app.js"))) {
-  throw new Error("Missing dist/panel-app.js — background service worker import will fail.");
+for (const required of ["dist/background.js", "dist/sidepanel.js", ...manifest.content_scripts.flatMap((cs) => cs.js)]) {
+  if (!existsSync(join(store, required))) {
+    throw new Error(`Missing ${required} in the store build.`);
+  }
 }
 
 const zipName = `skout-extension-v${manifest.version}.zip`;
+rmSync(join(root, zipName), { force: true });
 execSync(`cd "${store}" && zip -r "../${zipName}" .`, { stdio: "inherit" });
 console.log(`Created ${join(root, zipName)}`);
 console.log("Store defaults:", PRODUCTION_DEFAULTS);

@@ -301,7 +301,7 @@ export class DbStore implements EnrichmentStore {
     const [row] = await this.db
       .select()
       .from(enrichmentJobs)
-      .where(scopedById(enrichmentJobs, workspaceId, id));
+      .where(and(scopedById(enrichmentJobs, workspaceId, id), eq(enrichmentJobs.kind, "contact_waterfall")));
     return row ? this.toJob(row, await this.loadResults(id), await this.loadAttempts(id)) : null;
   }
 
@@ -309,7 +309,8 @@ export class DbStore implements EnrichmentStore {
     const rows = await this.db
       .select()
       .from(enrichmentJobs)
-      .where(scopedTo(enrichmentJobs, workspaceId))
+      // Provider profile jobs (ENR-04) have their own read model in provider-jobs.service.ts.
+      .where(scopedTo(enrichmentJobs, workspaceId, eq(enrichmentJobs.kind, "contact_waterfall")))
       .orderBy(desc(enrichmentJobs.queuedAt));
     return Promise.all(
       rows.map(async (row) => this.toJob(row, await this.loadResults(row.id), await this.loadAttempts(row.id)))

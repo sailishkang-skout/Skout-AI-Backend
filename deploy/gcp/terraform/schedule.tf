@@ -87,3 +87,53 @@ resource "google_cloud_scheduler_job" "sql" {
 
   depends_on = [google_project_service.scheduler, google_project_iam_member.sql_scheduler]
 }
+
+# ---------- VM keep-alive: restart a reclaimed Spot VM ----------
+# Google can reclaim a Spot VM at any time; it then stays stopped until something starts it, and the
+# instance schedule above only starts it once in the morning. Every 15 minutes during working hours this
+# calls instances.start, which does nothing when the VM is already running. Services come back on their own.
+resource "google_project_iam_custom_role" "vm_starter" {
+  count       = var.schedule_enabled ? 1 : 0
+  role_id     = "${replace(local.prefix, "-", "_")}_vm_starter"
+  title       = "Start the staging VM"
+  permissions = ["compute.instances.get", "compute.instances.start"]
+}
+
+resource "google_service_account" "vm_keepalive" {
+  count        = var.schedule_enabled ? 1 : 0
+  account_id   = "${local.prefix}-vm-keepalive"
+  display_name = "Restarts the staging VM if Google reclaimed it"
+
+  depends_on = [google_project_service.apis]
+}
+
+resource "google_project_iam_member" "vm_keepalive" {
+  count   = var.schedule_enabled ? 1 : 0
+  project = var.gcp_project
+  role    = google_project_iam_custom_role.vm_starter[0].id
+  member  = "serviceAccount:${google_service_account.vm_keepalive[0].email}"
+}
+
+resource "google_cloud_scheduler_job" "vm_keepalive" {
+  count     = var.schedule_enabled ? 1 : 0
+  name      = "${local.prefix}-vm-keepalive"
+  region    = var.gcp_region
+  schedule  = "*/15 10-21 * * ${var.schedule_days}"
+  time_zone = local.schedule_tz
+
+  retry_config {
+    retry_count = 1
+  }
+
+  http_target {
+    http_method = "POST"
+    uri         = "https://compute.googleapis.com/compute/v1/projects/${var.gcp_project}/zones/${var.gcp_zone}/instances/${local.prefix}-1/start"
+
+    oauth_token {
+      service_account_email = google_service_account.vm_keepalive[0].email
+      scope                 = "https://www.googleapis.com/auth/cloud-platform"
+    }
+  }
+
+  depends_on = [google_project_service.scheduler, google_project_iam_member.vm_keepalive]
+}

@@ -59,8 +59,8 @@ variable "machine_type" {
 
 variable "spot" {
   type        = bool
-  default     = true
-  description = "Spot VM: typically 60-70% cheaper, but Google can stop it at any time (data stays on disk; restart it with gcloud). Set false before production."
+  default     = false
+  description = "Spot VM: about 65% cheaper, but Google can reclaim it at any time and it stays stopped until restarted. In October 2026 us-east1-b reclaimed it twice within 11 minutes of a start, so the default is a standard VM; with the working-hours schedule that costs roughly $17/month against $6."
 }
 
 variable "running" {
