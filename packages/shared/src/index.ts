@@ -24,3 +24,4 @@ export * from "./cops-activity.js";
 export * from "./cops-commercial.js";
 export * from "./cops-tickets.js";
 export * from "./cops-admin-config.js";
+export * from "./cops-commercial-policy.js";
