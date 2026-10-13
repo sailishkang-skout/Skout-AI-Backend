@@ -2,7 +2,9 @@ import { and, desc, eq, inArray, lt, notInArray, or, sql } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
 import {
   APPROVER_DECIDED_BY,
+  appendCopsEvent,
   approvalPolicySchema,
+  createCopsEvent,
   canonicalJson,
   evaluateApprovals,
   materialChanges,
@@ -285,9 +287,37 @@ export async function requestApproval(db: Db, ctx: CommercialContext, proposalId
       correlationId: ctx.requestId,
       sourceChannel: "api",
     });
+    await emitApprovalEvent(
+      tx,
+      ctx,
+      { id: row!.id, proposalId, opportunityId: proposal.opportunityId, proposalVersion: state.proposal_version },
+      { type: "ApprovalRequested", required_approvers: state.required_approvers }
+    );
     return row!.id;
   });
   return (await listApprovals(db, ctx.workspaceId, { id }))[0]!;
+}
+
+/** Outbox event in the caller's transaction; the event worker turns it into in-app notifications by role. */
+async function emitApprovalEvent(
+  tx: Tx,
+  ctx: CommercialContext,
+  approval: { id: string; proposalId: string; opportunityId: string; proposalVersion: number },
+  event: { type: "ApprovalRequested"; required_approvers: ApproverRole[] } | { type: "ApprovalDecided"; status: "approved" | "rejected" | "voided"; reason: string | null }
+): Promise<void> {
+  const base = { approval_id: approval.id, proposal_id: approval.proposalId, opportunity_id: approval.opportunityId, proposal_version: approval.proposalVersion };
+  await appendCopsEvent(
+    tx as never,
+    createCopsEvent({
+      eventType: event.type,
+      tenantId: ctx.workspaceId,
+      aggregateType: "proposal",
+      aggregateId: approval.proposalId,
+      actor: { type: "user", id: ctx.userId },
+      correlationId: ctx.requestId,
+      payload: event.type === "ApprovalRequested" ? { ...base, required_approvers: event.required_approvers } : { ...base, status: event.status, reason: event.reason },
+    })
+  );
 }
 
 async function memberRoleKeys(db: Reader, workspaceId: string, userId: string): Promise<string[]> {
@@ -357,6 +387,7 @@ export async function decideApproval(
       correlationId: ctx.requestId,
       sourceChannel: "api",
     });
+    if (status !== "pending") await emitApprovalEvent(tx, ctx, approval, { type: "ApprovalDecided", status, reason: status === "rejected" ? comment : null });
     // The signature or payment may have arrived first; the last approval is then what opens the gate.
     if (status === "approved") {
       await evaluateGate(tx as unknown as Db, {
@@ -404,5 +435,6 @@ export async function carryOrVoidApprovals(tx: Tx, ctx: CommercialContext, propo
       correlationId: ctx.requestId,
       sourceChannel: "api",
     });
+    await emitApprovalEvent(tx, ctx, approval, { type: "ApprovalDecided", status: "voided", reason: `The terms changed: ${changed.join(", ")}` });
   }
 }

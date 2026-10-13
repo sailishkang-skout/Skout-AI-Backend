@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
+import { handleDexterEvent } from "../workers/dexter-event.worker.js";
 
 /**
  * COPS-08 approval engine against a real Postgres (COPS_TEST_DATABASE_URL). Ticket acceptance:
@@ -148,6 +149,12 @@ maybe("COPS-08 approval engine", () => {
     expect(second.json().data.decisions.find((d: { role: string }) => d.role === "sales_manager")).toMatchObject({ decision: "approved", comment: "Fine for this account" });
     expect((await evaluate(id)).satisfied).toBe(true);
 
+    // One event when it is asked for and one when it is granted; the worker notifies by role from these.
+    const events = await sql`select event_type, envelope->'payload' as payload from cops_outbox where aggregate_id = ${id} and event_type like 'Approval%' order by created_at`;
+    expect(events.map((e: { event_type: string }) => e.event_type)).toEqual(["ApprovalRequested", "ApprovalDecided"]);
+    expect(events[0].payload).toMatchObject({ approval_id: approval.id, required_approvers: ["sales_manager", "finance"] });
+    expect(events[1].payload).toMatchObject({ status: "approved" });
+
     const audit = await sql`select action from audit_logs where entity_id = ${approval.id} order by created_at`;
     expect(audit.map((a: { action: string }) => a.action)).toEqual(["approval.requested", "approval.approved", "approval.approved"]);
   });
@@ -173,6 +180,8 @@ maybe("COPS-08 approval engine", () => {
     const [row] = await sql`select status, status_reason from approvals where id = ${approval.id}`;
     expect(row.status).toBe("voided");
     expect(row.status_reason).toContain("discount_pct");
+    const [voided] = await sql`select envelope->'payload' as payload from cops_outbox where aggregate_id = ${id} and event_type = 'ApprovalDecided' and envelope->'payload'->>'status' = 'voided'`;
+    expect(voided.payload.reason).toContain("discount_pct");
     expect((await call("POST", `/proposals/${id}/approvals`)).statusCode).toBe(201);
   });
 
@@ -247,6 +256,18 @@ maybe("COPS-08 approval engine", () => {
     const report = (await call("GET", "/approvals/grandfathered")).json().data as Array<{ opportunity_id: string; reasons: string[]; opportunity_name: string }>;
     expect(report.find((r) => r.opportunity_id === deal.id)).toMatchObject({ opportunity_name: "Old signed deal", reasons: ["contract_signed", "proposal_sent"] });
     expect((await call("GET", "/approvals/grandfathered", undefined, OTHER)).json().data).toEqual([]);
+  });
+
+  it("the approvers get an in-app notification, each once, and nobody else does", async () => {
+    const id = await create(terms({}, 25));
+    await call("POST", `/proposals/${id}/approvals`);
+    const [row] = await sql`select envelope from cops_outbox where aggregate_id = ${id} and event_type = 'ApprovalRequested'`;
+    // What the event worker does with the outbox row, run twice to prove it does not notify twice.
+    await handleDexterEvent(row.envelope, (app as unknown as { db: never }).db);
+    await handleDexterEvent(row.envelope, (app as unknown as { db: never }).db);
+    const sent = await sql`select u.email, n.type, n.entity_id from notifications n join users u on u.id = n.user_id where n.source_event_id = ${row.envelope.event_id} order by u.email`;
+    expect(sent.map((n: { email: string }) => n.email)).toEqual([FINANCE, MANAGER].sort());
+    expect(sent[0]).toMatchObject({ type: "cops.ApprovalRequested", entity_id: id });
   });
 
   it("a rejection needs a comment and closes the approval", async () => {

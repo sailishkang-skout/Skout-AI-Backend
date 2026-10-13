@@ -80,6 +80,24 @@ export const LifecycleTransitionedPayload = z.object({
   reason: z.string().min(1),
 });
 
+/** COPS-08: an approval was asked for; the approver roles it names are who gets notified. */
+export const ApprovalRequestedPayload = z.object({
+  approval_id: z.string().uuid(),
+  proposal_id: z.string().uuid(),
+  opportunity_id: z.string().uuid(),
+  proposal_version: z.number().int().min(1),
+  required_approvers: z.array(z.enum(["sales_manager", "finance", "legal_revops", "executive"])).min(1),
+});
+/** COPS-08: an approval reached an outcome (granted, rejected, or voided by a change of terms). */
+export const ApprovalDecidedPayload = z.object({
+  approval_id: z.string().uuid(),
+  proposal_id: z.string().uuid(),
+  opportunity_id: z.string().uuid(),
+  proposal_version: z.number().int().min(1),
+  status: z.enum(["approved", "rejected", "voided"]),
+  reason: z.string().nullable(),
+});
+
 /** Event type → payload schema. The single registry consumers and outbox writers use. */
 export const COPS_PHASE1_EVENTS = {
   OpportunityQualified: OpportunityQualifiedPayload,
@@ -103,6 +121,8 @@ export const COPS_PHASE1_EVENTS = {
   TicketEscalated: TicketEscalatedPayload,
   TicketResolved: TicketResolvedPayload,
   LifecycleTransitioned: LifecycleTransitionedPayload,
+  ApprovalRequested: ApprovalRequestedPayload,
+  ApprovalDecided: ApprovalDecidedPayload,
 } as const;
 
 export type CopsPhase1EventType = keyof typeof COPS_PHASE1_EVENTS;
