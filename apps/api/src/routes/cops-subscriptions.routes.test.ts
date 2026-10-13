@@ -8,6 +8,10 @@ import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
 import { getAccountSubscription, runSubscriptionBilling } from "../services/cops-subscriptions.service.js";
 import { runRenewals } from "../services/cops-renewals.service.js";
+import { postCreditTransaction } from "@skout/db";
+import { subscriptionAccessBlock, SubscriptionRestrictedError } from "../services/cops-subscription-access.js";
+import { DbStore } from "../services/enrichment/db-store.js";
+import { canContact } from "../services/cops-can-contact.js";
 
 /**
  * COPS-08 subscriptions against a real Postgres (COPS_TEST_DATABASE_URL): payment-link billing per
@@ -325,19 +329,46 @@ maybe("COPS-08 subscriptions", () => {
     expect(await entitlement()).toMatchObject({ source: "cops-subscription", value: { subscription_id: sub.id, status: "active", seats: 10, currency: "USD" } });
 
     const due = sub.invoices[0].due_at as string;
+    // What the product does for the customer's workspace: spend a credit, and ask whether outreach may go.
+    await postCreditTransaction(db, { workspaceId: customer.id, amount: 50, kind: "grant", action: "test-grant", referenceId: null });
+    const store = new DbStore(db);
+    const spend = () => store.deductCredits(customer.id, 1, "test-spend");
+    const mailConfig = { EMAIL_INTEL_SERVICE_URL: undefined, EMAIL_INTEL_TIMEOUT_MS: 100 } as never;
+    const outreach = () => canContact(db, mailConfig, { workspaceId: customer.id, email: "buyer@example.test", purpose: "outreach" });
+    const transactional = () => canContact(db, mailConfig, { workspaceId: customer.id, email: "buyer@example.test", purpose: "transactional" });
+
+    // Days 0 to 7: past due, full access.
+    await billAt(due, 3);
+    expect(await subscriptionAccessBlock(db, customer.id)).toBeNull();
+    expect(await spend()).toBe(49);
+    expect(await outreach()).not.toMatchObject({ reason: "subscription_restricted" });
+
     // Past due and restricted are stages of the subscription; the account is still a paying customer.
     await billAt(due, 9);
     expect(await accountState()).toBe("paid");
     expect((await entitlement()).value.status).toBe("restricted");
+    // From day 8: no new credit use and no outreach. Transactional mail still goes, and nothing is taken away.
+    expect(await subscriptionAccessBlock(db, customer.id)).toBe("restricted");
+    await expect(spend()).rejects.toBeInstanceOf(SubscriptionRestrictedError);
+    await expect(spend()).rejects.toMatchObject({ statusCode: 402, details: { stage: "restricted" } });
+    expect(await outreach()).toEqual({ allowed: false, reason: "subscription_restricted", detail: "restricted" });
+    expect(await transactional()).not.toMatchObject({ reason: "subscription_restricted" });
+    expect(await store.getCreditBalance(customer.id)).toBe(49);
+
     await billAt(due, 15);
     expect(await accountState()).toBe("suspended");
     expect((await entitlement()).value.status).toBe("suspended");
+    expect(await subscriptionAccessBlock(db, customer.id)).toBe("suspended");
 
     // Paying restores both, with no extra step.
     await sql`update subscription_invoices set status = 'paid', paid_at = now() where subscription_id = ${sub.id}`;
     await billAt(due, 16);
     expect(await accountState()).toBe("paid");
     expect((await entitlement()).value).toMatchObject({ status: "active", seats: 10 });
+    expect(await subscriptionAccessBlock(db, customer.id)).toBeNull();
+    expect(await spend()).toBe(48);
+    // A workspace with no subscription entitlement (internal, or on trial) is never restricted.
+    expect(await subscriptionAccessBlock(db, workspaceId)).toBeNull();
 
     // A seat amendment reaches the entitlement when it takes effect, and a longer term moves the renewal date at once.
     await call("POST", `/subscriptions/${sub.id}/amendments`, { seats: 15, term_months: 24, reason: "Growth" });

@@ -4,6 +4,7 @@ import type { Env } from "../config/env.js";
 import { isSuppressed } from "./suppression.service.js";
 import { isSendBlockedByEligibility } from "./send-eligibility-guard.service.js";
 import { buildConsentService } from "./consent.service.js";
+import { subscriptionAccessBlock } from "./cops-subscription-access.js";
 
 /**
  * COPS-05 single contact gate (Bible p.41/86, ticket: "respect suppression/consent via one central
@@ -21,7 +22,7 @@ import { buildConsentService } from "./consent.service.js";
  */
 export type ContactPurpose = "transactional" | "outreach";
 
-export type CanContactBlock = "invalid_email" | "suppressed" | "channel_suppressed" | "hard_bounce" | "ineligible" | "no_consent";
+export type CanContactBlock = "invalid_email" | "suppressed" | "channel_suppressed" | "hard_bounce" | "ineligible" | "no_consent" | "subscription_restricted";
 
 export type CanContactResult = { allowed: true } | { allowed: false; reason: CanContactBlock; detail?: string };
 
@@ -34,6 +35,12 @@ export async function canContact(
 ): Promise<CanContactResult> {
   const email = input.email.trim().toLowerCase();
   if (!EMAIL.test(email)) return { allowed: false, reason: "invalid_email" };
+  // COPS-08: outreach stops while the sending workspace has an unpaid subscription bill past day 7.
+  // Transactional mail (invites, receipts, the onboarding email) still goes.
+  if (input.purpose === "outreach") {
+    const block = await subscriptionAccessBlock(db, input.workspaceId);
+    if (block) return { allowed: false, reason: "subscription_restricted", detail: block };
+  }
 
   if (await isSuppressed(db, input.workspaceId, email)) return { allowed: false, reason: "suppressed" };
 
@@ -73,4 +80,5 @@ export const CAN_CONTACT_MESSAGE: Record<CanContactBlock, string> = {
   hard_bounce: "The contact's email hard-bounced",
   ineligible: "The address failed the send-eligibility check",
   no_consent: "No active email consent for this contact",
+  subscription_restricted: "Outreach is paused because this workspace has an unpaid subscription bill",
 };

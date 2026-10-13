@@ -13,6 +13,7 @@ import {
   type ProspectScore,
 } from "./types.js";
 import { trackCreditAdd, trackCreditSpend } from "../analytics-events.js";
+import { assertSubscriptionAllowsUse } from "../cops-subscription-access.js";
 
 const {
   creditBalances,
@@ -58,6 +59,8 @@ export class DbStore implements EnrichmentStore {
   /** The balance check and the write happen under the wallet lock, so two spends cannot overdraw. */
   async deductCredits(workspaceId: string, amount: number, action: string, ref?: string): Promise<number> {
     if (amount <= 0) return this.getCreditBalance(workspaceId);
+    // COPS-08: a workspace restricted or suspended for an unpaid bill cannot spend new credits.
+    await assertSubscriptionAllowsUse(this.db, workspaceId);
     try {
       const { balance } = await postCreditTransaction(this.db, {
         workspaceId,

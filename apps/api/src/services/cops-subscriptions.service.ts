@@ -24,6 +24,7 @@ import {
 import { writeCopsAudit } from "./cops-platform.service.js";
 import { getConfig } from "./cops-admin-config.service.js";
 import { runLifecycleTransition } from "./cops-lifecycle.service.js";
+import { SUBSCRIPTION_ENTITLEMENT_KEY } from "./cops-subscription-access.js";
 import { CommercialError, getOpportunity, type CommercialContext } from "./cops-commercial.service.js";
 import { createPaymentRequest } from "./cops-payments.service.js";
 import type { PspAdapter } from "./psp/psp-adapter.js";
@@ -37,8 +38,6 @@ import type { PspAdapter } from "./psp/psp-adapter.js";
  */
 const { subscriptions, subscriptionItems, subscriptionInvoices, subscriptionAmendments, paymentRequests, copsLifecycleStates, copsProvisionings, entitlements } = schema;
 
-/** The entitlement key the customer workspace carries; product code reads the subscription from it. */
-export const SUBSCRIPTION_ENTITLEMENT_KEY = "subscription";
 /**
  * Account lifecycle state (COPS-01) for each subscription status. The failed-payment stages before
  * suspension stay on the subscription: the account is still a paying customer until it is suspended.
