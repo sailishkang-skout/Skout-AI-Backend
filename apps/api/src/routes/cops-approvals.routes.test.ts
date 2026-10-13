@@ -101,6 +101,16 @@ maybe("COPS-08 approval engine", () => {
     expect(rows.n).toBe(0);
   });
 
+  it("contract value is TCV: a per-month price is multiplied by the term, so it cannot slip under the limit", async () => {
+    // 30 seats at USD 79 a month for 12 months is USD 28,440: over the 25k limit, and over 25 seats.
+    const id = await create(terms({ line_items: [{ kind: "seats", description: "Seats", quantity: 30, unit_amount_minor: 7900, price_basis: "per_month" }] }));
+    const state = await evaluate(id);
+    expect(state.terms.contract_value_minor).toBe(2_844_000);
+    expect(state.matched_rules.map((m: { rule: string }) => m.rule)).toEqual(["seats", "contract_value"]);
+    const proposal = (await call("GET", `/proposals/${id}`)).json().data;
+    expect(proposal.versions[0].line_items[0].price_basis).toBe("per_month");
+  });
+
   it("a discount hidden in line items still counts, and every matching rule adds its approvers", async () => {
     const id = await create(terms({ payment_terms_net_days: 60, custom_clauses: true }, 15));
     const state = await evaluate(id);

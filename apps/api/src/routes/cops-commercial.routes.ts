@@ -14,7 +14,7 @@ import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
  *     query, and the payment webhook resolves the account inside its own transaction.
  *   - Review date: revisit when apps/crm's internal API covers batched reads
  */
-import { APPROVER_ROLES, BILLING_CADENCES, COMMERCIAL_GATE_POLICIES, COMMERCIAL_LINE_KINDS, copsErrorBody, copsErrorStatus, resolveCorrelationId } from "@skout/shared";
+import { APPROVER_ROLES, PRICE_BASES, BILLING_CADENCES, COMMERCIAL_GATE_POLICIES, COMMERCIAL_LINE_KINDS, copsErrorBody, copsErrorStatus, resolveCorrelationId } from "@skout/shared";
 import { getMemberPermissions } from "@skout/auth";
 import { copsIdempotencyStore, requireAnyCopsPermission } from "../services/cops-platform.service.js";
 import { withCopsIdempotentReply, type CopsCapturingReply } from "../services/cops-idempotent.js";
@@ -58,6 +58,7 @@ const lineItemSchema = z
     quantity: z.number().int().min(1).max(10_000_000),
     unit_amount_minor: z.number().int().min(0).max(1_000_000_000_000),
     discount_pct: pct.default(0),
+    price_basis: z.enum(PRICE_BASES).optional(),
   })
   .strict();
 const termsSchema = z

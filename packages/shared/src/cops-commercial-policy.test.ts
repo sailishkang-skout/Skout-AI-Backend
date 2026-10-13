@@ -17,7 +17,7 @@ import {
   type MaterialTerms,
 } from "./cops-commercial-policy.js";
 import { COPS_CONFIG_DEFAULTS, COPS_CONFIG_SCHEMAS } from "./cops-admin-config.js";
-import { proposalApprovalTerms, proposalContentHash } from "./cops-commercial.js";
+import { computeProposalTotals, proposalApprovalTerms, proposalContentHash, proposalTcv } from "./cops-commercial.js";
 
 const policy = COMMERCIAL_POLICY_DEFAULTS.approval_policy;
 /** A deal under every threshold. */
@@ -211,5 +211,36 @@ describe("proposal terms the approval rules read", () => {
     for (const terms of [{ payment_terms_net_days: 60 }, { free_credits: 100 }, { custom_clauses: true }, { non_standard_sla: true }]) {
       expect(proposalContentHash({ ...base, approval_terms: terms })).not.toBe(standard);
     }
+  });
+});
+
+describe("total contract value", () => {
+  const tcvOf = (line_items: Parameters<typeof computeProposalTotals>[0]["line_items"], discount_pct = 0, term_months = 12) =>
+    proposalTcv({ term_months, discount_pct, lines: computeProposalTotals({ line_items, discount_pct }).lines });
+
+  it("a per-month seat line and a whole-term seat line give the same TCV", () => {
+    const perMonth = tcvOf([{ kind: "seats", description: "Seats", quantity: 10, unit_amount_minor: 7900, price_basis: "per_month" }]);
+    const perTerm = tcvOf([{ kind: "seats", description: "Seats", quantity: 10, unit_amount_minor: 94_800, price_basis: "per_term" }]);
+    expect(perMonth.tcv_minor).toBe(948_000);
+    expect(perTerm.tcv_minor).toBe(948_000);
+  });
+
+  it("is recurring lines x term plus one-time fees, after discount", () => {
+    const result = tcvOf(
+      [
+        { kind: "seats", description: "Seats", quantity: 10, unit_amount_minor: 7900, price_basis: "per_month", discount_pct: 10 },
+        { kind: "fee", description: "Onboarding", quantity: 1, unit_amount_minor: 50_000 },
+      ],
+      5
+    );
+    // Seats: 79,000 a month less 10% = 71,100, x 12 = 853,200. Fee once: 50,000. Less 5% header discount.
+    expect(result.gross_minor).toBe(998_000);
+    expect(result.tcv_minor).toBe(858_040);
+    expect(result.discount_pct).toBe(14.02);
+  });
+
+  it("a line with no basis is a whole-term amount, or a single charge for a fee, as before COPS-08", () => {
+    expect(tcvOf([{ kind: "seats", description: "Seats", quantity: 10, unit_amount_minor: 94_800 }], 0, 36).tcv_minor).toBe(948_000);
+    expect(tcvOf([{ kind: "fee", description: "Setup", quantity: 1, unit_amount_minor: 50_000 }], 0, 36).tcv_minor).toBe(50_000);
   });
 });

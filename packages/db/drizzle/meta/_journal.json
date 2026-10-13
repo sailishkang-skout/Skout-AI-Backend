@@ -883,6 +883,13 @@
       "when": 1795500000000,
       "tag": "0124_cops08_approvals",
       "breakpoints": true
+    },
+    {
+      "idx": 126,
+      "version": "7",
+      "when": 1795600000000,
+      "tag": "0125_cops08_line_price_basis",
+      "breakpoints": true
     }
   ]
 }

@@ -73,6 +73,8 @@ export const proposalLineItems = pgTable(
   "proposal_line_items",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    /** COPS-08: per_month | per_term | one_time. Null is the default for the line kind. */
+    priceBasis: text("price_basis"),
     workspaceId: uuid("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),

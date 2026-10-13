@@ -3,11 +3,13 @@ import { schema, type Db } from "@skout/db";
 import {
   appendCopsEvent,
   computeProposalTotals,
+  defaultPriceBasis,
   COPS_TRANSITIONS,
   createCopsEvent,
   proposalApprovalTerms,
   proposalContentHash,
   type CommercialLineKind,
+  type PriceBasis,
   type ProposalApprovalTerms,
   type ProposalTermsInput,
 } from "@skout/shared";
@@ -194,6 +196,7 @@ async function insertProposalVersion(
       versionId: version.id,
       position: line.position,
       kind: line.kind,
+      priceBasis: line.price_basis ?? defaultPriceBasis(line.kind),
       description: line.description,
       quantity: line.quantity,
       unitAmountMinor: line.unit_amount_minor,
@@ -421,6 +424,7 @@ function hashOfStoredVersion(version: VersionRow, lines: LineRow[]): string {
       quantity: l.quantity,
       unit_amount_minor: Number(l.unitAmountMinor),
       discount_pct: Number(l.discountPct),
+      price_basis: (l.priceBasis as PriceBasis | null) ?? undefined,
     })),
     totals: {
       subtotal_minor: Number(version.subtotalMinor),
@@ -452,6 +456,7 @@ function versionDto(version: VersionRow, lines: LineRow[]) {
       id: l.id,
       position: l.position,
       kind: l.kind,
+      price_basis: l.priceBasis ?? defaultPriceBasis(l.kind),
       description: l.description,
       quantity: l.quantity,
       unit_amount_minor: Number(l.unitAmountMinor),

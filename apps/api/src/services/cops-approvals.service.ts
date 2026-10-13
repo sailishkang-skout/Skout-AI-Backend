@@ -6,6 +6,7 @@ import {
   canonicalJson,
   evaluateApprovals,
   materialChanges,
+  proposalTcv,
   sha256Hex,
   type ApprovalEvaluation,
   type ApproverRole,
@@ -37,18 +38,21 @@ const OPEN_STATUSES = ["pending", "approved"];
 const ADMIN_ROLE_KEYS = ["admin", "owner"];
 
 /**
- * The terms the rules read, from a stored version. The discount is the effective one (line and
- * header discounts together), so a discount cannot be hidden in line items. Contract value is the
- * amount after discount and before tax.
+ * The terms the rules read, from a stored version. Contract value is TCV (see proposalTcv): every
+ * line brought to the full term, after discount, before tax. The discount is the effective one on
+ * that basis, line and header discounts together, so a discount cannot be hidden in line items.
  */
 export function approvalTermsOf(version: VersionRow, lines: LineRow[]): MaterialTerms {
-  const subtotal = Number(version.subtotalMinor);
-  const discount = Number(version.discountMinor);
+  const tcv = proposalTcv({
+    term_months: version.termMonths,
+    discount_pct: Number(version.discountPct),
+    lines: lines.map((l) => ({ kind: l.kind, price_basis: l.priceBasis, gross_minor: Number(l.grossMinor), net_minor: Number(l.netMinor) })),
+  });
   return {
     currency: version.currency,
-    discount_pct: subtotal > 0 ? Math.round((discount * 10_000) / subtotal) / 100 : 0,
+    discount_pct: tcv.discount_pct,
     seats: lines.filter((l) => l.kind === "seats").reduce((sum, l) => sum + l.quantity, 0),
-    contract_value_minor: subtotal - discount,
+    contract_value_minor: tcv.tcv_minor,
     term_months: version.termMonths,
     ...storedApprovalTerms(version),
     billing_cadence: version.billingCadence,
@@ -56,7 +60,7 @@ export function approvalTermsOf(version: VersionRow, lines: LineRow[]): Material
       canonicalJson(
         [...lines]
           .sort((a, b) => a.position - b.position)
-          .map((l) => ({ kind: l.kind, description: l.description, quantity: l.quantity, unit_amount_minor: Number(l.unitAmountMinor), discount_pct: Number(l.discountPct) }))
+          .map((l) => ({ kind: l.kind, basis: l.priceBasis, description: l.description, quantity: l.quantity, unit_amount_minor: Number(l.unitAmountMinor), discount_pct: Number(l.discountPct) }))
       )
     ),
   };

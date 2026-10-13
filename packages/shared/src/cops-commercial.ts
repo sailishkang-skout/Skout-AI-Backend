@@ -6,6 +6,14 @@
 import { createHash } from "node:crypto";
 
 export const COMMERCIAL_LINE_KINDS = ["product", "seats", "credits", "fee"] as const;
+
+/** COPS-08: what one line amount covers - one month, the whole term, or a single charge. */
+export const PRICE_BASES = ["per_month", "per_term", "one_time"] as const;
+export type PriceBasis = (typeof PRICE_BASES)[number];
+/** Lines written before COPS-08 carry no basis: a fee is charged once, anything else covers the term. */
+export function defaultPriceBasis(kind: string): PriceBasis {
+  return kind === "fee" ? "one_time" : "per_term";
+}
 export type CommercialLineKind = (typeof COMMERCIAL_LINE_KINDS)[number];
 
 export const BILLING_CADENCES = ["one_time", "monthly", "quarterly", "annual"] as const;
@@ -17,6 +25,7 @@ export interface ProposalLineInput {
   quantity: number;
   unit_amount_minor: number;
   discount_pct?: number;
+  price_basis?: PriceBasis;
 }
 
 export interface ProposalTermsInput {
@@ -148,7 +157,7 @@ export function proposalContentHash(input: {
   discount_pct: number;
   tax_pct: number;
   notes: string | null;
-  line_items: Array<Pick<ComputedLine, "position" | "kind" | "description" | "quantity" | "unit_amount_minor" | "discount_pct">>;
+  line_items: Array<Pick<ComputedLine, "position" | "kind" | "description" | "quantity" | "unit_amount_minor" | "discount_pct" | "price_basis">>;
   totals: ProposalTotals;
   approval_terms?: Partial<ProposalApprovalTerms>;
 }): string {
@@ -172,6 +181,8 @@ export function proposalContentHash(input: {
           quantity: Number(l.quantity),
           unit_amount_minor: Number(l.unit_amount_minor),
           discount_pct: Number(l.discount_pct),
+          // Only a non-default basis enters the hash, so versions sent before COPS-08 stay valid.
+          ...(l.price_basis && l.price_basis !== defaultPriceBasis(l.kind) ? { price_basis: l.price_basis } : {}),
         })),
       totals: input.totals,
       ...(nonStandard ? { approval_terms: extra } : {}),
@@ -241,4 +252,28 @@ const PAYMENT_FORWARD: Record<PaymentRequestStatus, readonly PaymentRequestStatu
 /** The status after an incoming provider status, or null when it must be ignored (late or repeated). */
 export function nextPaymentStatus(current: PaymentRequestStatus, incoming: PaymentRequestStatus): PaymentRequestStatus | null {
   return PAYMENT_FORWARD[current].includes(incoming) ? incoming : null;
+}
+
+// ---- Total contract value (COPS-08) ----
+
+/**
+ * TCV = recurring lines x term in months + whole-term lines + one-time fees, after line and header
+ * discounts, before tax. Every line is first brought to the full term, so ten seats at 79 a month
+ * for 12 months and ten seats at 948 for the term give the same TCV. `discount_pct` is the
+ * effective discount on that basis: line and header discounts together.
+ */
+export function proposalTcv(input: {
+  term_months: number;
+  discount_pct: number;
+  lines: Array<{ kind: string; price_basis?: PriceBasis | string | null; gross_minor: number; net_minor: number }>;
+}): { gross_minor: number; tcv_minor: number; discount_pct: number } {
+  let gross = 0;
+  let afterLineDiscounts = 0;
+  for (const line of input.lines) {
+    const months = (line.price_basis ?? defaultPriceBasis(line.kind)) === "per_month" ? input.term_months : 1;
+    gross += line.gross_minor * months;
+    afterLineDiscounts += line.net_minor * months;
+  }
+  const tcv = afterLineDiscounts - Math.round((afterLineDiscounts * input.discount_pct) / 100);
+  return { gross_minor: gross, tcv_minor: tcv, discount_pct: gross > 0 ? Math.round(((gross - tcv) * 10_000) / gross) / 100 : 0 };
 }
