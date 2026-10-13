@@ -198,11 +198,17 @@ export interface GateConditions {
   signature_complete: boolean;
   payment_complete: boolean;
   overridden: boolean;
+  /** COPS-08: false while a live proposal of the opportunity is over a threshold and not approved. */
+  approvals_complete?: boolean;
 }
 
-/** True when the policy's conditions are met. An override opens any policy. */
+/**
+ * True when the policy's conditions are met. An override opens any policy. Missing approvals keep
+ * every other policy closed: a signature or payment does not provision an unapproved deal.
+ */
 export function isGateOpen(policy: CommercialGatePolicy, c: GateConditions): boolean {
   if (c.overridden) return true;
+  if (c.approvals_complete === false) return false;
   switch (policy) {
     case "trial_approval_only":
       return c.trial_approved;

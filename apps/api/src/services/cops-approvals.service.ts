@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, notInArray, or, sql } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
 import {
   APPROVER_DECIDED_BY,
@@ -14,6 +14,7 @@ import {
 import { writeCopsAudit } from "./cops-platform.service.js";
 import { getConfig } from "./cops-admin-config.service.js";
 import { CommercialError, storedApprovalTerms, type CommercialContext } from "./cops-commercial.service.js";
+import { evaluateGate } from "./cops-gate.service.js";
 
 /**
  * COPS-08 approval engine (Bible p.34). A proposal version over a threshold needs every approver
@@ -108,12 +109,23 @@ function approvalDto(row: ApprovalRow, decisions: DecisionRow[]) {
 }
 export type ApprovalDto = ReturnType<typeof approvalDto>;
 
-/** Marks approvals past their expiry. Called before any read that depends on status. */
+/**
+ * Marks approvals past their expiry. Called before any read that depends on status. A granted
+ * approval whose version was sent to the customer in time was used, and does not lapse afterwards.
+ */
 export async function expireDueApprovals(db: Pick<Db, "update">, workspaceId: string, now: Date = new Date()): Promise<number> {
+  // Table-qualified by hand: inside the subquery a bare proposal_id would mean the version's own column.
+  const versionWasSent = sql`exists (select 1 from proposal_versions v where v.proposal_id = "approvals"."proposal_id" and v.version = "approvals"."proposal_version" and v.sent_at is not null)`;
   const rows = await db
     .update(approvals)
     .set({ status: "expired", statusReason: "The approval period ended", resolvedAt: now })
-    .where(and(eq(approvals.workspaceId, workspaceId), inArray(approvals.status, OPEN_STATUSES), lt(approvals.expiresAt, now)))
+    .where(
+      and(
+        eq(approvals.workspaceId, workspaceId),
+        lt(approvals.expiresAt, now),
+        or(eq(approvals.status, "pending"), and(eq(approvals.status, "approved"), sql`not ${versionWasSent}`))
+      )
+    )
     .returning({ id: approvals.id });
   return rows.length;
 }
@@ -172,6 +184,23 @@ export async function assertApproved(db: Db, workspaceId: string, proposalId: st
       approval_status: state.approval?.status ?? "not_requested",
     });
   }
+}
+
+/**
+ * Approval state of an opportunity, for the provisioning gate. Every proposal that is still live
+ * (not declined or expired) must need no approval or have one. `blocking` names the ones that do not.
+ */
+export async function opportunityApprovals(db: Db, workspaceId: string, opportunityId: string) {
+  const live = await db
+    .select({ id: proposals.id })
+    .from(proposals)
+    .where(and(eq(proposals.workspaceId, workspaceId), eq(proposals.opportunityId, opportunityId), notInArray(proposals.status, ["declined", "expired"])));
+  const blocking: Array<{ proposal_id: string; required_approvers: ApproverRole[]; approval_status: string }> = [];
+  for (const { id } of live) {
+    const state = await evaluateProposalApprovals(db, workspaceId, id);
+    if (!state.satisfied) blocking.push({ proposal_id: id, required_approvers: state.required_approvers, approval_status: state.approval?.status ?? "not_requested" });
+  }
+  return { complete: blocking.length === 0, blocking };
 }
 
 /** A contract built from a proposal cannot go out for signature before that proposal is approved. */
@@ -302,6 +331,16 @@ export async function decideApproval(
       correlationId: ctx.requestId,
       sourceChannel: "api",
     });
+    // The signature or payment may have arrived first; the last approval is then what opens the gate.
+    if (status === "approved") {
+      await evaluateGate(tx as unknown as Db, {
+        workspaceId: ctx.workspaceId,
+        opportunityId: approval.opportunityId,
+        trigger: "approval",
+        actor: { type: "user", id: ctx.userId },
+        requestId: ctx.requestId,
+      });
+    }
   });
   return (await listApprovals(db, ctx.workspaceId, { id: approvalId }))[0]!;
 }

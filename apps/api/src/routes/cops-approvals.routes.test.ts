@@ -29,11 +29,11 @@ maybe("COPS-08 approval engine", () => {
   let workspaceId = "";
   let opportunityId = "";
 
-  const call = (method: "GET" | "POST", path: string, body?: unknown, email = OWNER) =>
+  const call = (method: "GET" | "POST" | "PUT", path: string, body?: unknown, email = OWNER) =>
     app.inject({
       method,
       url: `/api/v1${path}`,
-      headers: { "x-stub-user-email": email, ...(method === "POST" ? { "idempotency-key": randomUUID() } : {}) },
+      headers: { "x-stub-user-email": email, ...(method !== "GET" ? { "idempotency-key": randomUUID() } : {}) },
       ...(body !== undefined ? { payload: body as object } : {}),
     });
 
@@ -178,6 +178,42 @@ maybe("COPS-08 approval engine", () => {
     expect((await call("POST", `/proposals/${over}/send`, {})).json().details.approval_status).toBe("pending");
     await decide(approval.id, "sales_manager", "approved", MANAGER);
     expect((await call("POST", `/proposals/${over}/send`, {})).statusCode).toBe(200);
+  });
+
+  it("the provisioning gate stays closed while an approval is missing, and the last approval opens it", async () => {
+    const [deal] = await sql`insert into deals (workspace_id, company_id, pipeline_id, stage_id, name, amount, currency)
+      select workspace_id, company_id, pipeline_id, stage_id, 'Gate and approvals', amount, currency from deals where id = ${opportunityId} returning id`;
+    const dealType = `trial-approvals-${stamp}`;
+    await call("PUT", "/commercial/gate-policies", { deal_type: dealType, policy: "trial_approval_only" });
+    await call("PUT", `/opportunities/${deal.id}/deal-type`, { deal_type: dealType });
+    const created = await call("POST", `/opportunities/${deal.id}/proposals`, terms({}, 15));
+    const proposalId = created.json().data.id as string;
+
+    // The trial is approved, but the proposal is over a threshold and nobody has approved it.
+    const trial = await call("POST", `/opportunities/${deal.id}/gate/approve-trial`, { reason: "Pilot agreed" });
+    expect(trial.json().data).toMatchObject({ fired_now: false, open: false });
+    const gate = (await call("GET", `/opportunities/${deal.id}/gate`)).json().data;
+    expect(gate.conditions).toMatchObject({ trial_approved: true, approvals_complete: false });
+    const fired = () => sql`select count(*)::int as n from cops_outbox where event_type = 'ProvisioningRequested' and aggregate_id = ${deal.id}`;
+    expect((await fired())[0].n).toBe(0);
+
+    const approval = (await call("POST", `/proposals/${proposalId}/approvals`)).json().data;
+    await decide(approval.id, "sales_manager", "approved", MANAGER);
+    const after = (await call("GET", `/opportunities/${deal.id}/gate`)).json().data;
+    expect(after).toMatchObject({ open: true });
+    expect(after.conditions.approvals_complete).toBe(true);
+    expect((await fired())[0].n).toBe(1);
+  });
+
+  it("an approval that was used in time does not lapse after the proposal has gone out", async () => {
+    const id = await create(terms({}, 15));
+    const approval = (await call("POST", `/proposals/${id}/approvals`)).json().data;
+    await decide(approval.id, "sales_manager", "approved", MANAGER);
+    expect((await call("POST", `/proposals/${id}/send`, {})).statusCode).toBe(200);
+    await sql`update approvals set expires_at = now() - interval '1 minute' where id = ${approval.id}`;
+    expect(await evaluate(id)).toMatchObject({ satisfied: true });
+    const [row] = await sql`select status from approvals where id = ${approval.id}`;
+    expect(row.status).toBe("approved");
   });
 
   it("a rejection needs a comment and closes the approval", async () => {

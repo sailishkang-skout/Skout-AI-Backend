@@ -45,7 +45,7 @@ export const ProvisioningRequestedPayload = z.object({
   opportunity_id: id,
   account_id: id.nullable(),
   policy: z.enum(["trial_approval_only", "signature", "payment", "signature+payment", "manual_override"]),
-  trigger: z.enum(["signature", "payment", "trial_approval", "override", "policy_change"]),
+  trigger: z.enum(["signature", "payment", "trial_approval", "override", "policy_change", "approval"]),
 });
 export const WorkspaceProvisionedPayload = z.object({ account_id: id, workspace_id: id });
 /** COPS-04: optional account_id (additive) so the grant reaches the account timeline. */
