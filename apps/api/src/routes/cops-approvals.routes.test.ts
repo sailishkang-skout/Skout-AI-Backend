@@ -289,6 +289,26 @@ maybe("COPS-08 approval engine", () => {
     expect((await move("won")).statusCode).toBeLessThan(300);
   });
 
+  it("the currency is locked once a proposal has been sent: no later version or second proposal in another currency", async () => {
+    const [deal] = await sql`insert into deals (workspace_id, company_id, pipeline_id, stage_id, name, amount, currency)
+      select workspace_id, company_id, pipeline_id, stage_id, 'Currency lock deal', amount, currency from deals where id = ${opportunityId} returning id`;
+    const make = (currency: string) => call("POST", `/opportunities/${deal.id}/proposals`, terms({ currency }));
+    const first = (await make("USD")).json().data.id as string;
+    const { title: _t, ...usd } = terms();
+    // Before anything is sent the currency can still change.
+    expect((await call("POST", `/proposals/${first}/versions`, { ...usd, currency: "EUR" })).statusCode).toBeLessThan(300);
+    expect((await call("POST", `/proposals/${first}/versions`, usd)).statusCode).toBeLessThan(300);
+    expect((await call("POST", `/proposals/${first}/send`, {})).statusCode).toBe(200);
+
+    const changed = await call("POST", `/proposals/${first}/versions`, { ...usd, currency: "EUR" });
+    expect(changed.statusCode).toBe(409);
+    expect(changed.json()).toMatchObject({ code: "BUSINESS_STATE_CONFLICT", details: { locked_currency: "USD", requested_currency: "EUR" } });
+    expect((await make("GBP")).statusCode).toBe(409);
+    // The same currency is still fine, for a new version or a second proposal.
+    expect((await call("POST", `/proposals/${first}/versions`, usd)).statusCode).toBeLessThan(300);
+    expect((await make("USD")).statusCode).toBe(201);
+  });
+
   it("a rejection needs a comment and closes the approval", async () => {
     const id = await create(terms({}, 12));
     const approval = (await call("POST", `/proposals/${id}/approvals`)).json().data;

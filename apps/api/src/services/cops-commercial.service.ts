@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
 import {
   appendCopsEvent,
@@ -222,6 +222,27 @@ async function lockProposal(tx: Tx, workspaceId: string, proposalId: string) {
 
 const CLOSED_PROPOSAL = ["accepted", "declined", "expired"];
 
+/**
+ * COPS-08: the currency of an opportunity is locked once any of its proposals has been sent. The
+ * customer has seen a price in that currency; a later version or a second proposal in another
+ * currency would be a silent conversion, and prices are never converted.
+ */
+async function assertCurrencyUnlocked(tx: Tx, workspaceId: string, opportunityId: string, currency: string): Promise<void> {
+  const [sent] = await tx
+    .select({ currency: proposalVersions.currency })
+    .from(proposalVersions)
+    .innerJoin(proposals, eq(proposals.id, proposalVersions.proposalId))
+    .where(and(eq(proposals.workspaceId, workspaceId), eq(proposals.opportunityId, opportunityId), isNotNull(proposalVersions.sentAt)))
+    .orderBy(proposalVersions.sentAt)
+    .limit(1);
+  if (sent && sent.currency !== currency) {
+    throw new CommercialError("BUSINESS_STATE_CONFLICT", `The currency is locked to ${sent.currency}: a proposal in ${sent.currency} has already been sent for this opportunity`, {
+      locked_currency: sent.currency,
+      requested_currency: currency,
+    });
+  }
+}
+
 export async function createProposal(
   db: Db,
   ctx: CommercialContext,
@@ -230,6 +251,7 @@ export async function createProposal(
 ): Promise<string> {
   await getOpportunity(db, ctx.workspaceId, opportunityId);
   return db.transaction(async (tx) => {
+    await assertCurrencyUnlocked(tx as unknown as Tx, ctx.workspaceId, opportunityId, input.currency);
     const [proposal] = await tx
       .insert(proposals)
       .values({ workspaceId: ctx.workspaceId, opportunityId, title: input.title, createdBy: ctx.userId })
@@ -264,6 +286,7 @@ export async function addProposalVersion(db: Db, ctx: CommercialContext, proposa
         status: proposal.status,
       });
     }
+    await assertCurrencyUnlocked(tx as unknown as Tx, ctx.workspaceId, proposal.opportunityId, terms.currency);
     const next = proposal.currentVersion + 1;
     const { totals } = await insertProposalVersion(tx as unknown as Tx, {
       workspaceId: ctx.workspaceId,
