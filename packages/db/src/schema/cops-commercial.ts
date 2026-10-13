@@ -293,3 +293,52 @@ export const approvalDecisions = pgTable(
   },
   (t) => [unique("approval_decisions_approval_role_unique").on(t.approvalId, t.approverRole), index("approval_decisions_workspace_idx").on(t.workspaceId)]
 );
+
+/** COPS-08 e-signature (Bible p.32): one envelope per send of a contract version. */
+export const signatureEnvelopes = pgTable(
+  "signature_envelopes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    contractId: uuid("contract_id")
+      .notNull()
+      .references(() => contracts.id, { onDelete: "cascade" }),
+    contractVersion: integer("contract_version").notNull(),
+    provider: text("provider").notNull(),
+    /** The provider's id for the envelope; a reference, never a key of ours. Null until the provider accepts it. */
+    providerRef: text("provider_ref"),
+    /** pending_send | failed | sent | viewed | expired | declined | signed */
+    status: text("status").notNull().default("pending_send"),
+    templateKey: text("template_key"),
+    signers: jsonb("signers").notNull(),
+    mergeFields: jsonb("merge_fields").notNull().default({}),
+    sentBy: uuid("sent_by").references(() => users.id, { onDelete: "set null" }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    statusChangedAt: timestamp("status_changed_at", { withTimezone: true }).notNull().defaultNow(),
+    lastEventAt: timestamp("last_event_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("signature_envelopes_contract_idx").on(t.contractId), index("signature_envelopes_workspace_status_idx").on(t.workspaceId, t.status)]
+);
+
+/** Every provider event received, deduplicated by provider event id. Unmatched events have no workspace. */
+export const signatureEvents = pgTable(
+  "signature_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").references(() => workspaces.id, { onDelete: "cascade" }),
+    envelopeId: uuid("envelope_id").references(() => signatureEnvelopes.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    providerEventId: text("provider_event_id").notNull(),
+    eventType: text("event_type").notNull(),
+    status: text("status"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    /** received | applied | no_change | ignored | unmatched */
+    outcome: text("outcome").notNull().default("received"),
+    refs: jsonb("refs").notNull().default({}),
+  },
+  (t) => [unique("signature_events_provider_event_unique").on(t.provider, t.providerEventId), index("signature_events_envelope_idx").on(t.envelopeId)]
+);
