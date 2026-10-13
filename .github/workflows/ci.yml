@@ -97,6 +97,9 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Lint (API fails on errors; see apps/api/eslint.config.mjs)
+        run: pnpm lint
+
       - name: Build API and CRM
         run: pnpm --filter @skout/api build && pnpm --filter @skout/crm build
 

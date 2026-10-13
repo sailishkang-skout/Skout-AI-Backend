@@ -9,7 +9,6 @@ import {
   type EnrichmentStore,
   type ListDetail,
   type ProspectList,
-  type ProspectScore,
 } from "./types.js";
 import { HttpError, isDatabaseError } from "../../utils/http.js";
 import { isIcpConfigured } from "../icp.service.js";
