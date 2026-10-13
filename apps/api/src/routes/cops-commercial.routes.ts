@@ -34,7 +34,7 @@ import {
   type CommercialContext,
 } from "../services/cops-commercial.service.js";
 import { createPaymentRequest, handlePaymentWebhook, loadPaymentRequests } from "../services/cops-payments.service.js";
-import { decideApproval, evaluateProposalApprovals, listApprovals, requestApproval } from "../services/cops-approvals.service.js";
+import { assertApproved, assertContractApproved, decideApproval, evaluateProposalApprovals, listApprovals, requestApproval } from "../services/cops-approvals.service.js";
 import { createRazorpayPaymentLinkAdapter } from "../services/psp/razorpay.js";
 import {
   approveTrial,
@@ -305,6 +305,8 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
         reply,
         ctx.requestId,
         async () => {
+          // COPS-08: a proposal over a threshold goes out only once every approver has agreed.
+          await assertApproved(db, ctx.workspaceId, request.params.id);
           await sendProposal(db, ctx, request.params.id);
           return (await loadProposals(db, ctx.workspaceId, { proposalId: request.params.id }))[0];
         },
@@ -398,6 +400,7 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
         reply,
         ctx.requestId,
         async () => {
+          await assertContractApproved(db, ctx.workspaceId, request.params.id);
           await sendContract(db, ctx, request.params.id);
           return (await loadContracts(db, ctx.workspaceId, { contractId: request.params.id }))[0];
         },

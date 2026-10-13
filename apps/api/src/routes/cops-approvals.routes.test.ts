@@ -166,6 +166,20 @@ maybe("COPS-08 approval engine", () => {
     expect((await call("POST", `/proposals/${id}/approvals`)).statusCode).toBe(201);
   });
 
+  it("a proposal over a threshold cannot be sent until it is approved; one under it sends at once", async () => {
+    const under = await create(terms());
+    expect((await call("POST", `/proposals/${under}/send`, {})).statusCode).toBe(200);
+
+    const over = await create(terms({}, 15));
+    const refused = await call("POST", `/proposals/${over}/send`, {});
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json()).toMatchObject({ code: "BUSINESS_STATE_CONFLICT", details: { required_approvers: ["sales_manager"], approval_status: "not_requested" } });
+    const approval = (await call("POST", `/proposals/${over}/approvals`)).json().data;
+    expect((await call("POST", `/proposals/${over}/send`, {})).json().details.approval_status).toBe("pending");
+    await decide(approval.id, "sales_manager", "approved", MANAGER);
+    expect((await call("POST", `/proposals/${over}/send`, {})).statusCode).toBe(200);
+  });
+
   it("a rejection needs a comment and closes the approval", async () => {
     const id = await create(terms({}, 12));
     const approval = (await call("POST", `/proposals/${id}/approvals`)).json().data;

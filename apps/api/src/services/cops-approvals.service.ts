@@ -21,7 +21,7 @@ import { CommercialError, storedApprovalTerms, type CommercialContext } from "./
  * belongs to the terms it was given for: a material change voids it, and it lapses after the
  * configured number of days. Deals under every threshold never get an approval row.
  */
-const { proposals, proposalVersions, proposalLineItems, approvals, approvalDecisions, workspaceMemberRoles, roles } = schema;
+const { proposals, proposalVersions, proposalLineItems, contracts, approvals, approvalDecisions, workspaceMemberRoles, roles } = schema;
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type Reader = Pick<Db, "select">;
@@ -172,6 +172,16 @@ export async function assertApproved(db: Db, workspaceId: string, proposalId: st
       approval_status: state.approval?.status ?? "not_requested",
     });
   }
+}
+
+/** A contract built from a proposal cannot go out for signature before that proposal is approved. */
+export async function assertContractApproved(db: Db, workspaceId: string, contractId: string): Promise<void> {
+  const [contract] = await db
+    .select({ proposalId: contracts.proposalId })
+    .from(contracts)
+    .where(and(eq(contracts.id, contractId), eq(contracts.workspaceId, workspaceId)))
+    .limit(1);
+  if (contract?.proposalId) await assertApproved(db, workspaceId, contract.proposalId);
 }
 
 export async function requestApproval(db: Db, ctx: CommercialContext, proposalId: string): Promise<ApprovalDto> {
