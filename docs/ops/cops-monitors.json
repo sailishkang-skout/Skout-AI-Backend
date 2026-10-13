@@ -1,0 +1,37 @@
+{
+  "_readme": "Datadog log monitors for CustomerOps (COPS-07). Not imported yet. Each entry in `monitors` is a body for POST /api/v1/monitor. They read the structured lines that reportPlatformOpsMetrics writes every 10 minutes from the cops-onboarding-evaluator worker (fields: cops_metric, value, metric_status, runbook). Check the service name and the notification handles against the Datadog account before importing; they are placeholders taken from the log output of this repo.",
+  "monitors": [
+    {
+      "name": "[CustomerOps] A workflow health metric is critical: {{[@cops_metric].name}}",
+      "type": "log alert",
+      "query": "logs(\"service:skout @module:cops-onboarding-evaluator.worker @metric_status:critical\").index(\"*\").rollup(\"count\").by(\"@cops_metric\").last(\"15m\") > 0",
+      "message": "{{[@cops_metric].name}} is critical. The runbook path is in the `runbook` field of the log line; thresholds are in docs/ops/cops-alerts.md. @oncall-customerops",
+      "tags": ["team:customerops", "ticket:cops-07"],
+      "options": { "thresholds": { "critical": 0 }, "notify_no_data": false, "renotify_interval": 60, "include_tags": true }
+    },
+    {
+      "name": "[CustomerOps] A workflow health metric is in warning: {{[@cops_metric].name}}",
+      "type": "log alert",
+      "query": "logs(\"service:skout @module:cops-onboarding-evaluator.worker @metric_status:warn\").index(\"*\").rollup(\"count\").by(\"@cops_metric\").last(\"30m\") > 2",
+      "message": "{{[@cops_metric].name}} has been in warning for three reports in a row. See docs/ops/cops-alerts.md. @slack-customerops-alerts",
+      "tags": ["team:customerops", "ticket:cops-07"],
+      "options": { "thresholds": { "critical": 2 }, "notify_no_data": false, "renotify_interval": 240, "include_tags": true }
+    },
+    {
+      "name": "[CustomerOps] The health report has stopped",
+      "type": "log alert",
+      "query": "logs(\"service:skout @module:cops-onboarding-evaluator.worker @cops_metric:outbox_lag_seconds\").index(\"*\").rollup(\"count\").last(\"30m\") < 1",
+      "message": "No CustomerOps health report in 30 minutes. The onboarding evaluator worker, Redis or the database is down, so the other CustomerOps monitors are blind. @oncall-customerops",
+      "tags": ["team:customerops", "ticket:cops-07"],
+      "options": { "thresholds": { "critical": 1 }, "notify_no_data": true, "no_data_timeframe": 30, "renotify_interval": 60 }
+    },
+    {
+      "name": "[CustomerOps] The health report itself is failing",
+      "type": "log alert",
+      "query": "logs(\"service:skout @module:cops-onboarding-evaluator.worker \\\"cops ops metrics report failed\\\"\").index(\"*\").rollup(\"count\").last(\"30m\") > 1",
+      "message": "The CustomerOps health report threw twice in 30 minutes. Check the database and the worker logs. @oncall-customerops",
+      "tags": ["team:customerops", "ticket:cops-07"],
+      "options": { "thresholds": { "critical": 1 }, "notify_no_data": false }
+    }
+  ]
+}

@@ -5,6 +5,7 @@ import { createLogger, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
 import { runOnboardingEvaluator } from "../services/cops-onboarding-signals.service.js";
+import { reportPlatformOpsMetrics } from "../services/cops-ops-metrics.service.js";
 import { enqueueSequenceAdvanceJob } from "./sequence-enrollment.queue.js";
 
 const log = createLogger("cops-onboarding-evaluator.worker");
@@ -45,6 +46,9 @@ export async function startCopsOnboardingEvaluatorWorker(config: Env) {
         const result = await runOnboardingEvaluator(db, deps, randomUUID());
         log.info("onboarding evaluator pass finished", result);
       });
+      // COPS-07: the same tick reports the platform health numbers that the log monitors alert on.
+      // A failure here must not fail the evaluator job.
+      await reportPlatformOpsMetrics(db, log).catch((err) => log.error("cops ops metrics report failed", { err }));
     },
     { connection, concurrency: 1 }
   );

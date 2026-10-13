@@ -117,3 +117,39 @@ describe("DsarService.updateStatus", () => {
     });
   });
 });
+
+describe("DsarService.runAutoExport with CustomerOps records (COPS-07)", () => {
+  it("includes onboarding emails sent to the subject and tickets linked to the contact", async () => {
+    const contactId = "0b0b0b0b-0b0b-4b0b-8b0b-0b0b0b0b0b0b";
+    const sent = new Date("2026-10-09T10:00:00Z");
+    const db = makeDb({
+      selects: [
+        [dsarRow({ subjectId: contactId })],
+        [],
+        [],
+        [{ id: "e1", templateKey: "welcome_trial", subject: "Your trial is ready", status: "delivered", sentAt: sent, openedAt: null, clickedAt: null }],
+        [{ id: "t1", title: "CRM sync fails", status: "triage", createdAt: sent, description: "internal detail" }],
+      ],
+      updates: [[dsarRow({ status: "completed" })]],
+    });
+    await new DsarService(db).runAutoExport("ws-1", "d1");
+    const set = db.__updateChains[0].set.mock.calls[0][0];
+    expect(set.status).toBe("completed");
+    const payload = JSON.parse(set.exportPayload);
+    expect(payload.customerOps.onboardingEmails).toEqual([
+      { id: "e1", templateKey: "welcome_trial", subject: "Your trial is ready", status: "delivered", sentAt: sent.toISOString(), openedAt: null, clickedAt: null },
+    ]);
+    expect(payload.customerOps.tickets).toEqual([{ id: "t1", title: "CRM sync fails", status: "triage", createdAt: sent.toISOString() }]);
+    // Ticket descriptions and comments are never exported.
+    expect(set.exportPayload).not.toContain("internal detail");
+  });
+
+  it("does not look up tickets when the request names no contact", async () => {
+    const db = makeDb({ selects: [[dsarRow()], [], [], []], updates: [[dsarRow({ status: "in_progress" })]] });
+    await new DsarService(db).runAutoExport("ws-1", "d1");
+    expect(db.select).toHaveBeenCalledTimes(4);
+    const set = db.__updateChains[0].set.mock.calls[0][0];
+    expect(set.status).toBe("in_progress");
+    expect(JSON.parse(set.exportPayload).customerOps).toEqual({ onboardingEmails: [], tickets: [] });
+  });
+});

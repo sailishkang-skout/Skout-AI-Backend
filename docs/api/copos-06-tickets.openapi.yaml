@@ -1,0 +1,238 @@
+openapi: 3.0.3
+info:
+  title: CustomerOps COPS-06 engineering tickets
+  version: 1.0.0
+  description: >
+    Engineering tickets with a visibility scope on comments. All paths are under /api/v1 and use the
+    COPS error envelope. POST /tickets and POST /tickets/{id}/comments require an Idempotency-Key.
+paths:
+  /tickets:
+    get:
+      summary: Engineering queue
+      description: Needs tickets:read. Ordered by severity, then newest.
+      parameters:
+        - { name: severity, in: query, schema: { $ref: "#/components/schemas/Severity" } }
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/Status" } }
+        - { name: open, in: query, schema: { type: string, enum: ["true", "false"] } }
+        - { name: assignee, in: query, description: "me, unassigned or a user id", schema: { type: string } }
+        - { name: tier, in: query, schema: { type: string, enum: [smb, mid_market, enterprise] } }
+        - { name: team, in: query, schema: { type: string } }
+        - { name: account_id, in: query, schema: { type: string, format: uuid } }
+        - { name: cursor, in: query, schema: { type: integer, minimum: 0 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 25 } }
+      responses:
+        "200":
+          description: One page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/TicketListItem" } }
+                  next_cursor: { type: integer, nullable: true }
+    post:
+      summary: Create a ticket
+      description: Needs tickets:write or crm:write. Diagnostics are reduced to the safe allowlist.
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateTicket" }
+      responses:
+        "201":
+          description: Created. Emits TicketCreated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Ticket" }
+                  summary: { $ref: "#/components/schemas/Summary" }
+        "404": { description: Account not found }
+        "422": { description: Validation failed, or a link belongs to another account }
+  /tickets/prefill:
+    get:
+      summary: Prefilled fields for Create ticket
+      description: Needs tickets:write or crm:write.
+      parameters:
+        - { name: account_id, in: query, required: true, schema: { type: string, format: uuid } }
+        - { name: milestone_id, in: query, schema: { type: string, format: uuid } }
+        - { name: blocker, in: query, description: "Onboarding blocker key, for example integration_error", schema: { type: string } }
+      responses:
+        "200":
+          description: Suggested title, category, severity, priority, impact, affected feature, environment, links and safe diagnostics
+  /tickets/{id}:
+    get:
+      summary: Ticket with customer context, all comments and history
+      description: Needs tickets:read. The context holds names only, never commercial or legal data.
+      responses:
+        "200": { description: Ticket }
+        "404": { description: Not found }
+    patch:
+      summary: Assign or triage
+      description: Needs tickets:write. The assignee must be a workspace member.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                assignee_id: { type: string, format: uuid, nullable: true }
+                team: { type: string, nullable: true }
+                priority: { $ref: "#/components/schemas/Priority" }
+      responses:
+        "200": { description: Updated ticket }
+  /tickets/{id}/customer-view:
+    get:
+      summary: Customer-safe view
+      description: Needs tickets:read or crm:read. Customer updates only; no internal notes or internal fields.
+      responses:
+        "200": { description: Safe ticket fields and customer updates }
+  /tickets/{id}/transition:
+    post:
+      summary: Move the ticket along the state machine
+      description: Needs tickets:write. Moving to resolved emits TicketResolved.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to: { $ref: "#/components/schemas/Status" }
+                reason: { type: string }
+      responses:
+        "200": { description: Ticket and account summary }
+        "409": { description: Transition not allowed }
+  /tickets/{id}/escalate:
+    post:
+      summary: Raise the severity
+      description: Needs tickets:write. Emits TicketEscalated.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [severity, reason]
+              properties:
+                severity: { $ref: "#/components/schemas/Severity" }
+                reason: { type: string }
+      responses:
+        "200": { description: Ticket and account summary }
+        "409": { description: Ticket is not open, or the severity is not higher }
+  /tickets/{id}/comments:
+    post:
+      summary: Add an internal note or a customer update
+      description: >
+        Needs tickets:write. visibility is required. A customer comment also needs tickets:send. An
+        ai_summary takes the visibility of its sources.
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body, visibility]
+              properties:
+                body: { type: string }
+                visibility: { $ref: "#/components/schemas/Visibility" }
+                kind: { type: string, enum: [note, update, ai_summary] }
+                source_comment_ids: { type: array, items: { type: string, format: uuid } }
+      responses:
+        "201": { description: Comment }
+        "403": { description: Publishing needs tickets:send }
+  /tickets/{id}/comments/{commentId}/visibility:
+    patch:
+      summary: Change a comment's visibility (audited)
+      description: Needs tickets:write; publishing also needs tickets:send.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [visibility, reason]
+              properties:
+                visibility: { $ref: "#/components/schemas/Visibility" }
+                reason: { type: string }
+      responses:
+        "200": { description: Comment }
+        "403": { description: Publishing needs tickets:send }
+        "409": { description: A summary built from internal notes cannot be published }
+  /accounts/{id}/tickets:
+    get:
+      summary: Account Engineering tab
+      description: Needs tickets:read or crm:read.
+      responses:
+        "200":
+          description: Summary and tickets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      summary: { $ref: "#/components/schemas/Summary" }
+                      tickets: { type: array, items: { $ref: "#/components/schemas/TicketListItem" } }
+components:
+  schemas:
+    Severity: { type: string, enum: [low, medium, high, critical] }
+    Priority: { type: string, enum: [p1, p2, p3, p4] }
+    Visibility: { type: string, enum: [internal, customer] }
+    Status:
+      type: string
+      enum: [new, triage, assigned, in_progress, testing, waiting_on_customer, resolved, verified, closed]
+    Summary:
+      type: object
+      properties:
+        open_count: { type: integer }
+        max_severity: { type: string, nullable: true }
+    CreateTicket:
+      type: object
+      required: [account_id, title]
+      properties:
+        account_id: { type: string, format: uuid }
+        contact_id: { type: string, format: uuid }
+        opportunity_id: { type: string, format: uuid }
+        milestone_id: { type: string, format: uuid }
+        title: { type: string, maxLength: 200 }
+        description: { type: string }
+        category: { type: string, enum: [bug, integration, data, performance, access, other] }
+        severity: { $ref: "#/components/schemas/Severity" }
+        priority: { $ref: "#/components/schemas/Priority" }
+        impact: { type: string }
+        affected_feature: { type: string }
+        environment: { type: string, enum: [production, sandbox, staging] }
+        repro_steps: { type: string }
+        log_refs: { type: array, items: { type: string } }
+        diagnostics: { type: object, additionalProperties: true }
+        team: { type: string }
+    Ticket:
+      allOf:
+        - $ref: "#/components/schemas/CreateTicket"
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            status: { $ref: "#/components/schemas/Status" }
+            assignee_id: { type: string, format: uuid, nullable: true }
+            account_tier: { type: string }
+            escalated_at: { type: string, format: date-time, nullable: true }
+            resolved_at: { type: string, format: date-time, nullable: true }
+            closed_at: { type: string, format: date-time, nullable: true }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+    TicketListItem:
+      allOf:
+        - $ref: "#/components/schemas/Ticket"
+        - type: object
+          properties:
+            account_name: { type: string }
+            assignee_email: { type: string, nullable: true }

@@ -583,6 +583,15 @@ export const pipelineStageCreateSchema = z.object({
   isClosedLost: z.boolean().default(false),
 });
 
+/** COPS-07: rename a stage or change its win probability. Order and closed flags are not editable. */
+export const pipelineStageUpdateSchema = z
+  .object({
+    name: z.string().min(1).max(255).optional(),
+    probability: z.number().int().min(0).max(100).optional(),
+  })
+  .strict()
+  .refine((d) => d.name !== undefined || d.probability !== undefined, { message: "At least one field is required" });
+
 export const pipelineStageResponseSchema = z.object({
   id: z.string().uuid(),
   pipelineId: z.string().uuid(),
@@ -874,6 +883,7 @@ export type ContactAutoFillInput = z.infer<typeof contactAutoFillSchema>;
 export type PipelineCreateInput = z.infer<typeof pipelineCreateSchema>;
 export type PipelineUpdateInput = z.infer<typeof pipelineUpdateSchema>;
 export type PipelineStageCreateInput = z.infer<typeof pipelineStageCreateSchema>;
+export type PipelineStageUpdateInput = z.infer<typeof pipelineStageUpdateSchema>;
 export type DealCreateInput = z.infer<typeof dealCreateSchema>;
 export type DealUpdateInput = z.infer<typeof dealUpdateSchema>;
 export type TaskCreateInput = z.infer<typeof taskCreateSchema>;

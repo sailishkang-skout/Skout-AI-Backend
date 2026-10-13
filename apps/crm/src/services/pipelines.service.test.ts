@@ -119,3 +119,37 @@ describe("PipelinesService.ensureDefaultPipeline 23505 recovery", () => {
     expect(db.select).toHaveBeenCalledTimes(3);
   });
 });
+
+describe.skipIf(!hasDatabase)("PipelinesService.updateStage (COPS-07)", () => {
+  let db: Db;
+  let closeDb: () => Promise<void>;
+
+  beforeAll(() => {
+    const created = createDb(process.env.DATABASE_URL!);
+    db = created.db;
+    closeDb = () => created.sql.end();
+  });
+
+  afterAll(async () => {
+    await closeDb?.();
+  });
+
+  it("renames a stage and changes its probability, keeps order and flags, and is scoped to the workspace", async () => {
+    const [ws] = await db.insert(schema.workspaces).values({ name: "Stage edit", slug: `stage-edit-${randomUUID()}` }).returning();
+    const [other] = await db.insert(schema.workspaces).values({ name: "Stage other", slug: `stage-other-${randomUUID()}` }).returning();
+    const svc = buildPipelinesService(db, buildAuditService(db)!)!;
+    const pipeline = await svc.create(ws.id, undefined, { name: "Sales" });
+    const stage = await svc.addStage(ws.id, pipeline.id, { name: "Demo", orderIndex: 50, probability: 30, isClosedWon: false, isClosedLost: false });
+
+    const updated = await svc.updateStage(ws.id, pipeline.id, stage.id, { name: "Product demo", probability: 45 });
+    expect(updated).toMatchObject({ id: stage.id, name: "Product demo", probability: 45, orderIndex: 50, isClosedWon: false });
+    const [row] = await db.select().from(schema.pipelineStages).where(eq(schema.pipelineStages.id, stage.id));
+    expect(row).toMatchObject({ name: "Product demo", probability: 45, orderIndex: 50 });
+
+    // Another workspace cannot reach the stage, and an unknown stage is not found.
+    expect(await svc.updateStage(other.id, pipeline.id, stage.id, { name: "Hijacked" })).toBeNull();
+    expect(await svc.updateStage(ws.id, pipeline.id, randomUUID(), { name: "Nope" })).toBeNull();
+    const [still] = await db.select().from(schema.pipelineStages).where(eq(schema.pipelineStages.id, stage.id));
+    expect(still.name).toBe("Product demo");
+  });
+});

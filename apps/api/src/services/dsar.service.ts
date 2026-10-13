@@ -3,7 +3,9 @@ import type { Db } from "@skout/db";
 import { schema, scopedById, scopedTo } from "@skout/db";
 import { HttpError } from "../utils/http.js";
 
-const { dataSubjectRequests, consents, suppressions } = schema;
+const { dataSubjectRequests, consents, suppressions, copsOnboardingEmailSends, engineeringTickets } = schema;
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export type DsarRequestType = "access" | "erasure" | "rectification" | "portability";
 export type DsarStatus = "received" | "in_progress" | "completed" | "rejected";
@@ -184,7 +186,23 @@ export class DsarService {
       .from(suppressions)
       .where(scopedTo(suppressions, workspaceId, eq(suppressions.email, existing.subjectEmail.toLowerCase())))
       .limit(1);
-    const hasData = consentRows.length > 0 || !!suppressionRow;
+    // COPS-07: CustomerOps records about the subject. Onboarding emails are keyed by the address
+    // they were sent to; tickets by the contact, when the request names one.
+    const onboardingEmails =
+      (await this.db
+        .select()
+        .from(copsOnboardingEmailSends)
+        .where(scopedTo(copsOnboardingEmailSends, workspaceId, sql`lower(${copsOnboardingEmailSends.toEmail}) = ${existing.subjectEmail.toLowerCase()}`))
+        .limit(200)) ?? [];
+    const tickets =
+      existing.subjectId && UUID.test(existing.subjectId)
+        ? ((await this.db
+            .select()
+            .from(engineeringTickets)
+            .where(scopedTo(engineeringTickets, workspaceId, eq(engineeringTickets.contactId, existing.subjectId)))
+            .limit(200)) ?? [])
+        : [];
+    const hasData = consentRows.length > 0 || !!suppressionRow || onboardingEmails.length > 0 || tickets.length > 0;
 
     const payload = {
       requestId: existing.id,
@@ -204,8 +222,21 @@ export class DsarService {
       suppression: suppressionRow
         ? { reason: suppressionRow.reason, createdAt: suppressionRow.createdAt.toISOString() }
         : null,
+      customerOps: {
+        onboardingEmails: onboardingEmails.map((e) => ({
+          id: e.id,
+          templateKey: e.templateKey,
+          subject: e.subject,
+          status: e.status,
+          sentAt: e.sentAt?.toISOString?.() ?? null,
+          openedAt: e.openedAt?.toISOString?.() ?? null,
+          clickedAt: e.clickedAt?.toISOString?.() ?? null,
+        })),
+        // Title and status only: descriptions and comments can hold internal notes and other people's data.
+        tickets: tickets.map((t) => ({ id: t.id, title: t.title, status: t.status, createdAt: t.createdAt?.toISOString?.() ?? null })),
+      },
       note: hasData
-        ? "Auto-export v1: consents + suppression + request metadata. CRM/inbox records are not included yet."
+        ? "Auto-export v2: consents + suppression + CustomerOps onboarding emails and linked tickets + request metadata. CRM/inbox records are not included yet."
         : "No consent or suppression records are keyed to this email. CRM/inbox records are not covered by auto-export — manual review required.",
     };
 

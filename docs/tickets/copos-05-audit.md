@@ -85,9 +85,9 @@ BE, rep queue
 - [x] One-click call / email / meeting / task actions that always log an activity
 
 FE
-- [ ] Onboarding Control screen: activation progress + trial timer, checklist with evidence, sequence card, usage/credit chart, integrations, blockers, escalation shortcuts
-- [ ] Sales Follow-up screen: prioritised queue, last touch / signals / recommendation, one-click actions
-- [ ] Onboarding-email send dialog with template preview; sequence pause/stop controls
+- [x] Onboarding Control screen: activation progress + trial timer, checklist with evidence, sequence card, usage/credit chart, integrations, blockers, escalation shortcuts
+- [x] Sales Follow-up screen: prioritised queue, last touch / signals / recommendation, one-click actions
+- [x] Onboarding-email send dialog with template preview; sequence pause/stop controls
 
 Acceptance
 - [x] 100% of WelcomeEmailSent events yield an enrollment or a task (handler + evaluator sweep)

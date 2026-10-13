@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
 import { appendCopsEvent, createCopsEvent, nextPaymentStatus, type PaymentRequestStatus } from "@skout/shared";
 import { createLogger } from "@skout/observability";
@@ -176,7 +176,7 @@ export async function handlePaymentWebhook(
   return db.transaction(async (tx) => {
     const [recorded] = await tx
       .insert(paymentProviderEvents)
-      .values({ provider: psp.provider, providerEventId: event.eventId, eventType: event.eventType, outcome: "received", refs: event.refs })
+      .values({ provider: psp.provider, providerEventId: event.eventId, eventType: event.eventType, outcome: "received", refs: event.refs, providerCreatedAt: event.providerCreatedAt ?? null })
       .onConflictDoNothing()
       .returning({ id: paymentProviderEvents.id });
     if (!recorded) return { kind: "duplicate" } as const;
@@ -203,7 +203,8 @@ export async function handlePaymentWebhook(
     const finish = async (outcome: "applied" | "ignored" | "unmatched", status?: PaymentRequestStatus) => {
       await tx
         .update(paymentProviderEvents)
-        .set({ outcome, workspaceId: request?.workspaceId ?? null, paymentRequestId: request?.id ?? null })
+        // clock_timestamp(), not now(): now() is the transaction start, which is also received_at.
+        .set({ outcome, workspaceId: request?.workspaceId ?? null, paymentRequestId: request?.id ?? null, processedAt: sql`clock_timestamp()` })
         .where(eq(paymentProviderEvents.id, recorded.id));
       return { kind: "processed", outcome, status } as const;
     };

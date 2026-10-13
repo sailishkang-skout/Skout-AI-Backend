@@ -20,6 +20,8 @@ export interface OnboardingTemplateInput {
   supportEmail: string;
   /** Enterprise variant adds the kickoff / success-plan paragraph. */
   enterprise?: boolean;
+  /** COPS-07: the workspace's own wording for this template (admin config `email_template`). */
+  override?: { subject: string; intro: string; closing?: string } | null;
 }
 
 interface OnboardingTemplate {
@@ -39,7 +41,12 @@ export function segmentOf(employeeCount: number | null | undefined): Segment {
 
 const ENTERPRISE_NOTE = "Your account team will reach out to schedule a kickoff with your stakeholders and agree the success plan.";
 
-function body(input: OnboardingTemplateInput, intro: string): { html: string; text: string } {
+/** {{workspace}} in admin-written wording becomes the customer workspace name. */
+export const fillTemplateText = (text: string, input: Pick<OnboardingTemplateInput, "workspaceName">) => text.replace(/\{\{\s*workspace\s*\}\}/g, input.workspaceName);
+
+function body(input: OnboardingTemplateInput, defaultIntro: string): { html: string; text: string } {
+  const intro = input.override ? fillTemplateText(input.override.intro, input) : defaultIntro;
+  const closing = input.override?.closing ? fillTemplateText(input.override.closing, input) : null;
   const start = input.inviteUrl ?? input.workspaceUrl;
   const steps = input.activationSteps.length > 0 ? input.activationSteps : ["Sign in to your workspace"];
   const trial = input.trialEndsAt ? new Date(input.trialEndsAt).toUTCString().slice(0, 16) : null;
@@ -52,6 +59,7 @@ function body(input: OnboardingTemplateInput, intro: string): { html: string; te
     ${input.enterprise ? `<p style="margin:0 0 16px;">${escapeHtml(ENTERPRISE_NOTE)}</p>` : ""}
     ${trial ? `<p style="margin:0 0 16px;">Your trial runs until <strong>${escapeHtml(trial)}</strong>.</p>` : ""}
     <p style="margin:0 0 8px;">Guides and how-tos: <a href="${escapeHtml(input.resourcesUrl)}" style="color:#3f3f46;">${escapeHtml(input.resourcesUrl)}</a></p>
+    ${closing ? `<p style="margin:0 0 16px;">${escapeHtml(closing)}</p>` : ""}
     ${input.bookingUrl ? `<p style="margin:0 0 8px;">Book a guided onboarding session: <a href="${escapeHtml(input.bookingUrl)}" style="color:#3f3f46;">${escapeHtml(input.bookingUrl)}</a></p>` : ""}
     <p style="margin:16px 0 0;font-size:12px;color:#71717a;">Questions? Reply to this email or write to ${escapeHtml(input.supportEmail)}.</p>
   `;
@@ -68,6 +76,7 @@ function body(input: OnboardingTemplateInput, intro: string): { html: string; te
     ...(input.enterprise ? [ENTERPRISE_NOTE, ""] : []),
     ...(trial ? [`Your trial runs until ${trial}.`, ""] : []),
     `Guides and how-tos: ${input.resourcesUrl}`,
+    ...(closing ? [closing] : []),
     ...(input.bookingUrl ? [`Book a guided onboarding session: ${input.bookingUrl}`] : []),
     "",
     `Questions? Reply to this email or write to ${input.supportEmail}.`,
@@ -88,7 +97,7 @@ const BASE_TEMPLATES: Record<string, OnboardingTemplate> = {
       const { html, text } = body(input, `Your Skout AI trial workspace "${input.workspaceName}" is ready.`);
       return {
         to: input.to,
-        subject: `Your Skout AI trial is ready: ${input.workspaceName}`,
+        subject: input.override ? fillTemplateText(input.override.subject, input) : `Your Skout AI trial is ready: ${input.workspaceName}`,
         text,
         html: renderTransactionalLayout({ preheader: "Your trial workspace is ready", title: "Welcome to Skout AI", bodyHtml: html }),
       };
@@ -102,7 +111,7 @@ const BASE_TEMPLATES: Record<string, OnboardingTemplate> = {
       const { html, text } = body(input, `Welcome aboard. Your Skout AI workspace "${input.workspaceName}" is ready.`);
       return {
         to: input.to,
-        subject: `Welcome to Skout AI: ${input.workspaceName}`,
+        subject: input.override ? fillTemplateText(input.override.subject, input) : `Welcome to Skout AI: ${input.workspaceName}`,
         text,
         html: renderTransactionalLayout({ preheader: "Your workspace is ready", title: "Welcome to Skout AI", bodyHtml: html }),
       };

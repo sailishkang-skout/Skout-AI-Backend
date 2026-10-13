@@ -134,3 +134,10 @@ apps/api and packages/db.
 The onboarding email's recipient check, first-send check and send row are written in one transaction
 with the account lock. The file carries the formal exception comment block. The COPS-05 tables
 (onboarding email sends, follow-ups, activation templates, instances, milestones, signals) are owned by apps/api.
+
+## COPS-06 additions (2026-10-09)
+
+`apps/api/src/services/cops-tickets.service.ts` reads `companies`, `contacts` and `deals` (owned by apps/crm).
+A ticket, its links, its CRM summary and its event commit in one transaction with the account lock. The
+customer context reads names only, never commercial values. The file carries the formal exception comment
+block. The COPS-06 tables (engineering tickets, comments, status history, account summaries) are owned by apps/api.

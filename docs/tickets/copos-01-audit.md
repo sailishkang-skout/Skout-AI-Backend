@@ -80,7 +80,7 @@ systems and adds only the missing transactional-outbox and idempotency capabilit
 | 422 field errors and retryable/429 handling | ⚠️ Partial | API returns `details.fields[]`; audit-page integration and Playwright tests verify a mocked 422 field alert. Playwright uses local E2E auth bypass; authenticated browser verification against a real API response remains pending. Update 2026-10-08: a signed-in request to the real API returns this exact envelope (422, `details.fields[].path = "from"`); a real 429 has not been triggered. |
 | OpenAPI contract and existing-code audit | ✅ | Contract: `docs/api/copos-01-platform-foundation.openapi.yaml`; findings recorded above. |
 | Six Bible p.10 ADRs | ✅ | All six decisions are documented and linked below. ADRs are proposed pending reviewer sign-off; provider selections are correctly deferred to the tickets that integrate them. |
-| Commercial / Engineering navigation | Commercial ✅ / Engineering ⏭ | Commercial Desk page and nav entry added in the COPS-04 PRs (2026-10-08). Engineering stays with COPS-06. |
+| Commercial / Engineering navigation | ✅ | Commercial Desk page and nav entry added in the COPS-04 PRs (2026-10-08). Engineering queue page (`/engineering`) and nav entry (`tickets:read`) added in the COPS-06 PRs (2026-10-09). |
 
 Focused verification run before the latest local-only extensions: backend COPS shared tests **67/67 passed**; seeded COPS role grant and
 Postgres matrix tests **4/4 passed**; frontend COPS error, fetch, navigation-helper, audit-viewer,

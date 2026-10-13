@@ -180,7 +180,8 @@ export interface ProvisioningDto {
   status: string;
   provisioned_workspace_id: string | null;
   invite_id: string | null;
-  admin_invite: { email: string; accepted_at: string | null; expires_at: string; accept_url: string | null } | null;
+  /** email_sent: false when the invite email could not be sent (the rep shares accept_url); null when unknown. */
+  admin_invite: { email: string; accepted_at: string | null; expires_at: string; accept_url: string | null; email_sent: boolean | null } | null;
   plan: string;
   trial_starts_at: string | null;
   trial_ends_at: string | null;
@@ -233,6 +234,8 @@ export async function loadProvisionings(
   return rows.map((r) => {
     const request = r.request as ProvisionRequest;
     const invite = invites.find((i) => i.id === r.inviteId);
+    const inviteStep = steps.find((s) => s.provisioningId === r.id && s.step === "admin_invite");
+    const emailSent = (inviteStep?.result as { email_sent?: unknown } | null)?.email_sent;
     return {
       id: r.id,
       account_id: r.accountId,
@@ -246,6 +249,7 @@ export async function loadProvisionings(
             accepted_at: invite.acceptedAt?.toISOString() ?? null,
             expires_at: invite.expiresAt.toISOString(),
             accept_url: opts.inviteBaseUrl && !invite.acceptedAt ? `${opts.inviteBaseUrl}/invite/${invite.token}` : null,
+            email_sent: typeof emailSent === "boolean" ? emailSent : null,
           }
         : null,
       plan: request.plan,

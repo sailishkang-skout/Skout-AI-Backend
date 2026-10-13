@@ -1,7 +1,7 @@
 import { and, asc, eq, isNull } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
-import type { PipelineCreateInput, PipelineStageCreateInput, PipelineUpdateInput } from "@skout/shared";
+import type { PipelineCreateInput, PipelineStageCreateInput, PipelineStageUpdateInput, PipelineUpdateInput } from "@skout/shared";
 import { HttpError } from "@skout/auth";
 import { pgErrorCode } from "../utils/http.js";
 import type { AuditService } from "./audit.service.js";
@@ -181,6 +181,40 @@ export class PipelinesService {
     const dto = stageToDto(row);
     await this.auditService.record(workspaceId, actorId, "create", "pipeline_stage", dto.id, null, dto);
     log.info("pipeline stage added", { workspaceId, pipelineId, stageId: row.id, name: row.name });
+    return dto;
+  }
+
+  /**
+   * COPS-07: rename a stage or change its win probability. The stage must belong to a pipeline of
+   * this workspace. Order and the closed-won / closed-lost flags stay as they are: deals already
+   * sit in the stage and stage rules depend on them.
+   */
+  async updateStage(
+    workspaceId: string,
+    pipelineId: string,
+    stageId: string,
+    input: PipelineStageUpdateInput,
+    actorId?: string
+  ): Promise<PipelineStageDto | null> {
+    const pipeline = await this.getById(workspaceId, pipelineId);
+    if (!pipeline) return null;
+    const [before] = await this.db
+      .select()
+      .from(pipelineStages)
+      .where(and(eq(pipelineStages.id, stageId), eq(pipelineStages.pipelineId, pipelineId)))
+      .limit(1);
+    if (!before) return null;
+    const [row] = await this.db
+      .update(pipelineStages)
+      .set({
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.probability !== undefined ? { probability: input.probability } : {}),
+      })
+      .where(eq(pipelineStages.id, stageId))
+      .returning();
+    const dto = stageToDto(row!);
+    await this.auditService.record(workspaceId, actorId, "update", "pipeline_stage", dto.id, stageToDto(before), dto);
+    log.info("pipeline stage updated", { workspaceId, pipelineId, stageId });
     return dto;
   }
 
