@@ -72,9 +72,84 @@ export const COMMERCIAL_POLICY_DEFAULT_DATA: Record<"approval_policy" | "dunning
           ]
         }
       ],
-      "EUR": null,
-      "GBP": null,
-      "INR": null
+      "EUR": [
+        {
+          "over": 2300000,
+          "up_to": 7000000,
+          "approvers": [
+            "sales_manager"
+          ]
+        },
+        {
+          "over": 7000000,
+          "up_to": 18500000,
+          "approvers": [
+            "sales_manager",
+            "finance"
+          ]
+        },
+        {
+          "over": 18500000,
+          "up_to": null,
+          "approvers": [
+            "sales_manager",
+            "finance",
+            "executive"
+          ]
+        }
+      ],
+      "GBP": [
+        {
+          "over": 2000000,
+          "up_to": 6000000,
+          "approvers": [
+            "sales_manager"
+          ]
+        },
+        {
+          "over": 6000000,
+          "up_to": 16000000,
+          "approvers": [
+            "sales_manager",
+            "finance"
+          ]
+        },
+        {
+          "over": 16000000,
+          "up_to": null,
+          "approvers": [
+            "sales_manager",
+            "finance",
+            "executive"
+          ]
+        }
+      ],
+      "INR": [
+        {
+          "over": 200000000,
+          "up_to": 600000000,
+          "approvers": [
+            "sales_manager"
+          ]
+        },
+        {
+          "over": 600000000,
+          "up_to": 1600000000,
+          "approvers": [
+            "sales_manager",
+            "finance"
+          ]
+        },
+        {
+          "over": 1600000000,
+          "up_to": null,
+          "approvers": [
+            "sales_manager",
+            "finance",
+            "executive"
+          ]
+        }
+      ]
     },
     "term_months": [
       {

@@ -85,8 +85,15 @@ describe("approval rules", () => {
     expect(approversFor({ contract_value_minor: 20_000_001 })).toEqual(["sales_manager", "finance", "executive"]);
   });
 
+  it("has contract-value thresholds for EUR, GBP and INR", () => {
+    expect(approversFor({ currency: "EUR", contract_value_minor: 2_300_001 })).toEqual(["sales_manager"]);
+    expect(approversFor({ currency: "GBP", contract_value_minor: 6_000_001 })).toEqual(["sales_manager", "finance"]);
+    expect(approversFor({ currency: "INR", contract_value_minor: 200_000_000 })).toEqual([]);
+    expect(approversFor({ currency: "INR", contract_value_minor: 1_600_000_001 })).toEqual(["sales_manager", "finance", "executive"]);
+  });
+
   it("reports contract value as unevaluated in a currency with no thresholds, and still applies the other rules", () => {
-    const result = evaluateApprovals(policy, { ...standard, currency: "EUR", contract_value_minor: 99_000_000, discount_pct: 15 });
+    const result = evaluateApprovals(policy, { ...standard, currency: "AUD", contract_value_minor: 99_000_000, discount_pct: 15 });
     expect(result.unevaluated).toEqual(["contract_value"]);
     expect(result.required_approvers).toEqual(["sales_manager"]);
   });

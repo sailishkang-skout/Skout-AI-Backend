@@ -10,52 +10,229 @@
     "A seat change takes effect on the next billing cycle; there is no immediate proration."
   ],
   "_open": [
-    "contract_value_minor for EUR, GBP and INR: not decided. null means a deal in that currency is reported as unevaluated on contract value.",
-    "free_credits: provisional thresholds set by engineering on 2026-10-13 so the rule works; to be confirmed with Finance.",
-    "price_book EUR, GBP and INR are suggestions, not benchmarked."
+    "Contract-value thresholds for EUR, GBP and INR are taken from Aditya's file on develop (commit 4d408a70).",
+    "free_credits: provisional thresholds by credit count, set by engineering on 2026-10-13. Aditya's file instead has 'complimentary value over 10% of TCV needs the Sales Manager'. That needs a money value per credit, which is a Finance question; until it is answered the count rule stands.",
+    "price_book EUR, GBP and INR are suggestions, not benchmarked.",
+    "This file and Aditya's file on develop have the same path and different shapes. This one is shaped like the admin config kinds the code reads. The two must be reconciled before this branch merges."
   ],
   "approval_policy": {
     "_readme": "A band matches a value over `over` and at most `up_to` (null: no upper limit). So a 10% discount needs no approval and 10.01% needs the Sales Manager.",
     "expires_after_days": 14,
     "discount_pct": [
-      { "over": 10, "up_to": 20, "approvers": ["sales_manager"] },
-      { "over": 20, "up_to": 30, "approvers": ["sales_manager", "finance"] },
-      { "over": 30, "up_to": null, "approvers": ["sales_manager", "finance", "executive"] }
+      {
+        "over": 10,
+        "up_to": 20,
+        "approvers": [
+          "sales_manager"
+        ]
+      },
+      {
+        "over": 20,
+        "up_to": 30,
+        "approvers": [
+          "sales_manager",
+          "finance"
+        ]
+      },
+      {
+        "over": 30,
+        "up_to": null,
+        "approvers": [
+          "sales_manager",
+          "finance",
+          "executive"
+        ]
+      }
     ],
     "seats": [
-      { "over": 25, "up_to": 100, "approvers": ["sales_manager"] },
-      { "over": 100, "up_to": null, "approvers": ["sales_manager", "finance"] }
+      {
+        "over": 25,
+        "up_to": 100,
+        "approvers": [
+          "sales_manager"
+        ]
+      },
+      {
+        "over": 100,
+        "up_to": null,
+        "approvers": [
+          "sales_manager",
+          "finance"
+        ]
+      }
     ],
     "contract_value_minor": {
       "USD": [
-        { "over": 2500000, "up_to": 7500000, "approvers": ["sales_manager"] },
-        { "over": 7500000, "up_to": 20000000, "approvers": ["sales_manager", "finance"] },
-        { "over": 20000000, "up_to": null, "approvers": ["sales_manager", "finance", "executive"] }
+        {
+          "over": 2500000,
+          "up_to": 7500000,
+          "approvers": [
+            "sales_manager"
+          ]
+        },
+        {
+          "over": 7500000,
+          "up_to": 20000000,
+          "approvers": [
+            "sales_manager",
+            "finance"
+          ]
+        },
+        {
+          "over": 20000000,
+          "up_to": null,
+          "approvers": [
+            "sales_manager",
+            "finance",
+            "executive"
+          ]
+        }
       ],
-      "EUR": null,
-      "GBP": null,
-      "INR": null
+      "EUR": [
+        {
+          "over": 2300000,
+          "up_to": 7000000,
+          "approvers": [
+            "sales_manager"
+          ]
+        },
+        {
+          "over": 7000000,
+          "up_to": 18500000,
+          "approvers": [
+            "sales_manager",
+            "finance"
+          ]
+        },
+        {
+          "over": 18500000,
+          "up_to": null,
+          "approvers": [
+            "sales_manager",
+            "finance",
+            "executive"
+          ]
+        }
+      ],
+      "GBP": [
+        {
+          "over": 2000000,
+          "up_to": 6000000,
+          "approvers": [
+            "sales_manager"
+          ]
+        },
+        {
+          "over": 6000000,
+          "up_to": 16000000,
+          "approvers": [
+            "sales_manager",
+            "finance"
+          ]
+        },
+        {
+          "over": 16000000,
+          "up_to": null,
+          "approvers": [
+            "sales_manager",
+            "finance",
+            "executive"
+          ]
+        }
+      ],
+      "INR": [
+        {
+          "over": 200000000,
+          "up_to": 600000000,
+          "approvers": [
+            "sales_manager"
+          ]
+        },
+        {
+          "over": 600000000,
+          "up_to": 1600000000,
+          "approvers": [
+            "sales_manager",
+            "finance"
+          ]
+        },
+        {
+          "over": 1600000000,
+          "up_to": null,
+          "approvers": [
+            "sales_manager",
+            "finance",
+            "executive"
+          ]
+        }
+      ]
     },
     "term_months": [
-      { "over": 24, "up_to": null, "approvers": ["finance"] }
+      {
+        "over": 24,
+        "up_to": null,
+        "approvers": [
+          "finance"
+        ]
+      }
     ],
     "free_credits": [
-      { "over": 500, "up_to": 2000, "approvers": ["sales_manager"] },
-      { "over": 2000, "up_to": null, "approvers": ["sales_manager", "finance"] }
+      {
+        "over": 500,
+        "up_to": 2000,
+        "approvers": [
+          "sales_manager"
+        ]
+      },
+      {
+        "over": 2000,
+        "up_to": null,
+        "approvers": [
+          "sales_manager",
+          "finance"
+        ]
+      }
     ],
     "payment_terms_net_days": [
-      { "over": 30, "up_to": null, "approvers": ["finance"] }
+      {
+        "over": 30,
+        "up_to": null,
+        "approvers": [
+          "finance"
+        ]
+      }
     ],
-    "custom_clauses": { "approvers": ["legal_revops"] },
-    "non_standard_sla": { "approvers": ["legal_revops", "finance"] }
+    "custom_clauses": {
+      "approvers": [
+        "legal_revops"
+      ]
+    },
+    "non_standard_sla": {
+      "approvers": [
+        "legal_revops",
+        "finance"
+      ]
+    }
   },
   "dunning_policy": {
     "_readme": "Day 0 is the first failed charge. Each stage runs from its day until the next one starts: past due (full access, reminders, provider retries), restricted (no new credit use, enrichment runs or outreach sends; login and payment still work), suspended (data retained, login goes to the billing page only), closed (per the retention policy).",
     "stages": [
-      { "state": "past_due", "from_day": 0 },
-      { "state": "restricted", "from_day": 8 },
-      { "state": "suspended", "from_day": 15 },
-      { "state": "closed", "from_day": 45 }
+      {
+        "state": "past_due",
+        "from_day": 0
+      },
+      {
+        "state": "restricted",
+        "from_day": 8
+      },
+      {
+        "state": "suspended",
+        "from_day": 15
+      },
+      {
+        "state": "closed",
+        "from_day": 45
+      }
     ],
     "suspend_when_provider_halted": true,
     "invoiced_accounts_auto_suspend": false
@@ -64,10 +241,22 @@
     "_readme": "Per seat, per month, on annual billing, in minor units. Month-to-month billing adds the surcharge.",
     "month_to_month_surcharge_pct": 20,
     "currencies": {
-      "USD": { "seat_month_annual_minor": 7900, "status": "benchmarked" },
-      "EUR": { "seat_month_annual_minor": 7500, "status": "suggested" },
-      "GBP": { "seat_month_annual_minor": 6500, "status": "suggested" },
-      "INR": { "seat_month_annual_minor": 599900, "status": "suggested" }
+      "USD": {
+        "seat_month_annual_minor": 7900,
+        "status": "benchmarked"
+      },
+      "EUR": {
+        "seat_month_annual_minor": 7500,
+        "status": "suggested"
+      },
+      "GBP": {
+        "seat_month_annual_minor": 6500,
+        "status": "suggested"
+      },
+      "INR": {
+        "seat_month_annual_minor": 599900,
+        "status": "suggested"
+      }
     }
   }
 }
