@@ -1,7 +1,7 @@
 import { Worker, Queue } from "bullmq";
 import { randomUUID } from "node:crypto";
 import { createDb } from "@skout/db";
-import { createLogger, withSpan } from "@skout/observability";
+import { createLogger, isConfiguredSecret, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
 import { runOnboardingEvaluator } from "../services/cops-onboarding-signals.service.js";
@@ -46,9 +46,12 @@ export async function startCopsOnboardingEvaluatorWorker(config: Env) {
         const result = await runOnboardingEvaluator(db, deps, randomUUID());
         log.info("onboarding evaluator pass finished", result);
       });
-      // COPS-07: the same tick reports the platform health numbers that the log monitors alert on.
-      // A failure here must not fail the evaluator job.
-      await reportPlatformOpsMetrics(db, log).catch((err) => log.error("cops ops metrics report failed", { err }));
+      // COPS-07: the same tick reports the platform health numbers, to the log and to Datadog as
+      // gauges (the monitors read the gauges). A failure here must not fail the evaluator job.
+      const datadog = isConfiguredSecret(config.DD_API_KEY)
+        ? { apiKey: config.DD_API_KEY, site: config.DD_SITE, env: process.env.DD_ENV ?? config.NODE_ENV }
+        : undefined;
+      await reportPlatformOpsMetrics(db, log, datadog).catch((err) => log.error("cops ops metrics report failed", { err }));
     },
     { connection, concurrency: 1 }
   );

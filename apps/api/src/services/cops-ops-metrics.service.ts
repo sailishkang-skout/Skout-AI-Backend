@@ -114,8 +114,11 @@ interface MetricLogger {
  * Writes the platform-wide metrics as one structured log line each, at info / warn / error by
  * status. Log-based monitors alert on these lines (docs/ops/cops-monitors.json), so alerting needs
  * no metrics agent. Returns the metrics that are not ok.
+ *
+ * With `datadog` given, the same numbers are also submitted to Datadog as gauges. The Datadog
+ * account indexes no logs, so the monitors in docs/ops/cops-monitors.json read these gauges.
  */
-export async function reportPlatformOpsMetrics(db: Db, log: MetricLogger): Promise<OpsMetric[]> {
+export async function reportPlatformOpsMetrics(db: Db, log: MetricLogger, datadog?: DatadogTarget): Promise<OpsMetric[]> {
   const { metrics } = await loadOpsMetrics(db, null);
   for (const m of metrics) {
     const fields = { cops_metric: m.key, value: m.value, unit: m.unit, metric_status: m.status, warn_at: m.warn_at, critical_at: m.critical_at, runbook: m.runbook };
@@ -123,5 +126,57 @@ export async function reportPlatformOpsMetrics(db: Db, log: MetricLogger): Promi
     else if (m.status === "warn") log.warn("cops ops metric warning", fields);
     else log.info("cops ops metric", fields);
   }
+  if (datadog?.apiKey) {
+    // Monitoring must never break the job that carries it.
+    const sent = await submitOpsMetricsToDatadog(metrics, datadog).catch(() => false);
+    if (!sent) log.warn("cops ops metrics were not accepted by Datadog", { site: datadog.site });
+  }
   return metrics.filter((m) => m.status !== "ok");
+}
+
+export interface DatadogTarget {
+  apiKey: string | undefined;
+  /** For example us5.datadoghq.com. */
+  site: string;
+  env: string;
+  fetchImpl?: typeof fetch;
+}
+
+const STATUS_VALUE: Record<MetricStatus, number> = { ok: 0, warn: 1, critical: 2 };
+
+export interface DatadogSeries {
+  metric: string;
+  type: 3;
+  points: Array<{ timestamp: number; value: number }>;
+  tags: string[];
+}
+
+/**
+ * The gauges for one report:
+ *  - `skout.cops.<key>`: the value, when there is one to measure;
+ *  - `skout.cops.metric_status` tagged `metric:<key>`: 0 ok, 1 warning, 2 critical, so one monitor
+ *    covers every metric with the thresholds kept in code;
+ *  - `skout.cops.report`: 1 per report, the heartbeat a "report has stopped" monitor watches.
+ */
+export function toDatadogSeries(metrics: OpsMetric[], env: string, now: Date = new Date()): DatadogSeries[] {
+  const timestamp = Math.floor(now.getTime() / 1000);
+  const tags = [`env:${env}`, "service:skout-api", "team:customerops"];
+  const gauge = (metric: string, value: number, extra: string[] = []): DatadogSeries => ({ metric, type: 3, points: [{ timestamp, value }], tags: [...tags, ...extra] });
+  return [
+    gauge("skout.cops.report", 1),
+    ...metrics.filter((m) => m.value != null).map((m) => gauge(`skout.cops.${m.key}`, m.value as number, [`unit:${m.unit}`])),
+    ...metrics.map((m) => gauge("skout.cops.metric_status", STATUS_VALUE[m.status], [`metric:${m.key}`])),
+  ];
+}
+
+/** Submits the gauges through the Datadog metrics API. Returns false when Datadog did not accept them. */
+export async function submitOpsMetricsToDatadog(metrics: OpsMetric[], target: DatadogTarget, now: Date = new Date()): Promise<boolean> {
+  if (!target.apiKey) return false;
+  const res = await (target.fetchImpl ?? fetch)(`https://api.${target.site}/api/v2/series`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "DD-API-KEY": target.apiKey },
+    body: JSON.stringify({ series: toDatadogSeries(metrics, target.env, now) }),
+    signal: AbortSignal.timeout(5000),
+  });
+  return res.status >= 200 && res.status < 300;
 }

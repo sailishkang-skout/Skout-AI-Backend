@@ -5,14 +5,26 @@ CustomerOps admin page under Operations. Each metric carries its own `warn_at`, 
 `status` and `runbook`, so a monitor only has to read `status`.
 
 Status: the metrics and thresholds below are implemented. The same numbers are computed
-platform-wide every 10 minutes by the onboarding evaluator worker and written as one structured log
-line per metric (`cops_metric`, `value`, `metric_status`, `runbook`), at info, warn or error level.
-`docs/ops/cops-monitors.json` holds four Datadog log monitors that read those lines.
+platform-wide every 10 minutes by the onboarding evaluator worker, written as one structured log
+line per metric, and submitted to Datadog (us5) as gauges through the metrics API with the
+`DD_API_KEY` the app already has:
 
-**The monitors have not been imported into Datadog and no dashboard has been created.** That is an
-operations task. Until it is done, "dashboards and alerting live" is not met. Two limits to know:
-the report runs every 10 minutes, so an outbox lag alert can be up to 10 minutes late; and the
-report needs Redis and the worker, so the "health report has stopped" monitor matters most.
+- `skout.cops.metric_status`, tagged `metric:<key>`: 0 ok, 1 warning, 2 critical;
+- `skout.cops.<key>`: the value;
+- `skout.cops.report`: 1 per report (heartbeat).
+
+`docs/ops/cops-monitors.json` holds three metric monitors over those gauges: a metric is critical,
+a metric has stayed in warning for 30 minutes, and the report has stopped.
+
+**Why metrics and not logs.** Checked on 2026-10-13: the Datadog account has no log index, and the
+app sends it only APM traces (`skout_api`, `skout_api_bullmq`, `skout_crm`). The first version of
+the monitors read log lines and could never have fired. The log lines stay for whoever reads logs
+elsewhere.
+
+**Limits.** The report runs every 10 minutes, so an outbox lag alert can be up to 10 minutes late.
+The report needs Redis and the worker, which is why the "report has stopped" monitor exists. No
+notification channel is attached: the handles on the account's existing monitors are template
+placeholders, so someone has to say where these alerts should go. No dashboard has been built.
 
 | Metric | Warn | Critical | Runbook |
 |---|---|---|---|

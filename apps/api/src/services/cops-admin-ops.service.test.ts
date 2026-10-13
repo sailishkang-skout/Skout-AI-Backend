@@ -5,7 +5,7 @@ import { createDb } from "@skout/db";
 import { saveConfig } from "./cops-admin-config.service.js";
 import { loadCopsModules } from "./cops-feature-flags.js";
 import { classifyTable, listRetentionRuns, loadDataInventory, RETENTION_TARGETS, startRetentionRun } from "./cops-retention.service.js";
-import { loadOpsMetrics, metricStatus, reportPlatformOpsMetrics } from "./cops-ops-metrics.service.js";
+import { loadOpsMetrics, metricStatus, reportPlatformOpsMetrics, submitOpsMetricsToDatadog, toDatadogSeries, type OpsMetric } from "./cops-ops-metrics.service.js";
 
 const postgres = createRequire(new URL("../../../../packages/db/package.json", import.meta.url))("postgres") as (url: string, options?: object) => any;
 
@@ -28,6 +28,41 @@ describe("COPS-07 pure rules", () => {
     expect(metricStatus(97, 95, 80, true)).toBe("ok");
     expect(metricStatus(90, 95, 80, true)).toBe("warn");
     expect(metricStatus(60, 95, 80, true)).toBe("critical");
+  });
+
+  const sample: OpsMetric[] = [
+    { key: "outbox_lag_seconds", label: "Outbox lag", value: 900, unit: "seconds", warn_at: 60, critical_at: 300, status: "critical", runbook: "docs/runbooks/cops-platform.md" },
+    { key: "outbox_pending", label: "Pending", value: 0, unit: "count", warn_at: 500, critical_at: 5000, status: "ok", runbook: "docs/runbooks/cops-platform.md" },
+    { key: "provisioning_p95_ms", label: "p95", value: null, unit: "ms", warn_at: 120000, critical_at: 240000, status: "ok", runbook: "docs/runbooks/cops-commercial-credits.md" },
+  ];
+
+  it("turns a report into Datadog gauges: a heartbeat, a value per measured metric and a status per metric", () => {
+    const at = new Date("2026-10-13T10:00:00Z");
+    const series = toDatadogSeries(sample, "production", at);
+    const by = (metric: string) => series.filter((s) => s.metric === metric);
+    expect(by("skout.cops.report")).toHaveLength(1);
+    expect(by("skout.cops.outbox_lag_seconds")[0]!.points).toEqual([{ timestamp: 1791885600, value: 900 }]);
+    // Nothing to measure: no value point, but the status is still reported.
+    expect(by("skout.cops.provisioning_p95_ms")).toHaveLength(0);
+    const status = Object.fromEntries(by("skout.cops.metric_status").map((s) => [s.tags.find((t) => t.startsWith("metric:")), s.points[0]!.value]));
+    expect(status).toEqual({ "metric:outbox_lag_seconds": 2, "metric:outbox_pending": 0, "metric:provisioning_p95_ms": 0 });
+    expect(series.every((s) => s.type === 3 && s.tags.includes("env:production") && s.tags.includes("service:skout-api"))).toBe(true);
+  });
+
+  it("submits the gauges with the API key, and reports a refusal or a missing key as not sent", async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const ok = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return new Response("{}", { status: 202 });
+    }) as unknown as typeof fetch;
+    expect(await submitOpsMetricsToDatadog(sample, { apiKey: "k", site: "us5.datadoghq.com", env: "uat", fetchImpl: ok })).toBe(true);
+    expect(calls[0]!.url).toBe("https://api.us5.datadoghq.com/api/v2/series");
+    expect((calls[0]!.init.headers as Record<string, string>)["DD-API-KEY"]).toBe("k");
+    expect(JSON.parse(String(calls[0]!.init.body)).series.length).toBe(6);
+    const refused = (async () => new Response("{}", { status: 403 })) as unknown as typeof fetch;
+    expect(await submitOpsMetricsToDatadog(sample, { apiKey: "k", site: "us5.datadoghq.com", env: "uat", fetchImpl: refused })).toBe(false);
+    expect(await submitOpsMetricsToDatadog(sample, { apiKey: undefined, site: "us5.datadoghq.com", env: "uat", fetchImpl: ok })).toBe(false);
+    expect(calls).toHaveLength(1);
   });
 
   it("every retention target is a table the classifier puts in the same category", () => {
@@ -163,8 +198,13 @@ maybe("COPS-07 retention, flags and metrics (Postgres)", () => {
       warn: (_m: string, fields?: Record<string, unknown>) => lines.push({ level: "warn", fields: fields ?? {} }),
       error: (_m: string, fields?: Record<string, unknown>) => lines.push({ level: "error", fields: fields ?? {} }),
     };
-    const notOk = await reportPlatformOpsMetrics(db, logger);
-    expect(lines).toHaveLength(12);
+    // Datadog being down must not fail the report; it is logged as one extra warning.
+    const down = (async () => {
+      throw new Error("network down");
+    }) as unknown as typeof fetch;
+    const notOk = await reportPlatformOpsMetrics(db, logger, { apiKey: "k", site: "us5.datadoghq.com", env: "test", fetchImpl: down });
+    expect(lines.filter((l) => l.fields.cops_metric)).toHaveLength(12);
+    expect(lines.filter((l) => !l.fields.cops_metric)).toEqual([{ level: "warn", fields: { site: "us5.datadoghq.com" } }]);
     expect(notOk.map((m) => m.key)).toContain("outbox_dead_lettered");
     const dead = lines.find((l) => l.fields.cops_metric === "outbox_dead_lettered")!;
     expect(["warn", "error"]).toContain(dead.level);
