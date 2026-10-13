@@ -143,6 +143,8 @@ function isPublicRoute(url: string, method?: string): boolean {
     // COPS-05: product analytics events; the route checks INTERNAL_SERVICE_TOKEN itself.
     pathname === "/api/v1/internal/product-events" ||
     pathname.startsWith("/api/v1/webhooks/unipile/") ||
+    // COPS-07: Datadog monitor alerts; the route checks DATADOG_WEBHOOK_SECRET itself.
+    pathname === "/api/v1/webhooks/datadog/cops-alerts" ||
     pathname.startsWith("/api/v1/track/") ||
     pathname.startsWith("/api/v1/unsubscribe/") ||
     pathname.startsWith("/api/v1/invite-auth/send-otp") ||

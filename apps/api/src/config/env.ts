@@ -34,6 +34,10 @@ const envSchema = z
     /** Datadog API key — ECS Fargate agent sidecar (not serverless/Lambda). */
     DD_API_KEY: z.string().optional(),
     DD_SITE: z.string().default("us5.datadoghq.com"),
+    /** COPS-07: shared secret the Datadog webhook sends; the alert endpoint refuses every call without it. */
+    DATADOG_WEBHOOK_SECRET: z.string().min(16).optional(),
+    /** COPS-07: the workspace whose Admin, owner and Engineering members get operational alerts in the app. */
+    OPS_ALERT_WORKSPACE_ID: z.string().uuid().optional(),
     TRUST_PROXY: z
       .string()
       .optional()

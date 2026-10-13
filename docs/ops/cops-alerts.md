@@ -21,10 +21,32 @@ app sends it only APM traces (`skout_api`, `skout_api_bullmq`, `skout_crm`). The
 the monitors read log lines and could never have fired. The log lines stay for whoever reads logs
 elsewhere.
 
+**Where alerts go.** Into the web app, as in-app notifications for the Admin, owner and Engineering
+members of one workspace. Datadog cannot write into the app, so the monitors notify a Datadog
+webhook, which calls `POST /api/v1/webhooks/datadog/cops-alerts`. The endpoint has no session; it
+checks a shared secret and refuses every call (503) until both settings below exist. A team email
+address is added to the monitors as a fallback for when the web app itself is down.
+
+Setup, once per environment:
+
+1. In the encrypted env file (`deploy/hetzner/env-enc/api.env`, SOPS + age) set
+   `DATADOG_WEBHOOK_SECRET` (a random string of 32 or more characters) and `OPS_ALERT_WORKSPACE_ID`
+   (the id of the internal Skout workspace). Never put the secret in the repository or in chat.
+2. In Datadog: Integrations > Webhooks > New. Name `skout-cops-alerts`. URL
+   `https://<api host>/api/v1/webhooks/datadog/cops-alerts`. Custom headers:
+   `{"X-Skout-Webhook-Secret": "<the secret>"}`. Payload:
+   `{"alert_id": "$ALERT_ID", "cycle_key": "$ALERT_CYCLE_KEY", "transition": "$ALERT_TRANSITION", "title": "$EVENT_TITLE", "body": "$TEXT_ONLY_MSG", "link": "$LINK"}`
+3. Create the monitors from `docs/ops/cops-monitors.json`; their messages already name
+   `@webhook-skout-cops-alerts`. Append the team email handle to each message.
+4. Use "Test notifications" on one monitor and check that the alert shows in the notification
+   center of an Admin.
+
+A Datadog retry of the same state change notifies nobody twice; a recovery is a new notification.
+
 **Limits.** The report runs every 10 minutes, so an outbox lag alert can be up to 10 minutes late.
-The report needs Redis and the worker, which is why the "report has stopped" monitor exists. No
-notification channel is attached: the handles on the account's existing monitors are template
-placeholders, so someone has to say where these alerts should go. No dashboard has been built.
+The report needs Redis and the worker, which is why the "report has stopped" monitor exists. If the
+web app or the API is down, the in-app alert cannot arrive: that is what the email fallback is for,
+and its address is still to be given. No dashboard has been built.
 
 | Metric | Warn | Critical | Runbook |
 |---|---|---|---|
