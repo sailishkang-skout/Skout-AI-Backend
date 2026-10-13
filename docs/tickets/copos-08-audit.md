@@ -235,3 +235,39 @@ When migration 0126 runs, an opportunity is marked if it has a sent proposal ver
 contract or a paid payment request. The mark is on `commercial_gates`. The engine still shows which
 rules such a deal matches, but requires nothing, and the gate ignores approvals for it. The backfill
 runs once: a second run marks nothing, so deals sent later are never grandfathered.
+
+## 11. State of the backend (2026-10-13)
+
+Built and tested on this branch. Migrations 0123 to 0130, all additive.
+
+| Ticket line | Built | Not built |
+|---|---|---|
+| Approval engine | Rules from config on discount, seats, TCV, term, free credits, payment terms, custom clauses, SLA. Request, decide per role (Admin or owner for the executive slot), reject with comment, void on material change, expiry after 14 days, in-app notifications. Hooks: proposal send, contract send, envelope send and the provisioning gate. Deals already in flight are skipped and listed for Finance | The pipeline stage rule (moving into Contracting) is not enforced: stage moves live in apps/crm. The complimentary-value rule is dormant until Finance prices a credit |
+| E-sign | Adapter interface, mock provider, envelopes, signed webhooks that are verified, deduplicated and applied in any order, template selection from config, merge fields. Replaces the manual status, which stays as the fallback | Dropbox Sign adapter (needs sandbox keys). Attaching an externally negotiated version and the redline status. Region, segment and legal entity are passed on the request: the account record does not hold them |
+| Subscriptions | `subscriptions`, `subscription_items`, a bill per period, payment link per bill, failed-payment timeline from the due date, automatic restore, invoiced accounts, renewal opportunity once per term (`RenewalOpened`), append-only amendments for seats and term | Provider auto-debit (waits on Razorpay). Entitlements are not written from the subscription. Restricted and suspended do not yet limit the product. The account lifecycle state does not follow the subscription. Amendments for credits and modules |
+| Finance ops | Failed-payment queue, reconciliation queue, subscriptions and payment-link lists, grandfathered-deals report | A cross-account list of credit purchases and manual adjustments (the per-account ledger and `GET /credits/reconciliation` from COPS-04 exist) |
+
+Acceptance criteria:
+
+| Criterion | Proven by |
+|---|---|
+| Editing approved terms voids the approval | `cops-approvals.routes.test.ts`: a deeper discount voids, a notes-only change does not |
+| Sub-threshold deals skip approval with no added step | Same file: no approval row, the request is refused, the proposal sends at once |
+| Out-of-order e-sign webhooks converge | `cops-esign.test.ts` (every ordering) and `cops-esign.routes.test.ts` (signed first, then viewed and sent) |
+| ContractSigned fires once | `cops-esign.routes.test.ts`: one outbox row after out-of-order events and a retry |
+| One renewal opportunity per term | `cops-subscriptions.routes.test.ts`: two passes at once and a third later open one |
+| Amendments never mutate original contracts | Same file: contract version rows unchanged; a DB trigger rejects UPDATE of an amendment |
+| Mismatched provider and Skout state shows in reconciliation | Same file: a bill paid at the provider and open here; an envelope signed with the contract still out |
+
+Things a reviewer should know:
+
+- `cops-renewals.service.ts` inserts into `deals`, an apps/crm-owned table, so that the renewal is
+  opened exactly once. ADR 0003 has the new entry and the reason.
+- The contract in `docs/api/copos-08-commercial-advanced.openapi.yaml` was written before the code.
+  Paths that changed while building: the approval and subscription paths match; the e-sign webhook
+  is `/esign/webhooks/{provider}`; `payment_link` is a third billing mode; bills are
+  `/subscription-invoices/{id}/payment-link` and `/mark-paid`; `/approvals/grandfathered` is new;
+  `/contracts/{id}/negotiated-versions`, `/billing/webhooks/razorpay/subscriptions` and
+  `/finance/credit-activity` are not built.
+- The worker file `cops-onboarding-evaluator.worker.ts` is also changed by PR #194, a few lines
+  away; whichever merges second may need a small conflict resolved.
