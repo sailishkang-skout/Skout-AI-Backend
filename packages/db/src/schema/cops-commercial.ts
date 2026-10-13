@@ -1,7 +1,7 @@
 import { bigint, boolean, index, integer, jsonb, numeric, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { workspaces } from "./workspaces.js";
 import { users } from "./users.js";
-import { deals } from "./crm.js";
+import { companies, deals } from "./crm.js";
 
 /**
  * COPS-03 commercial workspace (Bible p.30-35, 77). Opportunity = deals (COPS-02 mapping).
@@ -341,4 +341,84 @@ export const signatureEvents = pgTable(
     refs: jsonb("refs").notNull().default({}),
   },
   (t) => [unique("signature_events_provider_event_unique").on(t.provider, t.providerEventId), index("signature_events_envelope_idx").on(t.envelopeId)]
+);
+
+/** COPS-08 subscriptions (Bible p.36): what an account pays for, one term at a time. */
+export const subscriptions = pgTable(
+  "subscriptions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    /** The opportunity the subscription came from; its payment links are raised against it. */
+    opportunityId: uuid("opportunity_id")
+      .notNull()
+      .references(() => deals.id, { onDelete: "cascade" }),
+    /** active | past_due | restricted | suspended | closed. Set only from the oldest unpaid bill. */
+    status: text("status").notNull().default("active"),
+    /** payment_link | invoiced | provider */
+    billing: text("billing").notNull(),
+    currency: text("currency").notNull(),
+    cadence: text("cadence").notNull(),
+    termMonths: integer("term_months").notNull(),
+    termStart: timestamp("term_start", { withTimezone: true }).notNull(),
+    termEnd: timestamp("term_end", { withTimezone: true }).notNull(),
+    paymentTermsNetDays: integer("payment_terms_net_days").notNull().default(30),
+    /** Provider ids are references, set only for provider billing. */
+    providerSubscriptionId: text("provider_subscription_id"),
+    providerPlanId: text("provider_plan_id"),
+    statusChangedAt: timestamp("status_changed_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("subscriptions_workspace_status_idx").on(t.workspaceId, t.status)]
+);
+
+export const subscriptionItems = pgTable(
+  "subscription_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    subscriptionId: uuid("subscription_id")
+      .notNull()
+      .references(() => subscriptions.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    quantity: integer("quantity").notNull(),
+    /** Per unit per month, in minor units of the subscription currency. */
+    unitAmountMinor: bigint("unit_amount_minor", { mode: "number" }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("subscription_items_subscription_idx").on(t.subscriptionId), index("subscription_items_workspace_idx").on(t.workspaceId)]
+);
+
+/** One bill per billing period. Its due date is day 0 of the failed-payment timeline. */
+export const subscriptionInvoices = pgTable(
+  "subscription_invoices",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    subscriptionId: uuid("subscription_id")
+      .notNull()
+      .references(() => subscriptions.id, { onDelete: "cascade" }),
+    periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+    periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+    dueAt: timestamp("due_at", { withTimezone: true }).notNull(),
+    amountMinor: bigint("amount_minor", { mode: "number" }).notNull(),
+    currency: text("currency").notNull(),
+    /** open | paid | void */
+    status: text("status").notNull().default("open"),
+    paymentRequestId: uuid("payment_request_id").references(() => paymentRequests.id, { onDelete: "set null" }),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("subscription_invoices_period_unique").on(t.subscriptionId, t.periodStart), index("subscription_invoices_workspace_status_idx").on(t.workspaceId, t.status, t.dueAt)]
 );
