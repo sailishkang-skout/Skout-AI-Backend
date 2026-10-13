@@ -9,6 +9,7 @@ import { getEvidence } from "../services/evidence.service.js";
 import { createRegionalBriefService } from "../services/regional-brief.service.js";
 import { copsIdempotencyStore, requireAnyCopsPermission, writeCopsAudit } from "../services/cops-platform.service.js";
 import { runLifecycleTransition } from "../services/cops-lifecycle.service.js";
+import { assertApprovalsAllowWin } from "../services/cops-approvals.service.js";
 import { withCopsIdempotentReply } from "../services/cops-idempotent.js";
 import { AccountLinkError, linkAccounts } from "../services/cops-account-relationships.service.js";
 
@@ -1170,6 +1171,8 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
             .limit(1);
           const currentState = current?.state ?? "qualified";
           if (state !== currentState) {
+            // COPS-08 stage rule: no win while a proposal is waiting for approval.
+            if (state === "won") await assertApprovalsAllowWin(tx as unknown as Db, workspaceId, deal.id, currentState);
             await runLifecycleTransition(tx as unknown as Db, {
               workspaceId,
               dimension: "opportunity",

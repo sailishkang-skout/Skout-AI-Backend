@@ -270,6 +270,25 @@ maybe("COPS-08 approval engine", () => {
     expect(sent[0]).toMatchObject({ type: "cops.ApprovalRequested", entity_id: id });
   });
 
+  it("the stage rule: an opportunity cannot be marked won while a proposal is waiting for approval", async () => {
+    const [deal] = await sql`insert into deals (workspace_id, company_id, pipeline_id, stage_id, name, amount, currency)
+      select workspace_id, company_id, pipeline_id, stage_id, 'Stage rule deal', amount, currency from deals where id = ${opportunityId} returning id`;
+    const move = (to: string) => call("POST", `/cops/lifecycle/opportunity/${deal.id}/transitions`, { to, source: "test", reason: "moving the deal" });
+    expect((await move("demo")).statusCode).toBeLessThan(300);
+    expect((await move("commercial")).statusCode).toBeLessThan(300);
+    const proposalId = (await call("POST", `/opportunities/${deal.id}/proposals`, terms({}, 15))).json().data.id as string;
+
+    const blocked = await move("won");
+    expect(blocked.statusCode).toBe(409);
+    expect(blocked.json()).toMatchObject({ code: "BUSINESS_STATE_CONFLICT", details: { requested_state: "won" } });
+    expect(blocked.json().message).toContain("needs approval from sales_manager");
+    expect((await sql`select state from cops_lifecycle_states where dimension = 'opportunity' and entity_id = ${deal.id}`)[0].state).toBe("commercial");
+    // Losing the deal is always allowed.
+    const approval = (await call("POST", `/proposals/${proposalId}/approvals`)).json().data;
+    await decide(approval.id, "sales_manager", "approved", MANAGER);
+    expect((await move("won")).statusCode).toBeLessThan(300);
+  });
+
   it("a rejection needs a comment and closes the approval", async () => {
     const id = await create(terms({}, 12));
     const approval = (await call("POST", `/proposals/${id}/approvals`)).json().data;

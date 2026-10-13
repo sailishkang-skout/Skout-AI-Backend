@@ -6,6 +6,8 @@ import {
   approvalPolicySchema,
   createCopsEvent,
   canonicalJson,
+  CopsIllegalTransitionError,
+  COPS_TRANSITIONS,
   evaluateApprovals,
   materialChanges,
   proposalTcv,
@@ -437,4 +439,20 @@ export async function carryOrVoidApprovals(tx: Tx, ctx: CommercialContext, propo
     });
     await emitApprovalEvent(tx, ctx, approval, { type: "ApprovalDecided", status: "voided", reason: `The terms changed: ${changed.join(", ")}` });
   }
+}
+
+/**
+ * The stage rule (Bible p.22, p.34): an opportunity cannot be moved to won while one of its live
+ * proposals is over a threshold and unapproved. Thrown as the lifecycle's own illegal-transition
+ * error, so the stage routes answer 409 BUSINESS_STATE_CONFLICT and the board shows the message
+ * inline like any other stage rule. Call it in the transaction that makes the move.
+ */
+export async function assertApprovalsAllowWin(db: Db, workspaceId: string, opportunityId: string, from: string): Promise<void> {
+  const state = await opportunityApprovals(db, workspaceId, opportunityId);
+  if (state.complete) return;
+  const waiting = [...new Set(state.blocking.flatMap((b) => b.required_approvers))];
+  const allowed = (COPS_TRANSITIONS.opportunity as Record<string, readonly string[]>)[from]?.filter((s) => s !== "won") ?? [];
+  const error = new CopsIllegalTransitionError("opportunity", from, "won", allowed);
+  error.message = `This opportunity cannot be marked won yet: a proposal needs approval from ${waiting.join(", ")}`;
+  throw error;
 }

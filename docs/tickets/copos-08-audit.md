@@ -242,10 +242,10 @@ Built and tested on this branch. Migrations 0123 to 0131, all additive.
 
 | Ticket line | Built | Not built |
 |---|---|---|
-| Approval engine | Rules from config on discount, seats, TCV, term, free credits, payment terms, custom clauses, SLA. Request, decide per role (Admin or owner for the executive slot), reject with comment, void on material change, expiry after 14 days, in-app notifications. Hooks: proposal send, contract send, envelope send and the provisioning gate. Deals already in flight are skipped and listed for Finance | The pipeline stage rule (moving into Contracting) is not enforced: stage moves live in apps/crm. The complimentary-value rule is dormant until Finance prices a credit |
+| Approval engine | Rules from config on discount, seats, TCV, term, free credits, payment terms, custom clauses, SLA. Request, decide per role (Admin or owner for the executive slot), reject with comment, void on material change, expiry after 14 days, in-app notifications. Hooks: proposal send, contract send, envelope send, the provisioning gate, and the stage rule (an opportunity cannot be marked won while a proposal waits for approval). Deals already in flight are skipped and listed for Finance | The complimentary-value rule is dormant until Finance prices a credit. The stage rule blocks the move to won (both stage routes are in apps/api); it does not block entry to an earlier stage |
 | E-sign | Adapter interface, mock provider, envelopes, signed webhooks that are verified, deduplicated and applied in any order, template selection from config, merge fields, negotiated versions with a redline status (migration 0131). Replaces the manual status, which stays as the fallback | Dropbox Sign adapter (needs sandbox keys). Region, segment and legal entity are passed on the request: the account record does not hold them |
-| Subscriptions | `subscriptions`, `subscription_items`, a bill per period, payment link per bill, failed-payment timeline from the due date, automatic restore, invoiced accounts, renewal opportunity once per term (`RenewalOpened`), append-only amendments for seats and term | Provider auto-debit (waits on Razorpay). Entitlements are not written from the subscription. Restricted and suspended do not yet limit the product. The account lifecycle state does not follow the subscription. Amendments for credits and modules |
-| Finance ops | Failed-payment queue, reconciliation queue, subscriptions and payment-link lists, grandfathered-deals report | A cross-account list of credit purchases and manual adjustments (the per-account ledger and `GET /credits/reconciliation` from COPS-04 exist) |
+| Subscriptions | `subscriptions`, `subscription_items`, a bill per period, payment link per bill, failed-payment timeline from the due date, automatic restore, invoiced accounts, renewal opportunity once per term (`RenewalOpened`), append-only amendments for seats and term. The account lifecycle state follows the subscription, and the customer's workspace carries a `subscription` entitlement. From day 8 a restricted workspace cannot spend credits (402) or send outreach (sequence steps are deferred, not dropped; `canContact` refuses outreach) | Provider auto-debit (waits on Razorpay). Sending a suspended workspace's login to the billing page only (that is in the product's own auth flow). Entitlements beyond the subscription itself (plan limits, purchased credits). Amendments for credits and modules |
+| Finance ops | Failed-payment queue, reconciliation queue, subscriptions and payment-link lists, grandfathered-deals report | Nothing known. `GET /finance/credit-activity` lists purchases, grants, adjustments and refunds across accounts with actor and reason |
 
 Acceptance criteria:
 
@@ -267,6 +267,11 @@ Things a reviewer should know:
   Paths that changed while building: the approval and subscription paths match; the e-sign webhook
   is `/esign/webhooks/{provider}`; `payment_link` is a third billing mode; bills are
   `/subscription-invoices/{id}/payment-link` and `/mark-paid`; `/approvals/grandfathered` is new;
-  `/billing/webhooks/razorpay/subscriptions` and `/finance/credit-activity` are not built.
+  `/billing/webhooks/razorpay/subscriptions` is not built.
 - The worker file `cops-onboarding-evaluator.worker.ts` is also changed by PR #194, a few lines
   away; whichever merges second may need a small conflict resolved.
+- Restrictions read one entitlement on the customer's workspace (`subscription`). If that read
+  fails the customer keeps working: the guard fails open on purpose. Enrichment is restricted
+  through the credit spend, so an enrichment that costs no credits is not blocked.
+- `cops-onboarding.routes.test.ts` has one test that times out on my machine with or without this
+  branch's changes; CI is the reference for it.
