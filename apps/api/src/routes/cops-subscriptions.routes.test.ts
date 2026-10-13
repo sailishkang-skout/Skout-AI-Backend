@@ -367,6 +367,14 @@ maybe("COPS-08 subscriptions", () => {
     expect((await entitlement()).value).toMatchObject({ status: "active", seats: 10 });
     expect(await subscriptionAccessBlock(db, customer.id)).toBeNull();
     expect(await spend()).toBe(48);
+    // Finance sees the grant on this account, with why, and none of the usage.
+    await postCreditTransaction(db, { workspaceId: customer.id, amount: -5, kind: "adjustment", action: "manual_adjustment", referenceId: null, reason: "Duplicate grant corrected", actor: { type: "user", id: "finance-user" } });
+    const activity = (await call("GET", "/finance/credit-activity")).json().data as Array<{ account_id: string; kind: string; amount: number; reason: string | null; account_name: string | null }>;
+    const mine = activity.filter((r) => r.account_id === accountId);
+    expect(mine.map((r) => `${r.kind}:${r.amount}`)).toEqual(["adjustment:-5", "grant:50"]);
+    expect(mine[0]).toMatchObject({ reason: "Duplicate grant corrected", account_name: expect.stringContaining("Subs Co") });
+    expect((await call("GET", "/finance/credit-activity?kind=adjustment")).json().data.every((r: { kind: string }) => r.kind === "adjustment")).toBe(true);
+    expect((await call("GET", "/finance/credit-activity", undefined, OTHER)).json().data).toEqual([]);
     // A workspace with no subscription entitlement (internal, or on trial) is never restricted.
     expect(await subscriptionAccessBlock(db, workspaceId)).toBeNull();
 

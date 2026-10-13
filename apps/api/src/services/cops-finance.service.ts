@@ -6,7 +6,7 @@ import { schema, type Db } from "@skout/db";
  * places where what a provider told us and what Skout holds disagree, so a person can settle them;
  * it is built only from tables this service owns.
  */
-const { paymentRequests, paymentProviderEvents, subscriptionInvoices, subscriptions, signatureEnvelopes, contracts } = schema;
+const { paymentRequests, paymentProviderEvents, subscriptionInvoices, subscriptions, signatureEnvelopes, contracts, creditTransactions, copsProvisionings } = schema;
 
 export type ReconciliationKind = "payment_event_not_applied" | "bill_paid_at_provider_open_here" | "envelope_contract_mismatch" | "envelope_never_confirmed";
 
@@ -135,4 +135,37 @@ export async function listSubscriptionsForFinance(db: Db, workspaceId: string, w
     .orderBy(subscriptions.termEnd)
     .limit(500);
   return rows.map((r) => ({ ...r, renews_at: r.renews_at.toISOString() }));
+}
+
+/** Ledger entries a person or a payment put there. Usage (consume) and expiry are left out: they are not Finance decisions. */
+export const CREDIT_ACTIVITY_KINDS = ["purchase", "grant", "adjustment", "refund"] as const;
+export type CreditActivityKind = (typeof CREDIT_ACTIVITY_KINDS)[number];
+
+/**
+ * Credit purchases and manual entries across every account this workspace has provisioned, newest
+ * first, each with who did it and why (Bible p.67). The ledger belongs to the customer's workspace;
+ * provisioning is what ties it back to the account.
+ */
+export async function listCreditActivity(db: Db, workspaceId: string, where: { kind?: CreditActivityKind; limit?: number } = {}) {
+  const rows = await db
+    .select({
+      id: creditTransactions.id,
+      account_id: copsProvisionings.accountId,
+      kind: creditTransactions.kind,
+      amount: creditTransactions.amount,
+      balance_after: creditTransactions.balanceAfter,
+      action: creditTransactions.action,
+      reason: creditTransactions.reason,
+      actor_type: creditTransactions.actorType,
+      actor_id: creditTransactions.actorId,
+      reference_id: creditTransactions.referenceId,
+      compensates_id: creditTransactions.compensatesId,
+      created_at: creditTransactions.createdAt,
+    })
+    .from(creditTransactions)
+    .innerJoin(copsProvisionings, eq(copsProvisionings.provisionedWorkspaceId, creditTransactions.workspaceId))
+    .where(and(eq(copsProvisionings.workspaceId, workspaceId), where.kind ? eq(creditTransactions.kind, where.kind) : inArray(creditTransactions.kind, [...CREDIT_ACTIVITY_KINDS])))
+    .orderBy(desc(creditTransactions.createdAt), desc(creditTransactions.seq))
+    .limit(Math.min(where.limit ?? 200, 500));
+  return rows.map((r) => ({ ...r, created_at: r.created_at.toISOString() }));
 }

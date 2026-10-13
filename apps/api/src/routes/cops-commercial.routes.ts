@@ -49,7 +49,7 @@ import {
 import type { PspAdapter } from "../services/psp/psp-adapter.js";
 import { createMockEsignAdapter, type EsignAdapter } from "../services/esign/esign-adapter.js";
 import { handleEsignWebhook, listEnvelopes, sendEnvelope } from "../services/cops-esign.service.js";
-import { listSubscriptionsForFinance, loadReconciliation } from "../services/cops-finance.service.js";
+import { CREDIT_ACTIVITY_KINDS, listCreditActivity, listSubscriptionsForFinance, loadReconciliation } from "../services/cops-finance.service.js";
 import { amendSubscription, createSubscription, getAccountSubscription, issueInvoicePaymentLink, listFailedPayments, markInvoicePaid } from "../services/cops-subscriptions.service.js";
 import { applyPaidCreditPurchases } from "../services/cops-credits.service.js";
 
@@ -164,6 +164,7 @@ const amendmentSchema = z
 const financeSubscriptionsQuery = z
   .object({ status: z.enum(["active", "past_due", "restricted", "suspended", "closed"]).optional(), renewing_within_days: z.coerce.number().int().min(1).max(730).optional() })
   .strict();
+const financeCreditQuery = z.object({ kind: z.enum(CREDIT_ACTIVITY_KINDS).optional() }).strict();
 const financePaymentsQuery = z.object({ status: z.enum(["requested", "paid", "failed", "expired", "cancelled", "refunded"]).optional() }).strict();
 const markPaidSchema = z.object({ reason: z.string().trim().min(1, "reason is required").max(1000) }).strict();
 
@@ -405,6 +406,20 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
     const parsed = financeSubscriptionsQuery.safeParse(request.query ?? {});
     if (!parsed.success) return invalid(reply as unknown as Reply, ctx.requestId, parsed.error);
     return { data: await listSubscriptionsForFinance(db, ctx.workspaceId, parsed.data) };
+  });
+
+  /** Finance: credit purchases and manual ledger entries across accounts, with actor and reason. */
+  app.get<{ Querystring: unknown }>("/finance/credit-activity", { preHandler: requireAnyCopsPermission(["billing:read", "credits:read"], perms) }, async (request, reply) => {
+    const ctx = ctxOf(request);
+    const parsed = financeCreditQuery.safeParse(request.query ?? {});
+    if (!parsed.success) return invalid(reply as unknown as Reply, ctx.requestId, parsed.error);
+    const rows = await listCreditActivity(db, ctx.workspaceId, parsed.data);
+    const ids = [...new Set(rows.map((r) => r.account_id))];
+    const names = ids.length
+      ? await db.select({ id: schema.companies.id, name: schema.companies.name }).from(schema.companies).where(and(eq(schema.companies.workspaceId, ctx.workspaceId), inArray(schema.companies.id, ids)))
+      : [];
+    const byId = new Map(names.map((n) => [n.id, n.name]));
+    return { data: rows.map((r) => ({ ...r, account_name: byId.get(r.account_id) ?? null })) };
   });
 
   /** Finance: payment links across accounts, newest first, with the opportunity they belong to. */
