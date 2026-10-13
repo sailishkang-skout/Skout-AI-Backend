@@ -113,6 +113,8 @@ export const contracts = pgTable(
     status: text("status").notNull().default("draft"),
     currentVersion: integer("current_version").notNull().default(1),
     statusReason: text("status_reason"),
+    /** COPS-08: customer_redline | internal_review | agreed. Null: never redlined. */
+    redlineStatus: text("redline_status"),
     statusChangedAt: timestamp("status_changed_at", { withTimezone: true }),
     statusChangedBy: uuid("status_changed_by").references(() => users.id, { onDelete: "set null" }),
     signedAt: timestamp("signed_at", { withTimezone: true }),

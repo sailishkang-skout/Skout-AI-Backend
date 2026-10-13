@@ -200,6 +200,29 @@ maybe("COPS-08 e-signature", () => {
     expect(row).toMatchObject({ provider_ref: envelope.provider_ref, status: "viewed" });
   });
 
+  it("a version negotiated outside Skout is attached as a new version with its redline status, and can then be sent", async () => {
+    const { contractId } = await newContract();
+    const first = (await send(contractId)).json().data;
+    const attached = await call("POST", `/contracts/${contractId}/negotiated-versions`, { document_url: "https://docs.example.test/msa-redline.pdf", file_sha256: "e".repeat(64), redline_status: "customer_redline", note: "Customer legal changed clause 7" });
+    expect(attached.statusCode).toBe(201);
+    expect(attached.json().data).toMatchObject({ current_version: 2, redline_status: "customer_redline" });
+    // The first version is untouched, and an unknown redline status is refused.
+    const versions = await sql`select version, file_sha256, sent_at is not null as sent from contract_versions where contract_id = ${contractId} order by version`;
+    expect(versions).toEqual([{ version: 1, file_sha256: SHA, sent: true }, { version: 2, file_sha256: "e".repeat(64), sent: false }]);
+    expect((await call("POST", `/contracts/${contractId}/negotiated-versions`, { document_url: "x", file_sha256: "e".repeat(64), redline_status: "done" })).statusCode).toBe(422);
+
+    // The agreed version goes out as its own envelope; an event for the old one no longer moves the contract.
+    await call("POST", `/contracts/${contractId}/negotiated-versions`, { document_url: "https://docs.example.test/msa-final.pdf", file_sha256: "f".repeat(64), redline_status: "agreed" });
+    const second = await send(contractId);
+    expect(second.statusCode).toBe(201);
+    expect(second.json().data).toMatchObject({ contract_version: 3 });
+    await webhook({ envelope_ref: first.provider_ref, event_type: "envelope.signed" });
+    expect((await contractStatus(contractId)).status).toBe("sent");
+    await webhook({ envelope_ref: second.json().data.provider_ref, event_type: "envelope.signed" });
+    expect((await contractStatus(contractId)).status).toBe("signed");
+    expect(await signedEvents(contractId)).toBe(1);
+  });
+
   it("another workspace cannot send or see these envelopes", async () => {
     const { contractId } = await newContract();
     await send(contractId);

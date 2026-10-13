@@ -303,6 +303,8 @@ maybe("COPS-08 approval engine", () => {
     const mine = (await call("GET", "/approvals?status=pending&role=finance")).json().data as Array<{ decisions: Array<{ role: string; decision: string }> }>;
     expect(mine.length).toBeGreaterThan(0);
     expect(mine.every((a) => a.decisions.some((d) => d.role === "finance" && d.decision === "pending"))).toBe(true);
+    // The queue names the deal and its account.
+    expect(mine[0]).toMatchObject({ opportunity_name: expect.any(String), account_name: expect.stringContaining("Approvals Co") });
     const theirs = await call("GET", "/approvals", undefined, OTHER);
     expect(theirs.statusCode).toBe(200);
     expect(theirs.json().data).toEqual([]);

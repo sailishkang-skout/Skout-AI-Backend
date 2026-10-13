@@ -792,6 +792,7 @@ export async function loadContracts(db: Db, workspaceId: string, where: { contra
     status: c.status,
     current_version: c.currentVersion,
     status_reason: c.statusReason,
+    redline_status: c.redlineStatus,
     status_changed_at: c.statusChangedAt?.toISOString() ?? null,
     signed_at: c.signedAt?.toISOString() ?? null,
     created_at: c.createdAt.toISOString(),
@@ -807,4 +808,29 @@ export async function loadContracts(db: Db, workspaceId: string, where: { contra
         created_at: v.createdAt.toISOString(),
       })),
   }));
+}
+
+/**
+ * COPS-08 (Bible p.32): attach a version negotiated outside Skout and say where the redline stands.
+ * It is a new immutable contract version like any other; earlier versions stay as they were.
+ */
+export async function attachNegotiatedVersion(db: Db, ctx: CommercialContext, contractId: string, input: ContractDocumentInput & { redline_status: string; note?: string }) {
+  const version = await addContractVersion(db, ctx, contractId, { document_url: input.document_url, file_name: input.file_name, file_sha256: input.file_sha256 });
+  await db.transaction(async (tx) => {
+    const [before] = await tx.select({ redlineStatus: contracts.redlineStatus }).from(contracts).where(and(eq(contracts.id, contractId), eq(contracts.workspaceId, ctx.workspaceId))).limit(1);
+    await tx.update(contracts).set({ redlineStatus: input.redline_status, updatedAt: new Date() }).where(eq(contracts.id, contractId));
+    await writeCopsAudit(tx, {
+      tenantId: ctx.workspaceId,
+      actor: { type: "user", id: ctx.userId },
+      entityType: "contract",
+      entityId: contractId,
+      action: "contract.negotiated_version_attached",
+      before: { redline_status: before?.redlineStatus ?? null },
+      after: { redline_status: input.redline_status, file_sha256: input.file_sha256 },
+      reason: input.note,
+      correlationId: ctx.requestId,
+      sourceChannel: "api",
+    });
+  });
+  return version;
 }

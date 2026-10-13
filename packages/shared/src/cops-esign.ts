@@ -70,3 +70,9 @@ export function selectEsignTemplate(templates: Array<{ key: string; value: Esign
   candidates.sort((a, b) => b.specificity - a.specificity || a.t.key.localeCompare(b.t.key));
   return candidates[0]?.t ?? null;
 }
+
+// --- redlines ------------------------------------------------------------------------------------
+
+/** Where a contract stands in negotiation. A version negotiated outside Skout is attached with one of these. */
+export const REDLINE_STATUSES = ["customer_redline", "internal_review", "agreed"] as const;
+export type RedlineStatus = (typeof REDLINE_STATUSES)[number];

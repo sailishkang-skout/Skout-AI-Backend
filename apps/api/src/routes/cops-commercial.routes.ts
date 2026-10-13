@@ -14,12 +14,13 @@ import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
  *     query, and the payment webhook resolves the account inside its own transaction.
  *   - Review date: revisit when apps/crm's internal API covers batched reads
  */
-import { APPROVER_ROLES, PRICE_BASES, SUBSCRIPTION_BILLING, SUBSCRIPTION_CADENCES, BILLING_CADENCES, COMMERCIAL_GATE_POLICIES, COMMERCIAL_LINE_KINDS, copsErrorBody, copsErrorStatus, resolveCorrelationId } from "@skout/shared";
+import { APPROVER_ROLES, REDLINE_STATUSES, PRICE_BASES, SUBSCRIPTION_BILLING, SUBSCRIPTION_CADENCES, BILLING_CADENCES, COMMERCIAL_GATE_POLICIES, COMMERCIAL_LINE_KINDS, copsErrorBody, copsErrorStatus, resolveCorrelationId } from "@skout/shared";
 import { getMemberPermissions } from "@skout/auth";
 import { copsIdempotencyStore, requireAnyCopsPermission } from "../services/cops-platform.service.js";
 import { withCopsIdempotentReply, type CopsCapturingReply } from "../services/cops-idempotent.js";
 import {
   addContractVersion,
+  attachNegotiatedVersion,
   addProposalVersion,
   CommercialError,
   createContract,
@@ -93,6 +94,7 @@ const documentSchema = z
     file_sha256: z.string().regex(/^[a-f0-9]{64}$/, "file_sha256 must be a lowercase hex SHA-256"),
   })
   .strict();
+const negotiatedVersionSchema = documentSchema.extend({ redline_status: z.enum(REDLINE_STATUSES), note: z.string().trim().max(1000).optional() }).strict();
 const createContractSchema = documentSchema
   .extend({
     kind: z.enum(["msa", "order_form", "dpa"]),
@@ -261,7 +263,20 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
     const ctx = ctxOf(request);
     const parsed = approvalQuerySchema.safeParse(request.query ?? {});
     if (!parsed.success) return invalid(reply as unknown as Reply, ctx.requestId, parsed.error);
-    return { data: await listApprovals(db, ctx.workspaceId, parsed.data) };
+    const list = await listApprovals(db, ctx.workspaceId, parsed.data);
+    // The approver needs to know which deal this is, not only its numbers.
+    const ids = [...new Set(list.map((a) => a.opportunity_id))];
+    const named = ids.length
+      ? await db
+          .select({ id: schema.deals.id, name: schema.deals.name, account: schema.companies.name, accountId: schema.companies.id })
+          .from(schema.deals)
+          .leftJoin(schema.companies, eq(schema.companies.id, schema.deals.companyId))
+          .where(and(eq(schema.deals.workspaceId, ctx.workspaceId), inArray(schema.deals.id, ids)))
+      : [];
+    const byId = new Map(named.map((n) => [n.id, n]));
+    return {
+      data: list.map((a) => ({ ...a, opportunity_name: byId.get(a.opportunity_id)?.name ?? null, account_id: byId.get(a.opportunity_id)?.accountId ?? null, account_name: byId.get(a.opportunity_id)?.account ?? null })),
+    };
   });
 
   /** Deals the approval engine skips because they were already sent, signed or paid (report for Finance). */
@@ -623,6 +638,27 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
         ctx.requestId,
         async () => {
           await addContractVersion(db, ctx, request.params.id, parsed.data);
+          return (await loadContracts(db, ctx.workspaceId, { contractId: request.params.id }))[0];
+        },
+        (contract) => reply.status(201).send({ data: contract })
+      );
+    })
+  );
+
+  app.post<IdBody>(
+    "/contracts/:id/negotiated-versions",
+    { preHandler: statusGate },
+    withCopsIdempotentReply<IdBody>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      const parsed = negotiatedVersionSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(
+        reply,
+        ctx.requestId,
+        async () => {
+          await attachNegotiatedVersion(db, ctx, request.params.id, parsed.data);
           return (await loadContracts(db, ctx.workspaceId, { contractId: request.params.id }))[0];
         },
         (contract) => reply.status(201).send({ data: contract })
