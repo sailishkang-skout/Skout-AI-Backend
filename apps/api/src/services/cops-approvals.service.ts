@@ -23,7 +23,7 @@ import { evaluateGate } from "./cops-gate.service.js";
  * belongs to the terms it was given for: a material change voids it, and it lapses after the
  * configured number of days. Deals under every threshold never get an approval row.
  */
-const { proposals, proposalVersions, proposalLineItems, contracts, approvals, approvalDecisions, workspaceMemberRoles, roles } = schema;
+const { proposals, proposalVersions, proposalLineItems, contracts, commercialGates, approvals, approvalDecisions, workspaceMemberRoles, roles } = schema;
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type Reader = Pick<Db, "select">;
@@ -81,6 +81,19 @@ async function loadCurrent(db: Reader, workspaceId: string, proposalId: string) 
   if (!version) throw new CommercialError("NOT_FOUND", "Proposal version not found");
   const lines = await db.select().from(proposalLineItems).where(eq(proposalLineItems.versionId, version.id));
   return { proposal, version, terms: approvalTermsOf(version, lines) };
+}
+
+/**
+ * Deals that were already sent, signed or paid when the approval engine arrived are skipped by it
+ * (migration 0126). Blocking a customer who has signed or paid is worse than a missed approval.
+ */
+async function isGrandfathered(db: Reader, workspaceId: string, opportunityId: string): Promise<boolean> {
+  const [gate] = await db
+    .select({ at: commercialGates.approvalsGrandfatheredAt })
+    .from(commercialGates)
+    .where(and(eq(commercialGates.opportunityId, opportunityId), eq(commercialGates.workspaceId, workspaceId)))
+    .limit(1);
+  return Boolean(gate?.at);
 }
 
 async function loadPolicy(db: Db, workspaceId: string) {
@@ -165,7 +178,8 @@ export async function evaluateProposalApprovals(db: Db, workspaceId: string, pro
   const { policy, policyVersion } = await loadPolicy(db, workspaceId);
   const evaluation = evaluateApprovals(policy, terms);
   const open = (await listApprovals(db, workspaceId, { proposalId })).find((a) => OPEN_STATUSES.includes(a.status) && a.proposal_version === proposal.currentVersion) ?? null;
-  const required = evaluation.required_approvers.length > 0;
+  const grandfathered = await isGrandfathered(db, workspaceId, proposal.opportunityId);
+  const required = !grandfathered && evaluation.required_approvers.length > 0;
   return {
     proposal_id: proposalId,
     proposal_version: proposal.currentVersion,
@@ -173,6 +187,8 @@ export async function evaluateProposalApprovals(db: Db, workspaceId: string, pro
     terms,
     ...evaluation,
     policy_version: policyVersion,
+    /** True for a deal already in flight before COPS-08: the rules are shown but not enforced. */
+    grandfathered,
     required,
     satisfied: !required || (open?.status === "approved" && evaluation.required_approvers.every((r) => open.required_approvers.includes(r))),
     approval: open,
@@ -219,7 +235,13 @@ export async function assertContractApproved(db: Db, workspaceId: string, contra
 
 export async function requestApproval(db: Db, ctx: CommercialContext, proposalId: string): Promise<ApprovalDto> {
   const state = await evaluateProposalApprovals(db, ctx.workspaceId, proposalId);
-  if (!state.required) throw new CommercialError("BUSINESS_STATE_CONFLICT", "This proposal is under every threshold and needs no approval", { required_approvers: [] });
+  if (!state.required) {
+    throw new CommercialError(
+      "BUSINESS_STATE_CONFLICT",
+      state.grandfathered ? "This deal was already in progress before approvals were introduced and needs none" : "This proposal is under every threshold and needs no approval",
+      { required_approvers: [], grandfathered: state.grandfathered }
+    );
+  }
   if (state.approval) throw new CommercialError("BUSINESS_STATE_CONFLICT", `An approval for this version is already ${state.approval.status}`, { approval_id: state.approval.id });
   const { policy } = await loadPolicy(db, ctx.workspaceId);
 

@@ -225,6 +225,29 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
     return { data: await listApprovals(db, ctx.workspaceId, parsed.data) };
   });
 
+  /** Deals the approval engine skips because they were already sent, signed or paid (report for Finance). */
+  const financeReportGate = requireAnyCopsPermission(["commercial:approve", "billing:read"], perms);
+  app.get("/approvals/grandfathered", { preHandler: financeReportGate }, async (request) => {
+    const ctx = ctxOf(request);
+    const rows = await db
+      .select({
+        opportunity_id: schema.commercialGates.opportunityId,
+        opportunity_name: schema.deals.name,
+        amount: schema.deals.amount,
+        currency: schema.deals.currency,
+        grandfathered_at: schema.commercialGates.approvalsGrandfatheredAt,
+        reason: schema.commercialGates.approvalsGrandfatheredReason,
+      })
+      .from(schema.commercialGates)
+      .innerJoin(schema.deals, eq(schema.deals.id, schema.commercialGates.opportunityId))
+      .where(and(eq(schema.commercialGates.workspaceId, ctx.workspaceId), sql`${schema.commercialGates.approvalsGrandfatheredAt} is not null`))
+      .orderBy(desc(schema.commercialGates.approvalsGrandfatheredAt), schema.deals.name)
+      .limit(1000);
+    return {
+      data: rows.map((r) => ({ ...r, amount: r.amount == null ? null : Number(r.amount), grandfathered_at: r.grandfathered_at?.toISOString() ?? null, reasons: (r.reason ?? "").split(",").filter(Boolean) })),
+    };
+  });
+
   app.post<IdOnly>(
     "/approvals/:id/decisions",
     { preHandler: approvalDecideGate },

@@ -226,6 +226,29 @@ maybe("COPS-08 approval engine", () => {
     expect(row.status).toBe("approved");
   });
 
+  it("a deal already in flight before COPS-08 is skipped by the engine and listed for Finance", async () => {
+    const [deal] = await sql`insert into deals (workspace_id, company_id, pipeline_id, stage_id, name, amount, currency)
+      select workspace_id, company_id, pipeline_id, stage_id, 'Old signed deal', amount, currency from deals where id = ${opportunityId} returning id`;
+    const proposalId = (await call("POST", `/opportunities/${deal.id}/proposals`, terms({}, 35))).json().data.id as string;
+    expect((await evaluate(proposalId)).satisfied).toBe(false);
+    // What migration 0126 writes for a deal that had a sent proposal when it ran.
+    await sql`insert into commercial_gates (opportunity_id, workspace_id, approvals_grandfathered_at, approvals_grandfathered_reason)
+      values (${deal.id}, ${workspaceId}, now(), 'contract_signed,proposal_sent')
+      on conflict (opportunity_id) do update set approvals_grandfathered_at = now(), approvals_grandfathered_reason = 'contract_signed,proposal_sent'`;
+
+    const state = await evaluate(proposalId);
+    expect(state).toMatchObject({ grandfathered: true, required: false, satisfied: true });
+    // The rules are still shown, so Finance can see what would have applied.
+    expect(state.required_approvers).toEqual(["sales_manager", "finance", "executive"]);
+    expect((await call("POST", `/proposals/${proposalId}/approvals`)).statusCode).toBe(409);
+    expect((await call("POST", `/proposals/${proposalId}/send`, {})).statusCode).toBe(200);
+    expect((await call("GET", `/opportunities/${deal.id}/gate`)).json().data.conditions.approvals_complete).toBe(true);
+
+    const report = (await call("GET", "/approvals/grandfathered")).json().data as Array<{ opportunity_id: string; reasons: string[]; opportunity_name: string }>;
+    expect(report.find((r) => r.opportunity_id === deal.id)).toMatchObject({ opportunity_name: "Old signed deal", reasons: ["contract_signed", "proposal_sent"] });
+    expect((await call("GET", "/approvals/grandfathered", undefined, OTHER)).json().data).toEqual([]);
+  });
+
   it("a rejection needs a comment and closes the approval", async () => {
     const id = await create(terms({}, 12));
     const approval = (await call("POST", `/proposals/${id}/approvals`)).json().data;

@@ -235,6 +235,9 @@ export const commercialGates = pgTable("commercial_gates", {
   firedAt: timestamp("fired_at", { withTimezone: true }),
   firedEventId: uuid("fired_event_id"),
   firedPolicy: text("fired_policy"),
+  /** COPS-08: set once by migration 0126 for deals already sent, signed or paid; the approval engine skips them. */
+  approvalsGrandfatheredAt: timestamp("approvals_grandfathered_at", { withTimezone: true }),
+  approvalsGrandfatheredReason: text("approvals_grandfathered_reason"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
