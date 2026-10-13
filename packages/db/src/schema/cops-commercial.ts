@@ -425,3 +425,31 @@ export const subscriptionInvoices = pgTable(
   },
   (t) => [unique("subscription_invoices_period_unique").on(t.subscriptionId, t.periodStart), index("subscription_invoices_workspace_status_idx").on(t.workspaceId, t.status, t.dueAt)]
 );
+
+/** COPS-08 amendments (Bible p.37): append-only; a DB trigger rejects UPDATE. */
+export const subscriptionAmendments = pgTable(
+  "subscription_amendments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    subscriptionId: uuid("subscription_id")
+      .notNull()
+      .references(() => subscriptions.id, { onDelete: "cascade" }),
+    seq: integer("seq").notNull(),
+    /** The new seat count, when the amendment changes seats. */
+    seats: integer("seats"),
+    /** The new term length, when the amendment changes the term. */
+    termMonths: integer("term_months"),
+    reason: text("reason").notNull(),
+    /** A seat change starts with the next billing period; a term change is immediate. */
+    effectiveAt: timestamp("effective_at", { withTimezone: true }).notNull(),
+    /** What the subscription gave before and after: seats, term and renewal date. */
+    before: jsonb("before").notNull(),
+    after: jsonb("after").notNull(),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("subscription_amendments_seq_unique").on(t.subscriptionId, t.seq), index("subscription_amendments_workspace_idx").on(t.workspaceId)]
+);

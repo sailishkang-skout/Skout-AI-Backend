@@ -237,6 +237,45 @@ maybe("COPS-08 subscriptions", () => {
     expect((await sql`select count(*)::int as n from deals where company_id = ${accountId}`)[0].n).toBe(1);
   });
 
+  it("amendments are appended and never edited; seats change with the next period and the original contract is untouched", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    const contract = (await call("POST", `/opportunities/${opportunityId}/contracts`, { kind: "msa", document_url: "https://docs.example.test/msa.pdf", file_sha256: "c".repeat(64) })).json().data;
+    const contractBefore = await sql`select file_sha256, document_url, version from contract_versions where contract_id = ${contract.id}`;
+    const sub = (await subscribe(accountId, opportunityId, { payment_terms_net_days: 30 })).json().data;
+
+    expect((await call("POST", `/subscriptions/${sub.id}/amendments`, { seats: 15 })).statusCode).toBe(422);
+    expect((await call("POST", `/subscriptions/${sub.id}/amendments`, { reason: "nothing to change" })).statusCode).toBe(422);
+    const first = await call("POST", `/subscriptions/${sub.id}/amendments`, { seats: 15, reason: "Five more reps joined" });
+    expect(first.statusCode).toBe(201);
+    const amended = first.json().data;
+    // Still 10 seats in this period; 15 from the next one.
+    expect(amended.seats).toBe(10);
+    expect(amended.amendments).toHaveLength(1);
+    expect(amended.amendments[0]).toMatchObject({ seq: 1, seats: 15, before: { seats: 10 }, after: { seats: 15 }, reason: "Five more reps joined" });
+    expect(new Date(amended.amendments[0].effective_at).getTime()).toBe(new Date(sub.invoices[0].period_end).getTime());
+
+    // A longer term moves the renewal date at once, and is a second row.
+    const second = (await call("POST", `/subscriptions/${sub.id}/amendments`, { term_months: 24, reason: "Two year commitment" })).json().data;
+    expect(second.term_months).toBe(24);
+    expect(new Date(second.renews_at).getUTCFullYear()).toBe(new Date(sub.term_start).getUTCFullYear() + 2);
+    expect(second.amendments.map((a: { seq: number }) => a.seq)).toEqual([1, 2]);
+    expect(second.amendments[1]).toMatchObject({ before: { seats: 15, term_months: 12 }, after: { seats: 15, term_months: 24 } });
+
+    // The first bill keeps its price; the next period is billed for 15 seats.
+    await sql`update subscription_invoices set status = 'paid', paid_at = now() where subscription_id = ${sub.id}`;
+    await billAt(sub.invoices[0].period_end, 0);
+    const later = await currentAt(accountId, sub.invoices[0].period_end, 0);
+    expect(later.seats).toBe(15);
+    expect(later.invoices.map((i) => i.amount_minor)).toEqual([142_200, 94_800]);
+
+    // No way to edit an amendment, even straight in the database.
+    await expect(sql`update subscription_amendments set seats = 99 where subscription_id = ${sub.id}`).rejects.toThrow(/append-only/);
+    // And the original contract is exactly as it was.
+    expect(await sql`select file_sha256, document_url, version from contract_versions where contract_id = ${contract.id}`).toEqual(contractBefore);
+    const audit = await sql`select action, reason from audit_logs where entity_id = ${sub.id} and action = 'subscription.amended' order by created_at`;
+    expect(audit.map((r: { reason: string }) => r.reason)).toEqual(["Five more reps joined", "Two year commitment"]);
+  });
+
   it("another workspace cannot see or change a subscription", async () => {
     const { accountId, opportunityId } = await newAccount();
     const sub = (await subscribe(accountId, opportunityId)).json().data;

@@ -6,6 +6,8 @@ import {
   appendCopsEvent,
   createCopsEvent,
   dunningPolicySchema,
+  effectiveSeats,
+  nextPeriodStart,
   nextDunningStep,
   periodAmountMinor,
   periodsStarted,
@@ -30,12 +32,16 @@ import type { PspAdapter } from "./psp/psp-adapter.js";
  * auto-debit. `invoiced` accounts are never suspended automatically. Status comes only from the
  * oldest unpaid bill, so paying it restores access with no extra step, and nothing here deletes data.
  */
-const { subscriptions, subscriptionItems, subscriptionInvoices, paymentRequests } = schema;
+const { subscriptions, subscriptionItems, subscriptionInvoices, subscriptionAmendments, paymentRequests } = schema;
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type SubscriptionRow = typeof subscriptions.$inferSelect;
 type ItemRow = typeof subscriptionItems.$inferSelect;
 type InvoiceRow = typeof subscriptionInvoices.$inferSelect;
+type AmendmentRow = typeof subscriptionAmendments.$inferSelect;
+
+const seatChanges = (amendments: AmendmentRow[]) => amendments.map((a) => ({ seq: a.seq, seats: a.seats, effective_at: a.effectiveAt }));
+const originalSeats = (items: ItemRow[]) => items.filter((i) => i.kind === "seats").reduce((sum, i) => sum + i.quantity, 0);
 
 async function loadDunningPolicy(db: Db, workspaceId: string): Promise<DunningPolicy> {
   const config = await getConfig(db, workspaceId, "dunning_policy", "default");
@@ -44,7 +50,7 @@ async function loadDunningPolicy(db: Db, workspaceId: string): Promise<DunningPo
   return parsed.data;
 }
 
-function subscriptionDto(row: SubscriptionRow, items: ItemRow[], invoices: InvoiceRow[], policy: DunningPolicy, now: Date) {
+function subscriptionDto(row: SubscriptionRow, items: ItemRow[], invoices: InvoiceRow[], amendments: AmendmentRow[], policy: DunningPolicy, now: Date) {
   const overdue = invoices.filter((i) => i.status === "open" && i.dueAt.getTime() <= now.getTime()).sort((a, b) => a.dueAt.getTime() - b.dueAt.getTime())[0];
   const state = overdue ? subscriptionStatusFor(policy, { billing: row.billing as SubscriptionBilling, oldest_overdue_due_at: overdue.dueAt, now }) : null;
   const next = overdue && state?.day != null && row.status !== "closed" ? nextDunningStep(policy, row.billing as SubscriptionBilling, overdue.dueAt, state.day) : null;
@@ -67,7 +73,11 @@ function subscriptionDto(row: SubscriptionRow, items: ItemRow[], invoices: Invoi
     renewal_opened_at: row.renewalOpenedAt?.toISOString() ?? null,
     status_changed_at: row.statusChangedAt.toISOString(),
     items: items.map((i) => ({ id: i.id, kind: i.kind, quantity: i.quantity, unit_amount_minor: Number(i.unitAmountMinor) })),
-    seats: items.filter((i) => i.kind === "seats").reduce((sum, i) => sum + i.quantity, 0),
+    /** Seats in force now. A seat amendment not yet effective shows in `amendments`, not here. */
+    seats: effectiveSeats(originalSeats(items), seatChanges(amendments), now),
+    amendments: [...amendments]
+      .sort((a, b) => a.seq - b.seq)
+      .map((a) => ({ id: a.id, seq: a.seq, seats: a.seats, term_months: a.termMonths, reason: a.reason, effective_at: a.effectiveAt.toISOString(), before: a.before, after: a.after, created_by: a.createdBy, created_at: a.createdAt.toISOString() })),
     invoices: [...invoices]
       .sort((a, b) => b.periodStart.getTime() - a.periodStart.getTime())
       .map((i) => ({
@@ -89,7 +99,8 @@ export type SubscriptionDto = ReturnType<typeof subscriptionDto>;
 async function loadDto(db: Db, row: SubscriptionRow, now: Date): Promise<SubscriptionDto> {
   const items = await db.select().from(subscriptionItems).where(eq(subscriptionItems.subscriptionId, row.id)).orderBy(asc(subscriptionItems.createdAt));
   const invoices = await db.select().from(subscriptionInvoices).where(eq(subscriptionInvoices.subscriptionId, row.id)).orderBy(desc(subscriptionInvoices.periodStart)).limit(36);
-  return subscriptionDto(row, items, invoices, await loadDunningPolicy(db, row.workspaceId), now);
+  const amendments = await db.select().from(subscriptionAmendments).where(eq(subscriptionAmendments.subscriptionId, row.id));
+  return subscriptionDto(row, items, invoices, amendments, await loadDunningPolicy(db, row.workspaceId), now);
 }
 
 /** The account's current subscription: the one that is not closed, else the most recent closed one. */
@@ -105,7 +116,11 @@ export async function getAccountSubscription(db: Db, workspaceId: string, accoun
 }
 
 /** One bill per period that has started. Safe to call again: a period is billed once. */
-async function ensurePeriodInvoices(tx: Tx, sub: SubscriptionRow, items: ItemRow[], now: Date): Promise<number> {
+async function ensurePeriodInvoices(tx: Tx, sub: SubscriptionRow, items: ItemRow[], now: Date, amendments: AmendmentRow[] = []): Promise<number> {
+  const base = originalSeats(items);
+  const changes = seatChanges(amendments);
+  // A period is billed for the seats in force when it starts: a later seat change never reprices it.
+  const priced = (at: Date) => items.map((i) => ({ quantity: i.kind === "seats" ? effectiveSeats(base, changes, at) : i.quantity, unit_amount_minor: Number(i.unitAmountMinor) }));
   const periods = periodsStarted(sub.termStart, sub.cadence as SubscriptionCadence, sub.termMonths, now);
   if (periods.length === 0) return 0;
   const rows = await tx
@@ -117,7 +132,7 @@ async function ensurePeriodInvoices(tx: Tx, sub: SubscriptionRow, items: ItemRow
         periodStart: p.start,
         periodEnd: p.end,
         dueAt: new Date(p.start.getTime() + sub.paymentTermsNetDays * 86_400_000),
-        amountMinor: periodAmountMinor(items.map((i) => ({ quantity: i.quantity, unit_amount_minor: Number(i.unitAmountMinor) })), p.months),
+        amountMinor: periodAmountMinor(priced(p.start), p.months),
         currency: sub.currency,
       }))
     )
@@ -297,7 +312,8 @@ export async function runSubscriptionBilling(db: Db, now: Date = new Date(), sco
       result.invoices_paid += paid.length;
 
       const items = await tx.select().from(subscriptionItems).where(eq(subscriptionItems.subscriptionId, sub.id));
-      result.invoices_created += await ensurePeriodInvoices(tx, sub, items, now);
+      const amendments = await tx.select().from(subscriptionAmendments).where(eq(subscriptionAmendments.subscriptionId, sub.id));
+      result.invoices_created += await ensurePeriodInvoices(tx, sub, items, now, amendments);
 
       const [overdue] = await tx
         .select({ dueAt: subscriptionInvoices.dueAt })
@@ -351,4 +367,73 @@ export async function listFailedPayments(db: Db, workspaceId: string, now: Date 
     .limit(500);
   const dtos = await Promise.all(rows.map((r) => loadDto(db, r, now)));
   return dtos.sort((a, b) => (b.dunning?.day ?? 0) - (a.dunning?.day ?? 0));
+}
+
+/**
+ * A change of seats or term (Bible p.37). It is appended and never edited; the original contract
+ * and earlier amendments stay as they were. Seats change with the next billing period, with no
+ * proration; a new term length moves the renewal date at once.
+ */
+export async function amendSubscription(db: Db, ctx: CommercialContext, subscriptionId: string, input: { seats?: number; term_months?: number; reason: string }, now: Date = new Date()): Promise<SubscriptionDto> {
+  if (input.seats == null && input.term_months == null) {
+    throw new CommercialError("VALIDATION_FAILED", "Give seats, term_months or both", { fields: [{ path: "seats", code: "required", message: "Give seats, term_months or both" }] });
+  }
+  await db.transaction(async (tx) => {
+    const [sub] = await tx
+      .select()
+      .from(subscriptions)
+      .where(and(eq(subscriptions.id, subscriptionId), eq(subscriptions.workspaceId, ctx.workspaceId)))
+      .for("update")
+      .limit(1);
+    if (!sub) throw new CommercialError("NOT_FOUND", "Subscription not found");
+    if (sub.status === "closed") throw new CommercialError("BUSINESS_STATE_CONFLICT", "A closed subscription cannot be amended", { status: sub.status });
+    const items = await tx.select().from(subscriptionItems).where(eq(subscriptionItems.subscriptionId, sub.id));
+    const earlier = await tx.select().from(subscriptionAmendments).where(eq(subscriptionAmendments.subscriptionId, sub.id));
+    // Seats as they will stand once every earlier amendment has taken effect.
+    const seatsBefore = effectiveSeats(originalSeats(items), seatChanges(earlier), new Date(8_640_000_000_000_000));
+
+    let effectiveAt = now;
+    if (input.seats != null) {
+      const next = nextPeriodStart(sub.termStart, sub.cadence as SubscriptionCadence, input.term_months ?? sub.termMonths, now);
+      if (!next) throw new CommercialError("BUSINESS_STATE_CONFLICT", "There is no later billing period in this term for a seat change to start in; change seats at renewal or extend the term", { term_end: sub.termEnd.toISOString() });
+      effectiveAt = next;
+    }
+    let termEnd = sub.termEnd;
+    if (input.term_months != null && input.term_months !== sub.termMonths) {
+      termEnd = addMonthsUtc(sub.termStart, input.term_months);
+      if (termEnd.getTime() <= now.getTime()) throw new CommercialError("VALIDATION_FAILED", "The new term would already be over", { fields: [{ path: "term_months", code: "too_short", message: "The new term would already be over" }] });
+      await tx.update(subscriptions).set({ termMonths: input.term_months, termEnd, updatedAt: now }).where(eq(subscriptions.id, sub.id));
+    }
+    const before = { seats: seatsBefore, term_months: sub.termMonths, renews_at: sub.termEnd.toISOString() };
+    const after = { seats: input.seats ?? seatsBefore, term_months: input.term_months ?? sub.termMonths, renews_at: termEnd.toISOString() };
+    const [row] = await tx
+      .insert(subscriptionAmendments)
+      .values({
+        workspaceId: ctx.workspaceId,
+        subscriptionId: sub.id,
+        seq: earlier.reduce((max, a) => Math.max(max, a.seq), 0) + 1,
+        seats: input.seats ?? null,
+        termMonths: input.term_months ?? null,
+        reason: input.reason,
+        effectiveAt,
+        before,
+        after,
+        createdBy: ctx.userId,
+      })
+      .returning({ id: subscriptionAmendments.id });
+    await writeCopsAudit(tx, {
+      tenantId: ctx.workspaceId,
+      actor: { type: "user", id: ctx.userId },
+      entityType: "subscription",
+      entityId: sub.id,
+      action: "subscription.amended",
+      before,
+      after: { ...after, amendment_id: row!.id, effective_at: effectiveAt.toISOString() },
+      reason: input.reason,
+      correlationId: ctx.requestId,
+      sourceChannel: "api",
+    });
+  });
+  const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, subscriptionId)).limit(1);
+  return loadDto(db, row!, now);
 }

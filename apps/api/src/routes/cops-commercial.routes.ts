@@ -48,7 +48,7 @@ import {
 import type { PspAdapter } from "../services/psp/psp-adapter.js";
 import { createMockEsignAdapter, type EsignAdapter } from "../services/esign/esign-adapter.js";
 import { handleEsignWebhook, listEnvelopes, sendEnvelope } from "../services/cops-esign.service.js";
-import { createSubscription, getAccountSubscription, issueInvoicePaymentLink, listFailedPayments, markInvoicePaid } from "../services/cops-subscriptions.service.js";
+import { amendSubscription, createSubscription, getAccountSubscription, issueInvoicePaymentLink, listFailedPayments, markInvoicePaid } from "../services/cops-subscriptions.service.js";
 import { applyPaidCreditPurchases } from "../services/cops-credits.service.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -154,6 +154,9 @@ const subscriptionSchema = z
     payment_terms_net_days: z.number().int().min(0).max(365).optional(),
     start_at: z.string().datetime().optional(),
   })
+  .strict();
+const amendmentSchema = z
+  .object({ seats: z.number().int().min(1).max(100_000).optional(), term_months: z.number().int().min(1).max(120).optional(), reason: z.string().trim().min(1, "reason is required").max(1000) })
   .strict();
 const markPaidSchema = z.object({ reason: z.string().trim().min(1, "reason is required").max(1000) }).strict();
 
@@ -316,6 +319,19 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
     if (bad) return bad;
     return { data: await getAccountSubscription(db, ctx.workspaceId, request.params.id) };
   });
+
+  app.post<IdOnly>(
+    "/subscriptions/:id/amendments",
+    { preHandler: billingWriteGate },
+    withCopsIdempotentReply<IdOnly>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      const parsed = amendmentSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(reply, ctx.requestId, () => amendSubscription(db, ctx, request.params.id, parsed.data), (subscription) => reply.status(201).send({ data: subscription }));
+    })
+  );
 
   app.post<IdOnly>(
     "/subscription-invoices/:id/payment-link",

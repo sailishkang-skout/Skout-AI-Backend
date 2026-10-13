@@ -85,3 +85,23 @@ export function nextDunningStep(policy: DunningPolicy, billing: SubscriptionBill
   const next = policy.stages.find((s) => s.from_day > day);
   return next ? { status: next.state, at: new Date(dueAt.getTime() + next.from_day * 86_400_000) } : null;
 }
+
+// --- amendments ------------------------------------------------------------------------------------
+
+/** Seats in force at a moment: the latest seat amendment already effective then, else the original count. */
+export function effectiveSeats(original: number, amendments: Array<{ seats: number | null; effective_at: Date; seq: number }>, at: Date): number {
+  const inForce = amendments.filter((a) => a.seats != null && a.effective_at.getTime() <= at.getTime()).sort((a, b) => b.seq - a.seq)[0];
+  return inForce?.seats ?? original;
+}
+
+/**
+ * When a seat change made at `now` starts: the first billing period that begins after `now`. Seat
+ * changes are never prorated inside a period. Null when the term has no later period.
+ */
+export function nextPeriodStart(termStart: Date, cadence: SubscriptionCadence, termMonths: number, now: Date): Date | null {
+  for (let i = 0; ; i++) {
+    const period = subscriptionPeriod(termStart, cadence, termMonths, i);
+    if (!period) return null;
+    if (period.start.getTime() > now.getTime()) return period.start;
+  }
+}

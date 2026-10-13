@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { COMMERCIAL_POLICY_DEFAULTS } from "./cops-commercial-policy.js";
-import { addMonthsUtc, nextDunningStep, periodAmountMinor, periodsStarted, subscriptionPeriod, subscriptionStatusFor } from "./cops-subscriptions.js";
+import { addMonthsUtc, effectiveSeats, nextDunningStep, nextPeriodStart, periodAmountMinor, periodsStarted, subscriptionPeriod, subscriptionStatusFor } from "./cops-subscriptions.js";
 
 const at = (iso: string) => new Date(iso);
 const iso = (d: Date | undefined) => d?.toISOString();
@@ -67,5 +67,30 @@ describe("COPS-08 subscription status from the oldest unpaid bill", () => {
     expect(nextDunningStep(policy, "payment_link", due, 20)).toEqual({ status: "closed", at: at("2026-11-15T00:00:00Z") });
     expect(nextDunningStep(policy, "payment_link", due, 60)).toBeNull();
     expect(nextDunningStep(policy, "invoiced", due, 3)).toBeNull();
+  });
+});
+
+describe("COPS-08 amendments", () => {
+  const start = at("2026-10-13T00:00:00Z");
+
+  it("a seat change starts with the next billing period, never inside one", () => {
+    expect(iso(nextPeriodStart(start, "monthly", 12, at("2026-10-20T00:00:00Z")) ?? undefined)).toBe("2026-11-13T00:00:00.000Z");
+    expect(iso(nextPeriodStart(start, "monthly", 12, at("2026-10-01T00:00:00Z")) ?? undefined)).toBe("2026-10-13T00:00:00.000Z");
+    // Annual billing with one period: there is no later period in this term.
+    expect(nextPeriodStart(start, "annual", 12, at("2026-10-20T00:00:00Z"))).toBeNull();
+    expect(iso(nextPeriodStart(start, "annual", 24, at("2026-10-20T00:00:00Z")) ?? undefined)).toBe("2027-10-13T00:00:00.000Z");
+  });
+
+  it("seats in force are the latest amendment already effective, else the original", () => {
+    const amendments = [
+      { seq: 1, seats: 15, effective_at: at("2026-11-13T00:00:00Z") },
+      { seq: 2, seats: null, effective_at: at("2026-11-20T00:00:00Z") },
+      { seq: 3, seats: 12, effective_at: at("2026-12-13T00:00:00Z") },
+    ];
+    expect(effectiveSeats(10, amendments, at("2026-11-12T23:59:59Z"))).toBe(10);
+    expect(effectiveSeats(10, amendments, at("2026-11-13T00:00:00Z"))).toBe(15);
+    expect(effectiveSeats(10, amendments, at("2026-12-01T00:00:00Z"))).toBe(15);
+    expect(effectiveSeats(10, amendments, at("2026-12-13T00:00:00Z"))).toBe(12);
+    expect(effectiveSeats(10, [], at("2026-12-13T00:00:00Z"))).toBe(10);
   });
 });
