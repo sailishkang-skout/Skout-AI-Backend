@@ -98,6 +98,16 @@ export const ApprovalDecidedPayload = z.object({
   reason: z.string().nullable(),
 });
 
+/** COPS-08: a subscription moved along the failed-payment timeline, or back to active after payment. */
+export const SubscriptionStatusChangedPayload = z.object({
+  subscription_id: z.string().uuid(),
+  account_id: z.string().uuid(),
+  from: z.enum(["active", "past_due", "restricted", "suspended", "closed"]),
+  to: z.enum(["active", "past_due", "restricted", "suspended", "closed"]),
+  /** Days since the due date of the oldest unpaid bill; null when nothing is unpaid. */
+  day: z.number().int().min(0).nullable(),
+});
+
 /** Event type → payload schema. The single registry consumers and outbox writers use. */
 export const COPS_PHASE1_EVENTS = {
   OpportunityQualified: OpportunityQualifiedPayload,
@@ -123,6 +133,7 @@ export const COPS_PHASE1_EVENTS = {
   LifecycleTransitioned: LifecycleTransitionedPayload,
   ApprovalRequested: ApprovalRequestedPayload,
   ApprovalDecided: ApprovalDecidedPayload,
+  SubscriptionStatusChanged: SubscriptionStatusChangedPayload,
 } as const;
 
 export type CopsPhase1EventType = keyof typeof COPS_PHASE1_EVENTS;

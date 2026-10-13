@@ -2,6 +2,7 @@ import { Worker, Queue } from "bullmq";
 import { randomUUID } from "node:crypto";
 import { createDb } from "@skout/db";
 import { createLogger, withSpan } from "@skout/observability";
+import { runSubscriptionBilling } from "../services/cops-subscriptions.service.js";
 import type { Env } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
 import { runOnboardingEvaluator } from "../services/cops-onboarding-signals.service.js";
@@ -45,6 +46,10 @@ export async function startCopsOnboardingEvaluatorWorker(config: Env) {
       await withSpan("cops-onboarding-evaluator.tick", async () => {
         const result = await runOnboardingEvaluator(db, deps, randomUUID());
         log.info("onboarding evaluator pass finished", result);
+        // COPS-08: bills for periods that have started, and subscription status from unpaid bills.
+        await runSubscriptionBilling(db)
+          .then((billing) => log.info("subscription billing pass finished", { ...billing, status_changes: billing.status_changes.length }))
+          .catch((err) => log.error("subscription billing pass failed", { err }));
       });
       // COPS-07: the same tick reports the platform health numbers that the log monitors alert on.
       // A failure here must not fail the evaluator job.

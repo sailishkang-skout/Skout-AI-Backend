@@ -39,6 +39,8 @@ const DEFAULT_EVENT_ROLES: Partial<Record<CopsPhase1EventType, readonly CopsNoti
   LifecycleTransitioned: ["cs"],
   // COPS-08: the outcome goes back to the people who own the deal.
   ApprovalDecided: ["sales", "sales_manager"],
+  // COPS-08: a failed payment, a restriction or a suspension is for Finance and the account's CS owner.
+  SubscriptionStatusChanged: ["finance", "cs"],
 };
 
 /** Approver slot to the roles that can decide it. An Admin or the owner decides the executive slot. */

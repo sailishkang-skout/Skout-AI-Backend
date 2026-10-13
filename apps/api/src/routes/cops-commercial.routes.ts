@@ -14,7 +14,7 @@ import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
  *     query, and the payment webhook resolves the account inside its own transaction.
  *   - Review date: revisit when apps/crm's internal API covers batched reads
  */
-import { APPROVER_ROLES, PRICE_BASES, BILLING_CADENCES, COMMERCIAL_GATE_POLICIES, COMMERCIAL_LINE_KINDS, copsErrorBody, copsErrorStatus, resolveCorrelationId } from "@skout/shared";
+import { APPROVER_ROLES, PRICE_BASES, SUBSCRIPTION_BILLING, SUBSCRIPTION_CADENCES, BILLING_CADENCES, COMMERCIAL_GATE_POLICIES, COMMERCIAL_LINE_KINDS, copsErrorBody, copsErrorStatus, resolveCorrelationId } from "@skout/shared";
 import { getMemberPermissions } from "@skout/auth";
 import { copsIdempotencyStore, requireAnyCopsPermission } from "../services/cops-platform.service.js";
 import { withCopsIdempotentReply, type CopsCapturingReply } from "../services/cops-idempotent.js";
@@ -48,6 +48,7 @@ import {
 import type { PspAdapter } from "../services/psp/psp-adapter.js";
 import { createMockEsignAdapter, type EsignAdapter } from "../services/esign/esign-adapter.js";
 import { handleEsignWebhook, listEnvelopes, sendEnvelope } from "../services/cops-esign.service.js";
+import { createSubscription, getAccountSubscription, issueInvoicePaymentLink, listFailedPayments, markInvoicePaid } from "../services/cops-subscriptions.service.js";
 import { applyPaidCreditPurchases } from "../services/cops-credits.service.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -141,6 +142,20 @@ const envelopeSchema = z
     message: z.string().max(5000).optional(),
   })
   .strict();
+
+const subscriptionSchema = z
+  .object({
+    opportunity_id: z.string().regex(UUID),
+    seats: z.number().int().min(1).max(100_000),
+    cadence: z.enum(SUBSCRIPTION_CADENCES),
+    term_months: z.number().int().min(1).max(120),
+    billing: z.enum(SUBSCRIPTION_BILLING).optional(),
+    seat_month_minor: z.number().int().min(1).max(1_000_000_000).optional(),
+    payment_terms_net_days: z.number().int().min(0).max(365).optional(),
+    start_at: z.string().datetime().optional(),
+  })
+  .strict();
+const markPaidSchema = z.object({ reason: z.string().trim().min(1, "reason is required").max(1000) }).strict();
 
 const approvalDecisionSchema = z
   .object({ role: z.enum(APPROVER_ROLES), decision: z.enum(["approved", "rejected"]), comment: z.string().trim().max(2000).nullable().optional() })
@@ -276,6 +291,70 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
       return run(reply, ctx.requestId, () => decideApproval(db, ctx, request.params.id, parsed.data), (approval) => ({ data: approval }));
     })
   );
+
+  // ---- Subscriptions (COPS-08) ----
+
+  const billingWriteGate = requireAnyCopsPermission(["billing:write"], perms);
+  const billingReadGate = requireAnyCopsPermission(["billing:read", "commercial:read"], perms);
+
+  app.post<IdOnly>(
+    "/accounts/:id/subscription",
+    { preHandler: billingWriteGate },
+    withCopsIdempotentReply<IdOnly>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      const parsed = subscriptionSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(reply, ctx.requestId, () => createSubscription(db, ctx, request.params.id, parsed.data), (subscription) => reply.status(201).send({ data: subscription }));
+    })
+  );
+
+  app.get<IdOnly>("/accounts/:id/subscription", { preHandler: billingReadGate }, async (request, reply) => {
+    const ctx = ctxOf(request);
+    const bad = checkId(reply as unknown as Reply, ctx.requestId, request.params.id);
+    if (bad) return bad;
+    return { data: await getAccountSubscription(db, ctx.workspaceId, request.params.id) };
+  });
+
+  app.post<IdOnly>(
+    "/subscription-invoices/:id/payment-link",
+    { preHandler: paymentWriteGate },
+    withCopsIdempotentReply<IdOnly>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      return run(
+        reply,
+        ctx.requestId,
+        async () => {
+          const linked = await issueInvoicePaymentLink(db, psp, ctx, request.params.id);
+          const [payment] = await loadPaymentRequests(db, ctx.workspaceId, { id: linked.payment_request_id });
+          return { ...linked, payment_request: payment };
+        },
+        (data) => reply.status(201).send({ data })
+      );
+    })
+  );
+
+  app.post<IdOnly>(
+    "/subscription-invoices/:id/mark-paid",
+    { preHandler: billingWriteGate },
+    withCopsIdempotentReply<IdOnly>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      const parsed = markPaidSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(reply, ctx.requestId, () => markInvoicePaid(db, ctx, request.params.id, parsed.data.reason), () => ({ data: { ok: true } }));
+    })
+  );
+
+  /** Finance: accounts with an unpaid bill past its due date, worst first. */
+  app.get("/finance/failed-payments", { preHandler: requireAnyCopsPermission(["billing:read"], perms) }, async (request) => {
+    const ctx = ctxOf(request);
+    return { data: await listFailedPayments(db, ctx.workspaceId) };
+  });
 
   // ---- E-signature (COPS-08) ----
 
