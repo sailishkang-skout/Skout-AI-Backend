@@ -235,3 +235,56 @@ export const commercialGates = pgTable("commercial_gates", {
   firedPolicy: text("fired_policy"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** COPS-08 approval engine (Bible p.34): one request per proposal version over a threshold. */
+export const approvals = pgTable(
+  "approvals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    opportunityId: uuid("opportunity_id")
+      .notNull()
+      .references(() => deals.id, { onDelete: "cascade" }),
+    proposalId: uuid("proposal_id")
+      .notNull()
+      .references(() => proposals.id, { onDelete: "cascade" }),
+    proposalVersion: integer("proposal_version").notNull(),
+    /** pending | approved | rejected | voided | expired */
+    status: text("status").notNull().default("pending"),
+    requiredApprovers: jsonb("required_approvers").notNull(),
+    matchedRules: jsonb("matched_rules").notNull(),
+    /** The material terms the approval was requested for; a change to any of them voids it. */
+    terms: jsonb("terms").notNull(),
+    /** Version of the approval_policy config used; 0 is the built-in default. */
+    policyVersion: integer("policy_version").notNull().default(0),
+    requestedBy: uuid("requested_by").references(() => users.id, { onDelete: "set null" }),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    statusReason: text("status_reason"),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (t) => [index("approvals_workspace_status_idx").on(t.workspaceId, t.status), index("approvals_proposal_idx").on(t.proposalId)]
+);
+
+export const approvalDecisions = pgTable(
+  "approval_decisions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    approvalId: uuid("approval_id")
+      .notNull()
+      .references(() => approvals.id, { onDelete: "cascade" }),
+    approverRole: text("approver_role").notNull(),
+    /** pending | approved | rejected */
+    decision: text("decision").notNull().default("pending"),
+    decidedBy: uuid("decided_by").references(() => users.id, { onDelete: "set null" }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    comment: text("comment"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("approval_decisions_approval_role_unique").on(t.approvalId, t.approverRole), index("approval_decisions_workspace_idx").on(t.workspaceId)]
+);

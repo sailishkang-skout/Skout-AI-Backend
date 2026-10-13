@@ -876,6 +876,13 @@
       "when": 1795400000000,
       "tag": "0123_cops08_proposal_approval_terms",
       "breakpoints": true
+    },
+    {
+      "idx": 125,
+      "version": "7",
+      "when": 1795500000000,
+      "tag": "0124_cops08_approvals",
+      "breakpoints": true
     }
   ]
 }
