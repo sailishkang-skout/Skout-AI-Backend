@@ -834,6 +834,13 @@
       "when": 1794800000000,
       "tag": "0117_enrichment_provider_jobs",
       "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "7",
+      "when": 1794900000000,
+      "tag": "0118_enrichment_campaigns",
+      "breakpoints": true
     }
   ]
 }

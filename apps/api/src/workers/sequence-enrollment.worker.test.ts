@@ -77,8 +77,16 @@ vi.mock("../services/prospect-resolver.service.js", () => ({
   resolveProspectFields: vi.fn(),
 }));
 
+// ENR-05 — these tests exercise ordinary sequence enrollments, which the campaign gate lets
+// through; the gate and outcome hook have their own tests in enrichment-campaign.routes.test.ts.
+vi.mock("../services/enrichment/campaign-gate.js", () => ({
+  campaignSendGate: vi.fn(async () => ({ allowed: true })),
+  recordCampaignOutcome: vi.fn(async () => {}),
+}));
+
 vi.mock("../services/suppression.service.js", () => ({
   isSuppressed: vi.fn(),
+  addSuppression: vi.fn(async () => ({})),
   buildUnsubscribeUrl: vi.fn().mockReturnValue("https://api.skout.ai/api/v1/unsubscribe/tok"),
 }));
 
@@ -193,6 +201,7 @@ import { createDb } from "@skout/db";
 import { isBusinessHour } from "../utils/scheduling.js";
 import { resolveProspectFields } from "../services/prospect-resolver.service.js";
 import { isSuppressed } from "../services/suppression.service.js";
+import { campaignSendGate } from "../services/enrichment/campaign-gate.js";
 import { pickNextInbox, markInboxUsed } from "../services/inbox-rotation.service.js";
 import { buildEmailSenderFromInbox } from "../services/email-sender.service.js";
 import { renderTemplate } from "../services/template-render.service.js";
@@ -753,6 +762,36 @@ describe("sequence-enrollment worker — email step execution", () => {
     expect(updateSet).toHaveBeenCalledWith(
       expect.objectContaining({ status: "skipped", failureReason: "suppressed" })
     );
+  });
+
+  it("does not send a campaign email whose approval is not on record (ENR-05)", async () => {
+    vi.mocked(resolveProspectFields).mockResolvedValue({ prospectId: "p-1", email: "prospect@example.com", firstName: "Ada", lastName: "Lovelace", fullName: "Ada Lovelace" });
+    vi.mocked(isSuppressed).mockResolvedValue(false);
+    vi.mocked(campaignSendGate).mockResolvedValueOnce({ allowed: false, reason: "campaign_approval_required", retry: false });
+
+    const { select, update, updateSet } = makeWorkerDb({ pendingStep: EMAIL_STEP_ROW });
+    const processor = await getProcessor({ select, update, transaction: vi.fn() });
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(campaignSendGate).toHaveBeenCalledWith(expect.anything(), expect.anything(), JOB_PAYLOAD.workspaceId, JOB_PAYLOAD.enrollmentId, "prospect@example.com");
+    expect(pickNextInbox).not.toHaveBeenCalled();
+    expect(buildEmailSenderFromInbox).not.toHaveBeenCalled();
+    expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({ status: "skipped", failureReason: "campaign_approval_required" }));
+  });
+
+  it("holds a campaign email, without sending, while the campaign is being re-reviewed (ENR-05)", async () => {
+    vi.mocked(resolveProspectFields).mockResolvedValue({ prospectId: "p-1", email: "prospect@example.com", firstName: "Ada", lastName: "Lovelace", fullName: "Ada Lovelace" });
+    vi.mocked(isSuppressed).mockResolvedValue(false);
+    vi.mocked(campaignSendGate).mockResolvedValueOnce({ allowed: false, reason: "campaign_re_review_required", retry: true });
+
+    const { select, update, updateSet } = makeWorkerDb({ pendingStep: EMAIL_STEP_ROW });
+    const processor = await getProcessor({ select, update, transaction: vi.fn() });
+    await processor({ data: JOB_PAYLOAD, attemptsMade: 1 });
+
+    expect(pickNextInbox).not.toHaveBeenCalled();
+    expect(buildEmailSenderFromInbox).not.toHaveBeenCalled();
+    expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({ failureReason: "campaign_re_review_required", scheduledAt: expect.any(Date) }));
+    expect(updateSet).not.toHaveBeenCalledWith(expect.objectContaining({ status: "executed" }));
   });
 
   it("marks the step skipped (no retry) when another contact at the account already replied positively", async () => {

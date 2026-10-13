@@ -164,21 +164,142 @@ export const jobChangeEvents = pgTable("job_change_events", {
   notified: boolean("notified").notNull().default(false),
 });
 
-// Enrichment campaigns for bulk operations
-export const enrichmentCampaigns = pgTable("enrichment_campaigns", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  workspaceId: uuid("workspace_id")
-    .notNull()
-    .references(() => workspaces.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  description: text("description"),
-  totalProspects: integer("total_prospects").notNull().default(0),
-  completedProspects: integer("completed_prospects").notNull().default(0),
-  status: text("status").notNull().default("draft"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  startedAt: timestamp("started_at", { withTimezone: true }),
-  completedAt: timestamp("completed_at", { withTimezone: true }),
-});
+/**
+ * ENR-05 — a saved audience: segmentation filters over captured people, plus the static list
+ * its members were last written to, so the audience can feed existing lists and sequences.
+ */
+export const enrichmentAudiences = pgTable(
+  "enrichment_audiences",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    filters: jsonb("filters").notNull().default({}),
+    listId: uuid("list_id").references(() => lists.id, { onDelete: "set null" }),
+    /** Counts at the last save, and outcome totals from campaigns that used the audience. */
+    stats: jsonb("stats").notNull().default({}),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("enrichment_audiences_workspace_idx").on(table.workspaceId, table.updatedAt)]
+);
+
+/**
+ * An evidence-to-sequence campaign (ENR-05): an audience, a composed draft, a recorded human
+ * approval, and — only after that approval — a sequence the approved recipients are enrolled
+ * in. Status: "draft" | "pending_review" | "approved" | "rejected" | "changes_required" |
+ * "launched" | "dismissed". Nothing is enrolled or sent before "approved".
+ */
+export const enrichmentCampaigns = pgTable(
+  "enrichment_campaigns",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    totalProspects: integer("total_prospects").notNull().default(0),
+    completedProspects: integer("completed_prospects").notNull().default(0),
+    status: text("status").notNull().default("draft"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    audienceId: uuid("audience_id").references(() => enrichmentAudiences.id, { onDelete: "set null" }),
+    /** The sequence created at launch. Null until then. */
+    sequenceId: uuid("sequence_id"),
+    /** "manual" | "job_change" — a job change only ever creates a draft for review. */
+    trigger: text("trigger").notNull().default("manual"),
+    sourceChangeEventId: uuid("source_change_event_id"),
+    /** Step copy: `{ schemaVersion, composer, steps: [{ order, delayDays, subject, body }] }`. */
+    draft: jsonb("draft").notNull().default({}),
+    /** Hash of the copy as approved. Each recipient carries the hash of what was approved for them. */
+    approvedFingerprint: text("approved_fingerprint"),
+    /** Lawful basis the approver recorded for recipients with no consent record yet. */
+    consentBasis: text("consent_basis"),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    submittedBy: uuid("submitted_by").references(() => users.id, { onDelete: "set null" }),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    approvedBy: uuid("approved_by").references(() => users.id, { onDelete: "set null" }),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    reviewComment: text("review_comment"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("enrichment_campaigns_workspace_status_idx").on(table.workspaceId, table.status, table.updatedAt),
+    index("enrichment_campaigns_sequence_idx").on(table.sequenceId),
+  ]
+);
+
+/**
+ * One person in a campaign: whether they may be contacted and why not, the claims proposed for
+ * them (each with its evidence reference), the reviewer's decision, and what happened after.
+ */
+export const enrichmentCampaignRecipients = pgTable(
+  "enrichment_campaign_recipients",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => enrichmentCampaigns.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    prospectId: text("prospect_id").notNull(),
+    fullName: text("full_name"),
+    email: text("email"),
+    /** "eligible" | "excluded" */
+    eligibility: text("eligibility").notNull().default("excluded"),
+    exclusionReason: text("exclusion_reason"),
+    emailVerification: text("email_verification").notNull().default("unverified"),
+    /** "active" | "missing" */
+    consentStatus: text("consent_status").notNull().default("missing"),
+    /** "included" | "removed" — the reviewer's choice; an excluded person cannot be included. */
+    decision: text("decision").notNull().default("included"),
+    decisionComment: text("decision_comment"),
+    /** `{ reason, talkingPoints, flagged, opening }` — every claim carries its evidence reference. */
+    claims: jsonb("claims").notNull().default({}),
+    /** Hash of this person's address and the evidence behind their claims, as approved. Null = not covered by an approval. */
+    approvedFingerprint: text("approved_fingerprint"),
+    enrollmentId: uuid("enrollment_id"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    repliedAt: timestamp("replied_at", { withTimezone: true }),
+    bouncedAt: timestamp("bounced_at", { withTimezone: true }),
+    unsubscribedAt: timestamp("unsubscribed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("enrichment_campaign_recipients_campaign_prospect_unique").on(table.campaignId, table.prospectId),
+    index("enrichment_campaign_recipients_enrollment_idx").on(table.enrollmentId),
+    index("enrichment_campaign_recipients_workspace_prospect_idx").on(table.workspaceId, table.prospectId),
+  ]
+);
+
+/** The approval record: who decided what, when, with which comment, over which fingerprint. */
+export const enrichmentCampaignReviews = pgTable(
+  "enrichment_campaign_reviews",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => enrichmentCampaigns.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    reviewerId: uuid("reviewer_id").references(() => users.id, { onDelete: "set null" }),
+    /** "approved" | "rejected" | "invalidated" (evidence or recipients changed after approval) */
+    decision: text("decision").notNull(),
+    comment: text("comment"),
+    fingerprint: text("fingerprint"),
+    recipientCount: integer("recipient_count").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("enrichment_campaign_reviews_campaign_idx").on(table.campaignId, table.createdAt)]
+);
 
 export const enrichmentAttempts = pgTable(
   "enrichment_attempts",

@@ -10,6 +10,7 @@ import { enrichmentRoutes } from "./enrichment.routes.js";
 import { enrichmentCaptureRoutes } from "./enrichment-capture.routes.js";
 import { enrichmentResearchRoutes } from "./enrichment-research.routes.js";
 import { enrichmentProviderRoutes } from "./enrichment-provider.routes.js";
+import { enrichmentCampaignRoutes } from "./enrichment-campaign.routes.js";
 import { icpRoutes } from "./icp.routes.js";
 import { smartListRoutes } from "./smart-list.routes.js";
 import { scrapeRoutes } from "./scrape.routes.js";
@@ -98,6 +99,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(enrichmentCaptureRoutes);
     await v1.register(enrichmentResearchRoutes);
     await v1.register(enrichmentProviderRoutes);
+    await v1.register(enrichmentCampaignRoutes);
     await v1.register(icpRoutes);
     await v1.register(smartListRoutes);
     await v1.register(scrapeRoutes);

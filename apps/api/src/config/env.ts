@@ -333,6 +333,12 @@ const envSchema = z
     ENRICHMENT_REQUEST_TIMEOUT_MS: z.coerce.number().default(8000),
     ENRICHMENT_PHONE_SCORE_GATE: z.coerce.number().default(80),
     ENRICHMENT_AI_TIMEOUT_MS: z.coerce.number().default(15000),
+    // --- ENR-05: evidence campaigns. ---
+    /**
+     * Outside production, an evidence-campaign email is sent only to these addresses or
+     * `@domain`s (comma-separated). Empty = campaigns send nothing outside production.
+     */
+    ENRICHMENT_CAMPAIGN_SANDBOX_RECIPIENTS: z.string().optional(),
     // --- ENR-04: provider enrichment jobs. ---
     /**
      * Comma-separated provider ids background enrichment may call in this environment (e.g.
