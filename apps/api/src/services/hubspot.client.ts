@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 const HUBSPOT_AUTH_URL = "https://app.hubspot.com/oauth/authorize";
 const HUBSPOT_TOKEN_URL = "https://api.hubapi.com/oauth/v1/token";
@@ -591,6 +591,39 @@ export function isHubSpotRetryableError(err: unknown): boolean {
   if (!match) return false;
   const status = Number(match[1]);
   return status === 429 || status >= 500;
+}
+
+/**
+ * COPS-09: the HubSpot account (portal) id the token belongs to, from HubSpot's token info
+ * endpoint. Webhook events carry this id, so it is what maps an event to a Skout workspace.
+ */
+export async function fetchHubSpotPortalId(accessToken: string, fetchImpl: typeof fetch = fetch): Promise<string> {
+  const res = await fetchImpl(`https://api.hubapi.com/oauth/v1/access-tokens/${encodeURIComponent(accessToken)}`, { signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) throw new Error(`HubSpot token info failed: ${res.status}`);
+  const body = (await res.json()) as { hub_id?: number | string };
+  if (body.hub_id == null || body.hub_id === "") throw new Error("HubSpot token info has no hub_id");
+  return String(body.hub_id);
+}
+
+/** Five minutes either way, as HubSpot recommends for v3 signatures. */
+export const HUBSPOT_SIGNATURE_MAX_AGE_MS = 5 * 60_000;
+
+/**
+ * HubSpot webhook v3 signature: base64 HMAC-SHA256, keyed with the client secret, of
+ * method + full request URI + body + timestamp (X-HubSpot-Request-Timestamp, in ms). Unlike v1 it
+ * covers the URL and expires, so a captured request cannot be replayed later or elsewhere.
+ */
+export function verifyHubSpotWebhookSignatureV3(
+  clientSecret: string,
+  input: { method: string; uri: string; rawBody: string; timestamp: string | undefined; signature: string | undefined; nowMs?: number }
+): boolean {
+  if (!input.signature || !input.timestamp) return false;
+  const ts = Number(input.timestamp);
+  if (!Number.isFinite(ts) || Math.abs((input.nowMs ?? Date.now()) - ts) > HUBSPOT_SIGNATURE_MAX_AGE_MS) return false;
+  const expected = createHmac("sha256", clientSecret).update(`${input.method}${input.uri}${input.rawBody}${input.timestamp}`, "utf8").digest("base64");
+  const a = Buffer.from(expected);
+  const b = Buffer.from(input.signature);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 /** HubSpot webhook v1 signature: sha256(clientSecret + body). */

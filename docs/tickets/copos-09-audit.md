@@ -79,6 +79,16 @@ Acceptance criteria and how each will be proven:
 7. Initial import and scheduled poll; per-account opt-in.
 8. Frontend: integrations page with health, mapping editor, conflict queue, record history with replay, DLQ view.
 
+### Progress
+
+- **Step 2 done (webhook hardening).** The workspace now comes from each event's `portalId`
+  (the URL's `workspaceId` is ignored), v3 signatures are checked with their timestamp when
+  HubSpot sends them (needs `API_PUBLIC_URL`), v1 otherwise, and each event id runs once
+  (`cops_processed_events`, consumer `hubspot-webhook`; no migration). Found on the way: the OAuth
+  callback stored an HMAC of the access token as the portal id, so no event could be matched to a
+  workspace. The callback now stores HubSpot's real `hub_id`, and connections made before the fix
+  get it on their next sync.
+
 ## 5. Out of scope
 
 - A second connector (Salesforce, Pipedrive, Zoho, Dynamics). The framework is built so one can be added, but only HubSpot ships here.

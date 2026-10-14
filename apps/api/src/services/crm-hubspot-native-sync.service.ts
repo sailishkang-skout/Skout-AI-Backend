@@ -15,6 +15,7 @@ import { searchHubSpotContactsModifiedSince, searchHubSpotDealsModifiedSince } f
 import { hubSpotContactToSnapshot } from "./crm.service.js";
 import { recordEvidence } from "./evidence.service.js";
 import { getHubSpotConnectionId, upsertCrmNativeLink, withSyncCheckpoint } from "./crm-sync-state.service.js";
+import { ensureHubSpotPortalId } from "./crm-hubspot-webhook.service.js";
 
 const log = createLogger("crm-hubspot-native-sync");
 const { contacts, companies, deals, pipelines, pipelineStages } = schema;
@@ -69,6 +70,8 @@ export async function syncHubSpotContactsToNativeCrm(
   const tokens = await ensureFreshTokens(db, config, credentialsStore, workspaceId);
   const connectionId = await getHubSpotConnectionId(db, workspaceId);
   if (!connectionId) throw new HttpError("hubspot_not_connected", 400);
+  // COPS-09: connections from before the fix hold a placeholder portal id; webhooks need the real one.
+  await ensureHubSpotPortalId(db, workspaceId, tokens.accessToken).catch((err) => log.warn("could not record the HubSpot portal id", { err, workspaceId }));
 
   return withSyncCheckpoint(db, workspaceId, connectionId, "contact", async (sinceIso) => {
     const hubspotContacts = await searchHubSpotContactsModifiedSince(tokens.accessToken, sinceIso, maxContacts);
