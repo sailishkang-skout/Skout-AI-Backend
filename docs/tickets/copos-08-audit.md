@@ -236,6 +236,17 @@ contract or a paid payment request. The mark is on `commercial_gates`. The engin
 rules such a deal matches, but requires nothing, and the gate ignores approvals for it. The backfill
 runs once: a second run marks nothing, so deals sent later are never grandfathered.
 
+## 10a. Decisions from Aditya (2026-10-14) and what was built
+
+| Topic | Decision | State |
+|---|---|---|
+| Renewal opportunities | Created directly in the CRM `deals` table, as ADR 0003 says; no parallel renewals table | Already built that way (`cops-renewals.service.ts`) |
+| Suspended customer | Can sign in and see a read-only billing page with the amount due and pay; product use (search, enrichment, sequences, exports) blocked; paying lifts it through the normal path | Done: 402 `subscription_suspended` on those routes, `GET /billing/subscription`, `POST /billing/subscription/invoices/:id/pay`, banner and Settings > Workspace card |
+| Sole-owner approval | The rule stays: an owner cannot approve the Sales Manager or Finance slot without that role. A second person gets the Sales Manager role | No code change. The role is assigned in team settings |
+| E-sign provider | DocuSeal, not Dropbox Sign. Mock stays for tests | Done: `docuseal-adapter.ts`, webhook `/api/v1/esign/webhooks/docuseal`, env `DOCUSEAL_API_KEY`, `DOCUSEAL_BASE_URL`, `DOCUSEAL_WEBHOOK_SECRET`, `DOCUSEAL_WEBHOOK_HEADER` |
+| Auto-debit | Not now: payment link per period | Unchanged |
+| Amendments with credits | Not until Finance decides what credits mean in an amendment | Not built |
+
 ## 11. State of the backend (2026-10-13)
 
 Built and tested on this branch. Migrations 0123 to 0131, all additive.
