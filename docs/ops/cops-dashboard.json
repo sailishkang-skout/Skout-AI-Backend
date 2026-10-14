@@ -1,0 +1,690 @@
+{
+  "_readme": "Datadog dashboard for CustomerOps (COPS-07). `dashboard` is the body for POST /api/v1/dashboard on us5. It reads the gauges that reportPlatformOpsMetrics submits every 10 minutes: skout.cops.<key>, skout.cops.metric_status (0 ok, 1 warning, 2 critical, tagged metric:<key>) and skout.cops.report. The warning and critical lines repeat the thresholds in apps/api/src/services/cops-ops-metrics.service.ts; change them there first. Create it only after the metrics are flowing, otherwise every widget is empty. Setup: docs/ops/cops-alerts.md.",
+  "dashboard": {
+    "title": "CustomerOps health",
+    "description": "Outbox, provisioning, payment webhooks and onboarding follow-up steps. Source: docs/ops/cops-dashboard.json in Skout-AI-Backend.",
+    "layout_type": "ordered",
+    "reflow_type": "fixed",
+    "tags": [
+      "team:customerops"
+    ],
+    "template_variables": [
+      {
+        "name": "env",
+        "prefix": "env",
+        "available_values": [],
+        "default": "*"
+      }
+    ],
+    "widgets": [
+      {
+        "definition": {
+          "type": "group",
+          "title": "Now",
+          "layout_type": "ordered",
+          "widgets": [
+            {
+              "definition": {
+                "type": "note",
+                "content": "CustomerOps health. The worker reports every 10 minutes, so a point can be up to 10 minutes old. Status: 0 ok, 1 warning, 2 critical. Thresholds and runbooks: docs/ops/cops-alerts.md in Skout-AI-Backend. The same numbers are in the app under CustomerOps admin > Operations.",
+                "background_color": "white",
+                "font_size": "14",
+                "text_align": "left",
+                "show_tick": false
+              },
+              "layout": {
+                "x": 0,
+                "y": 0,
+                "width": 4,
+                "height": 3
+              }
+            },
+            {
+              "definition": {
+                "type": "query_value",
+                "title": "Health reports in the last 30 minutes (0 means the report has stopped)",
+                "precision": 0,
+                "autoscale": false,
+                "requests": [
+                  {
+                    "response_format": "scalar",
+                    "queries": [
+                      {
+                        "name": "q",
+                        "data_source": "metrics",
+                        "query": "sum:skout.cops.report{$env}.as_count()",
+                        "aggregator": "sum"
+                      }
+                    ],
+                    "formulas": [
+                      {
+                        "formula": "default_zero(q)"
+                      }
+                    ],
+                    "conditional_formats": [
+                      {
+                        "comparator": "<",
+                        "value": 1,
+                        "palette": "white_on_red"
+                      },
+                      {
+                        "comparator": ">=",
+                        "value": 1,
+                        "palette": "white_on_green"
+                      }
+                    ]
+                  }
+                ],
+                "time": {
+                  "live_span": "30m"
+                }
+              },
+              "layout": {
+                "x": 4,
+                "y": 0,
+                "width": 3,
+                "height": 3
+              }
+            },
+            {
+              "definition": {
+                "type": "query_table",
+                "title": "Status of every metric now (worst first)",
+                "requests": [
+                  {
+                    "response_format": "scalar",
+                    "queries": [
+                      {
+                        "name": "q",
+                        "data_source": "metrics",
+                        "query": "max:skout.cops.metric_status{$env} by {metric,env}",
+                        "aggregator": "last"
+                      }
+                    ],
+                    "formulas": [
+                      {
+                        "formula": "q",
+                        "alias": "status",
+                        "limit": {
+                          "count": 50,
+                          "order": "desc"
+                        },
+                        "conditional_formats": [
+                          {
+                            "comparator": ">=",
+                            "value": 2,
+                            "palette": "white_on_red"
+                          },
+                          {
+                            "comparator": ">=",
+                            "value": 1,
+                            "palette": "white_on_yellow"
+                          },
+                          {
+                            "comparator": "<",
+                            "value": 1,
+                            "palette": "white_on_green"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ],
+                "time": {
+                  "live_span": "15m"
+                }
+              },
+              "layout": {
+                "x": 7,
+                "y": 0,
+                "width": 5,
+                "height": 3
+              }
+            }
+          ]
+        }
+      },
+      {
+        "definition": {
+          "type": "group",
+          "title": "Outbox (events leaving Skout)",
+          "layout_type": "ordered",
+          "widgets": [
+            {
+              "definition": {
+                "type": "timeseries",
+                "title": "Outbox lag, oldest unpublished event (seconds)",
+                "show_legend": false,
+                "requests": [
+                  {
+                    "response_format": "timeseries",
+                    "queries": [
+                      {
+                        "name": "q",
+                        "data_source": "metrics",
+                        "query": "max:skout.cops.outbox_lag_seconds{$env} by {env}"
+                      }
+                    ],
+                    "formulas": [
+                      {
+                        "formula": "q"
+                      }
+                    ],
+                    "display_type": "line"
+                  }
+                ],
+                "markers": [
+                  {
+                    "label": "warning > 60",
+                    "value": "y = 60",
+                    "display_type": "warning dashed"
+                  },
+                  {
+                    "label": "critical > 300",
+                    "value": "y = 300",
+                    "display_type": "error dashed"
+                  }
+                ]
+              },
+              "layout": {
+                "x": 0,
+                "y": 0,
+                "width": 4,
+                "height": 2
+              }
+            },
+            {
+              "definition": {
+                "type": "timeseries",
+                "title": "Events waiting to publish",
+                "show_legend": false,
+                "requests": [
+                  {
+                    "response_format": "timeseries",
+                    "queries": [
+                      {
+                        "name": "q",
+                        "data_source": "metrics",
+                        "query": "max:skout.cops.outbox_pending{$env} by {env}"
+                      }
+                    ],
+                    "formulas": [
+                      {
+                        "formula": "q"
+                      }
+                    ],
+                    "display_type": "line"
+                  }
+                ],
+                "markers": [
+                  {
+                    "label": "warning > 500",
+                    "value": "y = 500",
+                    "display_type": "warning dashed"
+                  },
+                  {
+                    "label": "critical > 5000",
+                    "value": "y = 5000",
+                    "display_type": "error dashed"
+                  }
+                ]
+              },
+              "layout": {
+                "x": 4,
+                "y": 0,
+                "width": 4,
+                "height": 2
+              }
+            },
+            {
+              "definition": {
+                "type": "timeseries",
+                "title": "Dead-lettered events",
+                "show_legend": false,
+                "requests": [
+                  {
+                    "response_format": "timeseries",
+                    "queries": [
+                      {
+                        "name": "q",
+                        "data_source": "metrics",
+                        "query": "max:skout.cops.outbox_dead_lettered{$env} by {env}"
+                      }
+                    ],
+                    "formulas": [
+                      {
+                        "formula": "q"
+                      }
+                    ],
+                    "display_type": "line"
+                  }
+                ],
+                "markers": [
+                  {
+                    "label": "warning > 1",
+                    "value": "y = 1",
+                    "display_type": "warning dashed"
+                  },
+                  {
+                    "label": "critical > 10",
+                    "value": "y = 10",
+                    "display_type": "error dashed"
+                  }
+                ]
+              },
+              "layout": {
+                "x": 8,
+                "y": 0,
+                "width": 4,
+                "height": 2
+              }
+            }
+          ]
+        }
+      },
+      {
+        "definition": {
+          "type": "group",
+          "title": "Provisioning (30 days)",
+          "layout_type": "ordered",
+          "widgets": [
+            {
+              "definition": {
+                "type": "timeseries",
+                "title": "Provisioning latency p95 (ms)",
+                "show_legend": false,
+                "requests": [
+                  {
+                    "response_format": "timeseries",
+                    "queries": [
+                      {
+                        "name": "q",
+                        "data_source": "metrics",
+                        "query": "max:skout.cops.provisioning_p95_ms{$env} by {env}"
+                      }
+                    ],
+                    "formulas": [
+                      {
+                        "formula": "q"
+                      }
+                    ],
+                    "display_type": "line"
+                  }
+                ],
+                "markers": [
+                  {
+                    "label": "warning > 120000",
+                    "value": "y = 120000",
+                    "display_type": "warning dashed"
+                  },
+                  {
+                    "label": "critical > 240000",
+                    "value": "y = 240000",
+                    "display_type": "error dashed"
+                  }
+                ]
+              },
+              "layout": {
+                "x": 0,
+                "y": 0,
+                "width": 4,
+                "height": 2
+              }
+            },
+            {
+              "definition": {
+                "type": "timeseries",
+                "title": "Provisionings within 2 minutes (%)",
+                "show_legend": false,
+                "requests": [
+                  {
+                    "response_format": "timeseries",
+                    "queries": [
+                      {
+                        "name": "q",
+                        "data_source": "metrics",
+                        "query": "max:skout.cops.provisioning_within_target_pct{$env} by {env}"
+                      }
+                    ],
+                    "formulas": [
+                      {
+                        "formula": "q"
+                      }
+                    ],
+                    "display_type": "line"
+                  }
+                ],
+                "markers": [
+                  {
+                    "label": "warning < 95",
+                    "value": "y = 95",
+                    "display_type": "warning dashed"
+                  },
+                  {
+                    "label": "critical < 80",
+                    "value": "y = 80",
+                    "display_type": "error dashed"
+                  }
+                ]
+              },
+              "layout": {
+                "x": 4,
+                "y": 0,
+                "width": 4,
+                "height": 2
+              }
+            },
+            {
+              "definition": {
+                "type": "timeseries",
+                "title": "Failed provisionings",
+                "show_legend": false,
+                "requests": [
+                  {
+                    "response_format": "timeseries",
+                    "queries": [
+                      {
+                        "name": "q",
+                        "data_source": "metrics",
+                        "query": "max:skout.cops.provisioning_failed{$env} by {env}"
+                      }
+                    ],
+                    "formulas": [
+                      {
+                        "formula": "q"
+                      }
+                    ],
+                    "display_type": "line"
+                  }
+                ],
+                "markers": [
+                  {
+                    "label": "warning > 1",
+                    "value": "y = 1",
+                    "display_type": "warning dashed"
+                  },
+                  {
+                    "label": "critical > 5",
+                    "value": "y = 5",
+                    "display_type": "error dashed"
+                  }
+                ]
+              },
+              "layout": {
+                "x": 8,
+                "y": 0,
+                "width": 4,
+                "height": 2
+              }
+            }
+          ]
+        }
+      },
+      {
+        "definition": {
+          "type": "group",
+          "title": "Payment webhooks (24 hours)",
+          "layout_type": "ordered",
+          "widgets": [
+            {
+              "definition": {
+                "type": "timeseries",
+                "title": "Payment webhooks received",
+                "show_legend": false,
+                "requests": [
+                  {
+                    "response_format": "timeseries",
+                    "queries": [
+                      {
+                        "name": "q",
+                        "data_source": "metrics",
+                        "query": "max:skout.cops.payment_webhooks_24h{$env} by {env}"
+                      }
+                    ],
+                    "formulas": [
+                      {
+                        "formula": "q"
+                      }
+                    ],
+                    "display_type": "line"
+                  }
+                ],
+                "markers": []
+              },
+              "layout": {
+                "x": 0,
+                "y": 0,
+                "width": 4,
+                "height": 2
+              }
+            },
+            {
+              "definition": {
+                "type": "timeseries",
+                "title": "Payment webhooks not applied",
+                "show_legend": false,
+                "requests": [
+                  {
+                    "response_format": "timeseries",
+                    "queries": [
+                      {
+                        "name": "q",
+                        "data_source": "metrics",
+                        "query": "max:skout.cops.payment_webhooks_rejected_24h{$env} by {env}"
+                      }
+                    ],
+                    "formulas": [
+                      {
+                        "formula": "q"
+                      }
+                    ],
+                    "display_type": "line"
+                  }
+                ],
+                "markers": [
+                  {
+                    "label": "warning > 1",
+                    "value": "y = 1",
+                    "display_type": "warning dashed"
+                  },
+                  {
+                    "label": "critical > 10",
+                    "value": "y = 10",
+                    "display_type": "error dashed"
+                  }
+                ]
+              },
+              "layout": {
+                "x": 4,
+                "y": 0,
+                "width": 4,
+                "height": 2
+              }
+            },
+            {
+              "definition": {
+                "type": "timeseries",
+                "title": "Webhook latency p95, provider to receipt (seconds)",
+                "show_legend": false,
+                "requests": [
+                  {
+                    "response_format": "timeseries",
+                    "queries": [
+                      {
+                        "name": "q",
+                        "data_source": "metrics",
+                        "query": "max:skout.cops.payment_webhook_latency_p95_seconds{$env} by {env}"
+                      }
+                    ],
+                    "formulas": [
+                      {
+                        "formula": "q"
+                      }
+                    ],
+                    "display_type": "line"
+                  }
+                ],
+                "markers": [
+                  {
+                    "label": "warning > 60",
+                    "value": "y = 60",
+                    "display_type": "warning dashed"
+                  },
+                  {
+                    "label": "critical > 300",
+                    "value": "y = 300",
+                    "display_type": "error dashed"
+                  }
+                ]
+              },
+              "layout": {
+                "x": 8,
+                "y": 0,
+                "width": 4,
+                "height": 2
+              }
+            },
+            {
+              "definition": {
+                "type": "timeseries",
+                "title": "Webhook processing p95 (ms)",
+                "show_legend": false,
+                "requests": [
+                  {
+                    "response_format": "timeseries",
+                    "queries": [
+                      {
+                        "name": "q",
+                        "data_source": "metrics",
+                        "query": "max:skout.cops.payment_webhook_processing_p95_ms{$env} by {env}"
+                      }
+                    ],
+                    "formulas": [
+                      {
+                        "formula": "q"
+                      }
+                    ],
+                    "display_type": "line"
+                  }
+                ],
+                "markers": [
+                  {
+                    "label": "warning > 2000",
+                    "value": "y = 2000",
+                    "display_type": "warning dashed"
+                  },
+                  {
+                    "label": "critical > 10000",
+                    "value": "y = 10000",
+                    "display_type": "error dashed"
+                  }
+                ]
+              },
+              "layout": {
+                "x": 0,
+                "y": 2,
+                "width": 4,
+                "height": 2
+              }
+            }
+          ]
+        }
+      },
+      {
+        "definition": {
+          "type": "group",
+          "title": "Onboarding follow-up steps",
+          "layout_type": "ordered",
+          "widgets": [
+            {
+              "definition": {
+                "type": "timeseries",
+                "title": "Steps executing for too long",
+                "show_legend": false,
+                "requests": [
+                  {
+                    "response_format": "timeseries",
+                    "queries": [
+                      {
+                        "name": "q",
+                        "data_source": "metrics",
+                        "query": "max:skout.cops.workflow_steps_stuck{$env} by {env}"
+                      }
+                    ],
+                    "formulas": [
+                      {
+                        "formula": "q"
+                      }
+                    ],
+                    "display_type": "line"
+                  }
+                ],
+                "markers": [
+                  {
+                    "label": "warning > 1",
+                    "value": "y = 1",
+                    "display_type": "warning dashed"
+                  },
+                  {
+                    "label": "critical > 10",
+                    "value": "y = 10",
+                    "display_type": "error dashed"
+                  }
+                ]
+              },
+              "layout": {
+                "x": 0,
+                "y": 0,
+                "width": 4,
+                "height": 2
+              }
+            },
+            {
+              "definition": {
+                "type": "timeseries",
+                "title": "Steps failed (24 hours)",
+                "show_legend": false,
+                "requests": [
+                  {
+                    "response_format": "timeseries",
+                    "queries": [
+                      {
+                        "name": "q",
+                        "data_source": "metrics",
+                        "query": "max:skout.cops.workflow_steps_failed_24h{$env} by {env}"
+                      }
+                    ],
+                    "formulas": [
+                      {
+                        "formula": "q"
+                      }
+                    ],
+                    "display_type": "line"
+                  }
+                ],
+                "markers": [
+                  {
+                    "label": "warning > 5",
+                    "value": "y = 5",
+                    "display_type": "warning dashed"
+                  },
+                  {
+                    "label": "critical > 25",
+                    "value": "y = 25",
+                    "display_type": "error dashed"
+                  }
+                ]
+              },
+              "layout": {
+                "x": 4,
+                "y": 0,
+                "width": 4,
+                "height": 2
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

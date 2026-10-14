@@ -40,13 +40,20 @@ Setup, once per environment:
    `@webhook-skout-cops-alerts`. Append the team email handle to each message.
 4. Use "Test notifications" on one monitor and check that the alert shows in the notification
    center of an Admin.
+5. Create the dashboard: POST the `dashboard` object of `docs/ops/cops-dashboard.json` to
+   `/api/v1/dashboard`. It has one graph per metric with its warning and critical lines, the status
+   of every metric now, and whether the report is arriving. Do this after the first reports have
+   arrived; before that every graph is empty.
 
 A Datadog retry of the same state change notifies nobody twice; a recovery is a new notification.
 
 **Limits.** The report runs every 10 minutes, so an outbox lag alert can be up to 10 minutes late.
 The report needs Redis and the worker, which is why the "report has stopped" monitor exists. If the
 web app or the API is down, the in-app alert cannot arrive: that is what the email fallback is for,
-and its address is still to be given. No dashboard has been built.
+and its address is still to be given. The dashboard is defined in `docs/ops/cops-dashboard.json`
+and has not been created in Datadog yet (step 5). Its threshold lines repeat the numbers in
+`cops-ops-metrics.service.ts`; when a threshold changes there, change the file and update the
+dashboard.
 
 | Metric | Warn | Critical | Runbook |
 |---|---|---|---|
