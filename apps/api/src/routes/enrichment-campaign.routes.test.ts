@@ -15,7 +15,7 @@ import { buildTestAuth, buildTestAuthEnv, grantSystemMemberRole } from "@skout/a
 import { loadEnv, type Env } from "../config/env.js";
 import { buildApp } from "../app.js";
 import { addSuppression, isSuppressed } from "../services/suppression.service.js";
-import { saveAudience, previewAudience } from "../services/enrichment/audience.service.js";
+import { audienceMembers, saveAudience, previewAudience } from "../services/enrichment/audience.service.js";
 import {
   campaignSendGate,
   createCampaign,
@@ -213,6 +213,19 @@ describe("ENR-05 audiences", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().counts.total).toBe(1);
     expect((await post("/enrichment/audiences/preview", { filters: { nope: true } })).statusCode).toBe(422);
+  });
+
+  it("leaves out a person who was added by URL and has not been captured yet", async () => {
+    const before = (await previewAudience(db(), WORKSPACE, {})).counts.total;
+    const added = await post("/enrichment/linkedin-urls", { url: `https://www.linkedin.com/in/pending-${RUN}/` });
+    expect(added.statusCode).toBe(201);
+    const pending = added.json().prospectId as string;
+
+    const after = await previewAudience(db(), WORKSPACE, {});
+    expect(after.counts.total).toBe(before);
+    expect((await audienceMembers(db(), WORKSPACE, {})).map((person) => person.prospectId)).not.toContain(pending);
+    // Still listed under People, where it can be captured.
+    expect((await get(`/enrichment/people/${pending}`)).statusCode).toBe(200);
   });
 
   it("saves an audience into an ordinary list and keeps the list in step when it is saved again", async () => {

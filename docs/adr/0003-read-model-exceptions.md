@@ -141,3 +141,18 @@ with the account lock. The file carries the formal exception comment block. The 
 A ticket, its links, its CRM summary and its event commit in one transaction with the account lock. The
 customer context reads names only, never commercial values. The file carries the formal exception comment
 block. The COPS-06 tables (engineering tickets, comments, status history, account summaries) are owned by apps/api.
+
+## COPS-08 additions (2026-10-13)
+
+| File | Tables | Access |
+|---|---|---|
+| `apps/api/src/services/cops-renewals.service.ts` | deals, pipeline_stages | read of the original opportunity and the first stage of its pipeline; **insert** of one renewal opportunity per subscription term |
+| `apps/api/src/services/cops-account-fields.service.ts` | companies | read only: the account belongs to the workspace before its region, segment and legal entity (custom field values) are written |
+
+This is the first COPS exception that inserts into an apps/crm-owned table. The ticket requires
+exactly one renewal opportunity per term. That holds only when the opportunity, the mark on the
+subscription and the `RenewalOpened` event are written in one transaction under the subscription's
+row lock; an HTTP call into apps/crm cannot join that transaction, and a retry after a lost response
+would create a second opportunity. The inserted row uses the same columns apps/crm's own create
+uses. It does not write apps/crm's audit row or `OpportunityQualified`; it writes a COPS audit row
+and `RenewalOpened` instead. Revisit when apps/crm's internal API offers an idempotent create.

@@ -37,6 +37,20 @@ const DEFAULT_EVENT_ROLES: Partial<Record<CopsPhase1EventType, readonly CopsNoti
   TicketEscalated: ["engineering", "cs"],
   TicketResolved: ["engineering", "cs"],
   LifecycleTransitioned: ["cs"],
+  // COPS-08: the outcome goes back to the people who own the deal.
+  ApprovalDecided: ["sales", "sales_manager"],
+  // COPS-08: a failed payment, a restriction or a suspension is for Finance and the account's CS owner.
+  SubscriptionStatusChanged: ["finance", "cs"],
+  // COPS-08: a renewal is a sales opportunity that CS prepares the ground for.
+  RenewalOpened: ["sales", "sales_manager", "cs"],
+};
+
+/** Approver slot to the roles that can decide it. An Admin or the owner decides the executive slot. */
+const APPROVER_SLOT_ROLES: Record<string, readonly CopsNotificationRoleKey[]> = {
+  sales_manager: ["sales_manager"],
+  finance: ["finance"],
+  legal_revops: ["legal_revops"],
+  executive: ["admin", "owner"],
 };
 
 /** Lifecycle notifications follow their dimension's owner instead of a generic recipient. */
@@ -44,6 +58,11 @@ export function defaultCopsNotificationRoles(
   eventType: CopsPhase1EventType,
   payload?: Record<string, unknown>
 ): readonly CopsNotificationRoleKey[] {
+  if (eventType === "ApprovalRequested") {
+    // Only the roles that have to decide are told; the request names them.
+    const slots = Array.isArray(payload?.required_approvers) ? (payload.required_approvers as unknown[]) : [];
+    return [...new Set(slots.flatMap((slot) => APPROVER_SLOT_ROLES[String(slot)] ?? []))];
+  }
   if (eventType === "LifecycleTransitioned") {
     switch (payload?.dimension) {
       case "commercial":

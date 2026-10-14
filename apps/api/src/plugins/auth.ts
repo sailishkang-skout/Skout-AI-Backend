@@ -145,6 +145,8 @@ function isPublicRoute(url: string, method?: string): boolean {
     pathname.startsWith("/api/v1/webhooks/unipile/") ||
     // COPS-07: operational alerts (GCP Cloud Monitoring); the route checks OPS_ALERT_WEBHOOK_SECRET itself.
     pathname === "/api/v1/webhooks/ops-alerts" ||
+    // COPS-08: e-sign provider events; the adapter verifies the provider's signature.
+    pathname.startsWith("/api/v1/esign/webhooks/") ||
     pathname.startsWith("/api/v1/track/") ||
     pathname.startsWith("/api/v1/unsubscribe/") ||
     pathname.startsWith("/api/v1/invite-auth/send-otp") ||

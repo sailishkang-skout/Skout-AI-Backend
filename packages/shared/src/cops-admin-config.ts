@@ -1,12 +1,26 @@
 import { z } from "zod";
+import { esignTemplateSchema } from "./cops-esign.js";
+import { COMMERCIAL_POLICY_DEFAULTS, approvalPolicySchema, currencyPolicySchema, dunningPolicySchema, priceBookSchema, renewalPolicySchema } from "./cops-commercial-policy.js";
 
 /**
  * COPS-07 admin configuration (Bible p.16): the config kinds kept in the versioned config store,
  * their schemas and the built-in defaults shown when a workspace has saved nothing. Config that
  * already has its own store (activation templates, sequences, gate policies, notification routes)
- * is not here.
+ * is not here. COPS-08 adds the commercial policy kinds; each has one key, `default`.
  */
-export const COPS_CONFIG_KINDS = ["credit_package", "trial_template", "email_template", "retention_policy", "feature_flags"] as const;
+export const COPS_CONFIG_KINDS = [
+  "credit_package",
+  "trial_template",
+  "email_template",
+  "retention_policy",
+  "feature_flags",
+  "approval_policy",
+  "dunning_policy",
+  "price_book",
+  "currency_policy",
+  "esign_template",
+  "renewal_policy",
+] as const;
 export type CopsConfigKind = (typeof COPS_CONFIG_KINDS)[number];
 
 /** Appendix F retention categories. */
@@ -60,6 +74,12 @@ export const COPS_CONFIG_SCHEMAS = {
       modules: z.record(z.enum(COPS_MODULES), z.boolean()),
     })
     .strict(),
+  approval_policy: approvalPolicySchema,
+  dunning_policy: dunningPolicySchema,
+  price_book: priceBookSchema,
+  currency_policy: currencyPolicySchema,
+  esign_template: esignTemplateSchema,
+  renewal_policy: renewalPolicySchema,
 } as const satisfies Record<CopsConfigKind, z.ZodTypeAny>;
 
 /**
@@ -76,6 +96,12 @@ export const COPS_CONFIG_DEFAULTS: Partial<Record<CopsConfigKind, Record<string,
   trial_template: {
     standard: { name: "Standard trial", plan: "trial", trial_days: 14, credits: 500, integrations: ["crm", "email"] },
   },
+  // Seeded from docs/ops/cops-commercial-policy.default.json.
+  approval_policy: { default: COMMERCIAL_POLICY_DEFAULTS.approval_policy },
+  dunning_policy: { default: COMMERCIAL_POLICY_DEFAULTS.dunning_policy },
+  price_book: { default: COMMERCIAL_POLICY_DEFAULTS.price_book },
+  currency_policy: { default: COMMERCIAL_POLICY_DEFAULTS.currency_policy },
+  renewal_policy: { default: COMMERCIAL_POLICY_DEFAULTS.renewal_policy },
 };
 
 export const COPS_CONFIG_KEY = /^[a-z0-9][a-z0-9_-]{0,63}$/;

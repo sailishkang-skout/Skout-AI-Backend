@@ -1,0 +1,479 @@
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
+import { randomUUID } from "node:crypto";
+import type { FastifyInstance } from "fastify";
+import type { Db } from "@skout/db";
+import { loadEnv } from "../config/env.js";
+import { buildApp } from "../app.js";
+import { getAccountSubscription, runSubscriptionBilling } from "../services/cops-subscriptions.service.js";
+import { notifyPassFailures } from "../services/cops-pass-alerts.service.js";
+import { runRenewals } from "../services/cops-renewals.service.js";
+import { postCreditTransaction } from "@skout/db";
+import { subscriptionAccessBlock, SubscriptionRestrictedError } from "../services/cops-subscription-access.js";
+import { DbStore } from "../services/enrichment/db-store.js";
+import { canContact } from "../services/cops-can-contact.js";
+
+/**
+ * COPS-08 subscriptions against a real Postgres (COPS_TEST_DATABASE_URL): payment-link billing per
+ * period, the failed-payment timeline counted from the bill's due date, automatic restore on
+ * payment, invoiced accounts that are never suspended, and tenant isolation. The billing pass is
+ * run with a chosen "now" so the timeline can be walked without waiting.
+ */
+const url = process.env.COPS_TEST_DATABASE_URL;
+const maybe = url ? describe : describe.skip;
+const postgres = createRequire(new URL("../../../../packages/db/package.json", import.meta.url))("postgres") as (url: string, options?: object) => any;
+
+const stamp = Date.now();
+const OWNER = `subs-owner-${stamp}@example.test`;
+const OTHER = `subs-other-${stamp}@example.test`;
+const DAY = 86_400_000;
+
+maybe("COPS-08 subscriptions", () => {
+  let app: FastifyInstance;
+  let db: Db;
+  let sql: any;
+  let workspaceId = "";
+  let pipelineId = "";
+  let stageId = "";
+
+  const call = (method: "GET" | "POST", path: string, body?: unknown, email = OWNER) =>
+    app.inject({
+      method,
+      url: `/api/v1${path}`,
+      headers: { "x-stub-user-email": email, ...(method !== "GET" ? { "idempotency-key": randomUUID() } : {}) },
+      ...(body !== undefined ? { payload: body as object } : {}),
+    });
+
+  const newAccount = async (currency = "USD") => {
+    const [company] = await sql`insert into companies (workspace_id, name) values (${workspaceId}, ${"Subs Co " + randomUUID().slice(0, 8)}) returning id`;
+    const [deal] = await sql`insert into deals (workspace_id, company_id, pipeline_id, stage_id, name, amount, currency)
+      values (${workspaceId}, ${company.id}, ${pipelineId}, ${stageId}, 'Subscription deal', 9480, ${currency}) returning id`;
+    return { accountId: company.id as string, opportunityId: deal.id as string };
+  };
+  const subscribe = (accountId: string, opportunityId: string, over: Record<string, unknown> = {}) =>
+    call("POST", `/accounts/${accountId}/subscription`, { opportunity_id: opportunityId, seats: 10, cadence: "monthly", term_months: 12, payment_terms_net_days: 0, ...over });
+  const current = async (accountId: string) => (await call("GET", `/accounts/${accountId}/subscription`)).json().data;
+  /** The scheduled pass, for this workspace only, as if it ran `days` after `from`. */
+  const at = (from: string, days: number) => new Date(new Date(from).getTime() + days * DAY + 3_600_000);
+  const billAt = (from: string, days: number) => runSubscriptionBilling(db, at(from, days), { workspaceId });
+  /** The subscription as it reads on that simulated day (the API reads it as of the real clock). */
+  const currentAt = async (accountId: string, from: string, days: number) => (await getAccountSubscription(db, workspaceId, accountId, at(from, days)))!;
+
+  beforeAll(async () => {
+    delete process.env.AUTH_MODE;
+    process.env.AUTH_STUB = "true";
+    process.env.CLERK_SECRET_KEY = "";
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
+      const target = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (target === "https://api.razorpay.com/v1/payment_links") {
+        const id = `plink_${randomUUID().replace(/-/g, "").slice(0, 14)}`;
+        return new Response(JSON.stringify({ id, short_url: `https://rzp.io/i/${id}`, status: "created" }), { status: 200 });
+      }
+      return realFetch(input, init);
+    });
+    const config = loadEnv();
+    app = await buildApp({ ...config, DATABASE_URL: url, CLERK_SECRET_KEY: undefined, LOG_LEVEL: "fatal", OPENSEARCH_URL: undefined, RAZORPAY_KEY_ID: "rzp_test_key", RAZORPAY_KEY_SECRET: "rzp_test_secret", RAZORPAY_WEBHOOK_SECRET: "whsec_test_subscriptions" } as typeof config);
+    db = (app as unknown as { db: Db }).db;
+    sql = postgres(url as string, { max: 1, onnotice: () => {} });
+    const [seeded] = await sql`select count(*)::int as n from roles where key = 'owner'`;
+    if (seeded.n === 0) {
+      const backfill = spawnSync("npx", ["tsx", "src/backfill-rbac.ts"], { cwd: new URL("../../../../packages/db/", import.meta.url), env: { ...process.env, DATABASE_URL: url }, shell: true, encoding: "utf8" });
+      if (backfill.status !== 0) throw new Error(`backfill-rbac failed: ${backfill.stderr}`);
+    }
+    await app.ready();
+    workspaceId = ((await call("GET", "/me")).json() as { workspaceId: string }).workspaceId;
+    await call("GET", "/me", undefined, OTHER);
+    const [pipeline] = await sql`insert into pipelines (workspace_id, name) values (${workspaceId}, 'Subscriptions test') returning id`;
+    const [stage] = await sql`insert into pipeline_stages (pipeline_id, name, order_index) values (${pipeline.id}, 'Closed', 1) returning id`;
+    pipelineId = pipeline.id;
+    stageId = stage.id;
+  });
+
+  afterAll(async () => {
+    vi.unstubAllGlobals();
+    await app?.close();
+    await sql?.end();
+  });
+
+  it("creates a subscription priced from the price book, with a bill for the first period", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    const res = await subscribe(accountId, opportunityId, { payment_terms_net_days: 30 });
+    expect(res.statusCode).toBe(201);
+    const sub = res.json().data;
+    // USD 79 a seat on annual billing, plus 20% for month to month.
+    expect(sub).toMatchObject({ status: "active", billing: "payment_link", currency: "USD", cadence: "monthly", seats: 10, dunning: null });
+    expect(sub.items[0]).toMatchObject({ kind: "seats", quantity: 10, unit_amount_minor: 9480 });
+    expect(sub.invoices).toHaveLength(1);
+    expect(sub.invoices[0]).toMatchObject({ amount_minor: 94_800, currency: "USD", status: "open", payment_request_id: null });
+    expect(new Date(sub.renews_at).getUTCFullYear()).toBe(new Date(sub.term_start).getUTCFullYear() + 1);
+    // One subscription per account.
+    expect((await subscribe(accountId, opportunityId)).statusCode).toBe(409);
+  });
+
+  it("refuses an opportunity of another account, a currency with no price, and provider auto-debit", async () => {
+    const a = await newAccount();
+    const b = await newAccount();
+    expect((await subscribe(a.accountId, b.opportunityId)).statusCode).toBe(422);
+    const aud = await newAccount("AUD");
+    expect((await subscribe(aud.accountId, aud.opportunityId)).statusCode).toBe(422);
+    // A price given by hand is accepted in any currency; nothing is converted.
+    expect((await subscribe(aud.accountId, aud.opportunityId, { seat_month_minor: 12_000 })).json().data).toMatchObject({ currency: "AUD" });
+    expect((await subscribe(a.accountId, a.opportunityId, { billing: "provider" })).statusCode).toBe(409);
+  });
+
+  it("walks the failed-payment timeline from the due date, and a payment restores access", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    const sub = (await subscribe(accountId, opportunityId)).json().data;
+    const due = sub.invoices[0].due_at as string;
+    const statusOn = async (days: number) => {
+      await billAt(due, days);
+      return (await current(accountId)).status as string;
+    };
+    expect(await statusOn(0)).toBe("past_due");
+    expect(await statusOn(7)).toBe("past_due");
+    expect(await statusOn(8)).toBe("restricted");
+    expect(await statusOn(15)).toBe("suspended");
+
+    const events = await sql`select envelope->'payload' as payload from cops_outbox where event_type = 'SubscriptionStatusChanged' and aggregate_id = ${sub.id} order by created_at`;
+    expect(events.map((e: { payload: { from: string; to: string } }) => `${e.payload.from}>${e.payload.to}`)).toEqual(["active>past_due", "past_due>restricted", "restricted>suspended"]);
+    expect(events[1].payload).toMatchObject({ account_id: accountId, day: 8 });
+
+    // Finance sees it in the queue.
+    const queue = (await call("GET", "/finance/failed-payments")).json().data as Array<{ id: string; status: string }>;
+    expect(queue.find((q) => q.id === sub.id)).toMatchObject({ status: "suspended" });
+
+    // A payment link for the bill, through the COPS-03 flow; asking again reuses the live link.
+    const link = await call("POST", `/subscription-invoices/${sub.invoices[0].id}/payment-link`);
+    expect(link.statusCode).toBe(201);
+    expect(link.json().data.payment_request).toMatchObject({ amount_minor: 94_800, currency: "USD", status: "requested" });
+    expect(link.json().data.payment_request.checkout_url).toContain("https://rzp.io/i/");
+    const again = await call("POST", `/subscription-invoices/${sub.invoices[0].id}/payment-link`);
+    expect(again.json().data.payment_request_id).toBe(link.json().data.payment_request_id);
+
+    // What the payment webhook does when the customer pays the link.
+    await sql`update payment_requests set status = 'paid', paid_at = now() where id = ${link.json().data.payment_request_id}`;
+    const run = await billAt(due, 16);
+    expect(run.status_changes.find((c) => c.subscription_id === sub.id)).toMatchObject({ from: "suspended", to: "active", day: null });
+    const restored = await current(accountId);
+    expect(restored).toMatchObject({ status: "active", dunning: null });
+    expect(restored.invoices[0]).toMatchObject({ status: "paid" });
+    // Nothing was deleted on the way.
+    expect((await sql`select count(*)::int as n from subscription_invoices where subscription_id = ${sub.id}`)[0].n).toBe(1);
+  });
+
+  it("bills the next period when it starts, once, however often the pass runs", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    const sub = (await subscribe(accountId, opportunityId)).json().data;
+    await sql`update subscription_invoices set status = 'paid', paid_at = now() where subscription_id = ${sub.id}`;
+    const due = sub.invoices[0].due_at as string;
+    expect((await billAt(due, 20)).invoices_created).toBe(0);
+    await billAt(due, 32);
+    await billAt(due, 32);
+    const after = await currentAt(accountId, due, 32);
+    expect(after.invoices).toHaveLength(2);
+    expect(after.invoices[0]).toMatchObject({ status: "open", amount_minor: 94_800 });
+    // The second bill is now overdue by a day or two: day 0 is its own due date, not the first bill's.
+    expect(after).toMatchObject({ status: "past_due" });
+    expect(after.dunning!.day).toBeLessThan(3);
+    expect(after.dunning).toMatchObject({ next_status: "restricted" });
+  });
+
+  it("closes on day 45, and a closed subscription is not reopened by a late payment", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    const sub = (await subscribe(accountId, opportunityId, { cadence: "annual" })).json().data;
+    // Annual billing: the first bill covers twelve months at the annual price.
+    expect(sub.invoices[0]).toMatchObject({ amount_minor: 948_000 });
+    await billAt(sub.invoices[0].due_at, 45);
+    expect((await current(accountId)).status).toBe("closed");
+    await sql`update subscription_invoices set status = 'paid', paid_at = now() where subscription_id = ${sub.id}`;
+    await billAt(sub.invoices[0].due_at, 46);
+    expect((await current(accountId)).status).toBe("closed");
+    // The account can then take a new subscription.
+    expect((await subscribe(accountId, opportunityId)).statusCode).toBe(201);
+  });
+
+  it("an invoiced account is never suspended automatically; Finance marks its bill paid with a reason", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    const sub = (await subscribe(accountId, opportunityId, { billing: "invoiced" })).json().data;
+    await billAt(sub.invoices[0].due_at, 30);
+    const late = await currentAt(accountId, sub.invoices[0].due_at, 30);
+    expect(late).toMatchObject({ status: "past_due" });
+    expect(late.dunning).toMatchObject({ day: 30, next_status: null });
+
+    expect((await call("POST", `/subscription-invoices/${sub.invoices[0].id}/mark-paid`, {})).statusCode).toBe(422);
+    expect((await call("POST", `/subscription-invoices/${sub.invoices[0].id}/mark-paid`, { reason: "Wire received, ref 4471" })).statusCode).toBe(200);
+    expect(await current(accountId)).toMatchObject({ status: "active", dunning: null });
+    const [audit] = await sql`select reason from audit_logs where entity_id = ${sub.invoices[0].id} and action = 'subscription_invoice.marked_paid'`;
+    expect(audit.reason).toBe("Wire received, ref 4471");
+    expect((await call("POST", `/subscription-invoices/${sub.invoices[0].id}/mark-paid`, { reason: "again" })).statusCode).toBe(409);
+  });
+
+  it("opens one renewal opportunity per term, 90 days before it ends, however the pass is run", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    const sub = (await subscribe(accountId, opportunityId, { payment_terms_net_days: 30 })).json().data;
+    const before = (days: number) => new Date(new Date(sub.renews_at).getTime() - days * DAY);
+
+    expect(await runRenewals(db, before(91), { workspaceId })).toEqual([]);
+    // Two passes at the same moment, then a third: still one opportunity.
+    const runs = await Promise.all([runRenewals(db, before(90), { workspaceId }), runRenewals(db, before(90), { workspaceId })]);
+    expect(runs.flat().filter((r) => r.subscription_id === sub.id)).toHaveLength(1);
+    expect((await runRenewals(db, before(10), { workspaceId })).filter((r) => r.subscription_id === sub.id)).toEqual([]);
+
+    const renewals = await sql`select id, name, amount, currency, deal_type, close_date, pipeline_id from deals where company_id = ${accountId} and id <> ${opportunityId}`;
+    expect(renewals).toHaveLength(1);
+    // One more term of the current seats: 10 seats x USD 94.80 a month x 12 months.
+    expect(renewals[0]).toMatchObject({ name: "Renewal: Subscription deal", currency: "USD", deal_type: "renewal", pipeline_id: pipelineId });
+    expect(Number(renewals[0].amount)).toBe(11_376);
+    const events = await sql`select envelope->'payload' as payload from cops_outbox where event_type = 'RenewalOpened' and aggregate_id = ${renewals[0].id}`;
+    expect(events).toHaveLength(1);
+    expect(events[0].payload).toMatchObject({ subscription_id: sub.id, account_id: accountId, original_opportunity_id: opportunityId });
+    expect(await current(accountId)).toMatchObject({ renewal_opportunity_id: renewals[0].id });
+    // The renewal is its own opportunity: the original is untouched.
+    expect((await sql`select name from deals where id = ${opportunityId}`)[0].name).toBe("Subscription deal");
+  });
+
+  it("opens no renewal for a closed subscription", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    const sub = (await subscribe(accountId, opportunityId)).json().data;
+    await billAt(sub.invoices[0].due_at, 45);
+    await runRenewals(db, new Date(new Date(sub.renews_at).getTime() - 10 * DAY), { workspaceId });
+    expect((await sql`select count(*)::int as n from deals where company_id = ${accountId}`)[0].n).toBe(1);
+  });
+
+  it("amendments are appended and never edited; seats change with the next period and the original contract is untouched", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    const contract = (await call("POST", `/opportunities/${opportunityId}/contracts`, { kind: "msa", document_url: "https://docs.example.test/msa.pdf", file_sha256: "c".repeat(64) })).json().data;
+    const contractBefore = await sql`select file_sha256, document_url, version from contract_versions where contract_id = ${contract.id}`;
+    const sub = (await subscribe(accountId, opportunityId, { payment_terms_net_days: 30 })).json().data;
+
+    expect((await call("POST", `/subscriptions/${sub.id}/amendments`, { seats: 15 })).statusCode).toBe(422);
+    expect((await call("POST", `/subscriptions/${sub.id}/amendments`, { reason: "nothing to change" })).statusCode).toBe(422);
+    const first = await call("POST", `/subscriptions/${sub.id}/amendments`, { seats: 15, reason: "Five more reps joined" });
+    expect(first.statusCode).toBe(201);
+    const amended = first.json().data;
+    // Still 10 seats in this period; 15 from the next one.
+    expect(amended.seats).toBe(10);
+    expect(amended.amendments).toHaveLength(1);
+    expect(amended.amendments[0]).toMatchObject({ seq: 1, seats: 15, before: { seats: 10 }, after: { seats: 15 }, reason: "Five more reps joined" });
+    expect(new Date(amended.amendments[0].effective_at).getTime()).toBe(new Date(sub.invoices[0].period_end).getTime());
+
+    // A longer term moves the renewal date at once, and is a second row.
+    const second = (await call("POST", `/subscriptions/${sub.id}/amendments`, { term_months: 24, reason: "Two year commitment" })).json().data;
+    expect(second.term_months).toBe(24);
+    expect(new Date(second.renews_at).getUTCFullYear()).toBe(new Date(sub.term_start).getUTCFullYear() + 2);
+    expect(second.amendments.map((a: { seq: number }) => a.seq)).toEqual([1, 2]);
+    expect(second.amendments[1]).toMatchObject({ before: { seats: 15, term_months: 12 }, after: { seats: 15, term_months: 24 } });
+
+    // The first bill keeps its price; the next period is billed for 15 seats.
+    await sql`update subscription_invoices set status = 'paid', paid_at = now() where subscription_id = ${sub.id}`;
+    await billAt(sub.invoices[0].period_end, 0);
+    const later = await currentAt(accountId, sub.invoices[0].period_end, 0);
+    expect(later.seats).toBe(15);
+    expect(later.invoices.map((i) => i.amount_minor)).toEqual([142_200, 94_800]);
+
+    // No way to edit an amendment, even straight in the database.
+    await expect(sql`update subscription_amendments set seats = 99 where subscription_id = ${sub.id}`).rejects.toThrow(/append-only/);
+    // And the original contract is exactly as it was.
+    expect(await sql`select file_sha256, document_url, version from contract_versions where contract_id = ${contract.id}`).toEqual(contractBefore);
+    const audit = await sql`select action, reason from audit_logs where entity_id = ${sub.id} and action = 'subscription.amended' order by created_at`;
+    expect(audit.map((r: { reason: string }) => r.reason)).toEqual(["Five more reps joined", "Two year commitment"]);
+  });
+
+  it("Finance sees where a provider and Skout disagree, and the lists of subscriptions and payment links", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    const sub = (await subscribe(accountId, opportunityId)).json().data;
+    const link = (await call("POST", `/subscription-invoices/${sub.invoices[0].id}/payment-link`)).json().data;
+    const reconciliation = async (email = OWNER) => (await call("GET", "/finance/reconciliation", undefined, email)).json().data;
+
+    // The customer has paid at the provider; our bill still reads open until the billing pass runs.
+    await sql`update payment_requests set status = 'paid', paid_at = now() where id = ${link.payment_request_id}`;
+    const before = await reconciliation();
+    expect(before.issues.find((i: { entity_id: string }) => i.entity_id === sub.invoices[0].id)).toMatchObject({ kind: "bill_paid_at_provider_open_here", provider_state: "paid", skout_state: "open" });
+    expect(before.counts.bill_paid_at_provider_open_here).toBeGreaterThan(0);
+    // Once the pass has run, the two agree and the issue is gone.
+    await billAt(sub.invoices[0].due_at, 1);
+    expect((await reconciliation()).issues.find((i: { entity_id: string }) => i.entity_id === sub.invoices[0].id)).toBeUndefined();
+
+    // The e-sign provider says signed; the contract is still out.
+    const contract = (await call("POST", `/opportunities/${opportunityId}/contracts`, { kind: "msa", document_url: "https://docs.example.test/msa.pdf", file_sha256: "d".repeat(64) })).json().data;
+    await call("POST", `/contracts/${contract.id}/send`, {});
+    const [envelope] = await sql`insert into signature_envelopes (workspace_id, contract_id, contract_version, provider, provider_ref, status, signers)
+      values (${workspaceId}, ${contract.id}, 1, 'mock', ${"mock_" + randomUUID()}, 'signed', '[]'::jsonb) returning id`;
+    const [stuck] = await sql`insert into signature_envelopes (workspace_id, contract_id, contract_version, provider, status, signers, created_at)
+      values (${workspaceId}, ${contract.id}, 2, 'mock', 'pending_send', '[]'::jsonb, now() - interval '1 hour') returning id`;
+    const after = await reconciliation();
+    expect(after.issues.find((i: { entity_id: string }) => i.entity_id === envelope.id)).toMatchObject({ kind: "envelope_contract_mismatch", provider_state: "signed", skout_state: "sent" });
+    expect(after.issues.find((i: { entity_id: string }) => i.entity_id === stuck.id)).toMatchObject({ kind: "envelope_never_confirmed" });
+    expect((await reconciliation(OTHER)).issues).toEqual([]);
+
+    const subs = (await call("GET", "/finance/subscriptions?renewing_within_days=400")).json().data as Array<{ id: string; seats: number; status: string }>;
+    expect(subs.find((x) => x.id === sub.id)).toMatchObject({ seats: 10, status: "active" });
+    expect((await call("GET", "/finance/subscriptions?renewing_within_days=30")).json().data.find((x: { id: string }) => x.id === sub.id)).toBeUndefined();
+    const payments = (await call("GET", "/finance/payment-requests?status=paid")).json().data as Array<{ id: string; opportunity_name: string; amount_minor: number }>;
+    expect(payments.find((x) => x.id === link.payment_request_id)).toMatchObject({ opportunity_name: "Subscription deal", amount_minor: 94_800, account_id: accountId });
+    expect((await call("GET", "/finance/payment-requests", undefined, OTHER)).json().data).toEqual([]);
+  });
+
+  it("the account's lifecycle state and the customer workspace's entitlement follow the subscription", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    // The customer's own workspace, as provisioning records it.
+    const [customer] = await sql`insert into workspaces (name, slug) values ('Customer workspace', ${"cust-" + randomUUID().slice(0, 12)}) returning id`;
+    await sql`insert into cops_provisionings (workspace_id, account_id, opportunity_id, idempotency_key, status, request, provisioned_workspace_id)
+      values (${workspaceId}, ${accountId}, ${opportunityId}, ${randomUUID()}, 'succeeded', '{}'::jsonb, ${customer.id})`;
+    const accountState = async () => (await sql`select state from cops_lifecycle_states where workspace_id = ${workspaceId} and dimension = 'account' and entity_id = ${accountId}`)[0]?.state;
+    const entitlement = async () => (await sql`select value, source from entitlements where workspace_id = ${customer.id} and key = 'subscription'`)[0];
+
+    const sub = (await subscribe(accountId, opportunityId)).json().data;
+    expect(await accountState()).toBe("paid");
+    expect(await entitlement()).toMatchObject({ source: "cops-subscription", value: { subscription_id: sub.id, status: "active", seats: 10, currency: "USD" } });
+
+    const due = sub.invoices[0].due_at as string;
+    // What the product does for the customer's workspace: spend a credit, and ask whether outreach may go.
+    await postCreditTransaction(db, { workspaceId: customer.id, amount: 50, kind: "grant", action: "test-grant", referenceId: null });
+    const store = new DbStore(db);
+    const spend = () => store.deductCredits(customer.id, 1, "test-spend");
+    const mailConfig = { EMAIL_INTEL_SERVICE_URL: undefined, EMAIL_INTEL_TIMEOUT_MS: 100 } as never;
+    const outreach = () => canContact(db, mailConfig, { workspaceId: customer.id, email: "buyer@example.test", purpose: "outreach" });
+    const transactional = () => canContact(db, mailConfig, { workspaceId: customer.id, email: "buyer@example.test", purpose: "transactional" });
+
+    // Days 0 to 7: past due, full access.
+    await billAt(due, 3);
+    expect(await subscriptionAccessBlock(db, customer.id)).toBeNull();
+    expect(await spend()).toBe(49);
+    expect(await outreach()).not.toMatchObject({ reason: "subscription_restricted" });
+
+    // Past due and restricted are stages of the subscription; the account is still a paying customer.
+    await billAt(due, 9);
+    expect(await accountState()).toBe("paid");
+    expect((await entitlement()).value.status).toBe("restricted");
+    // From day 8: no new credit use and no outreach. Transactional mail still goes, and nothing is taken away.
+    expect(await subscriptionAccessBlock(db, customer.id)).toBe("restricted");
+    await expect(spend()).rejects.toBeInstanceOf(SubscriptionRestrictedError);
+    await expect(spend()).rejects.toMatchObject({ statusCode: 402, details: { stage: "restricted" } });
+    expect(await outreach()).toEqual({ allowed: false, reason: "subscription_restricted", detail: "restricted" });
+    expect(await transactional()).not.toMatchObject({ reason: "subscription_restricted" });
+    expect(await store.getCreditBalance(customer.id)).toBe(49);
+
+    await billAt(due, 15);
+    expect(await accountState()).toBe("suspended");
+    expect((await entitlement()).value.status).toBe("suspended");
+    expect(await subscriptionAccessBlock(db, customer.id)).toBe("suspended");
+
+    // Paying restores both, with no extra step.
+    await sql`update subscription_invoices set status = 'paid', paid_at = now() where subscription_id = ${sub.id}`;
+    await billAt(due, 16);
+    expect(await accountState()).toBe("paid");
+    expect((await entitlement()).value).toMatchObject({ status: "active", seats: 10 });
+    expect(await subscriptionAccessBlock(db, customer.id)).toBeNull();
+    expect(await spend()).toBe(48);
+    // Finance sees the grant on this account, with why, and none of the usage.
+    await postCreditTransaction(db, { workspaceId: customer.id, amount: -5, kind: "adjustment", action: "manual_adjustment", referenceId: null, reason: "Duplicate grant corrected", actor: { type: "user", id: "finance-user" } });
+    const activity = (await call("GET", "/finance/credit-activity")).json().data as Array<{ account_id: string; kind: string; amount: number; reason: string | null; account_name: string | null }>;
+    const mine = activity.filter((r) => r.account_id === accountId);
+    expect(mine.map((r) => `${r.kind}:${r.amount}`)).toEqual(["adjustment:-5", "grant:50"]);
+    expect(mine[0]).toMatchObject({ reason: "Duplicate grant corrected", account_name: expect.stringContaining("Subs Co") });
+    expect((await call("GET", "/finance/credit-activity?kind=adjustment")).json().data.every((r: { kind: string }) => r.kind === "adjustment")).toBe(true);
+    expect((await call("GET", "/finance/credit-activity", undefined, OTHER)).json().data).toEqual([]);
+    // A workspace with no subscription entitlement (internal, or on trial) is never restricted.
+    expect(await subscriptionAccessBlock(db, workspaceId)).toBeNull();
+
+    // A seat amendment reaches the entitlement when it takes effect, and a longer term moves the renewal date at once.
+    await call("POST", `/subscriptions/${sub.id}/amendments`, { seats: 15, term_months: 24, reason: "Growth" });
+    expect((await entitlement()).value).toMatchObject({ seats: 10 });
+    expect(new Date((await entitlement()).value.renews_at).getUTCFullYear()).toBe(new Date(sub.term_start).getUTCFullYear() + 2);
+    await sql`update subscription_invoices set status = 'paid', paid_at = now() where subscription_id = ${sub.id}`;
+    await billAt(sub.invoices[0].period_end, 0);
+    expect((await entitlement()).value).toMatchObject({ seats: 15 });
+    // Every account-state change went through the transition service, so each has its event.
+    const moves = await sql`select envelope->'payload' as payload from cops_outbox where event_type = 'LifecycleTransitioned' and aggregate_id = ${accountId} order by created_at`;
+    expect(moves.map((m: { payload: { from: string; to: string } }) => `${m.payload.from}>${m.payload.to}`)).toEqual(["trial>paid", "paid>suspended", "suspended>paid"]);
+  });
+
+  it("a suspended customer can still sign in, read their own bills and pay, while product use is closed", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    // The customer's own user and workspace, as the stub auth provisions them.
+    const CUSTOMER = `customer-${randomUUID().slice(0, 8)}@subs.test`;
+    const customerWs = ((await call("GET", "/me", undefined, CUSTOMER)).json() as { workspaceId: string }).workspaceId;
+    expect((await call("GET", "/billing/subscription", undefined, CUSTOMER)).json().data).toBeNull();
+    await sql`insert into cops_provisionings (workspace_id, account_id, opportunity_id, idempotency_key, status, request, provisioned_workspace_id)
+      values (${workspaceId}, ${accountId}, ${opportunityId}, ${randomUUID()}, 'succeeded', '{}'::jsonb, ${customerWs})`;
+    const sub = (await subscribe(accountId, opportunityId)).json().data;
+    const due = sub.invoices[0].due_at as string;
+
+    const mine = (await call("GET", "/billing/subscription", undefined, CUSTOMER)).json().data;
+    expect(mine).toMatchObject({ status: "active", seats: 10, currency: "USD", invoices: [{ id: sub.invoices[0].id, status: "open", amount_minor: sub.invoices[0].amount_minor }] });
+    // The customer's view carries no internal ids or Skout-side notes.
+    expect(mine).not.toHaveProperty("account_id");
+    expect(mine.invoices[0]).not.toHaveProperty("payment_request_id");
+
+    await billAt(due, 15);
+    expect(await subscriptionAccessBlock(db, customerWs)).toBe("suspended");
+    // Product use is closed with a reason the app can show...
+    const blocked = await call("GET", "/sequences", undefined, CUSTOMER);
+    expect(blocked.statusCode).toBe(402);
+    expect(blocked.json()).toMatchObject({ code: "subscription_suspended", details: { stage: "suspended" } });
+    expect((await call("GET", "/enrichment/credits", undefined, CUSTOMER)).statusCode).toBe(402);
+    // ...while signing in and the billing page still work.
+    expect((await call("GET", "/me", undefined, CUSTOMER)).statusCode).toBe(200);
+    expect((await call("GET", "/billing/subscription", undefined, CUSTOMER)).json().data.invoices[0].status).toBe("open");
+
+    // Pay now: the same payment link Finance would send, reused if asked again.
+    const pay = await call("POST", `/billing/subscription/invoices/${sub.invoices[0].id}/pay`, {}, CUSTOMER);
+    expect(pay.statusCode).toBe(201);
+    expect(pay.json().data.checkout_url).toMatch(/^https:\/\/rzp\.io\/i\//);
+    expect((await call("POST", `/billing/subscription/invoices/${sub.invoices[0].id}/pay`, {}, CUSTOMER)).json().data.checkout_url).toBe(pay.json().data.checkout_url);
+    // Someone else's bill is not theirs to pay.
+    const { accountId: otherAccount, opportunityId: otherOpp } = await newAccount();
+    const otherSub = (await subscribe(otherAccount, otherOpp)).json().data;
+    expect((await call("POST", `/billing/subscription/invoices/${otherSub.invoices[0].id}/pay`, {}, CUSTOMER)).statusCode).toBe(404);
+
+    // Paying lifts the suspension through the normal path.
+    await sql`update subscription_invoices set status = 'paid', paid_at = now() where subscription_id = ${sub.id}`;
+    await billAt(due, 16);
+    expect((await call("GET", "/sequences", undefined, CUSTOMER)).statusCode).toBe(200);
+    expect((await call("GET", "/billing/subscription", undefined, CUSTOMER)).json().data.status).toBe("active");
+    // A workspace Skout does not bill is never closed.
+    expect((await call("GET", "/sequences")).statusCode).toBe(200);
+  });
+
+  it("a subscription the pass cannot process does not stop the others, and alerts Admin once a day", async () => {
+    const one = await newAccount();
+    const two = await newAccount();
+    const broken = (await subscribe(one.accountId, one.opportunityId)).json().data;
+    const fine = (await subscribe(two.accountId, two.opportunityId)).json().data;
+    // Make every new bill for one subscription fail, as a bad row or a bug would.
+    await sql.unsafe(`create or replace function test_fail_bill() returns trigger language plpgsql as $$
+      begin if new.subscription_id = '${broken.id}' then raise exception 'simulated failure'; end if; return new; end $$`);
+    await sql`create trigger test_fail_bill before insert on subscription_invoices for each row execute function test_fail_bill()`;
+    try {
+      const result = await billAt(fine.invoices[0].period_end, 1);
+      expect(result.failed).toEqual([{ subscription_id: broken.id, workspace_id: workspaceId, error: expect.stringContaining("simulated failure") }]);
+      // The other subscription was still billed for its next period.
+      expect((await currentAt(two.accountId, fine.invoices[0].period_end, 1)).invoices.length).toBe(2);
+
+      const now = new Date("2026-11-20T10:00:00Z");
+      const sent = await notifyPassFailures(db, "billing", result.failed, now);
+      expect(sent).toBeGreaterThan(0);
+      const [note] = await sql`select title, body, type from notifications where workspace_id = ${workspaceId} and type = 'cops.billing_pass_failed' order by created_at desc limit 1`;
+      expect(note.title).toBe("Subscription billing pass failed for 1 subscription");
+      expect(note.body).toContain(broken.id);
+      // The same day sends nothing new; the next day does.
+      expect(await notifyPassFailures(db, "billing", result.failed, new Date("2026-11-20T18:00:00Z"))).toBe(0);
+      expect(await notifyPassFailures(db, "billing", result.failed, new Date("2026-11-21T10:00:00Z"))).toBeGreaterThan(0);
+    } finally {
+      await sql`drop trigger if exists test_fail_bill on subscription_invoices`;
+      await sql`drop function if exists test_fail_bill()`;
+    }
+  });
+
+  it("another workspace cannot see or change a subscription", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    const sub = (await subscribe(accountId, opportunityId)).json().data;
+    expect((await call("GET", `/accounts/${accountId}/subscription`, undefined, OTHER)).json().data).toBeNull();
+    expect((await call("POST", `/subscription-invoices/${sub.invoices[0].id}/mark-paid`, { reason: "x" }, OTHER)).statusCode).toBe(404);
+    expect((await call("POST", `/accounts/${accountId}/subscription`, { opportunity_id: opportunityId, seats: 1, cadence: "monthly", term_months: 1 }, OTHER)).statusCode).toBe(404);
+    expect((await call("GET", "/finance/failed-payments", undefined, OTHER)).json().data).toEqual([]);
+  });
+});

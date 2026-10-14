@@ -14,12 +14,13 @@ import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
  *     query, and the payment webhook resolves the account inside its own transaction.
  *   - Review date: revisit when apps/crm's internal API covers batched reads
  */
-import { BILLING_CADENCES, COMMERCIAL_GATE_POLICIES, COMMERCIAL_LINE_KINDS, copsErrorBody, copsErrorStatus, resolveCorrelationId } from "@skout/shared";
+import { APPROVER_ROLES, REDLINE_STATUSES, PRICE_BASES, SUBSCRIPTION_BILLING, SUBSCRIPTION_CADENCES, BILLING_CADENCES, COMMERCIAL_GATE_POLICIES, COMMERCIAL_LINE_KINDS, copsErrorBody, copsErrorStatus, resolveCorrelationId } from "@skout/shared";
 import { getMemberPermissions } from "@skout/auth";
 import { copsIdempotencyStore, requireAnyCopsPermission } from "../services/cops-platform.service.js";
 import { withCopsIdempotentReply, type CopsCapturingReply } from "../services/cops-idempotent.js";
 import {
   addContractVersion,
+  attachNegotiatedVersion,
   addProposalVersion,
   CommercialError,
   createContract,
@@ -34,6 +35,7 @@ import {
   type CommercialContext,
 } from "../services/cops-commercial.service.js";
 import { createPaymentRequest, handlePaymentWebhook, loadPaymentRequests } from "../services/cops-payments.service.js";
+import { assertApproved, assertContractApproved, decideApproval, evaluateProposalApprovals, listApprovals, requestApproval } from "../services/cops-approvals.service.js";
 import { createRazorpayPaymentLinkAdapter } from "../services/psp/razorpay.js";
 import {
   approveTrial,
@@ -45,6 +47,12 @@ import {
   setGatePolicy,
 } from "../services/cops-gate.service.js";
 import type { PspAdapter } from "../services/psp/psp-adapter.js";
+import { createMockEsignAdapter, type EsignAdapter } from "../services/esign/esign-adapter.js";
+import { createDocusealAdapter } from "../services/esign/docuseal-adapter.js";
+import { handleEsignWebhook, listEnvelopes, sendEnvelope } from "../services/cops-esign.service.js";
+import { getAccountContractFields, setAccountContractFields } from "../services/cops-account-fields.service.js";
+import { CREDIT_ACTIVITY_KINDS, listCreditActivity, listSubscriptionsForFinance, loadReconciliation } from "../services/cops-finance.service.js";
+import { amendSubscription, createSubscription, getAccountSubscription, issueInvoicePaymentLink, listFailedPayments, markInvoicePaid } from "../services/cops-subscriptions.service.js";
 import { applyPaidCreditPurchases } from "../services/cops-credits.service.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -57,6 +65,7 @@ const lineItemSchema = z
     quantity: z.number().int().min(1).max(10_000_000),
     unit_amount_minor: z.number().int().min(0).max(1_000_000_000_000),
     discount_pct: pct.default(0),
+    price_basis: z.enum(PRICE_BASES).optional(),
   })
   .strict();
 const termsSchema = z
@@ -67,6 +76,10 @@ const termsSchema = z
     discount_pct: pct.default(0),
     tax_pct: pct.default(0),
     notes: z.string().max(5000).nullable().optional(),
+    payment_terms_net_days: z.number().int().min(0).max(365).optional(),
+    free_credits: z.number().int().min(0).max(10_000_000).optional(),
+    custom_clauses: z.boolean().optional(),
+    non_standard_sla: z.boolean().optional(),
     line_items: z.array(lineItemSchema).min(1).max(200),
   })
   .strict();
@@ -83,6 +96,7 @@ const documentSchema = z
     file_sha256: z.string().regex(/^[a-f0-9]{64}$/, "file_sha256 must be a lowercase hex SHA-256"),
   })
   .strict();
+const negotiatedVersionSchema = documentSchema.extend({ redline_status: z.enum(REDLINE_STATUSES), note: z.string().trim().max(1000).optional() }).strict();
 const createContractSchema = documentSchema
   .extend({
     kind: z.enum(["msa", "order_form", "dpa"]),
@@ -122,14 +136,66 @@ const contractStatusSchema = z
   .object({ status: z.enum(["signed", "declined", "expired"]), reason: reasonText, signed_at: z.string().datetime().optional() })
   .strict();
 
+const envelopeSchema = z
+  .object({
+    signers: z
+      .array(z.object({ name: z.string().trim().min(1).max(200), email: z.string().trim().email().max(320), role: z.string().trim().max(100).optional() }).strict())
+      .min(1)
+      .max(10),
+    merge_fields: z.record(z.string().regex(/^[a-z0-9_]{1,64}$/), z.string().max(2000)).optional(),
+    template_context: z.object({ region: z.string().trim().max(64).optional(), segment: z.string().trim().max(64).optional(), legal_entity: z.string().trim().max(64).optional() }).strict().optional(),
+    message: z.string().max(5000).optional(),
+  })
+  .strict();
+
+const subscriptionSchema = z
+  .object({
+    opportunity_id: z.string().regex(UUID),
+    seats: z.number().int().min(1).max(100_000),
+    cadence: z.enum(SUBSCRIPTION_CADENCES),
+    term_months: z.number().int().min(1).max(120),
+    billing: z.enum(SUBSCRIPTION_BILLING).optional(),
+    seat_month_minor: z.number().int().min(1).max(1_000_000_000).optional(),
+    payment_terms_net_days: z.number().int().min(0).max(365).optional(),
+    start_at: z.string().datetime().optional(),
+  })
+  .strict();
+const amendmentSchema = z
+  .object({ seats: z.number().int().min(1).max(100_000).optional(), term_months: z.number().int().min(1).max(120).optional(), reason: z.string().trim().min(1, "reason is required").max(1000) })
+  .strict();
+const financeSubscriptionsQuery = z
+  .object({ status: z.enum(["active", "past_due", "restricted", "suspended", "closed"]).optional(), renewing_within_days: z.coerce.number().int().min(1).max(730).optional() })
+  .strict();
+const financeCreditQuery = z.object({ kind: z.enum(CREDIT_ACTIVITY_KINDS).optional() }).strict();
+const financePaymentsQuery = z.object({ status: z.enum(["requested", "paid", "failed", "expired", "cancelled", "refunded"]).optional() }).strict();
+const markPaidSchema = z.object({ reason: z.string().trim().min(1, "reason is required").max(1000) }).strict();
+
+const approvalDecisionSchema = z
+  .object({ role: z.enum(APPROVER_ROLES), decision: z.enum(["approved", "rejected"]), comment: z.string().trim().max(2000).nullable().optional() })
+  .strict();
+const approvalQuerySchema = z
+  .object({ status: z.enum(["pending", "approved", "rejected", "voided", "expired"]).optional(), role: z.enum(APPROVER_ROLES).optional() })
+  .strict();
+
 type Reply = CopsCapturingReply;
 
 /**
  * COPS-03 proposals and contracts (status-tracking scope). Contract: docs/api/copos-03-commercial.openapi.yaml.
  * Every write needs an Idempotency-Key; reads need commercial:read. Sent versions are immutable.
  */
-export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db; psp?: PspAdapter }) {
+export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db; psp?: PspAdapter; esign?: EsignAdapter }) {
   const { db } = opts;
+  // DocuSeal once its API key is in the encrypted env file; the mock (never in production) until then.
+  const esign =
+    opts.esign ??
+    (app.config.DOCUSEAL_API_KEY
+      ? createDocusealAdapter({
+          apiKey: app.config.DOCUSEAL_API_KEY,
+          baseUrl: app.config.DOCUSEAL_BASE_URL,
+          webhookSecret: app.config.DOCUSEAL_WEBHOOK_SECRET,
+          webhookHeader: app.config.DOCUSEAL_WEBHOOK_HEADER,
+        })
+      : createMockEsignAdapter({ secret: app.config.ESIGN_MOCK_WEBHOOK_SECRET, enabled: app.config.NODE_ENV !== "production" }));
   const psp = opts.psp ?? createRazorpayPaymentLinkAdapter(app.config);
   const perms = (ws: string, user: string) => getMemberPermissions(db, ws, user);
   const readGate = requireAnyCopsPermission(["commercial:read"], perms);
@@ -174,6 +240,304 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
 
   const checkId = (reply: Reply, requestId: string, id: string, path = "id") =>
     UUID.test(id) ? null : invalid(reply, requestId, { path, message: "Invalid id" });
+
+  // ---- Approvals (COPS-08). Contract: docs/api/copos-08-commercial-advanced.openapi.yaml ----
+
+  const approvalDecideGate = requireAnyCopsPermission(["commercial:approve", "legal:approve"], perms);
+  type IdOnly = { Params: { id: string }; Body: unknown; Querystring: unknown };
+
+  app.get<IdOnly>("/proposals/:id/approvals/evaluate", { preHandler: readGate }, async (request, reply) => {
+    const ctx = ctxOf(request);
+    const bad = checkId(reply as unknown as Reply, ctx.requestId, request.params.id);
+    if (bad) return bad;
+    return run(reply as unknown as Reply, ctx.requestId, () => evaluateProposalApprovals(db, ctx.workspaceId, request.params.id), (data) => ({ data }));
+  });
+
+  app.get<IdOnly>("/proposals/:id/approvals", { preHandler: readGate }, async (request, reply) => {
+    const ctx = ctxOf(request);
+    const bad = checkId(reply as unknown as Reply, ctx.requestId, request.params.id);
+    if (bad) return bad;
+    return { data: await listApprovals(db, ctx.workspaceId, { proposalId: request.params.id }) };
+  });
+
+  app.post<IdOnly>(
+    "/proposals/:id/approvals",
+    { preHandler: sendGate },
+    withCopsIdempotentReply<IdOnly>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      return run(reply, ctx.requestId, () => requestApproval(db, ctx, request.params.id), (approval) => reply.status(201).send({ data: approval }));
+    })
+  );
+
+  app.get<{ Querystring: unknown }>("/approvals", { preHandler: approvalDecideGate }, async (request, reply) => {
+    const ctx = ctxOf(request);
+    const parsed = approvalQuerySchema.safeParse(request.query ?? {});
+    if (!parsed.success) return invalid(reply as unknown as Reply, ctx.requestId, parsed.error);
+    const list = await listApprovals(db, ctx.workspaceId, parsed.data);
+    // The approver needs to know which deal this is, not only its numbers.
+    const ids = [...new Set(list.map((a) => a.opportunity_id))];
+    const named = ids.length
+      ? await db
+          .select({ id: schema.deals.id, name: schema.deals.name, account: schema.companies.name, accountId: schema.companies.id })
+          .from(schema.deals)
+          .leftJoin(schema.companies, eq(schema.companies.id, schema.deals.companyId))
+          .where(and(eq(schema.deals.workspaceId, ctx.workspaceId), inArray(schema.deals.id, ids)))
+      : [];
+    const byId = new Map(named.map((n) => [n.id, n]));
+    return {
+      data: list.map((a) => ({ ...a, opportunity_name: byId.get(a.opportunity_id)?.name ?? null, account_id: byId.get(a.opportunity_id)?.accountId ?? null, account_name: byId.get(a.opportunity_id)?.account ?? null })),
+    };
+  });
+
+  /** Deals the approval engine skips because they were already sent, signed or paid (report for Finance). */
+  const financeReportGate = requireAnyCopsPermission(["commercial:approve", "billing:read"], perms);
+  app.get("/approvals/grandfathered", { preHandler: financeReportGate }, async (request) => {
+    const ctx = ctxOf(request);
+    const rows = await db
+      .select({
+        opportunity_id: schema.commercialGates.opportunityId,
+        opportunity_name: schema.deals.name,
+        amount: schema.deals.amount,
+        currency: schema.deals.currency,
+        grandfathered_at: schema.commercialGates.approvalsGrandfatheredAt,
+        reason: schema.commercialGates.approvalsGrandfatheredReason,
+      })
+      .from(schema.commercialGates)
+      .innerJoin(schema.deals, eq(schema.deals.id, schema.commercialGates.opportunityId))
+      .where(and(eq(schema.commercialGates.workspaceId, ctx.workspaceId), sql`${schema.commercialGates.approvalsGrandfatheredAt} is not null`))
+      .orderBy(desc(schema.commercialGates.approvalsGrandfatheredAt), schema.deals.name)
+      .limit(1000);
+    return {
+      data: rows.map((r) => ({ ...r, amount: r.amount == null ? null : Number(r.amount), grandfathered_at: r.grandfathered_at?.toISOString() ?? null, reasons: (r.reason ?? "").split(",").filter(Boolean) })),
+    };
+  });
+
+  app.post<IdOnly>(
+    "/approvals/:id/decisions",
+    { preHandler: approvalDecideGate },
+    withCopsIdempotentReply<IdOnly>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      const parsed = approvalDecisionSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(reply, ctx.requestId, () => decideApproval(db, ctx, request.params.id, parsed.data), (approval) => ({ data: approval }));
+    })
+  );
+
+  // ---- Subscriptions (COPS-08) ----
+
+  const billingWriteGate = requireAnyCopsPermission(["billing:write"], perms);
+  const billingReadGate = requireAnyCopsPermission(["billing:read", "commercial:read"], perms);
+
+  app.post<IdOnly>(
+    "/accounts/:id/subscription",
+    { preHandler: billingWriteGate },
+    withCopsIdempotentReply<IdOnly>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      const parsed = subscriptionSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(reply, ctx.requestId, () => createSubscription(db, ctx, request.params.id, parsed.data), (subscription) => reply.status(201).send({ data: subscription }));
+    })
+  );
+
+  app.get<IdOnly>("/accounts/:id/subscription", { preHandler: billingReadGate }, async (request, reply) => {
+    const ctx = ctxOf(request);
+    const bad = checkId(reply as unknown as Reply, ctx.requestId, request.params.id);
+    if (bad) return bad;
+    return { data: await getAccountSubscription(db, ctx.workspaceId, request.params.id) };
+  });
+
+  app.post<IdOnly>(
+    "/subscriptions/:id/amendments",
+    { preHandler: billingWriteGate },
+    withCopsIdempotentReply<IdOnly>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      const parsed = amendmentSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(reply, ctx.requestId, () => amendSubscription(db, ctx, request.params.id, parsed.data), (subscription) => reply.status(201).send({ data: subscription }));
+    })
+  );
+
+  app.post<IdOnly>(
+    "/subscription-invoices/:id/payment-link",
+    { preHandler: paymentWriteGate },
+    withCopsIdempotentReply<IdOnly>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      return run(
+        reply,
+        ctx.requestId,
+        async () => {
+          const linked = await issueInvoicePaymentLink(db, psp, ctx, request.params.id);
+          const [payment] = await loadPaymentRequests(db, ctx.workspaceId, { id: linked.payment_request_id });
+          return { ...linked, payment_request: payment };
+        },
+        (data) => reply.status(201).send({ data })
+      );
+    })
+  );
+
+  app.post<IdOnly>(
+    "/subscription-invoices/:id/mark-paid",
+    { preHandler: billingWriteGate },
+    withCopsIdempotentReply<IdOnly>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      const parsed = markPaidSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(reply, ctx.requestId, () => markInvoicePaid(db, ctx, request.params.id, parsed.data.reason), () => ({ data: { ok: true } }));
+    })
+  );
+
+  /** Finance: accounts with an unpaid bill past its due date, worst first. */
+  app.get("/finance/failed-payments", { preHandler: requireAnyCopsPermission(["billing:read"], perms) }, async (request) => {
+    const ctx = ctxOf(request);
+    return { data: await listFailedPayments(db, ctx.workspaceId) };
+  });
+
+  const financeReadGate = requireAnyCopsPermission(["billing:read"], perms);
+
+  /** Finance: where a provider and Skout disagree. */
+  app.get("/finance/reconciliation", { preHandler: financeReadGate }, async (request) => {
+    const ctx = ctxOf(request);
+    return { data: await loadReconciliation(db, ctx.workspaceId) };
+  });
+
+  app.get<{ Querystring: unknown }>("/finance/subscriptions", { preHandler: financeReadGate }, async (request, reply) => {
+    const ctx = ctxOf(request);
+    const parsed = financeSubscriptionsQuery.safeParse(request.query ?? {});
+    if (!parsed.success) return invalid(reply as unknown as Reply, ctx.requestId, parsed.error);
+    return { data: await listSubscriptionsForFinance(db, ctx.workspaceId, parsed.data) };
+  });
+
+  /** Finance: credit purchases and manual ledger entries across accounts, with actor and reason. */
+  app.get<{ Querystring: unknown }>("/finance/credit-activity", { preHandler: requireAnyCopsPermission(["billing:read", "credits:read"], perms) }, async (request, reply) => {
+    const ctx = ctxOf(request);
+    const parsed = financeCreditQuery.safeParse(request.query ?? {});
+    if (!parsed.success) return invalid(reply as unknown as Reply, ctx.requestId, parsed.error);
+    const rows = await listCreditActivity(db, ctx.workspaceId, parsed.data);
+    const ids = [...new Set(rows.map((r) => r.account_id))];
+    const names = ids.length
+      ? await db.select({ id: schema.companies.id, name: schema.companies.name }).from(schema.companies).where(and(eq(schema.companies.workspaceId, ctx.workspaceId), inArray(schema.companies.id, ids)))
+      : [];
+    const byId = new Map(names.map((n) => [n.id, n.name]));
+    return { data: rows.map((r) => ({ ...r, account_name: byId.get(r.account_id) ?? null })) };
+  });
+
+  /** Finance: payment links across accounts, newest first, with the opportunity they belong to. */
+  app.get<{ Querystring: unknown }>("/finance/payment-requests", { preHandler: financeReadGate }, async (request, reply) => {
+    const ctx = ctxOf(request);
+    const parsed = financePaymentsQuery.safeParse(request.query ?? {});
+    if (!parsed.success) return invalid(reply as unknown as Reply, ctx.requestId, parsed.error);
+    const rows = await db
+      .select({
+        id: schema.paymentRequests.id,
+        opportunity_id: schema.paymentRequests.opportunityId,
+        opportunity_name: schema.deals.name,
+        account_id: schema.deals.companyId,
+        amount_minor: schema.paymentRequests.amountMinor,
+        currency: schema.paymentRequests.currency,
+        description: schema.paymentRequests.description,
+        status: schema.paymentRequests.status,
+        provider: schema.paymentRequests.provider,
+        provider_ref: schema.paymentRequests.providerRef,
+        due_at: schema.paymentRequests.expiresAt,
+        paid_at: schema.paymentRequests.paidAt,
+        created_at: schema.paymentRequests.createdAt,
+      })
+      .from(schema.paymentRequests)
+      .innerJoin(schema.deals, eq(schema.deals.id, schema.paymentRequests.opportunityId))
+      .where(and(eq(schema.paymentRequests.workspaceId, ctx.workspaceId), parsed.data.status ? eq(schema.paymentRequests.status, parsed.data.status) : undefined))
+      .orderBy(desc(schema.paymentRequests.createdAt))
+      .limit(500);
+    return {
+      data: rows.map((r) => ({ ...r, amount_minor: Number(r.amount_minor), due_at: r.due_at?.toISOString() ?? null, paid_at: r.paid_at?.toISOString() ?? null, created_at: r.created_at.toISOString() })),
+    };
+  });
+
+  // ---- E-signature (COPS-08) ----
+
+  app.post<IdOnly>(
+    "/contracts/:id/envelopes",
+    { preHandler: sendGate },
+    withCopsIdempotentReply<IdOnly>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      const parsed = envelopeSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(
+        reply,
+        ctx.requestId,
+        async () => {
+          await assertContractApproved(db, ctx.workspaceId, request.params.id);
+          return sendEnvelope(db, ctx, esign, request.params.id, parsed.data);
+        },
+        (envelope) => reply.status(201).send({ data: envelope })
+      );
+    })
+  );
+
+  // The account's region, segment and legal entity, which pick the contract template (custom fields).
+  const contractFieldsSchema = z
+    .object({ region: z.string().trim().max(100), segment: z.string().trim().max(100), legal_entity: z.string().trim().max(200) })
+    .partial()
+    .strict();
+  app.get<IdOnly>("/accounts/:id/contract-fields", { preHandler: contractReadGate }, async (request, reply) => {
+    const ctx = ctxOf(request);
+    const bad = checkId(reply as unknown as Reply, ctx.requestId, request.params.id);
+    if (bad) return bad;
+    return { data: await getAccountContractFields(db, ctx.workspaceId, request.params.id) };
+  });
+  app.put<IdOnly>("/accounts/:id/contract-fields", { preHandler: contractWriteGate }, async (request, reply) => {
+    const ctx = ctxOf(request);
+    const bad = checkId(reply as unknown as Reply, ctx.requestId, request.params.id);
+    if (bad) return bad;
+    const parsed = contractFieldsSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return invalid(reply as unknown as Reply, ctx.requestId, parsed.error);
+    return run(reply as unknown as Reply, ctx.requestId, () => setAccountContractFields(db, ctx, request.params.id, parsed.data), (data) => ({ data }));
+  });
+
+  app.get<IdOnly>("/contracts/:id/envelopes", { preHandler: contractReadGate }, async (request, reply) => {
+    const ctx = ctxOf(request);
+    const bad = checkId(reply as unknown as Reply, ctx.requestId, request.params.id);
+    if (bad) return bad;
+    return { data: await listEnvelopes(db, ctx.workspaceId, { contractId: request.params.id }) };
+  });
+
+  app.post<{ Params: { provider: string } }>("/esign/webhooks/:provider", async (request, reply) => {
+    const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+    if (request.params.provider !== esign.provider) {
+      return reply.status(404).send(copsErrorBody({ code: "NOT_FOUND", message: "Unknown e-sign provider", requestId }));
+    }
+    const rawBody = request.rawBody ?? JSON.stringify(request.body ?? {});
+    const result = await handleEsignWebhook(db, esign, rawBody, request.headers, requestId, async (tx, signed) => {
+      await evaluateGate(tx as unknown as Db, {
+        workspaceId: signed.workspaceId,
+        opportunityId: signed.opportunityId,
+        trigger: "signature",
+        actor: { type: "integration", id: esign.provider },
+        requestId,
+      });
+    });
+    if (result.kind === "unauthorized") {
+      return reply.status(401).send(copsErrorBody({ code: "UNAUTHENTICATED", message: "Invalid webhook signature", requestId }));
+    }
+    if (result.kind === "bad_request") {
+      return reply.status(400).send(copsErrorBody({ code: "VALIDATION_FAILED", message: "Unreadable webhook body", requestId }));
+    }
+    if (result.kind === "duplicate") return { ok: true, duplicate: true };
+    return { ok: true, duplicate: false, outcome: result.outcome, status: result.status };
+  });
 
   // ---- Proposals ----
 
@@ -243,6 +607,8 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
         reply,
         ctx.requestId,
         async () => {
+          // COPS-08: a proposal over a threshold goes out only once every approver has agreed.
+          await assertApproved(db, ctx.workspaceId, request.params.id);
           await sendProposal(db, ctx, request.params.id);
           return (await loadProposals(db, ctx.workspaceId, { proposalId: request.params.id }))[0];
         },
@@ -326,6 +692,27 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
   );
 
   app.post<IdBody>(
+    "/contracts/:id/negotiated-versions",
+    { preHandler: statusGate },
+    withCopsIdempotentReply<IdBody>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      const parsed = negotiatedVersionSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(
+        reply,
+        ctx.requestId,
+        async () => {
+          await attachNegotiatedVersion(db, ctx, request.params.id, parsed.data);
+          return (await loadContracts(db, ctx.workspaceId, { contractId: request.params.id }))[0];
+        },
+        (contract) => reply.status(201).send({ data: contract })
+      );
+    })
+  );
+
+  app.post<IdBody>(
     "/contracts/:id/send",
     { preHandler: sendGate },
     withCopsIdempotentReply<IdBody>(idempotency, async (request, reply) => {
@@ -336,6 +723,7 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
         reply,
         ctx.requestId,
         async () => {
+          await assertContractApproved(db, ctx.workspaceId, request.params.id);
           await sendContract(db, ctx, request.params.id);
           return (await loadContracts(db, ctx.workspaceId, { contractId: request.params.id }))[0];
         },
