@@ -1,0 +1,28 @@
+# Google Ops Agent config for the Skout staging VM: ship Docker container logs to Cloud Logging.
+# Install once on the VM (see docs/ops/gcp-monitoring.md); this file goes to
+# /etc/google-cloud-ops-agent/config.yaml.
+#
+# Docker's json-file driver writes {"log":"<line>\n","stream":"stdout","time":"..."} per line. One parse
+# step reads that wrapper; the application's own JSON line stays in jsonPayload.log, which the
+# log-based metrics in monitoring.tf match on.
+logging:
+  receivers:
+    docker_containers:
+      type: files
+      include_paths:
+        - /var/lib/docker/containers/*/*-json.log
+  processors:
+    parse_docker_json:
+      type: parse_json
+      time_key: time
+      time_format: "%Y-%m-%dT%H:%M:%S.%LZ"
+  service:
+    pipelines:
+      docker:
+        receivers: [docker_containers]
+        processors: [parse_docker_json]
+metrics:
+  service:
+    pipelines:
+      default_pipeline:
+        receivers: [hostmetrics]
