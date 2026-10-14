@@ -147,7 +147,6 @@ resource "google_monitoring_alert_policy" "cops_critical" {
   }
 
   alert_strategy {
-    notification_rate_limit { period = "3600s" }
     auto_close = "3600s"
   }
 }
@@ -180,7 +179,6 @@ resource "google_monitoring_alert_policy" "cops_warn" {
   }
 
   alert_strategy {
-    notification_rate_limit { period = "14400s" }
     auto_close = "7200s"
   }
 }
@@ -246,6 +244,11 @@ resource "google_monitoring_alert_policy" "cops_report_missing" {
 
 # ---------- Dashboard ----------
 resource "google_monitoring_dashboard" "customerops" {
+  # Cloud Monitoring rewrites the stored JSON (key order and defaults), so every plan showed a change.
+  lifecycle {
+    ignore_changes = [dashboard_json]
+  }
+
   dashboard_json = jsonencode({
     displayName = "Skout staging: CustomerOps health"
     mosaicLayout = {
