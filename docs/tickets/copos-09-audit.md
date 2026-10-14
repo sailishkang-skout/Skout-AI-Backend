@@ -34,7 +34,7 @@ ticket still needs, and the order in which I would build it.
 | Provider clients, retries, rate limits | HubSpot client; outbound retry by lease expiry | 429 handling with `Retry-After` and backoff in the client; per-connection rate-limit state visible in health |
 | Never repeat irreversible provider actions | Outbound idempotency key per change | A check before re-sending an outbound create (search by Skout id stored on the external record) |
 | Encrypted credentials | Yes | Nothing for HubSpot |
-| Connector framework, refactor payment/email adapters onto it where practical | Not a framework yet: HubSpot code is called directly | A connector interface (auth, client, webhook verify/parse, object mappers) with HubSpot as the first implementation. Payment (PSP) and e-sign already have adapter interfaces; I would align naming, not move them |
+| Connector framework, refactor payment/email adapters onto it where practical | Not a framework yet: HubSpot code is called directly | A connector interface (auth, client, webhook verify/parse, object mappers) with HubSpot as the first implementation. Where practical, the payment and email adapters move onto it. Payment (`services/psp`) already has an adapter interface and needs only naming alignment. Email (`email-sender.service.ts`, `EmailTransport`) connects Google and Microsoft inboxes with OAuth: their token refresh and expired-grant handling should use the same OAuth lifecycle as the CRM connector, so a revoked inbox shows up the same way as a revoked CRM |
 | Object + field mappings, direction, transforms, null behaviour, scope; versioned and testable (Appendix E) | Hard-coded: inbound field map in the sync service, outbound owned fields in `crm-sync-fields.ts` | Mappings as versioned config per connector (internal path, external object.field, direction, transform, null behaviour, conflict policy, last validated schema version), with a "test mapping" endpoint |
 | Initial import then incremental (webhook/poll) | Incremental pull from checkpoint; one-off prospect import | A first full import for a new connection (paged, resumable via checkpoint), and a scheduled poll when webhooks are not set up |
 | Skout-originated writes land in Skout first, then async | Yes (outbound queue) | Companies are not synced as objects (ADR 0009: deferred) |
@@ -82,7 +82,7 @@ Acceptance criteria and how each will be proven:
 ## 5. Out of scope
 
 - A second connector (Salesforce, Pipedrive, Zoho, Dynamics). The framework is built so one can be added, but only HubSpot ships here.
-- Moving the payment and e-sign adapters onto the connector interface.
+- Moving the payment and e-sign adapters onto the connector interface beyond naming. The email inboxes share the OAuth lifecycle only (see section 2); their sending code stays where it is.
 
 ## 6. Open questions for Aditya
 
