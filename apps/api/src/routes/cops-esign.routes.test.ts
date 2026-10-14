@@ -112,7 +112,7 @@ maybe("COPS-08 e-signature", () => {
     const event = { event_type: "envelope.signed", envelope_ref: envelope.provider_ref };
     expect((await webhook(event, { signature: "0".repeat(64) })).statusCode).toBe(401);
     expect((await webhook(event, { signature: "" })).statusCode).toBe(401);
-    expect((await webhook(event, { provider: "dropbox_sign" })).statusCode).toBe(404);
+    expect((await webhook(event, { provider: "docuseal" })).statusCode).toBe(404);
     expect((await contractStatus(contractId)).status).toBe("sent");
   });
 

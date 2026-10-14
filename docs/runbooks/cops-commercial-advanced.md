@@ -59,9 +59,28 @@ Symptom: the customer says they signed; the contract still shows sent.
 7. `signature_events` rows with `outcome = 'unmatched'` are events for an envelope Skout does not
    know. They have no workspace and are not shown on any screen yet; query the table.
 
-Only the mock provider exists today. It sends nothing to anyone and is never configured in
-production. Until the Dropbox Sign adapter is added, record signatures with the manual contract
-status.
+The provider is DocuSeal (`services/esign/docuseal-adapter.ts`). It is used once
+`DOCUSEAL_API_KEY` is set in the encrypted env file; until then the mock serves development and
+tests, sends nothing to anyone, and is never configured in production. Without a provider, record
+signatures with the manual contract status.
+
+DocuSeal specifics:
+
+- Webhook URL: `https://<api host>/api/v1/esign/webhooks/docuseal`. Events to enable:
+  `form.viewed`, `form.declined`, `submission.created`, `submission.completed`,
+  `submission.expired`. One signer finishing (`form.completed`) is recorded but does not sign the
+  envelope; `submission.completed` does.
+- Verification: the HMAC signature (`X-Docuseal-Signature`, secret `whsec_...` from Webhooks >
+  Security > HMAC) in `DOCUSEAL_WEBHOOK_SECRET`. To use the console's fixed secret header instead,
+  also set `DOCUSEAL_WEBHOOK_HEADER` to that header's name. A 401 on the webhook means the secret,
+  or the header name, does not match the console. An HMAC older than five minutes is refused.
+- With an e-sign template in CustomerOps admin, its "template id at the provider" is the DocuSeal
+  template id (a number). Without one, the uploaded contract version is sent as a PDF by its URL,
+  and that PDF must carry DocuSeal text tags such as `{{Signature;role=First Party}}`, or there is
+  nothing to sign.
+- Each signer carries `external_id` "<envelope id>:<n>". A repeated send finds the submission
+  already made and does not mail the signers again.
+- DocuSeal retries a failed webhook for up to 48 hours; replays are deduplicated.
 
 ## A subscription is past due, restricted or suspended
 

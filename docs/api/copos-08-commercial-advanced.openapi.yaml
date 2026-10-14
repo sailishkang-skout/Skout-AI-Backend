@@ -158,8 +158,10 @@ paths:
         provider event id and applied by rank (sent, viewed, expired, declined, signed), so any
         arrival order ends in the same status. A signature marks the contract signed, emits
         ContractSigned once and evaluates the provisioning gate. An event for a replaced contract
-        version does not change the contract.
-      parameters: [{ name: provider, in: path, required: true, schema: { type: string } }]
+        version does not change the contract. The provider is `docuseal` (URL
+        /api/v1/esign/webhooks/docuseal, verified by X-Docuseal-Signature HMAC or the configured
+        secret header) once DOCUSEAL_API_KEY is set, and `mock` in development and tests.
+      parameters: [{ name: provider, in: path, required: true, schema: { type: string, enum: [docuseal, mock] } }]
       responses:
         "200": { description: "{ok, duplicate, outcome: applied | no_change | ignored | unmatched, status}" }
         "401": { description: Bad or missing signature }

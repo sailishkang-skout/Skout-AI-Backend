@@ -4,8 +4,8 @@ import type { EnvelopeEventStatus } from "@skout/shared";
 /**
  * COPS-08 e-signature adapter (Bible p.32, p.82), shaped like the PSP adapter. Skout sends a
  * contract version for signature and learns what happened from signed webhooks. A provider is one
- * implementation of this interface, so changing provider is an adapter change. Dropbox Sign is the
- * chosen provider; the mock below stands in until its sandbox keys exist.
+ * implementation of this interface, so changing provider is an adapter change. DocuSeal is the
+ * provider (docuseal-adapter.ts); the mock below is for tests and local work.
  */
 export interface EsignSigner {
   name: string;

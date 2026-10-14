@@ -48,6 +48,7 @@ import {
 } from "../services/cops-gate.service.js";
 import type { PspAdapter } from "../services/psp/psp-adapter.js";
 import { createMockEsignAdapter, type EsignAdapter } from "../services/esign/esign-adapter.js";
+import { createDocusealAdapter } from "../services/esign/docuseal-adapter.js";
 import { handleEsignWebhook, listEnvelopes, sendEnvelope } from "../services/cops-esign.service.js";
 import { CREDIT_ACTIVITY_KINDS, listCreditActivity, listSubscriptionsForFinance, loadReconciliation } from "../services/cops-finance.service.js";
 import { amendSubscription, createSubscription, getAccountSubscription, issueInvoicePaymentLink, listFailedPayments, markInvoicePaid } from "../services/cops-subscriptions.service.js";
@@ -183,8 +184,17 @@ type Reply = CopsCapturingReply;
  */
 export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db; psp?: PspAdapter; esign?: EsignAdapter }) {
   const { db } = opts;
-  // Dropbox Sign is the chosen provider; until its adapter and keys exist, the mock serves development and tests only.
-  const esign = opts.esign ?? createMockEsignAdapter({ secret: app.config.ESIGN_MOCK_WEBHOOK_SECRET, enabled: app.config.NODE_ENV !== "production" });
+  // DocuSeal once its API key is in the encrypted env file; the mock (never in production) until then.
+  const esign =
+    opts.esign ??
+    (app.config.DOCUSEAL_API_KEY
+      ? createDocusealAdapter({
+          apiKey: app.config.DOCUSEAL_API_KEY,
+          baseUrl: app.config.DOCUSEAL_BASE_URL,
+          webhookSecret: app.config.DOCUSEAL_WEBHOOK_SECRET,
+          webhookHeader: app.config.DOCUSEAL_WEBHOOK_HEADER,
+        })
+      : createMockEsignAdapter({ secret: app.config.ESIGN_MOCK_WEBHOOK_SECRET, enabled: app.config.NODE_ENV !== "production" }));
   const psp = opts.psp ?? createRazorpayPaymentLinkAdapter(app.config);
   const perms = (ws: string, user: string) => getMemberPermissions(db, ws, user);
   const readGate = requireAnyCopsPermission(["commercial:read"], perms);

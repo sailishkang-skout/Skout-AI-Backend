@@ -298,6 +298,14 @@ const envSchema = z
     RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
     /** COPS-08: signs the events posted to the mock e-sign provider. Development and tests only. */
     ESIGN_MOCK_WEBHOOK_SECRET: z.string().min(16).optional(),
+    /** COPS-08 DocuSeal (the e-sign provider). With an API key set, DocuSeal replaces the mock. */
+    DOCUSEAL_API_KEY: z.string().min(1).optional(),
+    /** https://api.docuseal.com (global) or https://api.docuseal.eu, by the account's region. */
+    DOCUSEAL_BASE_URL: z.string().url().default("https://api.docuseal.com"),
+    /** The HMAC signing secret (whsec_...), or the value of the secret header when DOCUSEAL_WEBHOOK_HEADER is set. */
+    DOCUSEAL_WEBHOOK_SECRET: z.string().min(16).optional(),
+    /** Name of the secret header configured in DocuSeal; unset means HMAC (X-Docuseal-Signature). */
+    DOCUSEAL_WEBHOOK_HEADER: z.string().min(1).optional(),
     /** JSON array of { id, label, credits, amountInr }. */
     RAZORPAY_CREDIT_PACKS_JSON: z.string().optional(),
     /** Prefix for per-workspace CRM OAuth secrets in AWS Secrets Manager. */

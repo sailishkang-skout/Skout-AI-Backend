@@ -16,7 +16,7 @@ Nothing in this ticket is implemented yet. The contract is `docs/api/copos-08-co
 - **Currency**: customers are billed in their own currency, with no implicit conversion. One price
   book per currency (USD, EUR, GBP, INR). Currency is set per account, carried on opportunity,
   proposal, payment request, subscription and ledger entry, and locked once a proposal is sent.
-- **E-sign**: Dropbox Sign, behind a connector interface so that a swap is an adapter change.
+- **E-sign**: DocuSeal (replaced Dropbox Sign, 2026-10-14), behind a connector interface so that a swap is an adapter change.
   Sandbox keys expected by Wednesday 2026-10-14; a mock adapter until then.
 - **Approvals**: rules on discount, seats, contract value, term, payment terms, custom clauses and
   non-standard SLA. Every matching rule applies and the deal needs every approver. Approvals expire
@@ -35,7 +35,7 @@ Nothing in this ticket is implemented yet. The contract is `docs/api/copos-08-co
 | Manual contract status | `POST /contracts/:id/status` with actor and reason (COPS-03) | Keep as the fallback; e-sign events take over when an envelope exists. |
 | Commercial gate | `commercial_gates`, `commercial_gate_policies`, fires once (COPS-03) | Reuse. Add one condition: required approvals are granted. |
 | Approval engine | Only `approve-trial` on the gate | **New**: `approvals`, `approval_decisions`, rule evaluator, and the proposal fields the rules read. |
-| E-sign | Nothing. Razorpay is the only provider adapter (`services/psp`) | **New**: `signature_envelopes`, `signature_events`, an e-sign adapter interface, a Dropbox Sign adapter and a mock. |
+| E-sign | Nothing. Razorpay is the only provider adapter (`services/psp`) | **New**: `signature_envelopes`, `signature_events`, an e-sign adapter interface, a DocuSeal adapter and a mock. |
 | Connector interface | `psp-adapter.ts` (payments) and the HubSpot client; no shared connector abstraction | Model the e-sign adapter on `psp-adapter.ts` (verify, parse, dedupe). The shared framework is COPS-09. |
 | Subscriptions | None. `entitlements` is a key/value table per workspace | **New**: `subscriptions`, `subscription_items`, append-only amendments. Entitlements stay in the existing table. |
 | Razorpay subscriptions | Adapter creates payment links only. Billing webhook handles `payment.captured` only | **New**: plan and subscription calls, and `subscription.*` webhook events. |
@@ -51,7 +51,7 @@ Nothing in this ticket is implemented yet. The contract is `docs/api/copos-08-co
 1. Audit, contract, policy defaults (this commit).
 2. Config kinds and the seed loader; account currency and the currency lock.
 3. Approval engine: rules, requests, decisions, voiding, expiry, the gate condition.
-4. E-sign: adapter interface, mock adapter, envelopes, out-of-order tolerant events. Dropbox Sign
+4. E-sign: adapter interface, mock adapter, envelopes, out-of-order tolerant events. DocuSeal
    adapter when sandbox keys arrive.
 5. Subscriptions: tables, Razorpay plan and subscription, webhook to state, dunning job, restore.
 6. Renewals and amendments.
@@ -78,7 +78,7 @@ unset, in every environment. It now fails closed outside local development. Sepa
 If USD recurring is not supported, those accounts use invoiced / payment-link billing, which the
 COPS-03 payment-link flow already supports.
 
-**Dropbox Sign**: sandbox API key and the webhook signing key.
+**DocuSeal**: sandbox/trial API token (`X-Auth-Token`), the account region (base URL) and the webhook secret.
 
 ## 6. Risks and open questions for Aditya
 
@@ -109,7 +109,7 @@ COPS-03 payment-link flow already supports.
 8. **Restricted access** (no new credit use, enrichment runs or outreach sends) has to be enforced in
    the product, outside CustomerOps: the credit consume path, the enrichment job start and the
    sequence send path. That is three guards in code owned by other tickets (enrichment is ENR).
-9. **Dropbox Sign credentials** must go in the secrets manager, never in the repository or in chat.
+9. **DocuSeal credentials** must go in the secrets manager, never in the repository or in chat.
 10. Prices other than USD are suggestions; Finance confirms before launch.
 11. **Free credits.** The ticket and Bible p.34 list free credits as an approval rule. The kickoff
     thresholds have none. What is the threshold (for example: any complimentary credits over N need
@@ -209,7 +209,7 @@ https://razorpay.com/accept-international-payments/ , https://razorpay.com/subsc
 | Free credits | Count rule stays for now (over 500 Sales Manager, over 2,000 plus Finance), in config. Keep "complimentary value over 10% of TCV" in the file, dormant | Done. The dormant rule is under `_dormant_complimentary_value_rule`; no code reads it. Switch when Finance gives the value of one credit |
 | Contract value | TCV, not the raw proposal amount | Done, see below |
 | Deals already in flight | Do not block them. Sent, signed or paid deals are grandfathered; drafts follow the new rules. Report for Finance | Done: migration 0126 and `GET /approvals/grandfathered` |
-| Secrets | SOPS + age encrypted env files (`deploy/hetzner/env-enc/*.env`), not AWS Secrets Manager | Applies to the Dropbox Sign keys and the Datadog webhook secret |
+| Secrets | SOPS + age encrypted env files (`deploy/hetzner/env-enc/*.env`), not AWS Secrets Manager | Applies to the DocuSeal keys and the Datadog webhook secret |
 | Notifications | In-app notification center (COPS-01), routed by role from config. No Slack | Next |
 | Datadog alerts | Datadog webhook to a signed internal endpoint that creates in-app notifications for Admin and Engineering, plus a team email as fallback | Next. The team email address is still to be given |
 | Razorpay | Aditya is checking the merchant account. Build payment-link-per-period billing now; count failed-payment days from the invoice due date, because the halted event never fires without auto-debit | With subscriptions |
@@ -243,7 +243,7 @@ Built and tested on this branch. Migrations 0123 to 0131, all additive.
 | Ticket line | Built | Not built |
 |---|---|---|
 | Approval engine | Rules from config on discount, seats, TCV, term, free credits, payment terms, custom clauses, SLA. Request, decide per role (Admin or owner for the executive slot), reject with comment, void on material change, expiry after 14 days, in-app notifications. Hooks: proposal send, contract send, envelope send, the provisioning gate, and the stage rule (an opportunity cannot be marked won while a proposal waits for approval). Deals already in flight are skipped and listed for Finance | The complimentary-value rule is dormant until Finance prices a credit. The stage rule blocks the move to won (both stage routes are in apps/api); it does not block entry to an earlier stage |
-| E-sign | Adapter interface, mock provider, envelopes, signed webhooks that are verified, deduplicated and applied in any order, template selection from config, merge fields, negotiated versions with a redline status (migration 0131). Replaces the manual status, which stays as the fallback | Dropbox Sign adapter (needs sandbox keys). Region, segment and legal entity are passed on the request: the account record does not hold them |
+| E-sign | Adapter interface, mock provider, envelopes, signed webhooks that are verified, deduplicated and applied in any order, template selection from config, merge fields, negotiated versions with a redline status (migration 0131). Replaces the manual status, which stays as the fallback | Live DocuSeal use: the adapter is built and tested, and is switched on by `DOCUSEAL_API_KEY` and `DOCUSEAL_WEBHOOK_SECRET` in the encrypted env file. Region, segment and legal entity are passed on the request: the account record does not hold them |
 | Subscriptions | `subscriptions`, `subscription_items`, a bill per period, payment link per bill, failed-payment timeline from the due date, automatic restore, invoiced accounts, renewal opportunity once per term (`RenewalOpened`), append-only amendments for seats and term. The account lifecycle state follows the subscription, and the customer's workspace carries a `subscription` entitlement. From day 8 a restricted workspace cannot spend credits (402) or send outreach (sequence steps are deferred, not dropped; `canContact` refuses outreach) | Provider auto-debit (waits on Razorpay). Sending a suspended workspace's login to the billing page only (that is in the product's own auth flow). Entitlements beyond the subscription itself (plan limits, purchased credits). Amendments for credits and modules |
 | Finance ops | Failed-payment queue, reconciliation queue, subscriptions and payment-link lists, grandfathered-deals report | Nothing known. `GET /finance/credit-activity` lists purchases, grants, adjustments and refunds across accounts with actor and reason |
 
