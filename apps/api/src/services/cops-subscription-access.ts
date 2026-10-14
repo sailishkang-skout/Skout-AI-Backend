@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import type { FastifyInstance } from "fastify";
 import { schema, type Db } from "@skout/db";
 import { HttpError } from "@skout/auth";
 
@@ -50,4 +51,35 @@ export class SubscriptionRestrictedError extends HttpError {
 export async function assertSubscriptionAllowsUse(db: Pick<Db, "select">, workspaceId: string): Promise<void> {
   const block = await subscriptionAccessBlock(db, workspaceId);
   if (block) throw new SubscriptionRestrictedError(block);
+}
+
+/**
+ * Product areas closed to a suspended or closed workspace (Aditya, 2026-10-14). The customer can
+ * still sign in, open the read-only billing page and pay; everything else that is not product use
+ * (settings, notifications, data) stays reachable, and nothing is deleted.
+ */
+export const SUSPENDED_PRODUCT_PREFIXES = ["/api/v1/search", "/api/v1/prospects", "/api/v1/enrichment", "/api/v1/sequences", "/api/v1/export", "/api/v1/ai/exports"] as const;
+
+export function isSuspendedProductPath(url: string): boolean {
+  const path = url.split("?")[0]!;
+  return SUSPENDED_PRODUCT_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`));
+}
+
+/** 402 for product use while the subscription is suspended or closed. Registered after auth. */
+export function registerSubscriptionSuspensionGate(app: FastifyInstance): void {
+  app.addHook("preHandler", async (request, reply) => {
+    if (request.method === "OPTIONS" || !isSuspendedProductPath(request.url)) return;
+    const workspaceId = (request as { workspaceId?: string }).workspaceId;
+    if (!workspaceId || !app.db) return;
+    const block = await subscriptionAccessBlock(app.db, workspaceId);
+    if (block !== "suspended" && block !== "closed") return;
+    return reply.status(402).send({
+      ok: false,
+      code: "subscription_suspended",
+      error: "subscription_suspended",
+      statusCode: 402,
+      message: "This workspace is suspended for an unpaid subscription bill. Pay it on the billing page to use Skout again.",
+      details: { stage: block },
+    });
+  });
 }

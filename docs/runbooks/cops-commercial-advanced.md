@@ -107,6 +107,14 @@ What "restricted" does to the customer's workspace: spending credits answers 402
 untouched. The restriction is read from the `subscription` entitlement on the customer's own
 workspace; if that row is missing the workspace is not restricted.
 
+What "suspended" (and "closed") adds (Aditya, 2026-10-14): product use stops. Search, prospects,
+enrichment, sequences and exports answer 402 `subscription_suspended`
+(`SUSPENDED_PRODUCT_PREFIXES` in `cops-subscription-access.ts`). The customer can still sign in,
+see their bills read-only on Settings > Workspace (`GET /api/v1/billing/subscription`) and pay
+(`POST /api/v1/billing/subscription/invoices/:id/pay`, the same payment link Finance sends).
+Paying lifts the suspension through the normal billing pass. Invoiced bills are paid as invoiced,
+not from that button.
+
 To lift a restriction that should not be there: fix the bill (pay it or mark it paid). Do not
 delete the entitlement row; the next pass writes it again.
 

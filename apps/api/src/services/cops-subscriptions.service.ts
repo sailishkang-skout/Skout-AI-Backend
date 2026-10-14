@@ -509,3 +509,57 @@ export async function amendSubscription(db: Db, ctx: CommercialContext, subscrip
   const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, subscriptionId)).limit(1);
   return loadDto(db, row!, now);
 }
+
+// ---- The customer's own view (COPS-08, Aditya 2026-10-14) ----
+
+/**
+ * The subscription that bills this customer workspace, found through the `subscription`
+ * entitlement the billing pass keeps on it. Null for a workspace Skout does not bill (internal,
+ * trial). Reachable while suspended: a customer who cannot see the bill cannot pay it.
+ */
+async function customerSubscriptionRow(db: Db, customerWorkspaceId: string): Promise<SubscriptionRow | null> {
+  const [ent] = await db
+    .select({ value: entitlements.value })
+    .from(entitlements)
+    .where(and(eq(entitlements.workspaceId, customerWorkspaceId), eq(entitlements.key, SUBSCRIPTION_ENTITLEMENT_KEY)))
+    .limit(1);
+  const id = (ent?.value as { subscription_id?: unknown } | undefined)?.subscription_id;
+  if (typeof id !== "string") return null;
+  const [row] = await db.select().from(subscriptions).where(eq(subscriptions.id, id)).limit(1);
+  return row ?? null;
+}
+
+/** Read-only: status, seats, renewal, the bills and how late the oldest unpaid one is. No internal ids or reasons. */
+export async function getCustomerSubscription(db: Db, customerWorkspaceId: string, now: Date = new Date()) {
+  const row = await customerSubscriptionRow(db, customerWorkspaceId);
+  if (!row) return null;
+  const dto = await loadDto(db, row, now);
+  return {
+    status: dto.status,
+    billing: dto.billing,
+    currency: dto.currency,
+    cadence: dto.cadence,
+    seats: dto.seats,
+    renews_at: dto.renews_at,
+    invoices: dto.invoices.map(({ payment_request_id: _p, ...bill }) => bill),
+    dunning: dto.dunning,
+  };
+}
+
+/**
+ * Pay-now for one of the customer's own open bills: the same payment link Finance would send
+ * (issueInvoicePaymentLink), so paying lifts the restriction through the normal path. The actor is
+ * the customer user, recorded with the source in the audit row the payment link writes.
+ */
+export async function customerInvoicePaymentLink(db: Db, psp: PspAdapter, customer: { workspaceId: string; userId: string; requestId: string }, invoiceId: string): Promise<{ checkout_url: string; status: string }> {
+  const row = await customerSubscriptionRow(db, customer.workspaceId);
+  if (!row) throw new CommercialError("NOT_FOUND", "This workspace has no subscription");
+  const [invoice] = await db.select().from(subscriptionInvoices).where(and(eq(subscriptionInvoices.id, invoiceId), eq(subscriptionInvoices.subscriptionId, row.id))).limit(1);
+  if (!invoice) throw new CommercialError("NOT_FOUND", "Bill not found");
+  if (invoice.status !== "open") throw new CommercialError("BUSINESS_STATE_CONFLICT", "This bill is already settled", { status: invoice.status });
+  if (row.billing === "invoiced") throw new CommercialError("BUSINESS_STATE_CONFLICT", "This bill is invoiced: pay it as the invoice says, or ask your account manager", { billing: row.billing });
+  const linked = await issueInvoicePaymentLink(db, psp, { workspaceId: row.workspaceId, userId: customer.userId, requestId: customer.requestId }, invoiceId);
+  const [request] = await db.select({ checkoutUrl: paymentRequests.checkoutUrl, status: paymentRequests.status }).from(paymentRequests).where(eq(paymentRequests.id, linked.payment_request_id)).limit(1);
+  if (!request) throw new CommercialError("PROVIDER_ERROR", "The payment link could not be created; try again");
+  return { checkout_url: request.checkoutUrl, status: request.status };
+}

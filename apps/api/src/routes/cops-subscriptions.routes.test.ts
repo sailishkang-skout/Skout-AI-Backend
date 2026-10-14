@@ -390,6 +390,53 @@ maybe("COPS-08 subscriptions", () => {
     expect(moves.map((m: { payload: { from: string; to: string } }) => `${m.payload.from}>${m.payload.to}`)).toEqual(["trial>paid", "paid>suspended", "suspended>paid"]);
   });
 
+  it("a suspended customer can still sign in, read their own bills and pay, while product use is closed", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    // The customer's own user and workspace, as the stub auth provisions them.
+    const CUSTOMER = `customer-${randomUUID().slice(0, 8)}@subs.test`;
+    const customerWs = ((await call("GET", "/me", undefined, CUSTOMER)).json() as { workspaceId: string }).workspaceId;
+    expect((await call("GET", "/billing/subscription", undefined, CUSTOMER)).json().data).toBeNull();
+    await sql`insert into cops_provisionings (workspace_id, account_id, opportunity_id, idempotency_key, status, request, provisioned_workspace_id)
+      values (${workspaceId}, ${accountId}, ${opportunityId}, ${randomUUID()}, 'succeeded', '{}'::jsonb, ${customerWs})`;
+    const sub = (await subscribe(accountId, opportunityId)).json().data;
+    const due = sub.invoices[0].due_at as string;
+
+    const mine = (await call("GET", "/billing/subscription", undefined, CUSTOMER)).json().data;
+    expect(mine).toMatchObject({ status: "active", seats: 10, currency: "USD", invoices: [{ id: sub.invoices[0].id, status: "open", amount_minor: sub.invoices[0].amount_minor }] });
+    // The customer's view carries no internal ids or Skout-side notes.
+    expect(mine).not.toHaveProperty("account_id");
+    expect(mine.invoices[0]).not.toHaveProperty("payment_request_id");
+
+    await billAt(due, 15);
+    expect(await subscriptionAccessBlock(db, customerWs)).toBe("suspended");
+    // Product use is closed with a reason the app can show...
+    const blocked = await call("GET", "/sequences", undefined, CUSTOMER);
+    expect(blocked.statusCode).toBe(402);
+    expect(blocked.json()).toMatchObject({ code: "subscription_suspended", details: { stage: "suspended" } });
+    expect((await call("GET", "/enrichment/credits", undefined, CUSTOMER)).statusCode).toBe(402);
+    // ...while signing in and the billing page still work.
+    expect((await call("GET", "/me", undefined, CUSTOMER)).statusCode).toBe(200);
+    expect((await call("GET", "/billing/subscription", undefined, CUSTOMER)).json().data.invoices[0].status).toBe("open");
+
+    // Pay now: the same payment link Finance would send, reused if asked again.
+    const pay = await call("POST", `/billing/subscription/invoices/${sub.invoices[0].id}/pay`, {}, CUSTOMER);
+    expect(pay.statusCode).toBe(201);
+    expect(pay.json().data.checkout_url).toMatch(/^https:\/\/rzp\.io\/i\//);
+    expect((await call("POST", `/billing/subscription/invoices/${sub.invoices[0].id}/pay`, {}, CUSTOMER)).json().data.checkout_url).toBe(pay.json().data.checkout_url);
+    // Someone else's bill is not theirs to pay.
+    const { accountId: otherAccount, opportunityId: otherOpp } = await newAccount();
+    const otherSub = (await subscribe(otherAccount, otherOpp)).json().data;
+    expect((await call("POST", `/billing/subscription/invoices/${otherSub.invoices[0].id}/pay`, {}, CUSTOMER)).statusCode).toBe(404);
+
+    // Paying lifts the suspension through the normal path.
+    await sql`update subscription_invoices set status = 'paid', paid_at = now() where subscription_id = ${sub.id}`;
+    await billAt(due, 16);
+    expect((await call("GET", "/sequences", undefined, CUSTOMER)).statusCode).toBe(200);
+    expect((await call("GET", "/billing/subscription", undefined, CUSTOMER)).json().data.status).toBe("active");
+    // A workspace Skout does not bill is never closed.
+    expect((await call("GET", "/sequences")).statusCode).toBe(200);
+  });
+
   it("another workspace cannot see or change a subscription", async () => {
     const { accountId, opportunityId } = await newAccount();
     const sub = (await subscribe(accountId, opportunityId)).json().data;

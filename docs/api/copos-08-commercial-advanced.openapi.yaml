@@ -166,6 +166,23 @@ paths:
         "200": { description: "{ok, duplicate, outcome: applied | no_change | ignored | unmatched, status}" }
         "401": { description: Bad or missing signature }
         "404": { description: Unknown provider }
+  /billing/subscription:
+    get:
+      summary: The customer's own subscription (read-only)
+      description: >
+        Any member of the customer workspace, also while suspended. Status, seats, renewal date,
+        the bills and the dunning block; no internal ids. Null when Skout does not bill this workspace.
+      responses:
+        "200": { description: "{data: {status, billing, currency, cadence, seats, renews_at, invoices, dunning} | null}" }
+  /billing/subscription/invoices/{id}/pay:
+    post:
+      summary: Pay one of the customer's own open bills
+      description: Returns the payment link for the bill (created once, then reused). Refused for an invoiced bill or one already settled.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "201": { description: "{data: {checkout_url, status}}" }
+        "404": { description: Not a bill of this workspace's subscription }
+        "409": { description: Already settled, or invoiced }
   /accounts/{id}/subscription:
     get:
       summary: The account's subscription
