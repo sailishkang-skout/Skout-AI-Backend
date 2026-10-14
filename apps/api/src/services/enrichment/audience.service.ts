@@ -58,11 +58,14 @@ const FRESH_SQL = sql`(${CAPTURED_AT} >= now() - make_interval(days => ${EVIDENC
 const VERIFIED_SQL = sql`(${contacts.employmentStatus} = 'verified_employment' and ${contacts.companyId} is not null)`;
 const HAS_EMAIL_SQL = sql`(${contacts.email} is not null and ${contacts.email} <> '')`;
 const VERIFIED_EMAIL_SQL = sql`exists (select 1 from ${emailVerifications} ev where ev.workspace_id = ${prospectActivations.workspaceId} and ev.prospect_id = ${prospectActivations.prospectId} and ev.status = 'valid' and lower(ev.email) = lower(${contacts.email}))`;
+/** A person added by URL and not yet captured has no facts to segment on or to write about. */
+const CAPTURED_SQL = sql`(nullif(btrim(${snap("fullName")}), '') is not null)`;
 const SUPPRESSED_SQL = sql`exists (select 1 from ${suppressions} sp where sp.workspace_id = ${prospectActivations.workspaceId} and sp.email = lower(${contacts.email}))`;
 
 function audienceWhere(workspaceId: string, filters: AudienceFilters): SQL {
   const where: SQL[] = [
     eq(prospectActivations.workspaceId, workspaceId),
+    CAPTURED_SQL,
     ...personFilters({
       q: filters.q,
       department: filters.department,
