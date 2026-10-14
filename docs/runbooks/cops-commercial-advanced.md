@@ -126,7 +126,11 @@ delete the entitlement row; the next pass writes it again.
 ## The billing or renewal pass is not running
 
 Both run inside the `cops-onboarding-evaluator` worker tick, every 10 minutes, after the onboarding
-evaluator. Each subscription is its own transaction, so one failure does not stop the rest.
+evaluator. Each subscription is its own transaction, and a subscription that fails is recorded and
+skipped, so the rest still run. Failures send an in-app alert ("Subscription billing pass failed for
+N subscriptions" or "Renewal pass failed ...") to Admin, Owner and Engineering in that workspace,
+at most once per pass and day; the body names the subscriptions and the database error. The failed
+ones are retried on every pass.
 
 1. Look for "subscription billing pass finished" in the worker log. Absent: the worker, Redis or
    the database is down; see `cops-platform.md`.

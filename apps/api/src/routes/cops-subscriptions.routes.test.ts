@@ -7,6 +7,7 @@ import type { Db } from "@skout/db";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
 import { getAccountSubscription, runSubscriptionBilling } from "../services/cops-subscriptions.service.js";
+import { notifyPassFailures } from "../services/cops-pass-alerts.service.js";
 import { runRenewals } from "../services/cops-renewals.service.js";
 import { postCreditTransaction } from "@skout/db";
 import { subscriptionAccessBlock, SubscriptionRestrictedError } from "../services/cops-subscription-access.js";
@@ -435,6 +436,36 @@ maybe("COPS-08 subscriptions", () => {
     expect((await call("GET", "/billing/subscription", undefined, CUSTOMER)).json().data.status).toBe("active");
     // A workspace Skout does not bill is never closed.
     expect((await call("GET", "/sequences")).statusCode).toBe(200);
+  });
+
+  it("a subscription the pass cannot process does not stop the others, and alerts Admin once a day", async () => {
+    const one = await newAccount();
+    const two = await newAccount();
+    const broken = (await subscribe(one.accountId, one.opportunityId)).json().data;
+    const fine = (await subscribe(two.accountId, two.opportunityId)).json().data;
+    // Make every new bill for one subscription fail, as a bad row or a bug would.
+    await sql.unsafe(`create or replace function test_fail_bill() returns trigger language plpgsql as $$
+      begin if new.subscription_id = '${broken.id}' then raise exception 'simulated failure'; end if; return new; end $$`);
+    await sql`create trigger test_fail_bill before insert on subscription_invoices for each row execute function test_fail_bill()`;
+    try {
+      const result = await billAt(fine.invoices[0].period_end, 1);
+      expect(result.failed).toEqual([{ subscription_id: broken.id, workspace_id: workspaceId, error: expect.stringContaining("simulated failure") }]);
+      // The other subscription was still billed for its next period.
+      expect((await currentAt(two.accountId, fine.invoices[0].period_end, 1)).invoices.length).toBe(2);
+
+      const now = new Date("2026-11-20T10:00:00Z");
+      const sent = await notifyPassFailures(db, "billing", result.failed, now);
+      expect(sent).toBeGreaterThan(0);
+      const [note] = await sql`select title, body, type from notifications where workspace_id = ${workspaceId} and type = 'cops.billing_pass_failed' order by created_at desc limit 1`;
+      expect(note.title).toBe("Subscription billing pass failed for 1 subscription");
+      expect(note.body).toContain(broken.id);
+      // The same day sends nothing new; the next day does.
+      expect(await notifyPassFailures(db, "billing", result.failed, new Date("2026-11-20T18:00:00Z"))).toBe(0);
+      expect(await notifyPassFailures(db, "billing", result.failed, new Date("2026-11-21T10:00:00Z"))).toBeGreaterThan(0);
+    } finally {
+      await sql`drop trigger if exists test_fail_bill on subscription_invoices`;
+      await sql`drop function if exists test_fail_bill()`;
+    }
   });
 
   it("another workspace cannot see or change a subscription", async () => {

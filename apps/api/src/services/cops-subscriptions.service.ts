@@ -344,6 +344,22 @@ export interface BillingRunResult {
   invoices_created: number;
   invoices_paid: number;
   status_changes: Array<{ subscription_id: string; from: SubscriptionStatus; to: SubscriptionStatus; day: number | null }>;
+  /** Subscriptions whose pass failed; the others carried on. */
+  failed: PassFailure[];
+}
+
+/** The database's own message rather than the query text a failed query is wrapped in. */
+export function passErrorMessage(error: unknown): string {
+  const cause = (error as { cause?: unknown } | null)?.cause;
+  const message = cause instanceof Error ? cause.message : error instanceof Error ? error.message : "unknown";
+  return message.slice(0, 300);
+}
+
+/** One subscription a scheduled pass could not process. */
+export interface PassFailure {
+  subscription_id: string;
+  workspace_id: string;
+  error: string;
 }
 
 /**
@@ -353,7 +369,7 @@ export interface BillingRunResult {
  * one failure does not hold up the rest.
  */
 export async function runSubscriptionBilling(db: Db, now: Date = new Date(), scope: { workspaceId?: string } = {}, requestId: string = randomUUID()): Promise<BillingRunResult> {
-  const result: BillingRunResult = { subscriptions: 0, invoices_created: 0, invoices_paid: 0, status_changes: [] };
+  const result: BillingRunResult = { subscriptions: 0, invoices_created: 0, invoices_paid: 0, status_changes: [], failed: [] };
   const open = await db
     .select({ id: subscriptions.id, workspaceId: subscriptions.workspaceId })
     .from(subscriptions)
@@ -363,6 +379,7 @@ export async function runSubscriptionBilling(db: Db, now: Date = new Date(), sco
   for (const ref of open) {
     if (!policies.has(ref.workspaceId)) policies.set(ref.workspaceId, await loadDunningPolicy(db, ref.workspaceId));
     const policy = policies.get(ref.workspaceId)!;
+    try {
     await db.transaction(async (tx) => {
       const [sub] = await tx.select().from(subscriptions).where(eq(subscriptions.id, ref.id)).for("update").limit(1);
       if (!sub || sub.status === "closed") return;
@@ -423,6 +440,10 @@ export async function runSubscriptionBilling(db: Db, now: Date = new Date(), sco
       );
       result.status_changes.push({ subscription_id: sub.id, from, to: next.status, day: next.day });
     });
+    } catch (error) {
+      // Each subscription is its own transaction: record the failure and carry on with the rest.
+      result.failed.push({ subscription_id: ref.id, workspace_id: ref.workspaceId, error: passErrorMessage(error) });
+    }
   }
   return result;
 }

@@ -9,6 +9,8 @@ import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
 import { runOnboardingEvaluator } from "../services/cops-onboarding-signals.service.js";
 import { reportPlatformOpsMetrics } from "../services/cops-ops-metrics.service.js";
 import { enqueueSequenceAdvanceJob } from "./sequence-enrollment.queue.js";
+import { notifyPassFailures } from "../services/cops-pass-alerts.service.js";
+import type { PassFailure } from "../services/cops-subscriptions.service.js";
 
 const log = createLogger("cops-onboarding-evaluator.worker");
 
@@ -48,11 +50,25 @@ export async function startCopsOnboardingEvaluatorWorker(config: Env) {
         const result = await runOnboardingEvaluator(db, deps, randomUUID());
         log.info("onboarding evaluator pass finished", result);
         // COPS-08: bills for periods that have started, and subscription status from unpaid bills.
+        // A failing subscription does not stop the pass; failures alert Admin, Owner and Engineering in-app.
         await runSubscriptionBilling(db)
-          .then((billing) => log.info("subscription billing pass finished", { ...billing, status_changes: billing.status_changes.length }))
+          .then(async (billing) => {
+            log.info("subscription billing pass finished", { ...billing, status_changes: billing.status_changes.length, failed: billing.failed.length });
+            if (billing.failed.length > 0) {
+              log.error("subscription billing pass failed for some subscriptions", { failed: billing.failed });
+              await notifyPassFailures(db, "billing", billing.failed);
+            }
+          })
           .catch((err) => log.error("subscription billing pass failed", { err }));
-        await runRenewals(db)
-          .then((opened) => opened.length > 0 && log.info("renewal opportunities opened", { count: opened.length }))
+        const renewalFailures: PassFailure[] = [];
+        await runRenewals(db, new Date(), {}, undefined, renewalFailures)
+          .then(async (opened) => {
+            if (opened.length > 0) log.info("renewal opportunities opened", { count: opened.length });
+            if (renewalFailures.length > 0) {
+              log.error("renewal pass failed for some subscriptions", { failed: renewalFailures });
+              await notifyPassFailures(db, "renewal", renewalFailures);
+            }
+          })
           .catch((err) => log.error("renewal pass failed", { err }));
       });
       // COPS-07: the same tick reports the platform health numbers that the log monitors alert on.

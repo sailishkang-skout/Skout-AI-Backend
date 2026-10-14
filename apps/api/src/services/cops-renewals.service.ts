@@ -1,3 +1,4 @@
+import { passErrorMessage, type PassFailure } from "./cops-subscriptions.service.js";
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, isNull, lte, ne } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
@@ -25,7 +26,7 @@ const { subscriptions, subscriptionItems, deals, pipelineStages } = schema;
  * It is a first-class opportunity on the same account, in the same pipeline as the original, owned
  * by the same person, valued at one more term of the current seats.
  */
-export async function runRenewals(db: Db, now: Date = new Date(), scope: { workspaceId?: string } = {}, requestId: string = randomUUID()): Promise<Array<{ subscription_id: string; opportunity_id: string }>> {
+export async function runRenewals(db: Db, now: Date = new Date(), scope: { workspaceId?: string } = {}, requestId: string = randomUUID(), failures: PassFailure[] = []): Promise<Array<{ subscription_id: string; opportunity_id: string }>> {
   const opened: Array<{ subscription_id: string; opportunity_id: string }> = [];
   const leadDays = new Map<string, number>();
   const candidates = await db
@@ -50,6 +51,7 @@ export async function runRenewals(db: Db, now: Date = new Date(), scope: { works
     const lead = leadDays.get(candidate.workspaceId)!;
     if (lead < 0 || candidate.termEnd.getTime() - lead * 86_400_000 > now.getTime()) continue;
 
+    try {
     await db.transaction(async (tx) => {
       // The row lock is what makes this once per term: a concurrent pass waits here, then sees the mark.
       const [sub] = await tx.select().from(subscriptions).where(eq(subscriptions.id, candidate.id)).for("update").limit(1);
@@ -106,6 +108,10 @@ export async function runRenewals(db: Db, now: Date = new Date(), scope: { works
       );
       opened.push({ subscription_id: sub.id, opportunity_id: deal!.id });
     });
+    } catch (error) {
+      // One subscription's failure must not stop the others: record it and carry on.
+      failures.push({ subscription_id: candidate.id, workspace_id: candidate.workspaceId, error: passErrorMessage(error) });
+    }
   }
   return opened;
 }
