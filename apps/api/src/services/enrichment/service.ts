@@ -9,6 +9,8 @@ import {
   type EnrichmentStore,
   type ListDetail,
   type ProspectList,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept on request; not used in this file yet
+  type ProspectScore,
 } from "./types.js";
 import { HttpError, isDatabaseError } from "../../utils/http.js";
 import { isIcpConfigured } from "../icp.service.js";
