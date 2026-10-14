@@ -92,10 +92,12 @@ export function createDocusealAdapter(config: DocusealConfig): EsignAdapter {
         external_id: `${input.referenceId}:${i}`,
       }));
       const message = input.message ? { message: { subject: input.title, body: input.message } } : {};
+      // Merge fields go in as DocuSeal variables ([[contract_title]] in a template or document).
+      const variables = Object.keys(input.mergeFields).length > 0 ? { variables: input.mergeFields } : {};
       if (input.templateId) {
         const templateId = Number(input.templateId);
         if (!Number.isInteger(templateId)) throw new Error(`DocuSeal template ids are numbers; got "${input.templateId}"`);
-        const created = await call<Array<{ submission_id?: number }>>("POST", "/submissions", { template_id: templateId, send_email: true, submitters, ...message });
+        const created = await call<Array<{ submission_id?: number }>>("POST", "/submissions", { template_id: templateId, send_email: true, submitters, ...variables, ...message });
         const ref = created?.[0]?.submission_id;
         if (!ref) throw new Error("DocuSeal returned no submission id");
         return { providerRef: String(ref) };
@@ -105,6 +107,7 @@ export function createDocusealAdapter(config: DocusealConfig): EsignAdapter {
         send_email: true,
         documents: [{ name: input.title, file: input.documentUrl }],
         submitters,
+        ...variables,
         ...message,
       });
       if (!created?.id) throw new Error("DocuSeal returned no submission id");

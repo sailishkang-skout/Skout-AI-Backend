@@ -85,8 +85,9 @@ describe("DocuSeal sending", () => {
 
   it("without a template, sends the uploaded contract version by its URL", async () => {
     const { a, calls } = adapter({ "GET https://api.docuseal.com/submitters": { data: [] }, "POST https://api.docuseal.com/submissions/pdf": { id: 55 } });
-    await expect(a.createEnvelope({ ...send, templateId: null })).resolves.toEqual({ providerRef: "55" });
-    expect(calls.find((c) => c.method === "POST")!.body).toMatchObject({ documents: [{ name: "Acme MSA", file: "https://files.test/msa.pdf" }] });
+    await expect(a.createEnvelope({ ...send, templateId: null, mergeFields: { contract_title: "Acme MSA", currency: "USD" } })).resolves.toEqual({ providerRef: "55" });
+    // Merge fields travel as DocuSeal variables.
+    expect(calls.find((c) => c.method === "POST")!.body).toMatchObject({ documents: [{ name: "Acme MSA", file: "https://files.test/msa.pdf" }], variables: { contract_title: "Acme MSA", currency: "USD" } });
   });
 
   it("a repeated send finds the submission already made and sends nothing", async () => {
