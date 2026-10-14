@@ -10,6 +10,14 @@ declare module "fastify" {
   }
 }
 
+/**
+ * An unsigned Razorpay webhook is accepted only on a developer machine or in tests. Every deployed
+ * environment runs with NODE_ENV=production and must have RAZORPAY_WEBHOOK_SECRET set.
+ */
+export function unsignedRazorpayWebhookAllowed(nodeEnv: string | undefined): boolean {
+  return nodeEnv === "development" || nodeEnv === "test";
+}
+
 export async function billingRoutes(app: FastifyInstance) {
   if (!app.db) {
     app.log.warn("Database not available — billing routes disabled");
@@ -129,8 +137,12 @@ export async function billingRoutes(app: FastifyInstance) {
       if (typeof signature !== "string" || !billing.verifyWebhookSignature(rawBody, signature)) {
         return reply.code(400).send(errorResponse("Invalid webhook signature", 400));
       }
+    } else if (unsignedRazorpayWebhookAllowed(app.config.NODE_ENV)) {
+      app.log.warn("RAZORPAY_WEBHOOK_SECRET not set — skipping signature verification (local development only)");
     } else {
-      app.log.warn("RAZORPAY_WEBHOOK_SECRET not set — skipping signature verification");
+      // Fail closed: without the secret anyone could post a "payment captured" event and be credited.
+      app.log.error("RAZORPAY_WEBHOOK_SECRET not set — refusing the webhook");
+      return reply.code(503).send(errorResponse("Webhook signature verification is not configured", 503));
     }
 
     try {
