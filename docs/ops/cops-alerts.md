@@ -7,10 +7,24 @@ CustomerOps admin page under Operations. Each metric carries its own `warn_at`, 
 Status: the metrics and thresholds below are implemented. The same numbers are computed
 platform-wide every 10 minutes by the onboarding evaluator worker and written as one structured log
 line per metric (`cops_metric`, `value`, `metric_status`, `runbook`), at info, warn or error level.
-`docs/ops/cops-monitors.json` holds four Datadog log monitors that read those lines.
+`docs/ops/cops-monitors.json` holds the four alerts that read those lines, for GCP Cloud Logging
+and Cloud Monitoring. **The GCP versions replace the earlier Datadog ones**: Datadog is not used
+(Aditya, 2026-10-14) and no Datadog dependency is added. The four: a metric is critical, a metric
+has stayed in warning, the health report has stopped, the health report itself is failing.
 
-**The monitors have not been imported into Datadog and no dashboard has been created.** That is an
-operations task. Until it is done, "dashboards and alerting live" is not met. Two limits to know:
+Alerts reach the web app through `POST /api/v1/webhooks/ops-alerts`: a Cloud Monitoring
+"webhook with basic auth" notification channel (any user name, the password is
+`OPS_ALERT_WEBHOOK_SECRET`). It creates an in-app notification for the Admin, owner and Engineering
+members of `OPS_ALERT_WORKSPACE_ID`, once per incident state (opened, closed). Without both settings
+it refuses every call. Both go in the encrypted env file.
+
+On staging, payment links made in the Razorpay dashboard for testing match no payment request and
+put `payment_webhooks_rejected_24h` in warning. That is not a fault, so the critical and warning
+alerts leave that metric out on staging.
+
+**Not created yet:** the alerts are created once log shipping to Cloud Logging is in place. Check the
+field paths and the `env` value against a real log entry first. Until then, "dashboards and
+alerting live" is not met; the numbers are on CustomerOps admin > Operations. Two limits to know:
 the report runs every 10 minutes, so an outbox lag alert can be up to 10 minutes late; and the
 report needs Redis and the worker, so the "health report has stopped" monitor matters most.
 

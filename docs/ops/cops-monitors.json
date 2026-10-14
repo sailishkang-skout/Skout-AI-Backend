@@ -1,37 +1,107 @@
 {
-  "_readme": "Datadog log monitors for CustomerOps (COPS-07). Not imported yet. Each entry in `monitors` is a body for POST /api/v1/monitor. They read the structured lines that reportPlatformOpsMetrics writes every 10 minutes from the cops-onboarding-evaluator worker (fields: cops_metric, value, metric_status, runbook). Check the service name and the notification handles against the Datadog account before importing; they are placeholders taken from the log output of this repo.",
-  "monitors": [
+  "_readme": "CustomerOps (COPS-07) alert definitions for GCP Cloud Logging and Cloud Monitoring. These GCP versions replace the earlier Datadog log monitors (Aditya, 2026-10-14: Datadog is not used; the Datadog definitions are in git history). The four alerts read the structured lines that reportPlatformOpsMetrics writes every 10 minutes from the cops-onboarding-evaluator worker (fields: module, msg, env, cops_metric, value, metric_status, runbook). Not created yet: create them once log shipping to Cloud Logging is in place, and check the field paths (jsonPayload.*) and the env value against a real log entry first. `log_based_metrics` are bodies for POST https://logging.googleapis.com/v2/projects/PROJECT/metrics; `alert_policies` are bodies for POST https://monitoring.googleapis.com/v3/projects/PROJECT/alertPolicies; `notification_channel` is the body for POST https://monitoring.googleapis.com/v3/projects/PROJECT/notificationChannels, and its name goes into each policy's notificationChannels. Setup: docs/ops/cops-alerts.md.",
+  "_staging_note": "Payment links made in the Razorpay dashboard for testing match no payment request, so payment_webhooks_rejected_24h goes to warn on staging without a real fault. The critical and warning filters leave that metric out on staging (env=staging); everywhere else it alerts as usual.",
+  "notification_channel": {
+    "type": "webhook_basicauth",
+    "displayName": "Skout in-app ops alerts",
+    "labels": {
+      "url": "https://stg.skoutai.io/api/v1/webhooks/ops-alerts",
+      "username": "skout",
+      "password": "<OPS_ALERT_WEBHOOK_SECRET, from the encrypted env file>"
+    }
+  },
+  "log_based_metrics": [
     {
-      "name": "[CustomerOps] A workflow health metric is critical: {{[@cops_metric].name}}",
-      "type": "log alert",
-      "query": "logs(\"service:skout @module:cops-onboarding-evaluator.worker @metric_status:critical\").index(\"*\").rollup(\"count\").by(\"@cops_metric\").last(\"15m\") > 0",
-      "message": "{{[@cops_metric].name}} is critical. The runbook path is in the `runbook` field of the log line; thresholds are in docs/ops/cops-alerts.md. @oncall-customerops",
-      "tags": ["team:customerops", "ticket:cops-07"],
-      "options": { "thresholds": { "critical": 0 }, "notify_no_data": false, "renotify_interval": 60, "include_tags": true }
+      "name": "cops_metric_warning",
+      "description": "One count per CustomerOps health metric reported at warning, labelled by metric.",
+      "filter": "jsonPayload.module=\"cops-onboarding-evaluator.worker\" AND jsonPayload.metric_status=\"warn\" AND NOT (jsonPayload.env=\"staging\" AND jsonPayload.cops_metric=\"payment_webhooks_rejected_24h\")",
+      "metricDescriptor": { "metricKind": "DELTA", "valueType": "INT64", "labels": [{ "key": "cops_metric", "valueType": "STRING" }] },
+      "labelExtractors": { "cops_metric": "EXTRACT(jsonPayload.cops_metric)" }
     },
     {
-      "name": "[CustomerOps] A workflow health metric is in warning: {{[@cops_metric].name}}",
-      "type": "log alert",
-      "query": "logs(\"service:skout @module:cops-onboarding-evaluator.worker @metric_status:warn\").index(\"*\").rollup(\"count\").by(\"@cops_metric\").last(\"30m\") > 2",
-      "message": "{{[@cops_metric].name}} has been in warning for three reports in a row. See docs/ops/cops-alerts.md. @slack-customerops-alerts",
-      "tags": ["team:customerops", "ticket:cops-07"],
-      "options": { "thresholds": { "critical": 2 }, "notify_no_data": false, "renotify_interval": 240, "include_tags": true }
+      "name": "cops_health_report",
+      "description": "One count per CustomerOps health report (the outbox lag line is written on every report).",
+      "filter": "jsonPayload.module=\"cops-onboarding-evaluator.worker\" AND jsonPayload.cops_metric=\"outbox_lag_seconds\"",
+      "metricDescriptor": { "metricKind": "DELTA", "valueType": "INT64" }
     },
     {
-      "name": "[CustomerOps] The health report has stopped",
-      "type": "log alert",
-      "query": "logs(\"service:skout @module:cops-onboarding-evaluator.worker @cops_metric:outbox_lag_seconds\").index(\"*\").rollup(\"count\").last(\"30m\") < 1",
-      "message": "No CustomerOps health report in 30 minutes. The onboarding evaluator worker, Redis or the database is down, so the other CustomerOps monitors are blind. @oncall-customerops",
-      "tags": ["team:customerops", "ticket:cops-07"],
-      "options": { "thresholds": { "critical": 1 }, "notify_no_data": true, "no_data_timeframe": 30, "renotify_interval": 60 }
+      "name": "cops_health_report_failed",
+      "description": "One count per CustomerOps health report that failed to run.",
+      "filter": "jsonPayload.module=\"cops-onboarding-evaluator.worker\" AND jsonPayload.msg=\"cops ops metrics report failed\"",
+      "metricDescriptor": { "metricKind": "DELTA", "valueType": "INT64" }
+    }
+  ],
+  "alert_policies": [
+    {
+      "displayName": "[CustomerOps] A workflow health metric is critical",
+      "combiner": "OR",
+      "conditions": [
+        {
+          "displayName": "A metric reported at critical",
+          "conditionMatchedLog": {
+            "filter": "jsonPayload.module=\"cops-onboarding-evaluator.worker\" AND jsonPayload.metric_status=\"critical\" AND NOT (jsonPayload.env=\"staging\" AND jsonPayload.cops_metric=\"payment_webhooks_rejected_24h\")",
+            "labelExtractors": { "cops_metric": "EXTRACT(jsonPayload.cops_metric)" }
+          }
+        }
+      ],
+      "alertStrategy": { "notificationRateLimit": { "period": "3600s" }, "autoClose": "1800s" },
+      "documentation": { "content": "A CustomerOps health metric (${log.extracted_label.cops_metric}) is critical. The runbook path is in the log line's runbook field; thresholds are in docs/ops/cops-alerts.md. Live values: CustomerOps admin > Operations.", "mimeType": "text/markdown" },
+      "notificationChannels": ["<notification_channel name>"]
     },
     {
-      "name": "[CustomerOps] The health report itself is failing",
-      "type": "log alert",
-      "query": "logs(\"service:skout @module:cops-onboarding-evaluator.worker \\\"cops ops metrics report failed\\\"\").index(\"*\").rollup(\"count\").last(\"30m\") > 1",
-      "message": "The CustomerOps health report threw twice in 30 minutes. Check the database and the worker logs. @oncall-customerops",
-      "tags": ["team:customerops", "ticket:cops-07"],
-      "options": { "thresholds": { "critical": 1 }, "notify_no_data": false }
+      "displayName": "[CustomerOps] A workflow health metric has stayed in warning",
+      "combiner": "OR",
+      "conditions": [
+        {
+          "displayName": "Warning on three reports in 30 minutes",
+          "conditionThreshold": {
+            "filter": "metric.type=\"logging.googleapis.com/user/cops_metric_warning\" AND resource.type=\"global\"",
+            "aggregations": [{ "alignmentPeriod": "1800s", "perSeriesAligner": "ALIGN_SUM", "crossSeriesReducer": "REDUCE_SUM", "groupByFields": ["metric.label.cops_metric"] }],
+            "comparison": "COMPARISON_GT",
+            "thresholdValue": 2,
+            "duration": "0s"
+          }
+        }
+      ],
+      "alertStrategy": { "autoClose": "3600s" },
+      "documentation": { "content": "A CustomerOps health metric has been at warning for 30 minutes. See docs/ops/cops-alerts.md.", "mimeType": "text/markdown" },
+      "notificationChannels": ["<notification_channel name>"]
+    },
+    {
+      "displayName": "[CustomerOps] The health report has stopped",
+      "combiner": "OR",
+      "conditions": [
+        {
+          "displayName": "No health report for 30 minutes",
+          "conditionAbsent": {
+            "filter": "metric.type=\"logging.googleapis.com/user/cops_health_report\" AND resource.type=\"global\"",
+            "aggregations": [{ "alignmentPeriod": "600s", "perSeriesAligner": "ALIGN_SUM" }],
+            "duration": "1800s"
+          }
+        }
+      ],
+      "alertStrategy": { "autoClose": "3600s" },
+      "documentation": { "content": "No CustomerOps health report for 30 minutes. The cops-onboarding-evaluator worker, Redis or the database is down, so the other CustomerOps alerts are blind. See docs/runbooks/cops-platform.md.", "mimeType": "text/markdown" },
+      "notificationChannels": ["<notification_channel name>"]
+    },
+    {
+      "displayName": "[CustomerOps] The health report itself is failing",
+      "combiner": "OR",
+      "conditions": [
+        {
+          "displayName": "The report failed more than once in 30 minutes",
+          "conditionThreshold": {
+            "filter": "metric.type=\"logging.googleapis.com/user/cops_health_report_failed\" AND resource.type=\"global\"",
+            "aggregations": [{ "alignmentPeriod": "1800s", "perSeriesAligner": "ALIGN_SUM" }],
+            "comparison": "COMPARISON_GT",
+            "thresholdValue": 1,
+            "duration": "0s"
+          }
+        }
+      ],
+      "alertStrategy": { "autoClose": "3600s" },
+      "documentation": { "content": "The CustomerOps health report fails to run (log message \"cops ops metrics report failed\"). The worker runs but cannot read the numbers; the error is in the log line.", "mimeType": "text/markdown" },
+      "notificationChannels": ["<notification_channel name>"]
     }
   ]
 }
