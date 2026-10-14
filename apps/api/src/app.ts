@@ -12,6 +12,7 @@ import { dbPlugin } from "./plugins/db.js";
 import { loggingPlugin } from "./plugins/logging.js";
 import { securityPlugin } from "./plugins/security.js";
 import { registerRoutes } from "./routes/index.js";
+import { registerSubscriptionSuspensionGate } from "./services/cops-subscription-access.js";
 import { apiError, defaultCodeForStatus, HttpError, isDatabaseError } from "./utils/http.js";
 
 export async function buildApp(config: Env, options: { onDbQuery?: (query: string) => void } = {}) {
@@ -164,6 +165,8 @@ export async function buildApp(config: Env, options: { onDbQuery?: (query: strin
   app.decorate("onDbQuery", options.onDbQuery ?? null);
   await app.register(dbPlugin);
   await app.register(authPlugin);
+  // COPS-08: a suspended or closed subscription closes product use; billing and sign-in stay open.
+  registerSubscriptionSuspensionGate(app);
 
   const allowedOrigins = config.CORS_ORIGIN.map((o) => o.toLowerCase());
 

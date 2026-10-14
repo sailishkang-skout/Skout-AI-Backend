@@ -45,7 +45,7 @@ export const ProvisioningRequestedPayload = z.object({
   opportunity_id: id,
   account_id: id.nullable(),
   policy: z.enum(["trial_approval_only", "signature", "payment", "signature+payment", "manual_override"]),
-  trigger: z.enum(["signature", "payment", "trial_approval", "override", "policy_change"]),
+  trigger: z.enum(["signature", "payment", "trial_approval", "override", "policy_change", "approval"]),
 });
 export const WorkspaceProvisionedPayload = z.object({ account_id: id, workspace_id: id });
 /** COPS-04: optional account_id (additive) so the grant reaches the account timeline. */
@@ -80,6 +80,43 @@ export const LifecycleTransitionedPayload = z.object({
   reason: z.string().min(1),
 });
 
+/** COPS-08: an approval was asked for; the approver roles it names are who gets notified. */
+export const ApprovalRequestedPayload = z.object({
+  approval_id: z.string().uuid(),
+  proposal_id: z.string().uuid(),
+  opportunity_id: z.string().uuid(),
+  proposal_version: z.number().int().min(1),
+  required_approvers: z.array(z.enum(["sales_manager", "finance", "legal_revops", "executive"])).min(1),
+});
+/** COPS-08: an approval reached an outcome (granted, rejected, or voided by a change of terms). */
+export const ApprovalDecidedPayload = z.object({
+  approval_id: z.string().uuid(),
+  proposal_id: z.string().uuid(),
+  opportunity_id: z.string().uuid(),
+  proposal_version: z.number().int().min(1),
+  status: z.enum(["approved", "rejected", "voided"]),
+  reason: z.string().nullable(),
+});
+
+/** COPS-08: a subscription moved along the failed-payment timeline, or back to active after payment. */
+export const SubscriptionStatusChangedPayload = z.object({
+  subscription_id: z.string().uuid(),
+  account_id: z.string().uuid(),
+  from: z.enum(["active", "past_due", "restricted", "suspended", "closed"]),
+  to: z.enum(["active", "past_due", "restricted", "suspended", "closed"]),
+  /** Days since the due date of the oldest unpaid bill; null when nothing is unpaid. */
+  day: z.number().int().min(0).nullable(),
+});
+
+/** COPS-08 (Bible p.73): a renewal opportunity was opened ahead of the end of a term. Once per term. */
+export const RenewalOpenedPayload = z.object({
+  subscription_id: z.string().uuid(),
+  account_id: z.string().uuid(),
+  opportunity_id: z.string().uuid(),
+  original_opportunity_id: z.string().uuid(),
+  term_end: z.string().datetime(),
+});
+
 /** Event type → payload schema. The single registry consumers and outbox writers use. */
 export const COPS_PHASE1_EVENTS = {
   OpportunityQualified: OpportunityQualifiedPayload,
@@ -103,6 +140,10 @@ export const COPS_PHASE1_EVENTS = {
   TicketEscalated: TicketEscalatedPayload,
   TicketResolved: TicketResolvedPayload,
   LifecycleTransitioned: LifecycleTransitionedPayload,
+  ApprovalRequested: ApprovalRequestedPayload,
+  ApprovalDecided: ApprovalDecidedPayload,
+  SubscriptionStatusChanged: SubscriptionStatusChangedPayload,
+  RenewalOpened: RenewalOpenedPayload,
 } as const;
 
 export type CopsPhase1EventType = keyof typeof COPS_PHASE1_EVENTS;

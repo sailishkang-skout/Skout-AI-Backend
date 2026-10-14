@@ -26,11 +26,15 @@ export interface CopsTimelineProjection {
 
 const TYPE_BY_EVENT: Record<string, CopsTimelineType> = {
   OpportunityQualified: "workflow_action",
+  RenewalOpened: "workflow_action",
   ProposalSent: "proposal",
+  ApprovalRequested: "proposal",
+  ApprovalDecided: "proposal",
   ContractSent: "contract",
   ContractSigned: "contract",
   PaymentRequested: "payment",
   PaymentSucceeded: "payment",
+  SubscriptionStatusChanged: "payment",
   ProvisioningRequested: "provisioning",
   WorkspaceProvisioned: "provisioning",
   CreditsGranted: "provisioning",
