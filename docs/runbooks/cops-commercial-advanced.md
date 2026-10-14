@@ -81,6 +81,11 @@ DocuSeal specifics:
 - Each signer carries `external_id` "<envelope id>:<n>". A repeated send finds the submission
   already made and does not mail the signers again.
 - DocuSeal retries a failed webhook for up to 48 hours; replays are deduplicated.
+- Checked against the DocuSeal test account (2026-10-14, test mode): a contract sent from Skout
+  became a submission whose id Skout stored, the signer got the role "First Party" from the
+  tagged PDF, the external_id lookup found it again, and a viewed then completed event moved the
+  envelope and the contract to signed. Webhook delivery from DocuSeal itself is checked after
+  deploy, when the URL can be registered.
 
 ## A subscription is past due, restricted or suspended
 
