@@ -1,0 +1,1231 @@
+openapi: 3.0.3
+info:
+  title: ENR-01..06 LinkedIn enrichment (capture, research, provider jobs, campaigns)
+  version: 0.1.0
+  description: |
+    Contract for the LinkedIn enrichment area (ENR-01 to ENR-06), written from the routes in
+    apps/api/src/routes/enrichment*.routes.ts. Consumers: the Skout web app (/app/enrichment/*)
+    and the Skout Chrome extension (capture and ingest).
+
+    Auth and tenancy: every path needs an authenticated workspace member (Bearer token) and the
+    x-workspace-id header; 401 otherwise. Each path names the permission it needs (enrichment:read,
+    :capture, :enrich, :export, :delete, :admin, or sequences:send); 403 "forbidden" with
+    requiredPermission otherwise. Rows of another workspace are never returned: the answer is 404.
+
+    Release gate (ENR-06): every path except GET /enrichment/release is refused for a workspace the
+    feature is not released to. GET /enrichment/release says whether it is, and why not.
+
+    Evidence rules: a fact carries source, source URL, observed and captured time, confidence and a
+    verified | discovery state. A Sales Navigator card or company search card is discovery; only a
+    public profile capture verifies employment. A public /in/ URL is never derived from a Sales lead
+    id, and missing contact data stays absent.
+
+    Errors: validation is 422 VALIDATION_FAILED with field paths. Service errors are
+    { ok: false, error, code } with a stable code; capture errors also carry the run. Mutations are
+    rate limited per minute (429).
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+tags:
+  - { name: Release, description: ENR-06 release gate }
+  - { name: Capture, description: ENR-02 capture runs, limits and ingest (extension) }
+  - { name: Research, description: ENR-03 people, companies, job changes, evidence }
+  - { name: Providers, description: ENR-04 provider jobs, connections, contact data, operations }
+  - { name: Campaigns, description: ENR-05 audiences, composer, approval, launch }
+paths:
+  /enrichment/release:
+    get:
+      tags: [Release]
+      summary: Whether LinkedIn enrichment is released to this workspace
+      description: Not gated itself, so the dashboard can explain why the feature is unavailable. Needs a workspace member only.
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Release" } } } }
+
+  # ── Capture (ENR-02) ────────────────────────────────────────────────────────
+  /enrichment/capture/status:
+    get:
+      tags: [Capture]
+      summary: Kill-switch state, per-run caps and the caller's remaining daily volume
+      description: Needs enrichment:capture.
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/CaptureStatus" } } } }
+  /enrichment/capture/settings:
+    put:
+      tags: [Capture]
+      summary: Workspace kill switch and daily lead limit
+      description: |
+        Needs enrichment:admin. enabled=false stops capture on the next request: ingest and run start
+        answer 403 capture_disabled. Audited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: At least one of enabled or dailyLeadLimit.
+              properties:
+                enabled: { type: boolean }
+                reason: { type: string, maxLength: 500 }
+                dailyLeadLimit: { type: integer, minimum: 0, maximum: 100000 }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/CaptureStatus" } } } }
+  /enrichment/capture/runs:
+    get:
+      tags: [Capture]
+      summary: Recent capture runs of the workspace (who, when, source, counts, terminal status)
+      description: Needs enrichment:read.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workspaceId: { type: string, format: uuid }
+                  runs: { type: array, items: { $ref: "#/components/schemas/CaptureRun" } }
+                  total: { type: integer }
+    post:
+      tags: [Capture]
+      summary: Start a capture run that several ingest calls report into
+      description: |
+        Needs enrichment:capture. Used for multi-page captures (Sales Navigator, company discovery):
+        each batch names the runId and the caps are counted across the run. The same clientRunId
+        returns the same run. An ingest call without a runId records its own one-shot run.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              properties:
+                kind: { type: string, enum: [person, company, sales_search] }
+                sourceUrl: { type: string, format: uri, description: A linkedin.com https URL }
+                clientRunId: { type: string, minLength: 8, maxLength: 100 }
+      responses:
+        "201":
+          description: Started. Body is the capture status plus the run.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/CaptureStatus" }
+                  - { type: object, properties: { run: { $ref: "#/components/schemas/CaptureRun" } } }
+        "403": { description: capture_disabled (kill switch), content: { application/json: { schema: { $ref: "#/components/schemas/CaptureError" } } } }
+  /enrichment/capture/runs/{runId}:
+    get:
+      tags: [Capture]
+      summary: One capture run
+      description: Needs enrichment:read.
+      parameters: [{ $ref: "#/components/parameters/RunId" }]
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { workspaceId: { type: string, format: uuid }, run: { $ref: "#/components/schemas/CaptureRun" } } } } } }
+        "404": { description: run_not_found }
+  /enrichment/capture/runs/{runId}/finish:
+    post:
+      tags: [Capture]
+      summary: Record the terminal state of a run
+      description: |
+        Needs enrichment:capture; only the member who started the run can finish it. The extension
+        shows success only after this answers with a terminal run. stopped is used for a user stop
+        and for the auto-stop when LinkedIn shows a warning or restriction.
+      parameters: [{ $ref: "#/components/parameters/RunId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [completed, stopped, failed] }
+                reason: { type: string, maxLength: 500 }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { run: { $ref: "#/components/schemas/CaptureRun" } } } } } }
+        "404": { description: run_not_found }
+        "409": { description: run_not_active (already terminal) }
+  /enrichment/ingest/person:
+    post:
+      tags: [Capture]
+      summary: Ingest a reviewed public person profile capture
+      description: |
+        Needs enrichment:capture. Body limit 1 MB, 30/min. Idempotent on the public /in/ id: a repeat
+        merges into the same person and a thinner capture does not erase richer fields. Page chrome,
+        ads, suggestions and endorsement helper text are dropped and listed in rejectedFields. Writes
+        evidence rows, a snapshot and change events; a changed current company is a job change, which
+        creates a review item and never a message.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PersonIngest" } } }
+      responses:
+        "201":
+          description: Stored. The run in the body is terminal unless a runId was given.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  run: { $ref: "#/components/schemas/CaptureRun" }
+                  person: { type: object, properties: { prospectId: { type: string }, contactId: { type: string, format: uuid } } }
+                  rejectedFields: { type: array, items: { type: string }, description: 'Paths that were dropped, e.g. "skills[1]"' }
+        "403": { description: capture_disabled, content: { application/json: { schema: { $ref: "#/components/schemas/CaptureError" } } } }
+        "404": { description: run_not_found (runId of another member or workspace) }
+        "409": { description: run_not_active or run_kind_mismatch }
+        "422": { description: Validation error, or daily_limit_reached, content: { application/json: { schema: { $ref: "#/components/schemas/CaptureError" } } } }
+  /enrichment/ingest/company:
+    post:
+      tags: [Capture]
+      summary: Ingest a reviewed company capture with the people cards discovered on it
+      description: |
+        Needs enrichment:capture. Idempotent on the company public id; merge also considers member id,
+        domain/website and normalized name, and an ambiguous name match stays unresolved. peopleProfiles
+        are stored as discovered candidates of the company, not verified employees. At most 10 pages
+        and 250 people per run.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CompanyIngest" } } }
+      responses:
+        "201":
+          description: Stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  run: { $ref: "#/components/schemas/CaptureRun" }
+                  company: { type: object, properties: { id: { type: string, format: uuid } } }
+        "403": { description: capture_disabled, content: { application/json: { schema: { $ref: "#/components/schemas/CaptureError" } } } }
+        "422": { description: Validation error, page_cap_exceeded, lead_cap_exceeded or daily_limit_reached }
+  /enrichment/ingest/sales-search:
+    post:
+      tags: [Capture]
+      summary: Ingest the people cards rendered in a Sales Navigator search the user filtered
+      description: |
+        Needs enrichment:capture. A card with a real public /in/ link is keyed by it; a card without one
+        is kept as sales-lead:<opaque-id> with its /sales/lead/ URL. Repeating a search merges by
+        identity. A card that uniquely matches a saved company (name or member id) becomes a discovered
+        candidate of it. Caps are enforced across the run: 10 pages and 250 distinct leads.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SalesSearchIngest" } } }
+      responses:
+        "201":
+          description: Stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  run: { $ref: "#/components/schemas/CaptureRun" }
+        "403": { description: capture_disabled, content: { application/json: { schema: { $ref: "#/components/schemas/CaptureError" } } } }
+        "422": { description: Validation error, page_cap_exceeded, lead_cap_exceeded or daily_limit_reached, content: { application/json: { schema: { $ref: "#/components/schemas/CaptureError" } } } }
+  /enrichment/ingest/company/{publicId}/captured-profile-ids:
+    get:
+      tags: [Capture]
+      summary: Public ids already captured for a company (the extension's resume checkpoint)
+      description: Needs enrichment:capture.
+      parameters: [{ name: publicId, in: path, required: true, schema: { type: string } }]
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { publicIds: { type: array, items: { type: string } } } } } } }
+  /enrichment/capture:
+    get:
+      tags: [Capture]
+      summary: Credit balance and capture status in one call (ENR-01 path)
+      description: Needs enrichment:capture.
+      responses:
+        "200": { description: "{ workspaceId, balance, captureEndpoint, capture: CaptureStatus }" }
+
+  # ── Research (ENR-03) ───────────────────────────────────────────────────────
+  /enrichment/overview:
+    get:
+      tags: [Research]
+      summary: Counts for the overview screen
+      description: Needs enrichment:read.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workspaceId: { type: string, format: uuid }
+                  people: { type: object, properties: { total: { type: integer }, verifiedEmployment: { type: integer }, discoveryCandidates: { type: integer }, publicProfiles: { type: integer }, salesNavigatorOnly: { type: integer } } }
+                  companies: { type: object, properties: { total: { type: integer } } }
+                  jobChanges: { type: object, properties: { pendingReview: { type: integer } } }
+                  captures: { type: object, properties: { runsLast7Days: { type: integer }, leadsLast7Days: { type: integer } } }
+  /enrichment/people:
+    get:
+      tags: [Research]
+      summary: Captured people
+      description: Needs enrichment:read.
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 120 }, description: Name, headline, title or company }
+        - { name: identity, in: query, schema: { type: string, enum: [public_profile, sales_lead] } }
+        - { name: state, in: query, schema: { type: string, enum: [verified, candidate] } }
+        - { name: department, in: query, schema: { type: string, maxLength: 120 } }
+        - { name: seniority, in: query, schema: { type: string, maxLength: 120 } }
+        - { name: companyId, in: query, schema: { type: string, format: uuid } }
+        - { $ref: "#/components/parameters/Page" }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workspaceId: { type: string, format: uuid }
+                  people: { type: array, items: { $ref: "#/components/schemas/PersonSummary" } }
+                  total: { type: integer }
+                  page: { type: integer }
+                  pageSize: { type: integer }
+  /enrichment/people/{id}:
+    get:
+      tags: [Research]
+      summary: Person detail (experience, education, skills, relationship context, evidence, change history)
+      description: Needs enrichment:read. Every displayed fact has its EvidenceFact.
+      parameters: [{ $ref: "#/components/parameters/ProspectId" }]
+      responses:
+        "200": { description: "{ workspaceId, person }: a PersonSummary plus the detail sections and facts" }
+        "404": { description: person_not_found }
+    delete:
+      tags: [Research]
+      summary: Delete a person and the evidence derived from them
+      description: Needs enrichment:delete. 20/min. Audited.
+      parameters: [{ $ref: "#/components/parameters/ProspectId" }]
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  workspaceId: { type: string, format: uuid }
+                  deletedId: { type: string }
+                  evidenceRemoved: { type: integer }
+                  contactRemoved: { type: boolean }
+        "404": { description: prospect_not_found }
+  /enrichment/people/{id}/public-url:
+    post:
+      tags: [Research]
+      summary: Attach a real public profile URL to a Sales Navigator lead
+      description: |
+        Needs enrichment:capture. The URL must be a public /in/ URL the user supplies; it is never
+        derived from the lead id. If that profile is already a person the two are merged. Attaching a
+        URL does not verify the employer. Audited.
+      parameters: [{ $ref: "#/components/parameters/ProspectId" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/UrlBody" } } }
+      responses:
+        "200": { description: "{ workspaceId, prospectId, contactId, linkedinUrl, merged }" }
+        "400": { description: invalid_public_url }
+        "404": { description: person_not_found }
+        "409": { description: public_url_conflict }
+  /enrichment/people/{id}/export.csv:
+    get:
+      tags: [Research]
+      summary: One person as CSV
+      description: Needs enrichment:export. 10/min. Audited.
+      parameters: [{ $ref: "#/components/parameters/ProspectId" }]
+      responses:
+        "200": { description: CSV, content: { text/csv: { schema: { type: string } } } }
+        "404": { description: person_not_found }
+  /enrichment/linkedin-urls:
+    post:
+      tags: [Research]
+      summary: Register a LinkedIn profile or company URL for capture
+      description: |
+        Needs enrichment:capture. Nothing is fetched from LinkedIn: the record holds only the URL and is
+        marked pendingCapture until the extension captures it. A pending person is listed under People
+        but is not part of any audience.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/UrlBody" } } }
+      responses:
+        "201": { description: '{ workspaceId, kind: "person", prospectId, contactId, created, linkedinUrl } or { workspaceId, kind: "company", companyId, created, linkedinUrl }' }
+        "400": { description: invalid_linkedin_url }
+  /enrichment/companies:
+    get:
+      tags: [Research]
+      summary: Captured companies
+      description: Needs enrichment:read.
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 120 } }
+        - { $ref: "#/components/parameters/Page" }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        "200": { description: "{ workspaceId, companies, total, page, pageSize }" }
+  /enrichment/companies/{id}:
+    get:
+      tags: [Research]
+      summary: Company detail (facts with evidence, visible member count, verified and candidate counts)
+      description: Needs enrichment:read. The member count is what LinkedIn displayed, not a number of obtainable records.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: "{ workspaceId, company }" }
+        "404": { description: company_not_found }
+    delete:
+      tags: [Research]
+      summary: Delete a company and the evidence derived from it
+      description: Needs enrichment:delete. 20/min. Audited.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: "{ success, workspaceId, deletedId, evidenceRemoved, contactRemoved }" }
+        "404": { description: company_not_found }
+  /enrichment/companies/{id}/people:
+    get:
+      tags: [Research]
+      summary: People of a company, verified employees and discovered candidates as separate lists
+      description: Needs enrichment:read. Candidates are reviewed 15 per page.
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { name: group, in: query, schema: { type: string, enum: [verified, candidates], default: candidates } }
+        - { name: q, in: query, schema: { type: string, maxLength: 120 } }
+        - { name: identity, in: query, schema: { type: string, enum: [public_profile, sales_lead] } }
+        - { name: department, in: query, schema: { type: string, maxLength: 120 } }
+        - { name: seniority, in: query, schema: { type: string, maxLength: 120 } }
+        - { $ref: "#/components/parameters/Page" }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 15 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workspaceId: { type: string, format: uuid }
+                  companyId: { type: string, format: uuid }
+                  group: { type: string, enum: [verified, candidates] }
+                  people: { type: array, items: { $ref: "#/components/schemas/PersonSummary" } }
+                  total: { type: integer }
+                  page: { type: integer }
+                  pageSize: { type: integer }
+        "404": { description: company_not_found }
+  /enrichment/companies/{id}/export.csv:
+    get:
+      tags: [Research]
+      summary: People of a company as CSV, with their group (verified or candidate)
+      description: Needs enrichment:export. 10/min. Audited.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: CSV, content: { text/csv: { schema: { type: string } } } }
+        "404": { description: company_not_found }
+  /enrichment/export:
+    post:
+      tags: [Research]
+      summary: Export people or companies as CSV
+      description: Needs enrichment:export. 10/min. Audited.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type: { type: string, enum: [people, companies], default: people }
+                ids: { type: array, maxItems: 1000, items: { type: string } }
+                listId: { type: string, format: uuid, description: People only }
+      responses:
+        "200": { description: CSV, content: { text/csv: { schema: { type: string } } } }
+        "404": { description: list_not_found }
+  /enrichment/job-changes:
+    get:
+      tags: [Research]
+      summary: Job-change feed (a person's current company changed between captures)
+      description: Needs enrichment:read. A job change asks for review; it never messages anyone or changes an enrollment.
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, reviewed, all], default: all } }
+        - { $ref: "#/components/parameters/Page" }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workspaceId: { type: string, format: uuid }
+                  jobChanges: { type: array, items: { $ref: "#/components/schemas/JobChange" } }
+                  total: { type: integer }
+                  page: { type: integer }
+                  pageSize: { type: integer }
+  /enrichment/job-changes/{id}/review:
+    post:
+      tags: [Research]
+      summary: Mark a job change as reviewed
+      description: Needs enrichment:capture. Audited.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: "{ workspaceId, jobChange }" }
+        "404": { description: job_change_not_found }
+  /enrichment/evidence/prospects/{id}:
+    get:
+      tags: [Research]
+      summary: ProspectEvidence, the stable read contract for sequence drafting
+      description: Needs enrichment:read. Also served at /enrichment/people/{id}/evidence.
+      parameters: [{ $ref: "#/components/parameters/ProspectId" }]
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Evidence" } } } }
+        "404": { description: person_not_found }
+  /enrichment/evidence/accounts/{id}:
+    get:
+      tags: [Research]
+      summary: AccountEvidence, the stable read contract for sequence drafting
+      description: Needs enrichment:read. Also served at /enrichment/companies/{id}/evidence.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Evidence" } } } }
+        "404": { description: company_not_found }
+
+  # ── Providers (ENR-04) ──────────────────────────────────────────────────────
+  /enrichment/provider-jobs:
+    post:
+      tags: [Providers]
+      summary: Queue a provider enrichment job for a LinkedIn profile or company URL (also re-enrich)
+      description: |
+        Needs enrichment:enrich. 20/min. The same Idempotency-Key returns the same job (reused=true).
+        The job is durable: it survives an API or worker restart, retries with backoff up to
+        maxAttempts, and always reaches a terminal state. Without a provider connection it ends
+        action_required. In test mode (LINKEDIN_ENRICHMENT_TEST_MODE) no provider is called and only
+        the submitted URL is recorded.
+      parameters:
+        - { name: Idempotency-Key, in: header, schema: { type: string, minLength: 8, maxLength: 200 } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/UrlBody" } } }
+      responses:
+        "202":
+          description: Accepted and queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workspaceId: { type: string, format: uuid }
+                  job: { $ref: "#/components/schemas/ProviderJob" }
+                  reused: { type: boolean }
+                  testMode: { type: boolean }
+        "400": { description: invalid_linkedin_url }
+        "409": { description: provider_not_permitted }
+        "429": { description: provider_daily_limit_reached }
+    get:
+      tags: [Providers]
+      summary: Provider jobs of the workspace
+      description: Needs enrichment:read.
+      parameters:
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/ProviderJobStatus" } }
+        - { name: targetId, in: query, schema: { type: string }, description: Prospect or company id, for last-run info }
+        - { $ref: "#/components/parameters/Page" }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workspaceId: { type: string, format: uuid }
+                  data: { type: array, items: { $ref: "#/components/schemas/ProviderJob" } }
+                  total: { type: integer }
+                  page: { type: integer }
+                  pageSize: { type: integer }
+  /enrichment/provider-jobs/{jobId}:
+    get:
+      tags: [Providers]
+      summary: One provider job with its attempts
+      description: Needs enrichment:read.
+      parameters: [{ name: jobId, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200": { description: "{ workspaceId, job: ProviderJob, attempts }" }
+        "404": { description: job_not_found }
+  /enrichment/provider-jobs/{jobId}/attempts/{attemptId}/raw:
+    get:
+      tags: [Providers]
+      summary: Raw provider response kept as evidence for one attempt
+      description: Needs enrichment:admin. Each read is audited.
+      parameters:
+        - { name: jobId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: attemptId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: "{ workspaceId, jobId, attemptId, provider, ...raw response }" }
+        "404": { description: raw_response_not_found }
+  /enrichment/providers:
+    get:
+      tags: [Providers]
+      summary: Permitted providers and this workspace's connections
+      description: Needs enrichment:read. A connection carries an account id and status; no secret is ever returned.
+      responses:
+        "200": { description: "{ workspaceId, testMode, providers: [{ id, name, purpose, ... }], connections }" }
+  /enrichment/provider-connections/unipile:
+    post:
+      tags: [Providers]
+      summary: Connect a Unipile account
+      description: Needs enrichment:admin. Takes the external account id only; the credential stays in the server-side secret store. Audited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [externalAccountId]
+              properties:
+                externalAccountId: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        "201": { description: "{ workspaceId, connection }" }
+        "400": { description: provider_account_not_linkedin }
+        "404": { description: provider_account_not_found }
+        "409": { description: provider_not_permitted, provider_credential_required or provider_credential_rejected }
+        "502": { description: provider_unreachable }
+  /enrichment/provider-connections/{id}/check:
+    post:
+      tags: [Providers]
+      summary: Re-check a provider connection
+      description: Needs enrichment:admin.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: "{ workspaceId, connection }" }
+        "404": { description: provider_connection_not_found }
+  /enrichment/provider-connections/{id}:
+    delete:
+      tags: [Providers]
+      summary: Disconnect a provider connection
+      description: Needs enrichment:admin. Audited.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: "{ workspaceId, connection }" }
+        "404": { description: provider_connection_not_found }
+  /enrichment/people/{id}/contact-data:
+    get:
+      tags: [Providers]
+      summary: Email and phone of a person with provider, provenance, verification status and freshness
+      description: Needs enrichment:read. A value that no provider supplied is absent; nothing is guessed.
+      parameters: [{ $ref: "#/components/parameters/ProspectId" }]
+      responses:
+        "200": { description: "{ workspaceId, contactData }" }
+        "404": { description: person_not_found }
+  /enrichment/people/{id}/contact-data/verify-email:
+    post:
+      tags: [Providers]
+      summary: Verify the person's email with the verification service
+      description: Needs enrichment:enrich. 20/min.
+      parameters: [{ $ref: "#/components/parameters/ProspectId" }]
+      responses:
+        "200": { description: "{ workspaceId, contactData }" }
+        "404": { description: person_not_found }
+        "409": { description: no_email }
+        "502": { description: verifier_unavailable }
+        "503": { description: verifier_not_configured }
+  /enrichment/ops:
+    get:
+      tags: [Providers]
+      summary: Capture-run, job, provider-error and queue-lag numbers with the alerts they trip
+      description: Needs enrichment:admin. Each alert names its threshold and what to do (docs/runbooks/enrichment.md).
+      responses:
+        "200": { description: "{ workspaceId, snapshot, alerts }" }
+
+  # ── Campaigns (ENR-05) ──────────────────────────────────────────────────────
+  /enrichment/audiences/preview:
+    post:
+      tags: [Campaigns]
+      summary: Live counts and a first page of matches while the filters are edited
+      description: Needs enrichment:read. 120/min. People registered by URL and not yet captured are never part of an audience.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [filters], properties: { filters: { $ref: "#/components/schemas/AudienceFilters" } } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workspaceId: { type: string, format: uuid }
+                  counts: { $ref: "#/components/schemas/AudienceCounts" }
+                  sample: { type: array, maxItems: 25, items: { $ref: "#/components/schemas/PersonSummary" } }
+                  maxAudienceSize: { type: integer, example: 500 }
+                  tooLarge: { type: boolean }
+  /enrichment/audiences:
+    get:
+      tags: [Campaigns]
+      summary: Saved audiences
+      description: Needs enrichment:read.
+      responses:
+        "200": { description: "{ workspaceId, audiences }" }
+    post:
+      tags: [Campaigns]
+      summary: Save an audience and write its members to an ordinary list
+      description: Needs enrichment:enrich. Audited.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/AudienceBody" } } }
+      responses:
+        "201": { description: "{ workspaceId, audience }" }
+        "422": { description: audience_empty or audience_too_large (more than 500) }
+  /enrichment/audiences/{id}:
+    get:
+      tags: [Campaigns]
+      summary: A saved audience with its live counts and sample
+      description: Needs enrichment:read.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: "{ workspaceId, audience, counts, sample, maxAudienceSize, tooLarge }" }
+        "404": { description: audience_not_found }
+    put:
+      tags: [Campaigns]
+      summary: Save again, bringing the audience's list up to date with who matches now
+      description: Needs enrichment:enrich. Audited.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/AudienceBody" } } }
+      responses:
+        "200": { description: "{ workspaceId, audience }" }
+        "404": { description: audience_not_found }
+        "422": { description: audience_empty or audience_too_large }
+    delete:
+      tags: [Campaigns]
+      summary: Delete the audience definition (its list and campaigns are kept)
+      description: Needs enrichment:enrich. Audited.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: "{ success, workspaceId }" }
+        "404": { description: audience_not_found }
+  /enrichment/campaigns:
+    get:
+      tags: [Campaigns]
+      summary: Campaigns of the workspace
+      description: Needs enrichment:read.
+      responses:
+        "200": { description: "{ workspaceId, campaigns, total }" }
+    post:
+      tags: [Campaigns]
+      summary: Build a draft campaign from an audience or a set of people
+      description: |
+        Needs enrichment:enrich. Evaluates each recipient (suppression, consent, verified email) and
+        composes the talking points. Every claim references an evidence row with source, capture time
+        and confidence; discovery-only evidence is flagged and kept out of the copy. Nobody is enrolled.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              description: Exactly one of audienceId or prospectIds.
+              properties:
+                name: { type: string, minLength: 1, maxLength: 160 }
+                audienceId: { type: string, format: uuid }
+                prospectIds: { type: array, minItems: 1, maxItems: 500, items: { type: string } }
+      responses:
+        "201": { description: "{ workspaceId, campaign }" }
+  /enrichment/campaigns/review-queue:
+    get:
+      tags: [Campaigns]
+      summary: Job-change suggestions waiting for a person
+      description: Needs enrichment:read. Items are drafts; none has been submitted or sent.
+      responses:
+        "200": { description: "{ workspaceId, items, total }" }
+  /enrichment/campaigns/{id}:
+    get:
+      tags: [Campaigns]
+      summary: A campaign with its draft steps, claims, recipients, reviews and send mode
+      description: |
+        Needs enrichment:read. Each recipient has its eligibility and, when excluded, the reason
+        (no_email, email_not_verified, consent_missing, person_removed, or a suppression block).
+        Outside production the campaign reports sandbox sending.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          description: "{ workspaceId, campaign, draft, problems, recipients, counts, outcomes, reviews, ... }"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workspaceId: { type: string, format: uuid }
+                  campaign: { $ref: "#/components/schemas/Campaign" }
+                  draft: { type: object, description: Steps and the claims behind them }
+                  problems: { type: array, items: { type: object }, description: What blocks submission, e.g. placeholder text }
+                  recipients: { type: array, items: { type: object } }
+                  counts: { type: object, properties: { total: { type: integer }, eligible: { type: integer }, excluded: { type: integer }, included: { type: integer }, withoutTalkingPoint: { type: integer }, consentMissing: { type: integer } } }
+                  outcomes: { type: object, properties: { enrolled: { type: integer }, sent: { type: integer }, replied: { type: integer }, bounced: { type: integer }, unsubscribed: { type: integer } } }
+                  reviews: { type: array, items: { type: object } }
+        "404": { description: campaign_not_found }
+  /enrichment/campaigns/{id}/draft:
+    put:
+      tags: [Campaigns]
+      summary: Edit the copy
+      description: Needs enrichment:enrich. Editing an approved campaign withdraws the approval (status changes_required).
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [steps]
+              properties:
+                steps:
+                  type: array
+                  minItems: 1
+                  maxItems: 6
+                  items:
+                    type: object
+                    required: [order, delayDays, subject, body]
+                    properties:
+                      order: { type: integer, minimum: 1, maximum: 10 }
+                      delayDays: { type: integer, minimum: 0, maximum: 60 }
+                      subject: { type: string, maxLength: 200 }
+                      body: { type: string, maxLength: 10000 }
+      responses:
+        "200": { description: The campaign, as GET returns it }
+        "409": { description: campaign_not_editable }
+  /enrichment/campaigns/{id}/recipients/{prospectId}:
+    put:
+      tags: [Campaigns]
+      summary: Include or remove one recipient
+      description: Needs enrichment:enrich. An excluded person cannot be included (409 recipient_excluded, with the reason). Withdraws an approval.
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { name: prospectId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [included, removed] }
+                comment: { type: string, maxLength: 2000 }
+      responses:
+        "200": { description: "{ workspaceId, recipient }" }
+        "409": { description: recipient_excluded or campaign_not_editable }
+  /enrichment/campaigns/{id}/refresh:
+    post:
+      tags: [Campaigns]
+      summary: Re-read eligibility and evidence for every recipient
+      description: Needs enrichment:enrich. Evidence that changed after approval forces re-review.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: The campaign, as GET returns it }
+  /enrichment/campaigns/{id}/submit:
+    post:
+      tags: [Campaigns]
+      summary: Submit the campaign for review
+      description: Needs enrichment:enrich. Refused while the copy still has placeholder text.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: The campaign, status pending_review }
+        "409": { description: campaign_not_submittable }
+  /enrichment/campaigns/{id}/review:
+    post:
+      tags: [Campaigns]
+      summary: Record the human decision on recipients and copy
+      description: Needs sequences:send. Audited. consentBasis is required for recipients without consent when consent is enforced.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approved, rejected] }
+                comment: { type: string, maxLength: 2000 }
+                consentBasis: { type: string, minLength: 2, maxLength: 120 }
+      responses:
+        "200": { description: The campaign, status approved or rejected }
+        "409": { description: campaign_not_pending_review }
+  /enrichment/campaigns/{id}/dismiss:
+    post:
+      tags: [Campaigns]
+      summary: Dismiss a draft or a job-change suggestion
+      description: Needs enrichment:enrich.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { comment: { type: string, maxLength: 2000 } } }
+      responses:
+        "200": { description: The campaign, status dismissed }
+        "409": { description: campaign_not_editable (already launched) }
+  /enrichment/campaigns/{id}/launch:
+    post:
+      tags: [Campaigns]
+      summary: Create the sequence and enroll the approved recipients
+      description: |
+        Needs sequences:send. 5/min. Sends go through Skout's existing sequence path; suppressed and
+        unverified recipients are never enrolled. The sequence worker checks the approval again at send
+        time. Outside production only sandbox recipients receive mail.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: "{ workspaceId, sequenceId, enrolled, skipped } plus the campaign as GET returns it" }
+        "409": { description: approval_required (no recorded approval) or re_review_required (evidence or contact details changed after approval) }
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    ProspectId: { name: id, in: path, required: true, schema: { type: string }, description: Prospect id (not a uuid) }
+    RunId: { name: runId, in: path, required: true, schema: { type: string, format: uuid } }
+    Page: { name: page, in: query, schema: { type: integer, minimum: 1, maximum: 10000, default: 1 } }
+  schemas:
+    Release:
+      type: object
+      properties:
+        workspaceId: { type: string, format: uuid }
+        enabled: { type: boolean }
+        stage: { type: string, enum: [internal, general] }
+        reason: { type: string, nullable: true }
+    UrlBody:
+      type: object
+      required: [url]
+      additionalProperties: false
+      properties:
+        url: { type: string, format: uri, maxLength: 2000 }
+    CaptureStatus:
+      type: object
+      properties:
+        workspaceId: { type: string, format: uuid }
+        enabled: { type: boolean }
+        disabledReason: { type: string, nullable: true }
+        caps:
+          type: object
+          properties:
+            maxPagesPerRun: { type: integer, example: 10 }
+            maxLeadsPerRun: { type: integer, example: 250 }
+            dailyLeadLimit: { type: integer, example: 1000 }
+        usage:
+          type: object
+          properties:
+            leadsToday: { type: integer }
+            remainingToday: { type: integer }
+    CaptureRun:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [person, company, sales_search] }
+        status: { type: string, enum: [running, completed, stopped, failed, rejected] }
+        terminal: { type: boolean, description: True for every status but running }
+        userId: { type: string, format: uuid }
+        sourceUrl: { type: string, nullable: true }
+        pagesRead: { type: integer }
+        leadsReceived: { type: integer }
+        leadsCreated: { type: integer }
+        leadsMerged: { type: integer }
+        leadsRejected: { type: integer }
+        errorCode: { type: string, nullable: true }
+        errorMessage: { type: string, nullable: true }
+        startedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time, nullable: true }
+    CaptureError:
+      type: object
+      properties:
+        ok: { type: boolean, enum: [false] }
+        error: { type: string, description: Readable message }
+        code:
+          type: string
+          description: capture_disabled, daily_limit_reached, page_cap_exceeded, lead_cap_exceeded, run_not_found, run_not_active, run_kind_mismatch, profile_not_readable, ingest_failed
+        run: { allOf: [{ $ref: "#/components/schemas/CaptureRun" }], nullable: true, description: The run's recorded state, when one exists }
+    RelationshipContext:
+      type: object
+      additionalProperties: false
+      properties:
+        degree: { type: integer, enum: [1, 2, 3] }
+        isDirectConnection: { type: boolean }
+        mutualConnections: { type: array, maxItems: 50, items: { type: object, properties: { name: { type: string }, profileUrl: { type: string, format: uri } } } }
+        mutualConnectionsText: { type: string, maxLength: 1000 }
+        sharedCompanyText: { type: string, maxLength: 1000 }
+        salesNavigatorLeadUrl: { type: string, format: uri }
+        activitySignals: { type: array, maxItems: 10, items: { type: string } }
+    PersonIngest:
+      type: object
+      required: [publicId, sourceUrl, fullName]
+      additionalProperties: false
+      description: |
+        Unknown keys are refused. sourceUrl must be a public https linkedin.com /in/ URL whose id equals
+        publicId. List items are free-form objects of at most 8 kB each.
+      properties:
+        runId: { type: string, format: uuid }
+        publicId: { type: string, maxLength: 200 }
+        sourceUrl: { type: string, format: uri }
+        capturedAt: { type: string, format: date-time }
+        fullName: { type: string, minLength: 1, maxLength: 300 }
+        firstName: { type: string }
+        lastName: { type: string }
+        headline: { type: string, maxLength: 500 }
+        summary: { type: string, maxLength: 20000 }
+        industry: { type: string }
+        locationName: { type: string }
+        locationCountry: { type: string }
+        logoUrl: { type: string, format: uri }
+        connectionsCount: { type: integer }
+        followersCount: { type: integer }
+        relationshipContext: { $ref: "#/components/schemas/RelationshipContext" }
+        currentCompanies: { type: array, maxItems: 50, items: { type: object }, description: "name, title, dates, companyPublicId" }
+        previousCompanies: { type: array, maxItems: 100, items: { type: object } }
+        educations: { type: array, maxItems: 50, items: { type: object } }
+        skills: { type: array, maxItems: 300, items: { oneOf: [{ type: string }, { type: object }] } }
+        volunteerExperiences: { type: array, maxItems: 50, items: { type: object } }
+        languages: { type: array, maxItems: 50, items: { type: object } }
+        recommendations: { type: array, maxItems: 50, items: { type: object } }
+        certifications: { type: array, maxItems: 100, items: { type: object } }
+        courses: { type: array, maxItems: 100, items: { type: object } }
+        honors: { type: array, maxItems: 100, items: { type: object } }
+        organizations: { type: array, maxItems: 100, items: { type: object } }
+        patents: { type: array, maxItems: 100, items: { type: object } }
+        projects: { type: array, maxItems: 100, items: { type: object } }
+        publications: { type: array, maxItems: 100, items: { type: object } }
+        pronoun: { type: string, maxLength: 100 }
+        jobFunction: { type: string }
+        seniority: { type: string }
+        openToWork: { type: boolean }
+        hiring: { type: boolean }
+        currentCompanyPublicId: { type: string }
+    CompanyIngest:
+      type: object
+      required: [publicId, sourceUrl]
+      additionalProperties: false
+      description: Unknown keys are refused. sourceUrl must be a linkedin.com company URL whose id equals publicId.
+      properties:
+        runId: { type: string, format: uuid }
+        publicId: { type: string }
+        memberId: { type: string, pattern: '^\d{1,20}$' }
+        sourceUrl: { type: string, format: uri }
+        capturedAt: { type: string, format: date-time }
+        pagesRead: { type: integer, minimum: 0, maximum: 10 }
+        peopleProfiles:
+          type: array
+          maxItems: 250
+          items:
+            type: object
+            required: [publicId, sourceUrl]
+            properties:
+              publicId: { type: string }
+              sourceUrl: { type: string, format: uri, description: A public /in/ URL matching publicId }
+              fullName: { type: string }
+              headline: { type: string }
+              associationSource: { type: string, enum: [company-people-page, company-search-result] }
+        name: { type: string }
+        website: { type: string }
+        domain: { type: string }
+        logoUrl: { type: string, format: uri }
+        locationCountry: { type: string }
+        phone: { type: string }
+        industry: { type: string }
+        tagline: { type: string }
+        overview: { type: string, maxLength: 20000 }
+        revenue: { type: string }
+        size: { type: string }
+        employeesOnLi: { type: integer, description: Member count LinkedIn displayed }
+        specialties: { type: array, items: { type: string } }
+        headquarter: { type: string }
+        followers: { type: integer }
+        foundedAt: { type: string }
+        locations: { type: array, items: { type: object } }
+        hashtags: { type: array, items: { type: string } }
+        funding: { type: object }
+        recentPosts: { type: array, maxItems: 20, items: { type: object } }
+        openJobs: { type: array, maxItems: 200, items: { type: object } }
+        products: { type: array, items: { type: object } }
+        life: { type: array, maxItems: 50, items: { oneOf: [{ type: string }, { type: object }] } }
+        peopleStats: { type: object }
+        insights: { type: object }
+        sectionCaptures:
+          type: object
+          description: "Keyed by tab: home, about, overview, posts, products, jobs, life, people, salesInsights, pastEvents, peopleHighlights, exclusiveInsights, newsletters"
+          additionalProperties:
+            type: object
+            required: [text, sourceUrl, capturedAt, method]
+            properties:
+              text: { type: string, minLength: 1, maxLength: 30000 }
+              sourceUrl: { type: string, format: uri }
+              capturedAt: { type: string, format: date-time }
+              method: { type: string, enum: [reviewed-text, rendered-dom] }
+              scope: { type: string, enum: [loaded-page] }
+    SalesSearchIngest:
+      type: object
+      required: [sourceUrl, peopleProfiles]
+      additionalProperties: false
+      properties:
+        runId: { type: string, format: uuid }
+        sourceUrl: { type: string, format: uri, description: A Sales Navigator URL }
+        capturedAt: { type: string, format: date-time }
+        filters: { type: array, maxItems: 100, items: { type: string }, description: The filters the user chose, as displayed }
+        pagesRead: { type: integer, minimum: 1, maximum: 10, default: 1 }
+        resultCount: { type: integer }
+        peopleProfiles:
+          type: array
+          minItems: 1
+          maxItems: 250
+          items:
+            type: object
+            required: [publicId, sourceUrl]
+            description: |
+              Either a public profile (sourceUrl is an /in/ URL matching publicId) or a Sales-only lead:
+              publicId is sales-lead:<opaque-id>, sourceUrl is its /sales/lead/ URL and
+              relationshipContext.salesNavigatorLeadUrl repeats it.
+            properties:
+              publicId: { type: string, maxLength: 220 }
+              sourceUrl: { type: string, format: uri }
+              fullName: { type: string }
+              headline: { type: string }
+              locationName: { type: string }
+              currentCompanies: { type: array, maxItems: 5, items: { type: object, properties: { name: { type: string }, title: { type: string }, companyPublicId: { type: string } } } }
+              relationshipContext: { $ref: "#/components/schemas/RelationshipContext" }
+    EvidenceFact:
+      type: object
+      properties:
+        evidenceId: { type: string, format: uuid }
+        attribute: { type: string, example: currentCompanies }
+        value: {}
+        source: { type: string, example: linkedin_public_profile }
+        sourceUrl: { type: string, nullable: true }
+        observedAt: { type: string, format: date-time, description: When the fact was seen on its source page }
+        capturedAt: { type: string, format: date-time, description: When Skout last captured it }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        state: { type: string, enum: [verified, discovery, unverified] }
+        method: { type: string, nullable: true, example: extension_rendered_dom }
+        freshnessExpiresAt: { type: string, format: date-time, nullable: true }
+        stale: { type: boolean }
+        usableForClaims: { type: boolean, description: Verified and fresh. Anything else needs hedging or review. }
+    Evidence:
+      type: object
+      description: |
+        ProspectEvidence or AccountEvidence, told apart by kind. ProspectEvidence adds prospectId,
+        contactId, identity { state, linkedinUrl, salesNavigatorLeadUrl } and employment (state,
+        companyId, companyName, title, sourceUrl, observedAt, confidence, usableForClaims; null when
+        unknown). AccountEvidence adds companyId, name, domain, linkedinUrl and people.
+      properties:
+        schemaVersion: { type: string }
+        kind: { type: string, enum: [ProspectEvidence, AccountEvidence] }
+        workspaceId: { type: string, format: uuid }
+        facts: { type: array, items: { $ref: "#/components/schemas/EvidenceFact" } }
+        generatedAt: { type: string, format: date-time }
+    PersonSummary:
+      type: object
+      properties:
+        prospectId: { type: string }
+        contactId: { type: string, format: uuid, nullable: true }
+        fullName: { type: string, nullable: true }
+        headline: { type: string, nullable: true }
+        title: { type: string, nullable: true }
+        companyId: { type: string, format: uuid, nullable: true }
+        companyName: { type: string, nullable: true }
+        location: { type: string, nullable: true }
+        linkedinUrl: { type: string, nullable: true, description: A real public profile URL or null. Never derived from a Sales lead id. }
+        salesNavigatorLeadUrl: { type: string, nullable: true }
+        identity: { type: string, enum: [public_profile, sales_lead, none] }
+        employmentState: { type: string, enum: [verified, candidate, unknown] }
+        seniority: { type: string, nullable: true }
+        jobFunction: { type: string, nullable: true }
+        captureSource: { type: string, nullable: true }
+        sourceUrl: { type: string, nullable: true }
+        capturedAt: { type: string, format: date-time }
+        pendingCapture: { type: boolean, description: Registered by URL only; no profile content captured yet }
+    JobChange:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        entityType: { type: string, enum: [person] }
+        entityId: { type: string }
+        field: { type: string, example: currentCompanies }
+        changeType: { type: string, example: FIELD_UPDATED }
+        oldValue: {}
+        newValue: {}
+    ProviderJobStatus:
+      type: string
+      enum: [queued, running, partial, action_required, failed, done]
+      description: |
+        partial = finished, with fields kept as evidence only (unverified mapping, or test mode).
+        action_required = cannot run until someone acts, e.g. connects a provider.
+    ProviderJob:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        correlationId: { type: string, format: uuid }
+        status: { $ref: "#/components/schemas/ProviderJobStatus" }
+        terminal: { type: boolean }
+        targetType: { type: string, enum: [person, company] }
+        targetId: { type: string }
+        sourceUrl: { type: string }
+        normalizedUrl: { type: string }
+        provider: { type: string, example: unipile }
+        providerConnectionId: { type: string, format: uuid, nullable: true }
+        trigger: { type: string, example: manual }
+        attemptCount: { type: integer }
+        maxAttempts: { type: integer, example: 3 }
+        nextAttemptAt: { type: string, format: date-time, nullable: true }
+        errorCode: { type: string, nullable: true }
+        errorMessage: { type: string, nullable: true }
+        result: { type: object, nullable: true }
+    AudienceFilters:
+      type: object
+      additionalProperties: false
+      properties:
+        q: { type: string, maxLength: 120 }
+        role: { type: string, maxLength: 120, description: Words in the title or headline }
+        department: { type: string, maxLength: 120 }
+        seniority: { type: string, maxLength: 120 }
+        location: { type: string, maxLength: 120 }
+        companyId: { type: string, format: uuid }
+        industry: { type: string, maxLength: 120 }
+        minEmployees: { type: integer, minimum: 0 }
+        maxEmployees: { type: integer, minimum: 0 }
+        evidenceState: { type: string, enum: [verified, discovery] }
+        freshness: { type: string, enum: [fresh, stale], description: fresh = captured within freshnessDays }
+    AudienceBody:
+      type: object
+      required: [name, filters]
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 160 }
+        filters: { $ref: "#/components/schemas/AudienceFilters" }
+    AudienceCounts:
+      type: object
+      properties:
+        total: { type: integer }
+        verifiedEmployment: { type: integer }
+        discoveryOnly: { type: integer }
+        fresh: { type: integer }
+        stale: { type: integer }
+        withEmail: { type: integer }
+        verifiedEmail: { type: integer, description: The only kind that can be enrolled }
+        suppressed: { type: integer }
+        freshnessDays: { type: integer, example: 90 }
+    Campaign:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        status: { type: string, enum: [draft, pending_review, approved, rejected, changes_required, launched, dismissed] }
+        trigger: { type: string, enum: [manual, job_change] }
+        audienceId: { type: string, format: uuid, nullable: true }
+        sequenceId: { type: string, format: uuid, nullable: true, description: Set once launched }
+        sourceChangeEventId: { type: string, format: uuid, nullable: true }
+        recipientCount: { type: integer }
+        consentBasis: { type: string, nullable: true }
+        reviewComment: { type: string, nullable: true }
+        createdBy: { type: string, format: uuid, nullable: true }
+        submittedBy: { type: string, format: uuid, nullable: true }
+        submittedAt: { type: string, format: date-time, nullable: true }
+        approvedBy: { type: string, format: uuid, nullable: true }
+        approvedAt: { type: string, format: date-time, nullable: true }
+        launchedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
