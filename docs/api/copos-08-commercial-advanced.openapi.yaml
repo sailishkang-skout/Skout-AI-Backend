@@ -166,6 +166,28 @@ paths:
         "200": { description: "{ok, duplicate, outcome: applied | no_change | ignored | unmatched, status}" }
         "401": { description: Bad or missing signature }
         "404": { description: Unknown provider }
+  /accounts/{id}/contract-fields:
+    get:
+      summary: The account's region, segment and legal entity
+      description: Needs commercial:read or legal:read. Stored as custom fields (object type account); a field with no value is left out.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: "{data: {region?, segment?, legal_entity?}}" }
+    put:
+      summary: Set or clear the account's contract fields
+      description: >
+        Needs commercial:write, legal:write or commercial:send. Only the fields given change; an empty
+        string clears one. Audited (account.contract_fields_updated). Sending for signature picks the
+        template from these; a template_context on the send wins.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, properties: { region: { type: string, maxLength: 100 }, segment: { type: string, maxLength: 100 }, legal_entity: { type: string, maxLength: 200 } } }
+      responses:
+        "200": { description: The fields after the change }
+        "404": { description: Not an account of this workspace }
+        "422": { description: Unknown field or too long }
   /billing/subscription:
     get:
       summary: The customer's own subscription (read-only)

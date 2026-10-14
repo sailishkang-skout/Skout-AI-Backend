@@ -5,6 +5,7 @@ import { writeCopsAudit } from "./cops-platform.service.js";
 import { listConfig } from "./cops-admin-config.service.js";
 import { CommercialError, getOpportunity, sendContract, setContractStatus, type CommercialContext } from "./cops-commercial.service.js";
 import type { EsignAdapter, EsignSigner } from "./esign/esign-adapter.js";
+import { getAccountContractFields } from "./cops-account-fields.service.js";
 
 /**
  * COPS-08 e-signature (Bible p.32). A contract version goes out through the provider adapter and
@@ -112,7 +113,9 @@ export async function sendEnvelope(db: Db, ctx: CommercialContext, adapter: Esig
     if (live) throw new CommercialError("BUSINESS_STATE_CONFLICT", "This version is already out for signature", { envelope_id: live.id, status: live.status });
 
     const opportunity = await getOpportunity(tx as unknown as Db, ctx.workspaceId, contract.opportunityId);
-    const template = selectEsignTemplate(templates, { contract_kind: contract.kind, deal_type: opportunity.dealType, ...input.template_context });
+    // Region, segment and legal entity come from the account; what the sender passes wins.
+    const accountFields = opportunity.companyId ? await getAccountContractFields(tx as unknown as Db, ctx.workspaceId, opportunity.companyId) : {};
+    const template = selectEsignTemplate(templates, { contract_kind: contract.kind, deal_type: opportunity.dealType, ...accountFields, ...input.template_context });
     const mergeFields: Record<string, string> = {
       contract_title: contract.title,
       opportunity_name: opportunity.name,

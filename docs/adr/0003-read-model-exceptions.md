@@ -147,6 +147,7 @@ block. The COPS-06 tables (engineering tickets, comments, status history, accoun
 | File | Tables | Access |
 |---|---|---|
 | `apps/api/src/services/cops-renewals.service.ts` | deals, pipeline_stages | read of the original opportunity and the first stage of its pipeline; **insert** of one renewal opportunity per subscription term |
+| `apps/api/src/services/cops-account-fields.service.ts` | companies | read only: the account belongs to the workspace before its region, segment and legal entity (custom field values) are written |
 
 This is the first COPS exception that inserts into an apps/crm-owned table. The ticket requires
 exactly one renewal opportunity per term. That holds only when the opportunity, the mark on the

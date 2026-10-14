@@ -68,7 +68,7 @@ maybe("COPS-08 e-signature", () => {
     process.env.AUTH_STUB = "true";
     process.env.CLERK_SECRET_KEY = "";
     const config = loadEnv();
-    app = await buildApp({ ...config, DATABASE_URL: url, CLERK_SECRET_KEY: undefined, LOG_LEVEL: "fatal", OPENSEARCH_URL: undefined, ESIGN_MOCK_WEBHOOK_SECRET: SECRET } as typeof config);
+    app = await buildApp({ ...config, DATABASE_URL: url, CLERK_SECRET_KEY: undefined, LOG_LEVEL: "fatal", OPENSEARCH_URL: undefined, ESIGN_MOCK_WEBHOOK_SECRET: SECRET, DOCUSEAL_API_KEY: undefined } as typeof config);
     sql = postgres(url as string, { max: 1, onnotice: () => {} });
     const [seeded] = await sql`select count(*)::int as n from roles where key = 'owner'`;
     if (seeded.n === 0) {
@@ -221,6 +221,37 @@ maybe("COPS-08 e-signature", () => {
     await webhook({ envelope_ref: second.json().data.provider_ref, event_type: "envelope.signed" });
     expect((await contractStatus(contractId)).status).toBe("signed");
     expect(await signedEvents(contractId)).toBe(1);
+  });
+
+  it("the account's region, segment and legal entity pick the contract template; what the sender passes wins", async () => {
+    const template = (key: string, match: Record<string, string>) =>
+      call("PUT", `/admin/config/esign_template/${key}`, { value: { name: key, contract_kind: "msa", provider_template_id: `tpl_${key}`, match, active: true }, reason: "Test template" });
+    expect((await template("msa_any", {})).statusCode).toBeLessThan(300);
+    expect((await template("msa_eu", { region: "EU" })).statusCode).toBeLessThan(300);
+    expect((await template("msa_eu_ent", { region: "EU", segment: "enterprise" })).statusCode).toBeLessThan(300);
+
+    // The fields live in the existing custom fields; an empty value clears one.
+    const set = await call("PUT", `/accounts/${companyId}/contract-fields`, { region: "EU", segment: "enterprise", legal_entity: "Acme GmbH" });
+    expect(set.statusCode).toBe(200);
+    expect(set.json().data).toEqual({ region: "EU", segment: "enterprise", legal_entity: "Acme GmbH" });
+    expect((await call("PUT", `/accounts/${companyId}/contract-fields`, { legal_entity: "" })).json().data).toEqual({ region: "EU", segment: "enterprise" });
+    expect((await call("GET", `/accounts/${companyId}/contract-fields`)).json().data).toEqual({ region: "EU", segment: "enterprise" });
+    expect((await call("PUT", `/accounts/${companyId}/contract-fields`, { colour: "red" })).statusCode).toBe(422);
+    const [audit] = await sql`select after_state from audit_logs where entity_id = ${companyId} and action = 'account.contract_fields_updated' order by created_at desc limit 1`;
+    expect(audit.after_state).toEqual({ region: "EU", segment: "enterprise" });
+
+    // The most specific template for this account is used without the sender passing anything.
+    const first = await newContract();
+    expect((await send(first.contractId)).json().data.template_key).toBe("msa_eu_ent");
+    // A value passed on the send wins over the account's.
+    const second = await newContract();
+    const overridden = await call("POST", `/contracts/${second.contractId}/envelopes`, { signers, template_context: { segment: "smb" } });
+    expect(overridden.json().data.template_key).toBe("msa_eu");
+
+    // Another workspace cannot read or write this account's fields.
+    expect((await call("PUT", `/accounts/${companyId}/contract-fields`, { region: "US" }, OTHER)).statusCode).toBe(404);
+    expect((await call("GET", `/accounts/${companyId}/contract-fields`, undefined, OTHER)).json().data).toEqual({});
+    await sql`delete from cops_config_versions where workspace_id = ${workspaceId} and kind = 'esign_template'`;
   });
 
   it("another workspace cannot send or see these envelopes", async () => {

@@ -244,6 +244,7 @@ runs once: a second run marks nothing, so deals sent later are never grandfather
 | Suspended customer | Can sign in and see a read-only billing page with the amount due and pay; product use (search, enrichment, sequences, exports) blocked; paying lifts it through the normal path | Done: 402 `subscription_suspended` on those routes, `GET /billing/subscription`, `POST /billing/subscription/invoices/:id/pay`, banner and Settings > Workspace card |
 | Sole-owner approval | The rule stays: an owner cannot approve the Sales Manager or Finance slot without that role. A second person gets the Sales Manager role | No code change. The role is assigned in team settings |
 | E-sign provider | DocuSeal, not Dropbox Sign. Mock stays for tests | Done: `docuseal-adapter.ts`, webhook `/api/v1/esign/webhooks/docuseal`, env `DOCUSEAL_API_KEY`, `DOCUSEAL_BASE_URL`, `DOCUSEAL_WEBHOOK_SECRET`, `DOCUSEAL_WEBHOOK_HEADER` |
+| Region, segment, legal entity | Yes; reuse the existing custom fields before adding columns | Done: `custom_field_definitions` / `custom_field_values` (migration 0104) had no API; three account fields are created on first use, read and written at `/accounts/:id/contract-fields` (audited), and template selection reads them. No new columns |
 | Auto-debit | Not now: payment link per period | Unchanged |
 | Amendments with credits | Not until Finance decides what credits mean in an amendment | Not built |
 

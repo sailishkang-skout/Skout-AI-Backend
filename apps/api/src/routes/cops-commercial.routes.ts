@@ -50,6 +50,7 @@ import type { PspAdapter } from "../services/psp/psp-adapter.js";
 import { createMockEsignAdapter, type EsignAdapter } from "../services/esign/esign-adapter.js";
 import { createDocusealAdapter } from "../services/esign/docuseal-adapter.js";
 import { handleEsignWebhook, listEnvelopes, sendEnvelope } from "../services/cops-esign.service.js";
+import { getAccountContractFields, setAccountContractFields } from "../services/cops-account-fields.service.js";
 import { CREDIT_ACTIVITY_KINDS, listCreditActivity, listSubscriptionsForFinance, loadReconciliation } from "../services/cops-finance.service.js";
 import { amendSubscription, createSubscription, getAccountSubscription, issueInvoicePaymentLink, listFailedPayments, markInvoicePaid } from "../services/cops-subscriptions.service.js";
 import { applyPaidCreditPurchases } from "../services/cops-credits.service.js";
@@ -485,6 +486,26 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
       );
     })
   );
+
+  // The account's region, segment and legal entity, which pick the contract template (custom fields).
+  const contractFieldsSchema = z
+    .object({ region: z.string().trim().max(100), segment: z.string().trim().max(100), legal_entity: z.string().trim().max(200) })
+    .partial()
+    .strict();
+  app.get<IdOnly>("/accounts/:id/contract-fields", { preHandler: contractReadGate }, async (request, reply) => {
+    const ctx = ctxOf(request);
+    const bad = checkId(reply as unknown as Reply, ctx.requestId, request.params.id);
+    if (bad) return bad;
+    return { data: await getAccountContractFields(db, ctx.workspaceId, request.params.id) };
+  });
+  app.put<IdOnly>("/accounts/:id/contract-fields", { preHandler: contractWriteGate }, async (request, reply) => {
+    const ctx = ctxOf(request);
+    const bad = checkId(reply as unknown as Reply, ctx.requestId, request.params.id);
+    if (bad) return bad;
+    const parsed = contractFieldsSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return invalid(reply as unknown as Reply, ctx.requestId, parsed.error);
+    return run(reply as unknown as Reply, ctx.requestId, () => setAccountContractFields(db, ctx, request.params.id, parsed.data), (data) => ({ data }));
+  });
 
   app.get<IdOnly>("/contracts/:id/envelopes", { preHandler: contractReadGate }, async (request, reply) => {
     const ctx = ctxOf(request);
