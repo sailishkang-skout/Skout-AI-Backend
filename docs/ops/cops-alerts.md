@@ -1,5 +1,11 @@
 # CustomerOps alerts and dashboard (COPS-07)
 
+> **Status (2026-10-14): Datadog setup skipped.** The Datadog trial (us5) has expired, and
+> Aditya decided to skip the Datadog part for now. The webhook, the monitors and the dashboard
+> below are not created. Their definitions stay in this folder for when an account is in place.
+> Until then the health numbers are read in CustomerOps admin > Operations. With `DD_API_KEY`
+> set, a refused metrics call is logged as a warning and never fails the worker.
+
 Source of every number: `GET /api/v1/admin/ops/metrics` (needs `admin:read`), also shown on the
 CustomerOps admin page under Operations. Each metric carries its own `warn_at`, `critical_at`,
 `status` and `runbook`, so a monitor only has to read `status`.
