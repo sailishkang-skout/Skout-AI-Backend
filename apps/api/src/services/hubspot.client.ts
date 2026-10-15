@@ -129,20 +129,143 @@ function contactProperties(c: HubSpotContactInput): Record<string, string> {
   return props;
 }
 
+export class HubSpotRateLimitError extends Error {
+  readonly status = 429;
+  readonly retryAfterMs: number;
+  readonly limitedUntil: Date;
+
+  constructor(message: string, retryAfterMs: number) {
+    super(message);
+    this.name = "HubSpotRateLimitError";
+    this.retryAfterMs = retryAfterMs;
+    this.limitedUntil = new Date(Date.now() + retryAfterMs);
+  }
+}
+
+export interface HubSpotRateLimitState {
+  isRateLimited: boolean;
+  lastRateLimitedAt: string | null;
+  limitedUntil: string | null;
+  retryAfterMs: number | null;
+}
+
+let currentRateLimitState: HubSpotRateLimitState = {
+  isRateLimited: false,
+  lastRateLimitedAt: null,
+  limitedUntil: null,
+  retryAfterMs: null,
+};
+
+export function recordHubSpotRateLimit(retryAfterMs: number, now = Date.now()): void {
+  currentRateLimitState = {
+    isRateLimited: true,
+    lastRateLimitedAt: new Date(now).toISOString(),
+    limitedUntil: new Date(now + retryAfterMs).toISOString(),
+    retryAfterMs,
+  };
+}
+
+export function getHubSpotRateLimitState(now = Date.now()): HubSpotRateLimitState {
+  if (
+    currentRateLimitState.isRateLimited &&
+    currentRateLimitState.limitedUntil &&
+    new Date(currentRateLimitState.limitedUntil).getTime() <= now
+  ) {
+    currentRateLimitState = {
+      ...currentRateLimitState,
+      isRateLimited: false,
+    };
+  }
+  return { ...currentRateLimitState };
+}
+
+export function resetHubSpotRateLimitState(): void {
+  currentRateLimitState = {
+    isRateLimited: false,
+    lastRateLimitedAt: null,
+    limitedUntil: null,
+    retryAfterMs: null,
+  };
+}
+
+export function parseRetryAfter(header: string | null | undefined, fallbackMs = 1000): number {
+  if (!header) return fallbackMs;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.round(seconds * 1000);
+  }
+  const dateMs = Date.parse(header);
+  if (!Number.isNaN(dateMs)) {
+    const diff = dateMs - Date.now();
+    return diff > 0 ? diff : fallbackMs;
+  }
+  return fallbackMs;
+}
+
+export interface HubSpotRequestOptions extends RequestInit {
+  maxRetries?: number;
+  sleepImpl?: (ms: number) => Promise<void>;
+  fetchImpl?: typeof fetch;
+}
+
+export async function hubspotFetchWithBackoff(
+  url: string,
+  init?: HubSpotRequestOptions
+): Promise<Response> {
+  const maxRetries = init?.maxRetries ?? 3;
+  const sleep = init?.sleepImpl ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const doFetch = init?.fetchImpl ?? fetch;
+
+  const currentState = getHubSpotRateLimitState();
+  if (currentState.isRateLimited && currentState.limitedUntil) {
+    const waitMs = new Date(currentState.limitedUntil).getTime() - Date.now();
+    if (waitMs > 0 && waitMs <= 60_000) {
+      await sleep(waitMs);
+    }
+  }
+
+  let attempt = 0;
+  while (true) {
+    const res = await doFetch(url, init);
+    if (res.status === 429) {
+      const retryAfterHeader =
+        typeof res.headers?.get === "function"
+          ? res.headers.get("retry-after")
+          : (res.headers as unknown as Record<string, string> | undefined)?.["retry-after"];
+      const waitMs = parseRetryAfter(retryAfterHeader, Math.min(1000 * 2 ** attempt, 30_000));
+      recordHubSpotRateLimit(waitMs);
+
+      if (attempt < maxRetries) {
+        attempt++;
+        await sleep(waitMs);
+        continue;
+      }
+      const text = await res.text().catch(() => "");
+      throw new HubSpotRateLimitError(
+        `HubSpot request to ${url} rate limited (429) after ${attempt} retries: ${text}`,
+        waitMs
+      );
+    }
+    return res;
+  }
+}
+
 const BATCH_SIZE = 100;
 
 async function hubspotBatchRequest<T>(
   accessToken: string,
   path: string,
-  body: unknown
+  body: unknown,
+  options?: HubSpotRequestOptions
 ): Promise<T> {
-  const res = await fetch(`${HUBSPOT_API}${path}`, {
+  const res = await hubspotFetchWithBackoff(`${HUBSPOT_API}${path}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
+    ...options,
   });
   if (!res.ok) {
     const text = await res.text();
@@ -242,21 +365,11 @@ export async function batchCreateHubSpotContacts(
     return { created: 0, errors: ["No contacts with email addresses"] };
   }
 
-  const res = await fetch(`${HUBSPOT_API}/crm/v3/objects/contacts/batch/create`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ inputs }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`HubSpot contact create failed: ${res.status} ${text}`);
-  }
-
-  const data = (await res.json()) as { results?: unknown[] };
+  const data = await hubspotBatchRequest<{ results?: unknown[] }>(
+    accessToken,
+    "/crm/v3/objects/contacts/batch/create",
+    { inputs }
+  );
   return { created: data.results?.length ?? inputs.length, errors: [] };
 }
 
@@ -296,15 +409,17 @@ export interface HubSpotListSummary {
 async function hubspotFetch<T>(
   accessToken: string,
   path: string,
-  init?: RequestInit
+  init?: RequestInit,
+  options?: HubSpotRequestOptions
 ): Promise<T> {
-  const res = await fetch(`${HUBSPOT_API}${path}`, {
+  const res = await hubspotFetchWithBackoff(`${HUBSPOT_API}${path}`, {
     ...init,
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),
     },
+    ...options,
   });
   if (!res.ok) {
     const text = await res.text();
@@ -586,6 +701,7 @@ export async function updateHubSpotDeal(
  * of `isHubSpotMissingScopeError` above — `hubspotFetch`/`hubspotBatchRequest` only throw a
  * generic `Error`, there's no typed HTTP-status error class to inspect instead. */
 export function isHubSpotRetryableError(err: unknown): boolean {
+  if (err instanceof HubSpotRateLimitError) return true;
   const msg = err instanceof Error ? err.message : String(err);
   const match = msg.match(/failed: (\d{3})/);
   if (!match) return false;

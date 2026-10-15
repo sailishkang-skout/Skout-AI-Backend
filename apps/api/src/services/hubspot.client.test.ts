@@ -1,6 +1,12 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  HubSpotRateLimitError,
+  getHubSpotRateLimitState,
+  hubspotFetchWithBackoff,
   isHubSpotRetryableError,
+  parseRetryAfter,
+  recordHubSpotRateLimit,
+  resetHubSpotRateLimitState,
   searchHubSpotContactsModifiedSince,
   searchHubSpotDealsModifiedSince,
   updateHubSpotContact,
@@ -115,6 +121,10 @@ describe("isHubSpotRetryableError", () => {
     expect(isHubSpotRetryableError(new Error("HubSpot API /x failed: 429 rate limited"))).toBe(true);
   });
 
+  it("treats HubSpotRateLimitError as retryable", () => {
+    expect(isHubSpotRetryableError(new HubSpotRateLimitError("rate limited", 1000))).toBe(true);
+  });
+
   it("treats 5xx as retryable", () => {
     expect(isHubSpotRetryableError(new Error("HubSpot API /x failed: 503 unavailable"))).toBe(true);
   });
@@ -129,3 +139,114 @@ describe("isHubSpotRetryableError", () => {
     expect(isHubSpotRetryableError("not an Error instance")).toBe(false);
   });
 });
+
+describe("parseRetryAfter", () => {
+  it("parses integer seconds into milliseconds", () => {
+    expect(parseRetryAfter("3")).toBe(3000);
+    expect(parseRetryAfter("0")).toBe(0);
+  });
+
+  it("parses HTTP date string into milliseconds from now", () => {
+    const futureDate = new Date(Date.now() + 5000).toUTCString();
+    const parsed = parseRetryAfter(futureDate);
+    expect(parsed).toBeGreaterThanOrEqual(4000);
+    expect(parsed).toBeLessThanOrEqual(6000);
+  });
+
+  it("falls back to default when header is missing or unparseable", () => {
+    expect(parseRetryAfter(undefined, 2500)).toBe(2500);
+    expect(parseRetryAfter(null, 1500)).toBe(1500);
+    expect(parseRetryAfter("invalid-date", 1000)).toBe(1000);
+  });
+});
+
+describe("HubSpot rate limit state tracking", () => {
+  beforeEach(() => {
+    resetHubSpotRateLimitState();
+  });
+
+  it("records rate limit state and marks isRateLimited true until expiry", () => {
+    const baseNow = 1_700_000_000_000;
+    recordHubSpotRateLimit(5000, baseNow);
+
+    const activeState = getHubSpotRateLimitState(baseNow + 1000);
+    expect(activeState.isRateLimited).toBe(true);
+    expect(activeState.retryAfterMs).toBe(5000);
+    expect(activeState.limitedUntil).toBe(new Date(baseNow + 5000).toISOString());
+
+    const expiredState = getHubSpotRateLimitState(baseNow + 6000);
+    expect(expiredState.isRateLimited).toBe(false);
+  });
+});
+
+describe("hubspotFetchWithBackoff", () => {
+  beforeEach(() => {
+    resetHubSpotRateLimitState();
+  });
+
+  it("backs off on 429 using Retry-After and succeeds on subsequent try", async () => {
+    const sleptMs: number[] = [];
+    const sleepMock = vi.fn(async (ms: number) => {
+      sleptMs.push(ms);
+    });
+
+    const mockResponse429 = {
+      ok: false,
+      status: 429,
+      headers: {
+        get: (h: string) => (h.toLowerCase() === "retry-after" ? "2" : null),
+      },
+      text: () => Promise.resolve("rate limit exceeded"),
+    };
+
+    const mockResponse200 = {
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: () => Promise.resolve({ ok: true }),
+    };
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(mockResponse429)
+      .mockResolvedValueOnce(mockResponse200);
+
+    const res = await hubspotFetchWithBackoff("https://api.hubapi.com/test", {
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      sleepImpl: sleepMock,
+      maxRetries: 3,
+    });
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sleptMs).toEqual([2000]);
+    expect(getHubSpotRateLimitState().lastRateLimitedAt).not.toBeNull();
+  });
+
+  it("throws HubSpotRateLimitError when retries are exhausted", async () => {
+    const sleepMock = vi.fn(async () => {});
+
+    const mockResponse429 = {
+      ok: false,
+      status: 429,
+      headers: {
+        get: (h: string) => (h.toLowerCase() === "retry-after" ? "1" : null),
+      },
+      text: () => Promise.resolve("rate limit exceeded"),
+    };
+
+    const fetchMock = vi.fn().mockResolvedValue(mockResponse429);
+
+    await expect(
+      hubspotFetchWithBackoff("https://api.hubapi.com/test", {
+        fetchImpl: fetchMock as unknown as typeof fetch,
+        sleepImpl: sleepMock,
+        maxRetries: 2,
+      })
+    ).rejects.toThrow(HubSpotRateLimitError);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3); // Initial + 2 retries
+    expect(sleepMock).toHaveBeenCalledTimes(2);
+  });
+});
+
