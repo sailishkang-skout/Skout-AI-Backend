@@ -1,8 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, isNull } from "drizzle-orm";
-import { searchFiltersSchema } from "@skout/shared";
+import { and, eq, isNull } from "drizzle-orm";
 import { schema } from "@skout/db";
 import { buildEnrichmentService, InsufficientCreditsError, SCORE_CREDIT_COST } from "../services/enrichment/index.js";
 import { getEnrichmentEfficiency } from "../services/analytics.service.js";
@@ -22,7 +21,6 @@ import { assertReleased, workspaceReleaseAccess } from "../services/enrichment/r
 const {
   companies,
   lists,
-  sequences,
 } = schema;
 
 const jobIdSchema = z.string().uuid();
