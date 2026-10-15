@@ -15,6 +15,7 @@ import {
   type HubSpotCredentialsStore,
 } from "./hubspot-credentials.store.js";
 import { DbStore } from "./enrichment/db-store.js";
+import { markConnectionNeedsReauth, isCrmGrantExpiredError } from "./crm-auth-lifecycle.service.js";
 
 const { crmConnections, crmProspectMappings, asyncJobs, prospectActivations, listMembers, enrichmentResults } =
   schema;
@@ -222,14 +223,21 @@ export async function ensureFreshTokens(
   workspaceId: string
 ): Promise<HubSpotTokens> {
   const row = await getHubSpotConnection(db, workspaceId);
-  if (!row || row.status !== "connected") {
+  if (!row || row.status === "needs_reauth") {
+    throw new HttpError("hubspot_needs_reauth", 401);
+  }
+  if (row.status !== "connected") {
     throw new HttpError("hubspot_not_connected", 400);
   }
 
   let tokens = await loadTokens(db, credentialsStore, workspaceId, row);
   if (!tokens) {
-    await markConnectionError(db, workspaceId);
-    throw new HttpError("hubspot_token_expired", 401);
+    await markConnectionNeedsReauth(db, config, {
+      workspaceId,
+      provider: HUBSPOT_PROVIDER,
+      reason: "Stored credentials could not be decrypted or are missing",
+    });
+    throw new HttpError("hubspot_needs_reauth", 401);
   }
 
   const expiresAt = tokens.expiresAt ? new Date(tokens.expiresAt).getTime() : 0;
@@ -238,18 +246,34 @@ export async function ensureFreshTokens(
   }
 
   if (!config.HUBSPOT_CLIENT_ID || !config.HUBSPOT_CLIENT_SECRET || !tokens.refreshToken) {
-    await markConnectionError(db, workspaceId);
-    throw new HttpError("hubspot_token_expired", 401);
+    await markConnectionNeedsReauth(db, config, {
+      workspaceId,
+      provider: HUBSPOT_PROVIDER,
+      reason: "Missing OAuth app credentials or refresh token",
+    });
+    throw new HttpError("hubspot_needs_reauth", 401);
   }
 
-  const refreshed = await refreshHubSpotToken({
-    clientId: config.HUBSPOT_CLIENT_ID,
-    clientSecret: config.HUBSPOT_CLIENT_SECRET,
-    refreshToken: tokens.refreshToken,
-  });
+  try {
+    const refreshed = await refreshHubSpotToken({
+      clientId: config.HUBSPOT_CLIENT_ID,
+      clientSecret: config.HUBSPOT_CLIENT_SECRET,
+      refreshToken: tokens.refreshToken,
+    });
 
-  await saveHubSpotTokens(db, credentialsStore, workspaceId, refreshed, row.externalAccountId);
-  return refreshed;
+    await saveHubSpotTokens(db, credentialsStore, workspaceId, refreshed, row.externalAccountId);
+    return refreshed;
+  } catch (err) {
+    if (isCrmGrantExpiredError(err)) {
+      await markConnectionNeedsReauth(db, config, {
+        workspaceId,
+        provider: HUBSPOT_PROVIDER,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+      throw new HttpError("hubspot_needs_reauth", 401);
+    }
+    throw err;
+  }
 }
 
 export async function saveHubSpotTokens(
