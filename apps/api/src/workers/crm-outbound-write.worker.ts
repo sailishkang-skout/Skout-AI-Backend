@@ -20,6 +20,7 @@ import {
   getResolvedCrmMapping,
   type CrmObjectMapping,
 } from "../services/crm-mapping.service.js";
+import { recordCrmConflict } from "../services/crm-conflict.service.js";
 
 const log = createLogger("crm-outbound-write.worker");
 
@@ -92,6 +93,22 @@ export async function processNextCrmOutboundWrite(db: Db, config: Env): Promise<
     // Reverse manual-wins: if the provider's own value changed more recently than the Skout
     // edit that queued this write, skip the push rather than overwrite a newer provider-side edit.
     if (link.externalUpdatedAt && link.externalUpdatedAt > claimed.skoutChangedAt) {
+      for (const [field, val] of Object.entries(claimed.patch as Record<string, unknown>)) {
+        await recordCrmConflict(db, {
+          workspaceId: claimed.workspaceId,
+          connectionId: claimed.connectionId,
+          entityType: claimed.entityType as "contact" | "deal",
+          entityId: claimed.entityId,
+          externalId: link.externalId,
+          fieldName: field,
+          skoutValue: val != null ? String(val) : null,
+          externalValue: null,
+          skoutUpdatedAt: claimed.skoutChangedAt,
+          externalUpdatedAt: link.externalUpdatedAt,
+          policy: "most_recent",
+        }).catch(() => {});
+      }
+
       await recordResult(db, crmOutboundWrites, claimed.id, WORKER_ID, {
         status: "failed",
         lastError: "conflict_hubspot_newer",

@@ -17,6 +17,7 @@ import { recordEvidence } from "./evidence.service.js";
 import { getHubSpotConnectionId, upsertCrmNativeLink, withSyncCheckpoint } from "./crm-sync-state.service.js";
 import { ensureHubSpotPortalId } from "./crm-hubspot-webhook.service.js";
 import { applyInboundMapping, getResolvedCrmMapping } from "./crm-mapping.service.js";
+import { evaluateFieldConflict, recordCrmConflict } from "./crm-conflict.service.js";
 
 const log = createLogger("crm-hubspot-native-sync");
 const { contacts, companies, deals, pipelines, pipelineStages } = schema;
@@ -165,9 +166,41 @@ export async function syncHubSpotContactsToNativeCrm(
           }
         }
       } else {
+        const eligiblePatch: Record<string, unknown> = {};
+        for (const [field, val] of Object.entries(patch)) {
+          const fieldMapping = contactMapping?.fields.find((f) => f.internalField === field);
+          const decision = evaluateFieldConflict({
+            fieldName: field,
+            skoutValue: (existing as Record<string, unknown>)[field],
+            externalValue: val,
+            skoutUpdatedAt: existing.updatedAt,
+            externalUpdatedAt: modifiedAt,
+            policy: fieldMapping?.conflictPolicy ?? "most_recent",
+            isFieldProtected: fieldMapping?.isProtected,
+          });
+
+          if (decision.action === "apply_external") {
+            eligiblePatch[field] = val;
+          } else if (decision.action === "manual_review") {
+            await recordCrmConflict(db, {
+              workspaceId,
+              connectionId,
+              entityType: "contact",
+              entityId: existing.id,
+              externalId: hsContact.id,
+              fieldName: field,
+              skoutValue: (existing as Record<string, unknown>)[field] != null ? String((existing as Record<string, unknown>)[field]) : null,
+              externalValue: String(val),
+              skoutUpdatedAt: existing.updatedAt,
+              externalUpdatedAt: modifiedAt,
+              policy: "manual_review",
+            }).catch((err) => log.warn("Failed recording contact sync conflict", { err }));
+          }
+        }
+
         const existingSources = asFieldSourcesMap(existing.fieldSources);
         const evidenceByAttribute = await getLatestEvidenceByAttribute(db, workspaceId, "contact", existing.id);
-        const { applied } = filterAutoFillablePatch(patch, existingSources, evidenceByAttribute);
+        const { applied } = filterAutoFillablePatch(eligiblePatch, existingSources, evidenceByAttribute);
         const appliedFields = Object.keys(applied);
 
         if (appliedFields.length === 0) {
@@ -307,12 +340,42 @@ export async function syncHubSpotDealsToNativeCrm(
           .returning();
         created++;
         skoutDealId = row?.id;
-      } else if (Object.keys(patch).length === 0) {
-        skipped++;
       } else {
+        const eligiblePatch: Record<string, unknown> = {};
+        for (const [field, val] of Object.entries(patch)) {
+          const fieldMapping = dealMapping?.fields.find((f) => f.internalField === field);
+          const decision = evaluateFieldConflict({
+            fieldName: field,
+            skoutValue: (existing as Record<string, unknown>)[field],
+            externalValue: val,
+            skoutUpdatedAt: existing.updatedAt,
+            externalUpdatedAt: modifiedAt,
+            policy: fieldMapping?.conflictPolicy ?? "manual_review",
+            isFieldProtected: fieldMapping?.isProtected,
+          });
+
+          if (decision.action === "apply_external") {
+            eligiblePatch[field] = val;
+          } else if (decision.action === "manual_review") {
+            await recordCrmConflict(db, {
+              workspaceId,
+              connectionId,
+              entityType: "deal",
+              entityId: existing.id,
+              externalId: hs.id,
+              fieldName: field,
+              skoutValue: (existing as Record<string, unknown>)[field] != null ? String((existing as Record<string, unknown>)[field]) : null,
+              externalValue: String(val),
+              skoutUpdatedAt: existing.updatedAt,
+              externalUpdatedAt: modifiedAt,
+              policy: "manual_review",
+            }).catch((err) => log.warn("Failed recording deal sync conflict", { err }));
+          }
+        }
+
         const existingSources = asFieldSourcesMap(existing.fieldSources);
         const evidenceByAttribute = await getLatestEvidenceByAttribute(db, workspaceId, "deal", existing.id);
-        const { applied } = filterAutoFillablePatch(patch, existingSources, evidenceByAttribute);
+        const { applied } = filterAutoFillablePatch(eligiblePatch, existingSources, evidenceByAttribute);
         const appliedFields = Object.keys(applied);
 
         if (appliedFields.length === 0) {
