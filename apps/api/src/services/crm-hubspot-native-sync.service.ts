@@ -16,6 +16,7 @@ import { hubSpotContactToSnapshot } from "./crm.service.js";
 import { recordEvidence } from "./evidence.service.js";
 import { getHubSpotConnectionId, upsertCrmNativeLink, withSyncCheckpoint } from "./crm-sync-state.service.js";
 import { ensureHubSpotPortalId } from "./crm-hubspot-webhook.service.js";
+import { applyInboundMapping, getResolvedCrmMapping } from "./crm-mapping.service.js";
 
 const log = createLogger("crm-hubspot-native-sync");
 const { contacts, companies, deals, pipelines, pipelineStages } = schema;
@@ -73,6 +74,8 @@ export async function syncHubSpotContactsToNativeCrm(
   // COPS-09: connections from before the fix hold a placeholder portal id; webhooks need the real one.
   await ensureHubSpotPortalId(db, workspaceId, tokens.accessToken).catch((err) => log.warn("could not record the HubSpot portal id", { err, workspaceId }));
 
+  const contactMapping = await getResolvedCrmMapping(db, workspaceId, "hubspot", "contact").catch(() => null);
+
   return withSyncCheckpoint(db, workspaceId, connectionId, "contact", async (sinceIso) => {
     const hubspotContacts = await searchHubSpotContactsModifiedSince(tokens.accessToken, sinceIso, maxContacts);
 
@@ -89,20 +92,23 @@ export async function syncHubSpotContactsToNativeCrm(
       }
 
       const snap = hubSpotContactToSnapshot(hsContact);
-      if (!snap?.email) {
+      const mapped = contactMapping ? applyInboundMapping(contactMapping, (hsContact.properties ?? {}) as Record<string, unknown>) : null;
+      const patch: Record<string, unknown> = mapped ? { ...mapped.patch } : {};
+
+      if (!patch.email && snap?.email) patch.email = snap.email.trim().toLowerCase();
+      if (!patch.email) {
         skipped++;
         continue;
       }
+      const email = String(patch.email).trim().toLowerCase();
 
-      const email = snap.email.trim().toLowerCase();
-      const companyId = snap.companyName
+      const companyId = snap?.companyName
         ? await findOrCreateCompany(db, workspaceId, snap.companyName, snap.companyDomain ?? null)
         : null;
 
-      const patch: Record<string, unknown> = {};
-      if (snap.title) patch.title = snap.title;
-      if (snap.phone) patch.phone = snap.phone;
-      if (snap.fullName) {
+      if (!patch.title && snap?.title) patch.title = snap.title;
+      if (!patch.phone && snap?.phone) patch.phone = snap.phone;
+      if (!patch.firstName && snap?.fullName) {
         const parts = snap.fullName.trim().split(/\s+/);
         patch.firstName = parts[0];
         if (parts.length > 1) patch.lastName = parts.slice(1).join(" ");
@@ -243,6 +249,8 @@ export async function syncHubSpotDealsToNativeCrm(
     ? await db.select().from(pipelineStages).where(eq(pipelineStages.pipelineId, pipeline.id)).limit(1)
     : [];
 
+  const dealMapping = await getResolvedCrmMapping(db, workspaceId, "hubspot", "deal").catch(() => null);
+
   return withSyncCheckpoint(db, workspaceId, connectionId, "deal", async (sinceIso) => {
     const hubspotDeals = await searchHubSpotDealsModifiedSince(tokens.accessToken, sinceIso, maxDeals);
 
@@ -266,13 +274,15 @@ export async function syncHubSpotDealsToNativeCrm(
         maxModifiedAt = modifiedAt;
       }
 
-      const name = hs.properties?.dealname?.trim();
+      const mapped = dealMapping ? applyInboundMapping(dealMapping, (hs.properties ?? {}) as Record<string, unknown>) : null;
+      const patch: Record<string, unknown> = mapped ? { ...mapped.patch } : {};
+
+      const name = (patch.name as string | undefined)?.trim() ?? hs.properties?.dealname?.trim();
       if (!name) {
         skipped++;
         continue;
       }
-      const amount = hs.properties?.amount ? hs.properties.amount : undefined;
-      const patch: Record<string, unknown> = {};
+      const amount = patch.amount != null ? String(patch.amount) : hs.properties?.amount ? hs.properties.amount : undefined;
       if (amount != null && amount !== "") patch.amount = amount;
 
       const [existing] = await db

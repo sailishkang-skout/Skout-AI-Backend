@@ -13,6 +13,13 @@ import {
   updateHubSpotContact,
   updateHubSpotDeal,
 } from "../services/hubspot.client.js";
+import {
+  applyOutboundMapping,
+  DEFAULT_HUBSPOT_CONTACT_MAPPING,
+  DEFAULT_HUBSPOT_DEAL_MAPPING,
+  getResolvedCrmMapping,
+  type CrmObjectMapping,
+} from "../services/crm-mapping.service.js";
 
 const log = createLogger("crm-outbound-write.worker");
 
@@ -35,14 +42,17 @@ const DEAL_FIELD_TO_HUBSPOT: Record<string, string> = {
   amount: "amount",
 };
 
-function toHubSpotProperties(entityType: string, patch: Record<string, unknown>): Record<string, string> {
-  const map = entityType === "contact" ? CONTACT_FIELD_TO_HUBSPOT : DEAL_FIELD_TO_HUBSPOT;
-  const props: Record<string, string> = {};
-  for (const [field, value] of Object.entries(patch)) {
-    const hsProp = map[field];
-    if (hsProp && value != null) props[hsProp] = String(value);
+function toHubSpotProperties(
+  entityType: string,
+  patch: Record<string, unknown>,
+  mapping?: CrmObjectMapping
+): Record<string, string> {
+  if (mapping) {
+    const { properties } = applyOutboundMapping(mapping, patch);
+    return properties;
   }
-  return props;
+  const defaultMapping = entityType === "contact" ? DEFAULT_HUBSPOT_CONTACT_MAPPING : DEFAULT_HUBSPOT_DEAL_MAPPING;
+  return applyOutboundMapping(defaultMapping, patch).properties;
 }
 
 /**
@@ -91,7 +101,13 @@ export async function processNextCrmOutboundWrite(db: Db, config: Env): Promise<
 
     const credentialsStore = createDefaultCredentialsStore(config);
     const tokens = await ensureFreshTokens(db, config, credentialsStore, claimed.workspaceId);
-    const properties = toHubSpotProperties(claimed.entityType, claimed.patch as Record<string, unknown>);
+    const mapping = await getResolvedCrmMapping(
+      db,
+      claimed.workspaceId,
+      "hubspot",
+      claimed.entityType as "contact" | "deal"
+    ).catch(() => undefined);
+    const properties = toHubSpotProperties(claimed.entityType, claimed.patch as Record<string, unknown>, mapping);
 
     if (claimed.entityType === "contact") {
       await updateHubSpotContact(tokens.accessToken, link.externalId, properties);

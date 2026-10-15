@@ -1,10 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   applyInboundMapping,
   applyOutboundMapping,
   DEFAULT_HUBSPOT_CONTACT_MAPPING,
   DEFAULT_HUBSPOT_DEAL_MAPPING,
   getDefaultCrmMappings,
+  getResolvedCrmMapping,
+  saveCrmMappings,
   testMappingTransformation,
   transformValue,
   validateMapping,
@@ -178,3 +180,88 @@ describe("getDefaultCrmMappings", () => {
     expect(defaults.mappings.deal.entityType).toBe("deal");
   });
 });
+
+describe("getResolvedCrmMapping & saveCrmMappings", () => {
+  it("falls back to default mappings when connection has no custom mapping", async () => {
+    const dbMock = {
+      select: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([{ settings: {} }]),
+          }),
+        }),
+      }),
+    };
+
+    const mapping = await getResolvedCrmMapping(dbMock as any, "ws-1", "hubspot", "contact");
+    expect(mapping.version).toBe(1);
+    expect(mapping.entityType).toBe("contact");
+    expect(mapping.fields).toEqual(DEFAULT_HUBSPOT_CONTACT_MAPPING.fields);
+  });
+
+  it("returns custom mapping when configured on connection", async () => {
+    const customContact = {
+      version: 2,
+      entityType: "contact" as const,
+      externalObjectType: "contacts",
+      fields: [
+        {
+          id: "custom_field",
+          internalField: "customField",
+          externalField: "hs_custom",
+          direction: "bidirectional" as const,
+        },
+      ],
+    };
+
+    const dbMock = {
+      select: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([{ settings: { mappings: { contact: customContact } } }]),
+          }),
+        }),
+      }),
+    };
+
+    const mapping = await getResolvedCrmMapping(dbMock as any, "ws-1", "hubspot", "contact");
+    expect(mapping.version).toBe(2);
+    expect(mapping.fields[0]?.internalField).toBe("customField");
+  });
+
+  it("saves updated mappings into connection settings", async () => {
+    let updatedSet: any;
+    const dbMock = {
+      select: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([{ id: "conn-1", settings: { otherSetting: 123 } }]),
+          }),
+        }),
+      }),
+      update: vi.fn().mockReturnValue({
+        set: vi.fn().mockImplementation((val) => {
+          updatedSet = val;
+          return {
+            where: vi.fn().mockResolvedValue([]),
+          };
+        }),
+      }),
+    };
+
+    await saveCrmMappings(dbMock as any, "ws-1", "hubspot", {
+      contact: DEFAULT_HUBSPOT_CONTACT_MAPPING,
+    });
+
+    expect(updatedSet).toMatchObject({
+      settings: {
+        otherSetting: 123,
+        mappings: {
+          contact: DEFAULT_HUBSPOT_CONTACT_MAPPING,
+        },
+      },
+    });
+  });
+});
+
+

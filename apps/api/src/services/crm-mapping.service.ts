@@ -1,3 +1,8 @@
+import { eq } from "drizzle-orm";
+import { schema, scopedTo, type Db } from "@skout/db";
+
+const { crmConnections } = schema;
+
 export type CrmSyncDirection = "inbound" | "outbound" | "bidirectional";
 export type CrmTransformType = "none" | "trim" | "lowercase" | "uppercase" | "split_name" | "number";
 export type CrmNullBehavior = "preserve" | "ignore" | "overwrite";
@@ -350,3 +355,63 @@ export function testMappingTransformation(
     };
   }
 }
+
+export async function getResolvedCrmMapping(
+  db: Db,
+  workspaceId: string,
+  provider: string,
+  entityType: "contact" | "deal"
+): Promise<CrmObjectMapping> {
+  const [row] = await db
+    .select({ settings: crmConnections.settings })
+    .from(crmConnections)
+    .where(scopedTo(crmConnections, workspaceId, eq(crmConnections.provider, provider)))
+    .limit(1);
+
+  const settings = (row?.settings ?? {}) as Record<string, any>;
+  const customMapping = settings?.mappings?.[entityType] as CrmObjectMapping | undefined;
+  if (customMapping && Array.isArray(customMapping.fields) && customMapping.fields.length > 0) {
+    return customMapping;
+  }
+
+  const defaults = getDefaultCrmMappings(provider);
+  return defaults.mappings[entityType];
+}
+
+export async function saveCrmMappings(
+  db: Db,
+  workspaceId: string,
+  provider: string,
+  mappings: { contact?: CrmObjectMapping; deal?: CrmObjectMapping }
+): Promise<void> {
+  const [row] = await db
+    .select({ id: crmConnections.id, settings: crmConnections.settings })
+    .from(crmConnections)
+    .where(scopedTo(crmConnections, workspaceId, eq(crmConnections.provider, provider)))
+    .limit(1);
+
+  if (!row) {
+    throw new Error(`CRM connection for provider ${provider} not found`);
+  }
+
+  const currentSettings = (row.settings ?? {}) as Record<string, any>;
+  const currentMappings = currentSettings.mappings ?? {};
+
+  const updatedMappings = {
+    ...currentMappings,
+    ...(mappings.contact ? { contact: mappings.contact } : {}),
+    ...(mappings.deal ? { deal: mappings.deal } : {}),
+  };
+
+  await db
+    .update(crmConnections)
+    .set({
+      settings: {
+        ...currentSettings,
+        mappings: updatedMappings,
+      },
+      updatedAt: new Date(),
+    })
+    .where(eq(crmConnections.id, row.id));
+}
+
