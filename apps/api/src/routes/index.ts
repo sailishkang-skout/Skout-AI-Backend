@@ -5,6 +5,7 @@ import { aiRoutes } from "./ai.routes.js";
 import { hubspotRoutes } from "./hubspot.routes.js";
 import { crmMappingRoutes } from "./crm-mapping.routes.js";
 import { crmConflictRoutes } from "./crm-conflict.routes.js";
+import { crmObservabilityRoutes } from "./crm-observability.routes.js";
 import { crmNativeRoutes } from "./crm-native.routes.js";
 import { workbookColumnRoutes } from "./workbook-column.routes.js";
 import { webhookRoutes } from "./webhooks.routes.js";
@@ -123,6 +124,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(hubspotRoutes);
     await v1.register(crmMappingRoutes);
     await v1.register(crmConflictRoutes);
+    await v1.register(crmObservabilityRoutes);
     await v1.register(crmNativeRoutes);
     await v1.register(webhookRoutes);
     await v1.register(integrationRoutes);

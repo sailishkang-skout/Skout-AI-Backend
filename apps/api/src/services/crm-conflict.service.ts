@@ -280,14 +280,17 @@ export async function resolveCrmConflict(
       action: `crm_conflict.${input.choice}_applied`,
       entityType: conflict.entityType,
       entityId: conflict.entityId,
-      details: {
+      beforeState: {
+        skoutValue: conflict.skoutValue,
+        externalValue: conflict.externalValue,
+      },
+      afterState: {
         conflictId: conflict.id,
         fieldName: conflict.fieldName,
         choice: input.choice,
         resolvedValue,
-        skoutValue: conflict.skoutValue,
-        externalValue: conflict.externalValue,
       },
+      reason: `CRM conflict resolved via ${input.choice}`,
     });
   } catch (auditErr) {
     log.warn("Failed recording audit log for conflict resolution", { auditErr, conflictId: conflict.id });
