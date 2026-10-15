@@ -3,7 +3,7 @@ import type { Db } from "@skout/db";
 import { schema, scopedTo } from "@skout/db";
 import { createLogger } from "@skout/observability";
 
-const { crmConflicts, contacts, deals } = schema;
+const { crmConflicts, contacts, deals, auditLogs } = schema;
 const log = createLogger("crm-conflict");
 
 export type CrmConflictPolicy = "skout_wins" | "external_wins" | "most_recent" | "manual_review";
@@ -270,6 +270,27 @@ export async function resolveCrmConflict(
         })
         .where(eq(deals.id, conflict.entityId));
     }
+  }
+
+  try {
+    await db.insert(auditLogs).values({
+      workspaceId,
+      actorType: input.resolvedBy ? "user" : "system",
+      actorId: input.resolvedBy ?? null,
+      action: `crm_conflict.${input.choice}_applied`,
+      entityType: conflict.entityType,
+      entityId: conflict.entityId,
+      details: {
+        conflictId: conflict.id,
+        fieldName: conflict.fieldName,
+        choice: input.choice,
+        resolvedValue,
+        skoutValue: conflict.skoutValue,
+        externalValue: conflict.externalValue,
+      },
+    });
+  } catch (auditErr) {
+    log.warn("Failed recording audit log for conflict resolution", { auditErr, conflictId: conflict.id });
   }
 
   log.info("CRM conflict resolved", {
