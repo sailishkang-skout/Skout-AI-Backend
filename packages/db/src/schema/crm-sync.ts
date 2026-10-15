@@ -1,5 +1,6 @@
 import { index, integer, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { crmConnections } from "./integrations.js";
+import { users } from "./users.js";
 import { workspaces } from "./workspaces.js";
 
 /** §8.12 Task ADI-10 — the two native-CRM entity types this sync engine covers so far. */
@@ -108,3 +109,41 @@ export const crmOutboundWrites = pgTable(
     index("crm_outbound_writes_workspace_status_idx").on(table.workspaceId, table.status),
   ]
 );
+
+/**
+ * COPS-09 — CRM conflict queue for manual review and audited side-by-side resolution.
+ * When a field mapping specifies 'manual_review' conflict policy or concurrent edits are
+ * detected, the overwrite is blocked and a row is queued here for admin resolution.
+ */
+export const crmConflicts = pgTable(
+  "crm_conflicts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    connectionId: uuid("connection_id")
+      .notNull()
+      .references(() => crmConnections.id, { onDelete: "cascade" }),
+    entityType: text("entity_type").notNull(),
+    entityId: uuid("entity_id").notNull(),
+    externalId: text("external_id").notNull(),
+    fieldName: text("field_name").notNull(),
+    skoutValue: text("skout_value"),
+    externalValue: text("external_value"),
+    skoutUpdatedAt: timestamp("skout_updated_at", { withTimezone: true }),
+    externalUpdatedAt: timestamp("external_updated_at", { withTimezone: true }),
+    policy: text("policy").notNull().default("manual_review"),
+    status: text("status").notNull().default("pending"),
+    resolvedValue: text("resolved_value"),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedBy: uuid("resolved_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("crm_conflicts_workspace_status_idx").on(table.workspaceId, table.status),
+    index("crm_conflicts_entity_idx").on(table.connectionId, table.entityType, table.entityId),
+  ]
+);
+
