@@ -122,7 +122,7 @@ not as proof that nothing else is open.
 Cross-cutting, from the Definition of Done:
 
 - **Analytics instrumentation**: added on the frontend for COPS-03 to COPS-06 actions; none yet for COPS-07.
-- **Runbooks**: platform, onboarding, and payments/credits/provisioning now exist. No runbook yet for tickets.
+- **Runbooks**: platform, onboarding, payments/credits/provisioning and tickets (`docs/runbooks/cops-tickets.md`, added 2026-10-16) exist.
 - **e2e**: per-ticket Playwright specs use a mocked API. The frontend suite as a whole is red on `develop` (older specs).
 - **Local email**: SES credentials in the local `.env` are rejected (`535`), so every email path was tested against a local catcher, not a real provider.
 
