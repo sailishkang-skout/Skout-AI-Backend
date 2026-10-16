@@ -11,7 +11,9 @@ import {
 } from "../services/crm-mapping.service.js";
 import { errorResponse, HttpError, requireWorkspaceId } from "../utils/http.js";
 import { createDefaultCredentialsStore, ensureFreshTokens } from "../services/crm-export.runner.js";
-import { fetchHubSpotPropertyNames } from "../services/hubspot.client.js";
+import { fetchHubSpotDealPipelines, fetchHubSpotPropertyNames } from "../services/hubspot.client.js";
+import { getStageMap, listSkoutStages, saveStageMap } from "../services/crm-stage-map.service.js";
+import { sendHttpError } from "./crm-admin-gate.js";
 import { crmAdminGate } from "./crm-admin-gate.js";
 
 export async function crmMappingRoutes(app: FastifyInstance) {
@@ -211,5 +213,63 @@ export async function crmMappingRoutes(app: FastifyInstance) {
     const history = await getCrmMappingHistory(app.db, workspaceId, provider, entityType);
     return reply.send({ data: history });
   });
-}
 
+  /**
+   * GET /crm/:provider/stage-map
+   * The HubSpot stage -> Skout stage map, with both sides' stages to pick from (HubSpot's are null
+   * when they cannot be read now).
+   */
+  app.get("/crm/:provider/stage-map", async (request, reply) => {
+    const workspaceId = requireWorkspaceId(request);
+    const { provider } = request.params as { provider: string };
+    if (provider !== "hubspot") {
+      return reply.status(404).send(errorResponse(`Unsupported CRM provider: ${provider}`, 404));
+    }
+    if (!app.db) {
+      return reply.status(503).send(errorResponse("Database unavailable", 503));
+    }
+    let providerPipelines: Awaited<ReturnType<typeof fetchHubSpotDealPipelines>> | null = null;
+    try {
+      const tokens = await ensureFreshTokens(app.db, app.config, createDefaultCredentialsStore(app.config), workspaceId);
+      providerPipelines = await fetchHubSpotDealPipelines(tokens.accessToken);
+    } catch {
+      providerPipelines = null;
+    }
+    const [map, skoutStages] = await Promise.all([getStageMap(app.db, workspaceId, provider), listSkoutStages(app.db, workspaceId)]);
+    return reply.send({ data: { map, providerPipelines, skoutStages } });
+  });
+
+  /**
+   * PUT /crm/:provider/stage-map  { map: { "<hubspot stage id>": "<skout stage id>" } }
+   * Used when a deal is first pulled from HubSpot; an existing deal's stage is never changed by a pull.
+   */
+  app.put("/crm/:provider/stage-map", async (request, reply) => {
+    const workspaceId = requireWorkspaceId(request);
+    const { provider } = request.params as { provider: string };
+    if (provider !== "hubspot") {
+      return reply.status(404).send(errorResponse(`Unsupported CRM provider: ${provider}`, 404));
+    }
+    if (!app.db) {
+      return reply.status(503).send(errorResponse("Database unavailable", 503));
+    }
+    const body = (request.body ?? {}) as { map?: unknown };
+    const map = body.map;
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (
+      !map ||
+      typeof map !== "object" ||
+      Array.isArray(map) ||
+      Object.keys(map).length > 500 ||
+      !Object.entries(map as Record<string, unknown>).every(([k, v]) => k.length > 0 && k.length <= 200 && typeof v === "string" && uuid.test(v))
+    ) {
+      return reply.status(422).send(errorResponse("map must be an object of HubSpot stage id to Skout stage id (uuid)", 422));
+    }
+    try {
+      const saved = await saveStageMap(app.db, workspaceId, provider, map as Record<string, string>, request.userId);
+      return reply.send({ ok: true, data: { map: saved } });
+    } catch (err) {
+      if (sendHttpError(reply, err)) return reply;
+      throw err;
+    }
+  });
+}

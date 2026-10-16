@@ -10,6 +10,7 @@ import { markConnectionNeedsReauth } from "./crm-auth-lifecycle.service.js";
 import { detectSchemaDrift, getCrmConnectorHealth, replayCrmOutboundWrite } from "./crm-observability.service.js";
 import { POLL_FAILURE_ALERT_THRESHOLD, runScheduledCrmPoll } from "./crm-initial-import.service.js";
 import { getRecordSyncHistory, listInboundSyncHistory, recordInboundSync } from "./crm-sync-history.service.js";
+import { getStageMap, listSkoutStages, pickNewDealStage, saveStageMap } from "./crm-stage-map.service.js";
 
 // postgres is a dependency of packages/db; resolve it from there.
 const postgres = createRequire(new URL("../../../../packages/db/package.json", import.meta.url))("postgres") as (url: string, options?: object) => any;
@@ -233,6 +234,26 @@ maybe("COPS-09 CRM sync (Postgres)", () => {
     const other = await fixture();
     expect(await getRecordSyncHistory(db, other.workspaceId, "contact", f.contactId)).toEqual([]);
     await sql`delete from crm_outbound_writes where workspace_id = ${f.workspaceId}`;
+  });
+
+  it("the stage map is validated against the workspace's stages and decides where a new deal starts", async () => {
+    const f = await fixture();
+    const [won] = await sql`insert into pipeline_stages (pipeline_id, name, order_index) select pipeline_id, 'Won', 5 from pipeline_stages where id = (select stage_id from deals where id = ${f.dealId}) returning id`;
+    const other = await fixture();
+    const [foreign] = await sql`select stage_id as id from deals where id = ${other.dealId}`;
+
+    await expect(saveStageMap(db, f.workspaceId, "hubspot", { closedwon: foreign.id })).rejects.toMatchObject({ statusCode: 422 });
+    await saveStageMap(db, f.workspaceId, "hubspot", { closedwon: won.id }, f.admins[0]);
+    expect(await getStageMap(db, f.workspaceId, "hubspot")).toEqual({ closedwon: won.id });
+
+    const stages = await listSkoutStages(db, f.workspaceId);
+    expect(pickNewDealStage(stages, { closedwon: won.id }, "closedwon")?.stageId).toBe(won.id);
+    // Unmapped stage: the pipeline's first stage (order 0), not whichever row comes first.
+    const [first] = await sql`select stage_id as id from deals where id = ${f.dealId}`;
+    expect(pickNewDealStage(stages, { closedwon: won.id }, "appointmentscheduled")?.stageId).toBe(first.id);
+    expect(pickNewDealStage([], {}, "x")).toBeNull();
+    const [conn] = await sql`select settings from crm_connections where id = ${f.connectionId}`;
+    expect(conn.settings.syncEnabled).toBe(true);
   });
 
   it("a blank provider value clears the Skout field only when the mapping says overwrite", () => {

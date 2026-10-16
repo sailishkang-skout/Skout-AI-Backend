@@ -720,6 +720,27 @@ export async function fetchHubSpotObjectProperties(
   return data.properties ?? {};
 }
 
+export interface HubSpotPipeline {
+  id: string;
+  label: string;
+  stages: Array<{ id: string; label: string }>;
+}
+
+/** COPS-09 — the portal's deal pipelines and stages, for the stage map. */
+export async function fetchHubSpotDealPipelines(accessToken: string): Promise<HubSpotPipeline[]> {
+  const data = await hubspotFetch<{ results?: Array<{ id?: string; label?: string; stages?: Array<{ id?: string; label?: string }> }> }>(
+    accessToken,
+    "/crm/v3/pipelines/deals"
+  );
+  return (data.results ?? [])
+    .filter((p): p is { id: string; label?: string; stages?: Array<{ id?: string; label?: string }> } => typeof p.id === "string")
+    .map((p) => ({
+      id: p.id,
+      label: p.label ?? p.id,
+      stages: (p.stages ?? []).filter((st) => typeof st.id === "string").map((st) => ({ id: st.id!, label: st.label ?? st.id! })),
+    }));
+}
+
 /** COPS-09 — the property names the portal defines for an object type, for schema-drift checks. */
 export async function fetchHubSpotPropertyNames(accessToken: string, objectType: "contacts" | "deals"): Promise<string[]> {
   const data = await hubspotFetch<{ results?: Array<{ name?: string }> }>(accessToken, `/crm/v3/properties/${objectType}`);

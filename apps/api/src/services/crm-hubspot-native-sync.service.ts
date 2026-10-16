@@ -20,9 +20,10 @@ import { applyInboundMapping, getResolvedCrmMapping, type CrmObjectMapping } fro
 import { evaluateFieldConflict, getPendingConflictFields, isProtectedField, recordCrmConflict } from "./crm-conflict.service.js";
 import { getCrmSyncScope, isCompanyInScope, type CrmSyncScope } from "./crm-opt-in.service.js";
 import { recordInboundSync } from "./crm-sync-history.service.js";
+import { getStageMap, listSkoutStages, pickNewDealStage } from "./crm-stage-map.service.js";
 
 const log = createLogger("crm-hubspot-native-sync");
-const { contacts, companies, deals, pipelines, pipelineStages } = schema;
+const { contacts, companies, deals } = schema;
 
 export interface HubSpotNativeSyncResult {
   pulled: number;
@@ -346,22 +347,18 @@ export async function syncHubSpotDealsToNativeCrm(
   const connectionId = await getHubSpotConnectionId(db, workspaceId);
   if (!connectionId) throw new HttpError("hubspot_not_connected", 400);
 
-  const [pipeline] = await db
-    .select()
-    .from(pipelines)
-    .where(scopedTo(pipelines, workspaceId, isNull(pipelines.deletedAt)))
-    .limit(1);
-  const [stage] = pipeline
-    ? await db.select().from(pipelineStages).where(eq(pipelineStages.pipelineId, pipeline.id)).limit(1)
-    : [];
+  // COPS-09: a new deal starts in the stage mapped to its HubSpot stage, else the first stage of
+  // the default pipeline. Existing deals keep their stage (stage moves go through the transition service).
+  const skoutStages = await listSkoutStages(db, workspaceId);
+  const stageMap = await getStageMap(db, workspaceId, "hubspot");
 
   const dealMapping = await getResolvedCrmMapping(db, workspaceId, "hubspot", "deal").catch(() => null);
 
   return withSyncCheckpoint(db, workspaceId, connectionId, "deal", async (sinceIso) => {
     const hubspotDeals = await searchHubSpotDealsModifiedSince(tokens.accessToken, sinceIso, maxDeals);
 
-    if (!pipeline || !stage) {
-      if (!pipeline) log.warn("no CRM pipeline — skipping HubSpot deal sync", { workspaceId });
+    if (skoutStages.length === 0) {
+      log.warn("no CRM pipeline — skipping HubSpot deal sync", { workspaceId });
       return {
         result: { pulled: hubspotDeals.length, created: 0, updated: 0, skipped: hubspotDeals.length },
         maxModifiedAt: null,
@@ -408,12 +405,13 @@ export async function syncHubSpotDealsToNativeCrm(
       let skoutDealId: string | undefined = existing?.id;
 
       if (!existing) {
+        const start = pickNewDealStage(skoutStages, stageMap, hs.properties?.dealstage)!;
         const [row] = await db
           .insert(deals)
           .values({
             workspaceId,
-            pipelineId: pipeline.id,
-            stageId: stage.id,
+            pipelineId: start.pipelineId,
+            stageId: start.stageId,
             name,
             amount: amount ?? null,
             fieldSources: mergeAutoFillSources({}, amount ? ["amount"] : [], "enrichment", undefined),
