@@ -26,3 +26,16 @@ describe("COPS notification routing defaults", () => {
     expect(resolveCopsNotificationRoles("PaymentRequested", {}, ["not-a-cops-role"])).toEqual([]);
   });
 });
+
+describe("COPS-08 approval notifications", () => {
+  it("an approval request goes to the roles that have to decide; an Admin or owner gets the executive slot", () => {
+    expect(resolveCopsNotificationRoles("ApprovalRequested", { required_approvers: ["sales_manager", "finance"] })).toEqual(["sales_manager", "finance"]);
+    expect(resolveCopsNotificationRoles("ApprovalRequested", { required_approvers: ["executive", "legal_revops"] })).toEqual(["admin", "owner", "legal_revops"]);
+    expect(resolveCopsNotificationRoles("ApprovalRequested", {})).toEqual([]);
+  });
+
+  it("the outcome goes to Sales and the Sales Manager, and a workspace route from config overrides both", () => {
+    expect(resolveCopsNotificationRoles("ApprovalDecided", { status: "rejected" })).toEqual(["sales", "sales_manager"]);
+    expect(resolveCopsNotificationRoles("ApprovalRequested", { required_approvers: ["finance"] }, ["admin"])).toEqual(["admin"]);
+  });
+});

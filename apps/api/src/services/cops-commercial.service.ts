@@ -1,15 +1,20 @@
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
 import {
   appendCopsEvent,
   computeProposalTotals,
+  defaultPriceBasis,
   COPS_TRANSITIONS,
   createCopsEvent,
+  proposalApprovalTerms,
   proposalContentHash,
   type CommercialLineKind,
+  type PriceBasis,
+  type ProposalApprovalTerms,
   type ProposalTermsInput,
 } from "@skout/shared";
 import { writeCopsAudit } from "./cops-platform.service.js";
+import { carryOrVoidApprovals } from "./cops-approvals.service.js";
 import { runLifecycleTransition } from "./cops-lifecycle.service.js";
 
 /**
@@ -35,6 +40,7 @@ const {
 
 export type CommercialErrorCode =
   | "NOT_FOUND"
+  | "FORBIDDEN"
   | "BUSINESS_STATE_CONFLICT"
   | "VALIDATION_FAILED"
   | "PROVIDER_UNAVAILABLE"
@@ -55,6 +61,8 @@ export class CommercialError extends Error {
     switch (this.code) {
       case "NOT_FOUND":
         return 404;
+      case "FORBIDDEN":
+        return 403;
       case "BUSINESS_STATE_CONFLICT":
         return 409;
       case "VALIDATION_FAILED":
@@ -158,6 +166,7 @@ async function insertProposalVersion(
       fields: [{ path: "line_items", code: "invalid", message: error instanceof Error ? error.message : "Invalid" }],
     });
   }
+  const approvalTerms = proposalApprovalTerms(input.terms);
   const [version] = await tx
     .insert(proposalVersions)
     .values({
@@ -170,6 +179,10 @@ async function insertProposalVersion(
       discountPct: String(input.terms.discount_pct ?? 0),
       taxPct: String(input.terms.tax_pct ?? 0),
       notes: input.terms.notes ?? null,
+      paymentTermsNetDays: approvalTerms.payment_terms_net_days,
+      freeCredits: approvalTerms.free_credits,
+      customClauses: approvalTerms.custom_clauses,
+      nonStandardSla: approvalTerms.non_standard_sla,
       subtotalMinor: computed.totals.subtotal_minor,
       discountMinor: computed.totals.discount_minor,
       taxMinor: computed.totals.tax_minor,
@@ -183,6 +196,7 @@ async function insertProposalVersion(
       versionId: version.id,
       position: line.position,
       kind: line.kind,
+      priceBasis: line.price_basis ?? defaultPriceBasis(line.kind),
       description: line.description,
       quantity: line.quantity,
       unitAmountMinor: line.unit_amount_minor,
@@ -208,6 +222,27 @@ async function lockProposal(tx: Tx, workspaceId: string, proposalId: string) {
 
 const CLOSED_PROPOSAL = ["accepted", "declined", "expired"];
 
+/**
+ * COPS-08: the currency of an opportunity is locked once any of its proposals has been sent. The
+ * customer has seen a price in that currency; a later version or a second proposal in another
+ * currency would be a silent conversion, and prices are never converted.
+ */
+async function assertCurrencyUnlocked(tx: Tx, workspaceId: string, opportunityId: string, currency: string): Promise<void> {
+  const [sent] = await tx
+    .select({ currency: proposalVersions.currency })
+    .from(proposalVersions)
+    .innerJoin(proposals, eq(proposals.id, proposalVersions.proposalId))
+    .where(and(eq(proposals.workspaceId, workspaceId), eq(proposals.opportunityId, opportunityId), isNotNull(proposalVersions.sentAt)))
+    .orderBy(proposalVersions.sentAt)
+    .limit(1);
+  if (sent && sent.currency !== currency) {
+    throw new CommercialError("BUSINESS_STATE_CONFLICT", `The currency is locked to ${sent.currency}: a proposal in ${sent.currency} has already been sent for this opportunity`, {
+      locked_currency: sent.currency,
+      requested_currency: currency,
+    });
+  }
+}
+
 export async function createProposal(
   db: Db,
   ctx: CommercialContext,
@@ -216,6 +251,7 @@ export async function createProposal(
 ): Promise<string> {
   await getOpportunity(db, ctx.workspaceId, opportunityId);
   return db.transaction(async (tx) => {
+    await assertCurrencyUnlocked(tx as unknown as Tx, ctx.workspaceId, opportunityId, input.currency);
     const [proposal] = await tx
       .insert(proposals)
       .values({ workspaceId: ctx.workspaceId, opportunityId, title: input.title, createdBy: ctx.userId })
@@ -250,6 +286,7 @@ export async function addProposalVersion(db: Db, ctx: CommercialContext, proposa
         status: proposal.status,
       });
     }
+    await assertCurrencyUnlocked(tx as unknown as Tx, ctx.workspaceId, proposal.opportunityId, terms.currency);
     const next = proposal.currentVersion + 1;
     const { totals } = await insertProposalVersion(tx as unknown as Tx, {
       workspaceId: ctx.workspaceId,
@@ -262,6 +299,8 @@ export async function addProposalVersion(db: Db, ctx: CommercialContext, proposa
       .update(proposals)
       .set({ currentVersion: next, status: "draft", updatedAt: new Date() })
       .where(eq(proposals.id, proposalId));
+    // COPS-08: an approval given for other terms does not survive a material change.
+    await carryOrVoidApprovals(tx as unknown as Parameters<typeof carryOrVoidApprovals>[0], ctx, proposalId);
     await writeCopsAudit(tx, {
       tenantId: ctx.workspaceId,
       actor: { type: "user", id: ctx.userId },
@@ -383,6 +422,15 @@ export async function setProposalStatus(
 type VersionRow = typeof proposalVersions.$inferSelect;
 type LineRow = typeof proposalLineItems.$inferSelect;
 
+export function storedApprovalTerms(version: VersionRow): ProposalApprovalTerms {
+  return {
+    payment_terms_net_days: version.paymentTermsNetDays,
+    free_credits: version.freeCredits,
+    custom_clauses: version.customClauses,
+    non_standard_sla: version.nonStandardSla,
+  };
+}
+
 function hashOfStoredVersion(version: VersionRow, lines: LineRow[]): string {
   return proposalContentHash({
     currency: version.currency,
@@ -391,6 +439,7 @@ function hashOfStoredVersion(version: VersionRow, lines: LineRow[]): string {
     discount_pct: Number(version.discountPct),
     tax_pct: Number(version.taxPct),
     notes: version.notes,
+    approval_terms: storedApprovalTerms(version),
     line_items: lines.map((l) => ({
       position: l.position,
       kind: l.kind as CommercialLineKind,
@@ -398,6 +447,7 @@ function hashOfStoredVersion(version: VersionRow, lines: LineRow[]): string {
       quantity: l.quantity,
       unit_amount_minor: Number(l.unitAmountMinor),
       discount_pct: Number(l.discountPct),
+      price_basis: (l.priceBasis as PriceBasis | null) ?? undefined,
     })),
     totals: {
       subtotal_minor: Number(version.subtotalMinor),
@@ -418,6 +468,7 @@ function versionDto(version: VersionRow, lines: LineRow[]) {
     discount_pct: Number(version.discountPct),
     tax_pct: Number(version.taxPct),
     notes: version.notes,
+    ...storedApprovalTerms(version),
     totals: {
       subtotal_minor: Number(version.subtotalMinor),
       discount_minor: Number(version.discountMinor),
@@ -428,6 +479,7 @@ function versionDto(version: VersionRow, lines: LineRow[]) {
       id: l.id,
       position: l.position,
       kind: l.kind,
+      price_basis: l.priceBasis ?? defaultPriceBasis(l.kind),
       description: l.description,
       quantity: l.quantity,
       unit_amount_minor: Number(l.unitAmountMinor),
@@ -677,8 +729,11 @@ export async function setContractStatus(
   ctx: CommercialContext,
   contractId: string,
   input: { status: "signed" | "declined" | "expired"; reason: string; signedAt?: Date },
-  onSigned?: (tx: Tx, contract: { opportunityId: string; kind: string }) => Promise<void>
+  onSigned?: (tx: Tx, contract: { opportunityId: string; kind: string }) => Promise<void>,
+  /** COPS-08: set when an e-sign provider event, not a person, changes the status. */
+  integration?: { type: "integration"; id: string }
 ) {
+  const actor = integration ?? { type: "user" as const, id: ctx.userId };
   return db.transaction(async (tx) => {
     const contract = await lockContract(tx as unknown as Tx, ctx.workspaceId, contractId);
     if (contract.status !== "sent") {
@@ -695,14 +750,14 @@ export async function setContractStatus(
         status: input.status,
         statusReason: input.reason,
         statusChangedAt: at,
-        statusChangedBy: ctx.userId,
+        statusChangedBy: integration ? null : ctx.userId,
         signedAt,
         updatedAt: at,
       })
       .where(eq(contracts.id, contractId));
     await writeCopsAudit(tx, {
       tenantId: ctx.workspaceId,
-      actor: { type: "user", id: ctx.userId },
+      actor,
       entityType: "contract",
       entityId: contractId,
       action: `contract.${input.status}`,
@@ -710,7 +765,7 @@ export async function setContractStatus(
       after: { status: input.status, signed_at: signedAt?.toISOString() ?? null },
       reason: input.reason,
       correlationId: ctx.requestId,
-      sourceChannel: "api",
+      sourceChannel: integration ? "webhook" : "api",
       occurredAt: at,
     });
     if (input.status === "signed") {
@@ -721,7 +776,7 @@ export async function setContractStatus(
           tenantId: ctx.workspaceId,
           aggregateType: "contract",
           aggregateId: contractId,
-          actor: { type: "user", id: ctx.userId },
+          actor,
           correlationId: ctx.requestId,
           payload: { contract_id: contractId, opportunity_id: contract.opportunityId },
           occurredAt: at,
@@ -760,6 +815,7 @@ export async function loadContracts(db: Db, workspaceId: string, where: { contra
     status: c.status,
     current_version: c.currentVersion,
     status_reason: c.statusReason,
+    redline_status: c.redlineStatus,
     status_changed_at: c.statusChangedAt?.toISOString() ?? null,
     signed_at: c.signedAt?.toISOString() ?? null,
     created_at: c.createdAt.toISOString(),
@@ -775,4 +831,29 @@ export async function loadContracts(db: Db, workspaceId: string, where: { contra
         created_at: v.createdAt.toISOString(),
       })),
   }));
+}
+
+/**
+ * COPS-08 (Bible p.32): attach a version negotiated outside Skout and say where the redline stands.
+ * It is a new immutable contract version like any other; earlier versions stay as they were.
+ */
+export async function attachNegotiatedVersion(db: Db, ctx: CommercialContext, contractId: string, input: ContractDocumentInput & { redline_status: string; note?: string }) {
+  const version = await addContractVersion(db, ctx, contractId, { document_url: input.document_url, file_name: input.file_name, file_sha256: input.file_sha256 });
+  await db.transaction(async (tx) => {
+    const [before] = await tx.select({ redlineStatus: contracts.redlineStatus }).from(contracts).where(and(eq(contracts.id, contractId), eq(contracts.workspaceId, ctx.workspaceId))).limit(1);
+    await tx.update(contracts).set({ redlineStatus: input.redline_status, updatedAt: new Date() }).where(eq(contracts.id, contractId));
+    await writeCopsAudit(tx, {
+      tenantId: ctx.workspaceId,
+      actor: { type: "user", id: ctx.userId },
+      entityType: "contract",
+      entityId: contractId,
+      action: "contract.negotiated_version_attached",
+      before: { redline_status: before?.redlineStatus ?? null },
+      after: { redline_status: input.redline_status, file_sha256: input.file_sha256 },
+      reason: input.note,
+      correlationId: ctx.requestId,
+      sourceChannel: "api",
+    });
+  });
+  return version;
 }

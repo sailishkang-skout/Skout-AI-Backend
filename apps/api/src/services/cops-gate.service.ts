@@ -21,13 +21,14 @@ import {
 } from "@skout/shared";
 import { writeCopsAudit } from "./cops-platform.service.js";
 import { advanceCommercialState, CommercialError, getOpportunity, type CommercialContext } from "./cops-commercial.service.js";
+import { opportunityApprovals } from "./cops-approvals.service.js";
 
 const { commercialGates, commercialGatePolicies, contracts, paymentRequests, deals } = schema;
 
 /** "*" is the workspace default policy row. */
 export const DEFAULT_DEAL_TYPE = "*";
 
-export type GateTrigger = "signature" | "payment" | "trial_approval" | "override" | "policy_change";
+export type GateTrigger = "signature" | "payment" | "trial_approval" | "override" | "policy_change" | "approval";
 type Actor = { type: "user" | "integration"; id: string | null };
 
 export async function resolveGatePolicy(
@@ -78,6 +79,7 @@ async function conditionsFor(db: Db, workspaceId: string, opportunityId: string,
     signature_complete: (signed?.n ?? 0) > 0,
     payment_complete: (paid?.n ?? 0) > 0,
     overridden: Boolean(gate?.overrideAt),
+    approvals_complete: (await opportunityApprovals(db, workspaceId, opportunityId)).complete,
   };
 }
 

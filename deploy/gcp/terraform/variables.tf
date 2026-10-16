@@ -114,3 +114,15 @@ variable "schedule_days" {
   default     = "1-5"
   description = "Cron day-of-week field for the schedule: \"1-5\" = Monday to Friday, \"*\" = every day."
 }
+
+variable "alert_email" {
+  type        = string
+  default     = ""
+  description = "Where Cloud Monitoring sends alerts. Empty creates the metrics and dashboard but no alert policies."
+}
+
+variable "alert_on_missing_health_report" {
+  type        = bool
+  default     = false
+  description = "Alert when no CustomerOps health report arrives for 30 minutes. Keep false while the working-hours schedule stops the VM overnight and at weekends, or it pages every night."
+}

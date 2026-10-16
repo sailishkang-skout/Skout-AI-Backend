@@ -869,6 +869,69 @@
       "when": 1795300000000,
       "tag": "0122_cops07_webhook_latency",
       "breakpoints": true
+    },
+    {
+      "idx": 124,
+      "version": "7",
+      "when": 1795400000000,
+      "tag": "0123_cops08_proposal_approval_terms",
+      "breakpoints": true
+    },
+    {
+      "idx": 125,
+      "version": "7",
+      "when": 1795500000000,
+      "tag": "0124_cops08_approvals",
+      "breakpoints": true
+    },
+    {
+      "idx": 126,
+      "version": "7",
+      "when": 1795600000000,
+      "tag": "0125_cops08_line_price_basis",
+      "breakpoints": true
+    },
+    {
+      "idx": 127,
+      "version": "7",
+      "when": 1795700000000,
+      "tag": "0126_cops08_approvals_grandfather",
+      "breakpoints": true
+    },
+    {
+      "idx": 128,
+      "version": "7",
+      "when": 1795800000000,
+      "tag": "0127_cops08_signature_envelopes",
+      "breakpoints": true
+    },
+    {
+      "idx": 129,
+      "version": "7",
+      "when": 1795900000000,
+      "tag": "0128_cops08_subscriptions",
+      "breakpoints": true
+    },
+    {
+      "idx": 130,
+      "version": "7",
+      "when": 1796000000000,
+      "tag": "0129_cops08_subscription_renewal",
+      "breakpoints": true
+    },
+    {
+      "idx": 131,
+      "version": "7",
+      "when": 1796100000000,
+      "tag": "0130_cops08_subscription_amendments",
+      "breakpoints": true
+    },
+    {
+      "idx": 132,
+      "version": "7",
+      "when": 1796200000000,
+      "tag": "0131_cops08_contract_redline",
+      "breakpoints": true
     }
   ]
 }

@@ -1,13 +1,20 @@
 {
-  "_readme": "Default commercial policy for CustomerOps COPS-08 (approvals, subscriptions, failed-payment handling). Seed values only: load into the versioned admin config (COPS-07), never hard-code. Every value is editable by an Admin; each edit creates a new version, is audited, and running subscriptions/approvals keep the version they started under. All amounts are per-currency and are never converted implicitly.",
-  "version": 1,
-  "effectiveFrom": "2026-10-13",
-  "status": "DEFAULT_PENDING_FINANCE_REVIEW",
-  "basis": {
-    "_note": "Where the defaults came from. Benchmarks are published vendor/agency material, not Skout's own margin data - Finance should confirm against gross margin before launch.",
-    "perSeatListPrice": "Mid-point of Apollo's published paid tiers ($49 / $79 / $119 per seat per month, annual billing) and the ~$100-120/user/month estimates for Outreach; Skout is positioned as an AI GTM platform, so the Professional-tier price point is used.",
-    "discountBands": "Published approval frameworks cluster at ~10% rep, 15-20% manager, 25-35% VP/Finance, above ~35% CFO/CEO.",
-    "dealSizeBands": "2026 benchmark segments: SMB under $10K, mid-market $25K-$75K, enterprise $200K+.",
+  "_readme": "Default commercial policy for CustomerOps (COPS-08). Seed data for the versioned admin config: each top-level section is the default of the admin config kind of the same name (key: default), and an Admin edits it from there without a deploy. No code contains these numbers. After editing this file run: node scripts/sync-cops-commercial-policy.mjs. Source: Aditya's COPS-08 kickoff decisions, 2026-10-13. Amounts are benchmark defaults, not margins; Finance reviews before launch.",
+  "_fixed_rules": [
+    "These are behaviours of the code, not settings, so they are not in the editable config.",
+    "Every matching approval rule applies and the deal needs every approver named by any of them.",
+    "A material change to a proposal voids approvals already given.",
+    "The executive approver slot is decided by a workspace Admin.",
+    "Data is never deleted because a payment failed. A successful payment restores access before the account is closed.",
+    "Currency is set per account, locked once a proposal is sent, and never converted.",
+    "A seat change takes effect on the next billing cycle; there is no immediate proration."
+  ],
+  "_status": "DEFAULT_PENDING_FINANCE_REVIEW, effective from 2026-10-13",
+  "_basis": {
+    "note": "Where the defaults came from. Benchmarks are published vendor and agency material, not Skout margin data. Finance confirms against gross margin before launch. Carried over from the first version of this file (develop, commit 4d408a70).",
+    "per_seat_list_price": "Mid-point of published paid tiers of comparable sales tools (about 49 / 79 / 119 USD per seat per month on annual billing).",
+    "discount_bands": "Published approval frameworks cluster at about 10% rep, 15-20% manager, 25-35% VP or Finance, above about 35% CFO or CEO.",
+    "deal_size_bands": "2026 benchmark segments: SMB under 10K USD, mid-market 25K-75K, enterprise 200K and over.",
     "sources": [
       "https://www.apollo.io/insights/salesloft-alternatives",
       "https://www.hyperline.co/resources/glossary/discount-limits",
@@ -16,92 +23,283 @@
       "https://razorpay.com/blog/accept-international-payments-razorpay/"
     ]
   },
-
-  "priceBook": {
-    "_note": "Per-seat price per month, billed annually. Month-to-month billing carries a surcharge. One price book entry per billing currency; a deal's currency is fixed once a proposal is sent. USD is benchmarked; the other currencies are SUGGESTED regional prices, not benchmarked - Finance to confirm.",
-    "annualBillingSeatPricePerMonth": {
-      "USD": { "list": 79, "minimumSeats": 1, "benchmarked": true },
-      "EUR": { "list": 75, "minimumSeats": 1, "benchmarked": false },
-      "GBP": { "list": 65, "minimumSeats": 1, "benchmarked": false },
-      "INR": { "list": 5999, "minimumSeats": 1, "benchmarked": false }
+  "_open": [
+    "free_credits is an interim rule by credit count. It is replaced by the dormant rule below once Finance gives the money value of one credit.",
+    "price_book EUR, GBP and INR are suggestions, not benchmarked.",
+    "Contract value is TCV: recurring lines x term in months + whole-term lines + one-time fees, after discount, before tax."
+  ],
+  "approval_policy": {
+    "_readme": "A band matches a value over `over` and at most `up_to` (null: no upper limit). So a 10% discount needs no approval and 10.01% needs the Sales Manager.",
+    "expires_after_days": 14,
+    "discount_pct": [
+      {
+        "over": 10,
+        "up_to": 20,
+        "approvers": [
+          "sales_manager"
+        ]
+      },
+      {
+        "over": 20,
+        "up_to": 30,
+        "approvers": [
+          "sales_manager",
+          "finance"
+        ]
+      },
+      {
+        "over": 30,
+        "up_to": null,
+        "approvers": [
+          "sales_manager",
+          "finance",
+          "executive"
+        ]
+      }
+    ],
+    "seats": [
+      {
+        "over": 25,
+        "up_to": 100,
+        "approvers": [
+          "sales_manager"
+        ]
+      },
+      {
+        "over": 100,
+        "up_to": null,
+        "approvers": [
+          "sales_manager",
+          "finance"
+        ]
+      }
+    ],
+    "contract_value_minor": {
+      "USD": [
+        {
+          "over": 2500000,
+          "up_to": 7500000,
+          "approvers": [
+            "sales_manager"
+          ]
+        },
+        {
+          "over": 7500000,
+          "up_to": 20000000,
+          "approvers": [
+            "sales_manager",
+            "finance"
+          ]
+        },
+        {
+          "over": 20000000,
+          "up_to": null,
+          "approvers": [
+            "sales_manager",
+            "finance",
+            "executive"
+          ]
+        }
+      ],
+      "EUR": [
+        {
+          "over": 2300000,
+          "up_to": 7000000,
+          "approvers": [
+            "sales_manager"
+          ]
+        },
+        {
+          "over": 7000000,
+          "up_to": 18500000,
+          "approvers": [
+            "sales_manager",
+            "finance"
+          ]
+        },
+        {
+          "over": 18500000,
+          "up_to": null,
+          "approvers": [
+            "sales_manager",
+            "finance",
+            "executive"
+          ]
+        }
+      ],
+      "GBP": [
+        {
+          "over": 2000000,
+          "up_to": 6000000,
+          "approvers": [
+            "sales_manager"
+          ]
+        },
+        {
+          "over": 6000000,
+          "up_to": 16000000,
+          "approvers": [
+            "sales_manager",
+            "finance"
+          ]
+        },
+        {
+          "over": 16000000,
+          "up_to": null,
+          "approvers": [
+            "sales_manager",
+            "finance",
+            "executive"
+          ]
+        }
+      ],
+      "INR": [
+        {
+          "over": 200000000,
+          "up_to": 600000000,
+          "approvers": [
+            "sales_manager"
+          ]
+        },
+        {
+          "over": 600000000,
+          "up_to": 1600000000,
+          "approvers": [
+            "sales_manager",
+            "finance"
+          ]
+        },
+        {
+          "over": 1600000000,
+          "up_to": null,
+          "approvers": [
+            "sales_manager",
+            "finance",
+            "executive"
+          ]
+        }
+      ]
     },
-    "monthlyBillingSurchargePct": 20,
-    "creditPacks": {
-      "_note": "Credit packs stay as one-time Razorpay orders. Keep the existing pack definitions and prices from the billing code; only add a per-currency price per pack here.",
-      "source": "existing billing pack definitions",
-      "perCurrencyPricing": true
+    "term_months": [
+      {
+        "over": 24,
+        "up_to": null,
+        "approvers": [
+          "finance"
+        ]
+      }
+    ],
+    "free_credits": [
+      {
+        "over": 500,
+        "up_to": 2000,
+        "approvers": [
+          "sales_manager"
+        ]
+      },
+      {
+        "over": 2000,
+        "up_to": null,
+        "approvers": [
+          "sales_manager",
+          "finance"
+        ]
+      }
+    ],
+    "payment_terms_net_days": [
+      {
+        "over": 30,
+        "up_to": null,
+        "approvers": [
+          "finance"
+        ]
+      }
+    ],
+    "custom_clauses": {
+      "approvers": [
+        "legal_revops"
+      ]
+    },
+    "non_standard_sla": {
+      "approvers": [
+        "legal_revops",
+        "finance"
+      ]
+    },
+    "_dormant_complimentary_value_rule": {
+      "status": "dormant: not read by any code",
+      "rule": "Complimentary value over 10% of TCV needs the Sales Manager.",
+      "over_pct_of_tcv": 10,
+      "approvers": [
+        "sales_manager"
+      ],
+      "switch_on_when": "Finance gives the money value of one credit. The free_credits count rule is then removed."
     }
   },
-
-  "approvals": {
-    "_note": "Rules are evaluated together; every rule that matches adds its approver. The deal needs all of them. Percentages are discount off the price-book list price for the deal currency.",
-    "rules": [
-      { "id": "discount-0-10", "when": { "discountPctLte": 10 }, "approvers": [] },
-      { "id": "discount-10-20", "when": { "discountPctGt": 10, "discountPctLte": 20 }, "approvers": ["SALES_MANAGER"] },
-      { "id": "discount-20-30", "when": { "discountPctGt": 20, "discountPctLte": 30 }, "approvers": ["SALES_MANAGER", "FINANCE"] },
-      { "id": "discount-30-plus", "when": { "discountPctGt": 30 }, "approvers": ["SALES_MANAGER", "FINANCE", "EXECUTIVE"] },
-
-      { "id": "seats-over-25", "when": { "seatsGt": 25 }, "approvers": ["SALES_MANAGER"] },
-      { "id": "seats-over-100", "when": { "seatsGt": 100 }, "approvers": ["SALES_MANAGER", "FINANCE"] },
-
+  "dunning_policy": {
+    "_readme": "Day 0 is the first failed charge. Each stage runs from its day until the next one starts: past due (full access, reminders, provider retries), restricted (no new credit use, enrichment runs or outreach sends; login and payment still work), suspended (data retained, login goes to the billing page only), closed (per the retention policy).",
+    "stages": [
       {
-        "id": "tcv-over-25k",
-        "when": { "tcvGt": { "USD": 25000, "EUR": 23000, "GBP": 20000, "INR": 2000000 } },
-        "approvers": ["SALES_MANAGER"]
+        "state": "past_due",
+        "from_day": 0
       },
       {
-        "id": "tcv-over-75k",
-        "when": { "tcvGt": { "USD": 75000, "EUR": 70000, "GBP": 60000, "INR": 6000000 } },
-        "approvers": ["SALES_MANAGER", "FINANCE"]
+        "state": "restricted",
+        "from_day": 8
       },
       {
-        "id": "tcv-over-200k",
-        "when": { "tcvGt": { "USD": 200000, "EUR": 185000, "GBP": 160000, "INR": 16000000 } },
-        "approvers": ["SALES_MANAGER", "FINANCE", "EXECUTIVE"]
+        "state": "suspended",
+        "from_day": 15
       },
-
-      { "id": "term-over-24m", "when": { "termMonthsGt": 24 }, "approvers": ["FINANCE"] },
-      { "id": "payment-terms-over-net30", "when": { "paymentTermsDaysGt": 30 }, "approvers": ["FINANCE"] },
       {
-        "id": "complimentary-over-limit",
-        "when": { "complimentaryValuePctOfTcvGt": 10 },
-        "approvers": ["SALES_MANAGER"]
-      },
-      { "id": "custom-clauses", "when": { "customClauses": true }, "approvers": ["LEGAL_REVOPS"] },
-      { "id": "non-standard-sla", "when": { "nonStandardSla": true }, "approvers": ["LEGAL_REVOPS", "FINANCE"] }
+        "state": "closed",
+        "from_day": 45
+      }
     ],
-    "expiryDays": 14,
-    "voidOnMaterialChange": true,
-    "materialChangeFields": ["seats", "pricePerSeat", "discountPct", "termMonths", "currency", "paymentTerms", "clauses"]
+    "suspend_when_provider_halted": true,
+    "invoiced_accounts_auto_suspend": false
   },
-
-  "failedPayment": {
-    "_note": "Applies to per-seat subscriptions. Day 0 = first failed charge. A failed credit-pack payment is simply not credited. Day numbers are calendar days. Align with Razorpay's actual retry/halted timing once confirmed.",
-    "graceFullAccessDays": 7,
-    "restrictedFromDay": 8,
-    "restrictedUntilDay": 14,
-    "suspendOnDay": 15,
-    "suspendEarlyOnProviderHalted": true,
-    "closeOnDay": 45,
-    "restrictions": ["BLOCK_NEW_CREDIT_CONSUMPTION", "BLOCK_ENRICHMENT_RUNS", "BLOCK_OUTREACH_SENDS"],
-    "suspendedAccess": "BILLING_PAGE_ONLY",
-    "deleteDataOnPaymentFailure": false,
-    "autoRestoreOnPayment": true,
-    "invoicedAccountsAutoSuspend": false
+  "price_book": {
+    "_readme": "Per seat, per month, on annual billing, in minor units. Month-to-month billing adds the surcharge.",
+    "month_to_month_surcharge_pct": 20,
+    "currencies": {
+      "USD": {
+        "seat_month_annual_minor": 7900,
+        "status": "benchmarked"
+      },
+      "EUR": {
+        "seat_month_annual_minor": 7500,
+        "status": "suggested"
+      },
+      "GBP": {
+        "seat_month_annual_minor": 6500,
+        "status": "suggested"
+      },
+      "INR": {
+        "seat_month_annual_minor": 599900,
+        "status": "suggested"
+      }
+    }
   },
-
-  "seatChanges": {
-    "addSeatsEffective": "NEXT_CYCLE",
-    "removeSeatsEffective": "NEXT_CYCLE",
-    "immediateProrationEnabled": false,
-    "_note": "Enable immediate proration only after confirming Razorpay subscription update/proration behaviour."
+  "currency_policy": {
+    "_readme": "The currency of an account defaults from its country. A deal currency is locked once a proposal is sent and is never converted (fixed rules above).",
+    "supported": [
+      "USD",
+      "EUR",
+      "GBP",
+      "INR"
+    ],
+    "default_by_country": {
+      "US": "USD",
+      "IN": "INR",
+      "GB": "GBP",
+      "DE": "EUR",
+      "FR": "EUR"
+    },
+    "fallback": "USD"
   },
-
-  "currency": {
-    "supported": ["USD", "EUR", "GBP", "INR"],
-    "defaultByCountry": { "US": "USD", "IN": "INR", "GB": "GBP", "DE": "EUR", "FR": "EUR" },
-    "fallback": "USD",
-    "lockAfterProposalSent": true,
-    "implicitConversion": false
+  "renewal_policy": {
+    "_readme": "A renewal opportunity is opened this many days before the end of a subscription term, once per term. 90 is an engineering default; Sales and CS to confirm.",
+    "lead_days": 90
   }
 }

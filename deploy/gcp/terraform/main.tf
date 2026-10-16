@@ -4,7 +4,7 @@ locals {
 }
 
 resource "google_project_service" "apis" {
-  for_each           = toset(["compute.googleapis.com", "sqladmin.googleapis.com", "storage.googleapis.com", "iam.googleapis.com"])
+  for_each           = toset(["compute.googleapis.com", "sqladmin.googleapis.com", "storage.googleapis.com", "iam.googleapis.com", "logging.googleapis.com", "monitoring.googleapis.com"])
   service            = each.key
   disable_on_destroy = false
 }
@@ -25,6 +25,9 @@ module "compute" {
   boot_disk_gb   = var.boot_disk_gb
 
   resource_policies = google_compute_resource_policy.working_hours[*].id
+
+  # Lets the Ops Agent on the VM write logs and metrics (monitoring.tf).
+  service_account_email = google_service_account.vm.email
 
   depends_on = [google_project_service.apis]
 }
