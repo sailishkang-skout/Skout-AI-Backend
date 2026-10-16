@@ -112,9 +112,16 @@ Acceptance criteria and how each will be proven:
   - a mapping could target any column, including `workspaceId`;
   - the default deal mapping wrote HubSpot's stage id into Skout's `stageId`, a uuid;
   - the expired-grant alert went out twice.
-- **Still open:** the frontend (step 8); moving the payment and email adapters onto the connector
-  interface; inbound per-record history (inbound failures are logged, not stored); a HubSpot to
-  Skout stage mapping (needs a stage lookup table).
+- **Closed 2026-10-16:**
+  - frontend (step 8): sync settings, health, mappings, conflict queue, DLQ, inbound history and
+    per-record history on contacts and deals (Skout-AI-Frontend#128);
+  - inbound per-record history (`crm_sync_history`, migration 0133);
+  - HubSpot to Skout deal stage map (new deals only; a pull never moves an existing deal);
+  - adapters: email inboxes now share the OAuth lifecycle (a revoked Google or Microsoft grant
+    marks the inbox `needs_reauth`, rotation stops using it, Admin and Owner get one alert). The
+    payment provider already sits behind `PspAdapter` (verify, parse, create), which is the same
+    shape as the connector interface, so it was left as is.
+- **Still open:** nothing in code. Testing against a real HubSpot portal needs a test account.
 
 ## 5. Out of scope
 

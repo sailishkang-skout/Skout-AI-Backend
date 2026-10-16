@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { encryptSecret } from "@skout/shared";
+import { refreshGoogleToken } from "./inbox-oauth.service.js";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { HttpError } from "@skout/auth";
@@ -254,6 +256,37 @@ maybe("COPS-09 CRM sync (Postgres)", () => {
     expect(pickNewDealStage([], {}, "x")).toBeNull();
     const [conn] = await sql`select settings from crm_connections where id = ${f.connectionId}`;
     expect(conn.settings.syncEnabled).toBe(true);
+  });
+
+  describe("shared OAuth lifecycle: email inboxes", () => {
+    const key = "test-key-32-bytes-long-for-aes!!";
+    const inboxConfig = { INTEGRATION_ENCRYPTION_KEY: key, GOOGLE_CLIENT_ID: "id", GOOGLE_CLIENT_SECRET: "secret" } as unknown as Env;
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("a revoked Google grant marks the inbox needs_reauth, stops rotation using it, and alerts once", async () => {
+      const f = await fixture();
+      const [inbox] = await sql`insert into inboxes (workspace_id, email_address, provider, oauth_refresh_token_encrypted)
+        values (${f.workspaceId}, ${"sales-" + randomUUID().slice(0, 6) + "@acme.test"}, 'google', ${encryptSecret("refresh", key)}) returning id`;
+      vi.stubGlobal("fetch", vi.fn(async () => new Response('{"error":"invalid_grant"}', { status: 400 })));
+
+      for (let i = 0; i < 2; i++) {
+        await expect(refreshGoogleToken(inbox.id, db as never, inboxConfig)).rejects.toMatchObject({ statusCode: 401 });
+      }
+      const [row] = await sql`select status from inboxes where id = ${inbox.id}`;
+      expect(row.status).toBe("needs_reauth");
+      const notes = await sql`select count(*)::int as n from notifications where workspace_id = ${f.workspaceId} and type = 'inbox_grant_expired'`;
+      expect(notes[0].n).toBe(2); // owner and admin, once
+    });
+
+    it("a provider outage is a retryable 502 and leaves the inbox active", async () => {
+      const f = await fixture();
+      const [inbox] = await sql`insert into inboxes (workspace_id, email_address, provider, oauth_refresh_token_encrypted)
+        values (${f.workspaceId}, ${"ops-" + randomUUID().slice(0, 6) + "@acme.test"}, 'google', ${encryptSecret("refresh", key)}) returning id`;
+      vi.stubGlobal("fetch", vi.fn(async () => new Response("upstream unavailable", { status: 503 })));
+      await expect(refreshGoogleToken(inbox.id, db as never, inboxConfig)).rejects.toMatchObject({ statusCode: 502 });
+      const [row] = await sql`select status from inboxes where id = ${inbox.id}`;
+      expect(row.status).toBe("active");
+    });
   });
 
   it("a blank provider value clears the Skout field only when the mapping says overwrite", () => {
