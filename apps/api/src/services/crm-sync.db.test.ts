@@ -9,6 +9,7 @@ import { applyInboundMapping, DEFAULT_HUBSPOT_CONTACT_MAPPING, getCrmMappingHist
 import { markConnectionNeedsReauth } from "./crm-auth-lifecycle.service.js";
 import { detectSchemaDrift, getCrmConnectorHealth, replayCrmOutboundWrite } from "./crm-observability.service.js";
 import { POLL_FAILURE_ALERT_THRESHOLD, runScheduledCrmPoll } from "./crm-initial-import.service.js";
+import { getRecordSyncHistory, listInboundSyncHistory, recordInboundSync } from "./crm-sync-history.service.js";
 
 // postgres is a dependency of packages/db; resolve it from there.
 const postgres = createRequire(new URL("../../../../packages/db/package.json", import.meta.url))("postgres") as (url: string, options?: object) => any;
@@ -206,6 +207,32 @@ maybe("COPS-09 CRM sync (Postgres)", () => {
     expect(conn.settings.pollFailures).toBe(POLL_FAILURE_ALERT_THRESHOLD + 1);
     const notes = await sql`select count(*)::int as n from notifications where workspace_id = ${f.workspaceId} and type = 'crm_sync_failing'`;
     expect(notes[0].n).toBe(2); // owner and admin, once for the day
+  });
+
+  it("a record's sync history merges pulls, pushes and conflicts, newest first", async () => {
+    const f = await fixture();
+    const base = { workspaceId: f.workspaceId, connectionId: f.connectionId, entityType: "contact" as const, externalId: "hs-h1" };
+    await recordInboundSync(db, { ...base, entityId: f.contactId, outcome: "created", fields: ["email", "title"] });
+    await sql`insert into crm_outbound_writes (workspace_id, connection_id, entity_type, entity_id, patch, skout_changed_at, idempotency_key, status, last_error, created_at)
+      values (${f.workspaceId}, ${f.connectionId}, 'contact', ${f.contactId}, ${sql.json({ phone: "1" })}, now(), ${randomUUID()}, 'failed', 'HubSpot API x failed: 500', now() + interval '1 second')`;
+    await recordCrmConflict(db, conflictOf(f, "title", "Head of Sales", "contact"));
+    await recordInboundSync(db, { ...base, entityId: f.contactId, outcome: "held_by_conflict", heldFields: ["title"] });
+    // A record skipped before matching has no Skout id and only shows in the workspace list.
+    await recordInboundSync(db, { ...base, externalId: "hs-h2", outcome: "skipped_invalid", detail: "no email address" });
+
+    const history = await getRecordSyncHistory(db, f.workspaceId, "contact", f.contactId);
+    expect(history.map((h) => `${h.direction}:${h.status}`).sort()).toEqual(
+      ["conflict:pending", "inbound:created", "inbound:held_by_conflict", "outbound:failed"].sort()
+    );
+    expect(history.find((h) => h.status === "held_by_conflict")!.fields).toEqual(["title (held)"]);
+    expect(history.find((h) => h.direction === "outbound")!.detail).toBe("HubSpot API x failed: 500");
+
+    const skipped = await listInboundSyncHistory(db, f.workspaceId, { outcome: "skipped_invalid" });
+    expect(skipped.map((r) => r.externalId)).toEqual(["hs-h2"]);
+    // Another workspace sees none of it.
+    const other = await fixture();
+    expect(await getRecordSyncHistory(db, other.workspaceId, "contact", f.contactId)).toEqual([]);
+    await sql`delete from crm_outbound_writes where workspace_id = ${f.workspaceId}`;
   });
 
   it("a blank provider value clears the Skout field only when the mapping says overwrite", () => {

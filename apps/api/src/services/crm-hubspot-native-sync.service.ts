@@ -19,6 +19,7 @@ import { ensureHubSpotPortalId } from "./crm-hubspot-webhook.service.js";
 import { applyInboundMapping, getResolvedCrmMapping, type CrmObjectMapping } from "./crm-mapping.service.js";
 import { evaluateFieldConflict, getPendingConflictFields, isProtectedField, recordCrmConflict } from "./crm-conflict.service.js";
 import { getCrmSyncScope, isCompanyInScope, type CrmSyncScope } from "./crm-opt-in.service.js";
+import { recordInboundSync } from "./crm-sync-history.service.js";
 
 const log = createLogger("crm-hubspot-native-sync");
 const { contacts, companies, deals, pipelines, pipelineStages } = schema;
@@ -36,7 +37,8 @@ const asText = (v: unknown): string | null => (v == null ? null : v instanceof D
  * COPS-09: which fields of an incoming provider patch may overwrite an existing Skout record.
  * Per field: a pending conflict blocks it (the open conflict is refreshed with the newest provider
  * value); a blank value the mapping says to overwrite clears the field unless Skout wins;
- * otherwise the field's conflict policy decides, and manual review queues a conflict.
+ * otherwise the field's conflict policy decides, and manual review queues a conflict. `held` lists
+ * the fields kept back for a conflict (for the record's sync history).
  */
 async function conflictCheckedPatch(
   db: Db,
@@ -50,9 +52,10 @@ async function conflictCheckedPatch(
     mapping: CrmObjectMapping | null;
     patch: Record<string, unknown>;
   }
-): Promise<Record<string, unknown>> {
+): Promise<{ eligible: Record<string, unknown>; held: string[] }> {
   const pending = await getPendingConflictFields(db, ctx.workspaceId, ctx.connectionId, ctx.entityType, ctx.existing.id);
   const eligible: Record<string, unknown> = {};
+  const held: string[] = [];
   for (const [field, val] of Object.entries(ctx.patch)) {
     const fieldMapping = ctx.mapping?.fields.find((f) => f.internalField === field);
     const policy = fieldMapping?.conflictPolicy ?? "most_recent";
@@ -72,6 +75,7 @@ async function conflictCheckedPatch(
     };
 
     if (pending.has(field)) {
+      held.push(field);
       await recordCrmConflict(db, conflict).catch((err) => log.warn("Failed refreshing CRM sync conflict", { err, field }));
       continue;
     }
@@ -92,10 +96,11 @@ async function conflictCheckedPatch(
     if (decision.action === "apply_external") {
       eligible[field] = val;
     } else if (decision.action === "manual_review") {
+      held.push(field);
       await recordCrmConflict(db, conflict).catch((err) => log.warn("Failed recording CRM sync conflict", { err, field }));
     }
   }
-  return eligible;
+  return { eligible, held };
 }
 
 async function findOrCreateCompany(
@@ -167,8 +172,10 @@ export async function syncHubSpotContactsToNativeCrm(
       const patch: Record<string, unknown> = mapped ? { ...mapped.patch } : {};
 
       if (!patch.email && snap?.email) patch.email = snap.email.trim().toLowerCase();
+      const history = { workspaceId, connectionId, entityType: "contact" as const, externalId: hsContact.id, externalModifiedAt: modifiedAt };
       if (!patch.email) {
         skipped++;
+        await recordInboundSync(db, { ...history, outcome: "skipped_invalid", detail: "no email address" });
         continue;
       }
       const email = String(patch.email).trim().toLowerCase();
@@ -191,6 +198,7 @@ export async function syncHubSpotContactsToNativeCrm(
       // no new records are created.
       if (scope && !isCompanyInScope(scope, existing ? existing.companyId : undefined)) {
         skipped++;
+        await recordInboundSync(db, { ...history, entityId: existing?.id, outcome: "skipped_out_of_scope", detail: "account not in the sync scope" });
         continue;
       }
 
@@ -223,6 +231,7 @@ export async function syncHubSpotContactsToNativeCrm(
         if (row) {
           created++;
           skoutContactId = row.id;
+          await recordInboundSync(db, { ...history, entityId: row.id, outcome: "created", fields: Object.keys(patch) });
           for (const field of ["title", "phone"] as const) {
             if (patch[field] == null) continue;
             try {
@@ -243,7 +252,7 @@ export async function syncHubSpotContactsToNativeCrm(
           }
         }
       } else {
-        const eligiblePatch = await conflictCheckedPatch(db, {
+        const { eligible: eligiblePatch, held } = await conflictCheckedPatch(db, {
           workspaceId,
           connectionId,
           entityType: "contact",
@@ -259,6 +268,13 @@ export async function syncHubSpotContactsToNativeCrm(
         const { applied } = filterAutoFillablePatch(eligiblePatch, existingSources, evidenceByAttribute);
         const appliedFields = Object.keys(applied);
 
+        await recordInboundSync(db, {
+          ...history,
+          entityId: existing.id,
+          outcome: appliedFields.length > 0 ? "updated" : held.length > 0 ? "held_by_conflict" : "unchanged",
+          fields: appliedFields,
+          heldFields: held,
+        });
         if (appliedFields.length === 0) {
           skipped++;
         } else {
@@ -368,8 +384,10 @@ export async function syncHubSpotDealsToNativeCrm(
       const patch: Record<string, unknown> = mapped ? { ...mapped.patch } : {};
 
       const name = (patch.name as string | undefined)?.trim() ?? hs.properties?.dealname?.trim();
+      const history = { workspaceId, connectionId, entityType: "deal" as const, externalId: hs.id, externalModifiedAt: modifiedAt };
       if (!name) {
         skipped++;
+        await recordInboundSync(db, { ...history, outcome: "skipped_invalid", detail: "no deal name" });
         continue;
       }
       const amount = patch.amount != null ? String(patch.amount) : hs.properties?.amount ? hs.properties.amount : undefined;
@@ -383,6 +401,7 @@ export async function syncHubSpotDealsToNativeCrm(
 
       if (scope && !isCompanyInScope(scope, existing ? existing.companyId : undefined)) {
         skipped++;
+        await recordInboundSync(db, { ...history, entityId: existing?.id, outcome: "skipped_out_of_scope", detail: "account not in the sync scope" });
         continue;
       }
 
@@ -402,8 +421,9 @@ export async function syncHubSpotDealsToNativeCrm(
           .returning();
         created++;
         skoutDealId = row?.id;
+        await recordInboundSync(db, { ...history, entityId: row?.id, outcome: "created", fields: ["name", ...(amount ? ["amount"] : [])] });
       } else {
-        const eligiblePatch = await conflictCheckedPatch(db, {
+        const { eligible: eligiblePatch, held } = await conflictCheckedPatch(db, {
           workspaceId,
           connectionId,
           entityType: "deal",
@@ -419,6 +439,13 @@ export async function syncHubSpotDealsToNativeCrm(
         const { applied } = filterAutoFillablePatch(eligiblePatch, existingSources, evidenceByAttribute);
         const appliedFields = Object.keys(applied);
 
+        await recordInboundSync(db, {
+          ...history,
+          entityId: existing.id,
+          outcome: appliedFields.length > 0 ? "updated" : held.length > 0 ? "held_by_conflict" : "unchanged",
+          fields: appliedFields,
+          heldFields: held,
+        });
         if (appliedFields.length === 0) {
           skipped++;
         } else {

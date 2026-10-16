@@ -54,6 +54,8 @@ export const RETENTION_TARGETS: readonly RetentionTarget[] = [
   { category: "diagnostics", table: "cops_idempotency_keys", tenantColumn: "workspace_id", ageColumn: "created_at", where: "state <> 'pending'" },
   // Published events only: an unpublished or dead-lettered event is still operational state.
   { category: "diagnostics", table: "cops_outbox", tenantColumn: "tenant_id", ageColumn: "created_at", where: "published_at is not null" },
+  // COPS-09: inbound CRM sync history is a log of what already happened to records.
+  { category: "diagnostics", table: "crm_sync_history", tenantColumn: "workspace_id", ageColumn: "created_at" },
 ];
 
 const DAY_MS = 86_400_000;
@@ -64,7 +66,7 @@ export function classifyTable(table: string): RetentionCategory {
   if (/(tombstone|deleted_|^dsar)/.test(table)) return "tombstones";
   if (/(attachment|document|_files?$|upload)/.test(table)) return "attachments";
   if (/(^ai_|prompt|model_version|draft|recommendation|next_best)/.test(table)) return "ai_traces";
-  if (/(outbox|idempotency|processed_events|_runs$|_jobs$|^async_jobs$|webhook_deliver|tracking_events|sync_state|provider_events)/.test(table)) return "diagnostics";
+  if (/(outbox|idempotency|processed_events|_runs$|_jobs$|^async_jobs$|webhook_deliver|tracking_events|sync_state|sync_history|provider_events)/.test(table)) return "diagnostics";
   if (/(email|inbox|message|comment|notification|^activities$|^meetings$|meeting_|call)/.test(table)) return "communications";
   return "core_records";
 }

@@ -152,3 +152,34 @@ export const crmConflicts = pgTable(
   ]
 );
 
+/**
+ * COPS-09 — per-record inbound sync history: what each pulled provider record did to Skout
+ * (created, updated, unchanged, held by a conflict, skipped and why), with the fields it changed.
+ * Outbound history is crm_outbound_writes. Old rows are removed by the retention job (diagnostics).
+ */
+export const crmSyncHistory = pgTable(
+  "crm_sync_history",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    connectionId: uuid("connection_id")
+      .notNull()
+      .references(() => crmConnections.id, { onDelete: "cascade" }),
+    entityType: text("entity_type").notNull(),
+    /** Null when the record never reached Skout (skipped before matching). */
+    entityId: uuid("entity_id"),
+    externalId: text("external_id").notNull(),
+    outcome: text("outcome").notNull(),
+    fields: jsonb("fields").$type<string[]>().notNull().default([]),
+    heldFields: jsonb("held_fields").$type<string[]>().notNull().default([]),
+    detail: text("detail"),
+    externalModifiedAt: timestamp("external_modified_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("crm_sync_history_entity_idx").on(table.workspaceId, table.entityType, table.entityId, table.createdAt),
+    index("crm_sync_history_workspace_idx").on(table.workspaceId, table.createdAt),
+  ]
+);

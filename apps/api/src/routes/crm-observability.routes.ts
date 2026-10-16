@@ -9,6 +9,7 @@ import { getCrmConnector } from "../services/crm-connector.registry.js";
 import { errorResponse, HttpError, requireWorkspaceId } from "../utils/http.js";
 import { createDefaultCredentialsStore, ensureFreshTokens } from "../services/crm-export.runner.js";
 import { crmAdminGate, sendHttpError } from "./crm-admin-gate.js";
+import { getRecordSyncHistory, listInboundSyncHistory } from "../services/crm-sync-history.service.js";
 
 export async function crmObservabilityRoutes(app: FastifyInstance) {
   app.addHook("preHandler", crmAdminGate(app));
@@ -140,5 +141,40 @@ export async function crmObservabilityRoutes(app: FastifyInstance) {
       }
       throw err;
     }
+  });
+
+  /**
+   * GET /crm/inbound-history
+   * What recent pulls did to Skout records (created, updated, unchanged, held by a conflict, skipped).
+   */
+  app.get("/crm/inbound-history", async (request, reply) => {
+    const workspaceId = requireWorkspaceId(request);
+    if (!app.db) {
+      return reply.status(503).send(errorResponse("Database unavailable", 503));
+    }
+    const query = (request.query ?? {}) as { entityType?: string; outcome?: string; limit?: string; offset?: string };
+    const limit = query.limit ? Math.min(Math.max(parseInt(query.limit, 10) || 50, 1), 200) : 50;
+    const offset = query.offset ? Math.max(parseInt(query.offset, 10) || 0, 0) : 0;
+    const rows = await listInboundSyncHistory(app.db, workspaceId, { entityType: query.entityType, outcome: query.outcome, limit, offset });
+    return reply.send({ data: rows, limit, offset });
+  });
+
+  /**
+   * GET /crm/records/:entityType/:entityId/history
+   * One Skout record's sync history: pulls, pushes (with DLQ state) and conflicts, newest first.
+   */
+  app.get("/crm/records/:entityType/:entityId/history", async (request, reply) => {
+    const workspaceId = requireWorkspaceId(request);
+    const { entityType, entityId } = request.params as { entityType: string; entityId: string };
+    if (entityType !== "contact" && entityType !== "deal") {
+      return reply.status(400).send(errorResponse("entityType must be 'contact' or 'deal'", 400));
+    }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entityId)) {
+      return reply.status(400).send(errorResponse("entityId must be a uuid", 400));
+    }
+    if (!app.db) {
+      return reply.status(503).send(errorResponse("Database unavailable", 503));
+    }
+    return reply.send({ data: await getRecordSyncHistory(app.db, workspaceId, entityType, entityId) });
   });
 }
