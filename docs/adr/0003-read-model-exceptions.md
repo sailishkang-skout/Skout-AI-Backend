@@ -162,6 +162,8 @@ and `RenewalOpened` instead. Revisit when apps/crm's internal API offers an idem
 | File | Tables | Access |
 |---|---|---|
 | `apps/api/src/services/crm-conflict.service.ts` | contacts, deals | **update** of one field of one record when an admin resolves a CRM sync conflict with the provider's or a custom value |
+| `apps/api/src/services/crm-hubspot-native-sync.service.ts` | contacts, companies, deals, pipelines, pipeline_stages | the ADI-10 inbound sync (read + write of pulled records); now also reads pipelines and stages for the stage a new deal starts in |
+| `apps/api/src/services/crm-stage-map.service.ts` | pipelines, pipeline_stages | read only: the HubSpot to Skout stage map is validated against, and picks from, the workspace's stages |
 
 A resolution writes the chosen value, closes the conflict (only if it is still pending) and writes the
 audit row in one transaction, so a second resolve cannot apply a second value. The field must be a

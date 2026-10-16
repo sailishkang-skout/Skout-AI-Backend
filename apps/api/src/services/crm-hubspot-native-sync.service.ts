@@ -1,3 +1,13 @@
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md (ADI-10 row and COPS-09 additions).
+ *   - Tables touched directly: contacts, companies, deals (read + write of pulled HubSpot records);
+ *     pipelines, pipeline_stages (read: the stage a new deal starts in)
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: the inbound sync applies each record, its conflict check, its sync history and its
+ *     native link in one pass per record; an HTTP hop per record into apps/crm would not keep them together.
+ *   - Review date: 2026-10-16
+ */
 import { eq, isNull } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, getLatestEvidenceByAttribute, scopedTo } from "@skout/db";
