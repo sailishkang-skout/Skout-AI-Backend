@@ -156,3 +156,17 @@ row lock; an HTTP call into apps/crm cannot join that transaction, and a retry a
 would create a second opportunity. The inserted row uses the same columns apps/crm's own create
 uses. It does not write apps/crm's audit row or `OpportunityQualified`; it writes a COPS audit row
 and `RenewalOpened` instead. Revisit when apps/crm's internal API offers an idempotent create.
+
+## COPS-09 additions (2026-10-16)
+
+| File | Tables | Access |
+|---|---|---|
+| `apps/api/src/services/crm-conflict.service.ts` | contacts, deals | **update** of one field of one record when an admin resolves a CRM sync conflict with the provider's or a custom value |
+
+A resolution writes the chosen value, closes the conflict (only if it is still pending) and writes the
+audit row in one transaction, so a second resolve cannot apply a second value. The field must be a
+column the CRM sync owns (`CRM_SYNC_OWNED_FIELDS`) and the value must fit the column's type, or the
+resolution is refused with 422 and nothing changes. The inbound HubSpot sync in
+`crm-hubspot-native-sync.service.ts` (listed above) now also reads `deals.company_id` and
+`contacts.company_id` to apply the ADR 0014 account scope. The COPS-09 table (`crm_conflicts`) is owned
+by apps/api.
