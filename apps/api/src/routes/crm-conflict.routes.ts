@@ -1,8 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { listCrmConflicts, resolveCrmConflict } from "../services/crm-conflict.service.js";
 import { errorResponse, HttpError, requireWorkspaceId } from "../utils/http.js";
+import { crmAdminGate, sendHttpError } from "./crm-admin-gate.js";
 
 export async function crmConflictRoutes(app: FastifyInstance) {
+  app.addHook("preHandler", crmAdminGate(app));
+
   /**
    * GET /crm/conflicts
    * Lists detected CRM sync conflicts for admin review.
@@ -17,6 +20,7 @@ export async function crmConflictRoutes(app: FastifyInstance) {
     const query = (request.query ?? {}) as {
       status?: string;
       entityType?: string;
+      entityId?: string;
       limit?: string;
       offset?: string;
     };
@@ -28,6 +32,7 @@ export async function crmConflictRoutes(app: FastifyInstance) {
       const conflicts = await listCrmConflicts(app.db, workspaceId, {
         status: query.status,
         entityType: query.entityType,
+        entityId: query.entityId && /^[0-9a-f-]{36}$/i.test(query.entityId) ? query.entityId : undefined,
         limit,
         offset,
       });
@@ -65,8 +70,11 @@ export async function crmConflictRoutes(app: FastifyInstance) {
     if (!body.choice || !["skout", "external", "custom"].includes(body.choice)) {
       return reply.status(400).send(errorResponse("choice must be 'skout', 'external', or 'custom'", 400));
     }
+    if (body.customValue !== undefined && (typeof body.customValue !== "string" || body.customValue.length > 2000)) {
+      return reply.status(422).send(errorResponse("customValue must be text of at most 2000 characters", 422));
+    }
 
-    const userId = (request as any).userId ?? (request as any).user?.id;
+    const userId = request.userId;
 
     try {
       const result = await resolveCrmConflict(app.db, workspaceId, id, {
@@ -80,10 +88,7 @@ export async function crmConflictRoutes(app: FastifyInstance) {
         data: result,
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes("not found")) {
-        return reply.status(404).send(errorResponse(msg, 404));
-      }
+      if (sendHttpError(reply, err)) return reply;
       throw err;
     }
   });

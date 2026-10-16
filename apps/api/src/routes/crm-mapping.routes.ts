@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { getCrmConnector } from "../services/crm-connector.registry.js";
 import {
+  getCrmMappingHistory,
   getDefaultCrmMappings,
   getResolvedCrmMapping,
   saveCrmMappings,
@@ -9,8 +10,28 @@ import {
   type CrmObjectMapping,
 } from "../services/crm-mapping.service.js";
 import { errorResponse, HttpError, requireWorkspaceId } from "../utils/http.js";
+import { createDefaultCredentialsStore, ensureFreshTokens } from "../services/crm-export.runner.js";
+import { fetchHubSpotPropertyNames } from "../services/hubspot.client.js";
+import { crmAdminGate } from "./crm-admin-gate.js";
 
 export async function crmMappingRoutes(app: FastifyInstance) {
+  app.addHook("preHandler", crmAdminGate(app));
+
+  /** The provider's live property names per object type, or null when they cannot be read now. */
+  async function liveProperties(workspaceId: string, provider: string): Promise<Record<"contact" | "deal", string[]> | null> {
+    if (provider !== "hubspot" || !app.db) return null;
+    try {
+      const tokens = await ensureFreshTokens(app.db, app.config, createDefaultCredentialsStore(app.config), workspaceId);
+      const [contact, deal] = await Promise.all([
+        fetchHubSpotPropertyNames(tokens.accessToken, "contacts"),
+        fetchHubSpotPropertyNames(tokens.accessToken, "deals"),
+      ]);
+      return { contact, deal };
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * GET /crm/:provider/mappings
    * Returns active field mappings for a provider in the current workspace.
@@ -71,28 +92,30 @@ export async function crmMappingRoutes(app: FastifyInstance) {
       deal?: CrmObjectMapping;
     };
 
-    const validationErrors: string[] = [];
-
-    if (body.contact) {
-      const res = validateMapping(body.contact);
-      if (!res.valid) {
-        validationErrors.push(...res.errors.map((e) => `contact: ${e}`));
-      }
+    if (!body.contact && !body.deal) {
+      return reply.status(422).send(errorResponse("Send a contact or deal mapping", 422));
     }
 
-    if (body.deal) {
-      const res = validateMapping(body.deal);
-      if (!res.valid) {
-        validationErrors.push(...res.errors.map((e) => `deal: ${e}`));
-      }
+    // Checked against the provider's live properties when they can be read, so a mapping to a
+    // field the portal does not have is refused instead of syncing nothing.
+    const live = await liveProperties(workspaceId, provider);
+    const validationErrors: string[] = [];
+    for (const entityType of ["contact", "deal"] as const) {
+      const mapping = body[entityType];
+      if (!mapping) continue;
+      const res = validateMapping(mapping, live?.[entityType], entityType);
+      validationErrors.push(...res.errors.map((e) => `${entityType}: ${e}`));
+      validationErrors.push(
+        ...res.missingExternalProperties.map((f) => `${entityType}: ${provider} has no property ${f}`)
+      );
     }
 
     if (validationErrors.length > 0) {
-      return reply.status(400).send(errorResponse("Invalid mapping configuration", 400, validationErrors));
+      return reply.status(422).send(errorResponse("Invalid mapping configuration", 422, validationErrors));
     }
 
     try {
-      await saveCrmMappings(app.db, workspaceId, provider, body);
+      await saveCrmMappings(app.db, workspaceId, provider, body, request.userId);
 
       const contactMapping = await getResolvedCrmMapping(app.db, workspaceId, provider, "contact");
       const dealMapping = await getResolvedCrmMapping(app.db, workspaceId, provider, "deal");
@@ -157,13 +180,36 @@ export async function crmMappingRoutes(app: FastifyInstance) {
       }
     }
 
-    const validation = validateMapping(mapping);
+    const validation = validateMapping(mapping, undefined, body.entityType);
     if (!validation.valid) {
-      return reply.status(400).send(errorResponse("Mapping to test is invalid", 400, validation.errors));
+      return reply.status(422).send(errorResponse("Mapping to test is invalid", 422, validation.errors));
     }
 
     const result = testMappingTransformation(mapping, sample, body.direction);
     return reply.send({ data: result });
+  });
+
+  /**
+   * GET /crm/:provider/mappings/history?entityType=contact
+   * Earlier versions of a mapping, newest first.
+   */
+  app.get("/crm/:provider/mappings/history", async (request, reply) => {
+    const workspaceId = requireWorkspaceId(request);
+    const { provider } = request.params as { provider: string };
+    const { entityType } = (request.query ?? {}) as { entityType?: string };
+
+    if (!getCrmConnector(provider)) {
+      return reply.status(404).send(errorResponse(`Unsupported CRM provider: ${provider}`, 404));
+    }
+    if (entityType !== "contact" && entityType !== "deal") {
+      return reply.status(400).send(errorResponse("entityType must be 'contact' or 'deal'", 400));
+    }
+    if (!app.db) {
+      return reply.status(503).send(errorResponse("Database unavailable", 503));
+    }
+
+    const history = await getCrmMappingHistory(app.db, workspaceId, provider, entityType);
+    return reply.send({ data: history });
   });
 }
 

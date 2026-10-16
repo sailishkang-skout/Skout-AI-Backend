@@ -1,14 +1,18 @@
 import type { FastifyInstance } from "fastify";
 import {
-  detectSchemaDrift,
+  checkHubSpotSchemaDrift,
   getCrmConnectorHealth,
   listCrmOutboundWrites,
   replayCrmOutboundWrite,
 } from "../services/crm-observability.service.js";
 import { getCrmConnector } from "../services/crm-connector.registry.js";
 import { errorResponse, HttpError, requireWorkspaceId } from "../utils/http.js";
+import { createDefaultCredentialsStore, ensureFreshTokens } from "../services/crm-export.runner.js";
+import { crmAdminGate, sendHttpError } from "./crm-admin-gate.js";
 
 export async function crmObservabilityRoutes(app: FastifyInstance) {
+  app.addHook("preHandler", crmAdminGate(app));
+
   /**
    * GET /crm/:provider/health
    * Returns connector health status, last sync timestamp, queue backlog,
@@ -52,6 +56,7 @@ export async function crmObservabilityRoutes(app: FastifyInstance) {
     const query = (request.query ?? {}) as {
       status?: string;
       entityType?: string;
+      entityId?: string;
       limit?: string;
       offset?: string;
     };
@@ -63,6 +68,7 @@ export async function crmObservabilityRoutes(app: FastifyInstance) {
       const writes = await listCrmOutboundWrites(app.db, workspaceId, {
         status: query.status,
         entityType: query.entityType,
+        entityId: query.entityId && /^[0-9a-f-]{36}$/i.test(query.entityId) ? query.entityId : undefined,
         limit,
         offset,
       });
@@ -92,29 +98,22 @@ export async function crmObservabilityRoutes(app: FastifyInstance) {
       return reply.status(503).send(errorResponse("Database unavailable", 503));
     }
 
-    const userId = (request as any).userId ?? (request as any).user?.id;
-
     try {
-      const result = await replayCrmOutboundWrite(app.db, workspaceId, id, userId);
+      const result = await replayCrmOutboundWrite(app.db, workspaceId, id, request.userId);
       return reply.send({
         ok: true,
         data: result,
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes("not found")) {
-        return reply.status(404).send(errorResponse(msg, 404));
-      }
-      if (msg.includes("Only failed writes")) {
-        return reply.status(400).send(errorResponse(msg, 400));
-      }
+      if (sendHttpError(reply, err)) return reply;
       throw err;
     }
   });
 
   /**
    * POST /crm/:provider/schema-drift
-   * Checks schema drift against external provider properties and triggers alerts if fields are missing.
+   * Checks the mappings against the provider's live property list now (the poll does it daily)
+   * and alerts the admins about mapped fields the provider no longer has.
    */
   app.post("/crm/:provider/schema-drift", async (request, reply) => {
     const workspaceId = requireWorkspaceId(request);
@@ -124,36 +123,17 @@ export async function crmObservabilityRoutes(app: FastifyInstance) {
     if (!connector) {
       return reply.status(404).send(errorResponse(`Unsupported CRM provider: ${provider}`, 404));
     }
-
+    if (provider !== "hubspot") {
+      return reply.status(400).send(errorResponse(`Schema checks not implemented for ${provider}`, 400));
+    }
     if (!app.db) {
       return reply.status(503).send(errorResponse("Database unavailable", 503));
     }
 
-    const body = (request.body ?? {}) as {
-      entityType: "contact" | "deal";
-      providerProperties?: string[];
-    };
-
-    if (!body.entityType || !["contact", "deal"].includes(body.entityType)) {
-      return reply.status(400).send(errorResponse("entityType must be 'contact' or 'deal'", 400));
-    }
-
-    const providerProps = body.providerProperties ?? [];
-
     try {
-      const result = await detectSchemaDrift(
-        app.db,
-        app.config,
-        workspaceId,
-        provider,
-        body.entityType,
-        providerProps
-      );
-
-      return reply.send({
-        ok: true,
-        data: result,
-      });
+      const tokens = await ensureFreshTokens(app.db, app.config, createDefaultCredentialsStore(app.config), workspaceId);
+      const result = await checkHubSpotSchemaDrift(app.db, app.config, workspaceId, tokens.accessToken);
+      return reply.send({ ok: true, data: result });
     } catch (err) {
       if (err instanceof HttpError) {
         return reply.status(err.statusCode).send(errorResponse(err.message, err.statusCode));
