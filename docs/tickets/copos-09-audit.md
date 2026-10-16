@@ -88,6 +88,33 @@ Acceptance criteria and how each will be proven:
   callback stored an HMAC of the access token as the portal id, so no event could be matched to a
   workspace. The callback now stores HubSpot's real `hub_id`, and connections made before the fix
   get it on their next sync.
+- **Steps 3 to 7 done (backend).** Connector interface with HubSpot; 429 backoff with
+  `Retry-After`, per connection; an expired or revoked grant sets `needs_reauth` and alerts Admin
+  and Owner once; versioned mappings (each save is a new version, the old one kept in history,
+  audited) with validation against HubSpot's live properties and a test endpoint; the four
+  conflict policies per field and protected fields; the conflict queue (`crm_conflicts`, migration
+  0132) with resolve as Skout / provider / custom, audited, in one transaction; health API; DLQ
+  replay; schema-drift alert (daily, from the poll); initial import; the poll worker
+  (`crm-sync-poll.worker.ts`); opt-in per workspace with object and account scope (ADR 0014).
+- **Review of the first version of steps 3 to 7 (2026-10-16), fixed on this branch:**
+  - the conflict table had no migration;
+  - the new admin routes had no permission check (now `workspace:manage`: Owner, Admin);
+  - every poll or webhook retry queued the same conflict again, and a pending conflict did not
+    stop the outbound push (now one pending conflict per field, and the field is held in both
+    directions until it is resolved);
+  - opt-in was checked only by the import and the poll (now by every sync path and the outbound
+    queue);
+  - the poll was never scheduled and drift was only checked when a client sent a property list;
+  - the rate-limit state was one global value for all workspaces;
+  - resolving could run twice, wrote text into any column, and "Skout wins" never reached HubSpot;
+  - outbound conflicts had no provider value;
+  - `nullBehavior: "preserve"` cleared the field;
+  - a mapping could target any column, including `workspaceId`;
+  - the default deal mapping wrote HubSpot's stage id into Skout's `stageId`, a uuid;
+  - the expired-grant alert went out twice.
+- **Still open:** the frontend (step 8); moving the payment and email adapters onto the connector
+  interface; inbound per-record history (inbound failures are logged, not stored); a HubSpot to
+  Skout stage mapping (needs a stage lookup table).
 
 ## 5. Out of scope
 
