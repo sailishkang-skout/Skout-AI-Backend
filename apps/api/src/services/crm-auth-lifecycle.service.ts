@@ -1,10 +1,9 @@
-import { eq } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, scopedTo } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
-import { createNotification } from "./notifications.service.js";
-import { getCopsNotificationRecipients } from "./cops-notification-routing.js";
+import { notifyCrmAdmins } from "./crm-alerts.service.js";
 
 const { crmConnections } = schema;
 const log = createLogger("crm-auth-lifecycle");
@@ -47,89 +46,45 @@ export interface MarkConnectionNeedsReauthParams {
 }
 
 /**
- * Marks a CRM connection as 'needs_reauth' and raises in-app alerts to workspace admins/owners.
- * Used when refresh tokens are rejected, grants are revoked by user in provider, or 401 Unauthorized
- * indicates authorization has expired.
+ * Marks a CRM connection as 'needs_reauth' and alerts the workspace's Admin and Owner members
+ * in-app. Used when refresh tokens are rejected, grants are revoked by the user in the provider,
+ * or a 401 shows the authorization has expired. Only the change into needs_reauth alerts, so a
+ * second caller (another worker, a retry) finds the status already set and notifies nobody.
  */
 export async function markConnectionNeedsReauth(
   db: Db,
-  config: Env,
+  _config: Env,
   params: MarkConnectionNeedsReauthParams
 ): Promise<void> {
   const { workspaceId, provider, reason } = params;
+  const at = new Date().toISOString();
 
-  // 1. Fetch current connection row to preserve existing settings
-  const [existing] = await db
-    .select({
-      id: crmConnections.id,
-      settings: crmConnections.settings,
-      status: crmConnections.status,
-    })
-    .from(crmConnections)
-    .where(scopedTo(crmConnections, workspaceId, eq(crmConnections.provider, provider)))
-    .limit(1);
-
-  const connectionId = params.connectionId ?? existing?.id ?? null;
-  const currentSettings = (existing?.settings ?? {}) as Record<string, unknown>;
-
-  // 2. Update status to 'needs_reauth' and persist error info in settings
-  await db
+  const [changed] = await db
     .update(crmConnections)
     .set({
       status: "needs_reauth",
-      settings: {
-        ...currentSettings,
-        lastAuthError: reason,
-        lastAuthErrorAt: new Date().toISOString(),
-      },
+      settings: sql`coalesce(${crmConnections.settings}, '{}'::jsonb) || ${JSON.stringify({ lastAuthError: reason, lastAuthErrorAt: at })}::jsonb`,
       updatedAt: new Date(),
     })
-    .where(scopedTo(crmConnections, workspaceId, eq(crmConnections.provider, provider)));
+    .where(and(scopedTo(crmConnections, workspaceId, eq(crmConnections.provider, provider)), ne(crmConnections.status, "needs_reauth")))
+    .returning({ id: crmConnections.id });
 
-  log.warn("CRM connection marked needs_reauth", {
-    workspaceId,
-    provider,
-    reason,
-    connectionId,
-  });
+  if (!changed) return;
+  const connectionId = params.connectionId ?? changed.id;
+
+  log.warn("CRM connection marked needs_reauth", { workspaceId, provider, reason, connectionId });
 
   const providerLabel = provider.charAt(0).toUpperCase() + provider.slice(1);
-  const title = `${providerLabel} Reconnection Required`;
-  const body = `The authorization grant for ${providerLabel} has expired or was revoked. Please reconnect the integration in Settings to resume CRM sync.`;
-
-  // 3. Workspace-wide in-app notification (userId: null)
   try {
-    await createNotification(db, config, {
+    await notifyCrmAdmins(db, {
       workspaceId,
-      userId: null,
       type: "crm_grant_expired",
-      title,
-      body,
-      entityType: "crm_connection",
-      entityId: connectionId,
+      title: `${providerLabel} Reconnection Required`,
+      body: `The authorization grant for ${providerLabel} has expired or was revoked. Please reconnect the integration in Settings to resume CRM sync.`,
+      connectionId,
+      dedupeKey: `grant:${connectionId}:${at}`,
     });
   } catch (err) {
-    log.warn("Failed creating workspace notification for expired CRM grant", { err, workspaceId, provider });
-  }
-
-  // 4. Targeted in-app notifications to admin/owner roles
-  try {
-    const adminRecipients = await getCopsNotificationRecipients(db, workspaceId, ["admin", "owner"]);
-    for (const userId of adminRecipients) {
-      await createNotification(db, config, {
-        workspaceId,
-        userId,
-        type: "crm_grant_expired",
-        title,
-        body,
-        entityType: "crm_connection",
-        entityId: connectionId,
-      }).catch((err) => {
-        log.warn("Failed creating user notification for expired CRM grant", { err, userId, workspaceId });
-      });
-    }
-  } catch (err) {
-    log.warn("Failed fetching admin recipients for expired CRM grant", { err, workspaceId });
+    log.warn("Failed notifying admins of an expired CRM grant", { err, workspaceId, provider });
   }
 }
-

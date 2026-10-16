@@ -149,43 +149,46 @@ export interface HubSpotRateLimitState {
   retryAfterMs: number | null;
 }
 
-let currentRateLimitState: HubSpotRateLimitState = {
+const EMPTY_RATE_LIMIT_STATE: HubSpotRateLimitState = {
   isRateLimited: false,
   lastRateLimitedAt: null,
   limitedUntil: null,
   retryAfterMs: null,
 };
 
-export function recordHubSpotRateLimit(retryAfterMs: number, now = Date.now()): void {
-  currentRateLimitState = {
+/**
+ * Rate-limit state per access token (that is, per HubSpot connection), so one portal's 429 does
+ * not hold back every other workspace. In-process only; the sync paths copy it onto the
+ * connection row (settings.rateLimit) so the health API sees it from any process.
+ */
+const rateLimitStates = new Map<string, HubSpotRateLimitState>();
+const DEFAULT_RATE_LIMIT_KEY = "default";
+
+/** A short, non-reversible key for an access token. */
+export function hubspotRateLimitKey(accessToken: string | null | undefined): string {
+  if (!accessToken) return DEFAULT_RATE_LIMIT_KEY;
+  return createHash("sha256").update(accessToken).digest("hex").slice(0, 16);
+}
+
+export function recordHubSpotRateLimit(retryAfterMs: number, now = Date.now(), key = DEFAULT_RATE_LIMIT_KEY): void {
+  rateLimitStates.set(key, {
     isRateLimited: true,
     lastRateLimitedAt: new Date(now).toISOString(),
     limitedUntil: new Date(now + retryAfterMs).toISOString(),
     retryAfterMs,
-  };
+  });
 }
 
-export function getHubSpotRateLimitState(now = Date.now()): HubSpotRateLimitState {
-  if (
-    currentRateLimitState.isRateLimited &&
-    currentRateLimitState.limitedUntil &&
-    new Date(currentRateLimitState.limitedUntil).getTime() <= now
-  ) {
-    currentRateLimitState = {
-      ...currentRateLimitState,
-      isRateLimited: false,
-    };
+export function getHubSpotRateLimitState(now = Date.now(), key = DEFAULT_RATE_LIMIT_KEY): HubSpotRateLimitState {
+  const state = rateLimitStates.get(key) ?? EMPTY_RATE_LIMIT_STATE;
+  if (state.isRateLimited && state.limitedUntil && new Date(state.limitedUntil).getTime() <= now) {
+    return { ...state, isRateLimited: false };
   }
-  return { ...currentRateLimitState };
+  return { ...state };
 }
 
 export function resetHubSpotRateLimitState(): void {
-  currentRateLimitState = {
-    isRateLimited: false,
-    lastRateLimitedAt: null,
-    limitedUntil: null,
-    retryAfterMs: null,
-  };
+  rateLimitStates.clear();
 }
 
 export function parseRetryAfter(header: string | null | undefined, fallbackMs = 1000): number {
@@ -208,43 +211,50 @@ export interface HubSpotRequestOptions extends RequestInit {
   fetchImpl?: typeof fetch;
 }
 
-export async function hubspotFetchWithBackoff(
-  url: string,
-  init?: HubSpotRequestOptions
-): Promise<Response> {
-  const maxRetries = init?.maxRetries ?? 3;
-  const sleep = init?.sleepImpl ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
-  const doFetch = init?.fetchImpl ?? fetch;
+function bearerToken(headers: HeadersInit | undefined): string | null {
+  if (!headers) return null;
+  const value = new Headers(headers).get("authorization");
+  return value?.startsWith("Bearer ") ? value.slice(7) : null;
+}
 
-  const currentState = getHubSpotRateLimitState();
+/** Longest Retry-After honoured inside one request; a longer one fails the call for a later retry. */
+const MAX_IN_REQUEST_WAIT_MS = 60_000;
+
+export async function hubspotFetchWithBackoff(url: string, init?: HubSpotRequestOptions): Promise<Response> {
+  const { maxRetries: maxRetriesOpt, sleepImpl, fetchImpl, ...requestInit } = init ?? {};
+  const maxRetries = maxRetriesOpt ?? 3;
+  const sleep = sleepImpl ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const doFetch = fetchImpl ?? fetch;
+  const key = hubspotRateLimitKey(bearerToken(requestInit.headers));
+
+  // This connection is still inside a window HubSpot told us to wait: wait it out first.
+  const currentState = getHubSpotRateLimitState(Date.now(), key);
   if (currentState.isRateLimited && currentState.limitedUntil) {
     const waitMs = new Date(currentState.limitedUntil).getTime() - Date.now();
-    if (waitMs > 0 && waitMs <= 60_000) {
+    if (waitMs > 0 && waitMs <= MAX_IN_REQUEST_WAIT_MS) {
       await sleep(waitMs);
     }
   }
 
   let attempt = 0;
   while (true) {
-    const res = await doFetch(url, init);
+    const res = await doFetch(url, requestInit);
     if (res.status === 429) {
       const retryAfterHeader =
         typeof res.headers?.get === "function"
           ? res.headers.get("retry-after")
           : (res.headers as unknown as Record<string, string> | undefined)?.["retry-after"];
       const waitMs = parseRetryAfter(retryAfterHeader, Math.min(1000 * 2 ** attempt, 30_000));
-      recordHubSpotRateLimit(waitMs);
+      recordHubSpotRateLimit(waitMs, Date.now(), key);
 
-      if (attempt < maxRetries) {
+      if (attempt < maxRetries && waitMs <= MAX_IN_REQUEST_WAIT_MS) {
         attempt++;
         await sleep(waitMs);
         continue;
       }
+      // Nothing was written: the caller's retry (checkpoint or outbound-write lease) repeats it later.
       const text = await res.text().catch(() => "");
-      throw new HubSpotRateLimitError(
-        `HubSpot request to ${url} rate limited (429) after ${attempt} retries: ${text}`,
-        waitMs
-      );
+      throw new HubSpotRateLimitError(`HubSpot request to ${url} rate limited (429) after ${attempt} retries: ${text}`, waitMs);
     }
     return res;
   }
@@ -693,6 +703,27 @@ export async function updateHubSpotDeal(
     method: "PATCH",
     body: JSON.stringify({ properties }),
   });
+}
+
+/** COPS-09 — one record's current values, used to show both sides of an outbound conflict. */
+export async function fetchHubSpotObjectProperties(
+  accessToken: string,
+  objectType: "contacts" | "deals",
+  objectId: string,
+  properties: readonly string[]
+): Promise<Record<string, string | null>> {
+  const qs = new URLSearchParams({ properties: properties.join(",") });
+  const data = await hubspotFetch<{ properties?: Record<string, string | null> }>(
+    accessToken,
+    `/crm/v3/objects/${objectType}/${encodeURIComponent(objectId)}?${qs}`
+  );
+  return data.properties ?? {};
+}
+
+/** COPS-09 — the property names the portal defines for an object type, for schema-drift checks. */
+export async function fetchHubSpotPropertyNames(accessToken: string, objectType: "contacts" | "deals"): Promise<string[]> {
+  const data = await hubspotFetch<{ results?: Array<{ name?: string }> }>(accessToken, `/crm/v3/properties/${objectType}`);
+  return (data.results ?? []).map((p) => p.name).filter((n): n is string => typeof n === "string");
 }
 
 /** §8.12 Task ADI-10 — 429 (rate limit) and 5xx are worth retrying via the outbound-write
