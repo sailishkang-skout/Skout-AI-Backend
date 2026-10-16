@@ -103,6 +103,10 @@ empty/loading/error audit across all Phase 1 screens; live end-to-end specs for 
 paths; Datadog monitors; the navigation does not yet hide a module that is turned off (the API
 refuses it). The release gates that need people (pilot sign-off, dashboards live) are open.
 
+Update 2026-10-16: since then the frontend has `e2e/cops-admin.spec.ts` and
+`e2e/cops-golden-paths.spec.ts`; the navigation hides a module that is turned off (sidebar
+`copsModule`, from `GET /cops/modules`); Datadog was dropped for GCP Cloud Monitoring (#201).
+
 ## 8. Phase 1 gap list against the epic document (COPS-01 to COPS-07)
 
 Basis: the per-ticket audit docs and what was run in the COPS-05/06/07 work. It is not a fresh
@@ -112,17 +116,17 @@ not as proof that nothing else is open.
 | Ticket | Open against the epic text |
 |---|---|
 | COPS-01 | A real 429 has never been triggered end to end (retry/backoff code exists). Slack/Teams webhook adapters and per-user notification preferences: not re-checked here. `cops_processed_events` has no `workspace_id` (keyed by event id; listed in the scoping guard with its reason). |
-| COPS-02 | Customer 360 "Usage" and "Success" tabs are still placeholders (Success belongs to COPS-11). Not re-checked: kanban 409 inline messages, account merge. |
-| COPS-03 | Not re-checked in this pass. The live run skipped it: the deal and fired gate were inserted in the database. Paid-deal and failed-payment paths have no live browser run. |
+| COPS-02 | Usage tab built 2026-10-16 (first login, milestones with evidence, credits used, balance); Success stays a placeholder until COPS-11. The two 360 endpoints are kept on purpose (COPS-02 audit, decision 5). Not re-checked: kanban 409 inline messages, account merge. |
+| COPS-03 | Live browser run 2026-10-16 (real user, local API, Razorpay test payment links, signed webhooks): paid and failed both show on the account without a reload; a replayed paid event changes nothing; the gate override (with reason) fired and provisioning took 5.9 s. Found and fixed: Account 360 deals printed every amount in dollars. |
 | COPS-04 | Fixed here: the dialog said "Invitation sent" when the invite email had failed. The frontend message for that fix was type-checked, not opened in a browser. |
-| COPS-05 | Fixed here: a failed first onboarding email could not be sent again from the UI. Still open: calendar integration shows "not tracked" (no calendar connection model); delivery/open/click tracking was not exercised live (no provider webhook locally); questions Q1 to Q5 in the COPS-05 audit. The signal-trigger playbooks (no login 24h, no activity 72h, trial ending) were not exercised live. |
+| COPS-05 | Fixed here: a failed first onboarding email could not be sent again from the UI. Calendar integration now reads `calendar_connections` (fixed 2026-10-16). Live run 2026-10-16: Svix-signed delivered and opened events update the email (a repeat is unchanged, a bad signature 401); the no-login-24h playbook raised one task, shown in Next actions and the Follow-up queue, and a second pass added none. Found and fixed: the evaluator only ever read the oldest 200 open instances, so with more than 200 open onboardings the rest were never evaluated. Still open: questions Q1 to Q5 in the COPS-05 audit; a real email provider was not used (the local SMTP login fails, and the failed send is shown). |
 | COPS-06 | PRs open, not merged. Create ticket from an onboarding blocker was run live without a blocker present, so the blocker prefill was only covered by tests. SLA, incident linking and release tracking are COPS-12 by design. |
 | COPS-07 | See section 7. All frontend work is open. "Five golden paths green in CI", "dashboards live" and "pilot sign-off" cannot be closed by code alone (section 6). |
 
 Cross-cutting, from the Definition of Done:
 
-- **Analytics instrumentation**: added on the frontend for COPS-03 to COPS-06 actions; none yet for COPS-07.
-- **Runbooks**: platform, onboarding, and payments/credits/provisioning now exist. No runbook yet for tickets.
+- **Analytics instrumentation**: added on the frontend for COPS-03 to COPS-07 actions (COPS-07: config save and rollback, retention runs, notification routes, activation definitions and gate policy).
+- **Runbooks**: platform, onboarding, payments/credits/provisioning and tickets (`docs/runbooks/cops-tickets.md`, added 2026-10-16) exist.
 - **e2e**: per-ticket Playwright specs use a mocked API. The frontend suite as a whole is red on `develop` (older specs).
 - **Local email**: SES credentials in the local `.env` are rejected (`535`), so every email path was tested against a local catcher, not a real provider.
 

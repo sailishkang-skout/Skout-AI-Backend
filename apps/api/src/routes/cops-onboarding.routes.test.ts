@@ -163,16 +163,24 @@ maybe("COPS-05 onboarding email routes", () => {
     expect(data.integrations).toEqual([
       { key: "crm", status: "not_connected", detail: null },
       { key: "email", status: "not_connected", detail: null },
-      { key: "calendar", status: "not_available", detail: "Calendar connections are not tracked yet" },
+      { key: "calendar", status: "not_connected", detail: null },
     ]);
     const [prov] = await sql`select provisioned_workspace_id as id from cops_provisionings where account_id = ${accountId}`;
     await sql`insert into inboxes (workspace_id, email_address) values (${prov.id}, ${"sales-" + RUN + "@cust.test"})`;
     await sql`insert into crm_connections (workspace_id, provider, status) values (${prov.id}, 'hubspot', 'connected')`;
+    const [calUser] = await sql`insert into users (email) values (${"cal-" + RUN + "@cust.test"}) returning id`;
+    await sql`insert into calendar_connections (workspace_id, user_id, connected_email, oauth_access_token_encrypted, oauth_refresh_token_encrypted)
+      values (${prov.id}, ${calUser.id}, ${"cal-" + RUN + "@cust.test"}, 'enc', 'enc-refresh')`;
     const again = (await call("GET", `/accounts/${accountId}/onboarding`)).json().data.integrations;
-    expect(again.slice(0, 2)).toEqual([
+    expect(again).toEqual([
       { key: "crm", status: "connected", detail: "hubspot" },
       { key: "email", status: "connected", detail: `sales-${RUN}@cust.test` },
+      { key: "calendar", status: "connected", detail: `cal-${RUN}@cust.test` },
     ]);
+    // An expired token with no refresh token cannot sync: error, so CS can ask for a reconnect.
+    await sql`update calendar_connections set oauth_refresh_token_encrypted = null, oauth_token_expires_at = now() - interval '1 day' where workspace_id = ${prov.id}`;
+    const dead = (await call("GET", `/accounts/${accountId}/onboarding`)).json().data.integrations;
+    expect(dead[2]).toEqual({ key: "calendar", status: "error", detail: `cal-${RUN}@cust.test needs reconnecting` });
 
     const path = `/accounts/${accountId}/activation/milestones`;
     expect((await call("POST", `${path}/success_review/complete`, {})).statusCode).toBe(422);

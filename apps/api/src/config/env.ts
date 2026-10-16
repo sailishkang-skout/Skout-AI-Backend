@@ -484,6 +484,8 @@ const envSchema = z
     // --- §8.12 CRM sync checkpoint + push-back (ADI-10). ---
     /** How often the outbound-write worker drains pending crm_outbound_writes rows. */
     CRM_OUTBOUND_WRITE_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(5),
+    /** COPS-09: how often the poll worker looks for CRM connections whose poll interval has passed. */
+    CRM_SYNC_POLL_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().max(59).default(5),
   })
   .transform((data) => {
     let next = data;

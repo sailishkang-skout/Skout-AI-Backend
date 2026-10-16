@@ -122,47 +122,40 @@ export async function hubspotRoutes(app: FastifyInstance) {
   });
 
   /**
-   * §8.12 — HubSpot webhook receiver. Verifies X-HubSpot-Signature, then triggers a bounded
-   * native sync for the workspace identified by query `workspaceId` (configured in HubSpot
-   * subscription URL). Public — signature is the auth.
+   * §8.12 / COPS-09 — HubSpot webhook receiver. Public: the signature is the auth (v3 when HubSpot
+   * sends it, else v1). The workspace is found from each event's portalId, never from the URL,
+   * and each event runs once. Then one bounded native sync per workspace with new events.
    */
   app.post("/crm/hubspot/webhook", async (request, reply) => {
     if (!app.db) return reply.status(503).send(errorResponse("Database unavailable", 503));
     const secret = app.config.HUBSPOT_CLIENT_SECRET;
     if (!secret) return reply.status(503).send(errorResponse("hubspot_not_configured", 503));
 
-    const { verifyHubSpotWebhookSignature } = await import("../services/hubspot.client.js");
+    const { acceptHubSpotWebhookEvents, verifyHubSpotWebhook } = await import("../services/crm-hubspot-webhook.service.js");
     const raw =
-      typeof request.body === "string"
-        ? request.body
-        : Buffer.isBuffer(request.body)
-          ? request.body.toString("utf8")
-          : JSON.stringify(request.body ?? {});
-    const sig = request.headers["x-hubspot-signature"] as string | undefined;
-    if (!verifyHubSpotWebhookSignature(secret, raw, sig)) {
-      return reply.status(401).send(errorResponse("invalid_signature", 401));
-    }
+      request.rawBody ??
+      (typeof request.body === "string" ? request.body : Buffer.isBuffer(request.body) ? request.body.toString("utf8") : JSON.stringify(request.body ?? {}));
+    const publicBase = app.config.API_PUBLIC_URL?.replace(/\/$/, "");
+    const verified = verifyHubSpotWebhook(secret, {
+      method: request.method,
+      uri: publicBase ? `${publicBase}${request.url}` : null,
+      rawBody: raw,
+      headers: request.headers,
+    });
+    if (!verified) return reply.status(401).send(errorResponse("invalid_signature", 401));
 
-    const workspaceId =
-      (request.query as { workspaceId?: string }).workspaceId ??
-      (Array.isArray(request.body)
-        ? undefined
-        : (request.body as { workspaceId?: string } | undefined)?.workspaceId);
-    if (!workspaceId) {
-      // HubSpot subscription validation / empty payloads
-      return reply.send({ ok: true, skipped: "no_workspace" });
+    const outcome = await acceptHubSpotWebhookEvents(app.db, raw);
+    let synced = 0;
+    for (const workspaceId of outcome.workspaces) {
+      try {
+        await syncHubSpotNativeOrThrow(app.db, app.config, workspaceId, { maxContacts: 50, maxDeals: 50 });
+        synced += 1;
+      } catch (err) {
+        // The event is recorded; the next sync pulls from the checkpoint, so nothing is lost.
+        app.log.warn({ err, workspaceId }, "HubSpot webhook sync failed");
+      }
     }
-
-    try {
-      const result = await syncHubSpotNativeOrThrow(app.db, app.config, workspaceId, {
-        maxContacts: 50,
-        maxDeals: 50,
-      });
-      return reply.send({ ok: true, data: result });
-    } catch (err) {
-      app.log.warn({ err }, "HubSpot webhook sync failed");
-      return reply.send({ ok: true, deferred: true });
-    }
+    return reply.send({ ok: true, events: outcome.events, duplicates: outcome.duplicates, unmatched: outcome.unmatched, synced });
   });
 
   /** ADI-18 (§8.12) — checkpoint health per entity type + recent push-back writes (including
