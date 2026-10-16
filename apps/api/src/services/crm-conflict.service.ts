@@ -1,3 +1,11 @@
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md (COPS-09 additions).
+ *   - Tables touched directly: contacts, deals - read and update on manual/policy conflict resolution (owned by apps/crm)
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: applies CRM conflict resolution decisions directly to canonical records within the same transaction.
+ *   - Review date: 2026-10-16
+ */
 import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, scopedTo } from "@skout/db";

@@ -324,7 +324,7 @@ export async function detectSchemaDrift(
         title,
         body,
         entityType: "crm_connection",
-        entityId: null,
+        entityId: undefined,
       });
 
       const admins = await getCopsNotificationRecipients(db, workspaceId, ["admin", "owner"]);
@@ -336,7 +336,7 @@ export async function detectSchemaDrift(
           title,
           body,
           entityType: "crm_connection",
-          entityId: null,
+          entityId: undefined,
         }).catch((err) => {
           log.warn("Failed creating user notification for schema drift", { err, adminId });
         });
