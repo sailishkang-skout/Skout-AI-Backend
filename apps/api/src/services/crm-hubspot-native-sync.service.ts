@@ -16,8 +16,9 @@ import { hubSpotContactToSnapshot } from "./crm.service.js";
 import { recordEvidence } from "./evidence.service.js";
 import { getHubSpotConnectionId, upsertCrmNativeLink, withSyncCheckpoint } from "./crm-sync-state.service.js";
 import { ensureHubSpotPortalId } from "./crm-hubspot-webhook.service.js";
-import { applyInboundMapping, getResolvedCrmMapping } from "./crm-mapping.service.js";
-import { evaluateFieldConflict, recordCrmConflict } from "./crm-conflict.service.js";
+import { applyInboundMapping, getResolvedCrmMapping, type CrmObjectMapping } from "./crm-mapping.service.js";
+import { evaluateFieldConflict, getPendingConflictFields, isProtectedField, recordCrmConflict } from "./crm-conflict.service.js";
+import { getCrmSyncScope, isCompanyInScope, type CrmSyncScope } from "./crm-opt-in.service.js";
 
 const log = createLogger("crm-hubspot-native-sync");
 const { contacts, companies, deals, pipelines, pipelineStages } = schema;
@@ -27,6 +28,74 @@ export interface HubSpotNativeSyncResult {
   created: number;
   updated: number;
   skipped: number;
+}
+
+const asText = (v: unknown): string | null => (v == null ? null : v instanceof Date ? v.toISOString() : String(v));
+
+/**
+ * COPS-09: which fields of an incoming provider patch may overwrite an existing Skout record.
+ * Per field: a pending conflict blocks it (the open conflict is refreshed with the newest provider
+ * value); a blank value the mapping says to overwrite clears the field unless Skout wins;
+ * otherwise the field's conflict policy decides, and manual review queues a conflict.
+ */
+async function conflictCheckedPatch(
+  db: Db,
+  ctx: {
+    workspaceId: string;
+    connectionId: string;
+    entityType: "contact" | "deal";
+    existing: Record<string, unknown> & { id: string; updatedAt: Date | null };
+    externalId: string;
+    modifiedAt: Date | null;
+    mapping: CrmObjectMapping | null;
+    patch: Record<string, unknown>;
+  }
+): Promise<Record<string, unknown>> {
+  const pending = await getPendingConflictFields(db, ctx.workspaceId, ctx.connectionId, ctx.entityType, ctx.existing.id);
+  const eligible: Record<string, unknown> = {};
+  for (const [field, val] of Object.entries(ctx.patch)) {
+    const fieldMapping = ctx.mapping?.fields.find((f) => f.internalField === field);
+    const policy = fieldMapping?.conflictPolicy ?? "most_recent";
+    const skoutValue = ctx.existing[field];
+    const conflict = {
+      workspaceId: ctx.workspaceId,
+      connectionId: ctx.connectionId,
+      entityType: ctx.entityType,
+      entityId: ctx.existing.id,
+      externalId: ctx.externalId,
+      fieldName: field,
+      skoutValue: asText(skoutValue),
+      externalValue: asText(val),
+      skoutUpdatedAt: ctx.existing.updatedAt,
+      externalUpdatedAt: ctx.modifiedAt,
+      policy: "manual_review" as const,
+    };
+
+    if (pending.has(field)) {
+      await recordCrmConflict(db, conflict).catch((err) => log.warn("Failed refreshing CRM sync conflict", { err, field }));
+      continue;
+    }
+    if (val === null) {
+      if (skoutValue != null && policy !== "skout_wins" && !fieldMapping?.isProtected && !isProtectedField(field)) eligible[field] = null;
+      continue;
+    }
+
+    const decision = evaluateFieldConflict({
+      fieldName: field,
+      skoutValue,
+      externalValue: val,
+      skoutUpdatedAt: ctx.existing.updatedAt,
+      externalUpdatedAt: ctx.modifiedAt,
+      policy,
+      isFieldProtected: fieldMapping?.isProtected,
+    });
+    if (decision.action === "apply_external") {
+      eligible[field] = val;
+    } else if (decision.action === "manual_review") {
+      await recordCrmConflict(db, conflict).catch((err) => log.warn("Failed recording CRM sync conflict", { err, field }));
+    }
+  }
+  return eligible;
 }
 
 async function findOrCreateCompany(
@@ -66,7 +135,8 @@ export async function syncHubSpotContactsToNativeCrm(
   db: Db,
   config: Env,
   workspaceId: string,
-  maxContacts = 200
+  maxContacts = 200,
+  scope: CrmSyncScope | null = null
 ): Promise<HubSpotNativeSyncResult> {
   const credentialsStore = createDefaultCredentialsStore(config);
   const tokens = await ensureFreshTokens(db, config, credentialsStore, workspaceId);
@@ -103,10 +173,6 @@ export async function syncHubSpotContactsToNativeCrm(
       }
       const email = String(patch.email).trim().toLowerCase();
 
-      const companyId = snap?.companyName
-        ? await findOrCreateCompany(db, workspaceId, snap.companyName, snap.companyDomain ?? null)
-        : null;
-
       if (!patch.title && snap?.title) patch.title = snap.title;
       if (!patch.phone && snap?.phone) patch.phone = snap.phone;
       if (!patch.firstName && snap?.fullName) {
@@ -120,6 +186,17 @@ export async function syncHubSpotContactsToNativeCrm(
         .from(contacts)
         .where(scopedTo(contacts, workspaceId, eq(contacts.email, email), isNull(contacts.deletedAt)))
         .limit(1);
+
+      // ADR 0014 account scope: with a limited scope, only contacts of in-scope accounts sync, and
+      // no new records are created.
+      if (scope && !isCompanyInScope(scope, existing ? existing.companyId : undefined)) {
+        skipped++;
+        continue;
+      }
+
+      const companyId = snap?.companyName
+        ? await findOrCreateCompany(db, workspaceId, snap.companyName, snap.companyDomain ?? null)
+        : null;
 
       let skoutContactId: string | undefined = existing?.id;
 
@@ -166,37 +243,16 @@ export async function syncHubSpotContactsToNativeCrm(
           }
         }
       } else {
-        const eligiblePatch: Record<string, unknown> = {};
-        for (const [field, val] of Object.entries(patch)) {
-          const fieldMapping = contactMapping?.fields.find((f) => f.internalField === field);
-          const decision = evaluateFieldConflict({
-            fieldName: field,
-            skoutValue: (existing as Record<string, unknown>)[field],
-            externalValue: val,
-            skoutUpdatedAt: existing.updatedAt,
-            externalUpdatedAt: modifiedAt,
-            policy: fieldMapping?.conflictPolicy ?? "most_recent",
-            isFieldProtected: fieldMapping?.isProtected,
-          });
-
-          if (decision.action === "apply_external") {
-            eligiblePatch[field] = val;
-          } else if (decision.action === "manual_review") {
-            await recordCrmConflict(db, {
-              workspaceId,
-              connectionId,
-              entityType: "contact",
-              entityId: existing.id,
-              externalId: hsContact.id,
-              fieldName: field,
-              skoutValue: (existing as Record<string, unknown>)[field] != null ? String((existing as Record<string, unknown>)[field]) : null,
-              externalValue: String(val),
-              skoutUpdatedAt: existing.updatedAt,
-              externalUpdatedAt: modifiedAt,
-              policy: "manual_review",
-            }).catch((err) => log.warn("Failed recording contact sync conflict", { err }));
-          }
-        }
+        const eligiblePatch = await conflictCheckedPatch(db, {
+          workspaceId,
+          connectionId,
+          entityType: "contact",
+          existing: existing as unknown as Record<string, unknown> & { id: string; updatedAt: Date | null },
+          externalId: hsContact.id,
+          modifiedAt,
+          mapping: contactMapping,
+          patch,
+        });
 
         const existingSources = asFieldSourcesMap(existing.fieldSources);
         const evidenceByAttribute = await getLatestEvidenceByAttribute(db, workspaceId, "contact", existing.id);
@@ -266,7 +322,8 @@ export async function syncHubSpotDealsToNativeCrm(
   db: Db,
   config: Env,
   workspaceId: string,
-  maxDeals = 200
+  maxDeals = 200,
+  scope: CrmSyncScope | null = null
 ): Promise<HubSpotDealSyncResult> {
   const credentialsStore = createDefaultCredentialsStore(config);
   const tokens = await ensureFreshTokens(db, config, credentialsStore, workspaceId);
@@ -324,6 +381,11 @@ export async function syncHubSpotDealsToNativeCrm(
         .where(scopedTo(deals, workspaceId, eq(deals.name, name), isNull(deals.deletedAt)))
         .limit(1);
 
+      if (scope && !isCompanyInScope(scope, existing ? existing.companyId : undefined)) {
+        skipped++;
+        continue;
+      }
+
       let skoutDealId: string | undefined = existing?.id;
 
       if (!existing) {
@@ -341,37 +403,16 @@ export async function syncHubSpotDealsToNativeCrm(
         created++;
         skoutDealId = row?.id;
       } else {
-        const eligiblePatch: Record<string, unknown> = {};
-        for (const [field, val] of Object.entries(patch)) {
-          const fieldMapping = dealMapping?.fields.find((f) => f.internalField === field);
-          const decision = evaluateFieldConflict({
-            fieldName: field,
-            skoutValue: (existing as Record<string, unknown>)[field],
-            externalValue: val,
-            skoutUpdatedAt: existing.updatedAt,
-            externalUpdatedAt: modifiedAt,
-            policy: fieldMapping?.conflictPolicy ?? "manual_review",
-            isFieldProtected: fieldMapping?.isProtected,
-          });
-
-          if (decision.action === "apply_external") {
-            eligiblePatch[field] = val;
-          } else if (decision.action === "manual_review") {
-            await recordCrmConflict(db, {
-              workspaceId,
-              connectionId,
-              entityType: "deal",
-              entityId: existing.id,
-              externalId: hs.id,
-              fieldName: field,
-              skoutValue: (existing as Record<string, unknown>)[field] != null ? String((existing as Record<string, unknown>)[field]) : null,
-              externalValue: String(val),
-              skoutUpdatedAt: existing.updatedAt,
-              externalUpdatedAt: modifiedAt,
-              policy: "manual_review",
-            }).catch((err) => log.warn("Failed recording deal sync conflict", { err }));
-          }
-        }
+        const eligiblePatch = await conflictCheckedPatch(db, {
+          workspaceId,
+          connectionId,
+          entityType: "deal",
+          existing: existing as unknown as Record<string, unknown> & { id: string; updatedAt: Date | null },
+          externalId: hs.id,
+          modifiedAt,
+          mapping: dealMapping,
+          patch,
+        });
 
         const existingSources = asFieldSourcesMap(existing.fieldSources);
         const evidenceByAttribute = await getLatestEvidenceByAttribute(db, workspaceId, "deal", existing.id);
@@ -426,11 +467,16 @@ export async function syncHubSpotNativeOrThrow(
   if (!config.HUBSPOT_CLIENT_ID || !config.HUBSPOT_CLIENT_SECRET) {
     throw new HttpError("hubspot_not_configured", 503);
   }
-  const contactsResult = await syncHubSpotContactsToNativeCrm(db, config, workspaceId, opts?.maxContacts);
+  // ADR 0014: nothing syncs until an admin turns sync on for the connection.
+  const scope = await getCrmSyncScope(db, workspaceId, "hubspot");
+  if (!scope?.enabled) throw new HttpError("crm_sync_not_enabled", 409);
+  const contactsResult = scope.contacts
+    ? await syncHubSpotContactsToNativeCrm(db, config, workspaceId, opts?.maxContacts, scope)
+    : { pulled: 0, created: 0, updated: 0, skipped: 0 };
   let dealsResult: HubSpotDealSyncResult | undefined;
-  if (opts?.includeDeals !== false) {
+  if (opts?.includeDeals !== false && scope.deals) {
     try {
-      dealsResult = await syncHubSpotDealsToNativeCrm(db, config, workspaceId, opts?.maxDeals);
+      dealsResult = await syncHubSpotDealsToNativeCrm(db, config, workspaceId, opts?.maxDeals, scope);
     } catch (err) {
       log.warn("HubSpot deal sync failed (contacts still applied) — check deals.read scope", { err });
     }

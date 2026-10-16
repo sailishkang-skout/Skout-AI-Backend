@@ -3,6 +3,7 @@ import type { Db } from "@skout/db";
 import { schema, scopedTo } from "@skout/db";
 import { buildIdempotencyKey, crmSyncOwnedPatch, type CrmSyncEntityType } from "@skout/shared";
 import { createLogger } from "@skout/observability";
+import { isCrmSyncOptedIn } from "./crm-opt-in.service.js";
 
 const log = createLogger("crm-outbound-sync");
 const { crmConnections, crmNativeLinks, crmOutboundWrites } = schema;
@@ -31,11 +32,12 @@ export async function queueCrmOutboundWriteIfOwned(
   if (Object.keys(owned).length === 0) return;
 
   const [connection] = await db
-    .select({ id: crmConnections.id })
+    .select({ id: crmConnections.id, settings: crmConnections.settings })
     .from(crmConnections)
     .where(scopedTo(crmConnections, workspaceId, eq(crmConnections.provider, "hubspot")))
     .limit(1);
-  if (!connection) return;
+  // ADR 0014: nothing is queued for a connection that has sync turned off.
+  if (!connection || !isCrmSyncOptedIn(connection.settings)) return;
 
   const [link] = await db
     .select({ id: crmNativeLinks.id })

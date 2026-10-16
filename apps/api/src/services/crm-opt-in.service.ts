@@ -55,6 +55,40 @@ export function isAccountInScope(settings: unknown, accountId?: string | null): 
   return false;
 }
 
+export interface CrmSyncScope {
+  enabled: boolean;
+  contacts: boolean;
+  deals: boolean;
+  /** Skout company (account) ids, or ["*"] for every account. */
+  accountScope: string[];
+}
+
+/** The opt-in state every sync path checks (ADR 0014); null when there is no connection. */
+export async function getCrmSyncScope(db: Db, workspaceId: string, provider: string): Promise<CrmSyncScope | null> {
+  const [connection] = await db
+    .select({ settings: crmConnections.settings, status: crmConnections.status })
+    .from(crmConnections)
+    .where(scopedTo(crmConnections, workspaceId, eq(crmConnections.provider, provider)))
+    .limit(1);
+  if (!connection) return null;
+  const s = (connection.settings ?? {}) as Record<string, any>;
+  return {
+    enabled: connection.status === "connected" && isCrmSyncOptedIn(s),
+    contacts: s.objectScope?.contacts !== false,
+    deals: s.objectScope?.deals !== false,
+    accountScope: Array.isArray(s.accountScope) && s.accountScope.length > 0 ? (s.accountScope as string[]) : ["*"],
+  };
+}
+
+/**
+ * Whether a record of this account is in scope. With every account in scope, new records (no
+ * account yet) are in scope too; with a limited scope only records of the listed accounts are.
+ */
+export function isCompanyInScope(scope: CrmSyncScope, companyId: string | null | undefined): boolean {
+  if (scope.accountScope.includes("*")) return true;
+  return Boolean(companyId && scope.accountScope.includes(companyId));
+}
+
 /**
  * Retrieves the current opt-in configuration for a CRM connection.
  */
