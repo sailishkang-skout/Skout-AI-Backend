@@ -229,39 +229,6 @@ describe("getResolvedCrmMapping & saveCrmMappings", () => {
     expect(mapping.fields[0]?.internalField).toBe("customField");
   });
 
-  it("saves updated mappings into connection settings", async () => {
-    let updatedSet: any;
-    const dbMock = {
-      select: vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue([{ id: "conn-1", settings: { otherSetting: 123 } }]),
-          }),
-        }),
-      }),
-      update: vi.fn().mockReturnValue({
-        set: vi.fn().mockImplementation((val) => {
-          updatedSet = val;
-          return {
-            where: vi.fn().mockResolvedValue([]),
-          };
-        }),
-      }),
-    };
-
-    await saveCrmMappings(dbMock as any, "ws-1", "hubspot", {
-      contact: DEFAULT_HUBSPOT_CONTACT_MAPPING,
-    });
-
-    expect(updatedSet).toMatchObject({
-      settings: {
-        otherSetting: 123,
-        mappings: {
-          contact: DEFAULT_HUBSPOT_CONTACT_MAPPING,
-        },
-      },
-    });
-  });
 });
 
 

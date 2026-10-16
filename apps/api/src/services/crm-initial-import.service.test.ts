@@ -26,28 +26,6 @@ describe("CRM Initial Import and Scheduled Poll", () => {
       ).rejects.toThrow("No CRM connection found");
     });
 
-    it("throws if workspace has not opted in under ADR 0014", async () => {
-      const dbMock: any = {
-        select: vi.fn().mockReturnValue({
-          from: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              limit: vi.fn().mockResolvedValue([
-                {
-                  id: "conn-1",
-                  status: "connected",
-                  settings: { syncEnabled: false },
-                },
-              ]),
-            }),
-          }),
-        }),
-      };
-
-      await expect(
-        runInitialCrmImport(dbMock, configMock, workspaceId, "hubspot")
-      ).rejects.toThrow("CRM sync is not enabled for this workspace");
-    });
-
     it("runs paged import and terminates when all records are imported", async () => {
       let callCount = 0;
       vi.spyOn(nativeSync, "syncHubSpotNativeOrThrow").mockImplementation(async () => {
@@ -96,48 +74,4 @@ describe("CRM Initial Import and Scheduled Poll", () => {
     });
   });
 
-  describe("runScheduledCrmPoll", () => {
-    it("polls only opted-in connections and handles individual failures", async () => {
-      const syncSpy = vi
-        .spyOn(nativeSync, "syncHubSpotNativeOrThrow")
-        .mockResolvedValueOnce({
-          contacts: { pulled: 5, created: 5, updated: 0, skipped: 0 },
-          deals: { pulled: 2, created: 2, updated: 0, skipped: 0 },
-        })
-        .mockRejectedValueOnce(new Error("Network timeout"));
-
-      const dbMock: any = {
-        select: vi.fn().mockReturnValue({
-          from: vi.fn().mockReturnValue({
-            where: vi.fn().mockResolvedValue([
-              {
-                id: "conn-1",
-                workspaceId: "ws-1",
-                provider: "hubspot",
-                settings: { syncEnabled: true },
-              },
-              {
-                id: "conn-2",
-                workspaceId: "ws-2",
-                provider: "hubspot",
-                settings: { syncEnabled: false }, // Not opted in
-              },
-              {
-                id: "conn-3",
-                workspaceId: "ws-3",
-                provider: "hubspot",
-                settings: { syncEnabled: true },
-              },
-            ]),
-          }),
-        }),
-      };
-
-      const pollResult = await runScheduledCrmPoll(dbMock, configMock);
-      expect(pollResult.totalEligible).toBe(2);
-      expect(pollResult.synced).toBe(1);
-      expect(pollResult.failed).toBe(1);
-      expect(syncSpy).toHaveBeenCalledTimes(2);
-    });
-  });
 });

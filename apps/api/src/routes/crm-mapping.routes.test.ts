@@ -1,7 +1,16 @@
 import Fastify from "fastify";
 import { describe, expect, it, vi } from "vitest";
 import { crmMappingRoutes } from "./crm-mapping.routes.js";
+import * as mappingService from "../services/crm-mapping.service.js";
 import { DEFAULT_HUBSPOT_CONTACT_MAPPING, DEFAULT_HUBSPOT_DEAL_MAPPING } from "../services/crm-mapping.service.js";
+
+// The routes are gated on workspace:manage (Owner, Admin); tests run as an admin unless they say otherwise.
+const permissions = vi.hoisted(() => ({ list: ["workspace:manage"] as string[] }));
+vi.mock("@skout/auth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@skout/auth")>()),
+  getMemberPermissions: vi.fn(async () => permissions.list),
+}));
+
 
 async function createTestApp(dbMock?: any) {
   const app = Fastify();
@@ -9,6 +18,7 @@ async function createTestApp(dbMock?: any) {
   app.decorate("config", {} as any);
   app.addHook("onRequest", async (req: any) => {
     req.workspaceId = "ws-test-123";
+    req.userId = "user-test-456";
   });
   await app.register(crmMappingRoutes);
   return app;
@@ -53,7 +63,7 @@ describe("CRM Mapping Routes", () => {
   });
 
   describe("PUT /crm/:provider/mappings", () => {
-    it("rejects invalid mapping configuration with 400", async () => {
+    it("rejects invalid mapping configuration with 422", async () => {
       const app = await createTestApp({} as any);
       const res = await app.inject({
         method: "PUT",
@@ -67,31 +77,15 @@ describe("CRM Mapping Routes", () => {
         },
       });
 
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(422);
       expect(res.json().message).toBe("Invalid mapping configuration");
     });
 
-    it("updates valid mapping configuration", async () => {
-      let updatedSettings: any;
-      const dbMock = {
-        select: vi.fn().mockReturnValue({
-          from: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              limit: vi.fn().mockResolvedValue([{ id: "conn-1", settings: {} }]),
-            }),
-          }),
-        }),
-        update: vi.fn().mockReturnValue({
-          set: vi.fn().mockImplementation((val) => {
-            updatedSettings = val;
-            return {
-              where: vi.fn().mockResolvedValue([]),
-            };
-          }),
-        }),
-      };
+    it("updates valid mapping configuration, as the acting user", async () => {
+      const save = vi.spyOn(mappingService, "saveCrmMappings").mockResolvedValueOnce();
+      vi.spyOn(mappingService, "getResolvedCrmMapping").mockResolvedValue(DEFAULT_HUBSPOT_CONTACT_MAPPING);
 
-      const app = await createTestApp(dbMock);
+      const app = await createTestApp({} as any);
       const res = await app.inject({
         method: "PUT",
         url: "/crm/hubspot/mappings",
@@ -102,6 +96,23 @@ describe("CRM Mapping Routes", () => {
 
       expect(res.statusCode).toBe(200);
       expect(res.json().ok).toBe(true);
+      expect(save).toHaveBeenCalledWith(expect.anything(), "ws-test-123", "hubspot", { contact: DEFAULT_HUBSPOT_CONTACT_MAPPING }, "user-test-456");
+    });
+
+    it("refuses a mapping onto a field the sync does not own", async () => {
+      const app = await createTestApp({} as any);
+      const res = await app.inject({
+        method: "PUT",
+        url: "/crm/hubspot/mappings",
+        payload: {
+          contact: {
+            ...DEFAULT_HUBSPOT_CONTACT_MAPPING,
+            fields: [{ id: "x", internalField: "workspaceId", externalField: "email", direction: "inbound" }],
+          },
+        },
+      });
+      expect(res.statusCode).toBe(422);
+      expect(JSON.stringify(res.json())).toContain("workspaceId cannot be synced");
     });
   });
 
@@ -175,5 +186,15 @@ describe("CRM Mapping Routes", () => {
       expect(res.statusCode).toBe(400);
     });
   });
-});
 
+  it("refuses a member without workspace:manage (403)", async () => {
+    permissions.list = ["crm:manage"];
+    try {
+      const app = await createTestApp({} as any);
+      const res = await app.inject({ method: "GET", url: "/crm/hubspot/mappings" });
+      expect(res.statusCode).toBe(403);
+    } finally {
+      permissions.list = ["workspace:manage"];
+    }
+  });
+});

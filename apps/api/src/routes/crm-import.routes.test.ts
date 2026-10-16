@@ -1,9 +1,18 @@
 import Fastify from "fastify";
+import { HttpError } from "@skout/auth";
 import { describe, expect, it, vi } from "vitest";
 import { crmImportRoutes } from "./crm-import.routes.js";
 import * as optInService from "../services/crm-opt-in.service.js";
 import * as importService from "../services/crm-initial-import.service.js";
 import * as nativeSync from "../services/crm-hubspot-native-sync.service.js";
+
+// The routes are gated on workspace:manage (Owner, Admin); tests run as an admin unless they say otherwise.
+const permissions = vi.hoisted(() => ({ list: ["workspace:manage"] as string[] }));
+vi.mock("@skout/auth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@skout/auth")>()),
+  getMemberPermissions: vi.fn(async () => permissions.list),
+}));
+
 
 async function createTestApp(dbMock?: any) {
   const app = Fastify();
@@ -58,7 +67,7 @@ describe("CRM Import and Opt-In Routes", () => {
     it("updates opt-in settings", async () => {
       vi.spyOn(optInService, "updateCrmSyncOptIn").mockResolvedValueOnce({
         syncEnabled: true,
-        accountScope: ["acc-123"],
+        accountScope: ["8f6b7a52-3c1d-4f7e-9a2b-1c2d3e4f5a6b"],
         objectScope: { contacts: true, deals: false },
         pollIntervalMinutes: 15,
       });
@@ -69,7 +78,7 @@ describe("CRM Import and Opt-In Routes", () => {
         url: "/crm/hubspot/opt-in",
         payload: {
           syncEnabled: true,
-          accountScope: ["acc-123"],
+          accountScope: ["8f6b7a52-3c1d-4f7e-9a2b-1c2d3e4f5a6b"],
           objectScope: { contacts: true, deals: false },
           pollIntervalMinutes: 15,
         },
@@ -78,14 +87,14 @@ describe("CRM Import and Opt-In Routes", () => {
       expect(res.statusCode).toBe(200);
       expect(res.json().ok).toBe(true);
       expect(res.json().data.syncEnabled).toBe(true);
-      expect(res.json().data.accountScope).toEqual(["acc-123"]);
+      expect(res.json().data.accountScope).toEqual(["8f6b7a52-3c1d-4f7e-9a2b-1c2d3e4f5a6b"]);
     });
   });
 
   describe("POST /crm/:provider/import", () => {
-    it("returns 403 when workspace has not opted into sync", async () => {
+    it("returns 409 when workspace has not opted into sync", async () => {
       vi.spyOn(importService, "runInitialCrmImport").mockRejectedValueOnce(
-        new Error("CRM sync is not enabled for this workspace. Opt-in is required under ADR 0014.")
+        new HttpError("crm_sync_not_enabled", 409)
       );
 
       const app = await createTestApp({} as any);
@@ -95,8 +104,8 @@ describe("CRM Import and Opt-In Routes", () => {
         payload: {},
       });
 
-      expect(res.statusCode).toBe(403);
-      expect(res.json().message).toContain("not enabled");
+      expect(res.statusCode).toBe(409);
+      expect(res.json().message).toBe("crm_sync_not_enabled");
     });
 
     it("runs initial import successfully", async () => {
@@ -141,5 +150,16 @@ describe("CRM Import and Opt-In Routes", () => {
       expect(res.json().ok).toBe(true);
       expect(res.json().data.contacts.pulled).toBe(5);
     });
+  });
+
+  it("refuses a member without workspace:manage (403)", async () => {
+    permissions.list = ["crm:manage"];
+    try {
+      const app = await createTestApp({} as any);
+      const res = await app.inject({ method: "GET", url: "/crm/hubspot/opt-in" });
+      expect(res.statusCode).toBe(403);
+    } finally {
+      permissions.list = ["workspace:manage"];
+    }
   });
 });

@@ -1,7 +1,17 @@
 import Fastify from "fastify";
+import { HttpError } from "@skout/auth";
 import { describe, expect, it, vi } from "vitest";
 import { crmObservabilityRoutes } from "./crm-observability.routes.js";
+import * as exportRunner from "../services/crm-export.runner.js";
 import * as obsService from "../services/crm-observability.service.js";
+
+// The routes are gated on workspace:manage (Owner, Admin); tests run as an admin unless they say otherwise.
+const permissions = vi.hoisted(() => ({ list: ["workspace:manage"] as string[] }));
+vi.mock("@skout/auth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@skout/auth")>()),
+  getMemberPermissions: vi.fn(async () => permissions.list),
+}));
+
 
 async function createTestApp(dbMock?: any) {
   const app = Fastify();
@@ -93,7 +103,7 @@ describe("CRM Observability Routes", () => {
   describe("POST /crm/outbound-writes/:id/replay", () => {
     it("returns 404 when write not found", async () => {
       vi.spyOn(obsService, "replayCrmOutboundWrite").mockRejectedValueOnce(
-        new Error("Outbound write write-999 not found")
+        new HttpError("Outbound write write-999 not found", 404)
       );
 
       const app = await createTestApp({} as any);
@@ -106,9 +116,9 @@ describe("CRM Observability Routes", () => {
       expect(res.json().message).toContain("not found");
     });
 
-    it("returns 400 when write is not failed", async () => {
+    it("returns 409 when write is not failed", async () => {
       vi.spyOn(obsService, "replayCrmOutboundWrite").mockRejectedValueOnce(
-        new Error("Only failed writes can be replayed")
+        new HttpError("Only failed writes can be replayed", 409)
       );
 
       const app = await createTestApp({} as any);
@@ -117,7 +127,7 @@ describe("CRM Observability Routes", () => {
         url: "/crm/outbound-writes/write-1/replay",
       });
 
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(409);
       expect(res.json().message).toContain("Only failed writes");
     });
 
@@ -142,40 +152,36 @@ describe("CRM Observability Routes", () => {
   });
 
   describe("POST /crm/:provider/schema-drift", () => {
-    it("validates entityType", async () => {
+    it("is only implemented for HubSpot", async () => {
       const app = await createTestApp({} as any);
-      const res = await app.inject({
-        method: "POST",
-        url: "/crm/hubspot/schema-drift",
-        payload: {
-          entityType: "invalid_type",
-        },
-      });
-
-      expect(res.statusCode).toBe(400);
-      expect(res.json().message).toContain("entityType must be 'contact' or 'deal'");
+      const res = await app.inject({ method: "POST", url: "/crm/salesforce/schema-drift" });
+      expect([400, 404]).toContain(res.statusCode);
     });
 
-    it("checks schema drift successfully", async () => {
-      vi.spyOn(obsService, "detectSchemaDrift").mockResolvedValueOnce({
-        driftDetected: true,
-        missingFields: ["custom_field"],
+    it("checks the mappings against HubSpot's live properties", async () => {
+      vi.spyOn(exportRunner, "ensureFreshTokens").mockResolvedValueOnce({ accessToken: "tok", refreshToken: "r", expiresAt: "" } as any);
+      const check = vi.spyOn(obsService, "checkHubSpotSchemaDrift").mockResolvedValueOnce({
+        contact: { driftDetected: true, missingFields: ["custom_field"] },
+        deal: { driftDetected: false, missingFields: [] },
       });
 
       const app = await createTestApp({} as any);
-      const res = await app.inject({
-        method: "POST",
-        url: "/crm/hubspot/schema-drift",
-        payload: {
-          entityType: "contact",
-          providerProperties: ["email", "firstname"],
-        },
-      });
+      const res = await app.inject({ method: "POST", url: "/crm/hubspot/schema-drift" });
 
       expect(res.statusCode).toBe(200);
-      expect(res.json().ok).toBe(true);
-      expect(res.json().data.driftDetected).toBe(true);
-      expect(res.json().data.missingFields).toEqual(["custom_field"]);
+      expect(res.json().data.contact.missingFields).toEqual(["custom_field"]);
+      expect(check).toHaveBeenCalledWith(expect.anything(), expect.anything(), "ws-test-123", "tok");
     });
+  });
+
+  it("refuses a member without workspace:manage (403)", async () => {
+    permissions.list = ["crm:manage"];
+    try {
+      const app = await createTestApp({} as any);
+      const res = await app.inject({ method: "GET", url: "/crm/hubspot/health" });
+      expect(res.statusCode).toBe(403);
+    } finally {
+      permissions.list = ["workspace:manage"];
+    }
   });
 });

@@ -1,7 +1,16 @@
 import Fastify from "fastify";
+import { HttpError } from "@skout/auth";
 import { describe, expect, it, vi } from "vitest";
 import { crmConflictRoutes } from "./crm-conflict.routes.js";
 import * as conflictService from "../services/crm-conflict.service.js";
+
+// The routes are gated on workspace:manage (Owner, Admin); tests run as an admin unless they say otherwise.
+const permissions = vi.hoisted(() => ({ list: ["workspace:manage"] as string[] }));
+vi.mock("@skout/auth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@skout/auth")>()),
+  getMemberPermissions: vi.fn(async () => permissions.list),
+}));
+
 
 async function createTestApp(dbMock?: any) {
   const app = Fastify();
@@ -87,7 +96,7 @@ describe("CRM Conflict Routes", () => {
 
     it("returns 404 when conflict is not found", async () => {
       vi.spyOn(conflictService, "resolveCrmConflict").mockRejectedValueOnce(
-        new Error("Conflict conf-999 not found")
+        new HttpError("Conflict conf-999 not found", 404)
       );
 
       const app = await createTestApp({} as any);
@@ -133,5 +142,16 @@ describe("CRM Conflict Routes", () => {
         })
       );
     });
+  });
+
+  it("refuses a member without workspace:manage (403)", async () => {
+    permissions.list = ["crm:manage"];
+    try {
+      const app = await createTestApp({} as any);
+      const res = await app.inject({ method: "GET", url: "/crm/conflicts" });
+      expect(res.statusCode).toBe(403);
+    } finally {
+      permissions.list = ["workspace:manage"];
+    }
   });
 });
