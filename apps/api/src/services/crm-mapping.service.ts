@@ -1,10 +1,20 @@
 import { eq } from "drizzle-orm";
 import { schema, scopedTo, type Db } from "@skout/db";
+import { CRM_SYNC_OWNED_FIELDS } from "@skout/shared";
+import { isProtectedField } from "./crm-conflict.service.js";
 
-const { crmConnections } = schema;
+const { crmConnections, auditLogs } = schema;
+
+/** Earlier mapping versions kept on the connection, newest first. */
+const MAPPING_HISTORY_LIMIT = 20;
 
 export type CrmSyncDirection = "inbound" | "outbound" | "bidirectional";
-export type CrmTransformType = "none" | "trim" | "lowercase" | "uppercase" | "split_name" | "number";
+export type CrmTransformType = "none" | "trim" | "lowercase" | "uppercase" | "number";
+const DIRECTIONS: readonly CrmSyncDirection[] = ["inbound", "outbound", "bidirectional"];
+const TRANSFORMS: readonly CrmTransformType[] = ["none", "trim", "lowercase", "uppercase", "number"];
+const NULL_BEHAVIORS: readonly CrmNullBehavior[] = ["preserve", "ignore", "overwrite"];
+const CONFLICT_POLICIES: readonly CrmConflictPolicy[] = ["skout_wins", "external_wins", "most_recent", "manual_review"];
+/** A blank provider value: "overwrite" clears the Skout field; "preserve" and "ignore" keep it. */
 export type CrmNullBehavior = "preserve" | "ignore" | "overwrite";
 export type CrmConflictPolicy = "skout_wins" | "external_wins" | "most_recent" | "manual_review";
 
@@ -120,16 +130,8 @@ export const DEFAULT_HUBSPOT_DEAL_MAPPING: CrmObjectMapping = {
       conflictPolicy: "manual_review",
       isProtected: false,
     },
-    {
-      id: "deal_stage",
-      internalField: "stageId",
-      externalField: "dealstage",
-      direction: "inbound",
-      transform: "none",
-      nullBehavior: "ignore",
-      conflictPolicy: "manual_review",
-      isProtected: false,
-    },
+    // No stage mapping: HubSpot's dealstage is a HubSpot stage id, Skout's stageId a uuid of its
+    // own pipeline; mapping one to the other needs a stage lookup table (open question for COPS-09).
   ],
 };
 
@@ -201,11 +203,11 @@ export function applyInboundMapping(
     const isBlank = rawValue == null || (typeof rawValue === "string" && rawValue.trim() === "");
 
     if (isBlank) {
-      if (field.nullBehavior === "overwrite" || field.nullBehavior === "preserve") {
+      if (field.nullBehavior === "overwrite") {
         patch[field.internalField] = null;
         appliedFields.push(field.internalField);
       } else {
-        // nullBehavior === "ignore" (default)
+        // "preserve" and "ignore" (the default) keep the Skout value.
         skippedFields.push(field.internalField);
       }
       continue;
@@ -271,7 +273,8 @@ export interface MappingValidationResult {
 
 export function validateMapping(
   mapping: CrmObjectMapping,
-  availableExternalProperties?: string[]
+  availableExternalProperties?: string[],
+  expectedEntityType?: "contact" | "deal"
 ): MappingValidationResult {
   const errors: string[] = [];
   const missingExternalProperties: string[] = [];
@@ -282,7 +285,13 @@ export function validateMapping(
 
   if (!mapping.entityType || !["contact", "deal"].includes(mapping.entityType)) {
     errors.push(`Invalid entityType: ${mapping.entityType}`);
+  } else if (expectedEntityType && mapping.entityType !== expectedEntityType) {
+    errors.push(`Mapping entityType ${mapping.entityType} does not match ${expectedEntityType}`);
   }
+  // Only fields the CRM sync owns can be mapped: a mapping must never write ids, workspace or
+  // system-derived fields.
+  const allowed: readonly string[] =
+    mapping.entityType === "contact" || mapping.entityType === "deal" ? CRM_SYNC_OWNED_FIELDS[mapping.entityType] : [];
 
   if (!Array.isArray(mapping.fields) || mapping.fields.length === 0) {
     errors.push("Mapping must define at least one field mapping");
@@ -296,6 +305,22 @@ export function validateMapping(
           errors.push(`Duplicate mapping for internalField: ${field.internalField}`);
         }
         internalFieldsSeen.add(field.internalField);
+        if (isProtectedField(field.internalField) || !allowed.includes(field.internalField)) {
+          errors.push(`internalField ${field.internalField} cannot be synced (allowed: ${allowed.join(", ")})`);
+        }
+      }
+
+      if (!DIRECTIONS.includes(field.direction)) {
+        errors.push(`Field ${field.internalField}: invalid direction ${field.direction}`);
+      }
+      if (field.transform !== undefined && !TRANSFORMS.includes(field.transform)) {
+        errors.push(`Field ${field.internalField}: invalid transform ${field.transform}`);
+      }
+      if (field.nullBehavior !== undefined && !NULL_BEHAVIORS.includes(field.nullBehavior)) {
+        errors.push(`Field ${field.internalField}: invalid nullBehavior ${field.nullBehavior}`);
+      }
+      if (field.conflictPolicy !== undefined && !CONFLICT_POLICIES.includes(field.conflictPolicy)) {
+        errors.push(`Field ${field.internalField}: invalid conflictPolicy ${field.conflictPolicy}`);
       }
 
       if (!field.externalField) {
@@ -303,7 +328,7 @@ export function validateMapping(
       }
 
       if (availableExternalProperties && availableExternalProperties.length > 0) {
-        if (!availableExternalProperties.includes(field.externalField)) {
+        if (!availableExternalProperties.map((p) => p.toLowerCase()).includes(String(field.externalField).toLowerCase())) {
           missingExternalProperties.push(field.externalField);
         }
       }
@@ -378,40 +403,89 @@ export async function getResolvedCrmMapping(
   return defaults.mappings[entityType];
 }
 
+export interface CrmMappingHistoryEntry {
+  version: number;
+  replacedAt: string;
+  mapping: CrmObjectMapping;
+}
+
+/**
+ * Saves new mappings as a new version: the version number is one above the current one (the
+ * client's number is ignored), the replaced mapping is kept in settings.mappingHistory (newest
+ * first, last MAPPING_HISTORY_LIMIT), and the change is audited. Runs in a transaction with the
+ * connection row locked, so two saves cannot both read the same version.
+ */
 export async function saveCrmMappings(
   db: Db,
   workspaceId: string,
   provider: string,
-  mappings: { contact?: CrmObjectMapping; deal?: CrmObjectMapping }
+  mappings: { contact?: CrmObjectMapping; deal?: CrmObjectMapping },
+  actorId?: string | null
 ): Promise<void> {
+  await db.transaction(async (tx) => {
+    const [row] = await tx
+      .select({ id: crmConnections.id, settings: crmConnections.settings })
+      .from(crmConnections)
+      .where(scopedTo(crmConnections, workspaceId, eq(crmConnections.provider, provider)))
+      .for("update")
+      .limit(1);
+
+    if (!row) {
+      throw new Error(`CRM connection for provider ${provider} not found`);
+    }
+
+    const settings = (row.settings ?? {}) as Record<string, any>;
+    const current: Record<string, CrmObjectMapping | undefined> = { ...(settings.mappings ?? {}) };
+    const history: Record<string, CrmMappingHistoryEntry[]> = { ...(settings.mappingHistory ?? {}) };
+    const now = new Date().toISOString();
+    const changes: Array<{ entityType: string; from: number; to: number }> = [];
+
+    for (const entityType of ["contact", "deal"] as const) {
+      const next = mappings[entityType];
+      if (!next) continue;
+      const previous = current[entityType] ?? getDefaultCrmMappings(provider).mappings[entityType];
+      const version = (previous?.version ?? 0) + 1;
+      current[entityType] = { ...next, entityType, version, lastValidatedAt: now };
+      history[entityType] = [{ version: previous.version, replacedAt: now, mapping: previous }, ...(history[entityType] ?? [])].slice(
+        0,
+        MAPPING_HISTORY_LIMIT
+      );
+      changes.push({ entityType, from: previous.version, to: version });
+    }
+    if (changes.length === 0) return;
+
+    await tx
+      .update(crmConnections)
+      .set({ settings: { ...settings, mappings: current, mappingHistory: history }, updatedAt: new Date() })
+      .where(eq(crmConnections.id, row.id));
+
+    await tx.insert(auditLogs).values({
+      workspaceId,
+      actorType: actorId ? "user" : "system",
+      actorId: actorId ?? null,
+      action: "crm_mapping.updated",
+      entityType: "crm_connection",
+      entityId: row.id,
+      beforeState: Object.fromEntries(changes.map((c) => [c.entityType, { version: c.from }])),
+      afterState: Object.fromEntries(changes.map((c) => [c.entityType, current[c.entityType]])),
+      reason: `CRM field mappings updated (${changes.map((c) => `${c.entityType} v${c.to}`).join(", ")})`,
+    });
+  });
+}
+
+/** Earlier versions of one entity's mapping, newest first. */
+export async function getCrmMappingHistory(
+  db: Db,
+  workspaceId: string,
+  provider: string,
+  entityType: "contact" | "deal"
+): Promise<CrmMappingHistoryEntry[]> {
   const [row] = await db
-    .select({ id: crmConnections.id, settings: crmConnections.settings })
+    .select({ settings: crmConnections.settings })
     .from(crmConnections)
     .where(scopedTo(crmConnections, workspaceId, eq(crmConnections.provider, provider)))
     .limit(1);
-
-  if (!row) {
-    throw new Error(`CRM connection for provider ${provider} not found`);
-  }
-
-  const currentSettings = (row.settings ?? {}) as Record<string, any>;
-  const currentMappings = currentSettings.mappings ?? {};
-
-  const updatedMappings = {
-    ...currentMappings,
-    ...(mappings.contact ? { contact: mappings.contact } : {}),
-    ...(mappings.deal ? { deal: mappings.deal } : {}),
-  };
-
-  await db
-    .update(crmConnections)
-    .set({
-      settings: {
-        ...currentSettings,
-        mappings: updatedMappings,
-      },
-      updatedAt: new Date(),
-    })
-    .where(eq(crmConnections.id, row.id));
+  const settings = (row?.settings ?? {}) as Record<string, any>;
+  const list = settings.mappingHistory?.[entityType];
+  return Array.isArray(list) ? (list as CrmMappingHistoryEntry[]) : [];
 }
-
