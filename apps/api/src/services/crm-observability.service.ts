@@ -2,11 +2,11 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, scopedTo } from "@skout/db";
 import { createLogger } from "@skout/observability";
+import { HttpError } from "@skout/auth";
 import type { Env } from "../config/env.js";
-import { getHubSpotRateLimitState, type HubSpotRateLimitState } from "./hubspot.client.js";
+import { fetchHubSpotPropertyNames, type HubSpotRateLimitState } from "./hubspot.client.js";
 import { getResolvedCrmMapping } from "./crm-mapping.service.js";
-import { createNotification } from "./notifications.service.js";
-import { getCopsNotificationRecipients } from "./cops-notification-routing.js";
+import { alertDay, notifyCrmAdmins } from "./crm-alerts.service.js";
 
 const { crmConnections, crmSyncCheckpoints, crmOutboundWrites, crmConflicts, auditLogs } = schema;
 const log = createLogger("crm-observability");
@@ -14,7 +14,7 @@ const log = createLogger("crm-observability");
 export interface CrmHealthCheckResult {
   connected: boolean;
   provider: string;
-  authStatus: "connected" | "needs_reauth" | "disconnected" | "expired";
+  authStatus: "connected" | "needs_reauth" | "disconnected";
   lastSyncAt: string | null;
   backlog: number;
   failedRecords: number;
@@ -64,17 +64,10 @@ export async function getCrmConnectorHealth(
     };
   }
 
-  // Derive granular authStatus
-  let authStatus: "connected" | "needs_reauth" | "disconnected" | "expired" = "connected";
-  if (connection.status === "needs_reauth") {
-    authStatus = "needs_reauth";
-  } else if (connection.tokenExpiresAt && new Date(connection.tokenExpiresAt).getTime() < Date.now()) {
-    authStatus = "expired";
-  } else if (connection.status === "connected") {
-    authStatus = "connected";
-  } else {
-    authStatus = "disconnected";
-  }
+  // An expired access token is normal (it lasts 30 minutes and is refreshed on use); only a
+  // rejected refresh (needs_reauth) means the admin must reconnect.
+  const authStatus: CrmHealthCheckResult["authStatus"] =
+    connection.status === "needs_reauth" ? "needs_reauth" : connection.status === "connected" ? "connected" : "disconnected";
 
   // Fetch checkpoints
   const checkpointRows = await db
@@ -134,8 +127,18 @@ export async function getCrmConnectorHealth(
       )
     );
 
-  // Rate limit state (provider-specific)
-  const rateLimitState = provider === "hubspot" ? getHubSpotRateLimitState() : null;
+  // Rate-limit state as last recorded on the connection by whichever process hit it.
+  const stored = ((connection.settings ?? {}) as Record<string, any>).rateLimit as
+    | { lastRateLimitedAt?: string | null; limitedUntil?: string | null; retryAfterMs?: number | null }
+    | undefined;
+  const rateLimitState: HubSpotRateLimitState | null = stored
+    ? {
+        isRateLimited: Boolean(stored.limitedUntil && new Date(stored.limitedUntil).getTime() > Date.now()),
+        lastRateLimitedAt: stored.lastRateLimitedAt ?? null,
+        limitedUntil: stored.limitedUntil ?? null,
+        retryAfterMs: stored.retryAfterMs ?? null,
+      }
+    : null;
 
   return {
     connected: true,
@@ -159,9 +162,14 @@ export async function getCrmConnectorHealth(
 export interface ListOutboundWritesOptions {
   status?: string;
   entityType?: string;
+  /** One record's history. */
+  entityId?: string;
   limit?: number;
   offset?: number;
 }
+
+/** lastError values of writes the outbound worker held back for a conflict. */
+export const REPLAY_REFUSED_ERRORS = ["conflict_hubspot_newer", "blocked_by_pending_conflict"];
 
 /**
  * Lists per-record outbound writes (history & DLQ) with filtering and pagination.
@@ -171,10 +179,13 @@ export async function listCrmOutboundWrites(
   workspaceId: string,
   opts: ListOutboundWritesOptions = {}
 ) {
-  const limit = opts.limit ?? 50;
-  const offset = opts.offset ?? 0;
+  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+  const offset = Math.max(opts.offset ?? 0, 0);
 
   const conditions = [eq(crmOutboundWrites.workspaceId, workspaceId)];
+  if (opts.entityId) {
+    conditions.push(eq(crmOutboundWrites.entityId, opts.entityId));
+  }
   if (opts.status) {
     conditions.push(eq(crmOutboundWrites.status, opts.status));
   }
@@ -215,15 +226,20 @@ export async function replayCrmOutboundWrite(
     .limit(1);
 
   if (!write) {
-    throw new Error(`Outbound write ${writeId} not found`);
+    throw new HttpError(`Outbound write ${writeId} not found`, 404);
   }
 
   if (write.status !== "failed") {
-    throw new Error(`Only failed writes can be replayed (current status: ${write.status})`);
+    throw new HttpError(`Only failed writes can be replayed (current status: ${write.status})`, 409);
+  }
+  // A write held back by a conflict would only be held back again: the conflict queue decides it.
+  if (write.lastError && REPLAY_REFUSED_ERRORS.includes(write.lastError)) {
+    throw new HttpError(`This write was held back by a conflict (${write.lastError}); resolve it in the conflict queue`, 409);
   }
 
-  // Reset write in DLQ to pending
-  await db
+  // Back to pending, only if still failed: two replays at once queue it once. Replaying is safe:
+  // the push is a PATCH of the same values, so it creates nothing twice.
+  const reset = await db
     .update(crmOutboundWrites)
     .set({
       status: "pending",
@@ -233,7 +249,11 @@ export async function replayCrmOutboundWrite(
       lastError: null,
       updatedAt: new Date(),
     })
-    .where(eq(crmOutboundWrites.id, write.id));
+    .where(and(eq(crmOutboundWrites.id, write.id), eq(crmOutboundWrites.status, "failed")))
+    .returning({ id: crmOutboundWrites.id });
+  if (reset.length === 0) {
+    throw new HttpError(`Outbound write ${writeId} was already replayed`, 409);
+  }
 
   // Audited replay
   try {
@@ -288,7 +308,7 @@ export interface SchemaDriftResult {
  */
 export async function detectSchemaDrift(
   db: Db,
-  config: Env,
+  _config: Env,
   workspaceId: string,
   provider: string,
   entityType: "contact" | "deal",
@@ -305,54 +325,44 @@ export async function detectSchemaDrift(
   }
 
   if (missingFields.length > 0) {
-    log.warn("CRM schema drift detected", {
-      workspaceId,
-      provider,
-      entityType,
-      missingFields,
-    });
+    log.warn("CRM schema drift detected", { workspaceId, provider, entityType, missingFields });
 
     const providerLabel = provider.charAt(0).toUpperCase() + provider.slice(1);
-    const title = `${providerLabel} Schema Drift Alert`;
-    const body = `Mapping for ${entityType} expects external field(s): ${missingFields.join(", ")}, which were not found in ${providerLabel}'s current schema. Please update your field mappings.`;
-
     try {
-      await createNotification(db, config, {
+      // Once a day per set of missing fields, until the mapping or the provider is fixed.
+      await notifyCrmAdmins(db, {
         workspaceId,
-        userId: null,
         type: "crm_schema_drift",
-        title,
-        body,
-        entityType: "crm_connection",
-        entityId: undefined,
+        title: `${providerLabel} Schema Drift Alert`,
+        body: `Mapping for ${entityType} expects external field(s): ${missingFields.join(", ")}, which were not found in ${providerLabel}'s current schema. Those fields are not synced until the mapping is updated.`,
+        dedupeKey: `drift:${workspaceId}:${provider}:${entityType}:${[...missingFields].sort().join(",")}:${alertDay()}`,
       });
-
-      const admins = await getCopsNotificationRecipients(db, workspaceId, ["admin", "owner"]);
-      for (const adminId of admins) {
-        await createNotification(db, config, {
-          workspaceId,
-          userId: adminId,
-          type: "crm_schema_drift",
-          title,
-          body,
-          entityType: "crm_connection",
-          entityId: undefined,
-        }).catch((err) => {
-          log.warn("Failed creating user notification for schema drift", { err, adminId });
-        });
-      }
     } catch (notifErr) {
       log.warn("Failed sending schema drift notifications", { notifErr, workspaceId });
     }
 
-    return {
-      driftDetected: true,
-      missingFields,
-    };
+    return { driftDetected: true, missingFields };
   }
 
   return {
     driftDetected: false,
     missingFields: [],
+  };
+}
+
+/** Checks both HubSpot object types against the portal's live property list. */
+export async function checkHubSpotSchemaDrift(
+  db: Db,
+  config: Env,
+  workspaceId: string,
+  accessToken: string
+): Promise<Record<"contact" | "deal", SchemaDriftResult>> {
+  const [contactProps, dealProps] = await Promise.all([
+    fetchHubSpotPropertyNames(accessToken, "contacts"),
+    fetchHubSpotPropertyNames(accessToken, "deals"),
+  ]);
+  return {
+    contact: await detectSchemaDrift(db, config, workspaceId, "hubspot", "contact", contactProps),
+    deal: await detectSchemaDrift(db, config, workspaceId, "hubspot", "deal", dealProps),
   };
 }
