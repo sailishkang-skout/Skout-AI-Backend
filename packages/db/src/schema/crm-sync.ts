@@ -1,4 +1,5 @@
-import { index, integer, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { index, integer, jsonb, pgTable, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { crmConnections } from "./integrations.js";
 import { users } from "./users.js";
 import { workspaces } from "./workspaces.js";
@@ -144,6 +145,10 @@ export const crmConflicts = pgTable(
   (table) => [
     index("crm_conflicts_workspace_status_idx").on(table.workspaceId, table.status),
     index("crm_conflicts_entity_idx").on(table.connectionId, table.entityType, table.entityId),
+    // One open conflict per field: a repeated poll or webhook updates it instead of queueing another.
+    uniqueIndex("crm_conflicts_one_pending_uq")
+      .on(table.connectionId, table.entityType, table.entityId, table.fieldName)
+      .where(sql`status = 'pending'`),
   ]
 );
 
