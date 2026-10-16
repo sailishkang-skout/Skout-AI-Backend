@@ -378,12 +378,13 @@ export interface IntegrationStatusDto {
 
 /**
  * Integration state of the provisioned customer workspace for Onboarding Control: CRM from
- * crm_connections, email from the workspace's sending mailboxes (inboxes). There is no calendar
- * connection model yet, so calendar reports not_available instead of a guessed state.
+ * crm_connections, email from the workspace's sending mailboxes (inboxes), calendar from the
+ * Google Calendar connections (calendar_connections, one per member). A calendar whose access
+ * token has expired with no refresh token cannot sync any more and reports error.
  */
 export async function loadIntegrations(db: Db, customerWorkspaceId: string | null): Promise<IntegrationStatusDto[]> {
   if (!customerWorkspaceId) {
-    return (["crm", "email", "calendar"] as const).map((key) => ({ key, status: key === "calendar" ? "not_available" : "not_connected", detail: null }));
+    return (["crm", "email", "calendar"] as const).map((key) => ({ key, status: "not_connected", detail: null }));
   }
   const crm = await db
     .select({ provider: crmConnections.provider, status: crmConnections.status })
@@ -393,8 +394,15 @@ export async function loadIntegrations(db: Db, customerWorkspaceId: string | nul
     .select({ address: schema.inboxes.emailAddress, provider: schema.inboxes.provider, status: schema.inboxes.status })
     .from(schema.inboxes)
     .where(eq(schema.inboxes.workspaceId, customerWorkspaceId));
+  const calendars = await db
+    .select({ email: schema.calendarConnections.connectedEmail, refresh: schema.calendarConnections.oauthRefreshTokenEncrypted, expiresAt: schema.calendarConnections.oauthTokenExpiresAt })
+    .from(schema.calendarConnections)
+    .where(eq(schema.calendarConnections.workspaceId, customerWorkspaceId));
   const okCrm = crm.find((c) => c.status === "connected");
-  const badCrm = crm.find((c) => ["error", "expired", "revoked"].includes(c.status));
+  const badCrm = crm.find((c) => ["error", "expired", "revoked", "needs_reauth"].includes(c.status));
+  const now = Date.now();
+  const calendarDead = (c: (typeof calendars)[number]) => !c.refresh && c.expiresAt != null && c.expiresAt.getTime() < now;
+  const okCalendar = calendars.find((c) => !calendarDead(c));
   const okBox = boxes.find((b) => b.status === "active");
   return [
     okCrm
@@ -407,6 +415,10 @@ export async function loadIntegrations(db: Db, customerWorkspaceId: string | nul
       : boxes[0]
         ? { key: "email", status: "error", detail: `${boxes[0].address} ${boxes[0].status}` }
         : { key: "email", status: "not_connected", detail: null },
-    { key: "calendar", status: "not_available", detail: "Calendar connections are not tracked yet" },
+    okCalendar
+      ? { key: "calendar", status: "connected", detail: okCalendar.email }
+      : calendars[0]
+        ? { key: "calendar", status: "error", detail: `${calendars[0].email} needs reconnecting` }
+        : { key: "calendar", status: "not_connected", detail: null },
   ];
 }
