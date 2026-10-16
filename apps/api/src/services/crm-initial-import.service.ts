@@ -5,6 +5,10 @@ import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { isCrmSyncOptedIn } from "./crm-opt-in.service.js";
 import { syncHubSpotNativeOrThrow } from "./crm-hubspot-native-sync.service.js";
+import { createDefaultCredentialsStore, ensureFreshTokens } from "./crm-export.runner.js";
+import { checkHubSpotSchemaDrift } from "./crm-observability.service.js";
+import { alertDay, mergeConnectionSettings, notifyCrmAdmins, persistHubSpotRateLimit } from "./crm-alerts.service.js";
+import { HttpError } from "@skout/auth";
 
 const { crmConnections, crmSyncCheckpoints, auditLogs } = schema;
 const log = createLogger("crm-initial-import");
@@ -56,16 +60,16 @@ export async function runInitialCrmImport(
     .limit(1);
 
   if (!connection) {
-    throw new Error(`No CRM connection found for ${provider}`);
+    throw new HttpError(`No CRM connection found for ${provider}`, 404);
   }
 
   if (connection.status !== "connected") {
-    throw new Error(`CRM connection is not connected (status: ${connection.status})`);
+    throw new HttpError(`CRM connection is not connected (status: ${connection.status})`, 409);
   }
 
   // Enforce opt-in per ADR 0014
   if (!isCrmSyncOptedIn(connection.settings)) {
-    throw new Error("CRM sync is not enabled for this workspace. Opt-in is required under ADR 0014.");
+    throw new HttpError("crm_sync_not_enabled", 409);
   }
 
   // If reset requested, clear checkpoint cursor to start from beginning of time
@@ -168,11 +172,25 @@ export interface ScheduledPollResult {
   }>;
 }
 
+/** Consecutive failed polls before the admins are alerted (then at most once a day). */
+export const POLL_FAILURE_ALERT_THRESHOLD = 3;
+const SCHEMA_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+/** Whether a connection's poll interval has passed since its last poll. */
+export function isPollDue(settings: Record<string, any>, now: Date): boolean {
+  const minutes = typeof settings.pollIntervalMinutes === "number" && settings.pollIntervalMinutes > 0 ? settings.pollIntervalMinutes : 30;
+  const last = typeof settings.lastPolledAt === "string" ? Date.parse(settings.lastPolledAt) : NaN;
+  return Number.isNaN(last) || now.getTime() - last >= minutes * 60_000;
+}
+
 /**
- * Runs a scheduled incremental poll for all connected and opted-in CRM workspaces.
- * Called on a periodic timer when webhooks are unavailable or as an integrity backstop.
+ * Runs the incremental poll for every connected, opted-in CRM connection whose poll interval has
+ * passed (the crm-sync-poll worker calls this every few minutes). Webhooks bring changes sooner;
+ * this is the backstop that catches anything a webhook missed. Per connection it also checks the
+ * mapping against the provider's live schema once a day, and after POLL_FAILURE_ALERT_THRESHOLD
+ * failures in a row it alerts the admins.
  */
-export async function runScheduledCrmPoll(db: Db, config: Env): Promise<ScheduledPollResult> {
+export async function runScheduledCrmPoll(db: Db, config: Env, now: Date = new Date()): Promise<ScheduledPollResult> {
   const activeConnections = await db
     .select({
       id: crmConnections.id,
@@ -183,50 +201,57 @@ export async function runScheduledCrmPoll(db: Db, config: Env): Promise<Schedule
     .from(crmConnections)
     .where(eq(crmConnections.status, "connected"));
 
-  // Filter for opted-in workspaces
-  const eligible = activeConnections.filter((c) => isCrmSyncOptedIn(c.settings));
+  const eligible = activeConnections.filter(
+    (c) => c.provider === "hubspot" && isCrmSyncOptedIn(c.settings) && isPollDue((c.settings ?? {}) as Record<string, any>, now)
+  );
 
   const results: ScheduledPollResult["results"] = [];
   let synced = 0;
   let failed = 0;
 
   for (const conn of eligible) {
+    const settings = (conn.settings ?? {}) as Record<string, any>;
     try {
-      if (conn.provider === "hubspot") {
-        await syncHubSpotNativeOrThrow(db, config, conn.workspaceId, {
-          maxContacts: 100,
-          maxDeals: 100,
-        });
+      await syncHubSpotNativeOrThrow(db, config, conn.workspaceId, { maxContacts: 100, maxDeals: 100 });
+
+      const tokens = await ensureFreshTokens(db, config, createDefaultCredentialsStore(config), conn.workspaceId);
+      const lastCheck = typeof settings.lastSchemaCheckAt === "string" ? Date.parse(settings.lastSchemaCheckAt) : NaN;
+      const schemaCheck: Record<string, unknown> = {};
+      if (Number.isNaN(lastCheck) || now.getTime() - lastCheck >= SCHEMA_CHECK_INTERVAL_MS) {
+        await checkHubSpotSchemaDrift(db, config, conn.workspaceId, tokens.accessToken).catch((err) =>
+          log.warn("CRM schema drift check failed", { err, connectionId: conn.id })
+        );
+        schemaCheck.lastSchemaCheckAt = now.toISOString();
       }
+      await persistHubSpotRateLimit(db, conn.id, tokens.accessToken).catch(() => undefined);
+      await mergeConnectionSettings(db, conn.id, { lastPolledAt: now.toISOString(), pollFailures: 0, lastPollError: null, ...schemaCheck });
+
       synced++;
       results.push({ workspaceId: conn.workspaceId, provider: conn.provider, success: true });
     } catch (err) {
       failed++;
       const errorMsg = err instanceof Error ? err.message : String(err);
-      log.warn("Scheduled CRM poll failed for connection", {
-        err,
-        connectionId: conn.id,
-        workspaceId: conn.workspaceId,
-      });
-      results.push({
-        workspaceId: conn.workspaceId,
-        provider: conn.provider,
-        success: false,
-        error: errorMsg,
-      });
+      const failures = (typeof settings.pollFailures === "number" ? settings.pollFailures : 0) + 1;
+      log.warn("Scheduled CRM poll failed for connection", { err, connectionId: conn.id, workspaceId: conn.workspaceId, failures });
+      await mergeConnectionSettings(db, conn.id, { lastPolledAt: now.toISOString(), pollFailures: failures, lastPollError: errorMsg.slice(0, 500) }).catch(
+        () => undefined
+      );
+      // An expired grant has its own alert (markConnectionNeedsReauth).
+      if (failures >= POLL_FAILURE_ALERT_THRESHOLD && !/needs_reauth/.test(errorMsg)) {
+        await notifyCrmAdmins(db, {
+          workspaceId: conn.workspaceId,
+          type: "crm_sync_failing",
+          title: "HubSpot sync is failing",
+          body: `The last ${failures} HubSpot syncs failed: ${errorMsg.slice(0, 300)}. Nothing is lost: the next successful sync continues from the last checkpoint. See CRM health in Settings > Integrations.`,
+          connectionId: conn.id,
+          dedupeKey: `poll-failing:${conn.id}:${alertDay(now)}`,
+        }).catch((notifyErr) => log.warn("Failed alerting admins of failing CRM sync", { notifyErr, connectionId: conn.id }));
+      }
+      results.push({ workspaceId: conn.workspaceId, provider: conn.provider, success: false, error: errorMsg });
     }
   }
 
-  log.info("Scheduled CRM poll completed", {
-    totalEligible: eligible.length,
-    synced,
-    failed,
-  });
+  log.info("Scheduled CRM poll completed", { totalEligible: eligible.length, synced, failed });
 
-  return {
-    totalEligible: eligible.length,
-    synced,
-    failed,
-    results,
-  };
+  return { totalEligible: eligible.length, synced, failed, results };
 }
