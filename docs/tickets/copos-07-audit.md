@@ -116,7 +116,7 @@ not as proof that nothing else is open.
 | Ticket | Open against the epic text |
 |---|---|
 | COPS-01 | A real 429 has never been triggered end to end (retry/backoff code exists). Slack/Teams webhook adapters and per-user notification preferences: not re-checked here. `cops_processed_events` has no `workspace_id` (keyed by event id; listed in the scoping guard with its reason). |
-| COPS-02 | Customer 360 "Usage" and "Success" tabs are still placeholders (Success belongs to COPS-11). Not re-checked: kanban 409 inline messages, account merge. |
+| COPS-02 | Usage tab built 2026-10-16 (first login, milestones with evidence, credits used, balance); Success stays a placeholder until COPS-11. The two 360 endpoints are kept on purpose (COPS-02 audit, decision 5). Not re-checked: kanban 409 inline messages, account merge. |
 | COPS-03 | Not re-checked in this pass. The live run skipped it: the deal and fired gate were inserted in the database. Paid-deal and failed-payment paths have no live browser run. |
 | COPS-04 | Fixed here: the dialog said "Invitation sent" when the invite email had failed. The frontend message for that fix was type-checked, not opened in a browser. |
 | COPS-05 | Fixed here: a failed first onboarding email could not be sent again from the UI. Calendar integration now reads `calendar_connections` (fixed 2026-10-16). Still open: delivery/open/click tracking was not exercised live (no provider webhook locally); questions Q1 to Q5 in the COPS-05 audit. The signal-trigger playbooks (no login 24h, no activity 72h, trial ending) were not exercised live. |
