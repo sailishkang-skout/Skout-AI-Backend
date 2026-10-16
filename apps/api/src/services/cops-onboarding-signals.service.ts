@@ -319,9 +319,21 @@ export async function sweepMissedFollowUps(db: Db, deps: FollowUpDeps, olderThan
 }
 
 /** One evaluator pass over every open instance plus activated ones still waiting for a handoff. */
+const EVALUATOR_PAGE_SIZE = 200;
+/** 25 pages: up to 5,000 open onboarding instances per pass (the pass runs every 10 minutes). */
+const EVALUATOR_MAX_PAGES = 25;
+
 export async function runOnboardingEvaluator(db: Db, deps: FollowUpDeps, correlationId: string) {
   const swept = await sweepMissedFollowUps(db, deps);
-  const ids = new Set((await openInstances(db)).map((i) => i.id));
+  // Every open instance, page by page (bounded per pass so one pass cannot run forever).
+  const ids = new Set<string>();
+  let afterId: string | undefined;
+  for (let page = 0; page < EVALUATOR_MAX_PAGES; page++) {
+    const rows = await openInstances(db, EVALUATOR_PAGE_SIZE, afterId);
+    for (const r of rows) ids.add(r.id);
+    if (rows.length < EVALUATOR_PAGE_SIZE) break;
+    afterId = rows[rows.length - 1]!.id;
+  }
   const pendingHandoff = await db
     .select({ id: copsOnboardingInstances.id })
     .from(copsOnboardingInstances)
