@@ -103,6 +103,10 @@ empty/loading/error audit across all Phase 1 screens; live end-to-end specs for 
 paths; Datadog monitors; the navigation does not yet hide a module that is turned off (the API
 refuses it). The release gates that need people (pilot sign-off, dashboards live) are open.
 
+Update 2026-10-16: since then the frontend has `e2e/cops-admin.spec.ts` and
+`e2e/cops-golden-paths.spec.ts`; the navigation hides a module that is turned off (sidebar
+`copsModule`, from `GET /cops/modules`); Datadog was dropped for GCP Cloud Monitoring (#201).
+
 ## 8. Phase 1 gap list against the epic document (COPS-01 to COPS-07)
 
 Basis: the per-ticket audit docs and what was run in the COPS-05/06/07 work. It is not a fresh
@@ -121,7 +125,7 @@ not as proof that nothing else is open.
 
 Cross-cutting, from the Definition of Done:
 
-- **Analytics instrumentation**: added on the frontend for COPS-03 to COPS-06 actions; none yet for COPS-07.
+- **Analytics instrumentation**: added on the frontend for COPS-03 to COPS-07 actions (COPS-07: config save and rollback, retention runs, notification routes, activation definitions and gate policy).
 - **Runbooks**: platform, onboarding, payments/credits/provisioning and tickets (`docs/runbooks/cops-tickets.md`, added 2026-10-16) exist.
 - **e2e**: per-ticket Playwright specs use a mocked API. The frontend suite as a whole is red on `develop` (older specs).
 - **Local email**: SES credentials in the local `.env` are rejected (`535`), so every email path was tested against a local catcher, not a real provider.
