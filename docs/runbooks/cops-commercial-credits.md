@@ -37,6 +37,19 @@ A correction is always a new, compensating entry.
 3. Run the reconciliation again. The wallet must now equal the ledger.
 4. If a grant was duplicated, post the negative of the duplicate. Do not try to remove the row.
 
+## A credit purchase was refunded
+
+A refund webhook for a payment request that bought credits takes those credits back
+automatically: one `adjustment` entry for minus the purchased amount, linked to the purchase
+(`compensates_id`), audited as `credits.purchase_reversed`. A replayed refund webhook reverses
+nothing a second time.
+
+- If the customer had already spent the credits, the wallet goes below zero and further spending
+  is refused until it is topped up. Finance decides whether to top it up (purchase or grant) or
+  write the balance off with an adjustment and a reason.
+- Check: `select kind, amount, reason from credit_transactions where reference_id = '<payment request id>';`
+  shows the `purchase` and its reversing `adjustment`.
+
 ## Provisioning is slow or failed
 
 Symptom: `provisioning_p95_ms` above 120000, `provisioning_within_target_pct` below 95, or
