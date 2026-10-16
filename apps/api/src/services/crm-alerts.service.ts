@@ -18,6 +18,11 @@ function stableId(key: string): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 
+const PROVIDER_LABELS: Record<string, string> = { hubspot: "HubSpot", salesforce: "Salesforce", pipedrive: "Pipedrive" };
+
+/** The provider's name as its users write it ("HubSpot", not "Hubspot"). */
+export const crmProviderLabel = (provider: string) => PROVIDER_LABELS[provider] ?? provider.charAt(0).toUpperCase() + provider.slice(1);
+
 /** UTC day, for alerts that should go out at most once a day. */
 export const alertDay = (now: Date = new Date()) => now.toISOString().slice(0, 10);
 

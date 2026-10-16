@@ -6,7 +6,7 @@ import { HttpError } from "@skout/auth";
 import type { Env } from "../config/env.js";
 import { fetchHubSpotPropertyNames, type HubSpotRateLimitState } from "./hubspot.client.js";
 import { getResolvedCrmMapping } from "./crm-mapping.service.js";
-import { alertDay, notifyCrmAdmins } from "./crm-alerts.service.js";
+import { alertDay, crmProviderLabel, notifyCrmAdmins } from "./crm-alerts.service.js";
 
 const { crmConnections, crmSyncCheckpoints, crmOutboundWrites, crmConflicts, auditLogs } = schema;
 const log = createLogger("crm-observability");
@@ -327,7 +327,7 @@ export async function detectSchemaDrift(
   if (missingFields.length > 0) {
     log.warn("CRM schema drift detected", { workspaceId, provider, entityType, missingFields });
 
-    const providerLabel = provider.charAt(0).toUpperCase() + provider.slice(1);
+    const providerLabel = crmProviderLabel(provider);
     try {
       // Once a day per set of missing fields, until the mapping or the provider is fixed.
       await notifyCrmAdmins(db, {

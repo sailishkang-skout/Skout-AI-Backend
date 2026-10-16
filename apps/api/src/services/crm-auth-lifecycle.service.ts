@@ -3,7 +3,7 @@ import type { Db } from "@skout/db";
 import { schema, scopedTo } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
-import { notifyCrmAdmins } from "./crm-alerts.service.js";
+import { crmProviderLabel, notifyCrmAdmins } from "./crm-alerts.service.js";
 
 const { crmConnections } = schema;
 const log = createLogger("crm-auth-lifecycle");
@@ -74,7 +74,7 @@ export async function markConnectionNeedsReauth(
 
   log.warn("CRM connection marked needs_reauth", { workspaceId, provider, reason, connectionId });
 
-  const providerLabel = provider.charAt(0).toUpperCase() + provider.slice(1);
+  const providerLabel = crmProviderLabel(provider);
   try {
     await notifyCrmAdmins(db, {
       workspaceId,
