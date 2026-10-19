@@ -79,15 +79,20 @@ describe("automation routes", () => {
     });
     const { id, workspaceId } = create.json().data;
 
-    // A node type with no registered handler fails deterministically regardless of simulation —
-    // every real node type short-circuits before doing anything risky when isSimulation is true.
-    const graph = { nodes: [{ id: "n1", type: "not_a_real_node_type", config: {} }], edges: [] };
+    // Publish a valid graph, then swap in a node type with no handler: publish now refuses it
+    // (COPS-10 allowlist), but a stored graph could still name one, and it fails deterministically
+    // regardless of simulation.
+    const graph = { nodes: [{ id: "n1", type: "trigger", config: {} }], edges: [] };
     await app.inject({
       method: "POST",
       url: `/api/v1/automations/${id}/versions/publish`,
       headers: { ...asUser(email), "content-type": "application/json" },
       payload: { graph },
     });
+    await app.db!
+      .update(schema.automationVersions)
+      .set({ graph: { nodes: [{ id: "n1", type: "not_a_real_node_type", config: {} }], edges: [] } })
+      .where(eq(schema.automationVersions.automationId, id));
 
     const run = await app.inject({
       method: "POST",
