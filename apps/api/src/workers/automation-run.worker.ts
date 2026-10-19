@@ -123,6 +123,7 @@ export async function advanceAutomationRun(
         isSimulation: run.isSimulation,
         node: interpolatedNode,
         priorOutputs,
+        triggerPayload: (run.triggerPayload ?? undefined) as Record<string, unknown> | undefined,
       })
     );
     if (result.outcome === "ambiguous") {

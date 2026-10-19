@@ -1,17 +1,36 @@
 import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
+import type { Db } from "@skout/db";
 import { z } from "zod";
-import { schema } from "@skout/db";
+import { schema, scopedById } from "@skout/db";
 import { errorResponse, HttpError } from "../utils/http.js";
 import { AutomationService } from "../services/automation.service.js";
-import { createAutomationRun, getRun, listRuns, retryFailedSteps } from "../services/automation-run.service.js";
+import { createAutomationRun, getRun, listRuns, retryFailedSteps, RUN_SUBJECT_TYPES, type RunSubjectType } from "../services/automation-run.service.js";
 import { enqueueAutomationRunAdvance } from "../workers/automation-run.queue.js";
 import type { AutomationGraph } from "../services/automation-graph.js";
 import { validateAutomationGraph } from "../services/automation-graph-validate.js";
 import { workspaceManageGate } from "./crm-admin-gate.js";
 
-const { automations } = schema;
+const { automations, companies, contacts, deals } = schema;
+
+const subjectSchema = z.object({ type: z.enum(RUN_SUBJECT_TYPES), id: z.string().uuid() });
+const SUBJECT_TABLES = { account: companies, contact: contacts, deal: deals } as const;
+
+/** 422 unless the run's subject is a record in this workspace. */
+async function assertSubjectInWorkspace(db: Db, workspaceId: string, subject: { type: RunSubjectType; id: string }) {
+  const table = SUBJECT_TABLES[subject.type];
+  const [row] = await db.select({ id: table.id }).from(table).where(scopedById(table, workspaceId, subject.id)).limit(1);
+  if (!row) throw new HttpError("automation_run_subject_not_found", 422);
+}
+
+const runHistoryQuery = z.object({
+  version: z.coerce.number().int().min(0).optional(),
+  account_id: z.string().uuid().optional(),
+  status: z.enum(["pending", "running", "awaiting_approval", "succeeded", "failed", "cancelled"]).optional(),
+  before: z.string().datetime({ offset: true }).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
 
 const graphSchema = z.object({
   nodes: z.array(z.object({ id: z.string(), type: z.string(), config: z.record(z.string(), z.unknown()) })),
@@ -93,7 +112,9 @@ export async function automationRoutes(app: FastifyInstance) {
   app.post("/automations/:id/run", manage, async (request, reply) => {
     if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-    const body = z.object({ isSimulation: z.boolean().optional() }).parse(request.body ?? {});
+    const body = z
+      .object({ isSimulation: z.boolean().optional(), payload: z.record(z.string(), z.unknown()).optional(), subject: subjectSchema.optional() })
+      .parse(request.body ?? {});
     const isSimulation = body.isSimulation ?? false;
 
     const svc = new AutomationService(db());
@@ -110,6 +131,7 @@ export async function automationRoutes(app: FastifyInstance) {
       return reply.code(422).send(errorResponse(message, 422));
     }
 
+    if (body.subject) await assertSubjectInWorkspace(db(), request.workspaceId, body.subject);
     const run = await createAutomationRun(db(), {
       automationId: id,
       automationVersionId: version.id,
@@ -120,6 +142,8 @@ export async function automationRoutes(app: FastifyInstance) {
       graph: version.graph as AutomationGraph,
       idempotencyKey: `manual:${randomUUID()}`,
       isSimulation,
+      triggerPayload: body.payload,
+      subject: body.subject,
     });
     // Fire-and-forget, same pattern as enqueueSequenceAdvanceJob's call sites — a Redis hiccup
     // shouldn't block this response; the run stays "pending" and a later retry/backfill picks it
@@ -158,6 +182,7 @@ export async function automationRoutes(app: FastifyInstance) {
       correlationId: randomUUID(),
       graph: version.graph as AutomationGraph,
       idempotencyKey: `webhook:${token}:${Date.now()}`,
+      triggerPayload: request.body && typeof request.body === "object" && !Array.isArray(request.body) ? (request.body as Record<string, unknown>) : undefined,
     });
     enqueueAutomationRunAdvance(app.config, { automationRunId: run.id, workspaceId: run.workspaceId }).catch((err: unknown) => {
       app.log.error({ err, runId: run.id }, "Failed to enqueue automation run advance job");
@@ -165,10 +190,34 @@ export async function automationRoutes(app: FastifyInstance) {
     return reply.code(202).send({ data: { runId: run.id, verified: false } });
   });
 
+  /** COPS-10 run history of one workflow: ?version, ?account_id, ?status, ?before, ?limit. */
   app.get("/automations/:id/runs", async (request, reply) => {
     if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-    return reply.send({ data: await listRuns(db(), request.workspaceId, id) });
+    const q = runHistoryQuery.parse(request.query ?? {});
+    await new AutomationService(db()).getAutomation(request.workspaceId, id);
+    const result = await listRuns(db(), request.workspaceId, {
+      automationId: id,
+      version: q.version,
+      subject: q.account_id ? { type: "account", id: q.account_id } : undefined,
+      status: q.status,
+      before: q.before ? new Date(q.before) : undefined,
+      limit: q.limit,
+    });
+    return reply.send({ data: result.data, next_before: result.nextBefore });
+  });
+
+  /** COPS-10 run history across every workflow, e.g. everything that ran for one account. */
+  app.get("/automations/runs", async (request, reply) => {
+    if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    const q = runHistoryQuery.parse(request.query ?? {});
+    const result = await listRuns(db(), request.workspaceId, {
+      subject: q.account_id ? { type: "account", id: q.account_id } : undefined,
+      status: q.status,
+      before: q.before ? new Date(q.before) : undefined,
+      limit: q.limit,
+    });
+    return reply.send({ data: result.data, next_before: result.nextBefore });
   });
 
   app.get("/automations/runs/:runId", async (request, reply) => {

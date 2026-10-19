@@ -11,6 +11,8 @@ export interface NodeExecutionContext {
   node: AutomationNode;
   /** Outputs of every previously-succeeded step in this run, keyed by nodeId. */
   priorOutputs: Record<string, unknown>;
+  /** COPS-10: what started the run; the trigger node passes it on as its output. */
+  triggerPayload?: Record<string, unknown>;
 }
 
 export interface NodeHandlerResult {

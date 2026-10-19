@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, scopedTo, scopedById } from "@skout/db";
 import { createLogger } from "@skout/observability";
@@ -8,7 +8,7 @@ import { HttpError } from "../utils/http.js";
 import { findStartNodes, type AutomationGraph } from "./automation-graph.js";
 import { listAutomationSecretValues, maskAutomationSecrets } from "./automation-secrets.service.js";
 
-const { automationRuns, automationRunSteps } = schema;
+const { automationRuns, automationRunSteps, automationVersions } = schema;
 const log = createLogger("automation-run.service");
 
 const CLAIM_LEASE_MS = 60_000;
@@ -23,7 +23,13 @@ export interface CreateRunInput {
   graph: AutomationGraph;
   idempotencyKey?: string;
   isSimulation?: boolean;
+  /** COPS-10: what started the run, and what it is about (e.g. an account). */
+  triggerPayload?: Record<string, unknown>;
+  subject?: { type: RunSubjectType; id: string };
 }
+
+export const RUN_SUBJECT_TYPES = ["account", "contact", "deal"] as const;
+export type RunSubjectType = (typeof RUN_SUBJECT_TYPES)[number];
 
 /**
  * Creates a run plus one pending step per start node (a node with no incoming edge). Idempotent
@@ -51,6 +57,9 @@ export async function createAutomationRun(db: Db, input: CreateRunInput) {
       correlationId: input.correlationId,
       idempotencyKey: input.idempotencyKey ?? null,
       isSimulation: input.isSimulation ?? false,
+      triggerPayload: input.triggerPayload ?? null,
+      subjectType: input.subject?.type ?? null,
+      subjectId: input.subject?.id ?? null,
     })
     .returning();
 
@@ -196,10 +205,36 @@ export async function getRun(db: Db, config: Env, workspaceId: string, runId: st
   return { run, steps };
 }
 
-export async function listRuns(db: Db, workspaceId: string, automationId: string) {
-  return db
-    .select()
+export interface RunHistoryQuery {
+  automationId?: string;
+  version?: number;
+  subject?: { type: RunSubjectType; id: string };
+  status?: string;
+  /** Runs created before this time (paging, newest first). */
+  before?: Date;
+  limit?: number;
+}
+
+/**
+ * COPS-10 run history: newest first, filtered by workflow, version, subject (e.g. one account
+ * across every workflow) and status. Each row carries its version number.
+ */
+export async function listRuns(db: Db, workspaceId: string, query: RunHistoryQuery) {
+  const limit = Math.min(Math.max(query.limit ?? 50, 1), 200);
+  const conditions = [eq(automationRuns.workspaceId, workspaceId)];
+  if (query.automationId) conditions.push(eq(automationRuns.automationId, query.automationId));
+  if (query.version !== undefined) conditions.push(eq(automationVersions.version, query.version));
+  if (query.subject) conditions.push(eq(automationRuns.subjectType, query.subject.type), eq(automationRuns.subjectId, query.subject.id));
+  if (query.status) conditions.push(eq(automationRuns.status, query.status));
+  if (query.before) conditions.push(lt(automationRuns.createdAt, query.before));
+  const rows = await db
+    .select({ run: automationRuns, version: automationVersions.version })
     .from(automationRuns)
-    .where(scopedTo(automationRuns, workspaceId, eq(automationRuns.automationId, automationId)))
-    .orderBy(asc(automationRuns.createdAt));
+    .innerJoin(automationVersions, eq(automationRuns.automationVersionId, automationVersions.id))
+    .where(and(...conditions))
+    .orderBy(desc(automationRuns.createdAt), desc(automationRuns.id))
+    .limit(limit + 1);
+  const page = rows.slice(0, limit).map((r) => ({ ...r.run, version: r.version }));
+  const last = page[page.length - 1];
+  return { data: page, nextBefore: rows.length > limit && last ? last.createdAt.toISOString() : null };
 }

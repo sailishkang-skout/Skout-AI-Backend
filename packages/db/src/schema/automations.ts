@@ -70,12 +70,19 @@ export const automationRuns = pgTable(
     idempotencyKey: text("idempotency_key"),
     isSimulation: boolean("is_simulation").notNull().default(false),
     businessResult: jsonb("business_result"),
+    /** COPS-10: what started the run (event, webhook body, schedule tick, manual input). */
+    triggerPayload: jsonb("trigger_payload"),
+    /** COPS-10: what the run is about, e.g. "account" + the company id, for per-account history. */
+    subjectType: text("subject_type"),
+    subjectId: uuid("subject_id"),
     startedAt: timestamp("started_at", { withTimezone: true }),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index("automation_runs_automation_idx").on(table.automationId, table.createdAt),
+    index("automation_runs_version_idx").on(table.automationVersionId, table.createdAt),
+    index("automation_runs_subject_idx").on(table.workspaceId, table.subjectType, table.subjectId, table.createdAt),
     uniqueIndex("automation_runs_idempotency_uidx").on(table.automationId, table.idempotencyKey),
   ]
 );
