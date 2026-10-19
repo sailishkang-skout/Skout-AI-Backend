@@ -5,6 +5,7 @@ import { createDb } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { createAutomationRun, listRunsWithDueSteps } from "../services/automation-run.service.js";
 import type { AutomationGraph } from "../services/automation-graph.js";
+import { AutomationService } from "../services/automation.service.js";
 
 // The queue is Redis; here each "job" is a direct advanceAutomationRun call, and the delays the
 // worker asks for are recorded.
@@ -98,5 +99,39 @@ maybe("COPS-10 durable delay (Postgres)", () => {
     const step = await stepOf(r.runId, "wait");
     expect(step.status).toBe("succeeded");
     expect(step.run_after).toBeNull();
+  });
+
+  it("rollback makes an earlier version live again and leaves an in-flight run on its own version", async () => {
+    const tag = randomUUID().slice(0, 8);
+    const [ws] = await sql`insert into workspaces (name, slug) values (${`wf-${tag}`}, ${`wf-rollback-${tag}`}) returning id`;
+    const svc = new AutomationService(db);
+    const auto = await svc.createAutomation(ws.id, { name: "Rollback" });
+    const titled = (title: string): AutomationGraph => ({
+      ...graph,
+      nodes: graph.nodes.map((n) => (n.id === "notify" ? { ...n, config: { title } } : n)),
+    });
+
+    const v1 = await svc.publishVersion(ws.id, auto.id, titled("from v1"));
+    const inflight = await createAutomationRun(db, { automationId: auto.id, automationVersionId: v1.id, workspaceId: ws.id, triggerType: "manual", graph: titled("from v1"), idempotencyKey: `rb:${tag}` });
+    const r = { workspaceId: ws.id as string, runId: inflight.id };
+    await advance(r);
+    await advance(r); // now waiting on the delay
+    await svc.publishVersion(ws.id, auto.id, titled("from v2"));
+
+    const rolled = await svc.rollbackToVersion(ws.id, auto.id, 1);
+    expect(rolled).toMatchObject({ version: 3, restoredFrom: 1 });
+    expect((await svc.getLatestPublishedVersion(auto.id))!.graph).toEqual(titled("from v1"));
+    await expect(svc.rollbackToVersion(ws.id, auto.id, 3)).rejects.toMatchObject({ statusCode: 409 });
+    await expect(svc.rollbackToVersion(ws.id, auto.id, 9)).rejects.toMatchObject({ statusCode: 404 });
+    const [audit] = await sql`select action, after_state from audit_logs where entity_id = ${auto.id} and action = 'automation.rolled_back'`;
+    expect(audit.after_state).toEqual({ version: 3, restoredFrom: 1 });
+
+    // The in-flight run is still on v1 and finishes with v1's step.
+    const [pinned] = await sql`select automation_version_id from automation_runs where id = ${inflight.id}`;
+    expect(pinned.automation_version_id).toBe(v1.id);
+    await sql`update automation_run_steps set run_after = now() - interval '1 second' where automation_run_id = ${inflight.id} and node_id = 'wait'`;
+    for (let i = 0; i < 3; i++) await advance(r);
+    const [sent] = await sql`select title from notifications where workspace_id = ${ws.id}`;
+    expect(sent.title).toBe("from v1");
   });
 });

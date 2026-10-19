@@ -102,6 +102,14 @@ export async function automationRoutes(app: FastifyInstance) {
     return reply.code(201).send({ data: version });
   });
 
+  /** COPS-10: makes an earlier version live again, as the next version. In-flight runs keep theirs. */
+  app.post("/automations/:id/versions/:version/rollback", manage, async (request, reply) => {
+    if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    const { id, version } = z.object({ id: z.string().uuid(), version: z.coerce.number().int().min(1) }).parse(request.params);
+    const svc = new AutomationService(db());
+    return reply.code(201).send({ data: await svc.rollbackToVersion(request.workspaceId, id, version, request.userId) });
+  });
+
   app.get("/automations/:id/versions", async (request, reply) => {
     if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);

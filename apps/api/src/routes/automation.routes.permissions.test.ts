@@ -16,7 +16,8 @@ let app: FastifyInstance;
 
 beforeAll(async () => {
   const config = loadEnv();
-  app = await buildApp({ ...config, CLERK_SECRET_KEY: undefined, LOG_LEVEL: "fatal", OPENSEARCH_URL: undefined, EXPORTS_BUCKET: undefined });
+  // No Redis: runs are advanced inline below, never by a worker that may share this database.
+  app = await buildApp({ ...config, CLERK_SECRET_KEY: undefined, LOG_LEVEL: "fatal", OPENSEARCH_URL: undefined, EXPORTS_BUCKET: undefined, REDIS_URL: undefined });
 }, 30000);
 
 afterAll(async () => {
