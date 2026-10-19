@@ -19,10 +19,11 @@ export const createTicketActionNodeHandler: NodeHandler = async (ctx) => {
   const title = config.title?.trim();
   if (!title) throw new HttpError("Create ticket needs a title", 422);
   const accountId = ctx.subject?.type === "account" ? ctx.subject.id : null;
-  if (!accountId) throw new HttpError("Create ticket needs a run about an account", 422);
+  if (!accountId && !ctx.isSimulation) throw new HttpError("Create ticket needs a run about an account", 422);
   const severity: TicketSeverity = (TICKET_SEVERITIES as readonly string[]).includes(config.severity ?? "") ? (config.severity as TicketSeverity) : "medium";
 
-  if (ctx.isSimulation) return { output: { simulated: true, title, severity, accountId } };
+  if (ctx.isSimulation) return { output: { simulated: true, title, severity, accountId, ...(accountId ? {} : { note: "A real run raises this for the run's account" }) } };
+  if (!accountId) throw new HttpError("Create ticket needs a run about an account", 422);
 
   const output = await withStepEffect(ctx, "ticket", async (tx) => {
     const [owner] = await tx

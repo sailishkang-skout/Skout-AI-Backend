@@ -29,13 +29,14 @@ export const updateFieldsActionNodeHandler: NodeHandler = async (ctx) => {
   const entityType = config.entityType;
   if (entityType !== "contact" && entityType !== "deal") throw new HttpError('Update fields needs entityType "contact" or "deal"', 422);
   const entityId = config.entityId || (ctx.subject?.type === entityType ? ctx.subject.id : undefined);
-  if (!entityId) throw new HttpError("Update fields needs a record id", 422);
+  if (!entityId && !ctx.isSimulation) throw new HttpError("Update fields needs a record id", 422);
   const table = entityType === "contact" ? contacts : deals;
   const entries = Object.entries(config.fields ?? {});
   if (!entries.length) throw new HttpError("Update fields needs at least one field", 422);
   const patch = Object.fromEntries(entries.map(([field, value]) => [field, columnValue(entityType, table, field, String(value ?? ""))]));
 
-  if (ctx.isSimulation) return { output: { simulated: true, entityType, entityId, patch } };
+  if (ctx.isSimulation) return { output: { simulated: true, entityType, entityId: entityId ?? null, patch } };
+  if (!entityId) throw new HttpError("Update fields needs a record id", 422);
 
   const output = await withStepEffect(ctx, "update_fields", async (tx) => {
     const updated = await tx

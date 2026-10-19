@@ -29,11 +29,13 @@ export const createTaskActionNodeHandler: NodeHandler = async (ctx) => {
   const type = (TASK_TYPES as readonly string[]).includes(config.type ?? "") ? config.type! : "follow_up";
   const priority = (PRIORITIES as readonly string[]).includes(config.priority ?? "") ? config.priority! : "medium";
   const accountId = ctx.subject?.type === "account" ? ctx.subject.id : null;
-  if (!accountId) throw new HttpError("Create task needs a run about an account", 422);
+  // A simulation needs no account (the builder simulates before publish); a real run does.
+  if (!accountId && !ctx.isSimulation) throw new HttpError("Create task needs a run about an account", 422);
   const hours = Number(config.dueInHours ?? 24);
   const dueDate = new Date(Date.now() + (Number.isFinite(hours) && hours >= 0 ? hours : 24) * 3600_000);
 
-  if (ctx.isSimulation) return { output: { simulated: true, title, type, priority, accountId } };
+  if (ctx.isSimulation) return { output: { simulated: true, title, type, priority, accountId, ...(accountId ? {} : { note: "A real run creates this for the run's account" }) } };
+  if (!accountId) throw new HttpError("Create task needs a run about an account", 422);
 
   const output = await withStepEffect(ctx, "task", async (tx) => {
     const [account] = await tx
