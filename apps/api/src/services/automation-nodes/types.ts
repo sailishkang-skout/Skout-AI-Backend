@@ -13,6 +13,8 @@ export interface NodeExecutionContext {
   priorOutputs: Record<string, unknown>;
   /** COPS-10: what started the run; the trigger node passes it on as its output. */
   triggerPayload?: Record<string, unknown>;
+  /** COPS-10: set when an admin approved this step after the Policy Gateway paused it. */
+  approval?: { approvedBy: string | null; reason: string | null; at: string };
 }
 
 export interface NodeHandlerResult {

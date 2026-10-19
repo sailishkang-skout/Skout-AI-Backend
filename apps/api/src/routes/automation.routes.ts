@@ -14,7 +14,7 @@ import { z } from "zod";
 import { schema, scopedById } from "@skout/db";
 import { errorResponse, HttpError } from "../utils/http.js";
 import { AutomationService } from "../services/automation.service.js";
-import { createAutomationRun, getRun, listRuns, retryFailedSteps, RUN_SUBJECT_TYPES, type RunSubjectType } from "../services/automation-run.service.js";
+import { cancelRun, createAutomationRun, decideApproval, getRun, listRuns, replayRun, retryFailedSteps, RUN_SUBJECT_TYPES, type RunSubjectType } from "../services/automation-run.service.js";
 import { enqueueAutomationRunAdvance } from "../workers/automation-run.queue.js";
 import type { AutomationGraph } from "../services/automation-graph.js";
 import { validateAutomationGraph } from "../services/automation-graph-validate.js";
@@ -251,5 +251,42 @@ export async function automationRoutes(app: FastifyInstance) {
       app.log.error({ err, runId: updatedRun.id }, "Failed to enqueue automation run advance job after retry");
     });
     return reply.code(202).send({ data: updatedRun });
+  });
+
+  const runParams = z.object({ runId: z.string().uuid() });
+  const reasonField = z.string().trim().max(1000).optional();
+
+  /** COPS-10: stops a run that has not finished. */
+  app.post("/automations/runs/:runId/cancel", manage, async (request, reply) => {
+    if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    const { runId } = runParams.parse(request.params);
+    const body = z.object({ reason: reasonField }).parse(request.body ?? {});
+    return reply.send({ data: await cancelRun(db(), request.workspaceId, runId, request.userId, body.reason || null) });
+  });
+
+  /** COPS-10: approves or rejects the step a run is waiting on. */
+  app.post("/automations/runs/:runId/approval", manage, async (request, reply) => {
+    if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    const { runId } = runParams.parse(request.params);
+    const body = z.object({ decision: z.enum(["approve", "reject"]), reason: reasonField }).parse(request.body ?? {});
+    const result = await decideApproval(db(), request.workspaceId, runId, body.decision, request.userId, body.reason || null);
+    if (body.decision === "approve") {
+      enqueueAutomationRunAdvance(app.config, { automationRunId: runId, workspaceId: request.workspaceId }).catch((err: unknown) => {
+        app.log.error({ err, runId }, "Failed to enqueue automation run advance job");
+      });
+    }
+    return reply.send({ data: result });
+  });
+
+  /** COPS-10: runs again with the same trigger payload and subject, on the same or the latest version. */
+  app.post("/automations/runs/:runId/replay", manage, async (request, reply) => {
+    if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    const { runId } = runParams.parse(request.params);
+    const body = z.object({ version: z.enum(["same", "latest"]).default("same") }).parse(request.body ?? {});
+    const run = await replayRun(db(), request.workspaceId, runId, request.userId, body.version);
+    enqueueAutomationRunAdvance(app.config, { automationRunId: run.id, workspaceId: request.workspaceId }).catch((err: unknown) => {
+      app.log.error({ err, runId: run.id }, "Failed to enqueue automation run advance job");
+    });
+    return reply.code(202).send({ data: run });
   });
 }

@@ -3,7 +3,8 @@ import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { createDb } from "@skout/db";
 import type { Env } from "../config/env.js";
-import { createAutomationRun, listRunsWithDueSteps } from "../services/automation-run.service.js";
+import { cancelRun, createAutomationRun, decideApproval, listRunsWithDueSteps, replayRun } from "../services/automation-run.service.js";
+import { upsertActionMode } from "../services/policy-gateway.service.js";
 import type { AutomationGraph } from "../services/automation-graph.js";
 import { AutomationService } from "../services/automation.service.js";
 
@@ -133,5 +134,75 @@ maybe("COPS-10 durable delay (Postgres)", () => {
     for (let i = 0; i < 3; i++) await advance(r);
     const [sent] = await sql`select title from notifications where workspace_id = ${ws.id}`;
     expect(sent.title).toBe("from v1");
+  });
+
+  async function runOf(g: AutomationGraph, extra: { payload?: Record<string, unknown> } = {}) {
+    const tag = randomUUID().slice(0, 8);
+    const [ws] = await sql`insert into workspaces (name, slug) values (${`wf-${tag}`}, ${`wf-ctl-${tag}`}) returning id`;
+    const [auto] = await sql`insert into automations (workspace_id, name, status, current_version) values (${ws.id}, 'Ctl', 'active', 1) returning id`;
+    const [version] = await sql`insert into automation_versions (automation_id, version, graph, status) values (${auto.id}, 1, ${sql.json(g)}, 'published') returning id`;
+    const run = await createAutomationRun(db, { automationId: auto.id, automationVersionId: version.id, workspaceId: ws.id, triggerType: "manual", graph: g, idempotencyKey: `ctl:${tag}`, triggerPayload: extra.payload });
+    return { workspaceId: ws.id as string, runId: run.id, versionId: version.id as string };
+  }
+  const approvalGraph: AutomationGraph = {
+    nodes: [
+      { id: "t", type: "trigger", config: {} },
+      { id: "ok", type: "approval", config: { entityType: "account", entityId: "acc-1" } },
+      { id: "notify", type: "action_notification", config: { title: "Delay fired" } },
+    ],
+    edges: [
+      { id: "e1", source: "t", target: "ok" },
+      { id: "e2", source: "ok", target: "notify" },
+    ],
+  };
+  const runStatus = async (runId: string) => (await sql`select status from automation_runs where id = ${runId}`)[0].status as string;
+
+  it("an approval step waits for a decision; approve runs it once, reject cancels the run", async () => {
+    const a = await runOf(approvalGraph);
+    await upsertActionMode(db, a.workspaceId, "workflow.step_approval", "approve");
+    await advance(a); // trigger
+    await advance(a); // approval: the gateway denies it, so it waits
+    expect(await runStatus(a.runId)).toBe("awaiting_approval");
+    expect((await stepOf(a.runId, "ok")).status).toBe("awaiting_approval");
+    await advance(a); // a stray job runs nothing and asks the gateway nothing
+    expect((await sql`select count(*)::int as n from policy_decisions where workspace_id = ${a.workspaceId}`)[0].n).toBe(1);
+
+    await decideApproval(db, a.workspaceId, a.runId, "approve", undefined, "looks right");
+    await expect(decideApproval(db, a.workspaceId, a.runId, "approve", undefined, null)).rejects.toMatchObject({ statusCode: 409 });
+    await advance(a); // approval again, now allowed
+    await advance(a); // notify
+    await advance(a);
+    expect((await stepOf(a.runId, "ok")).status).toBe("succeeded");
+    expect(await fired(a.workspaceId)).toBe(1);
+    expect(await runStatus(a.runId)).toBe("succeeded");
+
+    const b = await runOf(approvalGraph);
+    await upsertActionMode(db, b.workspaceId, "workflow.step_approval", "approve");
+    await advance(b);
+    await advance(b);
+    await decideApproval(db, b.workspaceId, b.runId, "reject", undefined, "wrong account");
+    expect(await runStatus(b.runId)).toBe("cancelled");
+    await advance(b);
+    expect(await fired(b.workspaceId)).toBe(0);
+    const [audit] = await sql`select action from audit_logs where entity_id = ${b.runId}`;
+    expect(audit.action).toBe("automation.step_rejected");
+  });
+
+  it("cancel stops a waiting run for good; replay starts a new run with the same payload and version", async () => {
+    const r = await runOf(graph, { payload: { account: { tier: "enterprise" } } });
+    await advance(r);
+    await advance(r); // waiting on the delay
+    await cancelRun(db, r.workspaceId, r.runId, undefined, "customer churned");
+    expect(await runStatus(r.runId)).toBe("cancelled");
+    expect((await stepOf(r.runId, "wait")).status).toBe("skipped");
+    await sql`update automation_run_steps set run_after = now() - interval '1 second' where automation_run_id = ${r.runId}`;
+    expect((await listRunsWithDueSteps(db, new Date())).some((d) => d.automationRunId === r.runId)).toBe(false);
+    await advance(r);
+    expect(await fired(r.workspaceId)).toBe(0);
+    await expect(cancelRun(db, r.workspaceId, r.runId, undefined, null)).rejects.toMatchObject({ statusCode: 409 });
+
+    const replay = await replayRun(db, r.workspaceId, r.runId, undefined, "same");
+    expect(replay.id).not.toBe(r.runId);
+    expect(replay).toMatchObject({ automationVersionId: r.versionId, triggerRef: `replay:${r.runId}`, triggerPayload: { account: { tier: "enterprise" } }, status: "pending" });
   });
 });

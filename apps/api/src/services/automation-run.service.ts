@@ -8,7 +8,8 @@ import { HttpError } from "../utils/http.js";
 import { findStartNodes, type AutomationGraph } from "./automation-graph.js";
 import { listAutomationSecretValues, maskAutomationSecrets } from "./automation-secrets.service.js";
 
-const { automationRuns, automationRunSteps, automationVersions } = schema;
+const { automationRuns, automationRunSteps, automationVersions, auditLogs } = schema;
+const FINISHED_RUN = ["succeeded", "failed", "cancelled"];
 const log = createLogger("automation-run.service");
 
 const CLAIM_LEASE_MS = 60_000;
@@ -237,4 +238,146 @@ export async function listRuns(db: Db, workspaceId: string, query: RunHistoryQue
   const page = rows.slice(0, limit).map((r) => ({ ...r.run, version: r.version }));
   const last = page[page.length - 1];
   return { data: page, nextBefore: rows.length > limit && last ? last.createdAt.toISOString() : null };
+}
+
+/**
+ * COPS-10: an approval step the Policy Gateway did not allow waits as `awaiting_approval`. Neither
+ * a claim (pending only) nor the lease reclaim (claimed/running only) picks it up, so it is not
+ * re-asked on every lease expiry; it moves on only through decideApproval().
+ */
+export async function pauseStepForApproval(db: Db, stepId: string, workerId: string, detail: unknown) {
+  const rows = await db
+    .update(automationRunSteps)
+    .set({ status: "awaiting_approval", output: { policy: detail ?? null }, leaseOwner: null, leaseExpiresAt: null })
+    .where(and(eq(automationRunSteps.id, stepId), eq(automationRunSteps.leaseOwner, workerId)))
+    .returning({ id: automationRunSteps.id });
+  return rows.length > 0;
+}
+
+async function lockRun(tx: Parameters<Parameters<Db["transaction"]>[0]>[0], workspaceId: string, runId: string) {
+  const [run] = await tx.select().from(automationRuns).where(scopedById(automationRuns, workspaceId, runId)).for("update").limit(1);
+  if (!run) throw new HttpError("automation_run_not_found", 404);
+  return run;
+}
+
+/**
+ * Approve: the waiting step runs again with the approval (the Policy Gateway then allows it).
+ * Reject: the step fails, what was left of the run is skipped and the run is cancelled. Audited.
+ * The caller enqueues the run after an approval.
+ */
+export async function decideApproval(
+  db: Db,
+  workspaceId: string,
+  runId: string,
+  decision: "approve" | "reject",
+  actorId: string | undefined,
+  reason: string | null
+) {
+  return db.transaction(async (tx) => {
+    const run = await lockRun(tx, workspaceId, runId);
+    if (run.status !== "awaiting_approval") throw new HttpError("automation_run_not_awaiting_approval", 409);
+    const [step] = await tx
+      .select()
+      .from(automationRunSteps)
+      .where(and(eq(automationRunSteps.automationRunId, runId), eq(automationRunSteps.status, "awaiting_approval")))
+      .limit(1);
+    if (!step) throw new HttpError("automation_run_not_awaiting_approval", 409);
+    const at = new Date();
+    if (decision === "approve") {
+      await tx
+        .update(automationRunSteps)
+        .set({ status: "pending", input: { approval: { approvedBy: actorId ?? null, reason, at: at.toISOString() } } })
+        .where(eq(automationRunSteps.id, step.id));
+      await tx.update(automationRuns).set({ status: "running" }).where(eq(automationRuns.id, runId));
+    } else {
+      await tx.update(automationRunSteps).set({ status: "failed", error: `approval rejected${reason ? `: ${reason}` : ""}` }).where(eq(automationRunSteps.id, step.id));
+      await tx
+        .update(automationRunSteps)
+        .set({ status: "skipped" })
+        .where(and(eq(automationRunSteps.automationRunId, runId), eq(automationRunSteps.status, "pending")));
+      await tx.update(automationRuns).set({ status: "cancelled", finishedAt: at }).where(eq(automationRuns.id, runId));
+    }
+    await tx.insert(auditLogs).values({
+      workspaceId,
+      actorType: actorId ? "user" : "system",
+      actorId: actorId ?? null,
+      action: decision === "approve" ? "automation.step_approved" : "automation.step_rejected",
+      entityType: "automation_run",
+      entityId: runId,
+      beforeState: { status: run.status, nodeId: step.nodeId },
+      afterState: { status: decision === "approve" ? "running" : "cancelled" },
+      reason: reason ?? `Workflow step ${step.nodeId} ${decision === "approve" ? "approved" : "rejected"}`,
+    });
+    return { runId, decision, nodeId: step.nodeId };
+  });
+}
+
+/**
+ * Cancels a run that has not finished: its waiting steps are skipped, and a step a worker is
+ * running now is skipped when that worker next looks at the run. Audited.
+ */
+export async function cancelRun(db: Db, workspaceId: string, runId: string, actorId: string | undefined, reason: string | null) {
+  return db.transaction(async (tx) => {
+    const run = await lockRun(tx, workspaceId, runId);
+    if (FINISHED_RUN.includes(run.status)) throw new HttpError("automation_run_already_finished", 409);
+    await tx
+      .update(automationRunSteps)
+      .set({ status: "skipped" })
+      .where(and(eq(automationRunSteps.automationRunId, runId), inArray(automationRunSteps.status, ["pending", "awaiting_approval"])));
+    const [updated] = await tx.update(automationRuns).set({ status: "cancelled", finishedAt: new Date() }).where(eq(automationRuns.id, runId)).returning();
+    await tx.insert(auditLogs).values({
+      workspaceId,
+      actorType: actorId ? "user" : "system",
+      actorId: actorId ?? null,
+      action: "automation.run_cancelled",
+      entityType: "automation_run",
+      entityId: runId,
+      beforeState: { status: run.status },
+      afterState: { status: "cancelled" },
+      reason: reason ?? "Workflow run cancelled",
+    });
+    return updated!;
+  });
+}
+
+/**
+ * COPS-10 replay: a new run with the original trigger payload and subject, on the original
+ * version or the latest published one. The original run is not changed. Audited.
+ */
+export async function replayRun(db: Db, workspaceId: string, runId: string, actorId: string | undefined, target: "same" | "latest") {
+  const [original] = await db.select().from(automationRuns).where(scopedById(automationRuns, workspaceId, runId)).limit(1);
+  if (!original) throw new HttpError("automation_run_not_found", 404);
+  const [version] =
+    target === "same"
+      ? await db.select().from(automationVersions).where(eq(automationVersions.id, original.automationVersionId)).limit(1)
+      : await db
+          .select()
+          .from(automationVersions)
+          .where(and(eq(automationVersions.automationId, original.automationId), eq(automationVersions.status, "published")))
+          .orderBy(desc(automationVersions.version))
+          .limit(1);
+  if (!version) throw new HttpError("automation_version_not_found", 422);
+  const run = await createAutomationRun(db, {
+    automationId: original.automationId,
+    automationVersionId: version.id,
+    workspaceId,
+    triggerType: original.triggerType as CreateRunInput["triggerType"],
+    triggerRef: `replay:${original.id}`,
+    graph: version.graph as AutomationGraph,
+    idempotencyKey: `replay:${original.id}:${crypto.randomUUID()}`,
+    isSimulation: original.isSimulation,
+    triggerPayload: (original.triggerPayload ?? undefined) as Record<string, unknown> | undefined,
+    subject: original.subjectType && original.subjectId ? { type: original.subjectType as RunSubjectType, id: original.subjectId } : undefined,
+  });
+  await db.insert(auditLogs).values({
+    workspaceId,
+    actorType: actorId ? "user" : "system",
+    actorId: actorId ?? null,
+    action: "automation.run_replayed",
+    entityType: "automation_run",
+    entityId: original.id,
+    afterState: { replayRunId: run.id, version: version.version },
+    reason: `Workflow run replayed on v${version.version}`,
+  });
+  return run;
 }

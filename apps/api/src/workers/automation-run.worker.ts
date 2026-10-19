@@ -1,7 +1,7 @@
 import { Worker } from "bullmq";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
@@ -14,6 +14,7 @@ import {
   failStep,
   deferStep,
   listRunsWithDueSteps,
+  pauseStepForApproval,
 } from "../services/automation-run.service.js";
 import { reclaimExpiredLeases, withLeaseHeartbeat, buildIdempotencyKey, LeaseLostError } from "@skout/shared";
 import { AmbiguousOutcomeError } from "../services/automation-nodes/types.js";
@@ -75,6 +76,15 @@ export async function advanceAutomationRun(
     return;
   }
 
+  // COPS-10: a cancelled run runs nothing more; a step claimed after the cancel is skipped.
+  if (run.status === "cancelled") {
+    await db
+      .update(automationRunSteps)
+      .set({ status: "skipped", leaseOwner: null, leaseExpiresAt: null })
+      .where(and(eq(automationRunSteps.id, step.id), eq(automationRunSteps.leaseOwner, WORKER_ID)));
+    return;
+  }
+
   let graph = graphOverride;
   if (!graph) {
     const [version] = await db.select().from(automationVersions).where(eq(automationVersions.id, run.automationVersionId)).limit(1);
@@ -109,7 +119,9 @@ export async function advanceAutomationRun(
     }
   }
 
-  await markStepRunning(db, step.id, {});
+  // Keep the step's input: an approved approval step carries the approval there.
+  const stepInput = (step.input ?? {}) as { approval?: NonNullable<Parameters<ReturnType<typeof getNodeHandler>>[0]["approval"]> };
+  await markStepRunning(db, step.id, stepInput);
 
   try {
     const handler = getNodeHandler(node.type);
@@ -124,6 +136,7 @@ export async function advanceAutomationRun(
         node: interpolatedNode,
         priorOutputs,
         triggerPayload: (run.triggerPayload ?? undefined) as Record<string, unknown> | undefined,
+        approval: stepInput.approval,
       })
     );
     if (result.outcome === "ambiguous") {
@@ -185,6 +198,8 @@ export async function advanceAutomationRun(
     const statusCode = (err as { statusCode?: number })?.statusCode;
     const isPolicyGatewayPause = statusCode === 403 || statusCode === 409;
     if (isPolicyGatewayPause) {
+      // The step waits for a decision (decideApproval) instead of being re-asked on every lease expiry.
+      if (!(await pauseStepForApproval(db, step.id, WORKER_ID, (err as { details?: unknown }).details))) return;
       await db.update(automationRuns).set({ status: "awaiting_approval" }).where(eq(automationRuns.id, run.id));
       log.info("automation run paused for approval", { runId: run.id, nodeId: node.id });
       return;
