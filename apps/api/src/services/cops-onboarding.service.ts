@@ -296,7 +296,7 @@ export async function sendOnboardingEmail(
     throw new OnboardingError("CONTACT_BLOCKED", CAN_CONTACT_MESSAGE[gate.reason as CanContactBlock], { reason: gate.reason, to: target.to });
   }
 
-  let row = existing;
+  let row: typeof existing | null = existing;
   if (!row) {
     // Lock the account so two different keys for the same first send cannot both pass the check.
     row = await db.transaction(async (tx) => {
