@@ -179,3 +179,5 @@ by apps/api.
 |---|---|---|
 | `apps/api/src/routes/automation.routes.ts` | companies, contacts, deals | read only, by id: a workflow run's subject (account, contact or deal) must belong to the caller's workspace |
 | `apps/api/src/routes/automation.routes.permissions.test.ts` | companies, workspaces | test fixtures: an account in the workspace and one in another |
+| `apps/api/src/services/automation-nodes/action-create-task.node.ts` | tasks, companies | **insert** of one task for the run's account (the workflow "create task" action, the same insert COPS-05 playbooks make); reads the account owner |
+| `apps/api/src/services/automation-nodes/action-update-fields.node.ts` | contacts, deals | **update** of CRM-sync-owned fields of one record (the workflow "update allowed fields" action), with the COPS-09 conflict-resolution allowlist and type checks |

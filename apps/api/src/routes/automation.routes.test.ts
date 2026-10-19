@@ -1,10 +1,13 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { schema } from "@skout/db";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
 import { saveAutomationSecret } from "../services/automation-secrets.service.js";
 import type { FastifyInstance } from "fastify";
+
+// Runs are advanced inline: nothing goes to Redis, where another worker could pick a run up first.
+vi.mock("../workers/automation-run.queue.js", () => ({ AUTOMATION_RUN_QUEUE: "test", enqueueAutomationRunAdvance: vi.fn(async () => undefined) }));
 
 let app: FastifyInstance;
 

@@ -125,6 +125,21 @@ export const automationRunSteps = pgTable(
   ]
 );
 
+/**
+ * COPS-10: one row per action step that changed something, written in the same transaction as the
+ * change and keyed by the step's idempotency key, so a step re-run after a crash does not repeat it.
+ */
+export const automationStepEffects = pgTable("automation_step_effects", {
+  stepKey: text("step_key").primaryKey(),
+  automationRunId: uuid("automation_run_id")
+    .notNull()
+    .references(() => automationRuns.id, { onDelete: "cascade" }),
+  nodeId: text("node_id").notNull(),
+  effectType: text("effect_type").notNull(),
+  output: jsonb("output").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 /** Encrypted credentials an automation's generic HTTP node can reference by id. */
 export const automationSecrets = pgTable(
   "automation_secrets",

@@ -138,6 +138,8 @@ export async function advanceAutomationRun(
         priorOutputs,
         triggerPayload: (run.triggerPayload ?? undefined) as Record<string, unknown> | undefined,
         approval: stepInput.approval,
+        stepKey: step.idempotencyKey,
+        subject: run.subjectType && run.subjectId ? { type: run.subjectType, id: run.subjectId } : undefined,
       })
     );
     if (result.outcome === "ambiguous") {

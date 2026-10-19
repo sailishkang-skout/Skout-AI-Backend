@@ -1,5 +1,6 @@
 import type { AutomationGraph, NodeType } from "./automation-graph.js";
 import { MIN_SCHEDULE_MINUTES, STATE_CHANGE_EVENTS, TRIGGER_KINDS, WORKFLOW_EVENT_TYPES, type TriggerConfig } from "./automation-triggers.service.js";
+import { publicHttpsUrlProblem } from "./automation-nodes/action-http.node.js";
 import { CONDITION_OPS, CONDITION_TYPES, isGroup, toConditionGroup, type ConditionGroup } from "./automation-nodes/condition.node.js";
 
 /**
@@ -18,6 +19,9 @@ export const NODE_REQUIRED_CONFIG: Record<NodeType, string[]> = {
   action_ai: ["prospectId", "prompt"],
   action_enrichment: ["companyDomain"],
   action_crm_sync: ["entityType", "entityId"],
+  action_create_task: ["title"],
+  action_create_ticket: ["title"],
+  action_update_fields: ["entityType", "fields"],
   approval: ["entityType", "entityId"],
 };
 
@@ -50,6 +54,10 @@ export function validateAutomationGraph(graph: AutomationGraph, options: { stric
     if (!options.strict) return;
     for (const key of required) {
       if (isMissing(node.config?.[key])) issues.push({ path: `${path}.config.${key}`, message: `${node.type} needs ${key}` });
+    }
+    if (node.type === "action_http" && typeof node.config.url === "string" && !node.config.url.includes("{{")) {
+      const problem = publicHttpsUrlProblem(node.config.url);
+      if (problem) issues.push({ path: `${path}.config.url`, message: problem });
     }
     if (node.type === "trigger") checkTrigger((node.config ?? {}) as TriggerConfig, `${path}.config`, issues);
     if (node.type === "condition") checkCondition(toConditionGroup(node.config ?? {}), `${path}.config`, graph, issues);

@@ -15,6 +15,10 @@ export interface NodeExecutionContext {
   triggerPayload?: Record<string, unknown>;
   /** COPS-10: set when an admin approved this step after the Policy Gateway paused it. */
   approval?: { approvedBy: string | null; reason: string | null; at: string };
+  /** COPS-10: the step's idempotency key; actions record their effect against it (step-effect.ts). */
+  stepKey?: string;
+  /** COPS-10: what the run is about, e.g. the account an action applies to. */
+  subject?: { type: string; id: string };
 }
 
 export interface NodeHandlerResult {
