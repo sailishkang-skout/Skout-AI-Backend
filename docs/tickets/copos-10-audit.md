@@ -93,12 +93,40 @@ Frontend gaps:
 8. Frontend builder changes.
 9. COPS-05 evaluation doc.
 
-## 4. COPS-05 on the engine (to be evaluated in step 9)
+## 4. COPS-05 on the engine: evaluation
 
-Today, COPS-05 playbooks are code paths with their own dedupe: a unique signal row per instance
-and trigger. Moving them onto the engine would make them editable, but every playbook would have
-to produce the same tasks at the same times. The proposal is to evaluate this after steps 2 to 6
-land, and to change nothing in this ticket unless the playbooks behave identically.
+The ticket asks to evaluate moving COPS-05 onto the engine with no behaviour change. Recommendation:
+**do not migrate in COPS-10.** Keep the COPS-05 evaluator, and let workflows add to it.
+
+What COPS-05 does today (`cops-onboarding-signals.service.ts`):
+- an evaluator sweeps open onboarding instances;
+- for each one it checks eight playbook triggers: no_delivery, delivered_no_login, login_no_value,
+  integration_error, low_credits, trial_ending, hard_bounce and first_login;
+- a firing creates one task per instance and trigger (a unique signal row), emits TaskCreated, stops
+  follow-ups on activation or opt-out, and creates the handoff task on activation.
+
+Why the engine cannot reproduce it without changes:
+- **Absence of events.** Most triggers mean that something did *not* happen in a window ("no login
+  24h after delivery", "signed in but no first result"). Engine triggers start on an event or a
+  schedule, and a condition can only read earlier steps. Reproducing this needs a schedule trigger
+  plus a per-instance query step, i.e. a new "load onboarding state" action. That is new
+  behaviour to build, not a move.
+- **Per-instance dedupe.** COPS-05 fires each trigger once per instance through
+  `cops_onboarding_signals`. A scheduled workflow runs once per slot, not once per instance and
+  trigger, so it would need its own dedupe key per instance.
+- **Ordering with activation.** Bible Appendix H names "Sequence action runs after activation race".
+  COPS-05 checks activation in the same pass, before it fires. A workflow would rely on the
+  CustomerActivated stop event arriving first, which is weaker.
+
+What workflows already add on top, with no COPS-05 change:
+- start on COPS-05's own events (WelcomeEmailSent, FirstLogin, ActivationMilestoneCompleted,
+  CustomerActivated, TaskCreated);
+- stop on CustomerActivated;
+- create extra tasks or tickets, or notify.
+
+If the migration is wanted later, it needs three things: a "load onboarding state" action, a
+per-instance idempotency key on scheduled runs, and a side-by-side run that compares the tasks both
+create for the same instances before COPS-05 is switched off.
 
 ## 5. Policy decisions from the Bible (v2)
 
@@ -118,5 +146,5 @@ The Bible settles most of the earlier open questions:
 | Failure scenario | Appendix H: "Sequence action runs after activation race" | Covered by the activation stop condition, and by the COPS-05 evaluation. |
 
 Still open for Aditya:
-1. COPS-05: migrate the onboarding playbooks in this ticket, or only write the evaluation (the Bible does not say)?
+1. COPS-05: the evaluation (section 4) recommends not migrating in this ticket. OK?
 2. Phase 2 start: OK to continue while the Phase 1 pilot sign-off is pending?
