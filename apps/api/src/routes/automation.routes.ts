@@ -1,3 +1,11 @@
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md (COPS-10 additions).
+ *   - Tables touched directly: companies, contacts, deals (read only, by id)
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: a workflow run's subject must be a record of the caller's workspace.
+ *   - Review date: 2026-10-19
+ */
 import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";

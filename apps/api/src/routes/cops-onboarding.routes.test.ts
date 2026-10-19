@@ -1,9 +1,15 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createRequire } from "node:module";
 import { createHmac, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
+
+// Resume re-queues the next step on Redis, which CI does not run; the queue is not under test here.
+vi.mock("../workers/sequence-enrollment.queue.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../workers/sequence-enrollment.queue.js")>()),
+  enqueueSequenceAdvanceJob: vi.fn(async () => undefined),
+}));
 
 /**
  * COPS-05 onboarding email routes against a real Postgres: who may send (Sales and CS, not

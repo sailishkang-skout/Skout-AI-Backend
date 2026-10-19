@@ -1,3 +1,11 @@
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md (COPS-10 additions).
+ *   - Tables touched directly: companies, workspaces (test fixtures only)
+ *   - Owning service: apps/crm
+ *   - Reason: the run-history test needs an account in this workspace and one in another.
+ *   - Review date: 2026-10-19
+ */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { loadEnv } from "../config/env.js";
@@ -12,12 +20,15 @@ vi.mock("@skout/auth", async (importOriginal) => ({
   getMemberPermissions: vi.fn(async () => permissions.list),
 }));
 
+// Runs are advanced inline below: nothing goes to Redis (CI has none), and no worker that shares
+// this database can pick a run up first.
+vi.mock("../workers/automation-run.queue.js", () => ({ AUTOMATION_RUN_QUEUE: "test", enqueueAutomationRunAdvance: vi.fn(async () => undefined) }));
+
 let app: FastifyInstance;
 
 beforeAll(async () => {
   const config = loadEnv();
-  // No Redis: runs are advanced inline below, never by a worker that may share this database.
-  app = await buildApp({ ...config, CLERK_SECRET_KEY: undefined, LOG_LEVEL: "fatal", OPENSEARCH_URL: undefined, EXPORTS_BUCKET: undefined, REDIS_URL: undefined });
+  app = await buildApp({ ...config, CLERK_SECRET_KEY: undefined, LOG_LEVEL: "fatal", OPENSEARCH_URL: undefined, EXPORTS_BUCKET: undefined });
 }, 30000);
 
 afterAll(async () => {
