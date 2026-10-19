@@ -100,10 +100,23 @@ and trigger. Moving them onto the engine would make them editable, but every pla
 to produce the same tasks at the same times. The proposal is to evaluate this after steps 2 to 6
 land, and to change nothing in this ticket unless the playbooks behave identically.
 
-## 5. Open questions for Aditya
+## 5. Policy decisions from the Bible (v2)
 
-1. Phase rule: COPS-10 is Phase 2. Is it OK to start while the Phase 1 sign-off is open?
-2. Permission: a new `automation:manage` key, or reuse `workspace:manage` (Owner, Admin)?
-3. HTTP node: keep it with a per-workspace host allowlist, or limit it to Owner and Admin?
-4. Event triggers: subscribe to `cops_outbox` events only, or to the Dexter spine events as well?
-5. COPS-05: migrate the playbooks in this ticket, or only write the evaluation?
+The Bible settles most of the earlier open questions:
+
+| Question | What the Bible says | Decision |
+|---|---|---|
+| Who builds workflows | "Admin: configure mappings, workflows, templates, permissions, integrations" (roles) | `workspace:manage` (Owner, Admin), as built. No new permission key. |
+| What may a workflow do | "Non-goal for MVP: unrestricted end-user workflow programming; start with admin-configured templates and safe actions." Actions: "create task, enroll sequence, send notification, call integration, update allowed fields, create ticket, request approval" (p.68) | Node allowlist, as built. The HTTP node is "call integration": limited to public `https` hosts, never private or internal addresses. |
+| Triggers | "Trigger selector: event, schedule, field/state change" (p.68); "Workflow automation is event-driven with idempotency and replay" (assumptions) | Events from `cops_outbox` and the CRM change events; one run per event id. |
+| Stop conditions | "Provide cancellation when stop conditions occur (reply, activation, opt-out, etc.)" (p.74) | A workflow lists the events that stop its open runs for the same subject: reply, activation, opt-out. |
+| Run records | "Each run stores trigger, matched conditions, action states, retries, and outputs" (p.74) | Built: trigger payload, subject, per-rule results, step states, attempts, outputs. |
+| Delays | "Delayed actions must survive deploys/restarts" (p.74) | Built: durable delays. |
+| Exactly once | "Exactly-once business effect is achieved through idempotent actions, not assumed broker semantics" (p.74) | Each action passes its step idempotency key to its side effect. |
+| Phase | Workflow builder is listed under Phase 2 (p.93) | COPS-10 is Phase 2 work; Phase 1 release gates (golden paths, Appendix G) are green on the COPS-09 branch, and the pilot sign-off is pending. |
+| Release gate | "Workflow retry/replay tested" (p.98); Appendix I runbook "Replay failed workflow" | Retry and replay are built and tested; a runbook entry is added with the frontend. |
+| Failure scenario | Appendix H: "Sequence action runs after activation race" | Covered by the activation stop condition, and by the COPS-05 evaluation. |
+
+Still open for Aditya:
+1. COPS-05: migrate the onboarding playbooks in this ticket, or only write the evaluation (the Bible does not say)?
+2. Phase 2 start: OK to continue while the Phase 1 pilot sign-off is pending?
