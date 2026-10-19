@@ -313,6 +313,9 @@ export async function sendOnboardingEmail(
               eq(copsOnboardingEmailSends.isResend, false)
             )
           );
+        // A concurrent request with this same key got the lock first and inserted the send: that is
+        // a replay, not a second send to the recipient.
+        if (first && first.idempotencyKey === idempotencyKey) return null;
         // A first send that never left (provider failure) is not "already sent": a new attempt with
         // a new key takes over that row, so the email can be sent after the dialog was reopened.
         if (first && first.status === "failed") {
