@@ -38,3 +38,28 @@ describe("validateAutomationGraph", () => {
     expect(paths).toEqual(expect.arrayContaining(["nodes[1].config.seconds", "nodes[2].id", "edges[0].branch", "edges[2].target", "edges"]));
   });
 });
+
+describe("validateAutomationGraph: condition groups", () => {
+  it("checks each rule's step, operator, type and value on publish", () => {
+    const graph: AutomationGraph = {
+      nodes: [
+        node("t", "trigger"),
+        node("c", "condition", {
+          match: "all",
+          rules: [
+            { sourceNodeId: "t", field: "tier", op: "equals", value: "x" },
+            { match: "any", rules: [{ sourceNodeId: "ghost", field: "", op: "matches_regex", type: "json" }] },
+          ],
+        }),
+      ],
+      edges: [{ id: "e", source: "t", target: "c" }],
+    };
+    expect(validateAutomationGraph(graph, { strict: true }).map((i) => i.path)).toEqual([
+      "nodes[1].config.rules[1].rules[0].sourceNodeId",
+      "nodes[1].config.rules[1].rules[0].field",
+      "nodes[1].config.rules[1].rules[0].op",
+      "nodes[1].config.rules[1].rules[0].type",
+      "nodes[1].config.rules[1].rules[0].value",
+    ]);
+  });
+});
