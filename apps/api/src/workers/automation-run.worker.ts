@@ -21,6 +21,7 @@ import { AmbiguousOutcomeError } from "../services/automation-nodes/types.js";
 import { getNodeHandler } from "../services/automation-nodes/registry.js";
 import { interpolateConfig } from "../services/automation-nodes/interpolate.js";
 import { nextNodeIds, type AutomationGraph } from "../services/automation-graph.js";
+import { dispatchWorkflowEvents, runScheduledWorkflows } from "../services/automation-triggers.service.js";
 import { AUTOMATION_RUN_QUEUE, enqueueAutomationRunAdvance, type AutomationRunAdvancePayload } from "./automation-run.queue.js";
 
 const { automationRuns, automationVersions, automationRunSteps } = schema;
@@ -238,6 +239,12 @@ export async function startAutomationRunWorker(config: Env): Promise<() => Promi
   });
 
   const sweepTimer = setInterval(() => {
+    // COPS-10 triggers: new outbox events start (or stop) runs; scheduled workflows get their slot.
+    Promise.all([dispatchWorkflowEvents(db), runScheduledWorkflows(db)])
+      .then(async ([events, scheduled]) => {
+        for (const r of [...events.started, ...scheduled]) await enqueueAutomationRunAdvance(config, r);
+      })
+      .catch((err) => log.error("workflow trigger sweep failed", err));
     // Delays that came due while their queued job was lost (Redis flush, deploy) resume here.
     listRunsWithDueSteps(db, new Date())
       .then(async (due) => {

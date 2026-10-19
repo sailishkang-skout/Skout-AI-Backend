@@ -19,6 +19,10 @@ vi.mock("@skout/shared", () => ({
   buildIdempotencyKey: vi.fn((...parts: string[]) => parts.join(":")),
   LeaseLostError: class LeaseLostError extends Error {},
 }));
+vi.mock("../services/automation-triggers.service.js", () => ({
+  dispatchWorkflowEvents: vi.fn().mockResolvedValue({ started: [], cancelled: 0 }),
+  runScheduledWorkflows: vi.fn().mockResolvedValue([]),
+}));
 vi.mock("./automation-run.queue.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./automation-run.queue.js")>();
   return { ...actual, enqueueAutomationRunAdvance: vi.fn().mockResolvedValue(undefined) };

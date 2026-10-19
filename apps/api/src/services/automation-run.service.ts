@@ -38,14 +38,26 @@ export type RunSubjectType = (typeof RUN_SUBJECT_TYPES)[number];
  * instead of spawning a second one.
  */
 export async function createAutomationRun(db: Db, input: CreateRunInput) {
-  const [existing] = input.idempotencyKey
-    ? await db
-        .select()
-        .from(automationRuns)
-        .where(and(eq(automationRuns.automationId, input.automationId), eq(automationRuns.idempotencyKey, input.idempotencyKey)))
-        .limit(1)
-    : [];
-  if (existing) return existing;
+  return (await createAutomationRunOnce(db, input)).run;
+}
+
+/**
+ * Like createAutomationRun, and says whether this call created the run. Two concurrent calls
+ * with the same key cannot both insert: the loser gets the existing run with created = false.
+ */
+export async function createAutomationRunOnce(db: Db, input: CreateRunInput) {
+  const findExisting = async () => {
+    const [existing] = await db
+      .select()
+      .from(automationRuns)
+      .where(and(eq(automationRuns.automationId, input.automationId), eq(automationRuns.idempotencyKey, input.idempotencyKey!)))
+      .limit(1);
+    return existing;
+  };
+  if (input.idempotencyKey) {
+    const existing = await findExisting();
+    if (existing) return { run: existing, created: false };
+  }
 
   const [run] = await db
     .insert(automationRuns)
@@ -62,20 +74,21 @@ export async function createAutomationRun(db: Db, input: CreateRunInput) {
       subjectType: input.subject?.type ?? null,
       subjectId: input.subject?.id ?? null,
     })
+    .onConflictDoNothing({ target: [automationRuns.automationId, automationRuns.idempotencyKey] })
     .returning();
+  if (!run) return { run: (await findExisting())!, created: false };
 
-  const startNodes = findStartNodes(input.graph);
-  for (const node of startNodes) {
+  for (const node of findStartNodes(input.graph)) {
     await db.insert(automationRunSteps).values({
-      automationRunId: run!.id,
+      automationRunId: run.id,
       nodeId: node.id,
       status: "pending",
-      idempotencyKey: buildIdempotencyKey(run!.id, node.id),
+      idempotencyKey: buildIdempotencyKey(run.id, node.id),
     });
   }
 
-  log.info("automation run created", { runId: run!.id, automationId: input.automationId, triggerType: input.triggerType });
-  return run!;
+  log.info("automation run created", { runId: run.id, automationId: input.automationId, triggerType: input.triggerType });
+  return { run, created: true };
 }
 
 /**

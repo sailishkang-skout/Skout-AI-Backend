@@ -1,4 +1,5 @@
 import type { AutomationGraph, NodeType } from "./automation-graph.js";
+import { MIN_SCHEDULE_MINUTES, STATE_CHANGE_EVENTS, TRIGGER_KINDS, WORKFLOW_EVENT_TYPES, type TriggerConfig } from "./automation-triggers.service.js";
 import { CONDITION_OPS, CONDITION_TYPES, isGroup, toConditionGroup, type ConditionGroup } from "./automation-nodes/condition.node.js";
 
 /**
@@ -50,6 +51,7 @@ export function validateAutomationGraph(graph: AutomationGraph, options: { stric
     for (const key of required) {
       if (isMissing(node.config?.[key])) issues.push({ path: `${path}.config.${key}`, message: `${node.type} needs ${key}` });
     }
+    if (node.type === "trigger") checkTrigger((node.config ?? {}) as TriggerConfig, `${path}.config`, issues);
     if (node.type === "condition") checkCondition(toConditionGroup(node.config ?? {}), `${path}.config`, graph, issues);
     if (node.type === "delay" && !isMissing(node.config.seconds)) {
       const seconds = Number(node.config.seconds);
@@ -92,6 +94,24 @@ function checkCondition(group: ConditionGroup, path: string, graph: AutomationGr
     if (rule.type !== undefined && !TYPES.has(rule.type)) issues.push({ path: `${p}.type`, message: `Type ${String(rule.type)} is not allowed` });
     if (!NO_VALUE_OPS.has(rule.op) && rule.value === undefined) issues.push({ path: `${p}.value`, message: "A rule needs a value to compare with" });
   });
+}
+
+const EVENT_TYPES = new Set(WORKFLOW_EVENT_TYPES);
+
+function checkTrigger(t: TriggerConfig, path: string, issues: GraphIssue[]) {
+  if (t.kind !== undefined && !(TRIGGER_KINDS as readonly string[]).includes(t.kind)) {
+    issues.push({ path: `${path}.kind`, message: `Trigger ${String(t.kind)} is not allowed` });
+  }
+  if (t.kind === "event" && !EVENT_TYPES.has(t.eventType ?? "")) issues.push({ path: `${path}.eventType`, message: "An event trigger needs a known event type" });
+  if (t.kind === "state_change" && !(STATE_CHANGE_EVENTS as readonly string[]).includes(t.eventType ?? "")) {
+    issues.push({ path: `${path}.eventType`, message: `A state-change trigger listens to ${STATE_CHANGE_EVENTS.join(" or ")}` });
+  }
+  if (t.kind === "schedule" && !(Number(t.everyMinutes) >= MIN_SCHEDULE_MINUTES)) {
+    issues.push({ path: `${path}.everyMinutes`, message: `A schedule runs at most every ${MIN_SCHEDULE_MINUTES} minutes` });
+  }
+  if (t.stopOn !== undefined) {
+    if (!Array.isArray(t.stopOn) || t.stopOn.some((e) => !EVENT_TYPES.has(e))) issues.push({ path: `${path}.stopOn`, message: "Stop events must be known event types" });
+  }
 }
 
 function hasCycle(graph: AutomationGraph): boolean {
