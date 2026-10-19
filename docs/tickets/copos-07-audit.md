@@ -151,6 +151,20 @@ screen in a browser.
 Fixed while doing this: Engineering and Follow-up showed "this queue is for other roles" when the
 module was turned off; they now say the module is off. No other gap was found by the scan.
 
+Browser pass (2026-10-19, local, real login): every screen above plus all ten Customer 360 tabs,
+three ways:
+- with data: no crash, no 5xx;
+- with every API call failing (500), except the shell's own calls: each screen shows an error,
+  none goes blank or crashes. When the ICP setup check itself fails, the app shows
+  "Unable to verify setup" with Try again;
+- in a new workspace with one empty account: each screen shows its empty state. Customer 360
+  Engineering shows "this account is healthy" with Create ticket; Onboarding shows Provision trial.
+
+Fixed: the Account 360 record picker showed "No records in CRM yet." when the record list failed
+to load. It now shows the error with a retry (Skout-AI-Frontend#128).
+Left as is: the Engineering queue and Audit log say "No ... match these filters" even when a
+workspace has none at all.
+
 ## 10. Added after the first review pass
 
 - Webhook latency is measured (migration 0122; two metrics). See `docs/ops/cops-alerts.md`.
