@@ -34,12 +34,16 @@ resource "google_project_iam_member" "vm_metric_writer" {
 # jsonPayload.log. The filters match on that string, which avoids a second parse step.
 locals {
   cops_worker = "jsonPayload.log:\"cops-onboarding-evaluator.worker\""
+  # Razorpay dashboard test payments match no payment request and put payment_webhooks_rejected_24h
+  # in warn on staging without a real fault. Staging logs env "production" (NODE_ENV), so this is
+  # keyed on the metric name, behind a variable.
+  cops_alertable = var.ignore_payment_webhook_rejections ? " AND NOT jsonPayload.log:\"\\\"cops_metric\\\":\\\"payment_webhooks_rejected_24h\\\"\"" : ""
 }
 
 resource "google_logging_metric" "cops_critical" {
   name        = "cops_metric_critical"
   description = "CustomerOps health metric reported as critical, by metric name."
-  filter      = "${local.cops_worker} AND jsonPayload.log:\"\\\"metric_status\\\":\\\"critical\\\"\""
+  filter      = "${local.cops_worker} AND jsonPayload.log:\"\\\"metric_status\\\":\\\"critical\\\"\"${local.cops_alertable}"
 
   metric_descriptor {
     metric_kind = "DELTA"
@@ -60,7 +64,7 @@ resource "google_logging_metric" "cops_critical" {
 resource "google_logging_metric" "cops_warn" {
   name        = "cops_metric_warn"
   description = "CustomerOps health metric reported as warn, by metric name."
-  filter      = "${local.cops_worker} AND jsonPayload.log:\"\\\"metric_status\\\":\\\"warn\\\"\""
+  filter      = "${local.cops_worker} AND jsonPayload.log:\"\\\"metric_status\\\":\\\"warn\\\"\"${local.cops_alertable}"
 
   metric_descriptor {
     metric_kind = "DELTA"
@@ -114,13 +118,33 @@ resource "google_monitoring_notification_channel" "email" {
   depends_on = [google_project_service.apis]
 }
 
+# COPS-07: alerts also reach the web app, as in-app notifications for Admin, owner and Engineering
+# (POST /api/v1/webhooks/ops-alerts). Cloud Monitoring cannot send custom headers, so the shared
+# secret is the basic-auth password; it must equal OPS_ALERT_WEBHOOK_SECRET in the API env.
+resource "google_monitoring_notification_channel" "ops_webhook" {
+  count        = var.ops_alert_webhook_secret == "" ? 0 : 1
+  display_name = "Skout in-app ops alerts"
+  type         = "webhook_basicauth"
+  labels = {
+    url      = var.ops_alert_webhook_url
+    username = "skout"
+  }
+  sensitive_labels {
+    password = var.ops_alert_webhook_secret
+  }
+
+  depends_on = [google_project_service.apis]
+}
+
 locals {
-  channels = google_monitoring_notification_channel.email[*].id
+  channels = concat(google_monitoring_notification_channel.email[*].id, google_monitoring_notification_channel.ops_webhook[*].id)
+  # Alert policies exist when at least one channel does.
+  alerting = var.alert_email != "" || var.ops_alert_webhook_secret != ""
   runbook  = "Runbook path is in the runbook field of the log line. Alert definitions: docs/ops/gcp-monitoring.md."
 }
 
 resource "google_monitoring_alert_policy" "cops_critical" {
-  count                 = var.alert_email == "" ? 0 : 1
+  count                 = local.alerting ? 1 : 0
   display_name          = "[CustomerOps] A workflow health metric is critical"
   combiner              = "OR"
   notification_channels = local.channels
@@ -152,7 +176,7 @@ resource "google_monitoring_alert_policy" "cops_critical" {
 }
 
 resource "google_monitoring_alert_policy" "cops_warn" {
-  count                 = var.alert_email == "" ? 0 : 1
+  count                 = local.alerting ? 1 : 0
   display_name          = "[CustomerOps] A workflow health metric is in warning"
   combiner              = "OR"
   notification_channels = local.channels
@@ -184,7 +208,7 @@ resource "google_monitoring_alert_policy" "cops_warn" {
 }
 
 resource "google_monitoring_alert_policy" "cops_report_failed" {
-  count                 = var.alert_email == "" ? 0 : 1
+  count                 = local.alerting ? 1 : 0
   display_name          = "[CustomerOps] The health report itself is failing"
   combiner              = "OR"
   notification_channels = local.channels
@@ -215,7 +239,7 @@ resource "google_monitoring_alert_policy" "cops_report_failed" {
 
 # Off by default: the staging VM is stopped overnight and at weekends, which would page every night.
 resource "google_monitoring_alert_policy" "cops_report_missing" {
-  count                 = var.alert_email != "" && var.alert_on_missing_health_report ? 1 : 0
+  count                 = local.alerting && var.alert_on_missing_health_report ? 1 : 0
   display_name          = "[CustomerOps] The health report has stopped"
   combiner              = "OR"
   notification_channels = local.channels
