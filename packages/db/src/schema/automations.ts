@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { users } from "./users.js";
 import { workspaces } from "./workspaces.js";
@@ -97,6 +98,8 @@ export const automationRunSteps = pgTable(
     leaseOwner: text("lease_owner"),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
     attemptCount: integer("attempt_count").notNull().default(0),
+    /** COPS-10: a waiting delay step is not claimed before this time. */
+    runAfter: timestamp("run_after", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     // $onUpdate is a Drizzle-ORM-level feature (no migration needed): it makes Drizzle include
     // this column in every UPDATE statement it builds going forward, including the shared
@@ -110,6 +113,7 @@ export const automationRunSteps = pgTable(
   },
   (table) => [
     index("automation_run_steps_run_idx").on(table.automationRunId, table.status),
+    index("automation_run_steps_due_idx").on(table.runAfter).where(sql`status = 'pending' AND run_after IS NOT NULL`),
     uniqueIndex("automation_run_steps_idempotency_uidx").on(table.idempotencyKey),
   ]
 );

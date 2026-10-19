@@ -12,6 +12,8 @@ import {
   markStepRunning,
   completeStep,
   failStep,
+  deferStep,
+  listRunsWithDueSteps,
 } from "../services/automation-run.service.js";
 import { reclaimExpiredLeases, withLeaseHeartbeat, buildIdempotencyKey, LeaseLostError } from "@skout/shared";
 import { AmbiguousOutcomeError } from "../services/automation-nodes/types.js";
@@ -85,14 +87,29 @@ export async function advanceAutomationRun(
     return;
   }
 
-  await markStepRunning(db, step.id, {});
-
   const priorSteps = await db.select().from(automationRunSteps).where(eq(automationRunSteps.automationRunId, run.id));
   const priorOutputs = Object.fromEntries(
     (priorSteps as { status: string; nodeId: string; output: unknown }[])
       .filter((s) => s.status === "succeeded")
       .map((s) => [s.nodeId, s.output])
   );
+
+  // COPS-10 durable delay: the first claim records when the step may run and hands the step
+  // back; the run continues from the database after a restart, and the step runs once.
+  // A simulation does not wait.
+  if (node.type === "delay" && !run.isSimulation && !step.runAfter) {
+    const seconds = Number(interpolateConfig(node.config, priorOutputs).seconds ?? 0);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      const runAfter = new Date(Date.now() + seconds * 1000);
+      if (!(await deferStep(db, step.id, WORKER_ID, runAfter))) return;
+      if (run.status === "pending") await db.update(automationRuns).set({ status: "running" }).where(eq(automationRuns.id, run.id));
+      await enqueueAutomationRunAdvance(config, payload, seconds * 1000);
+      log.info("automation run waiting on a delay", { runId: run.id, nodeId: node.id, runAfter });
+      return;
+    }
+  }
+
+  await markStepRunning(db, step.id, {});
 
   try {
     const handler = getNodeHandler(node.type);
@@ -205,6 +222,15 @@ export async function startAutomationRunWorker(config: Env): Promise<() => Promi
   });
 
   const sweepTimer = setInterval(() => {
+    // Delays that came due while their queued job was lost (Redis flush, deploy) resume here.
+    listRunsWithDueSteps(db, new Date())
+      .then(async (due) => {
+        for (const { automationRunId, workspaceId } of due) {
+          await enqueueAutomationRunAdvance(config, { automationRunId, workspaceId });
+        }
+      })
+      .catch((err) => log.error("automation due-delay sweep failed", err));
+
     reclaimExpiredLeases(db, automationRunSteps)
       .then(async (result) => {
         if (result.requeuedIds.length === 0 && result.failedIds.length === 0) return;

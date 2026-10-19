@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, scopedTo, scopedById } from "@skout/db";
 import { createLogger } from "@skout/observability";
@@ -68,10 +68,54 @@ export async function createAutomationRun(db: Db, input: CreateRunInput) {
   return run!;
 }
 
-/** Claims the oldest pending step for a run via the shared execution-intent library. */
+/**
+ * Claims the oldest pending step for a run via the shared execution-intent library. A waiting
+ * delay step (run_after in the future) is skipped, so it neither runs early nor blocks a parallel
+ * branch.
+ */
 export async function claimNextStep(db: Db, automationRunId: string, workerId: string) {
-  const claimed = await claimNext(db, automationRunSteps, workerId, CLAIM_LEASE_MS, eq(automationRunSteps.automationRunId, automationRunId));
+  const due = or(isNull(automationRunSteps.runAfter), lte(automationRunSteps.runAfter, sql`now()`));
+  const claimed = await claimNext(db, automationRunSteps, workerId, CLAIM_LEASE_MS, and(eq(automationRunSteps.automationRunId, automationRunId), due));
   return claimed ?? null;
+}
+
+/**
+ * COPS-10 durable delay: puts a claimed delay step back to pending until `runAfter`, releasing
+ * this worker's lease. The claim's attempt is given back, so waiting never uses up retries.
+ * Returns false when the lease was already lost (another worker owns the step).
+ */
+export async function deferStep(db: Db, stepId: string, workerId: string, runAfter: Date) {
+  const rows = await db
+    .update(automationRunSteps)
+    .set({
+      status: "pending",
+      runAfter,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      attemptCount: sql`greatest(${automationRunSteps.attemptCount} - 1, 0)`,
+    })
+    .where(and(eq(automationRunSteps.id, stepId), eq(automationRunSteps.leaseOwner, workerId)))
+    .returning({ id: automationRunSteps.id });
+  return rows.length > 0;
+}
+
+/**
+ * Runs with a waiting delay step that is now due. The worker's sweep re-enqueues them, which is
+ * what makes a delay survive a restart or a lost queue job.
+ */
+export async function listRunsWithDueSteps(db: Db, now: Date, limit = 200) {
+  return db
+    .selectDistinct({ automationRunId: automationRunSteps.automationRunId, workspaceId: automationRuns.workspaceId })
+    .from(automationRunSteps)
+    .innerJoin(automationRuns, eq(automationRunSteps.automationRunId, automationRuns.id))
+    .where(
+      and(
+        eq(automationRunSteps.status, "pending"),
+        lte(automationRunSteps.runAfter, now),
+        inArray(automationRuns.status, ["pending", "running"])
+      )
+    )
+    .limit(limit);
 }
 
 export async function markStepRunning(db: Db, stepId: string, input: unknown) {
