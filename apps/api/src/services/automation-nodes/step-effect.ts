@@ -22,7 +22,7 @@ export async function withStepEffect(
     const [done] = await tx.select().from(automationStepEffects).where(eq(automationStepEffects.stepKey, key)).for("update").limit(1);
     if (done) return { ...(done.output as Record<string, unknown>), replayed: true };
     const output = await effect(tx);
-    await tx.insert(automationStepEffects).values({ stepKey: key, automationRunId: ctx.runId, nodeId: ctx.node.id, effectType, output });
+    await tx.insert(automationStepEffects).values({ stepKey: key, workspaceId: ctx.workspaceId, automationRunId: ctx.runId, nodeId: ctx.node.id, effectType, output });
     return output;
   });
 }

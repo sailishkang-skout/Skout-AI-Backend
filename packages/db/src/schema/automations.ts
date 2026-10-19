@@ -131,6 +131,9 @@ export const automationRunSteps = pgTable(
  */
 export const automationStepEffects = pgTable("automation_step_effects", {
   stepKey: text("step_key").primaryKey(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
   automationRunId: uuid("automation_run_id")
     .notNull()
     .references(() => automationRuns.id, { onDelete: "cascade" }),

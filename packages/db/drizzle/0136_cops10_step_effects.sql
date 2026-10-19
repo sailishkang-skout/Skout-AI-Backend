@@ -3,6 +3,7 @@
 -- step's idempotency key; a step that runs again after a crash finds the row and returns its output.
 CREATE TABLE IF NOT EXISTS "automation_step_effects" (
   "step_key" text PRIMARY KEY,
+  "workspace_id" uuid NOT NULL REFERENCES "workspaces"("id") ON DELETE CASCADE,
   "automation_run_id" uuid NOT NULL REFERENCES "automation_runs"("id") ON DELETE CASCADE,
   "node_id" text NOT NULL,
   "effect_type" text NOT NULL,
