@@ -53,7 +53,7 @@ import { handleEsignWebhook, listEnvelopes, sendEnvelope } from "../services/cop
 import { getAccountContractFields, setAccountContractFields } from "../services/cops-account-fields.service.js";
 import { CREDIT_ACTIVITY_KINDS, listCreditActivity, listSubscriptionsForFinance, loadReconciliation } from "../services/cops-finance.service.js";
 import { amendSubscription, createSubscription, getAccountSubscription, issueInvoicePaymentLink, listFailedPayments, markInvoicePaid } from "../services/cops-subscriptions.service.js";
-import { applyPaidCreditPurchases } from "../services/cops-credits.service.js";
+import { applyPaidCreditPurchases, reverseRefundedCreditPurchase } from "../services/cops-credits.service.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -821,6 +821,21 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
         .limit(1);
       if (deal?.companyId) {
         await applyPaidCreditPurchases(tx, { operatorWorkspaceId: paid.workspaceId, accountId: deal.companyId, requestId: paid.requestId });
+      }
+    }, async (tx, refunded) => {
+      // COPS-04 Q4: a refund takes back the credits that payment bought.
+      const [deal] = await tx
+        .select({ companyId: schema.deals.companyId })
+        .from(schema.deals)
+        .where(and(eq(schema.deals.id, refunded.opportunityId), eq(schema.deals.workspaceId, refunded.workspaceId)))
+        .limit(1);
+      if (deal?.companyId && refunded.paymentRequestId) {
+        await reverseRefundedCreditPurchase(tx, {
+          operatorWorkspaceId: refunded.workspaceId,
+          accountId: deal.companyId,
+          paymentRequestId: refunded.paymentRequestId,
+          requestId: refunded.requestId,
+        });
       }
     });
     if (result.kind === "unauthorized") {

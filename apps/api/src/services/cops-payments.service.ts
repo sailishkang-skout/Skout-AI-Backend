@@ -12,7 +12,7 @@ const log = createLogger("cops-payments.service");
 const { paymentRequests, paymentProviderEvents, proposals, proposalVersions } = schema;
 
 /** Runs inside the payment transaction after a payment is confirmed (used by the provisioning gate). */
-export type OnPaymentChange = (tx: Db, input: { workspaceId: string; opportunityId: string; requestId: string }) => Promise<void>;
+export type OnPaymentChange = (tx: Db, input: { workspaceId: string; opportunityId: string; requestId: string; paymentRequestId?: string }) => Promise<void>;
 
 export interface CreatePaymentRequestInput {
   opportunity_id: string;
@@ -159,14 +159,16 @@ export type WebhookOutcome =
  * Provider webhook. Signature first (401 otherwise); then, in one transaction, the event id is
  * recorded (unique per provider, so a replay or a concurrent duplicate stops here), the payment
  * request is locked and its status moves forward only. A paid event emits PaymentSucceeded and runs
- * `onPaid` (gate evaluation) in the same transaction.
+ * `onPaid` (gate evaluation) in the same transaction; a refunded event runs `onRefunded` (credit
+ * purchase reversal) in the same transaction.
  */
 export async function handlePaymentWebhook(
   db: Db,
   psp: PspAdapter,
   rawBody: string,
   headers: Record<string, string | string[] | undefined>,
-  onPaid?: OnPaymentChange
+  onPaid?: OnPaymentChange,
+  onRefunded?: OnPaymentChange
 ): Promise<WebhookOutcome> {
   if (!psp.verifyWebhook(rawBody, headers)) return { kind: "unauthorized" };
   const event = psp.parseWebhook(rawBody, headers);
@@ -253,6 +255,9 @@ export async function handlePaymentWebhook(
         })
       );
       if (onPaid) await onPaid(tx as unknown as Db, { workspaceId: request.workspaceId, opportunityId: request.opportunityId, requestId });
+    }
+    if (next === "refunded" && onRefunded) {
+      await onRefunded(tx as unknown as Db, { workspaceId: request.workspaceId, opportunityId: request.opportunityId, requestId, paymentRequestId: request.id });
     }
     return finish("applied", next);
   });

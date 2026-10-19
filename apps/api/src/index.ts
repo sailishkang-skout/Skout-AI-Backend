@@ -35,6 +35,7 @@ import { startIdentityMergeDiscoveryWorker } from "./workers/identity-merge-disc
 import { startDexterEventWorker } from "./workers/dexter-event.worker.js";
 import { startBounceAnomalySweepWorker } from "./workers/bounce-anomaly-sweep.worker.js";
 import { startCrmOutboundWriteWorker } from "./workers/crm-outbound-write.worker.js";
+import { startCrmSyncPollWorker } from "./workers/crm-sync-poll.worker.js";
 import { startGtmLearningSweepWorker } from "./workers/gtm-learning-sweep.worker.js";
 
 async function main() {
@@ -88,6 +89,7 @@ async function main() {
   const stopCopsOutboxRelayWorker = await startCopsOutboxRelayWorker(config);
   const stopBounceAnomalySweepWorker = await startBounceAnomalySweepWorker(config);
   const stopCrmOutboundWriteWorker = await startCrmOutboundWriteWorker(config);
+  const stopCrmSyncPollWorker = await startCrmSyncPollWorker(config);
   const stopGtmLearningSweepWorker = await startGtmLearningSweepWorker(config);
 
   const app = await buildApp(config);
@@ -111,6 +113,7 @@ async function main() {
   const shutdown = async () => {
     await stopGtmLearningSweepWorker();
     await stopCrmOutboundWriteWorker();
+    await stopCrmSyncPollWorker();
     await stopBounceAnomalySweepWorker();
     await stopReportDeliverySweepWorker();
     await stopWorkbookRunWorker();

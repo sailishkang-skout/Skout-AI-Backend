@@ -103,6 +103,6 @@ A pass over every COPS-01..04 acceptance item and the Definition of Done found t
 
 Still open:
 
-- Q1-Q4 above (Q4: refunds of a credit purchase are not reversed automatically yet; Finance posts an adjustment).
+- Q1-Q3 above. Q4 (refunds of a credit purchase) is closed 2026-10-16: a refunded payment request now reverses the credits it bought with one compensating adjustment (`reverseRefundedCreditPurchase`); a wallet whose credits were spent goes below zero until Finance tops it up or writes it off.
 - COPS-01 422 check: done against the real API (signed-in user, `GET /cops/audit?from=not-a-date` returns 422 `VALIDATION_FAILED` with `details.fields[{path: "from"}]`, `request_id`, `retryable: false`); the browser rendering of that envelope is covered by `cops-platform.spec.ts`. A real 429 was not triggered.
 - The full `apps/api` suite has not completed locally (30-minute limit); CI runs it once the stack is retargeted to develop.

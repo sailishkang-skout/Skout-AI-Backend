@@ -319,9 +319,21 @@ export async function sweepMissedFollowUps(db: Db, deps: FollowUpDeps, olderThan
 }
 
 /** One evaluator pass over every open instance plus activated ones still waiting for a handoff. */
+const EVALUATOR_PAGE_SIZE = 200;
+/** 25 pages: up to 5,000 open onboarding instances per pass (the pass runs every 10 minutes). */
+const EVALUATOR_MAX_PAGES = 25;
+
 export async function runOnboardingEvaluator(db: Db, deps: FollowUpDeps, correlationId: string) {
   const swept = await sweepMissedFollowUps(db, deps);
-  const ids = new Set((await openInstances(db)).map((i) => i.id));
+  // Every open instance, page by page (bounded per pass so one pass cannot run forever).
+  const ids = new Set<string>();
+  let afterId: string | undefined;
+  for (let page = 0; page < EVALUATOR_MAX_PAGES; page++) {
+    const rows = await openInstances(db, EVALUATOR_PAGE_SIZE, afterId);
+    for (const r of rows) ids.add(r.id);
+    if (rows.length < EVALUATOR_PAGE_SIZE) break;
+    afterId = rows[rows.length - 1]!.id;
+  }
   const pendingHandoff = await db
     .select({ id: copsOnboardingInstances.id })
     .from(copsOnboardingInstances)
@@ -378,12 +390,13 @@ export interface IntegrationStatusDto {
 
 /**
  * Integration state of the provisioned customer workspace for Onboarding Control: CRM from
- * crm_connections, email from the workspace's sending mailboxes (inboxes). There is no calendar
- * connection model yet, so calendar reports not_available instead of a guessed state.
+ * crm_connections, email from the workspace's sending mailboxes (inboxes), calendar from the
+ * Google Calendar connections (calendar_connections, one per member). A calendar whose access
+ * token has expired with no refresh token cannot sync any more and reports error.
  */
 export async function loadIntegrations(db: Db, customerWorkspaceId: string | null): Promise<IntegrationStatusDto[]> {
   if (!customerWorkspaceId) {
-    return (["crm", "email", "calendar"] as const).map((key) => ({ key, status: key === "calendar" ? "not_available" : "not_connected", detail: null }));
+    return (["crm", "email", "calendar"] as const).map((key) => ({ key, status: "not_connected", detail: null }));
   }
   const crm = await db
     .select({ provider: crmConnections.provider, status: crmConnections.status })
@@ -393,8 +406,15 @@ export async function loadIntegrations(db: Db, customerWorkspaceId: string | nul
     .select({ address: schema.inboxes.emailAddress, provider: schema.inboxes.provider, status: schema.inboxes.status })
     .from(schema.inboxes)
     .where(eq(schema.inboxes.workspaceId, customerWorkspaceId));
+  const calendars = await db
+    .select({ email: schema.calendarConnections.connectedEmail, refresh: schema.calendarConnections.oauthRefreshTokenEncrypted, expiresAt: schema.calendarConnections.oauthTokenExpiresAt })
+    .from(schema.calendarConnections)
+    .where(eq(schema.calendarConnections.workspaceId, customerWorkspaceId));
   const okCrm = crm.find((c) => c.status === "connected");
-  const badCrm = crm.find((c) => ["error", "expired", "revoked"].includes(c.status));
+  const badCrm = crm.find((c) => ["error", "expired", "revoked", "needs_reauth"].includes(c.status));
+  const now = Date.now();
+  const calendarDead = (c: (typeof calendars)[number]) => !c.refresh && c.expiresAt != null && c.expiresAt.getTime() < now;
+  const okCalendar = calendars.find((c) => !calendarDead(c));
   const okBox = boxes.find((b) => b.status === "active");
   return [
     okCrm
@@ -407,6 +427,10 @@ export async function loadIntegrations(db: Db, customerWorkspaceId: string | nul
       : boxes[0]
         ? { key: "email", status: "error", detail: `${boxes[0].address} ${boxes[0].status}` }
         : { key: "email", status: "not_connected", detail: null },
-    { key: "calendar", status: "not_available", detail: "Calendar connections are not tracked yet" },
+    okCalendar
+      ? { key: "calendar", status: "connected", detail: okCalendar.email }
+      : calendars[0]
+        ? { key: "calendar", status: "error", detail: `${calendars[0].email} needs reconnecting` }
+        : { key: "calendar", status: "not_connected", detail: null },
   ];
 }
