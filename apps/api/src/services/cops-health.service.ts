@@ -16,7 +16,7 @@ import { createLogger } from "@skout/observability";
 import { HttpError } from "../utils/http.js";
 import { runLifecycleTransition } from "./cops-lifecycle.service.js";
 
-const { companies, contacts, activities, copsOnboardingInstances, engineeringTickets, subscriptions, deals, paymentRequests, copsHealthScores, copsHealthModels, copsLifecycleStates, copsOutbox } = schema;
+const { creditTransactions, companies, contacts, activities, copsOnboardingInstances, engineeringTickets, subscriptions, deals, paymentRequests, copsHealthScores, copsHealthModels, copsLifecycleStates, copsOutbox } = schema;
 const log = createLogger("cops-health");
 
 export const HEALTH_DIMENSIONS = ["adoption", "relationship", "support", "commercial", "payment"] as const;
@@ -64,6 +64,9 @@ export interface HealthInputs {
   renewalAt: Date | null;
   subscriptionStatus: string | null;
   failedPayments: number;
+  /** Credits the customer's workspace used in the last 30 days and the 30 before (COPS-04 ledger). */
+  credits30d?: number;
+  creditsPrev30d?: number;
 }
 
 export interface HealthResult {
@@ -94,6 +97,17 @@ export function computeHealth(input: HealthInputs, model: HealthModel, now: Date
     const lost = Math.round((100 - input.activationPct) * 0.6);
     add({ dimension: "adoption", key: "activation", kind: "lagging", value: input.activationPct, points: -lost, reason: `Activation at ${input.activationPct}%` });
     if (!input.firstLoginAt) add({ dimension: "adoption", key: "first_login", kind: "leading", value: null, points: -40, reason: "Nobody has signed in yet" });
+  }
+  if (input.credits30d !== undefined) {
+    const cur = input.credits30d;
+    const prev = input.creditsPrev30d ?? 0;
+    if (prev > 0 && cur < prev / 2) {
+      add({ dimension: "adoption", key: "usage_trend", kind: "leading", value: cur, points: -20, reason: `Credit use down ${Math.round((1 - cur / prev) * 100)}% on the 30 days before (${cur} vs ${prev})` });
+    } else if (cur === 0 && input.activatedAt) {
+      add({ dimension: "adoption", key: "usage_trend", kind: "leading", value: 0, points: -15, reason: "No credits used in 30 days" });
+    } else {
+      add({ dimension: "adoption", key: "usage_trend", kind: "leading", value: cur, points: 0, reason: `${cur} credits used in 30 days` });
+    }
   }
 
   // Relationship
@@ -177,7 +191,7 @@ export async function saveHealthModel(db: Db, workspaceId: string, patch: Partia
 export async function gatherHealthInputs(db: Db, workspaceId: string, accountId: string, now: Date): Promise<HealthInputs> {
   const since = (days: number) => new Date(now.getTime() - days * DAY);
   const [inst] = await db
-    .select({ activationPct: copsOnboardingInstances.activationPct, firstLoginAt: copsOnboardingInstances.firstLoginAt, activatedAt: copsOnboardingInstances.activatedAt })
+    .select({ activationPct: copsOnboardingInstances.activationPct, firstLoginAt: copsOnboardingInstances.firstLoginAt, activatedAt: copsOnboardingInstances.activatedAt, customerWorkspaceId: copsOnboardingInstances.customerWorkspaceId })
     .from(copsOnboardingInstances)
     .where(and(eq(copsOnboardingInstances.workspaceId, workspaceId), eq(copsOnboardingInstances.accountId, accountId)))
     .orderBy(desc(copsOnboardingInstances.createdAt))
@@ -212,7 +226,21 @@ export async function gatherHealthInputs(db: Db, workspaceId: string, accountId:
     .from(paymentRequests)
     .innerJoin(deals, eq(paymentRequests.opportunityId, deals.id))
     .where(and(eq(paymentRequests.workspaceId, workspaceId), eq(deals.companyId, accountId), inArray(paymentRequests.status, ["failed", "expired"]), gte(paymentRequests.createdAt, since(90))));
+  // The customer's own workspace holds its credit wallet (COPS-04); usage is its consumption.
+  let credits: { cur: number; prev: number } | null = null;
+  if (inst?.customerWorkspaceId) {
+    const [c] = await db
+      .select({
+        cur: sql<number>`coalesce(-sum(${creditTransactions.amount}) filter (where ${creditTransactions.createdAt} >= ${since(30).toISOString()}::timestamptz), 0)::int`,
+        prev: sql<number>`coalesce(-sum(${creditTransactions.amount}) filter (where ${creditTransactions.createdAt} < ${since(30).toISOString()}::timestamptz), 0)::int`,
+      })
+      .from(creditTransactions)
+      .where(and(eq(creditTransactions.workspaceId, inst.customerWorkspaceId), eq(creditTransactions.kind, "consume"), gte(creditTransactions.createdAt, since(60))));
+    credits = { cur: c?.cur ?? 0, prev: c?.prev ?? 0 };
+  }
   return {
+    credits30d: credits?.cur,
+    creditsPrev30d: credits?.prev,
     activationPct: inst ? inst.activationPct : null,
     firstLoginAt: inst?.firstLoginAt ?? null,
     activatedAt: inst?.activatedAt ?? null,

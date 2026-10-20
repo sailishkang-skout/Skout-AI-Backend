@@ -11,7 +11,7 @@ import { schema, type Db } from "@skout/db";
 import type { HealthFactor } from "./cops-health.service.js";
 import { listPlaybookEnrollments } from "./cops-playbooks.service.js";
 
-const { companies, tasks, subscriptions, copsOnboardingInstances, copsHealthScores, copsOutbox } = schema;
+const { companies, tasks, subscriptions, copsOnboardingInstances, copsOnboardingMilestones, copsHealthScores, copsOutbox } = schema;
 const DAY = 86_400_000;
 
 /**
@@ -48,6 +48,19 @@ export async function getCustomerSuccessOverview(db: Db, workspaceId: string, no
     })
     .from(copsOnboardingInstances)
     .where(eq(copsOnboardingInstances.workspaceId, workspaceId));
+
+  // Adoption milestones: for each milestone, how many open onboardings reached it.
+  const milestones = await db
+    .select({
+      key: copsOnboardingMilestones.key,
+      label: sql<string>`min(${copsOnboardingMilestones.label})`,
+      reached: sql<number>`count(*) filter (where ${copsOnboardingMilestones.completedAt} is not null)::int`,
+      total: sql<number>`count(*)::int`,
+    })
+    .from(copsOnboardingMilestones)
+    .where(eq(copsOnboardingMilestones.workspaceId, workspaceId))
+    .groupBy(copsOnboardingMilestones.key)
+    .orderBy(asc(copsOnboardingMilestones.key));
 
   const risky = await db
     .select({ accountId: companies.id, name: companies.name, score: companies.healthScore, state: companies.healthState, renewalRisk: companies.renewalRisk, csmId: companies.csmId, ownerId: companies.ownerId })
@@ -106,5 +119,5 @@ export async function getCustomerSuccessOverview(db: Db, workspaceId: string, no
   }));
 
   const playbooks = await listPlaybookEnrollments(db, workspaceId, { limit: 50 });
-  return { distribution, renewalExposure: renewals, adoption, atRisk, expansionSignals, playbooks };
+  return { distribution, renewalExposure: renewals, adoption: { ...adoption, milestones }, atRisk, expansionSignals, playbooks };
 }

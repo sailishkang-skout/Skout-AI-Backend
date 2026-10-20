@@ -53,4 +53,12 @@ describe("computeHealth (COPS-11)", () => {
     expect(signalCycle("renewal_approaching", now, new Date("2026-12-01T00:00:00Z"))).toBe("renewal:2026-12-01");
     expect(signalCycle("ticket_heavy", now, null)).toBe("month:2026-10");
   });
+
+  it("adoption reads the credit usage trend of the customer's workspace", () => {
+    const usage = (cur: number, prev: number) => computeHealth({ ...healthy, credits30d: cur, creditsPrev30d: prev }, DEFAULT_HEALTH_MODEL, now).factors.find((f) => f.key === "usage_trend");
+    expect(usage(40, 100)).toMatchObject({ kind: "leading", points: -20, reason: "Credit use down 60% on the 30 days before (40 vs 100)" });
+    expect(usage(0, 0)).toMatchObject({ points: -15, reason: "No credits used in 30 days" });
+    expect(usage(120, 100)).toMatchObject({ points: 0, reason: "120 credits used in 30 days" });
+    expect(computeHealth(healthy, DEFAULT_HEALTH_MODEL, now).factors.some((f) => f.key === "usage_trend")).toBe(false);
+  });
 });
