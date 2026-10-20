@@ -188,3 +188,6 @@ by apps/api.
 |---|---|---|
 | `apps/api/src/services/cops-health.service.ts` | companies, contacts, activities | reads the account's contacts and activity for the relationship factors; **update** of the account's health fields (health_score, health_state, renewal_risk, health_computed_at), the Bible's Success fields |
 | `apps/api/src/services/cops-playbooks.service.ts` | activities | **insert** of one activity when a success playbook run starts, completes or is cancelled, so it shows on the account timeline (COPS-02 contract) |
+| `apps/api/src/services/cops-success-overview.service.ts` | companies, tasks | read only: the Customer Success screen lists accounts by health with each one's next open task |
+| `apps/api/src/routes/cops-success.routes.ts` | companies | read; **update** of `csm_id` when an admin sets the account's CSM (audited) |
+| `apps/api/src/routes/cops-success.routes.test.ts` | companies, users, workspace_members | test fixtures |
