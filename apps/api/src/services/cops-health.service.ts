@@ -198,7 +198,13 @@ export async function gatherHealthInputs(db: Db, workspaceId: string, accountId:
     .limit(1);
   const contactIds = (await db.select({ id: contacts.id }).from(contacts).where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.companyId, accountId)))).map((c) => c.id);
   const entityIds = [accountId, ...contactIds];
-  const onAccount = and(eq(activities.workspaceId, workspaceId), inArray(activities.entityId, entityIds));
+  // Relationship is human engagement: workflow activities (playbook and follow-up entries the system
+  // writes on the timeline) are not contact with the customer, so they do not count.
+  const onAccount = and(
+    eq(activities.workspaceId, workspaceId),
+    inArray(activities.entityId, entityIds),
+    sql`${activities.activityType} <> 'workflow'`
+  );
   const [act] = await db
     .select({
       last: sql<Date | null>`max(${activities.occurredAt})`,

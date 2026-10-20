@@ -62,8 +62,10 @@ maybe("COPS-11 success playbooks (Postgres)", () => {
     const timeline = await sql`select subject from activities where workspace_id = ${f.workspaceId} and entity_id = ${f.accountId} and activity_type = 'workflow' order by occurred_at`;
     expect(timeline.map((t: { subject: string }) => t.subject)).toEqual(["Playbook: ticket-heavy account started", "Playbook: ticket-heavy account completed"]);
 
-    // Same cycle: the signal is not raised again, so nothing enrolls twice.
-    await recordAccountHealth(db, f.workspaceId, f.accountId, { requestId: randomUUID() });
+    // Same cycle: the signal is not raised again, so nothing enrolls twice. The playbook's own
+    // timeline entries are not customer engagement, so the relationship score does not improve.
+    const again = await recordAccountHealth(db, f.workspaceId, f.accountId, { requestId: randomUUID() });
+    expect(again.factors.find((x) => x.key === "last_activity")).toMatchObject({ reason: "No recorded activity with the account", points: -50 });
     expect(await runAll(f.workspaceId)).toHaveLength(0);
     expect(await listPlaybookEnrollments(db, f.workspaceId, { accountId: f.accountId })).toHaveLength(1);
   });
