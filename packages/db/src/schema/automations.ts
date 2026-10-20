@@ -21,10 +21,15 @@ export const automations = pgTable(
     status: text("status").notNull().default("draft"), // draft | active | archived
     currentVersion: integer("current_version").notNull().default(0),
     createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    /** COPS-11: set when the workflow was seeded from a template (a success playbook). */
+    templateKey: text("template_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("automations_workspace_idx").on(table.workspaceId)]
+  (table) => [
+    index("automations_workspace_idx").on(table.workspaceId),
+    uniqueIndex("automations_template_key_uq").on(table.workspaceId, table.templateKey).where(sql`template_key IS NOT NULL`),
+  ]
 );
 
 /** An immutable, published-or-draft snapshot of an automation's graph. */

@@ -7,6 +7,7 @@ import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
 import { findStartNodes, type AutomationGraph } from "./automation-graph.js";
 import { listAutomationSecretValues, maskAutomationSecrets } from "./automation-secrets.service.js";
+import { recordPlaybookTimeline } from "./cops-playbooks.service.js";
 
 const { automationRuns, automationRunSteps, automationVersions, auditLogs } = schema;
 const FINISHED_RUN = ["succeeded", "failed", "cancelled"];
@@ -330,7 +331,7 @@ export async function decideApproval(
  * running now is skipped when that worker next looks at the run. Audited.
  */
 export async function cancelRun(db: Db, workspaceId: string, runId: string, actorId: string | undefined, reason: string | null) {
-  return db.transaction(async (tx) => {
+  const cancelled = await db.transaction(async (tx) => {
     const run = await lockRun(tx, workspaceId, runId);
     if (FINISHED_RUN.includes(run.status)) throw new HttpError("automation_run_already_finished", 409);
     await tx
@@ -351,6 +352,8 @@ export async function cancelRun(db: Db, workspaceId: string, runId: string, acto
     });
     return updated!;
   });
+  await recordPlaybookTimeline(db, runId, "cancelled");
+  return cancelled;
 }
 
 /**

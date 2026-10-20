@@ -22,6 +22,7 @@ import { getNodeHandler } from "../services/automation-nodes/registry.js";
 import { interpolateConfig } from "../services/automation-nodes/interpolate.js";
 import { nextNodeIds, type AutomationGraph } from "../services/automation-graph.js";
 import { dispatchWorkflowEvents, runScheduledWorkflows } from "../services/automation-triggers.service.js";
+import { recordPlaybookTimeline } from "../services/cops-playbooks.service.js";
 import { AUTOMATION_RUN_QUEUE, enqueueAutomationRunAdvance, type AutomationRunAdvancePayload } from "./automation-run.queue.js";
 
 const { automationRuns, automationVersions, automationRunSteps } = schema;
@@ -178,6 +179,7 @@ export async function advanceAutomationRun(
       );
       if (!stillPending) {
         await db.update(automationRuns).set({ status: "succeeded", finishedAt: new Date() }).where(eq(automationRuns.id, run.id));
+        await recordPlaybookTimeline(db, run.id, "completed");
       } else {
         await enqueueAutomationRunAdvance(config, payload);
       }

@@ -117,6 +117,10 @@ function checkTrigger(t: TriggerConfig, path: string, issues: GraphIssue[]) {
   if (t.kind === "schedule" && !(Number(t.everyMinutes) >= MIN_SCHEDULE_MINUTES)) {
     issues.push({ path: `${path}.everyMinutes`, message: `A schedule runs at most every ${MIN_SCHEDULE_MINUTES} minutes` });
   }
+  if (t.payloadEquals !== undefined) {
+    const ok = typeof t.payloadEquals === "object" && t.payloadEquals !== null && !Array.isArray(t.payloadEquals) && Object.values(t.payloadEquals).every((v) => typeof v === "string");
+    if (!ok) issues.push({ path: `${path}.payloadEquals`, message: "Payload filters are field: text pairs" });
+  }
   if (t.stopOn !== undefined) {
     if (!Array.isArray(t.stopOn) || t.stopOn.some((e) => !EVENT_TYPES.has(e))) issues.push({ path: `${path}.stopOn`, message: "Stop events must be known event types" });
   }

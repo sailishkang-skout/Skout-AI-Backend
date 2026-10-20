@@ -187,3 +187,4 @@ by apps/api.
 | File | Tables | Access |
 |---|---|---|
 | `apps/api/src/services/cops-health.service.ts` | companies, contacts, activities | reads the account's contacts and activity for the relationship factors; **update** of the account's health fields (health_score, health_state, renewal_risk, health_computed_at), the Bible's Success fields |
+| `apps/api/src/services/cops-playbooks.service.ts` | activities | **insert** of one activity when a success playbook run starts, completes or is cancelled, so it shows on the account timeline (COPS-02 contract) |
