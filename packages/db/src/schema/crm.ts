@@ -39,6 +39,12 @@ export const companies = pgTable(
      * every status change in companies.service.ts's update(). Nullable/no default so existing
      * rows read as unclassified until their status next changes (no backfill; see migration). */
     retentionClassification: text("retention_classification"),
+    /** COPS-11 — the Bible's Success fields, written by the health model (cops_health_scores). */
+    healthScore: integer("health_score"),
+    healthState: text("health_state"),
+    renewalRisk: text("renewal_risk"),
+    csmId: uuid("csm_id").references(() => users.id, { onDelete: "set null" }),
+    healthComputedAt: timestamp("health_computed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -47,6 +53,7 @@ export const companies = pgTable(
     index("companies_workspace_id_idx").on(table.workspaceId),
     uniqueIndex("companies_workspace_entity_unique_idx").on(table.workspaceId, table.id),
     index("companies_workspace_owner_idx").on(table.workspaceId, table.ownerId),
+    index("companies_workspace_health_idx").on(table.workspaceId, table.healthState),
   ]
 );
 
