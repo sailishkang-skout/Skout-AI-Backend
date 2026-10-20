@@ -341,3 +341,42 @@ export async function getAccountHealthHistory(db: Db, workspaceId: string, accou
     .orderBy(desc(copsHealthScores.computedAt))
     .limit(500);
 }
+
+/**
+ * COPS-11 sweep of one workspace: recomputes the health of every customer account and every
+ * account in onboarding. `expansion` comes from the retention rule (a customer with a new growth
+ * signal) and becomes an expansion_signal with that evidence. One account failing never stops
+ * the rest. Returns how many were scored and which signals are new.
+ */
+export async function sweepWorkspaceHealth(
+  db: Db,
+  workspaceId: string,
+  expansion: { companyId: string; signalType: string; detectedAt: string }[],
+  now = new Date()
+) {
+  const ids = await db
+    .selectDistinct({ id: companies.id })
+    .from(companies)
+    .leftJoin(copsOnboardingInstances, and(eq(copsOnboardingInstances.accountId, companies.id), eq(copsOnboardingInstances.workspaceId, workspaceId)))
+    .where(and(eq(companies.workspaceId, workspaceId), sql`${companies.deletedAt} is null`, sql`(${companies.status} = 'customer' or ${copsOnboardingInstances.id} is not null)`));
+  const byAccount = new Map(expansion.map((e) => [e.companyId, e]));
+  let scored = 0;
+  const raised: { accountId: string; signals: HealthSignal[] }[] = [];
+  for (const { id } of ids) {
+    const exp = byAccount.get(id);
+    try {
+      const r = await recordAccountHealth(db, workspaceId, id, {
+        now,
+        requestId: crypto.randomUUID(),
+        extraSignals: exp
+          ? [{ signal: "expansion_signal", evidence: [{ factor: "expansion", reason: `New ${exp.signalType.replace(/_/g, " ")} signal on ${exp.detectedAt.slice(0, 10)}` }] }]
+          : [],
+      });
+      scored++;
+      if (r.newSignals.length) raised.push({ accountId: id, signals: r.newSignals });
+    } catch (err) {
+      log.error("health computation failed for an account", err, { workspaceId, accountId: id });
+    }
+  }
+  return { scored, raised };
+}

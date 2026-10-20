@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { createDb } from "@skout/db";
-import { getAccountHealth, getAccountHealthHistory, recordAccountHealth, saveHealthModel } from "./cops-health.service.js";
+import { getAccountHealth, getAccountHealthHistory, recordAccountHealth, saveHealthModel, sweepWorkspaceHealth } from "./cops-health.service.js";
 
 const postgres = createRequire(new URL("../../../../packages/db/package.json", import.meta.url))("postgres") as (url: string, options?: object) => any;
 
@@ -63,5 +63,16 @@ maybe("COPS-11 account health (Postgres)", () => {
     expect(r.modelVersion).toBe(1);
     expect(r.score).toBe(r.dimensions.support.score);
     await expect(saveHealthModel(db, a.workspaceId, { thresholds: { healthy: 30, atRisk: 50 } }, null)).rejects.toMatchObject({ statusCode: 422 });
+  });
+
+  it("the sweep scores customer accounts and turns the retention expansion rule into a signal, once a month", async () => {
+    const a = await account();
+    const expansion = [{ companyId: a.accountId, signalType: "hiring_surge", detectedAt: "2026-10-18T00:00:00Z" }];
+    const first = await sweepWorkspaceHealth(db, a.workspaceId, expansion);
+    expect(first.scored).toBe(1);
+    expect(first.raised).toEqual([{ accountId: a.accountId, signals: ["expansion_signal"] }]);
+    expect((await sweepWorkspaceHealth(db, a.workspaceId, expansion)).raised).toEqual([]);
+    const [e] = await sql`select envelope->'payload' as p from cops_outbox where tenant_id = ${a.workspaceId} and event_type = 'HealthSignalDetected'`;
+    expect(e.p).toMatchObject({ signal: "expansion_signal", evidence: [{ factor: "expansion", reason: "New hiring surge signal on 2026-10-18" }] });
   });
 });
