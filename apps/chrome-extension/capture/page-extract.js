@@ -587,10 +587,32 @@ function companyPublicIdFromEntry(item) {
   return match?.[1];
 }
 
+/**
+ * The profile preview marks its sections `...TopLevelSection`; the /details/<section>/ pages
+ * (opened when LinkedIn shows "Show all") mark them `...DetailsSection`. Without either, fall
+ * back to the section under this page's own heading, never outside <main>.
+ */
+function profileSection(name) {
+  const keyed = document.querySelector(`[componentkey*="${name}TopLevelSection" i], [componentkey*="${name}DetailsSection" i]`);
+  if (keyed) return keyed;
+  const heading = Array.from(document.querySelectorAll('main h1, main h2, main h3'))
+    .find((node) => new RegExp(`^${name}$`, 'i').test(text(node) || ''));
+  return heading?.closest('section') || undefined;
+}
+
 function extractExperience() {
-  const section = document.querySelector('[componentkey*="ExperienceTopLevelSection" i]');
+  const section = profileSection('Experience');
   if (!section) return [];
-  const items = section.querySelectorAll('[componentkey^="entity-collection-item"]');
+  let items = Array.from(section.querySelectorAll('[componentkey^="entity-collection-item"]'));
+  if (!items.length) {
+    // Rows without component keys: one per company link, scoped to its own list item.
+    const rows = new Set();
+    section.querySelectorAll('a[href*="/company/"]').forEach((anchor) => {
+      const row = anchor.closest('li, [data-view-name*="profile-component-entity" i]');
+      if (row && section.contains(row)) rows.add(row);
+    });
+    items = [...rows];
+  }
   const results = [];
   const isExperienceNoise = value => !value || /^(ad options?|why am i seeing this ad\??|manage your ad preferences|hide or report this ad|skills|profile|untitled role)$/i.test(value.trim());
   const addExperience = entry => {
@@ -642,9 +664,8 @@ function extractExperience() {
 }
 
 function extractEducation() {
-  const section = document.querySelector('[componentkey*="EducationTopLevelSection" i]');
+  const section = profileSection('Education');
   if (!section) return [];
-  const anchors = section.querySelectorAll('a[href*="/school/"]');
   const seen = new Set();
   const results = [];
   const isBadSchool = (value) => {
@@ -652,12 +673,19 @@ function extractEducation() {
     return !candidate || /^(?:·\s*)?(?:1st|2nd|3rd|education|profile)$/i.test(candidate) ||
       /^(people you may know|all activity|ad options|hide or report this ad)$/i.test(candidate);
   };
-  anchors.forEach((a) => {
-    // Never climb outside the Education section. A loose climb can reach the
-    // profile header and turn connection degree, headline, and About text
-    // into an education record.
-    const container = a.closest('[componentkey^="entity-collection-item" i], li') || a.parentElement;
-    if (!container || seen.has(container)) return;
+  // Never climb outside the Education section. A loose climb can reach the
+  // profile header and turn connection degree, headline, and About text
+  // into an education record. Rows come from school links and, on current
+  // detail pages, from keyed rows that render a school without a link.
+  const containers = [
+    ...Array.from(section.querySelectorAll('a[href*="/school/"]'))
+      .map((a) => a.closest('[componentkey^="entity-collection-item" i], li') || a.parentElement),
+    ...Array.from(section.querySelectorAll('[componentkey^="entity-collection-item" i]')),
+  ];
+  containers.forEach((container) => {
+    if (!container || !section.contains(container)) return;
+    // A row and an element nested in it are the same entry; read it once.
+    if ([...seen].some((done) => done === container || done.contains(container) || container.contains(done))) return;
     seen.add(container);
     const paras = getItemParagraphs(container);
     const school = paras[0];
