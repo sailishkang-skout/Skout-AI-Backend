@@ -4,6 +4,7 @@ import { getMemberPermissions } from "@skout/auth";
 import { COPS_DASHBOARDS, COPS_METRICS, copsErrorBody, getMetric, resolveCorrelationId, type CopsDashboard } from "@skout/shared";
 import { DashboardError, dashboard, drill, type DashboardFilters } from "../services/cops-dashboards.service.js";
 import { funnelCohorts } from "../services/cops-funnel.service.js";
+import { feedStatus } from "../services/cops-analytics-feed.service.js";
 
 /**
  * COPS-13 analytics (Bible p.59, p.87-88): the metric catalog, role dashboards, drill-through and
@@ -96,5 +97,10 @@ export async function copsAnalyticsRoutes(app: FastifyInstance) {
 
   app.get("/cops/funnel", async (request, reply) =>
     guarded(request, reply, (g) => g.includes("analytics:read"), async () => funnelCohorts(db(), request.workspaceId!, filterSchema.parse(request.query ?? {}) as DashboardFilters))
+  );
+
+  /** Warehouse feed health (analytics:admin): whether it is on and how far behind this workspace's events are. */
+  app.get("/cops/analytics/feed", async (request, reply) =>
+    guarded(request, reply, (g) => g.includes("analytics:admin"), async () => feedStatus(db(), { apiKey: app.config.POSTHOG_API_KEY }, request.workspaceId!))
   );
 }

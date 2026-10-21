@@ -200,7 +200,8 @@ components:
             sink: { type: string, enum: [posthog] }
             enabled: { type: boolean }
             checkpoint_at: { type: string, format: date-time, nullable: true }
-            lag_events: { type: integer }
+            lag_events: { type: integer, description: This workspace's published events not yet sent }
+            last_run_at: { type: string, format: date-time, nullable: true }
             last_error: { type: string, nullable: true }
     EvidenceRef:
       type: object
