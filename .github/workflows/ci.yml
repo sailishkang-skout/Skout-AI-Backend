@@ -91,8 +91,12 @@ jobs:
       - name: Seed model versions (required by §10 journey E2E AI-pin assertions)
         run: pnpm --filter @skout/db seed-model-versions
 
+      # The *.db.test.ts suites (COPS-01 to COPS-10) run against this migrated database only when
+      # COPS_TEST_DATABASE_URL is set; without it they are skipped.
       - name: Test
         run: pnpm test
+        env:
+          COPS_TEST_DATABASE_URL: ${{ env.DATABASE_URL }}
 
       - name: Typecheck
         run: pnpm typecheck

@@ -19,6 +19,10 @@ vi.mock("@skout/shared", () => ({
   buildIdempotencyKey: vi.fn((...parts: string[]) => parts.join(":")),
   LeaseLostError: class LeaseLostError extends Error {},
 }));
+vi.mock("../services/automation-triggers.service.js", () => ({
+  dispatchWorkflowEvents: vi.fn().mockResolvedValue({ started: [], cancelled: 0 }),
+  runScheduledWorkflows: vi.fn().mockResolvedValue([]),
+}));
 vi.mock("./automation-run.queue.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./automation-run.queue.js")>();
   return { ...actual, enqueueAutomationRunAdvance: vi.fn().mockResolvedValue(undefined) };
@@ -33,7 +37,8 @@ import * as registry from "../services/automation-nodes/registry.js";
 import { AmbiguousOutcomeError } from "../services/automation-nodes/types.js";
 
 const GRAPH = {
-  nodes: [{ id: "n1", type: "delay" as const, config: { seconds: 1 } }],
+  // A plain node: a delay node now waits (COPS-10), which automation-delay.db.test.ts covers.
+  nodes: [{ id: "n1", type: "trigger" as const, config: {} }],
   edges: [],
 };
 
@@ -159,7 +164,10 @@ describe("advanceAutomationRun", () => {
 });
 
 describe("startAutomationRunWorker — reclaim sweep", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(runService, "listRunsWithDueSteps").mockResolvedValue([]);
+  });
 
   it("starts a reclaim sweep interval and stops it on shutdown", async () => {
     vi.useFakeTimers();

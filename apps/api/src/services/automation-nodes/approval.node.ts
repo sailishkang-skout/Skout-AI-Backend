@@ -14,11 +14,15 @@ export const approvalNodeHandler: NodeHandler = async (ctx) => {
     return { output: { simulated: true, entityType, entityId } };
   }
 
+  // COPS-10: after an admin approves the paused step (decideApproval), it runs again with the
+  // approval, which an "approve"-mode action needs to be allowed.
   const result = await assertAllowed(ctx.db, {
     workspaceId: ctx.workspaceId,
     actionKey: "workflow.step_approval",
     entityType,
     entityId,
+    priorApproval: Boolean(ctx.approval),
+    actorUserId: ctx.approval?.approvedBy ?? undefined,
   });
-  return { output: { decisionId: result.decisionId, mode: result.mode, outcome: result.outcome } };
+  return { output: { decisionId: result.decisionId, mode: result.mode, outcome: result.outcome, approvedBy: ctx.approval?.approvedBy ?? null } };
 };

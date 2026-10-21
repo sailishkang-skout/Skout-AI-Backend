@@ -21,7 +21,7 @@ export function getAutomationRunQueue(config: Env): Queue<AutomationRunAdvancePa
   return queue;
 }
 
-/** Enqueues one "advance this run by one step" job. */
-export async function enqueueAutomationRunAdvance(config: Env, payload: AutomationRunAdvancePayload) {
-  await getAutomationRunQueue(config).add("advance", payload);
+/** Enqueues one "advance this run by one step" job, optionally after `delayMs` (a waiting delay step). */
+export async function enqueueAutomationRunAdvance(config: Env, payload: AutomationRunAdvancePayload, delayMs = 0) {
+  await getAutomationRunQueue(config).add("advance", payload, delayMs > 0 ? { delay: delayMs } : undefined);
 }

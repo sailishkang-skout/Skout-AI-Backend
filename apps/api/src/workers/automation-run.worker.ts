@@ -1,7 +1,7 @@
 import { Worker } from "bullmq";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
@@ -12,12 +12,16 @@ import {
   markStepRunning,
   completeStep,
   failStep,
+  deferStep,
+  listRunsWithDueSteps,
+  pauseStepForApproval,
 } from "../services/automation-run.service.js";
 import { reclaimExpiredLeases, withLeaseHeartbeat, buildIdempotencyKey, LeaseLostError } from "@skout/shared";
 import { AmbiguousOutcomeError } from "../services/automation-nodes/types.js";
 import { getNodeHandler } from "../services/automation-nodes/registry.js";
 import { interpolateConfig } from "../services/automation-nodes/interpolate.js";
 import { nextNodeIds, type AutomationGraph } from "../services/automation-graph.js";
+import { dispatchWorkflowEvents, runScheduledWorkflows } from "../services/automation-triggers.service.js";
 import { AUTOMATION_RUN_QUEUE, enqueueAutomationRunAdvance, type AutomationRunAdvancePayload } from "./automation-run.queue.js";
 
 const { automationRuns, automationVersions, automationRunSteps } = schema;
@@ -73,6 +77,15 @@ export async function advanceAutomationRun(
     return;
   }
 
+  // COPS-10: a cancelled run runs nothing more; a step claimed after the cancel is skipped.
+  if (run.status === "cancelled") {
+    await db
+      .update(automationRunSteps)
+      .set({ status: "skipped", leaseOwner: null, leaseExpiresAt: null })
+      .where(and(eq(automationRunSteps.id, step.id), eq(automationRunSteps.leaseOwner, WORKER_ID)));
+    return;
+  }
+
   let graph = graphOverride;
   if (!graph) {
     const [version] = await db.select().from(automationVersions).where(eq(automationVersions.id, run.automationVersionId)).limit(1);
@@ -85,14 +98,31 @@ export async function advanceAutomationRun(
     return;
   }
 
-  await markStepRunning(db, step.id, {});
-
   const priorSteps = await db.select().from(automationRunSteps).where(eq(automationRunSteps.automationRunId, run.id));
   const priorOutputs = Object.fromEntries(
     (priorSteps as { status: string; nodeId: string; output: unknown }[])
       .filter((s) => s.status === "succeeded")
       .map((s) => [s.nodeId, s.output])
   );
+
+  // COPS-10 durable delay: the first claim records when the step may run and hands the step
+  // back; the run continues from the database after a restart, and the step runs once.
+  // A simulation does not wait.
+  if (node.type === "delay" && !run.isSimulation && !step.runAfter) {
+    const seconds = Number(interpolateConfig(node.config, priorOutputs).seconds ?? 0);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      const runAfter = new Date(Date.now() + seconds * 1000);
+      if (!(await deferStep(db, step.id, WORKER_ID, runAfter))) return;
+      if (run.status === "pending") await db.update(automationRuns).set({ status: "running" }).where(eq(automationRuns.id, run.id));
+      await enqueueAutomationRunAdvance(config, payload, seconds * 1000);
+      log.info("automation run waiting on a delay", { runId: run.id, nodeId: node.id, runAfter });
+      return;
+    }
+  }
+
+  // Keep the step's input: an approved approval step carries the approval there.
+  const stepInput = (step.input ?? {}) as { approval?: NonNullable<Parameters<ReturnType<typeof getNodeHandler>>[0]["approval"]> };
+  await markStepRunning(db, step.id, stepInput);
 
   try {
     const handler = getNodeHandler(node.type);
@@ -106,6 +136,10 @@ export async function advanceAutomationRun(
         isSimulation: run.isSimulation,
         node: interpolatedNode,
         priorOutputs,
+        triggerPayload: (run.triggerPayload ?? undefined) as Record<string, unknown> | undefined,
+        approval: stepInput.approval,
+        stepKey: step.idempotencyKey,
+        subject: run.subjectType && run.subjectId ? { type: run.subjectType, id: run.subjectId } : undefined,
       })
     );
     if (result.outcome === "ambiguous") {
@@ -167,6 +201,8 @@ export async function advanceAutomationRun(
     const statusCode = (err as { statusCode?: number })?.statusCode;
     const isPolicyGatewayPause = statusCode === 403 || statusCode === 409;
     if (isPolicyGatewayPause) {
+      // The step waits for a decision (decideApproval) instead of being re-asked on every lease expiry.
+      if (!(await pauseStepForApproval(db, step.id, WORKER_ID, (err as { details?: unknown }).details))) return;
       await db.update(automationRuns).set({ status: "awaiting_approval" }).where(eq(automationRuns.id, run.id));
       log.info("automation run paused for approval", { runId: run.id, nodeId: node.id });
       return;
@@ -205,6 +241,21 @@ export async function startAutomationRunWorker(config: Env): Promise<() => Promi
   });
 
   const sweepTimer = setInterval(() => {
+    // COPS-10 triggers: new outbox events start (or stop) runs; scheduled workflows get their slot.
+    Promise.all([dispatchWorkflowEvents(db), runScheduledWorkflows(db)])
+      .then(async ([events, scheduled]) => {
+        for (const r of [...events.started, ...scheduled]) await enqueueAutomationRunAdvance(config, r);
+      })
+      .catch((err) => log.error("workflow trigger sweep failed", err));
+    // Delays that came due while their queued job was lost (Redis flush, deploy) resume here.
+    listRunsWithDueSteps(db, new Date())
+      .then(async (due) => {
+        for (const { automationRunId, workspaceId } of due) {
+          await enqueueAutomationRunAdvance(config, { automationRunId, workspaceId });
+        }
+      })
+      .catch((err) => log.error("automation due-delay sweep failed", err));
+
     reclaimExpiredLeases(db, automationRunSteps)
       .then(async (result) => {
         if (result.requeuedIds.length === 0 && result.failedIds.length === 0) return;
