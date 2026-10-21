@@ -9,6 +9,11 @@ import { errorResponse } from "../utils/http.js";
  * Registered as a preHandler hook on each route plugin.
  */
 export function crmAdminGate(app: FastifyInstance) {
+  return workspaceManageGate(app);
+}
+
+/** workspace:manage (Owner, Admin). COPS-10 uses it for the workflow builder's write routes. */
+export function workspaceManageGate(app: FastifyInstance) {
   const gate = requireAnyCopsPermission(["workspace:manage"], (workspaceId, userId) => getMemberPermissions(app.db!, workspaceId, userId));
   // Without a database the routes answer 503 themselves; there are no permissions to read.
   return async (request: FastifyRequest, reply: FastifyReply) => (app.db ? gate(request, reply) : undefined);

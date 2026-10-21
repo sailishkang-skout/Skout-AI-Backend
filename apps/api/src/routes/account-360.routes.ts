@@ -351,7 +351,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       const accountId = request.params.id;
 
       const [account] = await db
-        .select({ id: companies.id, name: companies.name, ownerId: companies.ownerId })
+        .select({ id: companies.id, name: companies.name, ownerId: companies.ownerId, healthScore: companies.healthScore, renewalRisk: companies.renewalRisk, csmId: companies.csmId })
         .from(companies)
         .where(and(eq(companies.id, accountId), eq(companies.workspaceId, workspaceId)))
         .limit(1);
@@ -423,6 +423,10 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
           owner_id: account.ownerId,
           lifecycle: { account: life.account ?? null, health: life.health ?? null, support: life.support ?? null },
           health: life.health ?? null,
+          // COPS-11: the explainable score behind the health state, and the Success fields.
+          health_score: account.healthScore ?? null,
+          renewal_risk: account.renewalRisk ?? null,
+          csm_id: account.csmId ?? null,
           commercial_state: commercialState,
           onboarding_pct: null,
           plan: provisioned ? ((provisioned.request as { plan?: string }).plan ?? null) : null,

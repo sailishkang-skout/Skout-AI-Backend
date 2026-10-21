@@ -11,6 +11,9 @@ import { approvalNodeHandler } from "./approval.node.js";
 import { aiActionNodeHandler } from "./action-ai.node.js";
 import { enrichmentActionNodeHandler } from "./action-enrichment.node.js";
 import { crmSyncActionNodeHandler } from "./action-crm-sync.node.js";
+import { createTaskActionNodeHandler } from "./action-create-task.node.js";
+import { createTicketActionNodeHandler } from "./action-create-ticket.node.js";
+import { updateFieldsActionNodeHandler } from "./action-update-fields.node.js";
 
 const registry: Partial<Record<NodeType, NodeHandler>> = {
   trigger: triggerNodeHandler,
@@ -23,6 +26,9 @@ const registry: Partial<Record<NodeType, NodeHandler>> = {
   action_ai: aiActionNodeHandler,
   action_enrichment: enrichmentActionNodeHandler,
   action_crm_sync: crmSyncActionNodeHandler,
+  action_create_task: createTaskActionNodeHandler,
+  action_create_ticket: createTicketActionNodeHandler,
+  action_update_fields: updateFieldsActionNodeHandler,
   approval: approvalNodeHandler,
 };
 

@@ -6,7 +6,8 @@ describe("notificationActionNodeHandler", () => {
   it("calls createNotification with the configured title/body and returns the notification id", async () => {
     vi.spyOn(notificationsService, "createNotification").mockResolvedValue({ id: "notif-1" } as any);
     const result = await notificationActionNodeHandler({
-      db: {} as any,
+      // No step key: the effect runs in a plain transaction (step-effect.ts).
+      db: { transaction: (work: (tx: unknown) => unknown) => work({}) } as any,
       config: {} as any,
       workspaceId: "ws-1",
       runId: "run-1",
@@ -28,7 +29,8 @@ describe("notificationActionNodeHandler", () => {
     // for, matching what the frontend actually persists. `type` is a NOT NULL DB column with
     // no default, so this crashed the insert before the handler applied its own fallback.
     await notificationActionNodeHandler({
-      db: {} as any,
+      // No step key: the effect runs in a plain transaction (step-effect.ts).
+      db: { transaction: (work: (tx: unknown) => unknown) => work({}) } as any,
       config: {} as any,
       workspaceId: "ws-1",
       runId: "run-1",
@@ -46,7 +48,8 @@ describe("notificationActionNodeHandler", () => {
   it("skips the actual send in simulation mode", async () => {
     vi.spyOn(notificationsService, "createNotification").mockClear();
     const result = await notificationActionNodeHandler({
-      db: {} as any,
+      // No step key: the effect runs in a plain transaction (step-effect.ts).
+      db: { transaction: (work: (tx: unknown) => unknown) => work({}) } as any,
       config: {} as any,
       workspaceId: "ws-1",
       runId: "run-1",

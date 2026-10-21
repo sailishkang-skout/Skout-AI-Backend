@@ -9,6 +9,9 @@ export type NodeType =
   | "action_ai"
   | "action_enrichment"
   | "action_crm_sync"
+  | "action_create_task"
+  | "action_create_ticket"
+  | "action_update_fields"
   | "approval";
 
 export interface AutomationNode {

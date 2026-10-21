@@ -173,6 +173,25 @@ resolution is refused with 422 and nothing changes. The inbound HubSpot sync in
 `contacts.company_id` to apply the ADR 0014 account scope. The COPS-09 table (`crm_conflicts`) is owned
 by apps/api.
 
+## COPS-10 additions (2026-10-19)
+
+| File | Tables | Access |
+|---|---|---|
+| `apps/api/src/routes/automation.routes.ts` | companies, contacts, deals | read only, by id: a workflow run's subject (account, contact or deal) must belong to the caller's workspace |
+| `apps/api/src/routes/automation.routes.permissions.test.ts` | companies, workspaces | test fixtures: an account in the workspace and one in another |
+| `apps/api/src/services/automation-nodes/action-create-task.node.ts` | tasks, companies | **insert** of one task for the run's account (the workflow "create task" action, the same insert COPS-05 playbooks make); reads the account owner |
+| `apps/api/src/services/automation-nodes/action-update-fields.node.ts` | contacts, deals | **update** of CRM-sync-owned fields of one record (the workflow "update allowed fields" action), with the COPS-09 conflict-resolution allowlist and type checks |
+
+## COPS-11 additions (2026-10-20)
+
+| File | Tables | Access |
+|---|---|---|
+| `apps/api/src/services/cops-health.service.ts` | companies, contacts, activities | reads the account's contacts and activity for the relationship factors; **update** of the account's health fields (health_score, health_state, renewal_risk, health_computed_at), the Bible's Success fields |
+| `apps/api/src/services/cops-playbooks.service.ts` | activities | **insert** of one activity when a success playbook run starts, completes or is cancelled, so it shows on the account timeline (COPS-02 contract) |
+| `apps/api/src/services/cops-success-overview.service.ts` | companies, tasks | read only: the Customer Success screen lists accounts by health with each one's next open task |
+| `apps/api/src/routes/cops-success.routes.ts` | companies | read; **update** of `csm_id` when an admin sets the account's CSM (audited) |
+| `apps/api/src/routes/cops-success.routes.test.ts` | companies, users, workspace_members | test fixtures |
+
 ## COPS-12 additions (2026-10-21)
 
 | File | Tables | Access |
