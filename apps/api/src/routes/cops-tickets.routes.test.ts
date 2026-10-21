@@ -23,7 +23,7 @@ maybe("COPS-06 ticket routes", () => {
   let userId = "";
   let accountId = "";
 
-  const call = (method: "GET" | "POST" | "PATCH", path: string, body?: unknown, key: string | null = randomUUID()) =>
+  const call = (method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown, key: string | null = randomUUID()) =>
     app.inject({
       method,
       url: `/api/v1${path}`,
@@ -142,5 +142,46 @@ maybe("COPS-06 ticket routes", () => {
     const [foreign] = await sql`insert into engineering_tickets (workspace_id, account_id, title) values (${ws.id}, ${co.id}, 'Not yours') returning id`;
     expect((await call("GET", `/tickets/${foreign.id}`)).statusCode).toBe(404);
     expect((await call("GET", `/accounts/${co.id}/tickets`)).statusCode).toBe(404);
+  });
+
+  it("COPS-12: SLA on the ticket and in the queue, release evidence, the Verified gate (422) and metrics", async () => {
+    const id = await ticket({ priority: "p2" });
+    await asRole("engineering");
+    const detail = (await call("GET", `/tickets/${id}`)).json().data;
+    expect(detail.sla.clocks.map((c: { kind: string }) => c.kind).sort()).toEqual(["resolution", "response"]);
+    expect(detail.release).toMatchObject({ fixed_in_version: null, qa_verified_at: null });
+    const queue = (await call("GET", "/tickets")).json().data;
+    expect(queue.find((t: { id: string }) => t.id === id).sla).toMatchObject({ state: "running" });
+
+    for (const to of ["triage", "assigned", "in_progress", "testing", "resolved"]) expect((await call("POST", `/tickets/${id}/transition`, { to })).statusCode).toBe(200);
+    const blocked = await call("POST", `/tickets/${id}/transition`, { to: "verified" });
+    expect(blocked.statusCode).toBe(422);
+    expect(blocked.json()).toMatchObject({ code: "VERIFICATION_REQUIRED", details: { missing: ["qa_verification", "customer_verification"] } });
+    expect((await call("PATCH", `/tickets/${id}/release`, { fixed_in_version: "1.4.2", qa_evidence: "Suite green", customer_evidence: "Customer confirmed" })).statusCode).toBe(200);
+    expect((await call("POST", `/tickets/${id}/transition`, { to: "verified" })).statusCode).toBe(200);
+    const reopen = await call("POST", `/tickets/${id}/transition`, { to: "in_progress" });
+    expect(reopen.statusCode).toBe(422);
+    expect(reopen.json().code).toBe("REASON_REQUIRED");
+
+    const metrics = await call("GET", "/tickets/metrics?days=30");
+    expect(metrics.statusCode).toBe(200);
+    expect(metrics.json().data).toHaveProperty("breach_rate");
+    expect(metrics.json().data.definitions).toHaveProperty("mttr_minutes");
+  });
+
+  it("COPS-12: incidents link tickets; a customer update needs tickets:send", async () => {
+    const id = await ticket();
+    const [inc] = await sql`insert into incidents (workspace_id, title, source) values (${workspaceId}, 'API outage', 'manual') returning id`;
+    await asRole("engineering");
+    expect((await call("POST", `/incidents/${inc.id}/tickets`, { ticket_id: id })).statusCode).toBe(201);
+    const detail = (await call("GET", `/incidents/${inc.id}/detail`)).json().data;
+    expect(detail.tickets.map((t: { id: string }) => t.id)).toEqual([id]);
+    expect(detail.affected_accounts[0].name).toBe("Ticket Co");
+    // Engineering works tickets but cannot publish to the customer.
+    expect((await call("POST", `/incidents/${inc.id}/customer-update`, { body: "Fix rolling out" })).statusCode).toBe(403);
+    await asRole("cs");
+    expect((await call("POST", `/incidents/${inc.id}/customer-update`, { body: "Fix rolling out" })).json().data).toEqual({ ticketsUpdated: 1 });
+    await asRole("engineering");
+    expect((await call("DELETE", `/incidents/${inc.id}/tickets/${id}`)).statusCode).toBe(204);
   });
 });
