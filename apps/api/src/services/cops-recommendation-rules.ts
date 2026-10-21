@@ -54,6 +54,16 @@ export interface AccountContext {
 }
 
 const DAY = 86_400_000;
+
+/** COPS-05 stalled-onboarding triggers, in words. first_login and trial_ending are not stalls. */
+const STALL_LABEL: Record<string, string> = {
+  no_delivery: "the onboarding email was not delivered",
+  hard_bounce: "the onboarding email bounced",
+  delivered_no_login: "the onboarding email was delivered but nobody has signed in",
+  login_no_value: "users signed in but have not reached the first value",
+  integration_error: "an integration is failing",
+  low_credits: "credits are running low",
+};
 const daysUntil = (d: Date, now: Date) => Math.max(0, Math.ceil((d.getTime() - now.getTime()) / DAY));
 const money = (minor: number, currency: string) => `${currency} ${(minor / 100).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 const clamp = (x: number) => Math.round(Math.min(0.95, Math.max(0.3, x)) * 100) / 100;
@@ -166,13 +176,16 @@ export function recommendationCandidates(c: AccountContext): Candidate[] {
 
   // Stalled onboarding: a stall signal in the last 14 days and not activated.
   if (c.onboarding && !c.onboarding.activated) {
-    const recent = c.onboarding.stalledSignals.filter((s) => now.getTime() - s.firedAt.getTime() <= 14 * DAY).sort((a, b) => b.firedAt.getTime() - a.firedAt.getTime())[0];
+    const recent = c.onboarding.stalledSignals
+      .filter((s) => STALL_LABEL[s.trigger] && now.getTime() - s.firedAt.getTime() <= 14 * DAY)
+      .sort((a, b) => b.firedAt.getTime() - a.firedAt.getTime())[0];
     if (recent) {
+      const what = STALL_LABEL[recent.trigger]!;
       out.push({
         type: "stalled_onboarding",
-        headline: `Onboarding stalled: ${recent.trigger.replace(/_/g, " ")}`,
-        rationale: `Onboarding raised "${recent.trigger.replace(/_/g, " ")}" on ${recent.firedAt.toISOString().slice(0, 10)} and the account is not activated. Offer guided onboarding to reach the first value.`,
-        evidence: [{ kind: "onboarding_signal", id: recent.id, label: `${recent.trigger.replace(/_/g, " ")} ${recent.firedAt.toISOString().slice(0, 10)}` }],
+        headline: `Onboarding stalled: ${what}`,
+        rationale: `On ${recent.firedAt.toISOString().slice(0, 10)} ${what}, and the account is not activated. Offer guided onboarding to reach the first value.`,
+        evidence: [{ kind: "onboarding_signal", id: recent.id, label: `${what[0]!.toUpperCase()}${what.slice(1)} (${recent.firedAt.toISOString().slice(0, 10)})` }],
         action: { kind: "create_task", params: { title: "Onboarding stalled: offer guided onboarding", task_type: "onboarding_check", priority: "medium", due_in_hours: 48, assign_to: "csm" } },
         confidence: 0.65,
         dedupeKey: `stalled_onboarding:${recent.id}`,

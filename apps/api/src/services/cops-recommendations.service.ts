@@ -36,7 +36,6 @@ const log = createLogger("cops-recommendations.service");
 const {
   companies,
   subscriptions,
-  subscriptionItems,
   subscriptionInvoices,
   copsProvisionings,
   copsOnboardingInstances,
@@ -115,7 +114,8 @@ export async function buildAccountContext(db: Db, ctx: RecContext, accountId: st
         status: subscriptions.status,
         termEnd: subscriptions.termEnd,
         currency: subscriptions.currency,
-        arrMinor: sql<number>`((select coalesce(sum(${subscriptionItems.quantity} * ${subscriptionItems.unitAmountMinor}), 0) from ${subscriptionItems} where ${subscriptionItems.subscriptionId} = ${subscriptions.id}) * 12)::float8`,
+        // Aliased so the outer subscription id is not read as the item's own id.
+        arrMinor: sql<number>`((select coalesce(sum(si.quantity * si.unit_amount_minor), 0) from subscription_items si where si.subscription_id = "subscriptions"."id") * 12)::float8`,
       })
       .from(subscriptions)
       .where(and(eq(subscriptions.workspaceId, ws), eq(subscriptions.accountId, accountId)));
