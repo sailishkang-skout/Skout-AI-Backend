@@ -65,12 +65,13 @@ paths:
         content: { application/json: { schema: { $ref: "#/components/schemas/IncidentInput" } } }
       responses:
         "201": { description: Incident }
-  /incidents/{id}:
+  /incidents/{id}/detail:
     get:
-      summary: Incident with linked tickets and affected customers
+      summary: Incident with linked tickets and affected customers (the existing GET /incidents/{id} keeps its platform shape)
       parameters: [{ $ref: "#/components/parameters/Id" }]
       responses:
         "200": { description: Incident, content: { application/json: { schema: { $ref: "#/components/schemas/Incident" } } } }
+  /incidents/{id}:
     patch:
       summary: Update fields (status, owner, workaround, root cause, follow-ups, start/end)
       description: Changing owner_id reassigns every linked ticket to the new owner (one investigation owner).

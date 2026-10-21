@@ -172,3 +172,9 @@ resolution is refused with 422 and nothing changes. The inbound HubSpot sync in
 `crm-hubspot-native-sync.service.ts` (listed above) now also reads `deals.company_id` and
 `contacts.company_id` to apply the ADR 0014 account scope. The COPS-09 table (`crm_conflicts`) is owned
 by apps/api.
+
+## COPS-12 additions (2026-10-21)
+
+| File | Tables | Access |
+|---|---|---|
+| `apps/api/src/services/cops-incidents.service.ts` | companies | read only: the names of the accounts whose tickets are linked to an incident (affected customers) |
