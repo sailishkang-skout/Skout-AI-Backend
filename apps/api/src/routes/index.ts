@@ -85,6 +85,7 @@ import { ssoScimRoutes } from "./sso-scim.routes.js";
 import { automationRoutes } from "./automation.routes.js";
 import { copsSuccessRoutes } from "./cops-success.routes.js";
 import { copsAnalyticsRoutes } from "./cops-analytics.routes.js";
+import { copsRecommendationsRoutes } from "./cops-recommendations.routes.js";
 import { complianceRoutes } from "./compliance.routes.js";
 import { enterpriseControlPlaneRoutes } from "./enterprise-control-plane.routes.js";
 import { jwksRoutes } from "./jwks.routes.js";
@@ -197,6 +198,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(automationRoutes);
     await v1.register(copsSuccessRoutes);
     await v1.register(copsAnalyticsRoutes);
+    await v1.register(copsRecommendationsRoutes);
     await v1.register(complianceRoutes);
     await v1.register(enterpriseControlPlaneRoutes);
   }, { prefix: "/api/v1" });

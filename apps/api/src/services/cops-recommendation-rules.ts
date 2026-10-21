@@ -37,7 +37,7 @@ export interface Candidate {
 
 export interface AccountContext {
   now: Date;
-  account: { id: string; name: string; healthScore: number | null; healthState: string | null; healthComputedAt: Date | null };
+  account: { id: string; name: string; healthScore: number | null; healthState: string | null; healthComputedAt: Date | null; healthScoreId?: string | null };
   /** Omitted (undefined) when the caller cannot read commercial data. */
   subscriptions?: { id: string; status: string; termEnd: Date; arrMinor: number; currency: string }[];
   /** Omitted when the caller cannot read billing data. */
@@ -59,7 +59,7 @@ const money = (minor: number, currency: string) => `${currency} ${(minor / 100).
 const clamp = (x: number) => Math.round(Math.min(0.95, Math.max(0.3, x)) * 100) / 100;
 
 function healthRef(c: AccountContext): EvidenceRef[] {
-  return c.account.healthScore === null ? [] : [{ kind: "health_score", id: c.account.id, label: `Health ${c.account.healthScore} (${c.account.healthState ?? "unknown"})` }];
+  return c.account.healthScore === null ? [] : [{ kind: "health_score", id: c.account.healthScoreId ?? c.account.id, label: `Health ${c.account.healthScore} (${c.account.healthState ?? "unknown"})` }];
 }
 
 export function recommendationCandidates(c: AccountContext): Candidate[] {

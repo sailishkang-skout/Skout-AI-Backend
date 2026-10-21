@@ -205,3 +205,5 @@ by apps/api.
 | `apps/api/src/services/cops-dashboards.service.ts` | companies, deals, tasks, contacts | read only: each KPI and its drill-through are one query over the account filters (segment, owner, geography), so the headline and the drill-through cannot disagree |
 | `apps/api/src/services/cops-funnel.service.ts` | companies, deals | read only: maps outbox events to accounts for the funnel cohorts and applies the account filters |
 | `apps/api/src/services/cops-dashboards.db.test.ts` | companies, deals, pipelines, pipeline_stages, users | test fixtures |
+| `apps/api/src/services/cops-recommendations.service.ts` | companies, tasks, activities | reads the account for the recommendation context; **insert** of one task when a recommendation is approved, and one activity per decision for the timeline |
+| `apps/api/src/services/cops-recommendations.db.test.ts`, `apps/api/src/routes/cops-recommendations.routes.test.ts` | companies, deals, pipelines, pipeline_stages, users | test fixtures |

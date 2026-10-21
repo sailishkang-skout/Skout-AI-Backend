@@ -206,7 +206,7 @@ components:
     EvidenceRef:
       type: object
       properties:
-        kind: { type: string, enum: [health_score, ticket, subscription, milestone, timeline_event, sla_clock, opportunity, invoice, playbook_enrollment] }
+        kind: { type: string, enum: [health_score, ticket, subscription, invoice, provisioning, onboarding_signal, sla_clock, timeline_event] }
         id: { type: string }
         label: { type: string }
     Recommendation:
@@ -232,5 +232,5 @@ components:
         decided_by: { type: string, format: uuid, nullable: true }
         decided_at: { type: string, format: date-time, nullable: true }
         decision_reason: { type: string, nullable: true }
-        effect: { type: object, nullable: true, description: "What approve did, e.g. {kind: task, id}" }
+        effect: { type: object, nullable: true, description: "What approve did: {kind: task | workflow_run, id}; a playbook that is not installed gives {kind: task, fallback: playbook_not_installed}" }
         created_at: { type: string, format: date-time }

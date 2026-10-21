@@ -158,9 +158,10 @@ only from data the caller may see:
 - customer-safe ticket comments only, never internal notes;
 - no commercial data unless the caller has `commercial:read`.
 
-The model's answer must cite evidence ids that are in the context. Any other id fails validation
-and the candidate is dropped, not shown. With no LLM key, the rationale is the rule's own template
-(`source: rules`), still with the evidence.
+The model's answer must cite evidence ids from the candidate. Any other id (or an answer that is
+not valid JSON) fails validation; the model's wording is then discarded and the rule's own wording
+is used (`source: rules`), still with the evidence. With no LLM key, the rationale is always the
+rule's own wording.
 
 **Confidence.** The rule's own confidence (e.g. how far health is below the threshold), not the
 model's.
@@ -171,8 +172,9 @@ The table stores `input_hash` (a hash of the context), not the prompt text.
 **Approval.**
 - A recommendation is `pending` until a person approves or dismisses it.
 - Dismiss needs a reason.
-- Approve runs one allow-listed action: create a task, start a COPS-11 playbook, or open a
-  renewal-prep task for the owner.
+- Approve runs one allow-listed action: create a task, start a COPS-11 playbook (a manual run of
+  the installed playbook, with the account as subject), or open a renewal-prep task for the owner.
+  A playbook that is not installed creates the playbook's task instead.
 - Price, contract, payment and customer emails are never actions; at most they become a task for a
   person.
 - Approve needs `crm:write`, and `commercial:write` for commercial types.
