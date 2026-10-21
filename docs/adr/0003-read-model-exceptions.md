@@ -197,3 +197,11 @@ by apps/api.
 | File | Tables | Access |
 |---|---|---|
 | `apps/api/src/services/cops-incidents.service.ts` | companies | read only: the names of the accounts whose tickets are linked to an incident (affected customers) |
+
+## COPS-13 additions (2026-10-21)
+
+| File | Tables | Access |
+|---|---|---|
+| `apps/api/src/services/cops-dashboards.service.ts` | companies, deals, tasks, contacts | read only: each KPI and its drill-through are one query over the account filters (segment, owner, geography), so the headline and the drill-through cannot disagree |
+| `apps/api/src/services/cops-funnel.service.ts` | companies, deals | read only: maps outbox events to accounts for the funnel cohorts and applies the account filters |
+| `apps/api/src/services/cops-dashboards.db.test.ts` | companies, deals, pipelines, pipeline_stages, users | test fixtures |
