@@ -328,6 +328,57 @@ export async function verifyEmailAsVerdict(
   };
 }
 
+/**
+ * Why a VERIFIED answer cannot be trusted as proof for this exact address, or null when it can.
+ * Only an explicit signal from the service counts against it: a record marked non-authoritative,
+ * one that has expired, one issued for a different address, or a send policy that refuses the
+ * address. A field the service does not return is not treated as a refusal.
+ */
+export function untrustedVerificationReason(result: EmailIntelVerifyResult, email: string, now = new Date()): string | null {
+  const record = result.verificationRecord as
+    | { authoritative?: unknown; expiresAt?: unknown; emailAddress?: unknown }
+    | undefined;
+  if (record?.authoritative === false) return "not_authoritative";
+  if (typeof record?.expiresAt === "string" && Date.parse(record.expiresAt) <= now.getTime()) return "expired";
+  if (typeof record?.emailAddress === "string" && record.emailAddress.trim().toLowerCase() !== email.trim().toLowerCase()) {
+    return "different_address";
+  }
+  if (result.sendEligibility && result.sendEligibility.allowed === false) return "send_not_allowed";
+  return null;
+}
+
+/**
+ * ENR-04 — the verdict stored as contact-data proof. Same as verifyEmailAsVerdict, except that a
+ * VERIFIED answer the service itself does not stand behind (see untrustedVerificationReason) is
+ * recorded as unknown and risky, so it never makes a recipient eligible.
+ */
+export async function verifyEmailAsTrustedVerdict(
+  config: Pick<Env, "EMAIL_INTEL_SERVICE_URL" | "EMAIL_INTEL_TIMEOUT_MS">,
+  email: string,
+  now = new Date()
+): Promise<(EmailIntelVerdict & { untrustedReason: string | null }) | null> {
+  let result: EmailIntelVerifyResult;
+  try {
+    result = await verifyEmail(config, email);
+  } catch {
+    return null;
+  }
+  const status = result.verificationStatus?.status;
+  if (!result.success || !status) return null;
+
+  const mailbox = STATUS_TO_VERDICT[status] ?? "unknown";
+  const untrustedReason = mailbox === "valid" ? untrustedVerificationReason(result, email, now) : null;
+  const verdict = untrustedReason ? "unknown" : mailbox;
+  const confidence = result.sendEligibility?.decisionConfidence;
+  return {
+    status: verdict,
+    deliverabilityScore: typeof confidence === "number" ? confidence : verdict === "valid" ? 90 : 0,
+    catchAll: result.catchAll ?? verdict === "catch_all",
+    risky: verdict === "catch_all" || verdict === "unknown",
+    untrustedReason,
+  };
+}
+
 export interface SendEligibilityCheck {
   /** True = OK to send. False = the policy engine says don't (or defer/review) — caller should block the send. */
   allowed: boolean;
