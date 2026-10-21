@@ -165,6 +165,34 @@ maybe("COPS-13 recommendations (Postgres)", () => {
     expect(run).toMatchObject({ subject_type: "account", subject_id: accountId, trigger_type: "manual" });
   });
 
+  it("reads usage, the timeline and running playbooks: low credits are recommended, a stale touch is evidence, a running playbook is not suggested again", async () => {
+    // The renewal playbook started by the previous test is still running on the account.
+    await sql`update next_best_action_suggestions set status = 'dismissed' where workspace_id = ${ctx.workspaceId} and status = 'pending'`;
+    const [cust] = await sql`insert into workspaces (name, slug) values ('Rec customer', ${"recc-" + randomUUID()}) returning id`;
+    const [deal] = await sql`select id from deals where company_id = ${accountId} limit 1`;
+    await sql`insert into cops_provisionings (workspace_id, account_id, opportunity_id, idempotency_key, status, request, provisioned_workspace_id)
+      values (${ctx.workspaceId}, ${accountId}, ${deal.id}, ${randomUUID()}, 'succeeded', ${sql.json({ credits: 1000 })}, ${cust.id})`;
+    await sql`insert into cops_onboarding_instances (workspace_id, account_id, template_id, template_key, template_version, activated_at)
+      select ${ctx.workspaceId}, ${accountId}, id, key, version, ${days(-20)} from cops_activation_templates where workspace_id is null limit 1`;
+    await sql`insert into credit_balances (workspace_id, balance) values (${cust.id}, 80)`;
+    await sql`insert into credit_transactions (workspace_id, amount, kind, action, created_at) values (${cust.id}, -400, 'consume', 'search', ${days(-40)})`;
+    await sql`insert into credit_transactions (workspace_id, amount, kind, action, created_at) values (${cust.id}, -500, 'consume', 'search', ${days(-3)})`;
+    const [last] = await sql`insert into credit_transactions (workspace_id, amount, kind, action, created_at) values (${cust.id}, -20, 'consume', 'search', ${days(-1)}) returning id`;
+    const [touch] = await sql`insert into cops_timeline_events (workspace_id, account_id, type, occurred_at, actor_type, source_event_id, event_type, summary)
+      values (${ctx.workspaceId}, ${accountId}, 'call', ${days(-45)}, 'user', ${randomUUID()}, 'ActivityRecorded', 'Check-in call') returning id`;
+
+    await generateRecommendations(db, ctx, accountId, null, new Date(now));
+    const recs = await listRecommendations(db, ctx, accountId, "pending");
+    const credits = recs.find((r) => r.type === "credits_running_low");
+    expect(credits?.evidence_refs).toEqual([{ kind: "credit_ledger", id: last.id, label: "520 credits used in 30 days; 80 of 1,000 left" }]);
+    expect(recs.some((r) => r.type === "renewal_risk")).toBe(false);
+
+    await sql`update automation_runs set status = 'succeeded' where workspace_id = ${ctx.workspaceId} and subject_id = ${accountId}`;
+    await generateRecommendations(db, ctx, accountId, null, new Date(now));
+    const renewal = (await listRecommendations(db, ctx, accountId, "pending")).find((r) => r.type === "renewal_risk");
+    expect(renewal?.evidence_refs).toContainEqual({ kind: "timeline_event", id: touch.id, label: `Last call 45 days ago (${days(-45).slice(0, 10)})` });
+  });
+
   it("dismiss needs a reason and is audited", async () => {
     const [rec] = await listRecommendations(db, ctx, accountId, "pending");
     await expect(dismissRecommendation(db, ctx, rec!.id, " ")).rejects.toMatchObject({ code: "REASON_REQUIRED" });

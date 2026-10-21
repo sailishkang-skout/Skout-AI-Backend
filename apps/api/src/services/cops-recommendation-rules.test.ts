@@ -86,4 +86,36 @@ describe("COPS-13 recommendation rules", () => {
     }
     expect(new Set(all.map((c) => c.dedupeKey)).size).toBe(all.length);
   });
+
+  const atRisk = { id: "a1", name: "Acme", healthScore: 30, healthState: "at_risk", healthComputedAt: now };
+  const renewal = [{ id: "s1", status: "active", termEnd: days(30), arrMinor: 1_200_000, currency: "INR" }];
+
+  it("timeline: no call, email or meeting in 30 days adds the last touch as evidence and raises confidence", () => {
+    const fresh = recommendationCandidates(base({ account: atRisk, subscriptions: renewal, lastTouch: { id: "tl1", type: "call", at: days(-5) } }))[0]!;
+    const stale = recommendationCandidates(base({ account: atRisk, subscriptions: renewal, lastTouch: { id: "tl1", type: "meeting", at: days(-45) } }))[0]!;
+    const never = recommendationCandidates(base({ account: atRisk, subscriptions: renewal, lastTouch: null }))[0]!;
+    expect(fresh.evidence.map((e) => e.kind)).toEqual(["subscription", "health_score"]);
+    expect(stale.evidence[2]).toEqual({ kind: "timeline_event", id: "tl1", label: "Last meeting 45 days ago (2026-09-06)" });
+    expect(stale.rationale).toContain("The last meeting was 45 days ago.");
+    expect(stale.confidence).toBeGreaterThan(fresh.confidence);
+    expect(never.rationale).toContain("No call, email or meeting is on the timeline.");
+    expect(never.evidence.map((e) => e.kind)).toEqual(["subscription", "health_score"]);
+  });
+
+  it("usage: high usage and low credits on an activated account; not before activation or with credits left", () => {
+    const usage = [{ workspaceId: "w1", balance: 100, granted: 1000, consumed30d: 900, lastConsumeId: "ct1" }];
+    const onboarding = { trials: [], activated: true, stalledSignals: [] };
+    const [c] = recommendationCandidates(base({ onboarding, usage }));
+    expect(c).toMatchObject({ type: "credits_running_low", resource: "crm", action: { kind: "create_task", params: { assign_to: "account_owner", priority: "medium" } }, dedupeKey: "credits_running_low:w1" });
+    expect(c!.evidence).toEqual([{ kind: "credit_ledger", id: "ct1", label: "900 credits used in 30 days; 100 of 1,000 left" }]);
+    expect(types(base({ onboarding: { ...onboarding, activated: false }, usage }))).toEqual([]);
+    expect(types(base({ onboarding, usage: [{ ...usage[0]!, balance: 500 }] }))).toEqual([]);
+    expect(types(base({ onboarding, usage: [{ ...usage[0]!, consumed30d: 0, lastConsumeId: null }] }))).toEqual([]);
+  });
+
+  it("playbooks: a playbook already running on the account is not suggested again", () => {
+    const ctx = base({ account: atRisk, subscriptions: renewal, tickets: [1, 2, 3].map((i) => ({ id: `t${i}`, title: "T", priority: "p3", severity: "low", breachedClockIds: [] })) });
+    expect(types(ctx)).toEqual(["renewal_risk", "ticket_heavy"]);
+    expect(types({ ...ctx, runningPlaybooks: ["cs_renewal_approaching"] })).toEqual(["ticket_heavy"]);
+  });
 });

@@ -49,6 +49,10 @@ const {
   tasks,
   activities,
   automations,
+  automationRuns,
+  copsTimelineEvents,
+  creditBalances,
+  creditTransactions,
   auditLogs,
 } = schema;
 
@@ -148,6 +152,7 @@ export async function buildAccountContext(db: Db, ctx: RecContext, accountId: st
       activated: instances.some((i) => i.activatedAt !== null),
       stalledSignals: stalled,
     };
+    context.usage = await accountUsage(db, ws, accountId, now);
   }
   if (can(ctx, "tickets:read")) {
     const open = await db
@@ -170,6 +175,28 @@ export async function buildAccountContext(db: Db, ctx: RecContext, accountId: st
       customerUpdates.push(...updates.map((u) => ({ ticketId: u.ticketId, body: u.body.slice(0, 300) })));
     }
   }
+  const [touch] = await db
+    .select({ id: copsTimelineEvents.id, type: copsTimelineEvents.type, at: copsTimelineEvents.occurredAt })
+    .from(copsTimelineEvents)
+    .where(and(eq(copsTimelineEvents.workspaceId, ws), eq(copsTimelineEvents.accountId, accountId), eq(copsTimelineEvents.visibility, "public"), inArray(copsTimelineEvents.type, ["call", "email", "meeting"])))
+    .orderBy(desc(copsTimelineEvents.occurredAt))
+    .limit(1);
+  context.lastTouch = touch ?? null;
+  const running = await db
+    .selectDistinct({ key: automations.templateKey })
+    .from(automationRuns)
+    .innerJoin(automations, eq(automations.id, automationRuns.automationId))
+    .where(
+      and(
+        eq(automationRuns.workspaceId, ws),
+        eq(automationRuns.subjectType, "account"),
+        eq(automationRuns.subjectId, accountId),
+        eq(automationRuns.isSimulation, false),
+        inArray(automationRuns.status, ["pending", "running", "awaiting_approval"]),
+        isNotNull(automations.templateKey)
+      )
+    );
+  context.runningPlaybooks = running.map((r) => r.key!);
   const signals = await db
     .select({ id: copsOutbox.id, envelope: copsOutbox.envelope })
     .from(copsOutbox)
@@ -181,6 +208,33 @@ export async function buildAccountContext(db: Db, ctx: RecContext, accountId: st
     return { eventId: s.id, signal: e.payload.signal, at: new Date(e.occurred_at) };
   });
   return { context, customerUpdates };
+}
+
+/**
+ * Credit usage of the account's provisioned workspaces: balance, the credits granted at
+ * provisioning, and what was consumed in the last 30 days (the ledger stores consumption as
+ * negative amounts).
+ */
+async function accountUsage(db: Db, ws: string, accountId: string, now: Date): Promise<NonNullable<AccountContext["usage"]>> {
+  const provs = await db
+    .select({ workspaceId: copsProvisionings.provisionedWorkspaceId, request: copsProvisionings.request })
+    .from(copsProvisionings)
+    .where(and(eq(copsProvisionings.workspaceId, ws), eq(copsProvisionings.accountId, accountId), eq(copsProvisionings.status, "succeeded"), isNotNull(copsProvisionings.provisionedWorkspaceId)));
+  const out: NonNullable<AccountContext["usage"]> = [];
+  for (const p of provs) {
+    const wsId = p.workspaceId!;
+    const granted = Number((p.request as { credits?: number } | null)?.credits ?? 0);
+    const [bal] = await db.select({ balance: creditBalances.balance }).from(creditBalances).where(eq(creditBalances.workspaceId, wsId));
+    const [used] = await db
+      .select({
+        consumed: sql<number>`coalesce(-sum(${creditTransactions.amount}), 0)::int`,
+        lastId: sql<string | null>`(array_agg(${creditTransactions.id} order by ${creditTransactions.createdAt} desc))[1]`,
+      })
+      .from(creditTransactions)
+      .where(and(eq(creditTransactions.workspaceId, wsId), eq(creditTransactions.kind, "consume"), gte(creditTransactions.createdAt, new Date(now.getTime() - 30 * 86_400_000))));
+    out.push({ workspaceId: wsId, balance: bal?.balance ?? 0, granted, consumed30d: Number(used?.consumed ?? 0), lastConsumeId: used?.lastId ?? null });
+  }
+  return out;
 }
 
 const SYSTEM_PROMPT = `You write the rationale for one customer-success recommendation that a person will review.
