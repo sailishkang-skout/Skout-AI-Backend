@@ -10,6 +10,7 @@ import {
   getTicket,
   listTickets,
   loadAccountTickets,
+  recordTicketRelease,
   setCommentVisibility,
   ticketPrefill,
   ticketSummaryInputs,
@@ -140,6 +141,8 @@ maybe("COPS-06 engineering tickets (Postgres)", () => {
     expect(await supportState(accountId)).toBe("no_issue");
     expect((await events("TicketResolved", ticket.id)).length).toBe(1);
 
+    // COPS-12: Verified needs QA and customer verification evidence.
+    await recordTicketRelease(db, ctx, ticket.id, { fixed_in_version: "1.4.2", qa_evidence: "Regression suite green", customer_evidence: "Customer confirmed by email" });
     await transitionTicket(db, ctx, ticket.id, "verified");
     await transitionTicket(db, ctx, ticket.id, "closed");
     await expect(transitionTicket(db, ctx, ticket.id, "in_progress")).rejects.toMatchObject({ code: "BUSINESS_STATE_CONFLICT" });
