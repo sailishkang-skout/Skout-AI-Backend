@@ -48,6 +48,9 @@ const TABLES = [
   // COPS-07
   "cops_config_versions",
   "cops_retention_runs",
+  // COPS-12
+  "sla_clocks",
+  "incident_ticket_links",
 ] as const;
 
 maybe("COPS-02 tables are tenant-isolated (Postgres)", () => {
@@ -101,6 +104,9 @@ maybe("COPS-02 tables are tenant-isolated (Postgres)", () => {
     const [tk] = await sql`insert into engineering_tickets (workspace_id, account_id, milestone_id, title) values (${ws}, ${co.id}, ${ms.id}, ${label + " ticket"}) returning id`;
     await sql`insert into ticket_comments (workspace_id, ticket_id, body) values (${ws}, ${tk.id}, 'iso note')`;
     await sql`insert into ticket_status_history (workspace_id, ticket_id, to_status) values (${ws}, ${tk.id}, 'new')`;
+    await sql`insert into sla_clocks (workspace_id, ticket_id, kind, calendar, target_minutes, started_at) values (${ws}, ${tk.id}, 'response', 'business', 60, now())`;
+    const [inc] = await sql`insert into incidents (workspace_id, title, source) values (${ws}, ${label + " incident"}, 'manual') returning id`;
+    await sql`insert into incident_ticket_links (workspace_id, incident_id, ticket_id) values (${ws}, ${inc.id}, ${tk.id})`;
     await sql`insert into ticket_account_summaries (workspace_id, account_id, open_count, max_severity) values (${ws}, ${co.id}, 1, 'medium')`;
     await sql`insert into cops_config_versions (workspace_id, kind, key, version, value, reason) values (${ws}, 'feature_flags', 'default', 1, '{}'::jsonb, 'iso')`;
     await sql`insert into cops_retention_runs (workspace_id, mode, policy_version) values (${ws}, 'dry_run', 0)`;
