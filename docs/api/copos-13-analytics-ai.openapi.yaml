@@ -1,0 +1,236 @@
+openapi: 3.0.3
+info:
+  title: CustomerOps COPS-13 analytics, role dashboards and AI recommendations
+  version: 1.0.0
+  description: >
+    Contract for COPS-13, published before the frontend work (Definition of Done). All paths are
+    under /api/v1 and use the COPS error envelope {code, message, details, request_id, retryable}.
+    Every KPI is defined once in the shared metric catalog (packages/shared/src/cops-metrics.ts);
+    each dashboard KPI and drill-through response names its metric_id, metric_version and window.
+    Dashboards need analytics:read; a KPI whose resource the caller cannot read comes back with
+    restricted=true and no value. Recommendations need crm:read to list, crm:write to approve or
+    dismiss (commercial types also commercial:write). Every decision is audited. Times are ISO 8601
+    UTC; money is in minor units with its ISO currency.
+paths:
+  /cops/metrics/catalog:
+    get:
+      summary: The metric-definition catalog
+      responses:
+        "200": { description: Definitions, content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: "#/components/schemas/MetricDefinition" } } } } } } }
+  /cops/dashboards/{dashboard}:
+    get:
+      summary: One role dashboard's KPIs
+      description: >
+        Event KPIs count outbox events in the window; state KPIs are as of now. The value of each
+        KPI is computed from the same rows the drill-through returns, so the two always match.
+      parameters:
+        - { name: dashboard, in: path, required: true, schema: { $ref: "#/components/schemas/DashboardKey" } }
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Segment"
+        - $ref: "#/components/parameters/Owner"
+        - $ref: "#/components/parameters/Geo"
+      responses:
+        "200": { description: Dashboard, content: { application/json: { schema: { $ref: "#/components/schemas/Dashboard" } } } }
+        "403": { description: FORBIDDEN (no analytics:read) }
+        "422": { description: VALIDATION_FAILED (bad window or filter) }
+  /cops/dashboards/kpis/{metricId}/drill:
+    get:
+      summary: The accounts or events under one KPI, with the filters of the dashboard
+      parameters:
+        - { name: metricId, in: path, required: true, schema: { type: string, example: leadership.arr } }
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Segment"
+        - $ref: "#/components/parameters/Owner"
+        - $ref: "#/components/parameters/Geo"
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        "200": { description: Drill-through, content: { application/json: { schema: { $ref: "#/components/schemas/Drill" } } } }
+        "403": { description: FORBIDDEN (no analytics:read, or no read permission on the metric's resource) }
+        "404": { description: Unknown metric }
+  /cops/funnel:
+    get:
+      summary: Funnel cohorts (qualified → commercial → provisioned → first login → activated → paid → renewed)
+      description: A cohort is the accounts first qualified in a month; each stage counts the accounts of that cohort that reached it, from the outbox events.
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Segment"
+        - $ref: "#/components/parameters/Owner"
+        - $ref: "#/components/parameters/Geo"
+      responses:
+        "200": { description: Cohorts, content: { application/json: { schema: { $ref: "#/components/schemas/Funnel" } } } }
+  /cops/analytics/feed:
+    get:
+      summary: Warehouse feed status (analytics:admin)
+      responses:
+        "200": { description: Feed, content: { application/json: { schema: { $ref: "#/components/schemas/FeedStatus" } } } }
+  /accounts/{id}/recommendations:
+    get:
+      summary: The account's AI recommendations
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - { name: status, in: query, schema: { type: string, enum: [pending, approved, dismissed, expired] } }
+      responses:
+        "200": { description: List, content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: "#/components/schemas/Recommendation" } } } } } } }
+  /accounts/{id}/recommendations/generate:
+    post:
+      summary: Generate recommendations for the account now
+      description: >
+        Idempotent per candidate: a rule that already has a pending recommendation for the same
+        evidence does not add another. Context is built only from data the caller may read; internal
+        ticket notes never enter it. A model answer citing evidence that is not in the context is
+        dropped.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: The pending recommendations after generation, content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: "#/components/schemas/Recommendation" } }, generated: { type: integer } } } } } }
+  /recommendations/{id}/approve:
+    post:
+      summary: Approve and run the suggested action
+      description: Runs exactly one allow-listed action (create_task, start_playbook, renewal_prep_task). A second approve returns 409.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        content: { application/json: { schema: { type: object, properties: { note: { type: string, maxLength: 1000 } } } } }
+      responses:
+        "200": { description: Approved, content: { application/json: { schema: { type: object, properties: { data: { $ref: "#/components/schemas/Recommendation" } } } } } }
+        "403": { description: FORBIDDEN }
+        "409": { description: BUSINESS_STATE_CONFLICT (not pending) }
+  /recommendations/{id}/dismiss:
+    post:
+      summary: Dismiss with a reason
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string, minLength: 3, maxLength: 1000 } } } } }
+      responses:
+        "200": { description: Dismissed, content: { application/json: { schema: { type: object, properties: { data: { $ref: "#/components/schemas/Recommendation" } } } } } }
+        "409": { description: BUSINESS_STATE_CONFLICT (not pending) }
+        "422": { description: REASON_REQUIRED }
+components:
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    From: { name: from, in: query, description: Window start (default 30 days before `to`), schema: { type: string, format: date-time } }
+    To: { name: to, in: query, description: Window end (default now), schema: { type: string, format: date-time } }
+    Segment: { name: segment, in: query, schema: { type: string, enum: [smb, mid_market, enterprise] } }
+    Owner: { name: owner, in: query, description: Account owner user id, schema: { type: string, format: uuid } }
+    Geo: { name: geo, in: query, description: Case-insensitive match on the account location, schema: { type: string, maxLength: 100 } }
+  schemas:
+    DashboardKey: { type: string, enum: [leadership, sales, cs, engineering, finance] }
+    MetricDefinition:
+      type: object
+      properties:
+        id: { type: string, example: leadership.arr }
+        version: { type: integer }
+        label: { type: string }
+        definition: { type: string }
+        unit: { type: string, enum: [count, money, percent, minutes] }
+        resource: { type: string, description: RBAC resource whose read permission the KPI needs }
+        source: { type: string, enum: [events, state] }
+        source_events: { type: array, items: { type: string }, description: Outbox event types the KPI counts or traces to }
+        drill: { type: string, enum: [accounts, events] }
+        dashboards: { type: array, items: { $ref: "#/components/schemas/DashboardKey" } }
+    Window:
+      type: object
+      properties: { from: { type: string, format: date-time }, to: { type: string, format: date-time } }
+    Kpi:
+      type: object
+      properties:
+        metric_id: { type: string }
+        metric_version: { type: integer }
+        label: { type: string }
+        unit: { type: string }
+        value: { type: number, nullable: true, description: Null when restricted, or for money in more than one currency }
+        by_currency: { type: array, items: { type: object, properties: { currency: { type: string }, value: { type: number } } }, description: Money KPIs only }
+        restricted: { type: boolean }
+        window: { $ref: "#/components/schemas/Window" }
+    Dashboard:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            dashboard: { $ref: "#/components/schemas/DashboardKey" }
+            window: { $ref: "#/components/schemas/Window" }
+            filters: { type: object }
+            kpis: { type: array, items: { $ref: "#/components/schemas/Kpi" } }
+    DrillRow:
+      type: object
+      properties:
+        account_id: { type: string, format: uuid, nullable: true }
+        account_name: { type: string, nullable: true }
+        record: { type: object, properties: { kind: { type: string }, id: { type: string } } }
+        value: { type: number, nullable: true }
+        currency: { type: string, nullable: true }
+        occurred_at: { type: string, format: date-time, nullable: true }
+        source_event_ids: { type: array, items: { type: string, format: uuid } }
+    Drill:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            metric_id: { type: string }
+            metric_version: { type: integer }
+            window: { $ref: "#/components/schemas/Window" }
+            total: { type: integer, description: Number of rows; equals the KPI value for count KPIs }
+            rows: { type: array, items: { $ref: "#/components/schemas/DrillRow" } }
+            next_cursor: { type: string, nullable: true }
+    Funnel:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            stages: { type: array, items: { type: string, enum: [qualified, commercial, provisioned, first_login, activated, paid, renewed] } }
+            cohorts:
+              type: array
+              items:
+                type: object
+                properties:
+                  cohort: { type: string, example: "2026-10" }
+                  counts: { type: object, additionalProperties: { type: integer } }
+    FeedStatus:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            sink: { type: string, enum: [posthog] }
+            enabled: { type: boolean }
+            checkpoint_at: { type: string, format: date-time, nullable: true }
+            lag_events: { type: integer, description: This workspace's published events not yet sent }
+            last_run_at: { type: string, format: date-time, nullable: true }
+            last_error: { type: string, nullable: true }
+    EvidenceRef:
+      type: object
+      properties:
+        kind: { type: string, enum: [health_score, ticket, subscription, invoice, provisioning, onboarding_signal, sla_clock, timeline_event] }
+        id: { type: string }
+        label: { type: string }
+    Recommendation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        type: { type: string, enum: [renewal_risk, trial_not_activated, ticket_heavy, sla_breached, payment_past_due, expansion_signal, stalled_onboarding] }
+        headline: { type: string }
+        rationale: { type: string }
+        evidence_refs: { type: array, minItems: 1, items: { $ref: "#/components/schemas/EvidenceRef" } }
+        suggested_action:
+          type: object
+          properties:
+            kind: { type: string, enum: [create_task, start_playbook, renewal_prep_task] }
+            params: { type: object }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        status: { type: string, enum: [pending, approved, dismissed, expired] }
+        source: { type: string, enum: [llm, rules], description: Who wrote the rationale }
+        evidence_id: { type: string, format: uuid, description: Evidence-ledger row (pinAiClaim) }
+        model_version_id: { type: string, format: uuid, nullable: true }
+        prompt_version_id: { type: string, format: uuid, nullable: true }
+        decided_by: { type: string, format: uuid, nullable: true }
+        decided_at: { type: string, format: date-time, nullable: true }
+        decision_reason: { type: string, nullable: true }
+        effect: { type: object, nullable: true, description: "What approve did: {kind: task | workflow_run, id}; a playbook that is not installed gives {kind: task, fallback: playbook_not_installed}" }
+        created_at: { type: string, format: date-time }

@@ -1,4 +1,6 @@
-import { boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { incidents } from "./incidents.js";
 import { workspaces } from "./workspaces.js";
 import { users } from "./users.js";
 import { companies, contacts, deals } from "./crm.js";
@@ -48,6 +50,19 @@ export const engineeringTickets = pgTable(
     escalatedAt: timestamp("escalated_at", { withTimezone: true }),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     closedAt: timestamp("closed_at", { withTimezone: true }),
+    /** COPS-12 release and verification (Bible p.55). Verified needs both verifications. */
+    releaseId: text("release_id"),
+    fixedInVersion: text("fixed_in_version"),
+    deployedAt: timestamp("deployed_at", { withTimezone: true }),
+    qaVerifiedAt: timestamp("qa_verified_at", { withTimezone: true }),
+    qaVerifiedBy: uuid("qa_verified_by").references(() => users.id, { onDelete: "set null" }),
+    qaEvidence: text("qa_evidence"),
+    customerVerifiedAt: timestamp("customer_verified_at", { withTimezone: true }),
+    customerVerifiedBy: uuid("customer_verified_by").references(() => users.id, { onDelete: "set null" }),
+    customerEvidence: text("customer_evidence"),
+    /** First move out of new/triage or first customer-visible comment (MTTA). */
+    firstResponseAt: timestamp("first_response_at", { withTimezone: true }),
+    reopenCount: integer("reopen_count").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -122,4 +137,61 @@ export const ticketAccountSummaries = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [primaryKey({ columns: [table.workspaceId, table.accountId] })]
+);
+
+/**
+ * COPS-12 SLA clocks (Bible p.52): one response and one resolution clock per ticket. used_minutes
+ * is calendar time banked before the current running stretch; running_since is null while paused
+ * or finished; due_at is the breach instant while running. Clock math lives in packages/shared
+ * cops-sla.
+ */
+export const slaClocks = pgTable(
+  "sla_clocks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    ticketId: uuid("ticket_id")
+      .notNull()
+      .references(() => engineeringTickets.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    calendar: text("calendar").notNull(),
+    targetMinutes: integer("target_minutes").notNull(),
+    usedMinutes: integer("used_minutes").notNull().default(0),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    runningSince: timestamp("running_since", { withTimezone: true }),
+    dueAt: timestamp("due_at", { withTimezone: true }),
+    metAt: timestamp("met_at", { withTimezone: true }),
+    breachedAt: timestamp("breached_at", { withTimezone: true }),
+    atRiskNotifiedAt: timestamp("at_risk_notified_at", { withTimezone: true }),
+    breachNotifiedAt: timestamp("breach_notified_at", { withTimezone: true }),
+    policyVersion: integer("policy_version").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("sla_clocks_ticket_kind_uq").on(t.ticketId, t.kind),
+    index("sla_clocks_due_idx").on(t.workspaceId, t.dueAt).where(sql`met_at IS NULL`),
+  ]
+);
+
+/** COPS-12 incident links (Bible p.54): a ticket belongs to at most one incident. */
+export const incidentTicketLinks = pgTable(
+  "incident_ticket_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    incidentId: uuid("incident_id")
+      .notNull()
+      .references(() => incidents.id, { onDelete: "cascade" }),
+    ticketId: uuid("ticket_id")
+      .notNull()
+      .references(() => engineeringTickets.id, { onDelete: "cascade" }),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("incident_ticket_links_ticket_uq").on(t.ticketId), index("incident_ticket_links_incident_idx").on(t.workspaceId, t.incidentId)]
 );

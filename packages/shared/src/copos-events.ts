@@ -71,6 +71,8 @@ export const CustomerActivatedPayload = z.object({ account_id: id, rule_version:
 export const TicketCreatedPayload = z.object({ ticket_id: id, account_id: id, severity: z.string() });
 export const TicketEscalatedPayload = z.object({ ticket_id: id, account_id: id, severity: z.string() });
 export const TicketResolvedPayload = z.object({ ticket_id: id, account_id: id });
+/** COPS-12: an SLA clock passed its target (once per clock). */
+export const TicketSlaBreachedPayload = z.object({ ticket_id: id, account_id: id, clock: z.enum(["response", "resolution"]), priority: z.string(), target_minutes: z.number().int() });
 export const LifecycleTransitionedPayload = z.object({
   dimension: z.enum(["opportunity", "commercial", "onboarding", "account", "health", "support"]),
   entity_id: z.string().uuid(),
@@ -151,6 +153,7 @@ export const COPS_PHASE1_EVENTS = {
   CustomerActivated: CustomerActivatedPayload,
   TicketCreated: TicketCreatedPayload,
   TicketEscalated: TicketEscalatedPayload,
+  TicketSlaBreached: TicketSlaBreachedPayload,
   TicketResolved: TicketResolvedPayload,
   LifecycleTransitioned: LifecycleTransitionedPayload,
   ApprovalRequested: ApprovalRequestedPayload,

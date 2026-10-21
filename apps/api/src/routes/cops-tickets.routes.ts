@@ -1,6 +1,9 @@
 import type { FastifyInstance } from "fastify";
+import { ticketMetrics } from "../services/cops-ticket-metrics.service.js";
+import { getTicketSla, slaSummaries } from "../services/cops-sla.service.js";
 import { z } from "zod";
-import type { Db } from "@skout/db";
+import { schema, type Db } from "@skout/db";
+import { and, eq } from "drizzle-orm";
 import {
   copsErrorBody,
   copsErrorStatus,
@@ -25,6 +28,7 @@ import {
   loadAccountTickets,
   setCommentVisibility,
   TicketError,
+  recordTicketRelease,
   ticketPrefill,
   transitionTicket,
   updateTicket,
@@ -140,7 +144,28 @@ export async function copsTicketsRoutes(app: FastifyInstance, opts: { db: Db }) 
     const parsed = queueSchema.safeParse(request.query ?? {});
     if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
     const { open, ...filters } = parsed.data;
-    return run(reply, ctx.requestId, () => listTickets(db, ctx, { ...filters, open: open === "true" }), (page) => page);
+    return run(
+      reply,
+      ctx.requestId,
+      async () => {
+        const page = await listTickets(db, ctx, { ...filters, open: open === "true" });
+        // COPS-12: each queue row carries its worst SLA clock (state and due time).
+        const sla = await slaSummaries(db, ctx.workspaceId, (page.data as { id: string }[]).map((t) => t.id));
+        return { ...page, data: (page.data as { id: string }[]).map((t) => ({ ...t, sla: sla.get(t.id) ?? null })) };
+      },
+      (page) => page
+    );
+  });
+
+  /** COPS-12 engineering dashboard metrics (Bible p.56). */
+  app.get<{ Querystring: unknown }>("/tickets/metrics", { preHandler: readGate }, async (request, rawReply) => {
+    const reply = rawReply as unknown as Reply;
+    const ctx = ctxOf(request);
+    const parsed = z
+      .object({ days: z.coerce.number().int().min(1).max(365).default(30), tier: z.enum(["smb", "mid_market", "enterprise"]).optional(), team: z.string().max(100).optional() })
+      .safeParse(request.query ?? {});
+    if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+    return run(reply, ctx.requestId, () => ticketMetrics(db, ctx.workspaceId, parsed.data), (data) => ({ data }));
   });
 
   /** Prefilled fields for "Create ticket" from an account or an onboarding blocker. */
@@ -167,7 +192,58 @@ export async function copsTicketsRoutes(app: FastifyInstance, opts: { db: Db }) 
     const reply = rawReply as unknown as Reply;
     const ctx = ctxOf(request);
     if (!UUID.test(request.params.id)) return invalid(reply, ctx.requestId, { path: "id", message: "Invalid id" });
-    return run(reply, ctx.requestId, () => getTicket(db, ctx, request.params.id), (data) => ({ data }));
+    return run(
+      reply,
+      ctx.requestId,
+      async () => {
+        const t = (await getTicket(db, ctx, request.params.id)) as { id: string; priority: string; account_tier: string; status: string };
+        const sla = await getTicketSla(db, ctx.workspaceId, { id: t.id, priority: t.priority, accountTier: t.account_tier, status: t.status });
+        // COPS-12: the incident this ticket is linked to, if any.
+        const [incident] = await db
+          .select({ id: schema.incidents.id, title: schema.incidents.title, status: schema.incidents.status, owner_id: schema.incidents.ownerId })
+          .from(schema.incidentTicketLinks)
+          .innerJoin(schema.incidents, eq(schema.incidents.id, schema.incidentTicketLinks.incidentId))
+          .where(and(eq(schema.incidentTicketLinks.workspaceId, ctx.workspaceId), eq(schema.incidentTicketLinks.ticketId, t.id)))
+          .limit(1);
+        return { ...t, sla, incident: incident ?? null };
+      },
+      (data) => ({ data })
+    );
+  });
+
+  /** COPS-12: the ticket's SLA clocks. */
+  app.get<IdParams>("/tickets/:id/sla", { preHandler: readGate }, async (request, rawReply) => {
+    const reply = rawReply as unknown as Reply;
+    const ctx = ctxOf(request);
+    if (!UUID.test(request.params.id)) return invalid(reply, ctx.requestId, { path: "id", message: "Invalid id" });
+    return run(
+      reply,
+      ctx.requestId,
+      async () => {
+        const t = (await getTicket(db, ctx, request.params.id)) as { id: string; priority: string; account_tier: string; status: string };
+        return getTicketSla(db, ctx.workspaceId, { id: t.id, priority: t.priority, accountTier: t.account_tier, status: t.status });
+      },
+      (data) => ({ data })
+    );
+  });
+
+  /** COPS-12 (Bible p.55): release id, fixed-in version, deployed-at and verification evidence. */
+  const releaseSchema = z
+    .object({
+      release_id: z.string().max(200).nullable().optional(),
+      fixed_in_version: z.string().max(100).nullable().optional(),
+      deployed_at: z.string().datetime().nullable().optional(),
+      qa_evidence: z.string().max(4000).optional(),
+      customer_evidence: z.string().max(4000).optional(),
+    })
+    .strict();
+  app.patch<IdParams>("/tickets/:id/release", { preHandler: writeGate }, async (request, rawReply) => {
+    const reply = rawReply as unknown as Reply;
+    const ctx = ctxOf(request);
+    if (!UUID.test(request.params.id)) return invalid(reply, ctx.requestId, { path: "id", message: "Invalid id" });
+    const parsed = releaseSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+    return run(reply, ctx.requestId, () => recordTicketRelease(db, ctx, request.params.id, parsed.data), (data) => ({ data }));
   });
 
   /** Customer-safe view: customer updates only, no internal notes or internal fields. */
