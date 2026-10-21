@@ -1,4 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+// COPS-11 playbook timeline entries are not under test here.
+vi.mock("./cops-playbooks.service.js", () => ({ recordPlaybookTimeline: vi.fn(async () => undefined) }));
 vi.mock("@skout/shared", () => ({
   claimNext: vi.fn(),
   recordResult: vi.fn(),
@@ -25,7 +27,8 @@ const GRAPH: AutomationGraph = {
 
 function makeDb() {
   const runReturning = vi.fn().mockResolvedValue([{ id: "run-1", automationId: "auto-1", status: "pending", idempotencyKey: "k1" }]);
-  const runValues = vi.fn().mockReturnValue({ returning: runReturning });
+  // The run insert is conflict-safe on (automation_id, idempotency_key).
+  const runValues = vi.fn().mockReturnValue({ returning: runReturning, onConflictDoNothing: vi.fn().mockReturnValue({ returning: runReturning }) });
   const stepReturning = vi.fn().mockResolvedValue([{ id: "step-1", nodeId: "n1", status: "pending" }]);
   const stepValues = vi.fn().mockReturnValue({ returning: stepReturning });
   const insert = vi.fn((..._args: unknown[]) => {

@@ -1,0 +1,190 @@
+openapi: 3.0.3
+info:
+  title: CustomerOps COPS-12 ticket SLA, incident linking and release tracking
+  version: 1.0.0
+  description: >
+    Contract for COPS-12, published before the frontend work (Definition of Done). All paths are
+    under /api/v1 and use the COPS error envelope {code, message, details, request_id, retryable}.
+    Extends the COPS-06 ticket contract (docs/api/copos-06-tickets.openapi.yaml): ticket reads gain
+    `sla`, `release`, `first_response_at`, `reopen_count` and `incident` ({id, title, status,
+    owner_id} or null); each queue row gains `sla` ({state, due_at}, its worst clock). Reads need tickets:read, writes tickets:write, customer-facing
+    incident updates tickets:send, SLA policy changes workspace:manage (through the COPS-07 admin
+    config kind `sla_policy`). Every write is audited. Times are ISO 8601 UTC.
+paths:
+  /tickets/{id}/sla:
+    get:
+      summary: The ticket's SLA clocks
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: SLA, content: { application/json: { schema: { $ref: "#/components/schemas/TicketSla" } } } }
+        "404": { description: Ticket not found in this workspace }
+  /tickets/{id}/release:
+    patch:
+      summary: Record the fix (release id, fixed-in version, deployed-at) and verification evidence
+      description: >
+        QA and customer verification each need evidence text; the server stamps who and when. A
+        ticket can move to `verified` only once both are recorded (422 VERIFICATION_REQUIRED with
+        details.missing otherwise).
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        content: { application/json: { schema: { $ref: "#/components/schemas/ReleasePatch" } } }
+      responses:
+        "200": { description: The ticket's release block, content: { application/json: { schema: { $ref: "#/components/schemas/Release" } } } }
+  /tickets/{id}/transition:
+    post:
+      summary: (COPS-06, extended) Change status
+      description: >
+        COPS-12 rules: moving to `verified` needs QA and customer verification (422
+        VERIFICATION_REQUIRED). A reopen (resolved or verified to in_progress) needs a `reason` (422
+        REASON_REQUIRED); it clears the verification and restarts the resolution clock, and the
+        history keeps both. Entering a pause status (waiting_on_customer) pauses the clocks;
+        leaving it resumes them.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: The ticket with its sla block }
+        "409": { description: BUSINESS_STATE_CONFLICT (illegal transition) }
+        "422": { description: VERIFICATION_REQUIRED or REASON_REQUIRED }
+  /tickets/metrics:
+    get:
+      summary: Engineering dashboard metrics
+      parameters:
+        - { name: days, in: query, schema: { type: integer, minimum: 1, maximum: 365, default: 30 } }
+        - { name: tier, in: query, schema: { type: string, enum: [smb, mid_market, enterprise] } }
+        - { name: team, in: query, schema: { type: string } }
+      responses:
+        "200": { description: Metrics, content: { application/json: { schema: { $ref: "#/components/schemas/TicketMetrics" } } } }
+  /incidents:
+    get:
+      summary: (extended) Incidents with their linked ticket count and affected accounts
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [open, investigating, resolved] } }
+      responses:
+        "200": { description: List of Incident }
+    post:
+      summary: (extended) Create an incident
+      requestBody:
+        content: { application/json: { schema: { $ref: "#/components/schemas/IncidentInput" } } }
+      responses:
+        "201": { description: Incident }
+  /incidents/{id}/detail:
+    get:
+      summary: Incident with linked tickets and affected customers (the existing GET /incidents/{id} keeps its platform shape)
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: Incident, content: { application/json: { schema: { $ref: "#/components/schemas/Incident" } } } }
+  /incidents/{id}:
+    patch:
+      summary: Update fields (status, owner, workaround, root cause, follow-ups, start/end)
+      description: Changing owner_id reassigns every linked ticket to the new owner (one investigation owner).
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        content: { application/json: { schema: { $ref: "#/components/schemas/IncidentInput" } } }
+      responses:
+        "200": { description: Incident }
+  /incidents/{id}/tickets:
+    post:
+      summary: Link a ticket (one incident per ticket)
+      description: The ticket is assigned to the incident owner. 409 TICKET_ALREADY_LINKED if it is linked to another incident.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        content: { application/json: { schema: { type: object, required: [ticket_id], properties: { ticket_id: { type: string, format: uuid } } } } }
+      responses:
+        "201": { description: The link }
+        "409": { description: TICKET_ALREADY_LINKED }
+  /incidents/{id}/tickets/{ticketId}:
+    delete:
+      summary: Unlink a ticket
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { name: ticketId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Unlinked }
+  /incidents/{id}/customer-update:
+    post:
+      summary: Publish a customer-safe update to every linked ticket
+      description: Needs tickets:send. Adds one customer-visible comment to each linked ticket and records it on the incident.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        content: { application/json: { schema: { type: object, required: [body], properties: { body: { type: string, minLength: 1, maxLength: 4000 } } } } }
+      responses:
+        "200": { description: "{ticketsUpdated}" }
+        "403": { description: Needs tickets:send }
+components:
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+  schemas:
+    SlaClock:
+      type: object
+      properties:
+        kind: { type: string, enum: [response, resolution] }
+        target_minutes: { type: integer }
+        calendar: { type: string, enum: [24x7, business] }
+        started_at: { type: string, format: date-time }
+        due_at: { type: string, format: date-time, nullable: true, description: null while paused }
+        paused: { type: boolean }
+        used_minutes: { type: integer, description: Calendar minutes used so far }
+        state: { type: string, enum: [running, paused, at_risk, met, breached] }
+        met_at: { type: string, format: date-time, nullable: true }
+        breached_at: { type: string, format: date-time, nullable: true }
+        policy_version: { type: integer }
+    TicketSla:
+      type: object
+      properties:
+        priority: { type: string, enum: [p1, p2, p3, p4] }
+        tier: { type: string }
+        clocks: { type: array, items: { $ref: "#/components/schemas/SlaClock" } }
+    Release:
+      type: object
+      properties:
+        release_id: { type: string, nullable: true }
+        fixed_in_version: { type: string, nullable: true }
+        deployed_at: { type: string, format: date-time, nullable: true }
+        qa_verified_at: { type: string, format: date-time, nullable: true }
+        qa_verified_by: { type: string, format: uuid, nullable: true }
+        qa_evidence: { type: string, nullable: true }
+        customer_verified_at: { type: string, format: date-time, nullable: true }
+        customer_verified_by: { type: string, format: uuid, nullable: true }
+        customer_evidence: { type: string, nullable: true }
+    ReleasePatch:
+      type: object
+      properties:
+        release_id: { type: string, maxLength: 200, nullable: true }
+        fixed_in_version: { type: string, maxLength: 100, nullable: true }
+        deployed_at: { type: string, format: date-time, nullable: true }
+        qa_evidence: { type: string, maxLength: 4000, description: "Records QA verification by the caller" }
+        customer_evidence: { type: string, maxLength: 4000, description: "Records customer verification by the caller" }
+    IncidentInput:
+      type: object
+      properties:
+        title: { type: string }
+        severity: { type: string, enum: [low, medium, high, critical] }
+        status: { type: string, enum: [open, investigating, resolved] }
+        owner_id: { type: string, format: uuid, nullable: true }
+        started_at: { type: string, format: date-time, nullable: true }
+        ended_at: { type: string, format: date-time, nullable: true }
+        workaround: { type: string, nullable: true }
+        root_cause: { type: string, nullable: true }
+        follow_ups: { type: array, items: { type: object, properties: { text: { type: string }, done: { type: boolean } } } }
+    Incident:
+      allOf:
+        - $ref: "#/components/schemas/IncidentInput"
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            customer_update: { type: string, nullable: true }
+            customer_update_at: { type: string, format: date-time, nullable: true }
+            tickets: { type: array, items: { type: object, properties: { id: { type: string }, title: { type: string }, status: { type: string }, account_id: { type: string }, account_name: { type: string } } } }
+            affected_accounts: { type: array, items: { type: object, properties: { id: { type: string }, name: { type: string } } } }
+    TicketMetrics:
+      type: object
+      description: Every metric carries its definition so COPS-13 can reuse it.
+      properties:
+        window_days: { type: integer }
+        open: { type: integer }
+        aged: { type: integer, description: Open longer than 7 days }
+        mtta_minutes: { type: number, nullable: true, description: Mean creation to first response, wall-clock }
+        mttr_minutes: { type: number, nullable: true, description: Mean creation to resolved, wall-clock }
+        reopen_rate: { type: number, nullable: true, description: Reopened / resolved in the window }
+        breach_rate: { type: number, nullable: true, description: Clocks breached / clocks finished in the window }
+        incident_linked: { type: integer, description: Open tickets linked to an incident }
+        at_risk: { type: integer, description: Open tickets with a clock at risk or breached }

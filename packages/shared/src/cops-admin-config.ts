@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DEFAULT_SLA_POLICY, slaPolicySchema } from "./cops-sla.js";
 import { esignTemplateSchema } from "./cops-esign.js";
 import { COMMERCIAL_POLICY_DEFAULTS, approvalPolicySchema, currencyPolicySchema, dunningPolicySchema, priceBookSchema, renewalPolicySchema } from "./cops-commercial-policy.js";
 
@@ -20,6 +21,8 @@ export const COPS_CONFIG_KINDS = [
   "currency_policy",
   "esign_template",
   "renewal_policy",
+  // COPS-12: SLA targets, business-hours calendar and pause rules.
+  "sla_policy",
 ] as const;
 export type CopsConfigKind = (typeof COPS_CONFIG_KINDS)[number];
 
@@ -80,6 +83,7 @@ export const COPS_CONFIG_SCHEMAS = {
   currency_policy: currencyPolicySchema,
   esign_template: esignTemplateSchema,
   renewal_policy: renewalPolicySchema,
+  sla_policy: slaPolicySchema,
 } as const satisfies Record<CopsConfigKind, z.ZodTypeAny>;
 
 /**
@@ -102,6 +106,7 @@ export const COPS_CONFIG_DEFAULTS: Partial<Record<CopsConfigKind, Record<string,
   price_book: { default: COMMERCIAL_POLICY_DEFAULTS.price_book },
   currency_policy: { default: COMMERCIAL_POLICY_DEFAULTS.currency_policy },
   renewal_policy: { default: COMMERCIAL_POLICY_DEFAULTS.renewal_policy },
+  sla_policy: { default: DEFAULT_SLA_POLICY },
 };
 
 export const COPS_CONFIG_KEY = /^[a-z0-9][a-z0-9_-]{0,63}$/;

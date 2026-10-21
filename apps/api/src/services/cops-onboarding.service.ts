@@ -296,7 +296,7 @@ export async function sendOnboardingEmail(
     throw new OnboardingError("CONTACT_BLOCKED", CAN_CONTACT_MESSAGE[gate.reason as CanContactBlock], { reason: gate.reason, to: target.to });
   }
 
-  let row = existing;
+  let row: typeof existing | null = existing;
   if (!row) {
     // Lock the account so two different keys for the same first send cannot both pass the check.
     row = await db.transaction(async (tx) => {
@@ -313,6 +313,9 @@ export async function sendOnboardingEmail(
               eq(copsOnboardingEmailSends.isResend, false)
             )
           );
+        // A concurrent request with this same key got the lock first and inserted the send: that is
+        // a replay, not a second send to the recipient.
+        if (first && first.idempotencyKey === idempotencyKey) return null;
         // A first send that never left (provider failure) is not "already sent": a new attempt with
         // a new key takes over that row, so the email can be sent after the dialog was reopened.
         if (first && first.status === "failed") {

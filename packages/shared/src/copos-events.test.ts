@@ -14,10 +14,12 @@ const base = {
 };
 
 describe("COPS Phase 1 event contract", () => {
-  it("registers the 17 Phase 1 business events, LifecycleTransitioned, the COPS-02 task/activity events and COPS-03 ProvisioningRequested", () => {
-    expect(Object.keys(COPS_PHASE1_EVENTS)).toHaveLength(25);
+  it("registers the 17 Phase 1 business events, LifecycleTransitioned, the COPS-02 task/activity events, COPS-03 ProvisioningRequested, COPS-11 HealthSignalDetected and COPS-12 TicketSlaBreached", () => {
+    expect(Object.keys(COPS_PHASE1_EVENTS)).toHaveLength(27);
+    expect(COPS_PHASE1_EVENTS).toHaveProperty("HealthSignalDetected");
     expect(COPS_PHASE1_EVENTS).toHaveProperty("LifecycleTransitioned");
     expect(COPS_PHASE1_EVENTS).toHaveProperty("ProvisioningRequested");
+    expect(COPS_PHASE1_EVENTS).toHaveProperty("TicketSlaBreached");
   });
 
   it("accepts a valid envelope with a matching payload", () => {
@@ -85,5 +87,12 @@ describe("COPS Phase 1 event contract", () => {
         payload: { account_id: "a", user_id: "u" },
       })
     ).toThrow();
+  });
+
+  it("HealthSignalDetected (COPS-11) accepts a signal with evidence and refuses an unknown signal", () => {
+    const payload = { account_id: "11111111-1111-4111-8111-111111111111", signal: "ticket_heavy", cycle: "month:2026-10", health_score: 44, evidence: [{ factor: "open_tickets", reason: "3 open ticket(s)" }] };
+    expect(parseCopsEvent({ ...base, event_type: "HealthSignalDetected", payload }).payload).toEqual(payload);
+    expect(() => parseCopsEvent({ ...base, event_type: "HealthSignalDetected", payload: { ...payload, signal: "churned" } })).toThrow();
+    expect(() => parseCopsEvent({ ...base, event_type: "HealthSignalDetected", payload: { ...payload, evidence: undefined } })).toThrow();
   });
 });

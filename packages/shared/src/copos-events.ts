@@ -71,6 +71,8 @@ export const CustomerActivatedPayload = z.object({ account_id: id, rule_version:
 export const TicketCreatedPayload = z.object({ ticket_id: id, account_id: id, severity: z.string() });
 export const TicketEscalatedPayload = z.object({ ticket_id: id, account_id: id, severity: z.string() });
 export const TicketResolvedPayload = z.object({ ticket_id: id, account_id: id });
+/** COPS-12: an SLA clock passed its target (once per clock). */
+export const TicketSlaBreachedPayload = z.object({ ticket_id: id, account_id: id, clock: z.enum(["response", "resolution"]), priority: z.string(), target_minutes: z.number().int() });
 export const LifecycleTransitionedPayload = z.object({
   dimension: z.enum(["opportunity", "commercial", "onboarding", "account", "health", "support"]),
   entity_id: z.string().uuid(),
@@ -117,6 +119,19 @@ export const RenewalOpenedPayload = z.object({
   term_end: z.string().datetime(),
 });
 
+/**
+ * COPS-11: the health sweep raised a customer-success signal for an account. One event per account,
+ * signal and cycle (the event id is derived from them), so a success playbook runs once per cycle.
+ */
+export const HEALTH_SIGNALS = ["low_adoption", "ticket_heavy", "renewal_approaching", "expansion_signal"] as const;
+export const HealthSignalDetectedPayload = z.object({
+  account_id: z.string().uuid(),
+  signal: z.enum(HEALTH_SIGNALS),
+  cycle: z.string().min(1),
+  health_score: z.number().int().nullable(),
+  evidence: z.array(z.object({ factor: z.string(), reason: z.string() })),
+});
+
 /** Event type → payload schema. The single registry consumers and outbox writers use. */
 export const COPS_PHASE1_EVENTS = {
   OpportunityQualified: OpportunityQualifiedPayload,
@@ -138,12 +153,14 @@ export const COPS_PHASE1_EVENTS = {
   CustomerActivated: CustomerActivatedPayload,
   TicketCreated: TicketCreatedPayload,
   TicketEscalated: TicketEscalatedPayload,
+  TicketSlaBreached: TicketSlaBreachedPayload,
   TicketResolved: TicketResolvedPayload,
   LifecycleTransitioned: LifecycleTransitionedPayload,
   ApprovalRequested: ApprovalRequestedPayload,
   ApprovalDecided: ApprovalDecidedPayload,
   SubscriptionStatusChanged: SubscriptionStatusChangedPayload,
   RenewalOpened: RenewalOpenedPayload,
+  HealthSignalDetected: HealthSignalDetectedPayload,
 } as const;
 
 export type CopsPhase1EventType = keyof typeof COPS_PHASE1_EVENTS;

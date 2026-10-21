@@ -99,10 +99,11 @@ export async function crmImportRoutes(app: FastifyInstance) {
   });
 
   /**
-   * POST /crm/:provider/import
+   * POST /crm/:provider/initial-import (not /import: the older static /crm/hubspot/import list
+   * import would match first for HubSpot and answer invalid_import_source)
    * Runs a resumable, paged initial import (sync must be turned on first).
    */
-  app.post("/crm/:provider/import", async (request, reply) => {
+  app.post("/crm/:provider/initial-import", async (request, reply) => {
     const workspaceId = requireWorkspaceId(request);
     const { provider } = request.params as { provider: string };
 

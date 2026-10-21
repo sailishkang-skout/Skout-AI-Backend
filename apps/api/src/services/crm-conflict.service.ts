@@ -260,7 +260,8 @@ export interface ResolveConflictInput {
 }
 
 /** Turns the stored text value into what the column holds; throws 422 when it cannot. */
-function columnValue(
+/** Checks that `fieldName` is a CRM-sync-owned column and casts `value` to its type (422 otherwise). */
+export function columnValue(
   entityType: "contact" | "deal",
   table: typeof contacts | typeof deals,
   fieldName: string,

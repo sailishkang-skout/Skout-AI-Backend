@@ -172,3 +172,38 @@ resolution is refused with 422 and nothing changes. The inbound HubSpot sync in
 `crm-hubspot-native-sync.service.ts` (listed above) now also reads `deals.company_id` and
 `contacts.company_id` to apply the ADR 0014 account scope. The COPS-09 table (`crm_conflicts`) is owned
 by apps/api.
+
+## COPS-10 additions (2026-10-19)
+
+| File | Tables | Access |
+|---|---|---|
+| `apps/api/src/routes/automation.routes.ts` | companies, contacts, deals | read only, by id: a workflow run's subject (account, contact or deal) must belong to the caller's workspace |
+| `apps/api/src/routes/automation.routes.permissions.test.ts` | companies, workspaces | test fixtures: an account in the workspace and one in another |
+| `apps/api/src/services/automation-nodes/action-create-task.node.ts` | tasks, companies | **insert** of one task for the run's account (the workflow "create task" action, the same insert COPS-05 playbooks make); reads the account owner |
+| `apps/api/src/services/automation-nodes/action-update-fields.node.ts` | contacts, deals | **update** of CRM-sync-owned fields of one record (the workflow "update allowed fields" action), with the COPS-09 conflict-resolution allowlist and type checks |
+
+## COPS-11 additions (2026-10-20)
+
+| File | Tables | Access |
+|---|---|---|
+| `apps/api/src/services/cops-health.service.ts` | companies, contacts, activities | reads the account's contacts and activity for the relationship factors; **update** of the account's health fields (health_score, health_state, renewal_risk, health_computed_at), the Bible's Success fields |
+| `apps/api/src/services/cops-playbooks.service.ts` | activities | **insert** of one activity when a success playbook run starts, completes or is cancelled, so it shows on the account timeline (COPS-02 contract) |
+| `apps/api/src/services/cops-success-overview.service.ts` | companies, tasks | read only: the Customer Success screen lists accounts by health with each one's next open task |
+| `apps/api/src/routes/cops-success.routes.ts` | companies | read; **update** of `csm_id` when an admin sets the account's CSM (audited) |
+| `apps/api/src/routes/cops-success.routes.test.ts` | companies, users, workspace_members | test fixtures |
+
+## COPS-12 additions (2026-10-21)
+
+| File | Tables | Access |
+|---|---|---|
+| `apps/api/src/services/cops-incidents.service.ts` | companies | read only: the names of the accounts whose tickets are linked to an incident (affected customers) |
+
+## COPS-13 additions (2026-10-21)
+
+| File | Tables | Access |
+|---|---|---|
+| `apps/api/src/services/cops-dashboards.service.ts` | companies, deals, tasks, contacts | read only: each KPI and its drill-through are one query over the account filters (segment, owner, geography), so the headline and the drill-through cannot disagree |
+| `apps/api/src/services/cops-funnel.service.ts` | companies, deals | read only: maps outbox events to accounts for the funnel cohorts and applies the account filters |
+| `apps/api/src/services/cops-dashboards.db.test.ts` | companies, deals, pipelines, pipeline_stages, users | test fixtures |
+| `apps/api/src/services/cops-recommendations.service.ts` | companies, tasks, activities | reads the account for the recommendation context; **insert** of one task when a recommendation is approved, and one activity per decision for the timeline |
+| `apps/api/src/services/cops-recommendations.db.test.ts`, `apps/api/src/routes/cops-recommendations.routes.test.ts` | companies, deals, pipelines, pipeline_stages, users | test fixtures |

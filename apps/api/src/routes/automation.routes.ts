@@ -1,15 +1,44 @@
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md (COPS-10 additions).
+ *   - Tables touched directly: companies, contacts, deals (read only, by id)
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: a workflow run's subject must be a record of the caller's workspace.
+ *   - Review date: 2026-10-19
+ */
 import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
+import type { Db } from "@skout/db";
 import { z } from "zod";
-import { schema } from "@skout/db";
+import { schema, scopedById } from "@skout/db";
 import { errorResponse, HttpError } from "../utils/http.js";
 import { AutomationService } from "../services/automation.service.js";
-import { createAutomationRun, getRun, listRuns, retryFailedSteps } from "../services/automation-run.service.js";
+import { cancelRun, createAutomationRun, decideApproval, getRun, listRuns, replayRun, retryFailedSteps, RUN_SUBJECT_TYPES, type RunSubjectType } from "../services/automation-run.service.js";
 import { enqueueAutomationRunAdvance } from "../workers/automation-run.queue.js";
 import type { AutomationGraph } from "../services/automation-graph.js";
+import { validateAutomationGraph } from "../services/automation-graph-validate.js";
+import { workspaceManageGate } from "./crm-admin-gate.js";
 
-const { automations } = schema;
+const { automations, companies, contacts, deals } = schema;
+
+const subjectSchema = z.object({ type: z.enum(RUN_SUBJECT_TYPES), id: z.string().uuid() });
+const SUBJECT_TABLES = { account: companies, contact: contacts, deal: deals } as const;
+
+/** 422 unless the run's subject is a record in this workspace. */
+async function assertSubjectInWorkspace(db: Db, workspaceId: string, subject: { type: RunSubjectType; id: string }) {
+  const table = SUBJECT_TABLES[subject.type];
+  const [row] = await db.select({ id: table.id }).from(table).where(scopedById(table, workspaceId, subject.id)).limit(1);
+  if (!row) throw new HttpError("automation_run_subject_not_found", 422);
+}
+
+const runHistoryQuery = z.object({
+  version: z.coerce.number().int().min(0).optional(),
+  account_id: z.string().uuid().optional(),
+  status: z.enum(["pending", "running", "awaiting_approval", "succeeded", "failed", "cancelled"]).optional(),
+  before: z.string().datetime({ offset: true }).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
 
 const graphSchema = z.object({
   nodes: z.array(z.object({ id: z.string(), type: z.string(), config: z.record(z.string(), z.unknown()) })),
@@ -22,8 +51,16 @@ export async function automationRoutes(app: FastifyInstance) {
     if (!app.db) throw new HttpError("Database not available", 500);
     return app.db;
   }
+  // COPS-10: building, publishing and running workflows is for Owner and Admin; members can read.
+  const manage = { preHandler: workspaceManageGate(app) };
 
-  app.post("/automations", async (request, reply) => {
+  /** Throws 422 with every issue when the graph uses a node type outside the allowlist or is incomplete. */
+  function checkGraph(graph: AutomationGraph, strict: boolean) {
+    const issues = validateAutomationGraph(graph, { strict });
+    if (issues.length) throw new HttpError("automation_graph_invalid", 422, { issues });
+  }
+
+  app.post("/automations", manage, async (request, reply) => {
     if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const body = z.object({ name: z.string().min(1).max(200), description: z.string().max(2000).optional() }).parse(request.body ?? {});
     const svc = new AutomationService(db());
@@ -44,7 +81,7 @@ export async function automationRoutes(app: FastifyInstance) {
     return reply.send({ data: await svc.getAutomation(request.workspaceId, id) });
   });
 
-  app.patch("/automations/:id", async (request, reply) => {
+  app.patch("/automations/:id", manage, async (request, reply) => {
     if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = z.object({ name: z.string().min(1).max(200).optional(), description: z.string().max(2000).optional() }).parse(request.body ?? {});
@@ -53,22 +90,32 @@ export async function automationRoutes(app: FastifyInstance) {
     return reply.send({ data: auto });
   });
 
-  app.post("/automations/:id/versions", async (request, reply) => {
+  app.post("/automations/:id/versions", manage, async (request, reply) => {
     if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = z.object({ graph: graphSchema }).parse(request.body ?? {});
     const svc = new AutomationService(db());
+    checkGraph(body.graph as AutomationGraph, false);
     const version = await svc.saveDraftVersion(request.workspaceId, id, body.graph as AutomationGraph);
     return reply.code(201).send({ data: version });
   });
 
-  app.post("/automations/:id/versions/publish", async (request, reply) => {
+  app.post("/automations/:id/versions/publish", manage, async (request, reply) => {
     if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = z.object({ graph: graphSchema }).parse(request.body ?? {});
     const svc = new AutomationService(db());
+    checkGraph(body.graph as AutomationGraph, true);
     const version = await svc.publishVersion(request.workspaceId, id, body.graph as AutomationGraph, request.userId);
     return reply.code(201).send({ data: version });
+  });
+
+  /** COPS-10: makes an earlier version live again, as the next version. In-flight runs keep theirs. */
+  app.post("/automations/:id/versions/:version/rollback", manage, async (request, reply) => {
+    if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    const { id, version } = z.object({ id: z.string().uuid(), version: z.coerce.number().int().min(1) }).parse(request.params);
+    const svc = new AutomationService(db());
+    return reply.code(201).send({ data: await svc.rollbackToVersion(request.workspaceId, id, version, request.userId) });
   });
 
   app.get("/automations/:id/versions", async (request, reply) => {
@@ -78,10 +125,12 @@ export async function automationRoutes(app: FastifyInstance) {
     return reply.send({ data: await svc.listVersions(request.workspaceId, id) });
   });
 
-  app.post("/automations/:id/run", async (request, reply) => {
+  app.post("/automations/:id/run", manage, async (request, reply) => {
     if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-    const body = z.object({ isSimulation: z.boolean().optional() }).parse(request.body ?? {});
+    const body = z
+      .object({ isSimulation: z.boolean().optional(), payload: z.record(z.string(), z.unknown()).optional(), subject: subjectSchema.optional() })
+      .parse(request.body ?? {});
     const isSimulation = body.isSimulation ?? false;
 
     const svc = new AutomationService(db());
@@ -98,6 +147,7 @@ export async function automationRoutes(app: FastifyInstance) {
       return reply.code(422).send(errorResponse(message, 422));
     }
 
+    if (body.subject) await assertSubjectInWorkspace(db(), request.workspaceId, body.subject);
     const run = await createAutomationRun(db(), {
       automationId: id,
       automationVersionId: version.id,
@@ -108,6 +158,8 @@ export async function automationRoutes(app: FastifyInstance) {
       graph: version.graph as AutomationGraph,
       idempotencyKey: `manual:${randomUUID()}`,
       isSimulation,
+      triggerPayload: body.payload,
+      subject: body.subject,
     });
     // Fire-and-forget, same pattern as enqueueSequenceAdvanceJob's call sites — a Redis hiccup
     // shouldn't block this response; the run stays "pending" and a later retry/backfill picks it
@@ -146,6 +198,7 @@ export async function automationRoutes(app: FastifyInstance) {
       correlationId: randomUUID(),
       graph: version.graph as AutomationGraph,
       idempotencyKey: `webhook:${token}:${Date.now()}`,
+      triggerPayload: request.body && typeof request.body === "object" && !Array.isArray(request.body) ? (request.body as Record<string, unknown>) : undefined,
     });
     enqueueAutomationRunAdvance(app.config, { automationRunId: run.id, workspaceId: run.workspaceId }).catch((err: unknown) => {
       app.log.error({ err, runId: run.id }, "Failed to enqueue automation run advance job");
@@ -153,10 +206,34 @@ export async function automationRoutes(app: FastifyInstance) {
     return reply.code(202).send({ data: { runId: run.id, verified: false } });
   });
 
+  /** COPS-10 run history of one workflow: ?version, ?account_id, ?status, ?before, ?limit. */
   app.get("/automations/:id/runs", async (request, reply) => {
     if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-    return reply.send({ data: await listRuns(db(), request.workspaceId, id) });
+    const q = runHistoryQuery.parse(request.query ?? {});
+    await new AutomationService(db()).getAutomation(request.workspaceId, id);
+    const result = await listRuns(db(), request.workspaceId, {
+      automationId: id,
+      version: q.version,
+      subject: q.account_id ? { type: "account", id: q.account_id } : undefined,
+      status: q.status,
+      before: q.before ? new Date(q.before) : undefined,
+      limit: q.limit,
+    });
+    return reply.send({ data: result.data, next_before: result.nextBefore });
+  });
+
+  /** COPS-10 run history across every workflow, e.g. everything that ran for one account. */
+  app.get("/automations/runs", async (request, reply) => {
+    if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    const q = runHistoryQuery.parse(request.query ?? {});
+    const result = await listRuns(db(), request.workspaceId, {
+      subject: q.account_id ? { type: "account", id: q.account_id } : undefined,
+      status: q.status,
+      before: q.before ? new Date(q.before) : undefined,
+      limit: q.limit,
+    });
+    return reply.send({ data: result.data, next_before: result.nextBefore });
   });
 
   app.get("/automations/runs/:runId", async (request, reply) => {
@@ -166,7 +243,7 @@ export async function automationRoutes(app: FastifyInstance) {
   });
 
   /** Manual recovery for a failed run — see failStep()'s comment for why failures aren't auto-retried. */
-  app.post("/automations/runs/:runId/retry", async (request, reply) => {
+  app.post("/automations/runs/:runId/retry", manage, async (request, reply) => {
     if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const { runId } = z.object({ runId: z.string().uuid() }).parse(request.params);
     const updatedRun = await retryFailedSteps(db(), request.workspaceId, runId);
@@ -174,5 +251,42 @@ export async function automationRoutes(app: FastifyInstance) {
       app.log.error({ err, runId: updatedRun.id }, "Failed to enqueue automation run advance job after retry");
     });
     return reply.code(202).send({ data: updatedRun });
+  });
+
+  const runParams = z.object({ runId: z.string().uuid() });
+  const reasonField = z.string().trim().max(1000).optional();
+
+  /** COPS-10: stops a run that has not finished. */
+  app.post("/automations/runs/:runId/cancel", manage, async (request, reply) => {
+    if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    const { runId } = runParams.parse(request.params);
+    const body = z.object({ reason: reasonField }).parse(request.body ?? {});
+    return reply.send({ data: await cancelRun(db(), request.workspaceId, runId, request.userId, body.reason || null) });
+  });
+
+  /** COPS-10: approves or rejects the step a run is waiting on. */
+  app.post("/automations/runs/:runId/approval", manage, async (request, reply) => {
+    if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    const { runId } = runParams.parse(request.params);
+    const body = z.object({ decision: z.enum(["approve", "reject"]), reason: reasonField }).parse(request.body ?? {});
+    const result = await decideApproval(db(), request.workspaceId, runId, body.decision, request.userId, body.reason || null);
+    if (body.decision === "approve") {
+      enqueueAutomationRunAdvance(app.config, { automationRunId: runId, workspaceId: request.workspaceId }).catch((err: unknown) => {
+        app.log.error({ err, runId }, "Failed to enqueue automation run advance job");
+      });
+    }
+    return reply.send({ data: result });
+  });
+
+  /** COPS-10: runs again with the same trigger payload and subject, on the same or the latest version. */
+  app.post("/automations/runs/:runId/replay", manage, async (request, reply) => {
+    if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    const { runId } = runParams.parse(request.params);
+    const body = z.object({ version: z.enum(["same", "latest"]).default("same") }).parse(request.body ?? {});
+    const run = await replayRun(db(), request.workspaceId, runId, request.userId, body.version);
+    enqueueAutomationRunAdvance(app.config, { automationRunId: run.id, workspaceId: request.workspaceId }).catch((err: unknown) => {
+      app.log.error({ err, runId: run.id }, "Failed to enqueue automation run advance job");
+    });
+    return reply.code(202).send({ data: run });
   });
 }

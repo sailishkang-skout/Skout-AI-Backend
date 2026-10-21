@@ -100,7 +100,7 @@ describe("CRM Import and Opt-In Routes", () => {
       const app = await createTestApp({} as any);
       const res = await app.inject({
         method: "POST",
-        url: "/crm/hubspot/import",
+        url: "/crm/hubspot/initial-import",
         payload: {},
       });
 
@@ -119,7 +119,7 @@ describe("CRM Import and Opt-In Routes", () => {
       const app = await createTestApp({} as any);
       const res = await app.inject({
         method: "POST",
-        url: "/crm/hubspot/import",
+        url: "/crm/hubspot/initial-import",
         payload: {
           maxBatches: 5,
         },

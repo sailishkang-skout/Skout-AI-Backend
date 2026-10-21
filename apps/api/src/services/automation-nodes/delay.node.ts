@@ -1,10 +1,9 @@
 import type { NodeHandler } from "./types.js";
 
 /**
- * Config: { seconds: number }. Executes synchronously — the worker is responsible for not
- * re-claiming this step until nextRetryAt if the caller wants an async delay; for MVP this
- * handler just returns immediately with the delay recorded, since the queue's own poll interval
- * already bounds how "live" any given step advance is.
+ * Config: { seconds: number }. The wait itself is done by the run worker (COPS-10): the first
+ * claim stores run_after on the step and hands it back, and the step is claimed again only once it
+ * is due. This handler runs at that point, so it just records the delay.
  */
 export const delayNodeHandler: NodeHandler = async (ctx) => {
   const { seconds } = ctx.node.config as { seconds: number };

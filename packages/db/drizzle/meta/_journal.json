@@ -951,7 +951,56 @@
       "idx": 135,
       "version": "7",
       "when": 1796500000000,
-      "tag": "0134_enrichment_attempts_workspace",
+      "tag": "0134_cops10_durable_delay",
+      "breakpoints": true
+    },
+    {
+      "idx": 136,
+      "version": "7",
+      "when": 1796600000000,
+      "tag": "0135_cops10_run_records",
+      "breakpoints": true
+    },
+    {
+      "idx": 137,
+      "version": "7",
+      "when": 1796700000000,
+      "tag": "0136_cops10_step_effects",
+      "breakpoints": true
+    },
+    {
+      "idx": 138,
+      "version": "7",
+      "when": 1796800000000,
+      "tag": "0137_cops11_health",
+      "breakpoints": true
+    },
+    {
+      "idx": 139,
+      "version": "7",
+      "when": 1796900000000,
+      "tag": "0138_cops11_playbook_templates",
+      "breakpoints": true
+    },
+    {
+      "idx": 140,
+      "version": "7",
+      "when": 1797000000000,
+      "tag": "0139_cops12_ticket_sla",
+      "breakpoints": true
+    },
+    {
+      "idx": 141,
+      "version": "7",
+      "when": 1797100000000,
+      "tag": "0140_cops13_analytics_ai",
+      "breakpoints": true
+    },
+    {
+      "idx": 142,
+      "version": "7",
+      "when": 1797200000000,
+      "tag": "0141_enrichment_attempts_workspace",
       "breakpoints": true
     }
   ]

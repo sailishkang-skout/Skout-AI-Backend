@@ -1,4 +1,5 @@
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { onCustomerComment, onTicketPriorityChange, onTicketStatusChange, startSlaClocks } from "./cops-sla.service.js";
 import { schema, type Db } from "@skout/db";
 import {
   appendCopsEvent,
@@ -62,14 +63,14 @@ export interface TicketContext {
 
 export class TicketError extends Error {
   constructor(
-    readonly code: "NOT_FOUND" | "VALIDATION_FAILED" | "BUSINESS_STATE_CONFLICT" | "FORBIDDEN",
+    readonly code: "NOT_FOUND" | "VALIDATION_FAILED" | "BUSINESS_STATE_CONFLICT" | "FORBIDDEN" | "VERIFICATION_REQUIRED" | "REASON_REQUIRED" | "TICKET_ALREADY_LINKED",
     message: string,
     readonly details: Record<string, unknown> = {}
   ) {
     super(message);
   }
   get status(): number {
-    return { NOT_FOUND: 404, VALIDATION_FAILED: 422, BUSINESS_STATE_CONFLICT: 409, FORBIDDEN: 403 }[this.code];
+    return { NOT_FOUND: 404, VALIDATION_FAILED: 422, BUSINESS_STATE_CONFLICT: 409, FORBIDDEN: 403, VERIFICATION_REQUIRED: 422, REASON_REQUIRED: 422, TICKET_ALREADY_LINKED: 409 }[this.code];
   }
 }
 
@@ -125,6 +126,10 @@ function ticketDto(t: TicketRow) {
     closed_at: iso(t.closedAt),
     created_at: iso(t.createdAt),
     updated_at: iso(t.updatedAt),
+    // COPS-12
+    first_response_at: iso(t.firstResponseAt),
+    reopen_count: t.reopenCount,
+    release: ticketReleaseDto(t),
   };
 }
 
@@ -346,6 +351,8 @@ export async function createTicket(db: Db, ctx: TicketContext, input: CreateTick
     if (!ticket) throw new Error("Ticket insert returned no row");
 
     await tx.insert(ticketStatusHistory).values({ workspaceId: ctx.workspaceId, ticketId: ticket.id, fromStatus: null, toStatus: "new", actorId: ctx.userId });
+    // COPS-12: every ticket starts its response and resolution SLA clocks.
+    await startSlaClocks(tx as never, ctx.workspaceId, ticket);
     await writeCopsAudit(tx, {
       tenantId: ctx.workspaceId,
       actor: actorOf(ctx),
@@ -547,6 +554,13 @@ export async function transitionTicket(db: Db, ctx: TicketContext, ticketId: str
     if (!canTransitionTicket(from, to)) {
       throw new TicketError("BUSINESS_STATE_CONFLICT", `A ticket cannot move from ${from} to ${to}`, { from, to });
     }
+    // COPS-12 (Bible p.55): Verified needs QA and customer verification; a reopen needs a reason.
+    if (to === "verified") {
+      const missing = [!ticket.qaVerifiedAt && "qa_verification", !ticket.customerVerifiedAt && "customer_verification"].filter(Boolean);
+      if (missing.length) throw new TicketError("VERIFICATION_REQUIRED", "Record QA and customer verification before marking the ticket verified", { missing });
+    }
+    const reopen = (from === "resolved" || from === "verified") && to === "in_progress";
+    if (reopen && !reason?.trim()) throw new TicketError("REASON_REQUIRED", "A reopen needs a reason", { fields: [{ path: "reason", message: "Required" }] });
     await lockAccount(tx as never, ctx.workspaceId, ticket.accountId);
     const now = new Date();
     const [updated] = await tx
@@ -557,9 +571,13 @@ export async function transitionTicket(db: Db, ctx: TicketContext, ticketId: str
         ...(to === "resolved" ? { resolvedAt: now } : {}),
         ...(to === "in_progress" && from !== "assigned" ? { resolvedAt: null } : {}),
         ...(to === "closed" ? { closedAt: now } : {}),
+        // A reopen clears the verification; the history keeps who verified and when.
+        ...(reopen ? { reopenCount: ticket.reopenCount + 1, qaVerifiedAt: null, qaVerifiedBy: null, customerVerifiedAt: null, customerVerifiedBy: null } : {}),
       })
       .where(eq(engineeringTickets.id, ticket.id))
       .returning();
+    const firstResponse = await onTicketStatusChange(tx as never, ctx.workspaceId, ticket, from, to, now);
+    if (firstResponse && !ticket.firstResponseAt) await tx.update(engineeringTickets).set({ firstResponseAt: now }).where(eq(engineeringTickets.id, ticket.id));
     await tx.insert(ticketStatusHistory).values({ workspaceId: ctx.workspaceId, ticketId: ticket.id, fromStatus: from, toStatus: to, actorId: ctx.userId, reason: reason ?? null });
     await writeCopsAudit(tx, {
       tenantId: ctx.workspaceId,
@@ -639,6 +657,68 @@ export async function escalateTicket(db: Db, ctx: TicketContext, ticketId: strin
 }
 
 /** Assignment and triage fields. The assignee must be a member of the workspace. */
+/** The release and verification block of a ticket (COPS-12, Bible p.55). */
+export function ticketReleaseDto(t: TicketRow) {
+  return {
+    release_id: t.releaseId,
+    fixed_in_version: t.fixedInVersion,
+    deployed_at: t.deployedAt?.toISOString() ?? null,
+    qa_verified_at: t.qaVerifiedAt?.toISOString() ?? null,
+    qa_verified_by: t.qaVerifiedBy,
+    qa_evidence: t.qaEvidence,
+    customer_verified_at: t.customerVerifiedAt?.toISOString() ?? null,
+    customer_verified_by: t.customerVerifiedBy,
+    customer_evidence: t.customerEvidence,
+  };
+}
+
+export interface ReleasePatch {
+  release_id?: string | null;
+  fixed_in_version?: string | null;
+  deployed_at?: string | null;
+  qa_evidence?: string;
+  customer_evidence?: string;
+}
+
+/**
+ * Records the fix and the verification evidence. Evidence stamps who verified and when; the
+ * Verified transition checks both are present. Audited with before and after.
+ */
+export async function recordTicketRelease(db: Db, ctx: TicketContext, ticketId: string, input: ReleasePatch) {
+  return db.transaction(async (tx) => {
+    const ticket = await lockTicket(tx as never, ctx.workspaceId, ticketId);
+    const now = new Date();
+    const evidence = (v: string | undefined) => (v === undefined ? undefined : v.trim());
+    const qa = evidence(input.qa_evidence);
+    const customer = evidence(input.customer_evidence);
+    if (qa === "" || customer === "") throw new TicketError("VALIDATION_FAILED", "Verification needs evidence", { fields: [{ path: qa === "" ? "qa_evidence" : "customer_evidence", message: "Required" }] });
+    const [updated] = await tx
+      .update(engineeringTickets)
+      .set({
+        ...(input.release_id !== undefined ? { releaseId: input.release_id } : {}),
+        ...(input.fixed_in_version !== undefined ? { fixedInVersion: input.fixed_in_version } : {}),
+        ...(input.deployed_at !== undefined ? { deployedAt: input.deployed_at ? new Date(input.deployed_at) : null } : {}),
+        ...(qa ? { qaEvidence: qa, qaVerifiedAt: now, qaVerifiedBy: ctx.userId } : {}),
+        ...(customer ? { customerEvidence: customer, customerVerifiedAt: now, customerVerifiedBy: ctx.userId } : {}),
+        updatedAt: now,
+      })
+      .where(eq(engineeringTickets.id, ticket.id))
+      .returning();
+    await writeCopsAudit(tx, {
+      tenantId: ctx.workspaceId,
+      actor: actorOf(ctx),
+      entityType: "engineering_ticket",
+      entityId: ticket.id,
+      action: "ticket.release_recorded",
+      before: ticketReleaseDto(ticket),
+      after: ticketReleaseDto(updated!),
+      correlationId: ctx.requestId,
+      sourceChannel: "api",
+    });
+    return ticketReleaseDto(updated!);
+  });
+}
+
 export async function updateTicket(db: Db, ctx: TicketContext, ticketId: string, input: { assignee_id?: string | null; team?: string | null; priority?: string }) {
   return db.transaction(async (tx) => {
     const ticket = await lockTicket(tx as never, ctx.workspaceId, ticketId);
@@ -671,6 +751,7 @@ export async function updateTicket(db: Db, ctx: TicketContext, ticketId: string,
       correlationId: ctx.requestId,
       sourceChannel: "api",
     });
+    if (input.priority !== undefined && input.priority !== ticket.priority) await onTicketPriorityChange(tx as never, ctx.workspaceId, updated!);
     return { ticket: ticketDto(updated!) };
   });
 }
@@ -730,6 +811,10 @@ export async function addTicketComment(db: Db, ctx: TicketContext, ticketId: str
       correlationId: ctx.requestId,
       sourceChannel: "api",
     });
+    if (visibility === "customer") {
+      const first = await onCustomerComment(tx as never, ctx.workspaceId, ticketId);
+      if (first) await tx.update(engineeringTickets).set({ firstResponseAt: new Date() }).where(and(eq(engineeringTickets.id, ticketId), isNull(engineeringTickets.firstResponseAt)));
+    }
     return { comment: commentDto(comment!) };
   });
 }

@@ -54,6 +54,7 @@ const UNSCOPED: Record<string, string> = {
   // Platform operations.
   cops_processed_events: "idempotent-consumer ledger keyed by event id (COPS-01)",
   credit_reconciliation_runs: "platform-wide daily reconciliation run (COPS-04)",
+  cops_analytics_feed_checkpoints: "platform-wide warehouse feed cursor per sink, no tenant data (COPS-13)",
   scrape_jobs: "platform scraping queue",
   signals: "corpus-level signals, joined to a workspace through the prospect",
 };

@@ -61,6 +61,7 @@ import { competitiveRoutes } from "./competitive.routes.js";
 import { regionalIntelRoutes } from "./regional-intel.routes.js";
 import { stepUpRoutes } from "./step-up.routes.js";
 import { incidentsRoutes } from "./incidents.routes.js";
+import { copsIncidentsRoutes } from "./cops-incidents.routes.js";
 import { modelVersionsRoutes } from "./model-versions.routes.js";
 import { regionalBriefRoutes } from "./regional-brief.routes.js";
 import { dexterPlatformRoutes } from "./dexter-platform.routes.js";
@@ -82,6 +83,9 @@ import { copsOutboxRoutes } from "./cops-outbox.routes.js";
 import { copsLifecycleRoutes } from "./cops-lifecycle.routes.js";
 import { ssoScimRoutes } from "./sso-scim.routes.js";
 import { automationRoutes } from "./automation.routes.js";
+import { copsSuccessRoutes } from "./cops-success.routes.js";
+import { copsAnalyticsRoutes } from "./cops-analytics.routes.js";
+import { copsRecommendationsRoutes } from "./cops-recommendations.routes.js";
 import { complianceRoutes } from "./compliance.routes.js";
 import { enterpriseControlPlaneRoutes } from "./enterprise-control-plane.routes.js";
 import { jwksRoutes } from "./jwks.routes.js";
@@ -163,6 +167,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(regionalIntelRoutes);
     await v1.register(stepUpRoutes);
     await v1.register(incidentsRoutes);
+    await v1.register(copsIncidentsRoutes);
     await v1.register(modelVersionsRoutes);
     await v1.register(regionalBriefRoutes);
     await v1.register(dexterPlatformRoutes);
@@ -191,6 +196,9 @@ export async function registerRoutes(app: FastifyInstance) {
     }
     await v1.register(ssoScimRoutes);
     await v1.register(automationRoutes);
+    await v1.register(copsSuccessRoutes);
+    await v1.register(copsAnalyticsRoutes);
+    await v1.register(copsRecommendationsRoutes);
     await v1.register(complianceRoutes);
     await v1.register(enterpriseControlPlaneRoutes);
   }, { prefix: "/api/v1" });
