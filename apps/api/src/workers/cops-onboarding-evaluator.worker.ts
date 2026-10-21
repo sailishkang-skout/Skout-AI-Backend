@@ -10,6 +10,7 @@ import { runOnboardingEvaluator } from "../services/cops-onboarding-signals.serv
 import { reportPlatformOpsMetrics } from "../services/cops-ops-metrics.service.js";
 import { enqueueSequenceAdvanceJob } from "./sequence-enrollment.queue.js";
 import { notifyPassFailures } from "../services/cops-pass-alerts.service.js";
+import { runSlaSweep } from "../services/cops-sla-sweep.service.js";
 import type { PassFailure } from "../services/cops-subscriptions.service.js";
 
 const log = createLogger("cops-onboarding-evaluator.worker");
@@ -71,6 +72,10 @@ export async function startCopsOnboardingEvaluatorWorker(config: Env) {
           })
           .catch((err) => log.error("renewal pass failed", { err }));
       });
+      // COPS-12: SLA escalation (at risk before breach, then breach) and clock backfill.
+      await runSlaSweep(db)
+        .then((r) => (r.atRisk || r.breached || r.backfilled ? log.info("sla sweep finished", r) : undefined))
+        .catch((err) => log.error("sla sweep failed", { err }));
       // COPS-07: the same tick reports the platform health numbers that the log monitors alert on.
       // A failure here must not fail the evaluator job.
       await reportPlatformOpsMetrics(db, log).catch((err) => log.error("cops ops metrics report failed", { err }));

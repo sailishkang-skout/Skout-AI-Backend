@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { createDb } from "@skout/db";
 import { addTicketComment, createTicket, recordTicketRelease, transitionTicket, updateTicket, type TicketContext } from "./cops-tickets.service.js";
 import { backfillSlaClocks, getTicketSla } from "./cops-sla.service.js";
+import { runSlaSweep } from "./cops-sla-sweep.service.js";
 
 const postgres = createRequire(new URL("../../../../packages/db/package.json", import.meta.url))("postgres") as (url: string, options?: object) => any;
 
@@ -114,5 +115,32 @@ maybe("COPS-12 ticket SLA (Postgres)", () => {
     expect((await byKind(t.id, "resolution")).target_minutes).toBe(2700);
     await updateTicket(db, ctx, t.id, { priority: "p1" });
     expect(await byKind(t.id, "resolution")).toMatchObject({ target_minutes: 240, calendar: "24x7" });
+  });
+
+  it("the sweep warns before the breach, then records the breach once with TicketSlaBreached", async () => {
+    const t = (await createTicket(db, ctx, { account_id: accountId, title: "Slow P1", priority: "p1" } as never)).ticket;
+    await updateTicket(db, ctx, t.id, { assignee_id: ctx.userId });
+    const start = Date.now();
+    // 12 of 15 response minutes used: at risk (75%).
+    await sql`update sla_clocks set running_since = ${new Date(start - 12 * 60_000)} where ticket_id = ${t.id} and kind = 'response'`;
+    const first = await runSlaSweep(db, new Date(start));
+    expect(first.atRisk).toBeGreaterThanOrEqual(1);
+    const [risk] = await sql`select count(*)::int as n from notifications where entity_id = ${t.id} and type = 'ticket_sla_at_risk' and user_id = ${ctx.userId}`;
+    expect(risk.n).toBe(1);
+    // Re-running does not warn again.
+    await runSlaSweep(db, new Date(start));
+    const [again] = await sql`select count(*)::int as n from notifications where entity_id = ${t.id} and type = 'ticket_sla_at_risk'`;
+    expect(again.n).toBe(risk.n);
+
+    // 20 minutes later the response target has passed.
+    await runSlaSweep(db, new Date(start + 8 * 60_000));
+    await runSlaSweep(db, new Date(start + 9 * 60_000));
+    const [clock] = await sql`select breached_at, breach_notified_at from sla_clocks where ticket_id = ${t.id} and kind = 'response'`;
+    expect(clock.breached_at).not.toBeNull();
+    const events = await sql`select envelope->'payload' as p from cops_outbox where event_type = 'TicketSlaBreached' and aggregate_id = ${t.id}`;
+    expect(events).toHaveLength(1);
+    expect(events[0].p).toMatchObject({ clock: "response", priority: "p1", target_minutes: 15 });
+    const [breach] = await sql`select count(*)::int as n from notifications where entity_id = ${t.id} and type = 'ticket_sla_breached' and user_id = ${ctx.userId}`;
+    expect(breach.n).toBe(1);
   });
 });
