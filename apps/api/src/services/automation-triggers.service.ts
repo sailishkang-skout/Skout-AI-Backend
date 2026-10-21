@@ -6,6 +6,7 @@ import { createLogger } from "@skout/observability";
 import type { AutomationGraph } from "./automation-graph.js";
 import { findStartNodes } from "./automation-graph.js";
 import { cancelRun, createAutomationRunOnce } from "./automation-run.service.js";
+import { recordPlaybookTimeline } from "./cops-playbooks.service.js";
 
 const { automations, automationVersions, automationRuns, copsOutbox, copsProcessedEvents } = schema;
 const log = createLogger("automation-triggers");
@@ -32,6 +33,8 @@ export interface TriggerConfig {
   everyMinutes?: number;
   /** Events that cancel this workflow's open runs for the same account. */
   stopOn?: string[];
+  /** event: start only when these payload fields have these values, e.g. { signal: "ticket_heavy" }. */
+  payloadEquals?: Record<string, string>;
 }
 
 /** The workflow's trigger config: the config of its trigger start node, if it has one. */
@@ -63,7 +66,10 @@ export function accountOfEvent(e: Envelope): string | null {
 
 /** Whether a trigger config starts a run for this event. */
 export function triggerMatches(t: TriggerConfig, e: Envelope): boolean {
-  if (t.kind === "event") return t.eventType === e.event_type;
+  if (t.kind === "event") {
+    if (t.eventType !== e.event_type) return false;
+    return Object.entries(t.payloadEquals ?? {}).every(([k, v]) => String(e.payload?.[k] ?? "") === v);
+  }
   if (t.kind === "state_change") {
     if (t.eventType !== e.event_type) return false;
     if (t.dimension && e.payload?.dimension !== t.dimension) return false;
@@ -169,6 +175,8 @@ export async function dispatchWorkflowEvents(db: Db, now = new Date(), options: 
       }
     });
   }
+  // COPS-11: a success playbook's run shows on the account timeline once it exists.
+  for (const r of started) await recordPlaybookTimeline(db, r.automationRunId, "started");
   if (started.length || cancelled) log.info("workflow events dispatched", { events: events.length, started: started.length, cancelled });
   return { started, cancelled };
 }

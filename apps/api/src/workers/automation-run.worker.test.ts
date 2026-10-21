@@ -1,5 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
+// COPS-11 playbook timeline entries are not under test here.
+vi.mock("../services/cops-playbooks.service.js", () => ({ recordPlaybookTimeline: vi.fn(async () => undefined) }));
 vi.mock("../lib/redis.js", () => ({
   isRedisAvailable: vi.fn().mockResolvedValue(true),
   redisBullMqConnection: vi.fn().mockReturnValue({ host: "localhost", port: 6379 }),

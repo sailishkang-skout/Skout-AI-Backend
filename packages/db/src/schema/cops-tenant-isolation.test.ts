@@ -48,6 +48,9 @@ const TABLES = [
   // COPS-07
   "cops_config_versions",
   "cops_retention_runs",
+  // COPS-11
+  "cops_health_scores",
+  "cops_health_models",
 ] as const;
 
 maybe("COPS-02 tables are tenant-isolated (Postgres)", () => {
@@ -104,6 +107,8 @@ maybe("COPS-02 tables are tenant-isolated (Postgres)", () => {
     await sql`insert into ticket_account_summaries (workspace_id, account_id, open_count, max_severity) values (${ws}, ${co.id}, 1, 'medium')`;
     await sql`insert into cops_config_versions (workspace_id, kind, key, version, value, reason) values (${ws}, 'feature_flags', 'default', 1, '{}'::jsonb, 'iso')`;
     await sql`insert into cops_retention_runs (workspace_id, mode, policy_version) values (${ws}, 'dry_run', 0)`;
+    await sql`insert into cops_health_scores (workspace_id, account_id, score, state, renewal_risk, dimensions, factors, model_version) values (${ws}, ${co.id}, 50, 'watch', 'low', '{}'::jsonb, '[]'::jsonb, 0)`;
+    await sql`insert into cops_health_models (workspace_id, version, config) values (${ws}, 1, '{}'::jsonb)`;
   }
 
   it("each table holds rows for its own workspace only", async () => {

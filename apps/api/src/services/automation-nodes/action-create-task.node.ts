@@ -18,13 +18,18 @@ export const TASK_TYPES = ["call", "email", "meeting", "review", "approval", "on
 const PRIORITIES = ["low", "medium", "high"] as const;
 
 /**
- * COPS-10 "create task" (Bible p.68). Config: { title; type?; priority?; dueInHours?; assignTo? }.
+ * COPS-10 "create task" (Bible p.68). Config: { title; type?; priority?; dueInHours?; assignTo?
+ * ("account_owner" | "csm" | a user id); includeEvidence? }.
  * The task belongs to the run's account and goes to the account owner unless assignTo names a
  * user. Emits TaskCreated, and runs once per step.
  */
 export const createTaskActionNodeHandler: NodeHandler = async (ctx) => {
-  const config = ctx.node.config as { title?: string; type?: string; priority?: string; dueInHours?: number | string; assignTo?: string };
-  const title = config.title?.trim();
+  const config = ctx.node.config as { title?: string; type?: string; priority?: string; dueInHours?: number | string; assignTo?: string; includeEvidence?: boolean };
+  // COPS-11: a playbook task can carry the evidence its trigger brought (e.g. an expansion signal).
+  const evidence = config.includeEvidence && Array.isArray(ctx.triggerPayload?.evidence)
+    ? (ctx.triggerPayload!.evidence as { reason?: string }[]).map((e) => e.reason).filter(Boolean).join("; ")
+    : "";
+  const title = [config.title?.trim(), evidence].filter(Boolean).join(" — ");
   if (!title) throw new HttpError("Create task needs a title", 422);
   const type = (TASK_TYPES as readonly string[]).includes(config.type ?? "") ? config.type! : "follow_up";
   const priority = (PRIORITIES as readonly string[]).includes(config.priority ?? "") ? config.priority! : "medium";
@@ -39,7 +44,7 @@ export const createTaskActionNodeHandler: NodeHandler = async (ctx) => {
 
   const output = await withStepEffect(ctx, "task", async (tx) => {
     const [account] = await tx
-      .select({ ownerId: companies.ownerId })
+      .select({ ownerId: companies.ownerId, csmId: companies.csmId })
       .from(companies)
       .where(and(eq(companies.id, accountId), eq(companies.workspaceId, ctx.workspaceId)))
       .limit(1);
@@ -48,7 +53,13 @@ export const createTaskActionNodeHandler: NodeHandler = async (ctx) => {
       .insert(tasks)
       .values({
         workspaceId: ctx.workspaceId,
-        assignedTo: config.assignTo && config.assignTo !== "account_owner" ? config.assignTo : account.ownerId ?? null,
+        // "csm": the account's CSM, else its owner (COPS-11); "account_owner" or none: the owner.
+        assignedTo:
+          config.assignTo === "csm"
+            ? account.csmId ?? account.ownerId ?? null
+            : config.assignTo && config.assignTo !== "account_owner"
+              ? config.assignTo
+              : account.ownerId ?? null,
         relatedEntityType: "company",
         relatedEntityId: accountId,
         title: title.slice(0, 500),

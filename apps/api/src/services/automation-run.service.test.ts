@@ -1,4 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+// COPS-11 playbook timeline entries are not under test here.
+vi.mock("./cops-playbooks.service.js", () => ({ recordPlaybookTimeline: vi.fn(async () => undefined) }));
 vi.mock("@skout/shared", () => ({
   claimNext: vi.fn(),
   recordResult: vi.fn(),
