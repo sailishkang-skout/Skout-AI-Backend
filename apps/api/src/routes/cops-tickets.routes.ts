@@ -2,7 +2,8 @@ import type { FastifyInstance } from "fastify";
 import { ticketMetrics } from "../services/cops-ticket-metrics.service.js";
 import { getTicketSla, slaSummaries } from "../services/cops-sla.service.js";
 import { z } from "zod";
-import type { Db } from "@skout/db";
+import { schema, type Db } from "@skout/db";
+import { and, eq } from "drizzle-orm";
 import {
   copsErrorBody,
   copsErrorStatus,
@@ -197,7 +198,14 @@ export async function copsTicketsRoutes(app: FastifyInstance, opts: { db: Db }) 
       async () => {
         const t = (await getTicket(db, ctx, request.params.id)) as { id: string; priority: string; account_tier: string; status: string };
         const sla = await getTicketSla(db, ctx.workspaceId, { id: t.id, priority: t.priority, accountTier: t.account_tier, status: t.status });
-        return { ...t, sla };
+        // COPS-12: the incident this ticket is linked to, if any.
+        const [incident] = await db
+          .select({ id: schema.incidents.id, title: schema.incidents.title, status: schema.incidents.status, owner_id: schema.incidents.ownerId })
+          .from(schema.incidentTicketLinks)
+          .innerJoin(schema.incidents, eq(schema.incidents.id, schema.incidentTicketLinks.incidentId))
+          .where(and(eq(schema.incidentTicketLinks.workspaceId, ctx.workspaceId), eq(schema.incidentTicketLinks.ticketId, t.id)))
+          .limit(1);
+        return { ...t, sla, incident: incident ?? null };
       },
       (data) => ({ data })
     );

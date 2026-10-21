@@ -6,7 +6,8 @@ info:
     Contract for COPS-12, published before the frontend work (Definition of Done). All paths are
     under /api/v1 and use the COPS error envelope {code, message, details, request_id, retryable}.
     Extends the COPS-06 ticket contract (docs/api/copos-06-tickets.openapi.yaml): ticket reads gain
-    `sla` and `release` blocks. Reads need tickets:read, writes tickets:write, customer-facing
+    `sla`, `release`, `first_response_at`, `reopen_count` and `incident` ({id, title, status,
+    owner_id} or null); each queue row gains `sla` ({state, due_at}, its worst clock). Reads need tickets:read, writes tickets:write, customer-facing
     incident updates tickets:send, SLA policy changes workspace:manage (through the COPS-07 admin
     config kind `sla_policy`). Every write is audited. Times are ISO 8601 UTC.
 paths:

@@ -176,6 +176,7 @@ maybe("COPS-06 ticket routes", () => {
     expect((await call("POST", `/incidents/${inc.id}/tickets`, { ticket_id: id })).statusCode).toBe(201);
     const detail = (await call("GET", `/incidents/${inc.id}/detail`)).json().data;
     expect(detail.tickets.map((t: { id: string }) => t.id)).toEqual([id]);
+    expect((await call("GET", `/tickets/${id}`)).json().data.incident).toMatchObject({ id: inc.id, title: "API outage" });
     expect(detail.affected_accounts[0].name).toBe("Ticket Co");
     // Engineering works tickets but cannot publish to the customer.
     expect((await call("POST", `/incidents/${inc.id}/customer-update`, { body: "Fix rolling out" })).statusCode).toBe(403);
