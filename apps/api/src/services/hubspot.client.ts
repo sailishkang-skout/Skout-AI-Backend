@@ -21,7 +21,8 @@ export function buildHubSpotAuthorizeUrl(params: {
   url.searchParams.set("redirect_uri", params.redirectUri);
   url.searchParams.set(
     "scope",
-    "oauth crm.objects.contacts.read crm.objects.contacts.write crm.objects.deals.read crm.objects.deals.write crm.lists.read"
+    // crm.schemas.*.read: the COPS-09 mapping check and schema-drift check read the property lists.
+    "oauth crm.objects.contacts.read crm.objects.contacts.write crm.objects.deals.read crm.objects.deals.write crm.lists.read crm.schemas.contacts.read crm.schemas.deals.read"
   );
   url.searchParams.set("state", params.state);
   return url.toString();
