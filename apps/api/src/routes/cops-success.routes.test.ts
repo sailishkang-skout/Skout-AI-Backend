@@ -52,6 +52,9 @@ describe("COPS-11 customer success routes", () => {
     const o = overview.json().data;
     expect(o.distribution.healthy + o.distribution.watch + o.distribution.at_risk).toBeGreaterThanOrEqual(1);
     expect(o).toHaveProperty("renewalExposure");
+    // The 360 header carries the score behind the health state.
+    const h360 = await app.inject({ method: "GET", url: `/api/v1/accounts/${acc!.id}/360`, headers });
+    expect(h360.json().data.header).toMatchObject({ health_score: h.score, renewal_risk: h.renewalRisk });
     expect(o).toHaveProperty("playbooks");
   });
 

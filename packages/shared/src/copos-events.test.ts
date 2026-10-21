@@ -87,4 +87,11 @@ describe("COPS Phase 1 event contract", () => {
       })
     ).toThrow();
   });
+
+  it("HealthSignalDetected (COPS-11) accepts a signal with evidence and refuses an unknown signal", () => {
+    const payload = { account_id: "11111111-1111-4111-8111-111111111111", signal: "ticket_heavy", cycle: "month:2026-10", health_score: 44, evidence: [{ factor: "open_tickets", reason: "3 open ticket(s)" }] };
+    expect(parseCopsEvent({ ...base, event_type: "HealthSignalDetected", payload }).payload).toEqual(payload);
+    expect(() => parseCopsEvent({ ...base, event_type: "HealthSignalDetected", payload: { ...payload, signal: "churned" } })).toThrow();
+    expect(() => parseCopsEvent({ ...base, event_type: "HealthSignalDetected", payload: { ...payload, evidence: undefined } })).toThrow();
+  });
 });

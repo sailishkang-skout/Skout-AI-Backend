@@ -8,6 +8,8 @@ info:
     crm:manage). Recompute and CSM changes need crm:manage or workspace:manage. Installing
     playbooks and changing the health model need workspace:manage. Every write is audited.
     Health is rule-based, not AI: every point a dimension loses is a factor with its reason.
+    The Customer 360 header (GET /accounts/{id}/360, COPS-02 contract) also carries health_score,
+    renewal_risk and csm_id.
 paths:
   /accounts/{id}/health:
     get:
@@ -136,7 +138,10 @@ components:
       type: object
       properties:
         distribution: { type: object, properties: { healthy: { type: integer }, watch: { type: integer }, at_risk: { type: integer }, unscored: { type: integer } } }
-        renewalExposure: { type: array, description: Open subscriptions ending within 90 days, items: { type: object } }
+        renewalExposure:
+          type: array
+          description: Open subscriptions ending within 90 days, with the annual value up for renewal (arrMinor = monthly line items x 12, minor units, in currency)
+          items: { type: object }
         adoption:
           type: object
           properties:

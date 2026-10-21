@@ -31,7 +31,16 @@ export async function getCustomerSuccessOverview(db: Db, workspaceId: string, no
   for (const d of dist) distribution[(d.state ?? "unscored") as keyof typeof distribution] += d.n;
 
   const renewals = await db
-    .select({ accountId: companies.id, name: companies.name, termEnd: subscriptions.termEnd, healthState: companies.healthState, renewalRisk: companies.renewalRisk })
+    .select({
+      accountId: companies.id,
+      name: companies.name,
+      termEnd: subscriptions.termEnd,
+      healthState: companies.healthState,
+      renewalRisk: companies.renewalRisk,
+      currency: subscriptions.currency,
+      // Annual value up for renewal: the monthly line items times twelve, in minor units.
+      arrMinor: sql<number>`(select coalesce(sum(si.quantity * si.unit_amount_minor), 0) * 12 from subscription_items si where si.subscription_id = ${subscriptions.id})::float8`,
+    })
     .from(subscriptions)
     .innerJoin(companies, eq(subscriptions.accountId, companies.id))
     .where(and(eq(subscriptions.workspaceId, workspaceId), sql`${subscriptions.status} <> 'closed'`, lte(subscriptions.termEnd, new Date(now.getTime() + 90 * DAY)), live))
