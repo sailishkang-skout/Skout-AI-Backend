@@ -36,7 +36,14 @@
    There is no FX conversion.
 4. Pipeline amounts come from `deals.amount` (major units) times 100.
 
-## "The feed is not sending"
+## The feed is behind or failing
+
+Alerts: `analytics_feed_lag_seconds` (warn at 15 minutes, critical at 1 hour) and
+`analytics_feed_failing` (warn when the last batch failed) are in the COPS-07 health report, so the
+CustomerOps warning and critical alerts fire on them (docs/ops/cops-alerts.md). Both are empty until
+the feed has run once; if the feed is turned off after running, delete its checkpoint row
+(`cops_analytics_feed_checkpoints`, sink `posthog`) or the lag alert keeps firing.
+
 
 1. `GET /api/v1/cops/analytics/feed`: `enabled: false` means `POSTHOG_API_KEY` (the project API key,
    `phc_…`) is not set in this environment. It lives in the encrypted environment file only.
