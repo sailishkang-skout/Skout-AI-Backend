@@ -5,6 +5,7 @@ import { createDb } from "@skout/db";
 import { addTicketComment, createTicket, recordTicketRelease, transitionTicket, updateTicket, type TicketContext } from "./cops-tickets.service.js";
 import { backfillSlaClocks, getTicketSla } from "./cops-sla.service.js";
 import { runSlaSweep } from "./cops-sla-sweep.service.js";
+import { ticketMetrics } from "./cops-ticket-metrics.service.js";
 
 const postgres = createRequire(new URL("../../../../packages/db/package.json", import.meta.url))("postgres") as (url: string, options?: object) => any;
 
@@ -142,5 +143,21 @@ maybe("COPS-12 ticket SLA (Postgres)", () => {
     expect(events[0].p).toMatchObject({ clock: "response", priority: "p1", target_minutes: 15 });
     const [breach] = await sql`select count(*)::int as n from notifications where entity_id = ${t.id} and type = 'ticket_sla_breached' and user_id = ${ctx.userId}`;
     expect(breach.n).toBe(1);
+  });
+
+  it("dashboard metrics: open, MTTA, MTTR, reopen and breach rate, each with its definition", async () => {
+    const done = (await createTicket(db, ctx, { account_id: accountId, title: "Done", priority: "p3" } as never)).ticket;
+    for (const st of ["triage", "assigned", "in_progress", "testing", "resolved"] as const) await transitionTicket(db, ctx, done.id, st);
+    const m = await ticketMetrics(db, ctx.workspaceId, { days: 30 });
+    expect(m.open).toBeGreaterThan(0);
+    expect(m.mtta_minutes).not.toBeNull();
+    expect(m.mttr_minutes).not.toBeNull();
+    // One reopened ticket among the resolved ones in this suite.
+    expect(m.reopen_rate).toBeGreaterThan(0);
+    // The sweep test breached one clock.
+    expect(m.breach_rate).toBeGreaterThan(0);
+    expect(m.at_risk).toBeGreaterThan(0);
+    expect(m.definitions.mtta_minutes).toMatch(/first response/);
+    expect((await ticketMetrics(db, ctx.workspaceId, { days: 30, tier: "enterprise" })).open).toBe(0);
   });
 });

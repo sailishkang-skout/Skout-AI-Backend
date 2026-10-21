@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { ticketMetrics } from "../services/cops-ticket-metrics.service.js";
 import { getTicketSla, slaSummaries } from "../services/cops-sla.service.js";
 import { z } from "zod";
 import type { Db } from "@skout/db";
@@ -153,6 +154,17 @@ export async function copsTicketsRoutes(app: FastifyInstance, opts: { db: Db }) 
       },
       (page) => page
     );
+  });
+
+  /** COPS-12 engineering dashboard metrics (Bible p.56). */
+  app.get<{ Querystring: unknown }>("/tickets/metrics", { preHandler: readGate }, async (request, rawReply) => {
+    const reply = rawReply as unknown as Reply;
+    const ctx = ctxOf(request);
+    const parsed = z
+      .object({ days: z.coerce.number().int().min(1).max(365).default(30), tier: z.enum(["smb", "mid_market", "enterprise"]).optional(), team: z.string().max(100).optional() })
+      .safeParse(request.query ?? {});
+    if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+    return run(reply, ctx.requestId, () => ticketMetrics(db, ctx.workspaceId, parsed.data), (data) => ({ data }));
   });
 
   /** Prefilled fields for "Create ticket" from an account or an onboarding blocker. */
