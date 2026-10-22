@@ -54,7 +54,7 @@ function buildHmacSignature(secret: string, timestampSec: number, body: string):
  * Constant-time comparison that also handles length mismatches without
  * throwing (timingSafeEqual requires equal-length buffers).
  */
-function safeEqual(a: string, b: string): boolean {
+export function safeEqual(a: string, b: string): boolean {
   try {
     const bufA = Buffer.from(a);
     const bufB = Buffer.from(b);
