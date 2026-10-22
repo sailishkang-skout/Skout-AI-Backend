@@ -37,7 +37,11 @@ describe("COPS-13 recommendation rules", () => {
     const onboarding = { trials: [{ id: "p1", trialEndsAt: days(3) }], activated: false, stalledSignals: [{ id: "g1", trigger: "delivered_no_login", firedAt: days(-2) }] };
     expect(types(base({ onboarding }))).toEqual(["trial_not_activated", "stalled_onboarding"]);
     expect(types(base({ onboarding: { ...onboarding, activated: true } }))).toEqual([]);
-    expect(types(base({ onboarding: { ...onboarding, trials: [{ id: "p1", trialEndsAt: days(20) }], stalledSignals: [{ id: "g1", trigger: "x", firedAt: days(-30) }] } }))).toEqual([]);
+    expect(types(base({ onboarding: { ...onboarding, trials: [{ id: "p1", trialEndsAt: days(20) }], stalledSignals: [{ id: "g1", trigger: "no_delivery", firedAt: days(-30) }] } }))).toEqual([]);
+    // first_login is good news, not a stall.
+    expect(types(base({ onboarding: { trials: [], activated: false, stalledSignals: [{ id: "g2", trigger: "first_login", firedAt: days(-1) }] } }))).toEqual([]);
+    const [stall] = recommendationCandidates(base({ onboarding: { trials: [], activated: false, stalledSignals: [{ id: "g3", trigger: "delivered_no_login", firedAt: days(-1) }] } }));
+    expect(stall!.headline).toBe("Onboarding stalled: the onboarding email was delivered but nobody has signed in");
   });
 
   it("ticket-heavy and SLA breached cite the tickets and clocks", () => {
@@ -68,7 +72,7 @@ describe("COPS-13 recommendation rules", () => {
         account: { id: "a1", name: "Acme", healthScore: 20, healthState: "at_risk", healthComputedAt: now },
         subscriptions: [{ id: "s1", status: "past_due", termEnd: days(10), arrMinor: 5, currency: "USD" }],
         overdueInvoices: [{ id: "i1", dueAt: days(-1), amountMinor: 5, currency: "USD" }],
-        onboarding: { trials: [{ id: "p1", trialEndsAt: days(1) }], activated: false, stalledSignals: [{ id: "g1", trigger: "x", firedAt: days(-1) }] },
+        onboarding: { trials: [{ id: "p1", trialEndsAt: days(1) }], activated: false, stalledSignals: [{ id: "g1", trigger: "login_no_value", firedAt: days(-1) }] },
         tickets: [1, 2, 3].map((i) => ({ id: `t${i}`, title: "T", priority: "p2", severity: "high", breachedClockIds: [`c${i}`] })),
         signals: [{ eventId: "e1", signal: "expansion_signal", at: days(-1) }],
       })

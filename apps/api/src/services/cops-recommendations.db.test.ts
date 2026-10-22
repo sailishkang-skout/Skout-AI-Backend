@@ -72,6 +72,9 @@ maybe("COPS-13 recommendations (Postgres)", () => {
     const r = await generateRecommendations(db, ctx, accountId, citingModel, new Date(now));
     const types = r.data.map((x) => x.type).sort();
     expect(types).toEqual(["renewal_risk", "sla_breached"]);
+    // 5 seats × INR 1,000 a month = INR 60,000 a year, read from the subscription's own items.
+    const renewal = r.data.find((x) => x.type === "renewal_risk")!;
+    expect(renewal.evidence_refs[0]!.label).toContain("INR 60,000 ARR");
     for (const rec of r.data) {
       expect(rec.status).toBe("pending");
       expect(rec.evidence_refs.length).toBeGreaterThan(0);
