@@ -1,0 +1,189 @@
+openapi: 3.1.0
+info:
+  title: COPS-14 custom roles and member role grants
+  version: 0.1.0
+  description: |
+    COPS-14 part C, first slice (docs/tickets/copos-14-audit.md section 3). Builds on the COPS-01
+    RBAC tables (roles, role_permissions, workspace_member_roles) and the verb x resource keys.
+
+    - Every endpoint needs `admin:admin`. Errors use the COPS envelope
+      {code, message, details, request_id, retryable}.
+    - Role kinds: `base` (owner, admin, member; set by the team settings, not here), `system`
+      (the CustomerOps roles, read-only) and `custom` (this workspace's own roles).
+    - No privilege escalation: a caller cannot create or edit a role with a permission they do not
+      hold themselves, or grant a role that has one.
+    - Every change writes an audit row with before/after; changes that alter access need a reason.
+servers:
+  - url: /api/v1
+paths:
+  /cops/permissions:
+    get:
+      summary: The permission catalog
+      responses:
+        "200":
+          description: Every permission key, grouped by category
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/Permission" } }
+  /cops/roles:
+    get:
+      summary: Roles available in this workspace
+      responses:
+        "200":
+          description: Base, system and this workspace's custom roles
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/Role" } }
+    post:
+      summary: Create a custom role
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 60 }
+                description: { type: string, maxLength: 300 }
+                permission_keys: { type: array, items: { type: string } }
+                clone_from_role_id:
+                  type: string
+                  format: uuid
+                  description: Start from another role's permissions; permission_keys, when given, replaces them.
+      responses:
+        "200": { description: Created, content: { application/json: { schema: { type: object, properties: { data: { $ref: "#/components/schemas/Role" } } } } } }
+        "403": { description: A permission the caller does not hold, or no admin:admin }
+        "409": { description: A custom role with this name already exists }
+        "422": { description: Unknown permission key or invalid body }
+  /cops/roles/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      summary: Edit a custom role (base and system roles cannot be edited)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 60 }
+                description: { type: string, maxLength: 300 }
+                permission_keys: { type: array, items: { type: string } }
+                reason: { type: string, minLength: 3, maxLength: 500 }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { type: object, properties: { data: { $ref: "#/components/schemas/Role" } } } } } }
+        "404": { description: Not a role of this workspace }
+        "409": { description: Base or system role, or the name is taken }
+    delete:
+      summary: Delete a custom role that nobody holds
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 3, maxLength: 500 }
+      responses:
+        "200": { description: Deleted }
+        "409": { description: Base or system role, or members still hold it }
+  /cops/members/{userId}/roles:
+    parameters:
+      - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: A member's roles in this workspace and the permissions they add up to
+      responses:
+        "200": { description: Roles, content: { application/json: { schema: { $ref: "#/components/schemas/MemberRoles" } } } }
+        "404": { description: Not a member of this workspace }
+    put:
+      summary: Set a member's system and custom roles
+      description: The base role (owner, admin, member) is kept; it is changed in team settings.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role_ids, reason]
+              properties:
+                role_ids: { type: array, maxItems: 20, items: { type: string, format: uuid } }
+                reason: { type: string, minLength: 3, maxLength: 500 }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/MemberRoles" } } } }
+        "403": { description: A role with a permission the caller does not hold }
+        "404": { description: Not a member, or a role that is not available here }
+        "422": { description: A base role in role_ids }
+  /cops/members/{userId}/data-scope:
+    parameters:
+      - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: A member's data scope (all accounts, or only the accounts they own or are CSM of)
+      responses:
+        "200": { description: Scope, content: { application/json: { schema: { $ref: "#/components/schemas/DataScope" } } } }
+        "404": { description: Not a member of this workspace }
+    put:
+      summary: Set a member's data scope
+      description: |
+        With `own_accounts`, every `/accounts/{id}/...` and `/account-360/{id}` route answers 404
+        for other accounts, and dashboards, drill-through and the funnel count only the member's
+        accounts. An owner cannot be limited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scope, reason]
+              properties:
+                scope: { type: string, enum: [all, own_accounts] }
+                reason: { type: string, minLength: 3, maxLength: 500 }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/DataScope" } } } }
+        "404": { description: Not a member of this workspace }
+        "409": { description: The member is the workspace owner }
+components:
+  schemas:
+    DataScope:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            user_id: { type: string, format: uuid }
+            scope: { type: string, enum: [all, own_accounts] }
+    Permission:
+      type: object
+      properties:
+        key: { type: string, example: "commercial:approve" }
+        description: { type: string }
+        category: { type: string }
+    Role:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        key: { type: string }
+        name: { type: string }
+        description: { type: [string, "null"] }
+        kind: { type: string, enum: [base, system, custom] }
+        editable: { type: boolean }
+        permission_keys: { type: array, items: { type: string } }
+        member_count: { type: integer }
+    MemberRoles:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            user_id: { type: string, format: uuid }
+            roles: { type: array, items: { $ref: "#/components/schemas/Role" } }
+            permissions: { type: array, items: { type: string } }
