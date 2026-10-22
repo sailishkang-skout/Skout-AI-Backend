@@ -1206,15 +1206,18 @@ export async function ingestCompanyCapture(
           ];
           const distinct = [...new Map(candidates.map((row) => [row.id, row])).values()];
           // A saved company holding another LinkedIn id of the same kind is a different LinkedIn
-          // company. Name, domain, industry or headquarters never override that; a same-name pair
-          // is queued for review below instead.
+          // company: a name, with or without a shared industry or headquarters, never overrides
+          // that, and such a same-name pair is queued for review below instead. The company's own
+          // website does: the same domain is the same company, which is how a rebrand that moved
+          // to a new LinkedIn URL is recognised. (A parent's or acquirer's domain is never this
+          // company's `domain`; only the captured website is compared.)
           const different = await differentLinkedinCompanies(
             tx,
             actor.workspaceId,
             distinct.map((row) => row.id),
             { publicId: capture.publicId, memberId: capture.memberId }
           );
-          const unkeyed = distinct.filter((row) => !different.has(row.id));
+          const unkeyed = distinct.filter((row) => !different.has(row.id) || (!!domain && row.domain === domain));
           const incoming = { ...capture, domain };
           const like = (row: CompanyRow) => ({ name: row.name, domain: row.domain, industry: row.industry, headquarter: row.location });
           stored = unkeyed
