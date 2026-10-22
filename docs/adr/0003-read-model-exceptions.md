@@ -207,3 +207,10 @@ by apps/api.
 | `apps/api/src/services/cops-dashboards.db.test.ts` | companies, deals, pipelines, pipeline_stages, users | test fixtures |
 | `apps/api/src/services/cops-recommendations.service.ts` | companies, tasks, activities | reads the account for the recommendation context; **insert** of one task when a recommendation is approved, and one activity per decision for the timeline |
 | `apps/api/src/services/cops-recommendations.db.test.ts`, `apps/api/src/routes/cops-recommendations.routes.test.ts` | companies, deals, pipelines, pipeline_stages, users | test fixtures |
+
+## COPS-14 additions (2026-10-22)
+
+| File | Tables | Access |
+|---|---|---|
+| `apps/api/src/services/cops-data-scope.service.ts` | companies | read only: `owner_id` and `csm_id`, to check before every account route whether a member limited to their own accounts may see it |
+| `apps/api/src/services/cops-roles.db.test.ts`, `apps/api/src/routes/cops-data-scope.routes.test.ts` | companies | test fixtures |

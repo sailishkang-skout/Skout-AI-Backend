@@ -5,6 +5,7 @@ import { createDb } from "@skout/db";
 import { getMemberPermissions } from "@skout/auth";
 import { createRole, deleteRole, getMemberRoles, listRoles, setMemberRoles, updateRole, type RoleCtx } from "./cops-roles.service.js";
 import { createTeamService } from "./team.service.js";
+import { canSeeAccount, getDataScope, setDataScope } from "./cops-data-scope.service.js";
 
 const postgres = createRequire(new URL("../../../../packages/db/package.json", import.meta.url))("postgres") as (url: string, options?: object) => any;
 
@@ -109,5 +110,21 @@ maybe("COPS-14 custom roles (Postgres)", () => {
     expect(await deleteRole(db, ctx, desk!.id, "Desk closed")).toEqual({ id: desk!.id, deleted: true });
     const [audit] = await sql`select count(*)::int as n from audit_logs where workspace_id = ${ws} and action in ('role.deleted', 'member.roles_updated')`;
     expect(audit.n).toBeGreaterThanOrEqual(5);
+  });
+
+  it("limits a member to their own accounts (owner or CSM), audited; an owner cannot be limited", async () => {
+    const [mine] = await sql`insert into companies (workspace_id, name, csm_id) values (${ws}, 'CSM of', ${member}) returning id`;
+    const [theirs] = await sql`insert into companies (workspace_id, name) values (${ws}, 'Not mine') returning id`;
+    expect(await canSeeAccount(db, ws, member, theirs.id)).toBe(true);
+    await expect(setDataScope(db, ctx, owner, "own_accounts", "Test")).rejects.toMatchObject({ code: "BUSINESS_STATE_CONFLICT" });
+    expect(await setDataScope(db, ctx, member, "own_accounts", "Regional rep")).toEqual({ user_id: member, scope: "own_accounts" });
+    expect(await getDataScope(db, ws, member)).toBe("own_accounts");
+    expect(await canSeeAccount(db, ws, member, mine.id)).toBe(true);
+    expect(await canSeeAccount(db, ws, member, theirs.id)).toBe(false);
+    expect(await getDataScope(db, otherWs, member)).toBe("all");
+    await setDataScope(db, ctx, member, "all", "Back to all accounts");
+    expect(await canSeeAccount(db, ws, member, theirs.id)).toBe(true);
+    const rows = await sql`select before_state, after_state from audit_logs where workspace_id = ${ws} and action = 'member.data_scope_updated' order by created_at`;
+    expect(rows.map((r: { after_state: { scope: string } }) => r.after_state.scope)).toEqual(["own_accounts", "all"]);
   });
 });
