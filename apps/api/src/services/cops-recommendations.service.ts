@@ -249,7 +249,10 @@ const visibleTypes = (ctx: RecContext) => {
   const hidden = new Set<string>();
   if (!can(ctx, "commercial:read")) hidden.add("renewal_risk");
   if (!can(ctx, "billing:read") && !can(ctx, "commercial:read")) hidden.add("payment_past_due");
-  if (!can(ctx, "tickets:read")) (hidden.add("ticket_heavy"), hidden.add("sla_breached"));
+  if (!can(ctx, "tickets:read")) {
+    hidden.add("ticket_heavy");
+    hidden.add("sla_breached");
+  }
   return hidden;
 };
 
@@ -296,8 +299,10 @@ export async function generateRecommendations(db: Db, ctx: RecContext, accountId
     if (model) {
       try {
         const accepted = acceptRationale(await model(messages), c);
-        if (accepted) (rationale = accepted), (source = "llm");
-        else log.warn("model rationale refused; using the rule's wording", { type: c.type });
+        if (accepted) {
+          rationale = accepted;
+          source = "llm";
+        } else log.warn("model rationale refused; using the rule's wording", { type: c.type });
       } catch (err) {
         log.warn("model rationale failed; using the rule's wording", { err, type: c.type });
       }

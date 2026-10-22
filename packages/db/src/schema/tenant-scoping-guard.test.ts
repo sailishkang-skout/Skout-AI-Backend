@@ -42,7 +42,6 @@ const UNSCOPED: Record<string, string> = {
   automation_versions: "child of automations",
   buying_committee_members: "child of buying committee / company",
   company_snapshots: "child of companies",
-  enrichment_attempts: "child of enrichment jobs",
   inbox_messages: "child of inbox_threads",
   list_members: "child of lists",
   meeting_attendees: "child of meetings",
