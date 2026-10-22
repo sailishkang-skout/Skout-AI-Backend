@@ -206,7 +206,7 @@ components:
     EvidenceRef:
       type: object
       properties:
-        kind: { type: string, enum: [health_score, ticket, subscription, invoice, provisioning, onboarding_signal, sla_clock, timeline_event] }
+        kind: { type: string, enum: [health_score, ticket, subscription, invoice, provisioning, onboarding_signal, sla_clock, timeline_event, credit_ledger] }
         id: { type: string }
         label: { type: string }
     Recommendation:
@@ -214,7 +214,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         account_id: { type: string, format: uuid }
-        type: { type: string, enum: [renewal_risk, trial_not_activated, ticket_heavy, sla_breached, payment_past_due, expansion_signal, stalled_onboarding] }
+        type: { type: string, enum: [renewal_risk, trial_not_activated, ticket_heavy, sla_breached, payment_past_due, expansion_signal, stalled_onboarding, credits_running_low] }
         headline: { type: string }
         rationale: { type: string }
         evidence_refs: { type: array, minItems: 1, items: { $ref: "#/components/schemas/EvidenceRef" } }

@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { createDb } from "@skout/db";
 import { feedStatus, runAnalyticsFeed } from "./cops-analytics-feed.service.js";
+import { loadOpsMetrics } from "./cops-ops-metrics.service.js";
 
 const postgres = createRequire(new URL("../../../../packages/db/package.json", import.meta.url))("postgres") as (url: string, options?: object) => any;
 
@@ -56,6 +57,11 @@ maybe("COPS-13 analytics feed (Postgres)", () => {
     const refused = await runAnalyticsFeed(db, { apiKey: "phc_test", host: "https://ph.test/", sink, fetchImpl: (async () => new Response("", { status: 503 })) as typeof fetch });
     expect(refused).toMatchObject({ enabled: true, sent: 0, error: "PostHog answered 503" });
     expect((await feedStatus(db, { apiKey: "phc_test", sink }, ws)).lag_events).toBe(3);
+    // The health report carries the feed, so the CustomerOps alerts fire on it.
+    const feedMetrics = async () => Object.fromEntries((await loadOpsMetrics(db, ws, { feedSink: sink })).metrics.filter((m) => m.key.startsWith("analytics_feed")).map((m) => [m.key, m]));
+    const failing = await feedMetrics();
+    expect(failing.analytics_feed_failing).toMatchObject({ value: 1, status: "warn", runbook: "docs/runbooks/cops-analytics-ai.md#the-feed-is-behind-or-failing" });
+    expect(failing.analytics_feed_lag_seconds!.value).not.toBeNull();
 
     const ok = (async (input: string, init: { body: string }) => {
       expect(input).toBe("https://ph.test/batch/");
@@ -80,6 +86,9 @@ maybe("COPS-13 analytics feed (Postgres)", () => {
     const after = await feedStatus(db, { apiKey: "phc_test", sink }, ws);
     expect(after.lag_events).toBe(0);
     expect(after.last_error).toBeNull();
+    const healthy = await feedMetrics();
+    expect(healthy.analytics_feed_failing).toMatchObject({ value: 0, status: "ok" });
+    expect(healthy.analytics_feed_lag_seconds).toMatchObject({ value: null, status: "ok" });
     // Running again sends nothing new of ours.
     const n = sent.length;
     await runAnalyticsFeed(db, { apiKey: "phc_test", host: "https://ph.test/", sink, fetchImpl: ok });

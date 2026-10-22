@@ -4,13 +4,13 @@
  * has evidence by construction; the model only words the rationale. Pure functions: the context
  * builder decides what the caller may see, and a rule without its data simply does not fire.
  */
-export const RECOMMENDATION_TYPES = ["renewal_risk", "trial_not_activated", "ticket_heavy", "sla_breached", "payment_past_due", "expansion_signal", "stalled_onboarding"] as const;
+export const RECOMMENDATION_TYPES = ["renewal_risk", "trial_not_activated", "ticket_heavy", "sla_breached", "payment_past_due", "expansion_signal", "stalled_onboarding", "credits_running_low"] as const;
 export type RecommendationType = (typeof RECOMMENDATION_TYPES)[number];
 
 export const RECOMMENDATION_ACTIONS = ["create_task", "start_playbook", "renewal_prep_task"] as const;
 export type RecommendationActionKind = (typeof RECOMMENDATION_ACTIONS)[number];
 
-export type EvidenceKind = "health_score" | "ticket" | "subscription" | "invoice" | "provisioning" | "onboarding_signal" | "sla_clock" | "timeline_event";
+export type EvidenceKind = "health_score" | "ticket" | "subscription" | "invoice" | "provisioning" | "onboarding_signal" | "sla_clock" | "timeline_event" | "credit_ledger";
 export interface EvidenceRef {
   kind: EvidenceKind;
   id: string;
@@ -51,6 +51,12 @@ export interface AccountContext {
   /** Omitted when the caller cannot read tickets. */
   tickets?: { id: string; title: string; priority: string; severity: string; breachedClockIds: string[] }[];
   signals: { eventId: string; signal: string; at: Date }[];
+  /** Product usage of the account's provisioned workspaces. Omitted when the caller cannot read onboarding data. */
+  usage?: { workspaceId: string; balance: number; granted: number; consumed30d: number; lastConsumeId: string | null }[];
+  /** The latest call, email or meeting on the account's timeline (public rows only); null when there is none. */
+  lastTouch?: { id: string; type: string; at: Date } | null;
+  /** Playbooks (automation template keys) already running on this account. */
+  runningPlaybooks?: string[];
 }
 
 const DAY = 86_400_000;
@@ -72,10 +78,22 @@ function healthRef(c: AccountContext): EvidenceRef[] {
   return c.account.healthScore === null ? [] : [{ kind: "health_score", id: c.account.healthScoreId ?? c.account.id, label: `Health ${c.account.healthScore} (${c.account.healthState ?? "unknown"})` }];
 }
 
+/** A rule that suggests a playbook already running on the account is dropped: the playbook is the follow-up. */
 export function recommendationCandidates(c: AccountContext): Candidate[] {
+  const running = new Set(c.runningPlaybooks ?? []);
+  return candidates(c).filter((x) => !(x.action.kind === "start_playbook" && x.action.params.playbook_key && running.has(x.action.params.playbook_key)));
+}
+
+function candidates(c: AccountContext): Candidate[] {
   const out: Candidate[] = [];
   const now = c.now;
   const weakHealth = c.account.healthState === "at_risk" || c.account.healthState === "watch";
+  // No call, email or meeting in 30 days. Only known when the timeline was read (lastTouch !== undefined).
+  const touchDays = c.lastTouch ? Math.floor((now.getTime() - c.lastTouch.at.getTime()) / DAY) : null;
+  const staleTouch = c.lastTouch !== undefined && (touchDays === null || touchDays > 30);
+  const touchRef: EvidenceRef[] =
+    c.lastTouch && staleTouch ? [{ kind: "timeline_event", id: c.lastTouch.id, label: `Last ${c.lastTouch.type} ${touchDays} days ago (${c.lastTouch.at.toISOString().slice(0, 10)})` }] : [];
+  const touchText = !staleTouch ? "" : touchDays === null ? " No call, email or meeting is on the timeline." : ` The last ${c.lastTouch!.type} was ${touchDays} days ago.`;
 
   // Renewal within 90 days on an account whose health is weak.
   for (const s of c.subscriptions ?? []) {
@@ -84,10 +102,10 @@ export function recommendationCandidates(c: AccountContext): Candidate[] {
     out.push({
       type: "renewal_risk",
       headline: `Renewal in ${days} days with ${c.account.healthState === "at_risk" ? "at-risk" : "watch"} health`,
-      rationale: `${money(s.arrMinor, s.currency)} ARR renews in ${days} days and the account's health is ${c.account.healthScore ?? "unknown"}. Review outcomes and stakeholders before the renewal conversation.`,
-      evidence: [{ kind: "subscription", id: s.id, label: `${money(s.arrMinor, s.currency)} ARR, term ends ${s.termEnd.toISOString().slice(0, 10)}` }, ...healthRef(c)],
+      rationale: `${money(s.arrMinor, s.currency)} ARR renews in ${days} days and the account's health is ${c.account.healthScore ?? "unknown"}.${touchText} Review outcomes and stakeholders before the renewal conversation.`,
+      evidence: [{ kind: "subscription", id: s.id, label: `${money(s.arrMinor, s.currency)} ARR, term ends ${s.termEnd.toISOString().slice(0, 10)}` }, ...healthRef(c), ...touchRef],
       action: { kind: "start_playbook", params: { title: "Renewal approaching: outcomes review, stakeholders, commercial prep", task_type: "renewal_action", priority: "high", due_in_hours: 120, assign_to: "csm", playbook_key: "cs_renewal_approaching" } },
-      confidence: clamp(0.55 + (90 - days) / 300 + (c.account.healthState === "at_risk" ? 0.15 : 0)),
+      confidence: clamp(0.55 + (90 - days) / 300 + (c.account.healthState === "at_risk" ? 0.15 : 0) + (staleTouch ? 0.1 : 0)),
       dedupeKey: `renewal_risk:${s.id}:${s.termEnd.toISOString().slice(0, 10)}`,
       resource: "commercial",
     });
@@ -190,6 +208,23 @@ export function recommendationCandidates(c: AccountContext): Candidate[] {
         confidence: 0.65,
         dedupeKey: `stalled_onboarding:${recent.id}`,
         resource: "onboarding",
+      });
+    }
+  }
+  // High usage, low credits on an activated account (before activation the COPS-05 low_credits stall covers it).
+  if (c.onboarding?.activated) {
+    for (const u of c.usage ?? []) {
+      if (u.granted <= 0 || u.balance > u.granted * 0.2 || u.consumed30d <= 0 || !u.lastConsumeId) continue;
+      const label = `${u.consumed30d.toLocaleString("en-US")} credits used in 30 days; ${u.balance.toLocaleString("en-US")} of ${u.granted.toLocaleString("en-US")} left`;
+      out.push({
+        type: "credits_running_low",
+        headline: "High usage, low credits",
+        rationale: `The team used ${u.consumed30d.toLocaleString("en-US")} credits in the last 30 days and ${u.balance.toLocaleString("en-US")} of ${u.granted.toLocaleString("en-US")} are left. Talk about a top-up or a plan change before work stops.`,
+        evidence: [{ kind: "credit_ledger", id: u.lastConsumeId, label }],
+        action: { kind: "create_task", params: { title: "High usage, low credits: top-up or plan conversation", task_type: "call", priority: u.balance <= u.granted * 0.05 ? "high" : "medium", due_in_hours: 48, assign_to: "account_owner" } },
+        confidence: clamp(0.6 + (1 - u.balance / u.granted) * 0.3),
+        dedupeKey: `credits_running_low:${u.workspaceId}`,
+        resource: "crm",
       });
     }
   }

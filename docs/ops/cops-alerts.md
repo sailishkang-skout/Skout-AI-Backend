@@ -42,6 +42,8 @@ report needs Redis and the worker, so the "health report has stopped" monitor ma
 | `payment_webhook_processing_p95_ms` (receipt to outcome, 24 hours) | 2000 | 10000 | `runbooks/cops-commercial-credits.md` |
 | `workflow_steps_stuck` (executing over 15 minutes) | 1 | 10 | `runbooks/cops-onboarding.md` |
 | `workflow_steps_failed_24h` | 5 | 25 | `runbooks/cops-onboarding.md` |
+| `analytics_feed_lag_seconds` (COPS-13: oldest published event not yet sent to PostHog) | 900 s | 3600 s | `runbooks/cops-analytics-ai.md` |
+| `analytics_feed_failing` (COPS-13: the last batch was refused or PostHog was unreachable) | 1 | none | `runbooks/cops-analytics-ai.md` |
 
 Webhook latency is measured from migration 0122 on: `provider_created_at` (the provider's own
 event time) and `processed_at` are stored per event. Events received before that migration have

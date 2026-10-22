@@ -25,6 +25,8 @@ const LOGICAL_NAMES = [
   "personalize",
   "sequence-generate",
   "sequence-step-suggest",
+  // COPS-13 recommendation rationale (cops-recommendations.service RECOMMENDATION_VERSION_NAME).
+  "cops-recommendation",
 ] as const;
 
 const databaseUrl = resolveDatabaseUrl();

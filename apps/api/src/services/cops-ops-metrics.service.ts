@@ -1,10 +1,12 @@
 import { sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
+import { FEED_SINK } from "./cops-analytics-feed.service.js";
 
 /**
  * COPS-07 operational metrics for dashboards and alerts (Bible p.89): outbox lag, dead-lettered
  * events, provisioning latency against the 2-minute target, payment webhook latency and outcomes,
- * and follow-up steps stuck in `executing`. Scoped to one workspace for the admin page, or
+ * follow-up steps stuck in `executing`, and the COPS-13 analytics feed (lag behind the outbox and
+ * the last sink error). Scoped to one workspace for the admin page, or
  * platform-wide (workspaceId null) for the scheduled report that monitors read. Thresholds match
  * docs/runbooks/cops-platform.md and docs/ops/cops-alerts.md.
  */
@@ -37,7 +39,8 @@ function metric(key: string, label: string, value: number | null, unit: OpsMetri
 
 const one = async <T>(db: Db, query: ReturnType<typeof sql>) => ((await db.execute(query)) as unknown as T[])[0] as T;
 
-export async function loadOpsMetrics(db: Db, workspaceId: string | null): Promise<{ generated_at: string; metrics: OpsMetric[] }> {
+/** `feedSink` names the analytics feed checkpoint (tests use their own). */
+export async function loadOpsMetrics(db: Db, workspaceId: string | null, opts: { feedSink?: string } = {}): Promise<{ generated_at: string; metrics: OpsMetric[] }> {
   /** One tenant, or every tenant for the platform-wide report. */
   const scope = (column: string) => (workspaceId ? sql`${sql.raw(column)} = ${workspaceId}` : sql`true`);
 
@@ -82,9 +85,23 @@ export async function loadOpsMetrics(db: Db, workspaceId: string | null): Promis
         where ${scope("e.workspace_id")}`
   );
 
+  // COPS-13 analytics feed. The checkpoint is one per sink (platform-wide); the lag is the age of
+  // the oldest published event of this scope still behind it. No checkpoint row: the feed has never
+  // run (off, no PostHog key), so there is nothing to measure.
+  const feed = await one<{ lag_seconds: number | null; failing: number | null }>(
+    db,
+    sql`select
+          (select extract(epoch from now() - min(o.published_at))::int from cops_outbox o
+            where o.published_at is not null and ${scope("o.tenant_id")}
+              and (c.last_created_at is null or (date_trunc('milliseconds', o.published_at), o.id) > (c.last_created_at, c.last_event_id))) as lag_seconds,
+          (case when c.last_error is null then 0 else 1 end)::int as failing
+        from cops_analytics_feed_checkpoints c where c.sink = ${opts.feedSink ?? FEED_SINK}`
+  );
+
   const platform = "docs/runbooks/cops-platform.md";
   const commercial = "docs/runbooks/cops-commercial-credits.md";
   const onboarding = "docs/runbooks/cops-onboarding.md#a-step-is-stuck-in-executing";
+  const analytics = "docs/runbooks/cops-analytics-ai.md";
   return {
     generated_at: new Date().toISOString(),
     metrics: [
@@ -100,6 +117,8 @@ export async function loadOpsMetrics(db: Db, workspaceId: string | null): Promis
       metric("payment_webhook_processing_p95_ms", "Payment webhook processing p95 (24 hours)", webhooks.processing_p95, "ms", 2000, 10_000, `${commercial}#reconcile-a-payment`),
       metric("workflow_steps_stuck", `Follow-up steps executing for over ${STUCK_STEP_MINUTES} minutes`, steps.stuck, "count", 1, 10, onboarding),
       metric("workflow_steps_failed_24h", "Follow-up steps failed (24 hours)", steps.failed, "count", 5, 25, onboarding),
+      metric("analytics_feed_lag_seconds", "Analytics feed lag (oldest event not yet sent)", feed?.lag_seconds ?? null, "seconds", 900, 3600, `${analytics}#the-feed-is-behind-or-failing`),
+      metric("analytics_feed_failing", "Analytics feed last batch failed", feed?.failing ?? null, "count", 1, null, `${analytics}#the-feed-is-behind-or-failing`),
     ],
   };
 }
