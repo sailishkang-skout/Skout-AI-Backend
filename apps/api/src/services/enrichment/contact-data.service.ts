@@ -11,7 +11,7 @@ import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../../config/env.js";
-import { isEmailIntelConfigured, verifyEmailAsVerdict } from "../email-intel.service.js";
+import { isEmailIntelConfigured, verifyEmailAsTrustedVerdict } from "../email-intel.service.js";
 import { recordEvidence } from "../evidence.service.js";
 import { CaptureError, type CaptureActor } from "./capture-ingest.service.js";
 import { resolveEmailVerifier } from "./index.js";
@@ -287,7 +287,16 @@ export async function verifyContactEmail(db: Db, config: Env, actor: CaptureActo
 
   let verdict: { status: string; deliverabilityScore: number; catchAll: boolean; risky: boolean } | null = null;
   let provider = "email-intel";
-  if (isEmailIntelConfigured(config)) verdict = await verifyEmailAsVerdict(config, email);
+  if (isEmailIntelConfigured(config)) {
+    const trusted = await verifyEmailAsTrustedVerdict(config, email, now);
+    if (trusted) {
+      const { untrustedReason, ...rest } = trusted;
+      verdict = rest;
+      if (untrustedReason) {
+        log.info("verified email not trusted as proof", { workspaceId: actor.workspaceId, prospectId, reason: untrustedReason });
+      }
+    }
+  }
   if (!verdict) {
     const verifier = await resolveEmailVerifier(db, config, actor.workspaceId);
     // The stub answers from a fixed rule, not from the mailbox: it is not a verification.
