@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   companyIdFromCompanyUrl,
   isSalesNavigatorUrl,
+  linkedinIdFromSegment,
   normalizeLinkedinId,
   publicIdFromProfileUrl,
   salesLeadIdFromUrl,
@@ -60,7 +61,8 @@ const linkedinId = z
   .trim()
   .min(1)
   .max(200)
-  .regex(/^[^\s/?#]+$/, "Not a LinkedIn identifier");
+  .regex(/^[^\s/?#]+$/, "Not a LinkedIn identifier")
+  .refine((value) => !!linkedinIdFromSegment(value), "Not a LinkedIn identifier");
 
 const runId = z.string().uuid().optional();
 
