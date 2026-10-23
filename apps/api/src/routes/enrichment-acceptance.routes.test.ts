@@ -37,6 +37,8 @@ let app: FastifyInstance;
 let config: Env;
 let owner: Record<string, string>;
 let ownerId: string;
+/** Approves campaigns: a second person, since the creator and submitter may not approve their own. */
+let reviewerId: string;
 let outsider: Record<string, string>;
 
 const { contacts, emailVerifications, enrichmentCaptureRuns, enrichmentJobs, sequenceEnrollments } = schema;
@@ -82,6 +84,7 @@ beforeAll(async () => {
   const o = await provisionUser(WORKSPACE);
   owner = o.headers;
   ownerId = o.userId;
+  reviewerId = (await provisionUser(WORKSPACE)).userId;
   outsider = (await provisionUser(OTHER_WORKSPACE)).headers;
 }, 60000);
 
@@ -91,6 +94,7 @@ afterAll(async () => {
 
 const db = () => app.db!;
 const actor = () => ({ workspaceId: WORKSPACE, userId: ownerId });
+const reviewerActor = () => ({ workspaceId: WORKSPACE, userId: reviewerId });
 const post = (url: string, payload: unknown = {}, headers: Record<string, string> = owner) =>
   app.inject({ method: "POST", url: `/api/v1${url}`, headers, payload: payload as object });
 const get = (url: string, headers = owner) => app.inject({ method: "GET", url: `/api/v1${url}`, headers });
@@ -402,7 +406,7 @@ describe("Case 8 — a campaign with sandbox recipients only", () => {
 
     await updateDraft(db(), actor(), campaign.id, defaultDraft(false).steps.map((step) => ({ ...step, body: step.body.replace(/\[Write[^\]]*\]/, "We help revenue teams.") })));
     await submitCampaign(db(), config, actor(), campaign.id);
-    await reviewCampaign(db(), config, actor(), campaign.id, { decision: "approved", comment: "Sandbox exercise" });
+    await reviewCampaign(db(), config, reviewerActor(), campaign.id, { decision: "approved", comment: "Sandbox exercise" });
     const { newEnrollments } = await launchCampaign(db(), config, actor(), campaign.id);
     const enrollment = Object.fromEntries(newEnrollments.map((entry) => [entry.prospectId, entry.enrollmentId]));
 
