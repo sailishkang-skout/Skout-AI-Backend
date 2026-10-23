@@ -4,6 +4,7 @@ import { createLogger, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
 import { closeAbandonedCaptureRuns, enrichmentOpsSnapshot, evaluateAlerts, type OpsAlert } from "../services/enrichment/ops.service.js";
+import { DB_SHUTDOWN_TIMEOUT_SECONDS } from "../plugins/db.js";
 
 const log = createLogger("enrichment-ops.worker");
 
@@ -53,7 +54,7 @@ export async function startEnrichmentOpsWorker(config: Env): Promise<() => Promi
     timer.unref();
     return async () => {
       clearInterval(timer);
-      await sql.end();
+      await sql.end({ timeout: DB_SHUTDOWN_TIMEOUT_SECONDS });
     };
   }
 
@@ -65,6 +66,6 @@ export async function startEnrichmentOpsWorker(config: Env): Promise<() => Promi
   return async () => {
     await worker.close();
     await queue.close();
-    await sql.end();
+    await sql.end({ timeout: DB_SHUTDOWN_TIMEOUT_SECONDS });
   };
 }

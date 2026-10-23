@@ -26,6 +26,19 @@ campaigns and the Chrome extension. Design and rationale are in ADR 0019; releas
 | One workspace | `GET /api/v1/enrichment/ops` (`enrichment:admin`) | `alerts: []` |
 | Release state | start-up log line `LinkedIn enrichment release stage: …` | the stage you intended |
 
+### When the database is down or restarting
+
+- Every request that needs the database answers **503 `SERVICE_UNAVAILABLE`**, `retryable: true`,
+  with `Retry-After: 5`; no SQL reaches the client and nothing is changed. `GET /api/v1/health`
+  stays 200 (the API process is up), so watch `skout_enrichment_metrics_up`, which drops to 0
+  within 30 seconds.
+- The API reconnects on its own when the database is back; no restart is needed.
+- The Chrome extension retries its reads (status, freshness) up to 5 times over about 7.5 seconds;
+  captures are never retried, so a capture made during the outage shows its error and is run again
+  by the user.
+- A graceful shutdown during or after an outage waits at most 5 seconds for open queries, then
+  closes the remaining database connections.
+
 ## Metrics and alerts
 
 All gauges are on `GET /api/v1/metrics`, cover the last 24 hours, and are labelled only by
