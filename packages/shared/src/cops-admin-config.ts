@@ -37,43 +37,75 @@ export type CopsModule = (typeof COPS_MODULES)[number];
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 
-export const NEXT_ACTION_TASK_TYPES = ["call", "email", "meeting", "review"] as const;
+/**
+ * What a next action does in the app. Every task template and deal step is tied to one, so the
+ * task it creates opens the right screen (proposal builder, payment link, ...). The name is free.
+ */
+export const NEXT_ACTION_LINKS = [
+  "call",
+  "email",
+  "meeting",
+  "review",
+  "send_proposal",
+  "send_contract",
+  "send_payment_link",
+  "provision_trial",
+  "send_onboarding_email",
+  "create_ticket",
+] as const;
+export type NextActionLink = (typeof NEXT_ACTION_LINKS)[number];
+/** The task type each action creates. */
+export const NEXT_ACTION_TASK_TYPE: Record<NextActionLink, "call" | "email" | "meeting" | "review"> = {
+  call: "call",
+  email: "email",
+  meeting: "meeting",
+  review: "review",
+  send_proposal: "email",
+  send_contract: "email",
+  send_payment_link: "email",
+  provision_trial: "review",
+  send_onboarding_email: "email",
+  create_ticket: "review",
+};
+const taskTemplateSchema = z.object({ group: text(60), title: text(200), action: z.enum(NEXT_ACTION_LINKS) }).strict();
+const dealStepSchema = z.object({ label: text(200), action: z.enum(NEXT_ACTION_LINKS) }).strict();
 const nextActionCatalogSchema = z
   .object({
-    task_templates: z
-      .array(z.object({ group: text(60), title: text(200), type: z.enum(NEXT_ACTION_TASK_TYPES) }).strict())
-      .min(1)
-      .max(100),
-    deal_next_steps: z.array(text(200)).min(1).max(50),
+    task_templates: z.array(taskTemplateSchema).min(1).max(100),
+    deal_next_steps: z.array(dealStepSchema).min(1).max(50),
   })
-  .strict();
+  .strict()
+  .refine((v) => new Set(v.deal_next_steps.map((d) => d.label.toLowerCase())).size === v.deal_next_steps.length, {
+    message: "Each deal step needs its own name",
+    path: ["deal_next_steps"],
+  });
 
 /** Built-in next actions until an admin edits them. */
-export const DEFAULT_NEXT_ACTION_CATALOG: z.infer<typeof nextActionCatalogSchema> = {
+export const DEFAULT_NEXT_ACTION_CATALOG = {
   task_templates: [
-    { group: "Onboarding", title: "Call to confirm access and first login", type: "call" },
-    { group: "Onboarding", title: "Check usage and help with the first value event", type: "review" },
-    { group: "Onboarding", title: "Offer a guided onboarding session", type: "meeting" },
-    { group: "Onboarding", title: "Help unblock the integration", type: "call" },
-    { group: "Onboarding", title: "Send onboarding follow-up email", type: "email" },
-    { group: "Commercial", title: "Follow up on the proposal", type: "email" },
-    { group: "Commercial", title: "Chase the contract signature", type: "email" },
-    { group: "Commercial", title: "Follow up on the payment link", type: "email" },
-    { group: "Commercial", title: "Trial review: convert, extend or close", type: "meeting" },
-    { group: "Success", title: "Success review with the customer", type: "meeting" },
-    { group: "Success", title: "Prepare the renewal", type: "review" },
-    { group: "Success", title: "Follow up on an open ticket", type: "call" },
+    { group: "Onboarding", title: "Call to confirm access and first login", action: "call" },
+    { group: "Onboarding", title: "Check usage and help with the first value event", action: "review" },
+    { group: "Onboarding", title: "Offer a guided onboarding session", action: "meeting" },
+    { group: "Onboarding", title: "Re-send the onboarding email", action: "send_onboarding_email" },
+    { group: "Onboarding", title: "Raise the integration blocker with engineering", action: "create_ticket" },
+    { group: "Commercial", title: "Follow up on the proposal", action: "send_proposal" },
+    { group: "Commercial", title: "Chase the contract signature", action: "send_contract" },
+    { group: "Commercial", title: "Follow up on the payment link", action: "send_payment_link" },
+    { group: "Commercial", title: "Trial review: convert, extend or close", action: "meeting" },
+    { group: "Success", title: "Success review with the customer", action: "meeting" },
+    { group: "Success", title: "Prepare the renewal", action: "review" },
+    { group: "Success", title: "Follow up on an open ticket", action: "call" },
   ],
   deal_next_steps: [
-    "Book discovery call",
-    "Schedule a demo",
-    "Confirm budget and decision maker",
-    "Send proposal",
-    "Send MSA / order form",
-    "Send payment link",
-    "Start a trial",
+    { label: "Book discovery call", action: "call" },
+    { label: "Schedule a demo", action: "meeting" },
+    { label: "Confirm budget and decision maker", action: "call" },
+    { label: "Send proposal", action: "send_proposal" },
+    { label: "Send MSA / order form", action: "send_contract" },
+    { label: "Send payment link", action: "send_payment_link" },
+    { label: "Start a trial", action: "provision_trial" },
   ],
-};
+} satisfies { task_templates: { group: string; title: string; action: NextActionLink }[]; deal_next_steps: { label: string; action: NextActionLink }[] };
 
 export const COPS_CONFIG_SCHEMAS = {
   credit_package: z

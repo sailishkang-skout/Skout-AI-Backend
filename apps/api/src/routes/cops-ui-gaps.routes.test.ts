@@ -79,12 +79,17 @@ maybe("CustomerOps panel gaps", () => {
     const first = await call("GET", "/next-action-catalog");
     expect(first.statusCode).toBe(200);
     expect(first.json().data.task_templates.length).toBeGreaterThan(0);
-    expect(first.json().data.deal_next_steps).toContain("Book discovery call");
-    const value = { task_templates: [{ group: "Onboarding", title: "Kickoff call", type: "call" }], deal_next_steps: ["Book discovery call"] };
+    expect(first.json().data.deal_next_steps).toContainEqual({ label: "Book discovery call", action: "call" });
+    const value = { task_templates: [{ group: "Onboarding", title: "Kickoff call", action: "call" }], deal_next_steps: [{ label: "Send our proposal", action: "send_proposal" }] };
     expect((await call("PUT", "/admin/config/next_action_catalog/default", { value, reason: "x" })).statusCode).toBe(403);
 
     await asRole("admin");
     expect((await call("PUT", "/admin/config/next_action_catalog/default", { value: { ...value, deal_next_steps: [] }, reason: "x" })).statusCode).toBe(422);
+    // Every step is tied to something the app can do; a made-up action or a bare name is refused.
+    const bad = (deal_next_steps: unknown) => call("PUT", "/admin/config/next_action_catalog/default", { value: { ...value, deal_next_steps }, reason: "x" });
+    expect((await bad([{ label: "Ask Sahil", action: "ask_sahil" }])).statusCode).toBe(422);
+    expect((await bad(["Book discovery call"])).statusCode).toBe(422);
+    expect((await bad([{ label: "Call", action: "call" }, { label: "call", action: "meeting" }])).statusCode).toBe(422);
     expect((await call("PUT", "/admin/config/next_action_catalog/default", { value, reason: "Shorter list" })).statusCode).toBe(201);
     await asRole("engineering");
     expect((await call("GET", "/next-action-catalog")).json().data).toMatchObject(value);
