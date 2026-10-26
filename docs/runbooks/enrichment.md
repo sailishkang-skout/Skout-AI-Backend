@@ -26,6 +26,13 @@ campaigns and the Chrome extension. Design and rationale are in ADR 0019; releas
 | One workspace | `GET /api/v1/enrichment/ops` (`enrichment:admin`) | `alerts: []` |
 | Release state | start-up log line `LinkedIn enrichment release stage: …` | the stage you intended |
 
+### "Not available in this workspace yet"
+
+Production is in internal release: only workspaces holding `enrichment.internal_access` can use
+enrichment. A platform admin (`PLATFORM_ADMIN_EMAILS`) grants it with
+`PUT /api/v1/admin/workspaces/<workspaceId>/entitlements/enrichment.internal_access {"value": true}`;
+see `docs/ops/enrichment-release-gates.md`. Workspace owners cannot grant it themselves.
+
 ## Metrics and alerts
 
 All gauges are on `GET /api/v1/metrics`, cover the last 24 hours, and are labelled only by

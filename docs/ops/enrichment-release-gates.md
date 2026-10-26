@@ -76,9 +76,21 @@ It does not cover capture or profile retrieval and is not this approval.
 3. Deploy. Confirm the start-up log says `release stage: general`.
 4. To go back: set the stage to `internal`. No code deploy is needed.
 
-To give one production workspace internal access:
-`buildEntitlementsService(db).set(workspaceId, "enrichment.internal_access", true)` through the
-entitlements admin path, recorded in the release ticket.
+To give one production workspace internal access, a **platform admin** (an email listed in
+`PLATFORM_ADMIN_EMAILS`) calls:
+
+```
+PUT    /api/v1/admin/workspaces/<workspaceId>/entitlements/enrichment.internal_access   {"value": true}
+DELETE /api/v1/admin/workspaces/<workspaceId>/entitlements/enrichment.internal_access   (to revoke)
+```
+
+The admin does not need to be a member of that workspace. Every grant and revoke is written to the
+audit log (`entitlement.platform_grant` / `entitlement.platform_revoke`, with before and after
+values and the admin's email). Record the workspace and the date in the release ticket.
+
+A workspace's own owner or admin **cannot** grant it: `enrichment.internal_access` (and any
+`*.internal_access` key) is platform-managed, and `PUT /api/v1/entitlements/:key` answers
+`403 platform_managed_entitlement` for it unless the caller is a platform admin.
 
 ## Known limits carried into release
 
