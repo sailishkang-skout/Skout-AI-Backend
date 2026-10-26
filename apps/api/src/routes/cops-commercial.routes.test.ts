@@ -181,6 +181,11 @@ maybe("COPS-03 proposals and contracts", () => {
     await call("POST", `/proposals/${sent.id}/send`, {});
     expect((await call("POST", `/proposals/${sent.id}/discard`, { reason: "oops" })).statusCode).toBe(409);
     expect((await call("GET", `/proposals/${sent.id}`)).statusCode).toBe(200);
+    // A new version makes it a draft again, but v1 went to the customer: still not deletable.
+    const v2 = await call("POST", `/proposals/${sent.id}/versions`, { ...terms, title: undefined, discount_pct: 1 });
+    expect(v2.json().data.status).toBe("draft");
+    expect((await call("POST", `/proposals/${sent.id}/discard`, { reason: "oops" })).statusCode).toBe(409);
+    expect((await call("GET", `/proposals/${sent.id}`)).json().data.versions).toHaveLength(2);
   });
 
   it("deleting a draft contract removes its file from storage once nothing else uses it", async () => {
@@ -208,6 +213,11 @@ ${randomUUID()}
     const sent = (await call("POST", `/opportunities/${opportunityId}/contracts`, { kind: "msa", document_url: "https://docs.example.test/sent.pdf", file_sha256: SHA })).json().data;
     await call("POST", `/contracts/${sent.id}/send`, {});
     expect((await call("POST", `/contracts/${sent.id}/discard`, { reason: "no" })).statusCode).toBe(409);
+    // A new version of a live contract is a draft, and still cannot be deleted.
+    const next = await call("POST", `/contracts/${sent.id}/versions`, { document_url: "https://docs.example.test/sent-v2.pdf", file_sha256: SHA.replace(/^./, "b") });
+    expect(next.json().data.status).toBe("draft");
+    expect((await call("POST", `/contracts/${sent.id}/discard`, { reason: "no" })).statusCode).toBe(409);
+    expect((await call("GET", `/contracts/${sent.id}`)).statusCode).toBe(200);
   });
 
   it("replays an Idempotency-Key and rejects a missing one", async () => {

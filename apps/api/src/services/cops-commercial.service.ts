@@ -34,6 +34,7 @@ const {
   proposalVersions,
   proposalLineItems,
   contracts,
+  signatureEnvelopes,
   contractVersions,
   copsLifecycleStates,
 } = schema;
@@ -433,6 +434,18 @@ export async function discardDraftProposal(db: Db, ctx: CommercialContext, propo
         allowed_from: ["draft"],
       });
     }
+    // A new version of a sent proposal is a draft again, but the sent version must stay.
+    const [sentVersion] = await tx
+      .select({ version: proposalVersions.version })
+      .from(proposalVersions)
+      .where(and(eq(proposalVersions.proposalId, proposalId), isNotNull(proposalVersions.sentAt)))
+      .limit(1);
+    if (sentVersion) {
+      throw new CommercialError("BUSINESS_STATE_CONFLICT", "This proposal was already sent to the customer, so it cannot be deleted", {
+        status: proposal.status,
+        sent_version: sentVersion.version,
+      });
+    }
     const at = new Date();
     await tx.delete(proposals).where(and(eq(proposals.id, proposalId), eq(proposals.workspaceId, ctx.workspaceId)));
     await writeCopsAudit(tx, {
@@ -764,6 +777,22 @@ export async function discardDraftContract(db: Db, ctx: CommercialContext, contr
       throw new CommercialError("BUSINESS_STATE_CONFLICT", "Only a draft contract can be deleted; a sent contract is kept as sent", {
         status: contract.status,
         allowed_from: ["draft"],
+      });
+    }
+    // A live contract is never deleted: not once any version went out, it was signed, or an
+    // e-sign envelope exists (a new version of a sent contract is a draft again).
+    const [sentVersion] = await tx
+      .select({ version: contractVersions.version })
+      .from(contractVersions)
+      .where(and(eq(contractVersions.contractId, contractId), isNotNull(contractVersions.sentAt)))
+      .limit(1);
+    const [envelope] = await tx.select({ id: signatureEnvelopes.id }).from(signatureEnvelopes).where(eq(signatureEnvelopes.contractId, contractId)).limit(1);
+    if (sentVersion || envelope || contract.signedAt) {
+      throw new CommercialError("BUSINESS_STATE_CONFLICT", "This contract was already sent or signed, so it cannot be deleted", {
+        status: contract.status,
+        sent_version: sentVersion?.version ?? null,
+        has_envelope: !!envelope,
+        signed: !!contract.signedAt,
       });
     }
     const at = new Date();
