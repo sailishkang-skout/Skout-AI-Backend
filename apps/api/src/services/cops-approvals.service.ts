@@ -331,10 +331,15 @@ async function memberRoleKeys(db: Reader, workspaceId: string, userId: string): 
   return rows.map((r) => r.key);
 }
 
-/** True when the member may decide that approver slot. An Admin (or the owner) decides the executive slot. */
+/**
+ * True when the member may decide that approver slot: the slot's own role, or an Admin/owner, who
+ * may decide any slot (the audit row records that an admin decided it). Other roles still cannot
+ * decide each other's slots.
+ */
 export function mayDecide(roleKeys: string[], slot: ApproverRole): boolean {
+  if (roleKeys.some((k) => ADMIN_ROLE_KEYS.includes(k))) return true;
   const needed = APPROVER_DECIDED_BY[slot];
-  return needed === "admin" ? roleKeys.some((k) => ADMIN_ROLE_KEYS.includes(k)) : roleKeys.includes(needed);
+  return needed !== "admin" && roleKeys.includes(needed);
 }
 
 export async function decideApproval(
@@ -348,7 +353,8 @@ export async function decideApproval(
     throw new CommercialError("VALIDATION_FAILED", "A comment is required to reject", { fields: [{ path: "comment", code: "required", message: "A comment is required to reject" }] });
   }
   await expireDueApprovals(db, ctx.workspaceId);
-  if (!mayDecide(await memberRoleKeys(db, ctx.workspaceId, ctx.userId), input.role)) {
+  const deciderKeys = await memberRoleKeys(db, ctx.workspaceId, ctx.userId);
+  if (!mayDecide(deciderKeys, input.role)) {
     throw new CommercialError("FORBIDDEN", `Only ${APPROVER_DECIDED_BY[input.role] === "admin" ? "an Admin" : `the ${input.role} role`} can decide this approval`, { role: input.role });
   }
 
@@ -384,7 +390,14 @@ export async function decideApproval(
       entityId: approvalId,
       action: `approval.${input.decision}`,
       before: { status: approval.status },
-      after: { status, role: input.role, proposal_id: approval.proposalId, version: approval.proposalVersion },
+      after: {
+        status,
+        role: input.role,
+        proposal_id: approval.proposalId,
+        version: approval.proposalVersion,
+        // Set when an Admin/owner decided a slot they do not hold themselves.
+        decided_as_admin: !deciderKeys.includes(APPROVER_DECIDED_BY[input.role]) || undefined,
+      },
       reason: comment ?? undefined,
       correlationId: ctx.requestId,
       sourceChannel: "api",
