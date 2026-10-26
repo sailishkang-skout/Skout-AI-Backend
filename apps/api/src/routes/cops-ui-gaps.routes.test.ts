@@ -74,6 +74,22 @@ maybe("CustomerOps panel gaps", () => {
     expect((await call("GET", "/price-book")).statusCode).toBe(403);
   });
 
+  it("next actions: everyone reads the list people pick from; only an admin changes it", async () => {
+    await asRole("sales");
+    const first = await call("GET", "/next-action-catalog");
+    expect(first.statusCode).toBe(200);
+    expect(first.json().data.task_templates.length).toBeGreaterThan(0);
+    expect(first.json().data.deal_next_steps).toContain("Book discovery call");
+    const value = { task_templates: [{ group: "Onboarding", title: "Kickoff call", type: "call" }], deal_next_steps: ["Book discovery call"] };
+    expect((await call("PUT", "/admin/config/next_action_catalog/default", { value, reason: "x" })).statusCode).toBe(403);
+
+    await asRole("admin");
+    expect((await call("PUT", "/admin/config/next_action_catalog/default", { value: { ...value, deal_next_steps: [] }, reason: "x" })).statusCode).toBe(422);
+    expect((await call("PUT", "/admin/config/next_action_catalog/default", { value, reason: "Shorter list" })).statusCode).toBe(201);
+    await asRole("engineering");
+    expect((await call("GET", "/next-action-catalog")).json().data).toMatchObject(value);
+  });
+
   it("gap 3: the 360 header carries onboarding % from the activation instance", async () => {
     await asRole("owner");
     const accountId = await company("Gap Three Ltd");

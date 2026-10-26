@@ -23,6 +23,8 @@ export const COPS_CONFIG_KINDS = [
   "renewal_policy",
   // COPS-12: SLA targets, business-hours calendar and pause rules.
   "sla_policy",
+  // The next actions people pick from when they create a task or a deal (Bible p.24, p.43).
+  "next_action_catalog",
 ] as const;
 export type CopsConfigKind = (typeof COPS_CONFIG_KINDS)[number];
 
@@ -34,6 +36,44 @@ export const COPS_MODULES = ["crm", "commercial", "provisioning", "onboarding", 
 export type CopsModule = (typeof COPS_MODULES)[number];
 
 const text = (max: number) => z.string().trim().min(1).max(max);
+
+export const NEXT_ACTION_TASK_TYPES = ["call", "email", "meeting", "review"] as const;
+const nextActionCatalogSchema = z
+  .object({
+    task_templates: z
+      .array(z.object({ group: text(60), title: text(200), type: z.enum(NEXT_ACTION_TASK_TYPES) }).strict())
+      .min(1)
+      .max(100),
+    deal_next_steps: z.array(text(200)).min(1).max(50),
+  })
+  .strict();
+
+/** Built-in next actions until an admin edits them. */
+export const DEFAULT_NEXT_ACTION_CATALOG: z.infer<typeof nextActionCatalogSchema> = {
+  task_templates: [
+    { group: "Onboarding", title: "Call to confirm access and first login", type: "call" },
+    { group: "Onboarding", title: "Check usage and help with the first value event", type: "review" },
+    { group: "Onboarding", title: "Offer a guided onboarding session", type: "meeting" },
+    { group: "Onboarding", title: "Help unblock the integration", type: "call" },
+    { group: "Onboarding", title: "Send onboarding follow-up email", type: "email" },
+    { group: "Commercial", title: "Follow up on the proposal", type: "email" },
+    { group: "Commercial", title: "Chase the contract signature", type: "email" },
+    { group: "Commercial", title: "Follow up on the payment link", type: "email" },
+    { group: "Commercial", title: "Trial review: convert, extend or close", type: "meeting" },
+    { group: "Success", title: "Success review with the customer", type: "meeting" },
+    { group: "Success", title: "Prepare the renewal", type: "review" },
+    { group: "Success", title: "Follow up on an open ticket", type: "call" },
+  ],
+  deal_next_steps: [
+    "Book discovery call",
+    "Schedule a demo",
+    "Confirm budget and decision maker",
+    "Send proposal",
+    "Send MSA / order form",
+    "Send payment link",
+    "Start a trial",
+  ],
+};
 
 export const COPS_CONFIG_SCHEMAS = {
   credit_package: z
@@ -84,6 +124,7 @@ export const COPS_CONFIG_SCHEMAS = {
   esign_template: esignTemplateSchema,
   renewal_policy: renewalPolicySchema,
   sla_policy: slaPolicySchema,
+  next_action_catalog: nextActionCatalogSchema,
 } as const satisfies Record<CopsConfigKind, z.ZodTypeAny>;
 
 /**
@@ -107,6 +148,7 @@ export const COPS_CONFIG_DEFAULTS: Partial<Record<CopsConfigKind, Record<string,
   currency_policy: { default: COMMERCIAL_POLICY_DEFAULTS.currency_policy },
   renewal_policy: { default: COMMERCIAL_POLICY_DEFAULTS.renewal_policy },
   sla_policy: { default: DEFAULT_SLA_POLICY },
+  next_action_catalog: { default: DEFAULT_NEXT_ACTION_CATALOG },
 };
 
 export const COPS_CONFIG_KEY = /^[a-z0-9][a-z0-9_-]{0,63}$/;

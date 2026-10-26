@@ -64,6 +64,7 @@ export async function copsAdminOpsRoutes(app: FastifyInstance, opts: { db: Db })
   // The catalogs feed the provision and credit dialogs, so the roles that use those dialogs read them.
   const catalogGate = requireAnyCopsPermission(["onboarding:send", "commercial:send", "crm:write", "credits:adjust", "credits:read", "admin:read", "admin:admin"], perms);
   // Sales prices proposals from the price book; only admins can change it (PUT /admin/config/price_book/default).
+  const nextActionGate = requireAnyCopsPermission(["crm:read", "crm:write", "onboarding:read", "commercial:read", "tickets:read", "admin:read", "admin:admin"], perms);
   const priceBookGate = requireAnyCopsPermission(["commercial:read", "commercial:write", "commercial:send", "commercial:approve", "admin:read", "admin:admin"], perms);
   const idempotency = copsIdempotencyStore(db);
 
@@ -102,6 +103,12 @@ export async function copsAdminOpsRoutes(app: FastifyInstance, opts: { db: Db })
       getConfig(db, request.workspaceId!, "currency_policy", "default"),
     ]);
     return { data: book ? { version: book.version, ...(book.value as object), currency_policy: currencies?.value ?? null } : null };
+  });
+
+  /** The next actions people choose from when creating a task or a deal; admins edit it in Admin. */
+  app.get("/next-action-catalog", { preHandler: nextActionGate }, async (request) => {
+    const row = await getConfig(db, request.workspaceId!, "next_action_catalog", "default");
+    return { data: row ? { version: row.version, ...(row.value as object) } : null };
   });
 
   /** Activation definitions: the newest version per key and segment, workspace versions over system ones. */
