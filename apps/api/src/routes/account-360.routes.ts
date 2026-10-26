@@ -417,6 +417,16 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
             )
           )
           .limit(1);
+        // Bible p.61 header: onboarding % from the newest activation instance and the renewal date
+        // from the open subscription term. One query for both keeps the 360 query count flat.
+        const [progress] = (await db.execute(sql`
+          select
+            (select oi.activation_pct from cops_onboarding_instances oi
+               where oi.workspace_id = ${workspaceId} and oi.account_id = ${accountId}
+               order by oi.created_at desc limit 1) as onboarding_pct,
+            (select s.term_end from subscriptions s
+               where s.workspace_id = ${workspaceId} and s.account_id = ${accountId} and s.status <> 'closed'
+               order by s.term_end desc limit 1) as renewal_at`)) as unknown as Array<{ onboarding_pct: number | null; renewal_at: Date | string | null }>;
         data.header = {
           id: account.id,
           name: account.name,
@@ -428,7 +438,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
           renewal_risk: account.renewalRisk ?? null,
           csm_id: account.csmId ?? null,
           commercial_state: commercialState,
-          onboarding_pct: null,
+          onboarding_pct: progress?.onboarding_pct ?? null,
           plan: provisioned ? ((provisioned.request as { plan?: string }).plan ?? null) : null,
           provisioning: provisioned
             ? {
@@ -437,7 +447,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
                 trial_ends_at: provisioned.trialEndsAt?.toISOString() ?? null,
               }
             : null,
-          renewal_at: null,
+          renewal_at: progress?.renewal_at ? new Date(progress.renewal_at).toISOString() : null,
         };
       }
 
