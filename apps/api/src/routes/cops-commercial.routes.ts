@@ -32,6 +32,8 @@ import {
   sendProposal,
   setContractStatus,
   setProposalStatus,
+  discardDraftProposal,
+  discardDraftContract,
   type CommercialContext,
 } from "../services/cops-commercial.service.js";
 import { createPaymentRequest, handlePaymentWebhook, loadPaymentRequests } from "../services/cops-payments.service.js";
@@ -90,6 +92,7 @@ const sendSchema = z
   .strict();
 const reasonText = z.string().trim().min(1, "reason is required").max(1000);
 const proposalStatusSchema = z.object({ status: z.enum(["accepted", "declined", "expired"]), reason: reasonText }).strict();
+const discardSchema = z.object({ reason: reasonText }).strict();
 const documentSchema = z
   .object({
     document_url: z.string().trim().min(1).max(2000),
@@ -614,6 +617,49 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
           return (await loadProposals(db, ctx.workspaceId, { proposalId: request.params.id }))[0];
         },
         (proposal) => ({ data: proposal })
+      );
+    })
+  );
+
+  // A draft that was never sent can be deleted, with a reason; sent proposals stay.
+  app.post<IdBody>(
+    "/proposals/:id/discard",
+    { preHandler: statusGate },
+    withCopsIdempotentReply<IdBody>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      const parsed = discardSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(
+        reply,
+        ctx.requestId,
+        async () => {
+          await discardDraftProposal(db, ctx, request.params.id, parsed.data.reason);
+          return { id: request.params.id, discarded: true };
+        },
+        (result) => ({ data: result })
+      );
+    })
+  );
+
+  app.post<IdBody>(
+    "/contracts/:id/discard",
+    { preHandler: statusGate },
+    withCopsIdempotentReply<IdBody>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      const parsed = discardSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(
+        reply,
+        ctx.requestId,
+        async () => {
+          await discardDraftContract(db, ctx, request.params.id, parsed.data.reason);
+          return { id: request.params.id, discarded: true };
+        },
+        (result) => ({ data: result })
       );
     })
   );

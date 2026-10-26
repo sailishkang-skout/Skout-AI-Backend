@@ -419,6 +419,38 @@ export async function setProposalStatus(
   });
 }
 
+/**
+ * A draft that was never sent can be thrown away (duplicates, mistakes). Its versions, line
+ * items and approvals go with it. Anything sent stays: it is customer-facing and immutable.
+ * The audit row keeps what was deleted and why.
+ */
+export async function discardDraftProposal(db: Db, ctx: CommercialContext, proposalId: string, reason: string) {
+  return db.transaction(async (tx) => {
+    const proposal = await lockProposal(tx as unknown as Tx, ctx.workspaceId, proposalId);
+    if (proposal.status !== "draft") {
+      throw new CommercialError("BUSINESS_STATE_CONFLICT", "Only a draft proposal can be deleted; a sent proposal is kept as sent", {
+        status: proposal.status,
+        allowed_from: ["draft"],
+      });
+    }
+    const at = new Date();
+    await tx.delete(proposals).where(and(eq(proposals.id, proposalId), eq(proposals.workspaceId, ctx.workspaceId)));
+    await writeCopsAudit(tx, {
+      tenantId: ctx.workspaceId,
+      actor: { type: "user", id: ctx.userId },
+      entityType: "proposal",
+      entityId: proposalId,
+      action: "proposal.discarded",
+      before: { status: proposal.status, title: proposal.title, opportunity_id: proposal.opportunityId, current_version: proposal.currentVersion },
+      after: null,
+      reason,
+      correlationId: ctx.requestId,
+      sourceChannel: "api",
+      occurredAt: at,
+    });
+  });
+}
+
 type VersionRow = typeof proposalVersions.$inferSelect;
 type LineRow = typeof proposalLineItems.$inferSelect;
 
@@ -724,6 +756,34 @@ export async function sendContract(db: Db, ctx: CommercialContext, contractId: s
  * Manual status (Phase 1 has no e-sign provider). `onSigned` runs in the same transaction after a
  * signature so the gate evaluation commits or rolls back with it.
  */
+/** Same rule as proposals: only a contract that was never sent can be deleted. */
+export async function discardDraftContract(db: Db, ctx: CommercialContext, contractId: string, reason: string) {
+  return db.transaction(async (tx) => {
+    const contract = await lockContract(tx as unknown as Tx, ctx.workspaceId, contractId);
+    if (contract.status !== "draft") {
+      throw new CommercialError("BUSINESS_STATE_CONFLICT", "Only a draft contract can be deleted; a sent contract is kept as sent", {
+        status: contract.status,
+        allowed_from: ["draft"],
+      });
+    }
+    const at = new Date();
+    await tx.delete(contracts).where(and(eq(contracts.id, contractId), eq(contracts.workspaceId, ctx.workspaceId)));
+    await writeCopsAudit(tx, {
+      tenantId: ctx.workspaceId,
+      actor: { type: "user", id: ctx.userId },
+      entityType: "contract",
+      entityId: contractId,
+      action: "contract.discarded",
+      before: { status: contract.status, kind: contract.kind, title: contract.title, opportunity_id: contract.opportunityId },
+      after: null,
+      reason,
+      correlationId: ctx.requestId,
+      sourceChannel: "api",
+      occurredAt: at,
+    });
+  });
+}
+
 export async function setContractStatus(
   db: Db,
   ctx: CommercialContext,

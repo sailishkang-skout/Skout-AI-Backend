@@ -168,6 +168,21 @@ maybe("COPS-03 proposals and contracts", () => {
     expect((await call("POST", `/proposals/${created.id}/versions`, { ...terms, title: undefined })).statusCode).toBe(409);
   });
 
+  it("deletes a draft with a reason and audit; a sent proposal cannot be deleted", async () => {
+    const draft = (await call("POST", `/opportunities/${opportunityId}/proposals`, terms)).json().data;
+    expect((await call("POST", `/proposals/${draft.id}/discard`, {})).statusCode).toBe(422);
+    const gone = await call("POST", `/proposals/${draft.id}/discard`, { reason: "Duplicate draft" });
+    expect(gone.statusCode).toBe(200);
+    expect((await call("GET", `/proposals/${draft.id}`)).statusCode).toBe(404);
+    const audit = await sql`select reason from audit_logs where workspace_id = ${workspaceId} and action = 'proposal.discarded' and entity_id = ${draft.id}`;
+    expect(audit[0]?.reason).toBe("Duplicate draft");
+
+    const sent = (await call("POST", `/opportunities/${opportunityId}/proposals`, terms)).json().data;
+    await call("POST", `/proposals/${sent.id}/send`, {});
+    expect((await call("POST", `/proposals/${sent.id}/discard`, { reason: "oops" })).statusCode).toBe(409);
+    expect((await call("GET", `/proposals/${sent.id}`)).statusCode).toBe(200);
+  });
+
   it("replays an Idempotency-Key and rejects a missing one", async () => {
     const key = randomUUID();
     const first = await call("POST", `/opportunities/${opportunityId}/proposals`, terms, OWNER, key);
