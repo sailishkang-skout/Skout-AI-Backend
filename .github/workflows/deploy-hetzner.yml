@@ -180,6 +180,13 @@ jobs:
           GHCR_PULL_USER: ${{ vars.GHCR_PULL_USER }}
         run: echo "$GHCR_PULL_TOKEN" | docker login ghcr.io -u "$GHCR_PULL_USER" --password-stdin
 
+      # Every deploy pulls a new image set onto a small disk. Images used by a
+      # running service are kept (so rollback still works); only unused ones go.
+      - name: Free disk on the cluster
+        run: |
+          docker image prune -a -f
+          df -h /
+
       - name: Note time for point-in-time restore
         run: echo "Managed Postgres keeps PITR backups; restore point if needed is before $(date -u +%FT%TZ)"
 
