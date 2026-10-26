@@ -179,43 +179,51 @@ maybe("CustomerOps panel gaps", () => {
     const pdf = Buffer.from("%PDF-1.4\n1 0 obj << >> endobj\ntrailer << >>\n%%EOF\n");
     const sha = createHash("sha256").update(pdf).digest("hex");
     const put = (u: string, body: Buffer) => app.inject({ method: "PUT", url: u, headers: { "content-type": "application/pdf" }, payload: body });
+    // Files sit under their account and document type.
+    const accountId = "0f9a2c4e-6b1d-4e8f-9a3c-5d7e1f2a4b6c";
+    const at = { account_id: accountId, kind: "msa" };
+    const ref = `cops-document:${accountId}/msa/${sha}`;
 
-    const start = await call("POST", "/contracts/documents/uploads", { file_name: "msa.pdf", file_sha256: sha, bytes: pdf.length });
+    const start = await call("POST", "/contracts/documents/uploads", { file_name: "msa.pdf", file_sha256: sha, bytes: pdf.length, ...at });
     expect(start.statusCode).toBe(201);
     const { upload, document_url } = start.json().data;
-    expect(document_url).toBe(`cops-document:${sha}`);
+    expect(document_url).toBe(ref);
+    // The place is part of the request: an upload without it is refused.
+    expect((await call("POST", "/contracts/documents/uploads", { file_name: "msa.pdf", file_sha256: sha, bytes: pdf.length })).statusCode).toBe(422);
     expect(upload.method).toBe("PUT");
     // Not uploaded yet: confirm refuses.
-    expect((await call("POST", `/contracts/documents/${sha}/confirm`, { file_name: "msa.pdf" })).statusCode).toBe(422);
+    expect((await call("POST", `/contracts/documents/${sha}/confirm`, { file_name: "msa.pdf", ...at })).statusCode).toBe(422);
     // The signed URL takes only the file that was hashed, and needs no bearer token.
     expect((await put(upload.url, Buffer.from("%PDF-other"))).statusCode).toBe(400);
     expect((await put(upload.url.replace(/sig=[a-f0-9]+/, "sig=" + "0".repeat(64)), pdf)).statusCode).toBe(403);
     expect((await put(upload.url, pdf)).statusCode).toBe(200);
 
-    const done = await call("POST", `/contracts/documents/${sha}/confirm`, { file_name: "msa.pdf" });
+    const done = await call("POST", `/contracts/documents/${sha}/confirm`, { file_name: "msa.pdf", ...at });
     expect(done.statusCode).toBe(200);
-    expect(done.json().data).toEqual({ document_url: `cops-document:${sha}`, file_sha256: sha, file_name: "msa.pdf", bytes: pdf.length });
+    expect(done.json().data).toEqual({ document_url: ref, file_sha256: sha, file_name: "msa.pdf", bytes: pdf.length });
 
     // Opening it gives a short-lived link, not the file.
-    const link = await call("GET", `/contracts/documents/${sha}`);
+    const link = await call("GET", `/contracts/documents/${sha}?account_id=${accountId}&kind=msa`);
     expect(link.statusCode).toBe(200);
     const file = await app.inject({ method: "GET", url: link.json().data.url });
     expect(file.headers["content-type"]).toContain("application/pdf");
     expect(Buffer.from(file.rawPayload).equals(pdf)).toBe(true);
-    expect((await call("GET", `/contracts/documents/${"0".repeat(64)}`)).statusCode).toBe(404);
+    expect((await call("GET", `/contracts/documents/${"0".repeat(64)}?account_id=${accountId}&kind=msa`)).statusCode).toBe(404);
+    // Same file, wrong place: not found (it lives under msa, not dpa).
+    expect((await call("GET", `/contracts/documents/${sha}?account_id=${accountId}&kind=dpa`)).statusCode).toBe(404);
 
     // A text file can be uploaded to its own signed URL but is refused at confirm.
     const txt = Buffer.from("hello, not a pdf");
     const txtSha = createHash("sha256").update(txt).digest("hex");
-    const t = (await call("POST", "/contracts/documents/uploads", { file_name: "x.txt", file_sha256: txtSha, bytes: txt.length })).json().data;
+    const t = (await call("POST", "/contracts/documents/uploads", { file_name: "x.txt", file_sha256: txtSha, bytes: txt.length, ...at })).json().data;
     await put(t.upload.url, txt);
-    expect((await call("POST", `/contracts/documents/${txtSha}/confirm`, { file_name: "x.txt" })).statusCode).toBe(422);
-    expect((await call("POST", "/contracts/documents/uploads", { file_name: "big.pdf", file_sha256: sha, bytes: 11 * 1024 * 1024 })).statusCode).toBe(422);
+    expect((await call("POST", `/contracts/documents/${txtSha}/confirm`, { file_name: "x.txt", ...at })).statusCode).toBe(422);
+    expect((await call("POST", "/contracts/documents/uploads", { file_name: "big.pdf", file_sha256: sha, bytes: 11 * 1024 * 1024, ...at })).statusCode).toBe(422);
     const audits = await sql`select count(*)::int as n from audit_logs where workspace_id = ${workspaceId} and action = 'contract_document.uploaded'`;
     expect(audits[0].n).toBe(1);
 
     await asRole("engineering");
-    expect((await call("GET", `/contracts/documents/${sha}`)).statusCode).toBe(403);
-    expect((await call("POST", "/contracts/documents/uploads", { file_name: "msa.pdf", file_sha256: sha, bytes: pdf.length })).statusCode).toBe(403);
+    expect((await call("GET", `/contracts/documents/${sha}?account_id=${accountId}&kind=msa`)).statusCode).toBe(403);
+    expect((await call("POST", "/contracts/documents/uploads", { file_name: "msa.pdf", file_sha256: sha, bytes: pdf.length, ...at })).statusCode).toBe(403);
   });
 });

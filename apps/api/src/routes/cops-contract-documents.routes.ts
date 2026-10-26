@@ -17,8 +17,8 @@ import { requireAnyCopsPermission, writeCopsAudit } from "../services/cops-platf
  *   GET  /contracts/documents/:sha         -> presigned GET (5 minutes)
  *
  * The PUT is signed with the file's SHA-256, so storage refuses any other body: the hash the
- * contract records is the hash of the stored file. Files are keyed by workspace and hash, so the
- * same PDF uploaded twice is one object.
+ * contract records is the hash of the stored file. Files sit under their account and document type,
+ * keyed by hash, so the same PDF uploaded twice to the same place is one object.
  *
  * Without a bucket (local dev only) the API hands out its own short-lived signed URLs under
  * /contracts/documents/local/ and keeps files in a local folder. Production refuses instead.
@@ -31,22 +31,60 @@ const VIEW_TTL_SECONDS = 5 * 60;
 const PROVIDER_TTL_SECONDS = 60 * 60;
 
 export const CONTRACT_DOCUMENT_SCHEME = "cops-document:";
-export const contractDocumentKey = (workspaceId: string, sha256: string) => `contracts/${workspaceId}/${sha256}.pdf`;
-export const contractDocumentRef = (sha256: string) => `${CONTRACT_DOCUMENT_SCHEME}${sha256}`;
+export const CONTRACT_DOCUMENT_KINDS = ["msa", "order_form", "dpa"] as const;
+export type ContractDocumentKind = (typeof CONTRACT_DOCUMENT_KINDS)[number];
+/** Where a file sits: under its account and document type. Files from before carry only the hash. */
+export interface ContractDocumentPlace {
+  accountId?: string;
+  kind?: ContractDocumentKind;
+}
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const placed = (p: ContractDocumentPlace): p is Required<ContractDocumentPlace> => !!p.accountId && !!p.kind;
+/**
+ * Bucket layout: cops/<workspace>/accounts/<account>/contracts/<kind>/<sha256>.pdf.
+ * Older uploads stay at contracts/<workspace>/<sha256>.pdf.
+ */
+export const contractDocumentKey = (workspaceId: string, sha256: string, place: ContractDocumentPlace = {}) =>
+  placed(place) ? `cops/${workspaceId}/accounts/${place.accountId}/contracts/${place.kind}/${sha256}.pdf` : `contracts/${workspaceId}/${sha256}.pdf`;
+export const contractDocumentRef = (sha256: string, place: ContractDocumentPlace = {}) =>
+  `${CONTRACT_DOCUMENT_SCHEME}${placed(place) ? `${place.accountId}/${place.kind}/` : ""}${sha256}`;
+/** Reads "cops-document:<sha>" or "cops-document:<account>/<kind>/<sha>". */
+export function parseContractDocumentRef(ref: string): { sha: string; place: ContractDocumentPlace } | null {
+  if (!ref.startsWith(CONTRACT_DOCUMENT_SCHEME)) return null;
+  const parts = ref.slice(CONTRACT_DOCUMENT_SCHEME.length).split("/");
+  const sha = parts.at(-1) ?? "";
+  if (!SHA.test(sha)) return null;
+  if (parts.length === 1) return { sha, place: {} };
+  const [accountId, kind] = parts;
+  if (parts.length !== 3 || !UUID.test(accountId ?? "") || !CONTRACT_DOCUMENT_KINDS.includes(kind as ContractDocumentKind)) return null;
+  return { sha, place: { accountId, kind: kind as ContractDocumentKind } };
+}
+const placeOf = (q: { account_id?: string; kind?: string }): ContractDocumentPlace | null => {
+  if (!q.account_id && !q.kind) return {};
+  if (!q.account_id || !UUID.test(q.account_id) || !CONTRACT_DOCUMENT_KINDS.includes(q.kind as ContractDocumentKind)) return null;
+  return { accountId: q.account_id.toLowerCase(), kind: q.kind as ContractDocumentKind };
+};
 const contractsBucket = (config: Env) => config.CONTRACTS_BUCKET ?? config.EXPORTS_BUCKET;
 
 // ---- Local dev signing (no bucket). A per-process key: URLs stop working when the API restarts. ----
 const LOCAL_KEY = randomBytes(32);
-const localSig = (method: string, workspaceId: string, sha: string, exp: number) =>
-  createHmac("sha256", LOCAL_KEY).update(`${method}\n${workspaceId}\n${sha}\n${exp}`).digest("hex");
-function localUrl(method: "PUT" | "GET", workspaceId: string, sha: string, ttl: number) {
+const localSig = (method: string, workspaceId: string, sha: string, exp: number, at = "") =>
+  createHmac("sha256", LOCAL_KEY).update(`${method}\n${workspaceId}\n${sha}\n${exp}\n${at}`).digest("hex");
+const placeParam = (p: ContractDocumentPlace) => (placed(p) ? `${p.accountId}/${p.kind}` : "");
+function localUrl(method: "PUT" | "GET", workspaceId: string, sha: string, ttl: number, place: ContractDocumentPlace = {}) {
   const exp = Math.floor(Date.now() / 1000) + ttl;
-  return `/api/v1/contracts/documents/local/${sha}?ws=${workspaceId}&exp=${exp}&sig=${localSig(method, workspaceId, sha, exp)}`;
+  const at = placeParam(place);
+  return `/api/v1/contracts/documents/local/${sha}?ws=${workspaceId}${at ? `&at=${encodeURIComponent(at)}` : ""}&exp=${exp}&sig=${localSig(method, workspaceId, sha, exp, at)}`;
 }
-function localSigValid(method: string, q: { ws?: string; exp?: string; sig?: string }, sha: string) {
+/** The signature covers `at`, so the place read back here is the one the API signed. */
+function localPlace(q: { at?: string }): ContractDocumentPlace {
+  const [accountId, kind] = (q.at ?? "").split("/");
+  return accountId && kind ? { accountId, kind: kind as ContractDocumentKind } : {};
+}
+function localSigValid(method: string, q: { ws?: string; at?: string; exp?: string; sig?: string }, sha: string) {
   const exp = Number(q.exp);
   if (!q.ws || !q.sig || !Number.isFinite(exp) || exp < Date.now() / 1000) return false;
-  const want = Buffer.from(localSig(method, q.ws, sha, exp), "hex");
+  const want = Buffer.from(localSig(method, q.ws, sha, exp, q.at ?? ""), "hex");
   const got = Buffer.from(q.sig, "hex");
   return got.length === want.length && timingSafeEqual(got, want);
 }
@@ -56,13 +94,13 @@ function localSigValid(method: string, q: { ws?: string; exp?: string; sig?: str
  * from (never the file itself). Plain URLs pass through unchanged.
  */
 export async function resolveContractDocumentForProvider(config: Env, workspaceId: string, documentUrl: string): Promise<string> {
-  if (!documentUrl.startsWith(CONTRACT_DOCUMENT_SCHEME)) return documentUrl;
-  const sha = documentUrl.slice(CONTRACT_DOCUMENT_SCHEME.length);
-  if (!SHA.test(sha)) return documentUrl;
+  const ref = parseContractDocumentRef(documentUrl);
+  if (!ref) return documentUrl;
+  const { sha, place } = ref;
   const bucket = contractsBucket(config);
-  if (bucket) return presignDocumentGet(bucket, contractDocumentKey(workspaceId, sha), { expiresIn: PROVIDER_TTL_SECONDS });
+  if (bucket) return presignDocumentGet(bucket, contractDocumentKey(workspaceId, sha, place), { expiresIn: PROVIDER_TTL_SECONDS });
   // Local dev: the API's own signed link, absolute so a provider (or the mock) can follow it.
-  return `${(config.API_PUBLIC_URL ?? "http://localhost:3001").replace(/\/$/, "")}${localUrl("GET", workspaceId, sha, PROVIDER_TTL_SECONDS)}`;
+  return `${(config.API_PUBLIC_URL ?? "http://localhost:3001").replace(/\/$/, "")}${localUrl("GET", workspaceId, sha, PROVIDER_TTL_SECONDS, place)}`;
 }
 
 const uploadSchema = z
@@ -70,9 +108,13 @@ const uploadSchema = z
     file_name: z.string().trim().min(1).max(300),
     file_sha256: z.string().regex(SHA, "file_sha256 must be a lowercase hex SHA-256"),
     bytes: z.number().int().positive().max(CONTRACT_DOCUMENT_MAX_BYTES, "The file is larger than 10 MB"),
+    account_id: z.string().uuid(),
+    kind: z.enum(CONTRACT_DOCUMENT_KINDS),
   })
   .strict();
-const confirmSchema = z.object({ file_name: z.string().trim().min(1).max(300) }).strict();
+const confirmSchema = z
+  .object({ file_name: z.string().trim().min(1).max(300), account_id: z.string().uuid(), kind: z.enum(CONTRACT_DOCUMENT_KINDS) })
+  .strict();
 
 export async function copsContractDocumentRoutes(app: FastifyInstance, opts: { db: Db }) {
   const { db } = opts;
@@ -93,14 +135,15 @@ export async function copsContractDocumentRoutes(app: FastifyInstance, opts: { d
     const parsed = uploadSchema.safeParse(request.body ?? {});
     if (!parsed.success) return fail(reply, requestId, parsed.error.issues[0]?.path.join(".") || "body", parsed.error.issues[0]?.message ?? "Invalid request");
     const { file_sha256: sha, bytes } = parsed.data;
+    const place: ContractDocumentPlace = { accountId: parsed.data.account_id.toLowerCase(), kind: parsed.data.kind };
     const workspaceId = request.workspaceId!;
     const b = bucket();
     if (!b && !localAllowed()) return noStorage(reply, requestId);
     const upload = b
-      ? { method: "PUT" as const, ...(await presignDocumentPut(b, contractDocumentKey(workspaceId, sha), { sha256Hex: sha, bytes, contentType: "application/pdf", expiresIn: UPLOAD_TTL_SECONDS })) }
-      : { method: "PUT" as const, url: localUrl("PUT", workspaceId, sha, UPLOAD_TTL_SECONDS), headers: { "Content-Type": "application/pdf" } };
+      ? { method: "PUT" as const, ...(await presignDocumentPut(b, contractDocumentKey(workspaceId, sha, place), { sha256Hex: sha, bytes, contentType: "application/pdf", expiresIn: UPLOAD_TTL_SECONDS })) }
+      : { method: "PUT" as const, url: localUrl("PUT", workspaceId, sha, UPLOAD_TTL_SECONDS, place), headers: { "Content-Type": "application/pdf" } };
     return reply.status(201).send({
-      data: { upload, document_url: contractDocumentRef(sha), file_sha256: sha, expires_at: new Date(Date.now() + UPLOAD_TTL_SECONDS * 1000).toISOString() },
+      data: { upload, document_url: contractDocumentRef(sha, place), file_sha256: sha, expires_at: new Date(Date.now() + UPLOAD_TTL_SECONDS * 1000).toISOString() },
     });
   });
 
@@ -111,7 +154,8 @@ export async function copsContractDocumentRoutes(app: FastifyInstance, opts: { d
     const parsed = confirmSchema.safeParse(request.body ?? {});
     if (!parsed.success) return fail(reply, requestId, "file_name", parsed.error.issues[0]?.message ?? "file_name is required");
     const workspaceId = request.workspaceId!;
-    const key = contractDocumentKey(workspaceId, sha);
+    const place: ContractDocumentPlace = { accountId: parsed.data.account_id.toLowerCase(), kind: parsed.data.kind };
+    const key = contractDocumentKey(workspaceId, sha, place);
     const b = bucket();
     if (!b && !localAllowed()) return noStorage(reply, requestId);
 
@@ -132,24 +176,25 @@ export async function copsContractDocumentRoutes(app: FastifyInstance, opts: { d
       // Audit ids are UUIDs; the document's id is its hash, shaped into a stable UUID.
       entityId: `${sha.slice(0, 8)}-${sha.slice(8, 12)}-4${sha.slice(13, 16)}-8${sha.slice(17, 20)}-${sha.slice(20, 32)}`,
       action: "contract_document.uploaded",
-      after: { file_sha256: sha, file_name: parsed.data.file_name, bytes: stored.bytes },
+      after: { file_sha256: sha, file_name: parsed.data.file_name, bytes: stored.bytes, account_id: place.accountId, kind: place.kind, key },
       correlationId: requestId,
       sourceChannel: "api",
     });
-    return { data: { document_url: contractDocumentRef(sha), file_sha256: sha, file_name: parsed.data.file_name, bytes: stored.bytes } };
+    return { data: { document_url: contractDocumentRef(sha, place), file_sha256: sha, file_name: parsed.data.file_name, bytes: stored.bytes } };
   });
 
-  app.get<{ Params: { sha256: string } }>("/contracts/documents/:sha256", { preHandler: readGate }, async (request, reply) => {
+  app.get<{ Params: { sha256: string }; Querystring: { account_id?: string; kind?: string } }>("/contracts/documents/:sha256", { preHandler: readGate }, async (request, reply) => {
     const requestId = resolveCorrelationId(request.headers["x-request-id"]);
     const sha = request.params.sha256;
     const notFound = () => reply.status(404).send(copsErrorBody({ code: "NOT_FOUND", message: "Document not found", requestId, details: {} }));
-    if (!SHA.test(sha)) return notFound();
+    const place = placeOf(request.query ?? {});
+    if (!SHA.test(sha) || !place) return notFound();
     const workspaceId = request.workspaceId!;
-    const key = contractDocumentKey(workspaceId, sha);
+    const key = contractDocumentKey(workspaceId, sha, place);
     const b = bucket();
     if (!b && !localAllowed()) return noStorage(reply, requestId);
     if (b ? !(await inspectDocument(b, key)) : !(await readLocalDocument(key))) return notFound();
-    const url = b ? await presignDocumentGet(b, key, { expiresIn: VIEW_TTL_SECONDS, fileName: `${sha.slice(0, 12)}.pdf` }) : localUrl("GET", workspaceId, sha, VIEW_TTL_SECONDS);
+    const url = b ? await presignDocumentGet(b, key, { expiresIn: VIEW_TTL_SECONDS, fileName: `${place.kind ?? "contract"}-${sha.slice(0, 12)}.pdf` }) : localUrl("GET", workspaceId, sha, VIEW_TTL_SECONDS, place);
     return { data: { url, expires_at: new Date(Date.now() + VIEW_TTL_SECONDS * 1000).toISOString() } };
   });
 }
@@ -161,7 +206,7 @@ export async function copsContractDocumentRoutes(app: FastifyInstance, opts: { d
 export async function copsContractDocumentLocalRoutes(app: FastifyInstance) {
   if (app.config.NODE_ENV === "production") return;
   app.addContentTypeParser("application/pdf", { parseAs: "buffer", bodyLimit: CONTRACT_DOCUMENT_MAX_BYTES }, (_req, body, done) => done(null, body));
-  type Local = { Params: { sha256: string }; Querystring: { ws?: string; exp?: string; sig?: string } };
+  type Local = { Params: { sha256: string }; Querystring: { ws?: string; at?: string; exp?: string; sig?: string } };
 
   app.put<Local>("/contracts/documents/local/:sha256", async (request, reply) => {
     const sha = request.params.sha256;
@@ -170,14 +215,14 @@ export async function copsContractDocumentLocalRoutes(app: FastifyInstance) {
     if (!Buffer.isBuffer(body) || body.length === 0) return reply.status(400).send({ error: "Empty body" });
     // Same guarantee storage gives with the signed checksum: the body must be the file that was hashed.
     if (createHash("sha256").update(body).digest("hex") !== sha) return reply.status(400).send({ error: "The file does not match its SHA-256" });
-    await writeLocalDocument(contractDocumentKey(request.query.ws!, sha), body);
+    await writeLocalDocument(contractDocumentKey(request.query.ws!, sha, localPlace(request.query)), body);
     return reply.status(200).send();
   });
 
   app.get<Local>("/contracts/documents/local/:sha256", async (request, reply) => {
     const sha = request.params.sha256;
     if (!SHA.test(sha) || !localSigValid("GET", request.query, sha)) return reply.status(403).send({ error: "Invalid or expired link" });
-    const file = await readLocalDocument(contractDocumentKey(request.query.ws!, sha));
+    const file = await readLocalDocument(contractDocumentKey(request.query.ws!, sha, localPlace(request.query)));
     if (!file) return reply.status(404).send({ error: "Not found" });
     return reply.header("content-type", "application/pdf").header("content-disposition", "inline").send(Buffer.from(file));
   });
