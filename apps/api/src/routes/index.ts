@@ -77,6 +77,7 @@ import { copsOnboardingRoutes } from "./cops-onboarding.routes.js";
 import { copsTicketsRoutes } from "./cops-tickets.routes.js";
 import { copsAdminConfigRoutes } from "./cops-admin-config.routes.js";
 import { copsAdminOpsRoutes } from "./cops-admin-ops.routes.js";
+import { copsIntegrationsStatusRoutes } from "./cops-integrations-status.routes.js";
 import { copsOpsAlertRoutes } from "./cops-ops-alerts.routes.js";
 import { requireCopsModule } from "../services/cops-feature-flags.js";
 import { copsOutboxRoutes } from "./cops-outbox.routes.js";
@@ -188,6 +189,7 @@ export async function registerRoutes(app: FastifyInstance) {
       await gated("tickets", [copsTicketsRoutes]);
       await v1.register(copsAdminConfigRoutes, { db: app.db });
       await v1.register(copsAdminOpsRoutes, { db: app.db });
+      await v1.register(copsIntegrationsStatusRoutes, { db: app.db });
       await v1.register(copsOpsAlertRoutes, { db: app.db });
       await v1.register(copsOutboxRoutes, { db: app.db });
       await v1.register(copsLifecycleRoutes, { db: app.db });

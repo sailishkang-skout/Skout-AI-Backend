@@ -128,4 +128,44 @@ maybe("CustomerOps panel gaps", () => {
     const visible = (await call("GET", "/cops/timeline")).json().data;
     expect(visible.some((e: { visibility: string }) => e.visibility === "internal")).toBe(false);
   });
+
+  it("gap 5: the contact list says whether each email is verified, bounced or suppressed", async () => {
+    await asRole("owner");
+    const accountId = await company("Status Co");
+    const tag = Date.now().toString(36);
+    const person = async (first: string, email: string | null) => {
+      const [row] = await sql`insert into contacts (workspace_id, company_id, first_name, email) values (${workspaceId}, ${accountId}, ${first}, ${email}) returning id`;
+      return row.id as string;
+    };
+    const verified = await person("Vera", `vera-${tag}@status.test`);
+    const bounced = await person("Bo", `bo-${tag}@status.test`);
+    const blocked = await person("Sue", `Sue-${tag}@Status.test`);
+    const plain = await person("Una", `una-${tag}@status.test`);
+    const none = await person("Nobody", null);
+    await sql`insert into contact_channels (workspace_id, contact_id, channel, value, verified) values (${workspaceId}, ${verified}, 'email', ${`vera-${tag}@status.test`}, true)`;
+    await sql`insert into contact_channels (workspace_id, contact_id, channel, value, verified, bounce_status) values (${workspaceId}, ${bounced}, 'email', ${`bo-${tag}@status.test`}, true, 'hard')`;
+    await sql`insert into suppressions (workspace_id, email) values (${workspaceId}, ${`sue-${tag}@status.test`})`;
+
+    const list = (await call("GET", `/contacts?company_id=${accountId}&limit=100`)).json().data as { id: string; email_status: string }[];
+    const status = Object.fromEntries(list.map((c) => [c.id, c.email_status]));
+    expect(status).toEqual({ [verified]: "verified", [bounced]: "bounced", [blocked]: "suppressed", [plain]: "unverified", [none]: "none" });
+    expect((await call("GET", `/contacts?company_id=${accountId}&fields=id,email_status`)).json().data[0]).toEqual({ id: expect.any(String), email_status: expect.any(String) });
+  });
+
+  it("gap 9: provider status lists payments, e-sign, email, Slack and Teams without secrets; admins only", async () => {
+    await asRole("owner");
+    const res = await call("GET", "/cops/integrations/status");
+    expect(res.statusCode).toBe(200);
+    const data = res.json().data as { key: string; status: string; missing: string[]; events_7d: number }[];
+    expect(data.map((p) => p.key)).toEqual(["payments", "esign", "email", "slack", "teams"]);
+    for (const p of data) expect(["connected", "partial", "sandbox", "not_configured"]).toContain(p.status);
+    expect(JSON.stringify(data)).not.toMatch(/https?:\/\/|whsec_|rzp_/);
+
+    await sql`update workspaces set slack_webhook_url = 'https://hooks.slack.test/x' where id = ${workspaceId}`;
+    const slack = (await call("GET", "/cops/integrations/status")).json().data.find((p: { key: string }) => p.key === "slack");
+    expect(slack).toMatchObject({ status: "connected", missing: [] });
+
+    await asRole("sales");
+    expect((await call("GET", "/cops/integrations/status")).statusCode).toBe(403);
+  });
 });
