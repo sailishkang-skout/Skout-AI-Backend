@@ -147,6 +147,8 @@ function isPublicRoute(url: string, method?: string): boolean {
     pathname === "/api/v1/webhooks/ops-alerts" ||
     // COPS-08: e-sign provider events; the adapter verifies the provider's signature.
     pathname.startsWith("/api/v1/esign/webhooks/") ||
+    // Dev-only signed links for contract files (no bucket); the route checks its own HMAC.
+    pathname.startsWith("/api/v1/contracts/documents/local/") ||
     pathname.startsWith("/api/v1/track/") ||
     pathname.startsWith("/api/v1/unsubscribe/") ||
     pathname.startsWith("/api/v1/invite-auth/send-otp") ||

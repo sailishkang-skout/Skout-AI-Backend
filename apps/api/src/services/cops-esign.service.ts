@@ -85,8 +85,8 @@ export interface SendEnvelopeInput {
 }
 
 /**
- * `resolveDocument` turns an internally stored contract (document_url "cops-document:<sha>") into
- * what the provider can take; providers also accept base64 file content. Plain URLs pass through.
+ * `resolveDocument` turns an internally stored contract (document_url "cops-document:<sha>") into a
+ * short-lived URL the provider downloads it from. Plain URLs pass through.
  */
 export async function sendEnvelope(
   db: Db,

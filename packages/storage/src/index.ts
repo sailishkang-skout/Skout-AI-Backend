@@ -1,8 +1,10 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import {
   GetObjectCommand,
+  HeadObjectCommand,
   PutObjectCommand,
   S3Client,
   type S3ClientConfig,
@@ -225,21 +227,64 @@ export function defaultLocalDocumentDir(): string {
   return path.join(path.resolve(here, "../../.."), ".cops-documents");
 }
 
-/** Stores one immutable document (S3 when `bucket` is set, otherwise the local document dir). */
-export async function storeDocument(bucket: string | undefined, key: string, body: Uint8Array, contentType: string): Promise<void> {
-  if (!bucket) {
-    const file = path.join(defaultLocalDocumentDir(), key);
-    await mkdir(path.dirname(file), { recursive: true });
-    await writeFile(file, body);
-    return;
-  }
-  await createS3Client().send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: contentType }));
+export async function writeLocalDocument(key: string, body: Uint8Array): Promise<void> {
+  const file = path.join(defaultLocalDocumentDir(), key);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, body);
 }
 
-export async function readDocument(bucket: string | undefined, key: string): Promise<Uint8Array> {
-  if (!bucket) return new Uint8Array(await readFile(path.join(defaultLocalDocumentDir(), key)));
-  const res = await createS3Client().send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-  return (await res.Body?.transformToByteArray()) ?? new Uint8Array();
+export async function readLocalDocument(key: string): Promise<Uint8Array | null> {
+  try {
+    return new Uint8Array(await readFile(path.join(defaultLocalDocumentDir(), key)));
+  } catch {
+    return null;
+  }
+}
+
+// The presigner and the S3 client resolve different @smithy/types copies in this monorepo; the
+// runtime objects are the same, only the declared middleware types differ.
+type Signable = Parameters<typeof getSignedUrl>[0];
+const signer = () => createS3Client() as unknown as Signable;
+
+/**
+ * A URL the browser PUTs the file to directly, so the bytes never pass through the API. The
+ * SHA-256 is part of the signature: the store refuses a body whose hash differs.
+ */
+export async function presignDocumentPut(bucket: string, key: string, opts: { sha256Hex: string; bytes: number; contentType: string; expiresIn: number }) {
+  const checksum = Buffer.from(opts.sha256Hex, "hex").toString("base64");
+  const url = await getSignedUrl(
+    signer(),
+    new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: opts.contentType, ContentLength: opts.bytes, ChecksumSHA256: checksum }) as unknown as Parameters<typeof getSignedUrl>[1],
+    { expiresIn: opts.expiresIn, signableHeaders: new Set(["content-type", "x-amz-checksum-sha256"]) }
+  );
+  return { url, headers: { "Content-Type": opts.contentType, "x-amz-checksum-sha256": checksum } };
+}
+
+/** A short-lived URL to read the file directly from the store (opening it, or the e-sign provider). */
+export async function presignDocumentGet(bucket: string, key: string, opts: { expiresIn: number; fileName?: string }) {
+  return getSignedUrl(
+    signer(),
+    new GetObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      ...(opts.fileName ? { ResponseContentDisposition: `inline; filename="${opts.fileName.replace(/[^\w. -]/g, "_")}"` } : {}),
+    }) as unknown as Parameters<typeof getSignedUrl>[1],
+    { expiresIn: opts.expiresIn }
+  );
+}
+
+/** Size and first bytes of a stored file, or null when it is not there. Reads 8 bytes, not the file. */
+export async function inspectDocument(bucket: string, key: string): Promise<{ bytes: number; head: Uint8Array } | null> {
+  const client = createS3Client();
+  try {
+    const meta = await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+    const part = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key, Range: "bytes=0-7" }));
+    return { bytes: Number(meta.ContentLength ?? 0), head: (await part.Body?.transformToByteArray()) ?? new Uint8Array() };
+  } catch (error) {
+    const status = (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+    if (status === 404 || status === 403) return null;
+    throw error;
+  }
 }
 
 export async function readCsvExport(bucket: string, key: string): Promise<string> {

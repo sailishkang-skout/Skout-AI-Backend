@@ -50,7 +50,7 @@ import type { PspAdapter } from "../services/psp/psp-adapter.js";
 import { createMockEsignAdapter, type EsignAdapter } from "../services/esign/esign-adapter.js";
 import { createDocusealAdapter } from "../services/esign/docuseal-adapter.js";
 import { handleEsignWebhook, listEnvelopes, sendEnvelope } from "../services/cops-esign.service.js";
-import { loadContractDocument } from "./cops-contract-documents.routes.js";
+import { resolveContractDocumentForProvider } from "./cops-contract-documents.routes.js";
 import { getAccountContractFields, setAccountContractFields } from "../services/cops-account-fields.service.js";
 import { CREDIT_ACTIVITY_KINDS, listCreditActivity, listSubscriptionsForFinance, loadReconciliation } from "../services/cops-finance.service.js";
 import { amendSubscription, createSubscription, getAccountSubscription, issueInvoicePaymentLink, listFailedPayments, markInvoicePaid } from "../services/cops-subscriptions.service.js";
@@ -481,10 +481,7 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
         ctx.requestId,
         async () => {
           await assertContractApproved(db, ctx.workspaceId, request.params.id);
-          return sendEnvelope(db, ctx, esign, request.params.id, parsed.data, async (url) => {
-            const file = await loadContractDocument(app.config.CONTRACTS_BUCKET ?? app.config.EXPORTS_BUCKET, ctx.workspaceId, url);
-            return file ? Buffer.from(file).toString("base64") : url;
-          });
+          return sendEnvelope(db, ctx, esign, request.params.id, parsed.data, (url) => resolveContractDocumentForProvider(app.config, ctx.workspaceId, url));
         },
         (envelope) => reply.status(201).send({ data: envelope })
       );

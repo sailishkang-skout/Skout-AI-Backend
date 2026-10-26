@@ -78,7 +78,7 @@ import { copsTicketsRoutes } from "./cops-tickets.routes.js";
 import { copsAdminConfigRoutes } from "./cops-admin-config.routes.js";
 import { copsAdminOpsRoutes } from "./cops-admin-ops.routes.js";
 import { copsIntegrationsStatusRoutes } from "./cops-integrations-status.routes.js";
-import { copsContractDocumentRoutes } from "./cops-contract-documents.routes.js";
+import { copsContractDocumentLocalRoutes, copsContractDocumentRoutes } from "./cops-contract-documents.routes.js";
 import { copsOpsAlertRoutes } from "./cops-ops-alerts.routes.js";
 import { requireCopsModule } from "../services/cops-feature-flags.js";
 import { copsOutboxRoutes } from "./cops-outbox.routes.js";
@@ -191,6 +191,8 @@ export async function registerRoutes(app: FastifyInstance) {
       await v1.register(copsAdminConfigRoutes, { db: app.db });
       await v1.register(copsAdminOpsRoutes, { db: app.db });
       await v1.register(copsIntegrationsStatusRoutes, { db: app.db });
+      // Dev-only stand-in for presigned URLs (no bucket); not registered in production.
+      await v1.register(copsContractDocumentLocalRoutes);
       await v1.register(copsOpsAlertRoutes, { db: app.db });
       await v1.register(copsOutboxRoutes, { db: app.db });
       await v1.register(copsLifecycleRoutes, { db: app.db });
