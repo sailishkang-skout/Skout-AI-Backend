@@ -22,7 +22,9 @@ info:
 
     Errors: validation is 422 VALIDATION_FAILED with field paths. Service errors are
     { ok: false, error, code } with a stable code; capture errors also carry the run. Mutations are
-    rate limited per minute (429).
+    rate limited per minute (429). While the database cannot be reached (down, restarting, out of
+    connections) any path answers 503 SERVICE_UNAVAILABLE with retryable: true and Retry-After: 5;
+    reads may be retried after that delay, and nothing was changed. Other server faults stay 500.
 servers:
   - url: /api/v1
 security:
