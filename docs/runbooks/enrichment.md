@@ -121,6 +121,11 @@ In the sequence worker log, a held or skipped campaign email names its reason:
 | `email_not_verified` / `campaign_recipient_email_changed` | The address changed or lost its verification after approval |
 | `suppressed` | On the suppression list |
 
+**Approve is refused with `self_approval_not_allowed` (403).** A second person approves: the user
+who created the campaign, or submitted it for review, cannot approve it (they can still reject it).
+Ask another member with the send permission (`sequences:send`) to approve. A workspace with a
+single member cannot approve campaigns until a second member is added.
+
 ## Deployment
 
 Environments and branches are in `docs/deployment-environments.md`. For a release that includes
