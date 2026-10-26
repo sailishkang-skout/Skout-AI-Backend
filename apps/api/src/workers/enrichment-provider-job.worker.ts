@@ -9,6 +9,7 @@ import {
   enqueueEnrichmentProviderJob,
   type EnrichmentProviderJobPayload,
 } from "./enrichment-provider-job.queue.js";
+import { DB_SHUTDOWN_TIMEOUT_SECONDS } from "../plugins/db.js";
 
 const log = createLogger("enrichment-provider-job.worker");
 
@@ -65,7 +66,7 @@ export async function startEnrichmentProviderJobWorker(config: Env): Promise<() 
     void tick();
     return async () => {
       clearInterval(timer);
-      await sql.end();
+      await sql.end({ timeout: DB_SHUTDOWN_TIMEOUT_SECONDS });
     };
   }
 
@@ -101,6 +102,6 @@ export async function startEnrichmentProviderJobWorker(config: Env): Promise<() 
     await worker.close();
     await recoveryWorker.close();
     await recoveryQueue.close();
-    await sql.end();
+    await sql.end({ timeout: DB_SHUTDOWN_TIMEOUT_SECONDS });
   };
 }

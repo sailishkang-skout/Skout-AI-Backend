@@ -143,6 +143,22 @@ function formatApiError(status, body, webUrl) {
 const REQUEST_TIMEOUT_MS = 20_000;
 const AUTH_REFRESH_TIMEOUT_MS = 20_000;
 
+const READ_METHODS = new Set(["GET", "HEAD"]);
+const READ_RETRY_ATTEMPTS = 5;
+const RETRYABLE_STATUSES = new Set([502, 503, 504]);
+const READ_RETRY_MAX_DELAY_MS = 4_000;
+
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** 0.5s, 1s, 2s, 4s; a Retry-After in seconds is used instead, capped at 4s. */
+export function readRetryDelayMs(attempt, retryAfter) {
+  const seconds = Number(retryAfter);
+  if (retryAfter != null && retryAfter !== "" && Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(READ_RETRY_MAX_DELAY_MS, seconds * 1000);
+  }
+  return Math.min(READ_RETRY_MAX_DELAY_MS, 500 * 2 ** (attempt - 1));
+}
+
 function isAbortError(error) {
   return error?.name === "AbortError";
 }
@@ -214,11 +230,24 @@ export async function skoutFetch(path, options = {}) {
       ? new Error(`The API at ${config.apiUrl} didn't respond in time. Check it's running, then try again.`)
       : new Error(`Cannot reach API at ${config.apiUrl}. Check the API URL in extension settings.`);
 
+  // A restart can leave the API, or its database, unreachable for a few seconds. Reads are
+  // safe to repeat, so a refused connection or a 502/503/504 is retried a few times with
+  // backoff (honouring Retry-After). Writes stay single-attempt: a capture whose response was
+  // lost after it saved must not be sent twice. A timeout is not retried.
+  const attempts = READ_METHODS.has(method.toUpperCase()) ? READ_RETRY_ATTEMPTS : 1;
   let res;
-  try {
-    res = await timeStep(`fetch ${method} ${path}`, () => request(path, options, bearerToken));
-  } catch (error) {
-    throw reachError(error);
+  for (let attempt = 1; ; attempt++) {
+    try {
+      res = await timeStep(`fetch ${method} ${path}`, () => request(path, options, bearerToken));
+    } catch (error) {
+      if (isAbortError(error) || attempt >= attempts) throw reachError(error);
+      log(`${method} ${path} could not connect (attempt ${attempt} of ${attempts}); retrying`);
+      await pause(readRetryDelayMs(attempt, null));
+      continue;
+    }
+    if (!RETRYABLE_STATUSES.has(res.status) || attempt >= attempts) break;
+    log(`${method} ${path} answered ${res.status} (attempt ${attempt} of ${attempts}); retrying`);
+    await pause(readRetryDelayMs(attempt, res.headers.get("retry-after")));
   }
 
   log(`fetch response ${res.status} for ${method} ${path}`);

@@ -412,6 +412,11 @@ async function claim(db: Db, jobId: string, now: Date): Promise<JobRow | null> {
       startedAt: sql`coalesce(${enrichmentJobs.startedAt}, ${now.toISOString()}::timestamptz)`,
       leaseExpiresAt: new Date(now.getTime() + LEASE_MS),
       nextAttemptAt: null,
+      // The note a waiting job carried ("trying again automatically", "queued again") described
+      // the previous attempt. A running job shows its own state, not that note.
+      errorCode: null,
+      errorMessage: null,
+      completedAt: null,
       updatedAt: now,
     })
     .where(
