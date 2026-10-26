@@ -164,6 +164,8 @@ const envSchema = z
       .optional()
       .transform((v) => v === "true" || v === "1"),
     EXPORTS_BUCKET: z.string().optional(),
+    /** Contract PDFs (POST /contracts/documents). Falls back to EXPORTS_BUCKET, then a local dir in dev. */
+    CONTRACTS_BUCKET: z.string().optional(),
     SCRAPE_BUCKET: z.string().optional(),
     S3_ENDPOINT: z.string().optional(),
     S3_FORCE_PATH_STYLE: z

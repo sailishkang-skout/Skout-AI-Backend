@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
@@ -41,11 +44,13 @@ maybe("CustomerOps panel gaps", () => {
   }
 
   beforeAll(async () => {
+    process.env.COPS_DOCUMENTS_LOCAL_DIR = mkdtempSync(path.join(tmpdir(), "cops-docs-"));
     delete process.env.AUTH_MODE;
     process.env.AUTH_STUB = "true";
     process.env.CLERK_SECRET_KEY = "";
     const config = loadEnv();
-    app = await buildApp({ ...config, DATABASE_URL: url, CLERK_SECRET_KEY: undefined, LOG_LEVEL: "fatal", OPENSEARCH_URL: undefined } as typeof config);
+    // No bucket: contract files go to the temp folder above instead of object storage.
+    app = await buildApp({ ...config, DATABASE_URL: url, CLERK_SECRET_KEY: undefined, LOG_LEVEL: "fatal", OPENSEARCH_URL: undefined, EXPORTS_BUCKET: undefined, CONTRACTS_BUCKET: undefined } as typeof config);
     sql = postgres(url as string, { max: 1, onnotice: () => {} });
     await app.ready();
     workspaceId = ((await call("GET", "/me")).json() as { workspaceId: string }).workspaceId;
@@ -167,5 +172,31 @@ maybe("CustomerOps panel gaps", () => {
 
     await asRole("sales");
     expect((await call("GET", "/cops/integrations/status")).statusCode).toBe(403);
+  });
+
+  it("gap 1: a contract PDF uploads once, is hashed by the server, reads back, and only PDFs are taken", async () => {
+    await asRole("sales");
+    const pdf = Buffer.from("%PDF-1.4\n1 0 obj << >> endobj\ntrailer << >>\n%%EOF\n");
+    const sha = createHash("sha256").update(pdf).digest("hex");
+    const up = await call("POST", "/contracts/documents", { file_name: "msa.pdf", content_base64: pdf.toString("base64") });
+    expect(up.statusCode).toBe(201);
+    expect(up.json().data).toEqual({ document_url: `cops-document:${sha}`, file_sha256: sha, file_name: "msa.pdf", bytes: pdf.length });
+    const again = await call("POST", "/contracts/documents", { file_name: "copy.pdf", content_base64: pdf.toString("base64") });
+    expect(again.json().data.file_sha256).toBe(sha);
+
+    const back = await call("GET", `/contracts/documents/${sha}`);
+    expect(back.statusCode).toBe(200);
+    expect(back.headers["content-type"]).toContain("application/pdf");
+    expect(Buffer.from(back.rawPayload).equals(pdf)).toBe(true);
+    expect((await call("GET", `/contracts/documents/${"0".repeat(64)}`)).statusCode).toBe(404);
+
+    const notPdf = await call("POST", "/contracts/documents", { file_name: "x.txt", content_base64: Buffer.from("hello").toString("base64") });
+    expect(notPdf.statusCode).toBe(422);
+    const audits = await sql`select count(*)::int as n from audit_logs where workspace_id = ${workspaceId} and action = 'contract_document.uploaded'`;
+    expect(audits[0].n).toBe(2);
+
+    await asRole("engineering");
+    expect((await call("GET", `/contracts/documents/${sha}`)).statusCode).toBe(403);
+    expect((await call("POST", "/contracts/documents", { file_name: "msa.pdf", content_base64: pdf.toString("base64") })).statusCode).toBe(403);
   });
 });

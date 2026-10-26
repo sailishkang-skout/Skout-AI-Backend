@@ -218,6 +218,30 @@ export async function storeCsvExport(
   return { key, filename, inline: false };
 }
 
+/** Repo-root `.cops-documents` — contract files in local dev when no bucket is configured. */
+export function defaultLocalDocumentDir(): string {
+  if (process.env.COPS_DOCUMENTS_LOCAL_DIR) return process.env.COPS_DOCUMENTS_LOCAL_DIR;
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  return path.join(path.resolve(here, "../../.."), ".cops-documents");
+}
+
+/** Stores one immutable document (S3 when `bucket` is set, otherwise the local document dir). */
+export async function storeDocument(bucket: string | undefined, key: string, body: Uint8Array, contentType: string): Promise<void> {
+  if (!bucket) {
+    const file = path.join(defaultLocalDocumentDir(), key);
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, body);
+    return;
+  }
+  await createS3Client().send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: contentType }));
+}
+
+export async function readDocument(bucket: string | undefined, key: string): Promise<Uint8Array> {
+  if (!bucket) return new Uint8Array(await readFile(path.join(defaultLocalDocumentDir(), key)));
+  const res = await createS3Client().send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  return (await res.Body?.transformToByteArray()) ?? new Uint8Array();
+}
+
 export async function readCsvExport(bucket: string, key: string): Promise<string> {
   const client = createS3Client();
   const res = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));

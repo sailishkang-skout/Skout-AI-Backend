@@ -78,6 +78,7 @@ import { copsTicketsRoutes } from "./cops-tickets.routes.js";
 import { copsAdminConfigRoutes } from "./cops-admin-config.routes.js";
 import { copsAdminOpsRoutes } from "./cops-admin-ops.routes.js";
 import { copsIntegrationsStatusRoutes } from "./cops-integrations-status.routes.js";
+import { copsContractDocumentRoutes } from "./cops-contract-documents.routes.js";
 import { copsOpsAlertRoutes } from "./cops-ops-alerts.routes.js";
 import { requireCopsModule } from "../services/cops-feature-flags.js";
 import { copsOutboxRoutes } from "./cops-outbox.routes.js";
@@ -183,7 +184,7 @@ export async function registerRoutes(app: FastifyInstance) {
         });
       await v1.register(copsAuditRoutes, { db: app.db });
       await gated("crm", [copsTimelineRoutes, copsAccount360Routes, copsSavedViewsRoutes, copsCrmObjectsRoutes]);
-      await gated("commercial", [copsCommercialRoutes]);
+      await gated("commercial", [copsCommercialRoutes, copsContractDocumentRoutes]);
       await gated("provisioning", [copsProvisioningRoutes]);
       await gated("onboarding", [copsOnboardingRoutes]);
       await gated("tickets", [copsTicketsRoutes]);
