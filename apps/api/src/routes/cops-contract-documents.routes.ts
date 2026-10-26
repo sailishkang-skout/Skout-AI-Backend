@@ -1,12 +1,15 @@
 import type { FastifyInstance } from "fastify";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import type { Db } from "@skout/db";
+import { and, eq } from "drizzle-orm";
+import { schema, type Db } from "@skout/db";
 import { getMemberPermissions } from "@skout/auth";
 import { copsErrorBody, copsErrorStatus, resolveCorrelationId } from "@skout/shared";
-import { inspectDocument, presignDocumentGet, presignDocumentPut, readLocalDocument, writeLocalDocument } from "@skout/storage";
+import { deleteDocument, deleteLocalDocument, inspectDocument, presignDocumentGet, presignDocumentPut, readLocalDocument, writeLocalDocument } from "@skout/storage";
 import type { Env } from "../config/env.js";
 import { requireAnyCopsPermission, writeCopsAudit } from "../services/cops-platform.service.js";
+
+const { contracts, contractVersions } = schema;
 
 /**
  * Contract PDFs (Bible p.32, p.77). The browser uploads straight to object storage with a presigned
@@ -101,6 +104,32 @@ export async function resolveContractDocumentForProvider(config: Env, workspaceI
   if (bucket) return presignDocumentGet(bucket, contractDocumentKey(workspaceId, sha, place), { expiresIn: PROVIDER_TTL_SECONDS });
   // Local dev: the API's own signed link, absolute so a provider (or the mock) can follow it.
   return `${(config.API_PUBLIC_URL ?? "http://localhost:3001").replace(/\/$/, "")}${localUrl("GET", workspaceId, sha, PROVIDER_TTL_SECONDS, place)}`;
+}
+
+/**
+ * After a draft contract is deleted: removes its file from storage unless another contract
+ * version still points to it. Best effort; a file left behind is harmless, a missing one is not.
+ */
+export async function removeContractDocumentIfUnused(db: Db, config: Env, workspaceId: string, documentUrl: string, log?: { warn: (o: object, m: string) => void }) {
+  const ref = parseContractDocumentRef(documentUrl);
+  if (!ref) return false;
+  const [used] = await db
+    .select({ id: contractVersions.id })
+    .from(contractVersions)
+    .innerJoin(contracts, eq(contracts.id, contractVersions.contractId))
+    .where(and(eq(contracts.workspaceId, workspaceId), eq(contractVersions.documentUrl, documentUrl)))
+    .limit(1);
+  if (used) return false;
+  const key = contractDocumentKey(workspaceId, ref.sha, ref.place);
+  try {
+    const bucket = contractsBucket(config);
+    if (bucket) await deleteDocument(bucket, key);
+    else if (config.NODE_ENV !== "production") await deleteLocalDocument(key);
+    return true;
+  } catch (error) {
+    log?.warn({ err: error, key }, "contract document could not be removed from storage");
+    return false;
+  }
 }
 
 const uploadSchema = z

@@ -767,6 +767,8 @@ export async function discardDraftContract(db: Db, ctx: CommercialContext, contr
       });
     }
     const at = new Date();
+    // The files behind its versions; the caller removes the ones nothing else points to.
+    const files = await tx.select({ documentUrl: contractVersions.documentUrl }).from(contractVersions).where(eq(contractVersions.contractId, contractId));
     await tx.delete(contracts).where(and(eq(contracts.id, contractId), eq(contracts.workspaceId, ctx.workspaceId)));
     await writeCopsAudit(tx, {
       tenantId: ctx.workspaceId,
@@ -774,13 +776,14 @@ export async function discardDraftContract(db: Db, ctx: CommercialContext, contr
       entityType: "contract",
       entityId: contractId,
       action: "contract.discarded",
-      before: { status: contract.status, kind: contract.kind, title: contract.title, opportunity_id: contract.opportunityId },
+      before: { status: contract.status, kind: contract.kind, title: contract.title, opportunity_id: contract.opportunityId, files: files.map((f) => f.documentUrl) },
       after: null,
       reason,
       correlationId: ctx.requestId,
       sourceChannel: "api",
       occurredAt: at,
     });
+    return { documentUrls: [...new Set(files.map((f) => f.documentUrl))] };
   });
 }
 

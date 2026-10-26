@@ -52,7 +52,7 @@ import type { PspAdapter } from "../services/psp/psp-adapter.js";
 import { createMockEsignAdapter, type EsignAdapter } from "../services/esign/esign-adapter.js";
 import { createDocusealAdapter } from "../services/esign/docuseal-adapter.js";
 import { handleEsignWebhook, listEnvelopes, sendEnvelope } from "../services/cops-esign.service.js";
-import { resolveContractDocumentForProvider } from "./cops-contract-documents.routes.js";
+import { removeContractDocumentIfUnused, resolveContractDocumentForProvider } from "./cops-contract-documents.routes.js";
 import { getAccountContractFields, setAccountContractFields } from "../services/cops-account-fields.service.js";
 import { CREDIT_ACTIVITY_KINDS, listCreditActivity, listSubscriptionsForFinance, loadReconciliation } from "../services/cops-finance.service.js";
 import { amendSubscription, createSubscription, getAccountSubscription, issueInvoicePaymentLink, listFailedPayments, markInvoicePaid } from "../services/cops-subscriptions.service.js";
@@ -656,8 +656,11 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
         reply,
         ctx.requestId,
         async () => {
-          await discardDraftContract(db, ctx, request.params.id, parsed.data.reason);
-          return { id: request.params.id, discarded: true };
+          const { documentUrls } = await discardDraftContract(db, ctx, request.params.id, parsed.data.reason);
+          // Its PDFs leave the bucket too, unless another contract version uses the same file.
+          let filesRemoved = 0;
+          for (const url of documentUrls) if (await removeContractDocumentIfUnused(db, app.config, ctx.workspaceId, url, request.log)) filesRemoved++;
+          return { id: request.params.id, discarded: true, files_removed: filesRemoved };
         },
         (result) => ({ data: result })
       );

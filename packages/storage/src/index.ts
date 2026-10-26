@@ -1,9 +1,10 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import {
   GetObjectCommand,
+  DeleteObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
   S3Client,
@@ -285,6 +286,15 @@ export async function inspectDocument(bucket: string, key: string): Promise<{ by
     if (status === 404 || status === 403) return null;
     throw error;
   }
+}
+
+/** Removes a stored document. Deleting a key that is not there is not an error. */
+export async function deleteDocument(bucket: string, key: string): Promise<void> {
+  await createS3Client().send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+}
+
+export async function deleteLocalDocument(key: string): Promise<void> {
+  await rm(path.join(defaultLocalDocumentDir(), key), { force: true });
 }
 
 export async function readCsvExport(bucket: string, key: string): Promise<string> {

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
@@ -56,7 +56,7 @@ maybe("COPS-03 proposals and contracts", () => {
     process.env.AUTH_STUB = "true";
     process.env.CLERK_SECRET_KEY = "";
     const config = loadEnv();
-    app = await buildApp({ ...config, DATABASE_URL: url, CLERK_SECRET_KEY: undefined, LOG_LEVEL: "fatal", OPENSEARCH_URL: undefined } as typeof config);
+    app = await buildApp({ ...config, DATABASE_URL: url, CLERK_SECRET_KEY: undefined, LOG_LEVEL: "fatal", OPENSEARCH_URL: undefined, EXPORTS_BUCKET: undefined, CONTRACTS_BUCKET: undefined } as typeof config);
     sql = postgres(url as string, { max: 1, onnotice: () => {} });
     const [roles] = await sql`select count(*)::int as n from roles where key = 'owner'`;
     if (roles.n === 0) {
@@ -181,6 +181,33 @@ maybe("COPS-03 proposals and contracts", () => {
     await call("POST", `/proposals/${sent.id}/send`, {});
     expect((await call("POST", `/proposals/${sent.id}/discard`, { reason: "oops" })).statusCode).toBe(409);
     expect((await call("GET", `/proposals/${sent.id}`)).statusCode).toBe(200);
+  });
+
+  it("deleting a draft contract removes its file from storage once nothing else uses it", async () => {
+    const pdf = Buffer.from(`%PDF-1.4
+${randomUUID()}
+%%EOF
+`);
+    const sha = createHash("sha256").update(pdf).digest("hex");
+    const at = { account_id: randomUUID(), kind: "msa" };
+    const slot = (await call("POST", "/contracts/documents/uploads", { file_name: "msa.pdf", file_sha256: sha, bytes: pdf.length, ...at })).json().data;
+    await app.inject({ method: "PUT", url: slot.upload.url, headers: { "content-type": "application/pdf" }, payload: pdf });
+    const doc = (await call("POST", `/contracts/documents/${sha}/confirm`, { file_name: "msa.pdf", ...at })).json().data;
+    const view = () => call("GET", `/contracts/documents/${sha}?account_id=${at.account_id}&kind=msa`);
+    const make = async () => (await call("POST", `/opportunities/${opportunityId}/contracts`, { kind: "msa", document_url: doc.document_url, file_sha256: sha })).json().data;
+    const first = await make();
+    const second = await make();
+
+    expect((await call("POST", `/contracts/${first.id}/discard`, {})).statusCode).toBe(422);
+    // The other draft still uses the file, so it stays.
+    expect((await call("POST", `/contracts/${first.id}/discard`, { reason: "Duplicate" })).json().data).toMatchObject({ discarded: true, files_removed: 0 });
+    expect((await view()).statusCode).toBe(200);
+    expect((await call("POST", `/contracts/${second.id}/discard`, { reason: "Wrong file" })).json().data).toMatchObject({ discarded: true, files_removed: 1 });
+    expect((await view()).statusCode).toBe(404);
+
+    const sent = (await call("POST", `/opportunities/${opportunityId}/contracts`, { kind: "msa", document_url: "https://docs.example.test/sent.pdf", file_sha256: SHA })).json().data;
+    await call("POST", `/contracts/${sent.id}/send`, {});
+    expect((await call("POST", `/contracts/${sent.id}/discard`, { reason: "no" })).statusCode).toBe(409);
   });
 
   it("replays an Idempotency-Key and rejects a missing one", async () => {
