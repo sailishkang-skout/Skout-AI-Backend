@@ -101,4 +101,31 @@ maybe("CustomerOps panel gaps", () => {
     await asRole("sales");
     expect((await call("PATCH", `/automations/${auto.id}`, { status: "paused" })).statusCode).toBe(403);
   });
+
+  it("gap 4: the workspace timeline lists every account, pages, filters and hides internal notes", async () => {
+    await asRole("owner");
+    const a = await company("Feed A");
+    const b = await company("Feed B");
+    const row = (account: string, type: string, visibility: string, minutes: number) =>
+      sql`insert into cops_timeline_events (workspace_id, account_id, type, visibility, occurred_at, actor_type, source_event_id, event_type, summary)
+          values (${workspaceId}, ${account}, ${type}, ${visibility}, now() - make_interval(mins => ${minutes}), 'user', ${randomUUID()}, 'cops.Test', ${type + " " + minutes})`;
+    await row(a, "note", "internal", 1);
+    await row(a, "email", "public", 2);
+    await row(b, "call", "public", 3);
+
+    const all = (await call("GET", "/cops/timeline?limit=2")).json();
+    expect(all.data).toHaveLength(2);
+    expect(all.data[0]).toMatchObject({ account_id: a, type: "note" });
+    expect(all.next_cursor).toEqual(expect.any(String));
+    const rest = (await call("GET", `/cops/timeline?limit=2&cursor=${all.next_cursor}`)).json();
+    expect(rest.data.map((e: { account_id: string }) => e.account_id)).toContain(b);
+
+    expect((await call("GET", `/cops/timeline?account_id=${b}`)).json().data.every((e: { account_id: string }) => e.account_id === b)).toBe(true);
+    expect((await call("GET", "/cops/timeline?type=call")).json().data.every((e: { type: string }) => e.type === "call")).toBe(true);
+    expect((await call("GET", "/cops/timeline?account_id=nope")).statusCode).toBe(422);
+
+    await asRole("sales");
+    const visible = (await call("GET", "/cops/timeline")).json().data;
+    expect(visible.some((e: { visibility: string }) => e.visibility === "internal")).toBe(false);
+  });
 });
