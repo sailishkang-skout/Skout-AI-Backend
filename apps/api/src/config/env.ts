@@ -166,6 +166,10 @@ const envSchema = z
     EXPORTS_BUCKET: z.string().optional(),
     /** Contract PDFs (POST /contracts/documents). Falls back to EXPORTS_BUCKET, then a local dir in dev. */
     CONTRACTS_BUCKET: z.string().optional(),
+    /** First admin, created once at startup if the email has no password yet (SOPS env only). */
+    BOOTSTRAP_ADMIN_EMAIL: z.string().email().optional(),
+    BOOTSTRAP_ADMIN_PASSWORD: z.string().min(1).optional(),
+    BOOTSTRAP_ADMIN_NAME: z.string().max(120).optional(),
     SCRAPE_BUCKET: z.string().optional(),
     S3_ENDPOINT: z.string().optional(),
     S3_FORCE_PATH_STYLE: z

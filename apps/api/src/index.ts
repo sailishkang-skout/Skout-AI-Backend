@@ -94,6 +94,13 @@ async function main() {
 
   const app = await buildApp(config);
 
+  if (app.db) {
+    const { bootstrapAdmin } = await import("./services/bootstrap-admin.service.js");
+    const outcome = await bootstrapAdmin(app.db, config);
+    if (outcome === "created") app.log.info({ email: config.BOOTSTRAP_ADMIN_EMAIL }, "Bootstrap admin created; remove BOOTSTRAP_ADMIN_PASSWORD from the env");
+    if (outcome === "rejected_policy") app.log.warn("BOOTSTRAP_ADMIN_PASSWORD does not meet the password policy; no admin created");
+  }
+
   if (config.RBAC_ENFORCEMENT_ENABLED && app.db) {
     const { assertRbacBackfillReady } = await import("@skout/auth");
     const gate = await assertRbacBackfillReady(app.db);
