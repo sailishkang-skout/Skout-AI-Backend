@@ -6,6 +6,10 @@ import { sendMail, buildInviteEmail } from "../services/mail.service.js";
 import { errorResponse, HttpError } from "../utils/http.js";
 import { enforcePermission } from "@skout/auth";
 import type { WorkspaceRole } from "../services/team.service.js";
+import { writeCopsAudit } from "../services/cops-platform.service.js";
+import { resolveCorrelationId } from "@skout/shared";
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function teamRoutes(app: FastifyInstance) {
   function teamSvc() {
@@ -56,6 +60,33 @@ export async function teamRoutes(app: FastifyInstance) {
       return reply.send({ data: updated });
     }
   );
+
+  // POST /team/members/:userId/deactivate | /reactivate — turn sign-in off or on (owner or admin), with a reason.
+  for (const [path, status] of [["deactivate", "deactivated"], ["reactivate", "active"]] as const) {
+    app.post<{ Params: { userId: string }; Body: { reason?: string } }>(`/team/members/:userId/${path}`, async (request, reply) => {
+      if (!request.workspaceId || !request.userId) return reply.code(401).send(errorResponse("Unauthorized", 401));
+      const reason = typeof request.body?.reason === "string" ? request.body.reason.trim() : "";
+      if (!reason) return reply.code(422).send(errorResponse("A reason is required", 422));
+      if (!UUID.test(request.params.userId)) return reply.code(404).send(errorResponse("Member not found.", 404));
+      await shadowCheckTeamManage(request.workspaceId, request.userId, `${path}-member`);
+      const result = await teamSvc().setMemberStatus(request.workspaceId, request.params.userId, request.userId, request.role, status);
+      if (result.changed && app.db) {
+        await writeCopsAudit(app.db, {
+          tenantId: request.workspaceId,
+          actor: { type: "user", id: request.userId },
+          entityType: "workspace_member",
+          entityId: request.params.userId,
+          action: `member.${status}`,
+          before: { status: result.before },
+          after: { status },
+          reason: reason.slice(0, 1000),
+          correlationId: resolveCorrelationId(request.headers["x-request-id"]),
+          sourceChannel: "api",
+        });
+      }
+      return reply.send({ data: { userId: result.userId, status: result.status } });
+    });
+  }
 
   // DELETE /team/members/:userId — remove a member (owner or admin)
   app.delete<{ Params: { userId: string } }>(

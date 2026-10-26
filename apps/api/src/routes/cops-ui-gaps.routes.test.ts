@@ -95,6 +95,39 @@ maybe("CustomerOps panel gaps", () => {
     expect((await call("GET", "/next-action-catalog")).json().data).toMatchObject(value);
   });
 
+  it("team: members show last login and activity; an admin deactivates and reactivates with a reason", async () => {
+    const email = `cops-deact-${Date.now()}@example.test`;
+    const [u] = await sql`insert into users (email, full_name) values (${email}, 'Deact Tester') returning id`;
+    await sql`insert into workspace_members (workspace_id, user_id, role) values (${workspaceId}, ${u.id}, 'member')`;
+    await sql`insert into auth_sessions (user_id, idle_expires_at, absolute_expires_at, last_used_at)
+              values (${u.id}, now() + interval '1 day', now() + interval '2 days', now() - interval '1 hour')`;
+
+    const members = (await call("GET", "/team/members")).json().data as { userId: string; status: string; lastLoginAt: string | null; lastActiveAt: string | null; role: string }[];
+    const row = members.find((m) => m.userId === u.id)!;
+    expect(row).toMatchObject({ status: "active", lastLoginAt: expect.any(String), lastActiveAt: expect.any(String) });
+
+    expect((await call("POST", `/team/members/${u.id}/deactivate`, {})).statusCode).toBe(422);
+    const owner = members.find((m) => m.role === "owner")!;
+    expect((await call("POST", `/team/members/${owner.userId}/deactivate`, { reason: "x" })).statusCode).toBeGreaterThanOrEqual(400);
+
+    const off = await call("POST", `/team/members/${u.id}/deactivate`, { reason: "Left the company" });
+    expect(off.statusCode).toBe(200);
+    expect(off.json().data.status).toBe("deactivated");
+    const [user] = await sql`select status from users where id = ${u.id}`;
+    expect(user.status).toBe("deactivated");
+    const open = await sql`select count(*)::int as n from auth_sessions where user_id = ${u.id} and revoked_at is null`;
+    expect(open[0].n).toBe(0);
+    const audit = await sql`select reason from audit_logs where workspace_id = ${workspaceId} and action = 'member.deactivated' and entity_id = ${u.id}`;
+    expect(audit[0]?.reason).toBe("Left the company");
+
+    expect((await call("POST", `/team/members/${u.id}/reactivate`, { reason: "Came back" })).json().data.status).toBe("active");
+
+    // Someone who also works in another workspace is not locked out from here.
+    const [other] = await sql`insert into workspaces (name, slug) values ('Other', ${`other-${Date.now()}`}) returning id`;
+    await sql`insert into workspace_members (workspace_id, user_id, role) values (${other.id}, ${u.id}, 'member')`;
+    expect((await call("POST", `/team/members/${u.id}/deactivate`, { reason: "x" })).statusCode).toBe(409);
+  });
+
   it("gap 3: the 360 header carries onboarding % from the activation instance", async () => {
     await asRole("owner");
     const accountId = await company("Gap Three Ltd");
