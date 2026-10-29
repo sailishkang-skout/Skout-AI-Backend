@@ -94,6 +94,15 @@ try {
     console.log("Created demo list");
   }
 
+  // Seed internal access entitlement for the default demo workspace (ENR-01/ENR-06)
+  await sql`
+    INSERT INTO entitlements (workspace_id, key, value, source, updated_at)
+    VALUES (${DEMO_WORKSPACE_ID}, 'enrichment.internal_access', 'true'::jsonb, 'seed', NOW())
+    ON CONFLICT (workspace_id, key)
+    DO UPDATE SET value = 'true'::jsonb, updated_at = NOW()
+  `;
+  console.log("Seeded demo enrichment.internal_access entitlement");
+
 
 
 

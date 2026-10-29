@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Skout AI Prospector",
-  "version": "0.9.1",
+  "version": "0.9.3",
   "description": "Capture reviewed LinkedIn profiles, companies and Sales Navigator results into Skout, and enrich contacts.",
   "permissions": [
     "storage",

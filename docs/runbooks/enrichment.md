@@ -26,6 +26,25 @@ campaigns and the Chrome extension. Design and rationale are in ADR 0019; releas
 | One workspace | `GET /api/v1/enrichment/ops` (`enrichment:admin`) | `alerts: []` |
 | Release state | start-up log line `LinkedIn enrichment release stage: …` | the stage you intended |
 
+### "Not available in this workspace yet"
+
+Production is in internal release: only workspaces holding `enrichment.internal_access` can use
+enrichment. A platform admin (`PLATFORM_ADMIN_EMAILS`) grants it with
+`PUT /api/v1/admin/workspaces/<workspaceId>/entitlements/enrichment.internal_access {"value": true}`;
+see `docs/ops/enrichment-release-gates.md`. Workspace owners cannot grant it themselves.
+### When the database is down or restarting
+
+- Every request that needs the database answers **503 `SERVICE_UNAVAILABLE`**, `retryable: true`,
+  with `Retry-After: 5`; no SQL reaches the client and nothing is changed. `GET /api/v1/health`
+  stays 200 (the API process is up), so watch `skout_enrichment_metrics_up`, which drops to 0
+  within 30 seconds.
+- The API reconnects on its own when the database is back; no restart is needed.
+- The Chrome extension retries its reads (status, freshness) up to 5 times over about 7.5 seconds;
+  captures are never retried, so a capture made during the outage shows its error and is run again
+  by the user.
+- A graceful shutdown during or after an outage waits at most 5 seconds for open queries, then
+  closes the remaining database connections.
+
 ## Metrics and alerts
 
 All gauges are on `GET /api/v1/metrics`, cover the last 24 hours, and are labelled only by
@@ -107,6 +126,11 @@ In the sequence worker log, a held or skipped campaign email names its reason:
 | `sandbox_recipient_blocked` | Not production and the address is not in `ENRICHMENT_CAMPAIGN_SANDBOX_RECIPIENTS` |
 | `email_not_verified` / `campaign_recipient_email_changed` | The address changed or lost its verification after approval |
 | `suppressed` | On the suppression list |
+
+**Approve is refused with `self_approval_not_allowed` (403).** A second person approves: the user
+who created the campaign, or submitted it for review, cannot approve it (they can still reject it).
+Ask another member with the send permission (`sequences:send`) to approve. A workspace with a
+single member cannot approve campaigns until a second member is added.
 
 ## Deployment
 

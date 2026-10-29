@@ -19,7 +19,13 @@ import {
 import { buildApiResolveAuthConfig } from "./auth-resolve-config.js";
 import { resolveOrProvisionUser } from "../services/auth.service.js";
 import { verifyInviteSession } from "../services/invite-auth.service.js";
-import { errorResponse, HttpError } from "../utils/http.js";
+import {
+  errorResponse,
+  HttpError,
+  isServiceUnavailableError,
+  SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS,
+  serviceUnavailableResponse,
+} from "../utils/http.js";
 import type { Env } from "../config/env.js";
 
 /** Constant-time string compare so secret checks don't leak timing info. */
@@ -241,6 +247,13 @@ export const authPlugin = fp(async (app) => {
         request.workspaceId = workspace.workspaceId;
         request.role = workspace.role;
       } catch (err) {
+        if (isServiceUnavailableError(err)) {
+          app.log.warn({ err }, "Stub user provisioning: database unavailable");
+          return reply
+            .code(503)
+            .header("Retry-After", String(SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS))
+            .send(serviceUnavailableResponse(request.id));
+        }
         app.log.error({ err }, "Stub user provisioning failed");
         return reply.code(500).send(errorResponse("Stub user provisioning failed", 500));
       }
@@ -367,6 +380,14 @@ export const authPlugin = fp(async (app) => {
       if (error instanceof HttpError) {
         const code = resolveAuthErrorCode(error);
         return reply.code(error.statusCode).send(authErrorResponse(code, error.message, error.statusCode));
+      }
+      // An unreachable database is a transient outage: answer 503 so clients retry, and never
+      // 401, which would tell them the session is invalid.
+      if (isServiceUnavailableError(error)) {
+        return reply
+          .code(503)
+          .header("Retry-After", String(SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS))
+          .send(serviceUnavailableResponse(request.id));
       }
       // DB errors during provisioning are server failures, not invalid tokens.
       const isDbError =

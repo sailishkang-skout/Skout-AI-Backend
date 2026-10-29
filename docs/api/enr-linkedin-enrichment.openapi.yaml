@@ -22,7 +22,9 @@ info:
 
     Errors: validation is 422 VALIDATION_FAILED with field paths. Service errors are
     { ok: false, error, code } with a stable code; capture errors also carry the run. Mutations are
-    rate limited per minute (429).
+    rate limited per minute (429). While the database cannot be reached (down, restarting, out of
+    connections) any path answers 503 SERVICE_UNAVAILABLE with retryable: true and Retry-After: 5;
+    reads may be retried after that delay, and nothing was changed. Other server faults stay 500.
 servers:
   - url: /api/v1
 security:
@@ -834,7 +836,10 @@ paths:
     post:
       tags: [Campaigns]
       summary: Record the human decision on recipients and copy
-      description: Needs sequences:send. Audited. consentBasis is required for recipients without consent when consent is enforced.
+      description: >-
+        Needs sequences:send. Audited. A second person approves: the user who created the campaign
+        or submitted it for review may reject (withdraw) it but not approve it. consentBasis is
+        required for recipients without consent when consent is enforced.
       parameters: [{ $ref: "#/components/parameters/Id" }]
       requestBody:
         required: true
@@ -849,6 +854,7 @@ paths:
                 consentBasis: { type: string, minLength: 2, maxLength: 120 }
       responses:
         "200": { description: The campaign, status approved or rejected }
+        "403": { description: "self_approval_not_allowed: the caller created or submitted this campaign; someone else must approve it" }
         "409": { description: campaign_not_pending_review }
   /enrichment/campaigns/{id}/dismiss:
     post:

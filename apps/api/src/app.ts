@@ -13,7 +13,15 @@ import { loggingPlugin } from "./plugins/logging.js";
 import { securityPlugin } from "./plugins/security.js";
 import { registerRoutes } from "./routes/index.js";
 import { registerSubscriptionSuspensionGate } from "./services/cops-subscription-access.js";
-import { apiError, defaultCodeForStatus, HttpError, isDatabaseError } from "./utils/http.js";
+import {
+  apiError,
+  defaultCodeForStatus,
+  HttpError,
+  isDatabaseError,
+  isServiceUnavailableError,
+  SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS,
+  serviceUnavailableResponse,
+} from "./utils/http.js";
 
 export async function buildApp(config: Env, options: { onDbQuery?: (query: string) => void } = {}) {
   const app = Fastify({
@@ -100,6 +108,16 @@ export async function buildApp(config: Env, options: { onDbQuery?: (query: strin
             details: error.details ?? undefined,
           })
         );
+    }
+
+    // The database could not be reached (down, restarting, connection lost): a transient
+    // outage, not a fault in the request. 503 + Retry-After tells clients to try again.
+    if (isServiceUnavailableError(error)) {
+      request.log.warn({ err: error }, "backing service unavailable");
+      return reply
+        .code(503)
+        .header("Retry-After", String(SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS))
+        .send(serviceUnavailableResponse(request.id));
     }
 
     // Database errors (Drizzle/postgres) must never be returned verbatim — they
