@@ -3,7 +3,7 @@ import type { Db } from "@skout/db";
 import { schema, scopedTo, scopedById } from "@skout/db";
 import { normalizeEmail } from "@skout/shared";
 import { createLogger } from "@skout/observability";
-import { count, eq, gt, isNull, ne } from "drizzle-orm";
+import { and, count, eq, gt, isNull, ne, sql } from "drizzle-orm";
 import { HttpError } from "../utils/http.js";
 
 const log = createLogger("team.service");
@@ -77,17 +77,25 @@ export function createTeamService(db: Db) {
           joinedAt: schema.workspaceMembers.joinedAt,
           email: schema.users.email,
           fullName: schema.users.fullName,
+          status: schema.users.status,
+          // A session starts at sign-in and is touched on every token refresh.
+          lastLoginAt: sql<Date | string | null>`(select max(s.created_at) from auth_sessions s where s.user_id = ${schema.users.id})`,
+          lastActiveAt: sql<Date | string | null>`(select max(s.last_used_at) from auth_sessions s where s.user_id = ${schema.users.id})`,
         })
         .from(schema.workspaceMembers)
         .innerJoin(schema.users, eq(schema.users.id, schema.workspaceMembers.userId))
         .where(scopedTo(schema.workspaceMembers, workspaceId));
 
+      const iso = (v: Date | string | null) => (v ? new Date(v).toISOString() : null);
       return rows.map((r) => ({
         userId: r.userId,
         email: r.email,
         fullName: r.fullName,
         role: r.role as WorkspaceRole,
         joinedAt: r.joinedAt.toISOString(),
+        status: r.status === "active" ? ("active" as const) : ("deactivated" as const),
+        lastLoginAt: iso(r.lastLoginAt),
+        lastActiveAt: iso(r.lastActiveAt),
       }));
     },
 
@@ -398,6 +406,51 @@ export function createTeamService(db: Db) {
       }
 
       log.info("team member removed", { workspaceId, targetUserId, requestingUserId });
+    },
+
+    /**
+     * Turn a member's sign-in off (or back on). Sign-in, token refresh and every request already
+     * refuse a user whose status is not active; deactivating also ends their open sessions.
+     * The status lives on the user, so a user who also belongs to another workspace is not
+     * deactivated from here (that would lock them out there too); remove them instead.
+     */
+    async setMemberStatus(
+      workspaceId: string,
+      targetUserId: string,
+      requestingUserId: string,
+      requestingRole: string | undefined,
+      status: "active" | "deactivated"
+    ) {
+      requireMinRole(requestingRole, "owner", "admin");
+      if (targetUserId === requestingUserId) throw new HttpError("You cannot deactivate yourself.", 400);
+      const [target] = await db
+        .select({ role: schema.workspaceMembers.role, status: schema.users.status })
+        .from(schema.workspaceMembers)
+        .innerJoin(schema.users, eq(schema.users.id, schema.workspaceMembers.userId))
+        .where(scopedTo(schema.workspaceMembers, workspaceId, eq(schema.workspaceMembers.userId, targetUserId)))
+        .limit(1);
+      if (!target) throw new HttpError("Member not found.", 404);
+      if (target.role === "owner") throw new HttpError("The owner cannot be deactivated.", 403);
+      const [elsewhere] = await db
+        .select({ n: count() })
+        .from(schema.workspaceMembers)
+        .where(and(eq(schema.workspaceMembers.userId, targetUserId), ne(schema.workspaceMembers.workspaceId, workspaceId)));
+      if (Number(elsewhere?.n ?? 0) > 0) {
+        throw new HttpError("This person is also a member of another workspace. Remove them from this workspace instead.", 409);
+      }
+      const before = target.status === "active" ? "active" : "deactivated";
+      if (before === status) return { userId: targetUserId, status, changed: false };
+      await db.transaction(async (tx) => {
+        await tx.update(schema.users).set({ status, updatedAt: new Date() }).where(eq(schema.users.id, targetUserId));
+        if (status === "deactivated") {
+          await tx
+            .update(schema.authSessions)
+            .set({ revokedAt: new Date(), revokedReason: "deactivated" })
+            .where(and(eq(schema.authSessions.userId, targetUserId), isNull(schema.authSessions.revokedAt)));
+        }
+      });
+      log.info("team member status changed", { workspaceId, targetUserId, requestingUserId, from: before, to: status });
+      return { userId: targetUserId, status, changed: true, before };
     },
 
     async revokeInvite(

@@ -19,6 +19,7 @@ import { enqueueAutomationRunAdvance } from "../workers/automation-run.queue.js"
 import type { AutomationGraph } from "../services/automation-graph.js";
 import { validateAutomationGraph } from "../services/automation-graph-validate.js";
 import { workspaceManageGate } from "./crm-admin-gate.js";
+import { resolveCorrelationId } from "@skout/shared";
 
 const { automations, companies, contacts, deals } = schema;
 
@@ -84,9 +85,13 @@ export async function automationRoutes(app: FastifyInstance) {
   app.patch("/automations/:id", manage, async (request, reply) => {
     if (!request.workspaceId) return reply.code(401).send(errorResponse("Unauthorized", 401));
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-    const body = z.object({ name: z.string().min(1).max(200).optional(), description: z.string().max(2000).optional() }).parse(request.body ?? {});
+    const body = z
+      .object({ name: z.string().min(1).max(200).optional(), description: z.string().max(2000).optional(), status: z.enum(["active", "paused"]).optional() })
+      .parse(request.body ?? {});
     const svc = new AutomationService(db());
-    const auto = await svc.updateAutomation(request.workspaceId, id, body);
+    const { status, ...fields } = body;
+    let auto = Object.keys(fields).length ? await svc.updateAutomation(request.workspaceId, id, fields) : await svc.getAutomation(request.workspaceId, id);
+    if (status) auto = await svc.setStatus(request.workspaceId, id, status, { userId: request.userId ?? null, correlationId: resolveCorrelationId(request.headers["x-request-id"]) });
     return reply.send({ data: auto });
   });
 

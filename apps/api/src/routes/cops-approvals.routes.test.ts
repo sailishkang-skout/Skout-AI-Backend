@@ -131,9 +131,8 @@ maybe("COPS-08 approval engine", () => {
     // A second request for the same version is refused.
     expect((await call("POST", `/proposals/${id}/approvals`)).statusCode).toBe(409);
 
-    // The Sales Manager cannot decide the Finance slot, and the owner holds neither role.
+    // The Sales Manager cannot decide the Finance slot (the owner may decide any slot; see below).
     expect((await decide(approval.id, "finance", "approved", MANAGER)).statusCode).toBe(403);
-    expect((await decide(approval.id, "sales_manager", "approved", OWNER)).statusCode).toBe(403);
     // A role that is not on this approval has nothing pending.
     expect((await decide(approval.id, "executive", "approved", OWNER)).statusCode).toBe(409);
 
@@ -326,6 +325,17 @@ maybe("COPS-08 approval engine", () => {
     expect(approval.required_approvers).toEqual(["sales_manager", "finance", "executive"]);
     expect((await decide(approval.id, "executive", "approved", FINANCE)).statusCode).toBe(403);
     expect((await decide(approval.id, "executive", "approved", OWNER)).statusCode).toBe(200);
+  });
+
+  it("the owner may decide a slot they do not hold, and the audit row says so", async () => {
+    const id = await create(terms({}, 18));
+    const approval = (await call("POST", `/proposals/${id}/approvals`)).json().data;
+    expect(approval.required_approvers).toEqual(["sales_manager"]);
+    const res = await decide(approval.id, "sales_manager", "approved", OWNER, "Owner approved");
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.status).toBe("approved");
+    const [row] = await sql`select after_state from audit_logs where entity_id = ${approval.id} and action = 'approval.approved' order by created_at desc limit 1`;
+    expect(row.after_state).toMatchObject({ role: "sales_manager", decided_as_admin: true });
   });
 
   it("an approval past its expiry no longer counts", async () => {

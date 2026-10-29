@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
 import { appendCopsEvent, createCopsEvent, nextPaymentStatus, type PaymentRequestStatus } from "@skout/shared";
 import { createLogger } from "@skout/observability";
@@ -38,7 +38,7 @@ export async function createPaymentRequest(db: Db, psp: PspAdapter, ctx: Commerc
   let amountMinor = input.amount_minor;
   let currency = input.currency;
   if (input.proposal_id) {
-    // Amount defaults to the total of the proposal's latest sent version.
+    // The amount is the total of the proposal's latest sent version: what the customer agreed to.
     const [sent] = await db
       .select({ total: proposalVersions.totalMinor, currency: proposalVersions.currency, status: proposals.status })
       .from(proposals)
@@ -47,12 +47,19 @@ export async function createPaymentRequest(db: Db, psp: PspAdapter, ctx: Commerc
         and(
           eq(proposals.id, input.proposal_id),
           eq(proposals.workspaceId, ctx.workspaceId),
-          eq(proposals.opportunityId, opportunity.id)
+          eq(proposals.opportunityId, opportunity.id),
+          isNotNull(proposalVersions.sentAt)
         )
       )
       .orderBy(desc(proposalVersions.sentAt))
       .limit(1);
     if (!sent) {
+      const [exists] = await db
+        .select({ id: proposals.id })
+        .from(proposals)
+        .where(and(eq(proposals.id, input.proposal_id), eq(proposals.workspaceId, ctx.workspaceId), eq(proposals.opportunityId, opportunity.id)))
+        .limit(1);
+      if (exists) throw new CommercialError("BUSINESS_STATE_CONFLICT", "Send the proposal before requesting payment for it", { status: "draft" });
       throw new CommercialError("VALIDATION_FAILED", "proposal_id is not a proposal of this opportunity", {
         fields: [{ path: "proposal_id", code: "invalid", message: "Not a proposal of this opportunity" }],
       });
@@ -60,8 +67,14 @@ export async function createPaymentRequest(db: Db, psp: PspAdapter, ctx: Commerc
     if (!["sent", "accepted"].includes(sent.status)) {
       throw new CommercialError("BUSINESS_STATE_CONFLICT", "Send the proposal before requesting payment for it", { status: sent.status });
     }
-    amountMinor ??= Number(sent.total);
-    currency ??= sent.currency;
+    // A link for a proposal charges exactly its price; a different amount or currency is refused.
+    if ((input.amount_minor !== undefined && input.amount_minor !== Number(sent.total)) || (input.currency !== undefined && input.currency !== sent.currency)) {
+      throw new CommercialError("VALIDATION_FAILED", "A payment link for a proposal charges its sent total; the amount cannot be changed", {
+        fields: [{ path: "amount_minor", code: "locked", message: `Must be the proposal total (${sent.total} ${sent.currency})` }],
+      });
+    }
+    amountMinor = Number(sent.total);
+    currency = sent.currency;
   }
   currency ??= opportunity.currency;
   if (!amountMinor || amountMinor < 100) {

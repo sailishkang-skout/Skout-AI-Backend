@@ -23,6 +23,8 @@ export const COPS_CONFIG_KINDS = [
   "renewal_policy",
   // COPS-12: SLA targets, business-hours calendar and pause rules.
   "sla_policy",
+  // The next actions people pick from when they create a task or a deal (Bible p.24, p.43).
+  "next_action_catalog",
 ] as const;
 export type CopsConfigKind = (typeof COPS_CONFIG_KINDS)[number];
 
@@ -34,6 +36,76 @@ export const COPS_MODULES = ["crm", "commercial", "provisioning", "onboarding", 
 export type CopsModule = (typeof COPS_MODULES)[number];
 
 const text = (max: number) => z.string().trim().min(1).max(max);
+
+/**
+ * What a next action does in the app. Every task template and deal step is tied to one, so the
+ * task it creates opens the right screen (proposal builder, payment link, ...). The name is free.
+ */
+export const NEXT_ACTION_LINKS = [
+  "call",
+  "email",
+  "meeting",
+  "review",
+  "send_proposal",
+  "send_contract",
+  "send_payment_link",
+  "provision_trial",
+  "send_onboarding_email",
+  "create_ticket",
+] as const;
+export type NextActionLink = (typeof NEXT_ACTION_LINKS)[number];
+/** The task type each action creates. */
+export const NEXT_ACTION_TASK_TYPE: Record<NextActionLink, "call" | "email" | "meeting" | "review"> = {
+  call: "call",
+  email: "email",
+  meeting: "meeting",
+  review: "review",
+  send_proposal: "email",
+  send_contract: "email",
+  send_payment_link: "email",
+  provision_trial: "review",
+  send_onboarding_email: "email",
+  create_ticket: "review",
+};
+const taskTemplateSchema = z.object({ group: text(60), title: text(200), action: z.enum(NEXT_ACTION_LINKS) }).strict();
+const dealStepSchema = z.object({ label: text(200), action: z.enum(NEXT_ACTION_LINKS) }).strict();
+const nextActionCatalogSchema = z
+  .object({
+    task_templates: z.array(taskTemplateSchema).min(1).max(100),
+    deal_next_steps: z.array(dealStepSchema).min(1).max(50),
+  })
+  .strict()
+  .refine((v) => new Set(v.deal_next_steps.map((d) => d.label.toLowerCase())).size === v.deal_next_steps.length, {
+    message: "Each deal step needs its own name",
+    path: ["deal_next_steps"],
+  });
+
+/** Built-in next actions until an admin edits them. */
+export const DEFAULT_NEXT_ACTION_CATALOG = {
+  task_templates: [
+    { group: "Onboarding", title: "Call to confirm access and first login", action: "call" },
+    { group: "Onboarding", title: "Check usage and help with the first value event", action: "review" },
+    { group: "Onboarding", title: "Offer a guided onboarding session", action: "meeting" },
+    { group: "Onboarding", title: "Re-send the onboarding email", action: "send_onboarding_email" },
+    { group: "Onboarding", title: "Raise the integration blocker with engineering", action: "create_ticket" },
+    { group: "Commercial", title: "Follow up on the proposal", action: "send_proposal" },
+    { group: "Commercial", title: "Chase the contract signature", action: "send_contract" },
+    { group: "Commercial", title: "Follow up on the payment link", action: "send_payment_link" },
+    { group: "Commercial", title: "Trial review: convert, extend or close", action: "meeting" },
+    { group: "Success", title: "Success review with the customer", action: "meeting" },
+    { group: "Success", title: "Prepare the renewal", action: "review" },
+    { group: "Success", title: "Follow up on an open ticket", action: "call" },
+  ],
+  deal_next_steps: [
+    { label: "Book discovery call", action: "call" },
+    { label: "Schedule a demo", action: "meeting" },
+    { label: "Confirm budget and decision maker", action: "call" },
+    { label: "Send proposal", action: "send_proposal" },
+    { label: "Send MSA / order form", action: "send_contract" },
+    { label: "Send payment link", action: "send_payment_link" },
+    { label: "Start a trial", action: "provision_trial" },
+  ],
+} satisfies { task_templates: { group: string; title: string; action: NextActionLink }[]; deal_next_steps: { label: string; action: NextActionLink }[] };
 
 export const COPS_CONFIG_SCHEMAS = {
   credit_package: z
@@ -84,6 +156,7 @@ export const COPS_CONFIG_SCHEMAS = {
   esign_template: esignTemplateSchema,
   renewal_policy: renewalPolicySchema,
   sla_policy: slaPolicySchema,
+  next_action_catalog: nextActionCatalogSchema,
 } as const satisfies Record<CopsConfigKind, z.ZodTypeAny>;
 
 /**
@@ -107,6 +180,7 @@ export const COPS_CONFIG_DEFAULTS: Partial<Record<CopsConfigKind, Record<string,
   currency_policy: { default: COMMERCIAL_POLICY_DEFAULTS.currency_policy },
   renewal_policy: { default: COMMERCIAL_POLICY_DEFAULTS.renewal_policy },
   sla_policy: { default: DEFAULT_SLA_POLICY },
+  next_action_catalog: { default: DEFAULT_NEXT_ACTION_CATALOG },
 };
 
 export const COPS_CONFIG_KEY = /^[a-z0-9][a-z0-9_-]{0,63}$/;

@@ -143,6 +143,31 @@ maybe("COPS-03 payment requests and webhook", () => {
     expect((await call("POST", "/payment-requests", { opportunity_id: opportunityId })).statusCode).toBe(422);
   });
 
+  it("a link for a proposal charges its sent total; a draft or a different amount is refused", async () => {
+    const terms = {
+      title: "Pay me",
+      currency: "INR",
+      billing_cadence: "annual",
+      term_months: 12,
+      discount_pct: 0,
+      line_items: [{ kind: "seats", description: "Skout seats", quantity: 2, unit_amount_minor: 100_000, price_basis: "one_time" }],
+    };
+    const proposal = (await call("POST", `/opportunities/${opportunityId}/proposals`, terms)).json().data;
+    const forProposal = (body: Record<string, unknown> = {}) => call("POST", "/payment-requests", { opportunity_id: opportunityId, proposal_id: proposal.id, ...body });
+    // Only a sent proposal has an agreed price.
+    expect((await forProposal()).statusCode).toBe(409);
+    await call("POST", `/proposals/${proposal.id}/send`, {});
+    // The price is the sent total and cannot be changed.
+    expect((await forProposal({ amount_minor: 1_000 })).statusCode).toBe(422);
+    expect((await forProposal({ currency: "USD" })).statusCode).toBe(422);
+    const ok = await forProposal();
+    expect(ok.statusCode).toBe(201);
+    expect(ok.json().data).toMatchObject({ amount_minor: 200_000, currency: "INR", proposal_id: proposal.id });
+    // While the terms are being revised (a new draft version), no link is created.
+    await call("POST", `/proposals/${proposal.id}/versions`, { ...terms, title: undefined, line_items: [{ ...terms.line_items[0], quantity: 9 }] });
+    expect((await forProposal()).statusCode).toBe(409);
+  });
+
   it("rejects a missing or bad signature with 401 and changes nothing", async () => {
     const pr = await newRequest();
     const body = paidEvent(pr.provider_ref, `pay_bad_${RUN}`);

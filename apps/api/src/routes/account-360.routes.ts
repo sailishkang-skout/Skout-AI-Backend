@@ -293,7 +293,7 @@ const SUMMARY_LIMIT = 5;
  */
 const LIST_FIELDS = {
   account: ["id", "name", "owner_id", "created_at", "updated_at"],
-  contact: ["id", "first_name", "last_name", "email", "company_id", "created_at"],
+  contact: ["id", "first_name", "last_name", "email", "company_id", "created_at", "email_status"],
   opportunity: ["id", "name", "company_id", "pipeline_id", "stage_id", "status", "amount", "currency", "owner_id", "updated_at"],
   task: ["id", "title", "type", "status", "priority", "due_at", "assigned_to", "account_id", "related_entity_type", "related_entity_id", "created_at"],
 } as const;
@@ -417,6 +417,16 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
             )
           )
           .limit(1);
+        // Bible p.61 header: onboarding % from the newest activation instance and the renewal date
+        // from the open subscription term. One query for both keeps the 360 query count flat.
+        const [progress] = (await db.execute(sql`
+          select
+            (select oi.activation_pct from cops_onboarding_instances oi
+               where oi.workspace_id = ${workspaceId} and oi.account_id = ${accountId}
+               order by oi.created_at desc limit 1) as onboarding_pct,
+            (select s.term_end from subscriptions s
+               where s.workspace_id = ${workspaceId} and s.account_id = ${accountId} and s.status <> 'closed'
+               order by s.term_end desc limit 1) as renewal_at`)) as unknown as Array<{ onboarding_pct: number | null; renewal_at: Date | string | null }>;
         data.header = {
           id: account.id,
           name: account.name,
@@ -428,7 +438,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
           renewal_risk: account.renewalRisk ?? null,
           csm_id: account.csmId ?? null,
           commercial_state: commercialState,
-          onboarding_pct: null,
+          onboarding_pct: progress?.onboarding_pct ?? null,
           plan: provisioned ? ((provisioned.request as { plan?: string }).plan ?? null) : null,
           provisioning: provisioned
             ? {
@@ -437,7 +447,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
                 trial_ends_at: provisioned.trialEndsAt?.toISOString() ?? null,
               }
             : null,
-          renewal_at: null,
+          renewal_at: progress?.renewal_at ? new Date(progress.renewal_at).toISOString() : null,
         };
       }
 
@@ -781,6 +791,17 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
           createdAt: contacts.createdAt,
           createdAtText: tsText(contacts.createdAt),
           nameKey,
+          // Bible p.21: suppression and bounce status, worst first; verified vs not. Same rules as canContact().
+          // Outer columns are written table-qualified: a single-table select renders them bare, and a bare
+          // "id"/"email" inside the subqueries would bind to the inner table instead.
+          emailStatus: sql<"none" | "suppressed" | "bounced" | "soft_bounce" | "verified" | "unverified">`case
+            when "contacts"."email" is null or "contacts"."email" = '' then 'none'
+            when exists (select 1 from suppressions sp where sp.workspace_id = "contacts"."workspace_id" and sp.email = lower(trim("contacts"."email"))) then 'suppressed'
+            when exists (select 1 from contact_channels cc where cc.workspace_id = "contacts"."workspace_id" and cc.contact_id = "contacts"."id" and cc.channel = 'email' and cc.suppressed) then 'suppressed'
+            when exists (select 1 from contact_channels cc where cc.workspace_id = "contacts"."workspace_id" and cc.contact_id = "contacts"."id" and cc.channel = 'email' and cc.bounce_status = 'hard') then 'bounced'
+            when exists (select 1 from contact_channels cc where cc.workspace_id = "contacts"."workspace_id" and cc.contact_id = "contacts"."id" and cc.channel = 'email' and cc.bounce_status = 'soft') then 'soft_bounce'
+            when exists (select 1 from contact_channels cc where cc.workspace_id = "contacts"."workspace_id" and cc.contact_id = "contacts"."id" and cc.channel = 'email' and cc.verified) then 'verified'
+            else 'unverified' end`,
         })
         .from(contacts)
         .where(and(...conditions))
@@ -802,6 +823,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
           email: r.email,
           company_id: r.companyId,
           created_at: r.createdAt.toISOString(),
+          email_status: r.emailStatus,
         })), fieldList),
         next_cursor: cursorOut,
         applied_filters: filters,

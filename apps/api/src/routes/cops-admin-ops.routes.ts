@@ -6,7 +6,7 @@ import { copsErrorBody, copsErrorStatus, resolveCorrelationId } from "@skout/sha
 import { getMemberPermissions } from "@skout/auth";
 import { copsIdempotencyStore, requireAnyCopsPermission, writeCopsAudit } from "../services/cops-platform.service.js";
 import { withCopsIdempotentReply, type CopsCapturingReply } from "../services/cops-idempotent.js";
-import { listConfig } from "../services/cops-admin-config.service.js";
+import { getConfig, listConfig } from "../services/cops-admin-config.service.js";
 import { loadCopsModules } from "../services/cops-feature-flags.js";
 import { listRetentionRuns, loadDataInventory, RETENTION_TARGETS, RetentionError, startRetentionRun } from "../services/cops-retention.service.js";
 import { loadOpsMetrics } from "../services/cops-ops-metrics.service.js";
@@ -63,6 +63,9 @@ export async function copsAdminOpsRoutes(app: FastifyInstance, opts: { db: Db })
   const adminGate = requireAnyCopsPermission(["admin:admin"], perms);
   // The catalogs feed the provision and credit dialogs, so the roles that use those dialogs read them.
   const catalogGate = requireAnyCopsPermission(["onboarding:send", "commercial:send", "crm:write", "credits:adjust", "credits:read", "admin:read", "admin:admin"], perms);
+  // Sales prices proposals from the price book; only admins can change it (PUT /admin/config/price_book/default).
+  const nextActionGate = requireAnyCopsPermission(["crm:read", "crm:write", "onboarding:read", "commercial:read", "tickets:read", "admin:read", "admin:admin"], perms);
+  const priceBookGate = requireAnyCopsPermission(["commercial:read", "commercial:write", "commercial:send", "commercial:approve", "admin:read", "admin:admin"], perms);
   const idempotency = copsIdempotencyStore(db);
 
   const ctxOf = (request: { workspaceId?: string; userId?: string; headers: Record<string, unknown> }) => ({
@@ -92,6 +95,21 @@ export async function copsAdminOpsRoutes(app: FastifyInstance, opts: { db: Db })
       .map((c) => ({ key: c.key, version: c.version, ...(c.value as { active?: boolean }) }))
       .filter((p) => p.active !== false),
   }));
+
+  /** The live price book and the currencies deals may use, read-only, for the proposal builder. */
+  app.get("/price-book", { preHandler: priceBookGate }, async (request) => {
+    const [book, currencies] = await Promise.all([
+      getConfig(db, request.workspaceId!, "price_book", "default"),
+      getConfig(db, request.workspaceId!, "currency_policy", "default"),
+    ]);
+    return { data: book ? { version: book.version, ...(book.value as object), currency_policy: currencies?.value ?? null } : null };
+  });
+
+  /** The next actions people choose from when creating a task or a deal; admins edit it in Admin. */
+  app.get("/next-action-catalog", { preHandler: nextActionGate }, async (request) => {
+    const row = await getConfig(db, request.workspaceId!, "next_action_catalog", "default");
+    return { data: row ? { version: row.version, ...(row.value as object) } : null };
+  });
 
   /** Activation definitions: the newest version per key and segment, workspace versions over system ones. */
   app.get("/admin/activation-templates", { preHandler: readGate }, async (request) => {

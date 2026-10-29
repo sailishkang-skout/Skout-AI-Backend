@@ -2,6 +2,7 @@ import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, scopedById, scopedTo } from "@skout/db";
 import { HttpError } from "../utils/http.js";
+import { writeCopsAudit } from "./cops-platform.service.js";
 import type { AutomationGraph } from "./automation-graph.js";
 import { validateAutomationGraph } from "./automation-graph-validate.js";
 
@@ -46,6 +47,36 @@ export class AutomationService {
       .where(scopedById(automations, workspaceId, automationId))
       .returning();
     return row!;
+  }
+
+  /**
+   * Turns a published automation on ("active") or off ("paused"). Only active automations start
+   * new runs; runs already in flight keep going. Turning on needs a published version.
+   */
+  async setStatus(workspaceId: string, automationId: string, status: "active" | "paused", actor: { userId: string | null; correlationId: string }) {
+    const before = await this.getAutomation(workspaceId, automationId);
+    if (before.status === status) return before;
+    if (status === "active" && before.currentVersion < 1) throw new HttpError("automation_not_published", 409);
+    if (before.status === "archived") throw new HttpError("automation_archived", 409);
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(automations)
+        .set({ status, updatedAt: new Date() })
+        .where(scopedById(automations, workspaceId, automationId))
+        .returning();
+      await writeCopsAudit(tx, {
+        tenantId: workspaceId,
+        actor: { type: "user", id: actor.userId },
+        entityType: "automation",
+        entityId: automationId,
+        action: status === "active" ? "automation.activated" : "automation.paused",
+        before: { status: before.status },
+        after: { status },
+        correlationId: actor.correlationId,
+        sourceChannel: "api",
+      });
+      return row!;
+    });
   }
 
   /** Upserts the single draft version for an automation (version 0 — never published). */

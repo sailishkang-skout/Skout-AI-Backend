@@ -34,6 +34,7 @@ const {
   proposalVersions,
   proposalLineItems,
   contracts,
+  signatureEnvelopes,
   contractVersions,
   copsLifecycleStates,
 } = schema;
@@ -419,6 +420,50 @@ export async function setProposalStatus(
   });
 }
 
+/**
+ * A draft that was never sent can be thrown away (duplicates, mistakes). Its versions, line
+ * items and approvals go with it. Anything sent stays: it is customer-facing and immutable.
+ * The audit row keeps what was deleted and why.
+ */
+export async function discardDraftProposal(db: Db, ctx: CommercialContext, proposalId: string, reason: string) {
+  return db.transaction(async (tx) => {
+    const proposal = await lockProposal(tx as unknown as Tx, ctx.workspaceId, proposalId);
+    if (proposal.status !== "draft") {
+      throw new CommercialError("BUSINESS_STATE_CONFLICT", "Only a draft proposal can be deleted; a sent proposal is kept as sent", {
+        status: proposal.status,
+        allowed_from: ["draft"],
+      });
+    }
+    // A new version of a sent proposal is a draft again, but the sent version must stay.
+    const [sentVersion] = await tx
+      .select({ version: proposalVersions.version })
+      .from(proposalVersions)
+      .where(and(eq(proposalVersions.proposalId, proposalId), isNotNull(proposalVersions.sentAt)))
+      .limit(1);
+    if (sentVersion) {
+      throw new CommercialError("BUSINESS_STATE_CONFLICT", "This proposal was already sent to the customer, so it cannot be deleted", {
+        status: proposal.status,
+        sent_version: sentVersion.version,
+      });
+    }
+    const at = new Date();
+    await tx.delete(proposals).where(and(eq(proposals.id, proposalId), eq(proposals.workspaceId, ctx.workspaceId)));
+    await writeCopsAudit(tx, {
+      tenantId: ctx.workspaceId,
+      actor: { type: "user", id: ctx.userId },
+      entityType: "proposal",
+      entityId: proposalId,
+      action: "proposal.discarded",
+      before: { status: proposal.status, title: proposal.title, opportunity_id: proposal.opportunityId, current_version: proposal.currentVersion },
+      after: null,
+      reason,
+      correlationId: ctx.requestId,
+      sourceChannel: "api",
+      occurredAt: at,
+    });
+  });
+}
+
 type VersionRow = typeof proposalVersions.$inferSelect;
 type LineRow = typeof proposalLineItems.$inferSelect;
 
@@ -724,6 +769,53 @@ export async function sendContract(db: Db, ctx: CommercialContext, contractId: s
  * Manual status (Phase 1 has no e-sign provider). `onSigned` runs in the same transaction after a
  * signature so the gate evaluation commits or rolls back with it.
  */
+/** Same rule as proposals: only a contract that was never sent can be deleted. */
+export async function discardDraftContract(db: Db, ctx: CommercialContext, contractId: string, reason: string) {
+  return db.transaction(async (tx) => {
+    const contract = await lockContract(tx as unknown as Tx, ctx.workspaceId, contractId);
+    if (contract.status !== "draft") {
+      throw new CommercialError("BUSINESS_STATE_CONFLICT", "Only a draft contract can be deleted; a sent contract is kept as sent", {
+        status: contract.status,
+        allowed_from: ["draft"],
+      });
+    }
+    // A live contract is never deleted: not once any version went out, it was signed, or an
+    // e-sign envelope exists (a new version of a sent contract is a draft again).
+    const [sentVersion] = await tx
+      .select({ version: contractVersions.version })
+      .from(contractVersions)
+      .where(and(eq(contractVersions.contractId, contractId), isNotNull(contractVersions.sentAt)))
+      .limit(1);
+    const [envelope] = await tx.select({ id: signatureEnvelopes.id }).from(signatureEnvelopes).where(eq(signatureEnvelopes.contractId, contractId)).limit(1);
+    if (sentVersion || envelope || contract.signedAt) {
+      throw new CommercialError("BUSINESS_STATE_CONFLICT", "This contract was already sent or signed, so it cannot be deleted", {
+        status: contract.status,
+        sent_version: sentVersion?.version ?? null,
+        has_envelope: !!envelope,
+        signed: !!contract.signedAt,
+      });
+    }
+    const at = new Date();
+    // The files behind its versions; the caller removes the ones nothing else points to.
+    const files = await tx.select({ documentUrl: contractVersions.documentUrl }).from(contractVersions).where(eq(contractVersions.contractId, contractId));
+    await tx.delete(contracts).where(and(eq(contracts.id, contractId), eq(contracts.workspaceId, ctx.workspaceId)));
+    await writeCopsAudit(tx, {
+      tenantId: ctx.workspaceId,
+      actor: { type: "user", id: ctx.userId },
+      entityType: "contract",
+      entityId: contractId,
+      action: "contract.discarded",
+      before: { status: contract.status, kind: contract.kind, title: contract.title, opportunity_id: contract.opportunityId, files: files.map((f) => f.documentUrl) },
+      after: null,
+      reason,
+      correlationId: ctx.requestId,
+      sourceChannel: "api",
+      occurredAt: at,
+    });
+    return { documentUrls: [...new Set(files.map((f) => f.documentUrl))] };
+  });
+}
+
 export async function setContractStatus(
   db: Db,
   ctx: CommercialContext,

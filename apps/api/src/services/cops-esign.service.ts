@@ -84,7 +84,18 @@ export interface SendEnvelopeInput {
   message?: string;
 }
 
-export async function sendEnvelope(db: Db, ctx: CommercialContext, adapter: EsignAdapter, contractId: string, input: SendEnvelopeInput): Promise<EnvelopeDto> {
+/**
+ * `resolveDocument` turns an internally stored contract (document_url "cops-document:<sha>") into a
+ * short-lived URL the provider downloads it from. Plain URLs pass through.
+ */
+export async function sendEnvelope(
+  db: Db,
+  ctx: CommercialContext,
+  adapter: EsignAdapter,
+  contractId: string,
+  input: SendEnvelopeInput,
+  resolveDocument: (documentUrl: string) => Promise<string> = async (url) => url
+): Promise<EnvelopeDto> {
   if (!adapter.isConfigured()) throw new CommercialError("PROVIDER_UNAVAILABLE", "E-signature is not configured in this environment", { provider: adapter.provider });
   const templates = await loadTemplates(db, ctx.workspaceId);
 
@@ -145,7 +156,7 @@ export async function sendEnvelope(db: Db, ctx: CommercialContext, adapter: Esig
     ({ providerRef } = await adapter.createEnvelope({
       referenceId: prepared.envelopeId,
       title: prepared.contract.title,
-      documentUrl: prepared.version.documentUrl,
+      documentUrl: await resolveDocument(prepared.version.documentUrl),
       fileSha256: prepared.version.fileSha256,
       signers: input.signers,
       templateId: prepared.template?.value.provider_template_id ?? null,
