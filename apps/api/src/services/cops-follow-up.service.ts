@@ -5,6 +5,7 @@ import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { canContact } from "./cops-can-contact.js";
 import { buildConsentService } from "./consent.service.js";
+import { contactProspectId } from "./prospect-resolver.service.js";
 import { SequenceService } from "./sequence.service.js";
 import { ensureFollowUpSequence, FOLLOW_UP_TEMPLATE_KEY } from "./cops-cadence.service.js";
 
@@ -127,6 +128,13 @@ export async function startFollowUp(db: Db, event: WelcomeEvent, deps: FollowUpD
         if (consentSvc && !(await consentSvc.hasActive(ws, "prospect", match.prospect_id, "email"))) {
           await consentSvc.record({ workspaceId: ws, subjectType: "prospect", subjectId: match.prospect_id, type: "email", basis: `Carried over from CustomerOps contact ${contact.id} consent` });
         }
+      }
+    }
+    // No corpus prospect: the contact itself is enrolled (consent already checked above), never a duplicate prospect.
+    if (!taskReason && !contact.prospectId) {
+      contact.prospectId = contactProspectId(contact.id);
+      if (consentSvc && !(await consentSvc.hasActive(ws, "prospect", contact.prospectId, "email"))) {
+        await consentSvc.record({ workspaceId: ws, subjectType: "prospect", subjectId: contact.prospectId, type: "email", basis: `Carried over from CustomerOps contact ${contact.id} consent` });
       }
     }
   }

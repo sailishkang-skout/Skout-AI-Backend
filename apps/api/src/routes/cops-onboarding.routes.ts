@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { copsErrorBody, copsErrorStatus, isValidIdempotencyKey, resolveCorrelationId } from "@skout/shared";
 import { getMemberPermissions } from "@skout/auth";
@@ -158,6 +159,37 @@ export async function copsOnboardingRoutes(app: FastifyInstance, opts: { db: Db;
     const ctx = ctxOf(request);
     if (!UUID.test(request.params.id)) return invalid(reply, ctx.requestId, { path: "id", message: "Invalid id" });
     return { data: await getFollowUpView(db, ctx.workspaceId, request.params.id) };
+  });
+
+  /** Every onboarding follow-up in the workspace (sequence or fallback task), newest first, for the Sequences screen. */
+  app.get<{ Querystring: { status?: string } }>("/follow-up/enrollments", { preHandler: readGate }, async (request) => {
+    const ctx = ctxOf(request);
+    const status = ["active", "paused", "stopped", "completed"].includes(request.query.status ?? "") ? request.query.status! : null;
+    const rows = (await db.execute(sql`
+      select f.id, f.account_id, c.name as account_name, f.mode, f.task_reason, f.created_at,
+             e.id as enrollment_id, e.status as enrollment_status, e.stop_reason, e.enrolled_at, e.prospect_id,
+             t.id as task_id, t.title as task_title, t.due_date as task_due, t.status as task_status
+      from cops_follow_ups f
+      left join companies c on c.id = f.account_id and c.workspace_id = f.workspace_id
+      left join sequence_enrollments e on e.id = f.enrollment_id and e.workspace_id = f.workspace_id
+      left join tasks t on t.id = f.task_id and t.workspace_id = f.workspace_id
+      where f.workspace_id = ${ctx.workspaceId} ${status ? sql`and e.status = ${status}` : sql``}
+      order by f.created_at desc limit 200`)) as unknown as Array<Record<string, unknown>>;
+    const iso = (v: unknown) => (v ? new Date(v as string).toISOString() : null);
+    return {
+      data: rows.map((r) => ({
+        id: r.id,
+        account_id: r.account_id,
+        account_name: r.account_name ?? null,
+        mode: r.mode,
+        task_reason: r.task_reason ?? null,
+        created_at: iso(r.created_at),
+        enrollment: r.enrollment_id
+          ? { id: r.enrollment_id, status: r.enrollment_status, stop_reason: r.stop_reason ?? null, enrolled_at: iso(r.enrolled_at), contact_enrolled: String(r.prospect_id ?? "").startsWith("contact:") }
+          : null,
+        task: r.task_id ? { id: r.task_id, title: r.task_title, due_at: iso(r.task_due), status: r.task_status } : null,
+      })),
+    };
   });
 
   /** Pause and stop need a reason (audited); resume re-queues the next step. */
