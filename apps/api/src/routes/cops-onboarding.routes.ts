@@ -282,7 +282,10 @@ export async function copsOnboardingRoutes(app: FastifyInstance, opts: { db: Db;
       listOnboardingEmails(db, ctx.workspaceId, accountId),
       listBlockers(db, ctx.workspaceId, accountId),
       loadHandoff(db, ctx.workspaceId, accountId),
-      loadIntegrations(db, provisioning.provisioned_workspace_id),
+      loadIntegrations(db, provisioning.provisioned_workspace_id).then((list) =>
+        // requested: asked for when the trial was provisioned, so the screen can tell "waiting on the customer" from "not part of this trial".
+        list.map((i) => ({ ...i, requested: (provisioning.integrations ?? []).includes(i.key) })),
+      ),
     ]);
     const endsAt = provisioning.trial_ends_at ? new Date(provisioning.trial_ends_at) : null;
     return {
