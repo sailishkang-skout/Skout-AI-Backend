@@ -4,6 +4,7 @@ import { getMemberPermissions } from "@skout/auth";
 import { COPS_DASHBOARDS, COPS_METRICS, copsErrorBody, getMetric, resolveCorrelationId, type CopsDashboard } from "@skout/shared";
 import { DashboardError, dashboard, drill, type DashboardFilters } from "../services/cops-dashboards.service.js";
 import { funnelCohorts } from "../services/cops-funnel.service.js";
+import { getDataScope } from "../services/cops-data-scope.service.js";
 import { feedStatus } from "../services/cops-analytics-feed.service.js";
 
 /**
@@ -60,6 +61,9 @@ export async function copsAnalyticsRoutes(app: FastifyInstance) {
     }
   }
 
+  /** COPS-14 data scope: a member limited to their own accounts only sees numbers about those. */
+  const scoped = async (request: Req, f: DashboardFilters): Promise<DashboardFilters> =>
+    (await getDataScope(db(), request.workspaceId!, request.userId!)) === "own_accounts" ? { ...f, ownedBy: request.userId! } : f;
   const canReadResource = (granted: string[]) => (resource: string) => granted.includes(`${resource}:read`);
   const dashboardAllowed = (key: CopsDashboard) => (granted: string[]) => granted.includes("analytics:read") || (key === "finance" && granted.includes("billing:read"));
 
@@ -72,7 +76,7 @@ export async function copsAnalyticsRoutes(app: FastifyInstance) {
     const key = parsed.success ? parsed.data.dashboard : "leadership";
     return guarded(request, reply, dashboardAllowed(key), async (granted) => {
       if (!parsed.success) throw new DashboardError("NOT_FOUND", "Unknown dashboard");
-      const f = filterSchema.parse(request.query ?? {}) as DashboardFilters;
+      const f = await scoped(request, filterSchema.parse(request.query ?? {}) as DashboardFilters);
       return dashboard(db(), request.workspaceId!, key, f, canReadResource(granted));
     });
   });
@@ -89,14 +93,14 @@ export async function copsAnalyticsRoutes(app: FastifyInstance) {
         if (!canReadResource(granted)(def.resource)) throw new DashboardError("FORBIDDEN", `This metric needs ${def.resource}:read`);
         const q = (request.query ?? {}) as Record<string, unknown>;
         const { cursor, limit, ...rest } = q;
-        const f = filterSchema.parse(rest) as DashboardFilters;
+        const f = await scoped(request, filterSchema.parse(rest) as DashboardFilters);
         return drill(db(), request.workspaceId!, def.id, f, pageSchema.parse({ cursor, limit }));
       }
     );
   });
 
   app.get("/cops/funnel", async (request, reply) =>
-    guarded(request, reply, (g) => g.includes("analytics:read"), async () => funnelCohorts(db(), request.workspaceId!, filterSchema.parse(request.query ?? {}) as DashboardFilters))
+    guarded(request, reply, (g) => g.includes("analytics:read"), async () => funnelCohorts(db(), request.workspaceId!, await scoped(request, filterSchema.parse(request.query ?? {}) as DashboardFilters)))
   );
 
   /** Warehouse feed health (analytics:admin): whether it is on and how far behind this workspace's events are. */

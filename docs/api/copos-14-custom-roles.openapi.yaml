@@ -123,8 +123,44 @@ paths:
         "403": { description: A role with a permission the caller does not hold }
         "404": { description: Not a member, or a role that is not available here }
         "422": { description: A base role in role_ids }
+  /cops/members/{userId}/data-scope:
+    parameters:
+      - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: A member's data scope (all accounts, or only the accounts they own or are CSM of)
+      responses:
+        "200": { description: Scope, content: { application/json: { schema: { $ref: "#/components/schemas/DataScope" } } } }
+        "404": { description: Not a member of this workspace }
+    put:
+      summary: Set a member's data scope
+      description: |
+        With `own_accounts`, every `/accounts/{id}/...` and `/account-360/{id}` route answers 404
+        for other accounts, and dashboards, drill-through and the funnel count only the member's
+        accounts. An owner cannot be limited.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scope, reason]
+              properties:
+                scope: { type: string, enum: [all, own_accounts] }
+                reason: { type: string, minLength: 3, maxLength: 500 }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/DataScope" } } } }
+        "404": { description: Not a member of this workspace }
+        "409": { description: The member is the workspace owner }
 components:
   schemas:
+    DataScope:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            user_id: { type: string, format: uuid }
+            scope: { type: string, enum: [all, own_accounts] }
     Permission:
       type: object
       properties:

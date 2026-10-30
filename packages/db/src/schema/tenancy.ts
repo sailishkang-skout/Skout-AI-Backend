@@ -201,3 +201,24 @@ export const workspaceSsoConfigs = pgTable("workspace_sso_configs", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+/**
+ * COPS-14 part C — a member limited to their own accounts (companies.owner_id or csm_id). No row
+ * means no limit. Enforced on the account read paths by apps/api cops-data-scope.service.ts.
+ */
+export const copsMemberDataScopes = pgTable(
+  "cops_member_data_scopes",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** own_accounts (the only scope so far). */
+    scope: text("scope").notNull(),
+    setBy: uuid("set_by").references(() => users.id, { onDelete: "set null" }),
+    reason: text("reason").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ name: "cops_member_data_scopes_pk", columns: [table.workspaceId, table.userId] })]
+);

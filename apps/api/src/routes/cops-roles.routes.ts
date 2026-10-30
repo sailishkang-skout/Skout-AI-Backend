@@ -14,6 +14,7 @@ import {
   updateRole,
   type RoleCtx,
 } from "../services/cops-roles.service.js";
+import { DATA_SCOPES, DataScopeError, getDataScope, setDataScope } from "../services/cops-data-scope.service.js";
 
 /**
  * COPS-14 part C: custom roles and member role grants (docs/api/copos-14-custom-roles.openapi.yaml).
@@ -58,6 +59,7 @@ export async function copsRolesRoutes(app: FastifyInstance) {
           copsErrorBody({ code: "VALIDATION_FAILED", message: error.issues[0]?.message ?? "Invalid request", requestId, details: { fields: error.issues.map((i) => ({ path: i.path.join(".") || "body", message: i.message })) } })
         );
       }
+      if (error instanceof DataScopeError) return reply.status(error.status).send(copsErrorBody({ code: error.code, message: error.message, requestId }));
       if (error instanceof RoleError) return reply.status(error.status).send(copsErrorBody({ code: error.code, message: error.message, requestId, details: error.details }));
       throw error;
     }
@@ -109,6 +111,24 @@ export async function copsRolesRoutes(app: FastifyInstance) {
       const { userId } = userParams.parse(request.params);
       const body = z.object({ role_ids: z.array(z.string().uuid()).max(20), reason }).parse(request.body ?? {});
       return { data: await setMemberRoles(db(), ctx, userId, body.role_ids, body.reason) };
+    });
+  });
+
+  app.get("/cops/members/:userId/data-scope", gate, async (request, reply) => {
+    const ctx = await ctxOf(request);
+    return run(reply, ctx.requestId, async () => {
+      const { userId } = userParams.parse(request.params);
+      await getMemberRoles(db(), ctx.workspaceId, userId);
+      return { data: { user_id: userId, scope: await getDataScope(db(), ctx.workspaceId, userId) } };
+    });
+  });
+
+  app.put("/cops/members/:userId/data-scope", gate, async (request, reply) => {
+    const ctx = await ctxOf(request);
+    return run(reply, ctx.requestId, async () => {
+      const { userId } = userParams.parse(request.params);
+      const body = z.object({ scope: z.enum(DATA_SCOPES), reason }).parse(request.body ?? {});
+      return { data: await setDataScope(db(), ctx, userId, body.scope, body.reason) };
     });
   });
 }

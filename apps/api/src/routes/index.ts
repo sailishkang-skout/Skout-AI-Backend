@@ -89,6 +89,7 @@ import { copsSuccessRoutes } from "./cops-success.routes.js";
 import { copsAnalyticsRoutes } from "./cops-analytics.routes.js";
 import { copsRecommendationsRoutes } from "./cops-recommendations.routes.js";
 import { copsRolesRoutes } from "./cops-roles.routes.js";
+import { accountScopeGuard } from "../services/cops-data-scope.service.js";
 import { complianceRoutes } from "./compliance.routes.js";
 import { enterpriseControlPlaneRoutes } from "./enterprise-control-plane.routes.js";
 import { jwksRoutes } from "./jwks.routes.js";
@@ -104,6 +105,9 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(jwksRoutes);
 
   await app.register(async (v1) => {
+    // COPS-14 data scope: before any account route, a member limited to their own accounts gets
+    // 404 for other accounts. Runs after the auth preHandlers, which set workspaceId and userId.
+    if (app.db) v1.addHook("preHandler", accountScopeGuard(app.db));
     await v1.register(userRoutes);
     await v1.register(workspaceRoutes);
     await v1.register(dashboardRoutes);
