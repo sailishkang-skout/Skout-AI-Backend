@@ -4,6 +4,7 @@ import {
   appendCopsEvent,
   computeProposalTotals,
   defaultPriceBasis,
+  firstInvoiceMinor,
   COPS_TRANSITIONS,
   createCopsEvent,
   proposalApprovalTerms,
@@ -514,6 +515,14 @@ function versionDto(version: VersionRow, lines: LineRow[]) {
     tax_pct: Number(version.taxPct),
     notes: version.notes,
     ...storedApprovalTerms(version),
+    /** What a payment link for this version charges (first billing period). */
+    first_invoice_minor: firstInvoiceMinor({
+      billing_cadence: version.billingCadence,
+      term_months: version.termMonths,
+      discount_pct: Number(version.discountPct),
+      tax_pct: Number(version.taxPct),
+      lines: lines.map((l) => ({ kind: l.kind, price_basis: l.priceBasis, net_minor: Number(l.netMinor) })),
+    }),
     totals: {
       subtotal_minor: Number(version.subtotalMinor),
       discount_minor: Number(version.discountMinor),
