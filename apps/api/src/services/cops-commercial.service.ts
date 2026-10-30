@@ -13,6 +13,7 @@ import {
   type PriceBasis,
   type ProposalApprovalTerms,
   type ProposalTermsInput,
+  proposalTcv,
 } from "@skout/shared";
 import { writeCopsAudit } from "./cops-platform.service.js";
 import { carryOrVoidApprovals } from "./cops-approvals.service.js";
@@ -358,7 +359,13 @@ export async function sendProposal(db: Db, ctx: CommercialContext, proposalId: s
       .from(deals)
       .where(and(eq(deals.workspaceId, ctx.workspaceId), eq(deals.id, proposal.opportunityId)))
       .limit(1);
-    const newAmount = (Number(version.totalMinor) / 100).toFixed(2);
+    // Deal value is the contract value (TCV over the term, before tax), not the monthly total.
+    const { tcv_minor } = proposalTcv({
+      term_months: version.termMonths,
+      discount_pct: Number(version.discountPct),
+      lines: lines.map((l) => ({ kind: l.kind, price_basis: l.priceBasis, gross_minor: Number(l.grossMinor), net_minor: Number(l.netMinor) })),
+    });
+    const newAmount = (tcv_minor / 100).toFixed(2);
     if (deal && (Number(deal.amount ?? 0).toFixed(2) !== newAmount || deal.currency !== version.currency)) {
       await tx
         .update(deals)
