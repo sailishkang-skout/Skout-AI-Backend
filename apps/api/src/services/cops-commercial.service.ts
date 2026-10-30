@@ -351,6 +351,32 @@ export async function sendProposal(db: Db, ctx: CommercialContext, proposalId: s
       .update(proposals)
       .set({ status: "sent", statusChangedAt: sentAt, statusChangedBy: ctx.userId, statusReason: null, updatedAt: sentAt })
       .where(eq(proposals.id, proposalId));
+    // The deal is worth what was last sent: its amount follows the sent proposal's total.
+    // The old value stays in the audit log (deal.amount_synced, before/after).
+    const [deal] = await tx
+      .select({ amount: deals.amount, currency: deals.currency })
+      .from(deals)
+      .where(and(eq(deals.workspaceId, ctx.workspaceId), eq(deals.id, proposal.opportunityId)))
+      .limit(1);
+    const newAmount = (Number(version.totalMinor) / 100).toFixed(2);
+    if (deal && (Number(deal.amount ?? 0).toFixed(2) !== newAmount || deal.currency !== version.currency)) {
+      await tx
+        .update(deals)
+        .set({ amount: newAmount, currency: version.currency, updatedAt: sentAt })
+        .where(and(eq(deals.workspaceId, ctx.workspaceId), eq(deals.id, proposal.opportunityId)));
+      await writeCopsAudit(tx, {
+        tenantId: ctx.workspaceId,
+        actor: { type: "user", id: ctx.userId },
+        entityType: "deal",
+        entityId: proposal.opportunityId,
+        action: "deal.amount_synced",
+        before: { amount: deal.amount === null ? null : Number(deal.amount), currency: deal.currency },
+        after: { amount: Number(newAmount), currency: version.currency, proposal_id: proposalId, version: version.version },
+        correlationId: ctx.requestId,
+        sourceChannel: "api",
+        occurredAt: sentAt,
+      });
+    }
     // Sending a proposal is the commercial dimension's starting state (COPS-01: proposal_sent).
     await tx
       .insert(copsLifecycleStates)
