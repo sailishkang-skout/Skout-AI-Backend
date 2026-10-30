@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { boolean, index, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { users } from "./users.js";
 import { workspaces } from "./workspaces.js";
@@ -52,7 +53,13 @@ export const roles = pgTable(
     isSystem: boolean("is_system").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("roles_workspace_id_idx").on(table.workspaceId)]
+  (table) => [
+    index("roles_workspace_id_idx").on(table.workspaceId),
+    // COPS-14: custom role names are unique per workspace (case-insensitive).
+    uniqueIndex("roles_workspace_name_uidx")
+      .on(table.workspaceId, sql`lower(${table.name})`)
+      .where(sql`${table.workspaceId} IS NOT NULL`),
+  ]
 );
 
 export const permissions = pgTable("permissions", {
