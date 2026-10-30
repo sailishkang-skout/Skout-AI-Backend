@@ -33,15 +33,16 @@ export interface ProviderHealth {
 type Counts = { last_at: Date | string | null; total: number | string; failed: number | string };
 const iso = (v: Date | string | null) => (v ? new Date(v).toISOString() : null);
 
+/** Failures are events Skout could not match or process; ignored, no_change and stale are expected outcomes (late or out-of-order events). */
 /** Which providers are configured (from the deployment's env, never echoed) and what they last did. */
 export async function loadIntegrationsStatus(db: Db, config: Env, workspaceId: string): Promise<ProviderHealth[]> {
   const [row] = (await db.execute(sql`
     select
       (select row_to_json(p) from (select max(received_at) as last_at, count(*) filter (where received_at > now() - interval '7 days') as total,
-         count(*) filter (where received_at > now() - interval '7 days' and outcome not in ('applied', 'received', 'duplicate')) as failed
+         count(*) filter (where received_at > now() - interval '7 days' and outcome in ('unmatched', 'error', 'failed', 'invalid')) as failed
          from payment_provider_events where workspace_id = ${workspaceId}) p) as payments,
       (select row_to_json(e) from (select max(received_at) as last_at, count(*) filter (where received_at > now() - interval '7 days') as total,
-         count(*) filter (where received_at > now() - interval '7 days' and outcome not in ('applied', 'received', 'duplicate', 'stale')) as failed
+         count(*) filter (where received_at > now() - interval '7 days' and outcome in ('unmatched', 'error', 'failed', 'invalid')) as failed
          from signature_events where workspace_id = ${workspaceId}) e) as esign,
       (select row_to_json(m) from (select max(created_at) as last_at, count(*) filter (where created_at > now() - interval '7 days') as total,
          count(*) filter (where created_at > now() - interval '7 days' and (status = 'failed' or bounced_at is not null)) as failed
