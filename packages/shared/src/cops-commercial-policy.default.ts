@@ -224,7 +224,7 @@ export const COMMERCIAL_POLICY_DEFAULT_DATA: Record<"approval_policy" | "dunning
     "month_to_month_surcharge_pct": 20,
     "currencies": {
       "USD": {
-        "seat_month_annual_minor": 7900,
+        "seat_month_annual_minor": 3500,
         "status": "benchmarked"
       },
       "EUR": {
@@ -238,6 +238,41 @@ export const COMMERCIAL_POLICY_DEFAULT_DATA: Record<"approval_policy" | "dunning
       "INR": {
         "seat_month_annual_minor": 599900,
         "status": "suggested"
+      }
+    },
+    "plans": {
+      "full": {
+        "name": "Skout Full",
+        "kind": "seats",
+        "includes": "1 seat, 1 connected identity, 2,000 active contacts, 5,000 sends and 1,000 AI actions per month",
+        "prices": {
+          "USD": {
+            "annual_minor": 3500,
+            "monthly_minor": 4500
+          }
+        }
+      },
+      "full_multichannel": {
+        "name": "Skout Full Multichannel",
+        "kind": "seats",
+        "includes": "1 seat, 2 connected identities, 10,000 active contacts, 25,000 sends and 5,000 AI actions per month",
+        "prices": {
+          "USD": {
+            "annual_minor": 5500,
+            "monthly_minor": 6500
+          }
+        }
+      },
+      "extra_identity": {
+        "name": "Additional connected identity",
+        "kind": "add_on",
+        "includes": "One more Gmail/Outlook, LinkedIn or WhatsApp identity",
+        "prices": {
+          "USD": {
+            "annual_minor": 700,
+            "monthly_minor": 900
+          }
+        }
       }
     }
   },

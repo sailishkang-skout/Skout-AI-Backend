@@ -3,7 +3,7 @@ import type { Db } from "@skout/db";
 import { schema, scopedTo, scopedById } from "@skout/db";
 import { normalizeEmail } from "@skout/shared";
 import { createLogger } from "@skout/observability";
-import { and, count, eq, gt, isNull, ne, sql } from "drizzle-orm";
+import { and, count, eq, gt, inArray, isNull, ne, sql } from "drizzle-orm";
 import { HttpError } from "../utils/http.js";
 
 const log = createLogger("team.service");
@@ -42,7 +42,7 @@ async function syncFineGrainedMemberRole(
   const [roleRow] = await db
     .select({ id: schema.roles.id })
     .from(schema.roles)
-    .where(eq(schema.roles.key, coarseRole))
+    .where(and(eq(schema.roles.key, coarseRole), isNull(schema.roles.workspaceId)))
     .limit(1);
   if (!roleRow) {
     log.warn("RBAC sync skipped — system role not seeded; run pnpm --filter @skout/db backfill-rbac", {
@@ -53,11 +53,22 @@ async function syncFineGrainedMemberRole(
     return;
   }
 
-  await db
-    .delete(schema.workspaceMemberRoles)
-    .where(
-      scopedTo(schema.workspaceMemberRoles, workspaceId, eq(schema.workspaceMemberRoles.userId, userId))
+  // Replace only the base role grant. CustomerOps and custom roles granted through COPS-14's
+  // member role API stay as they are.
+  const baseRoles = await db
+    .select({ id: schema.roles.id })
+    .from(schema.roles)
+    .where(and(inArray(schema.roles.key, ["owner", "admin", "member"]), isNull(schema.roles.workspaceId)));
+  if (baseRoles.length) {
+    await db.delete(schema.workspaceMemberRoles).where(
+      scopedTo(
+        schema.workspaceMemberRoles,
+        workspaceId,
+        eq(schema.workspaceMemberRoles.userId, userId),
+        inArray(schema.workspaceMemberRoles.roleId, baseRoles.map((r) => r.id))
+      )
     );
+  }
 
   await db.insert(schema.workspaceMemberRoles).values({
     workspaceId,

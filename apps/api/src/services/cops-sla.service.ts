@@ -114,7 +114,7 @@ export async function onTicketStatusChange(tx: Tx, workspaceId: string, ticket: 
   const clocks = await clocksOf(tx, workspaceId, ticket.id);
   const pausing = policy.pauseStatuses.includes(to);
   const resuming = policy.pauseStatuses.includes(from) && !pausing;
-  const reopen = (from === "resolved" || from === "verified") && to === "in_progress";
+  const reopen = (from === "resolved" || from === "verified" || from === "closed") && to === "in_progress";
   let firstResponse = false;
   for (const row of clocks) {
     let c = toState(row);

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canonicalJson,
   computeProposalTotals,
+  firstInvoiceMinor,
   isGateOpen,
   nextPaymentStatus,
   proposalContentHash,
@@ -122,5 +123,23 @@ describe("nextPaymentStatus", () => {
     expect(nextPaymentStatus("paid", "paid")).toBeNull();
     expect(nextPaymentStatus("refunded", "paid")).toBeNull();
     expect(nextPaymentStatus("expired", "paid")).toBeNull();
+  });
+});
+
+describe("firstInvoiceMinor", () => {
+  const seat = (price: number, basis: string) => ({ kind: "seats", price_basis: basis, net_minor: price });
+  it("annual billing charges a year of a monthly seat price up front ($35 -> $420)", () => {
+    expect(firstInvoiceMinor({ billing_cadence: "annual", term_months: 12, discount_pct: 0, tax_pct: 0, lines: [seat(3500, "per_month")] })).toBe(42_000);
+  });
+  it("monthly billing charges one month; quarterly three; a shorter term caps the period", () => {
+    const base = { discount_pct: 0, tax_pct: 0, lines: [seat(4500, "per_month")] };
+    expect(firstInvoiceMinor({ ...base, billing_cadence: "monthly", term_months: 12 })).toBe(4500);
+    expect(firstInvoiceMinor({ ...base, billing_cadence: "quarterly", term_months: 12 })).toBe(13_500);
+    expect(firstInvoiceMinor({ ...base, billing_cadence: "annual", term_months: 6 })).toBe(27_000);
+  });
+  it("one-time and whole-term lines are charged in full, then discount and tax apply", () => {
+    const lines = [seat(5500, "per_month"), { kind: "fee", price_basis: "one_time", net_minor: 50_000 }];
+    // 55 x 12 + 500 = 1,160; 10% off = 1,044; 18% tax = 1,231.92
+    expect(firstInvoiceMinor({ billing_cadence: "annual", term_months: 12, discount_pct: 10, tax_pct: 18, lines })).toBe(123_192);
   });
 });

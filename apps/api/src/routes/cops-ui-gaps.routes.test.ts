@@ -7,6 +7,7 @@ import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
+import { webhookProven } from "./cops-integrations-status.routes.js";
 
 /**
  * Endpoints the CustomerOps panel needed that the API did not offer yet (skout-customerops
@@ -217,7 +218,11 @@ maybe("CustomerOps panel gaps", () => {
     expect(res.statusCode).toBe(200);
     const data = res.json().data as { key: string; status: string; missing: string[]; events_7d: number }[];
     expect(data.map((p) => p.key)).toEqual(["payments", "esign", "email", "slack", "teams"]);
-    for (const p of data) expect(["connected", "partial", "sandbox", "not_configured"]).toContain(p.status);
+    for (const p of data) expect(["connected", "unverified", "partial", "sandbox", "not_configured"]).toContain(p.status);
+    // Keys alone are not "connected": the provider must have called back at least once.
+    expect(webhookProven("connected", null, "Razorpay").status).toBe("unverified");
+    expect(webhookProven("connected", new Date(), "Razorpay")).toEqual({ status: "connected", missing: [] });
+    expect(webhookProven("partial", null, "Razorpay").status).toBe("partial");
     expect(JSON.stringify(data)).not.toMatch(/https?:\/\/|whsec_|rzp_/);
 
     await sql`update workspaces set slack_webhook_url = 'https://hooks.slack.test/x' where id = ${workspaceId}`;

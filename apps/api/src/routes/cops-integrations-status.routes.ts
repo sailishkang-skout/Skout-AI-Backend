@@ -5,8 +5,18 @@ import { getMemberPermissions } from "@skout/auth";
 import type { Env } from "../config/env.js";
 import { requireAnyCopsPermission } from "../services/cops-platform.service.js";
 
-/** connected: keys and webhook in place. partial: can call the provider but hears nothing back. */
-export type ProviderStatus = "connected" | "partial" | "sandbox" | "not_configured";
+/**
+ * connected: keys and webhook secret in place AND the provider has sent this workspace a status update.
+ * unverified: fully set up, but no status update has arrived yet, so the round trip is not proven.
+ * partial: can call the provider but hears nothing back.
+ */
+export type ProviderStatus = "connected" | "unverified" | "partial" | "sandbox" | "not_configured";
+
+/** "Connected" only once the provider has called back; keys alone prove nothing. */
+export function webhookProven(configured: ProviderStatus, lastEventAt: Date | string | null | undefined, provider: string): { status: ProviderStatus; missing: string[] } {
+  if (configured !== "connected" || lastEventAt) return { status: configured, missing: [] };
+  return { status: "unverified", missing: [`No status update from ${provider} has reached this workspace yet; check its webhook points to this server`] };
+}
 
 export interface ProviderHealth {
   key: "payments" | "esign" | "email" | "slack" | "teams";
@@ -23,15 +33,16 @@ export interface ProviderHealth {
 type Counts = { last_at: Date | string | null; total: number | string; failed: number | string };
 const iso = (v: Date | string | null) => (v ? new Date(v).toISOString() : null);
 
+/** Failures are events Skout could not match or process; ignored, no_change and stale are expected outcomes (late or out-of-order events). */
 /** Which providers are configured (from the deployment's env, never echoed) and what they last did. */
 export async function loadIntegrationsStatus(db: Db, config: Env, workspaceId: string): Promise<ProviderHealth[]> {
   const [row] = (await db.execute(sql`
     select
       (select row_to_json(p) from (select max(received_at) as last_at, count(*) filter (where received_at > now() - interval '7 days') as total,
-         count(*) filter (where received_at > now() - interval '7 days' and outcome not in ('applied', 'received', 'duplicate')) as failed
+         count(*) filter (where received_at > now() - interval '7 days' and outcome in ('unmatched', 'error', 'failed', 'invalid')) as failed
          from payment_provider_events where workspace_id = ${workspaceId}) p) as payments,
       (select row_to_json(e) from (select max(received_at) as last_at, count(*) filter (where received_at > now() - interval '7 days') as total,
-         count(*) filter (where received_at > now() - interval '7 days' and outcome not in ('applied', 'received', 'duplicate', 'stale')) as failed
+         count(*) filter (where received_at > now() - interval '7 days' and outcome in ('unmatched', 'error', 'failed', 'invalid')) as failed
          from signature_events where workspace_id = ${workspaceId}) e) as esign,
       (select row_to_json(m) from (select max(created_at) as last_at, count(*) filter (where created_at > now() - interval '7 days') as total,
          count(*) filter (where created_at > now() - interval '7 days' and (status = 'failed' or bounced_at is not null)) as failed
@@ -68,16 +79,18 @@ export async function loadIntegrationsStatus(db: Db, config: Env, workspaceId: s
     {
       key: "payments",
       provider: payKeys ? "razorpay" : null,
-      status: !payKeys ? "not_configured" : payMissing.length ? "partial" : "connected",
-      missing: payMissing,
       ...activity(row?.payments),
+      ...(payMissing.length || !payKeys
+        ? { status: !payKeys ? "not_configured" : "partial", missing: payMissing }
+        : webhookProven("connected", row?.payments?.last_at, "Razorpay")),
     },
     {
       key: "esign",
       provider: docuseal ? "docuseal" : esignSandbox ? "mock" : null,
-      status: docuseal ? (esignMissing.length ? "partial" : "connected") : esignSandbox ? "sandbox" : "not_configured",
-      missing: esignMissing,
       ...activity(row?.esign),
+      ...(docuseal && !esignMissing.length
+        ? webhookProven("connected", row?.esign?.last_at, "DocuSeal")
+        : { status: docuseal ? "partial" : esignSandbox ? "sandbox" : "not_configured", missing: esignMissing }),
     },
     {
       key: "email",

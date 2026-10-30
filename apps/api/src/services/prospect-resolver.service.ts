@@ -1,10 +1,14 @@
-import { desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, scopedTo } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { SearchService } from "./search.service.js";
 
-const { enrichmentResults, prospectActivations } = schema;
+const { enrichmentResults, prospectActivations, contacts, companies } = schema;
+
+/** A CustomerOps contact enrolled straight into a sequence, without a corpus prospect (owner decision, Oct 2026). */
+export const CONTACT_PROSPECT_PREFIX = "contact:";
+export const contactProspectId = (contactId: string) => `${CONTACT_PROSPECT_PREFIX}${contactId}`;
 
 /** Free-mail domains — corpus often has these; enrichment usually returns work email. */
 const PERSONAL_EMAIL_DOMAINS = new Set([
@@ -67,6 +71,7 @@ export async function resolveProspectFields(
   workspaceId: string,
   prospectId: string
 ): Promise<ResolvedProspect | null> {
+  if (prospectId.startsWith(CONTACT_PROSPECT_PREFIX)) return resolveContactProspect(db, workspaceId, prospectId);
   const search = new SearchService(env, db);
   // OpenSearch lookup — may return null for manually-created prospects
   const doc = await search.findExistingProspect(prospectId).catch(() => null);
@@ -141,5 +146,41 @@ export async function resolveProspectFields(
         .join(", ");
       return str(snap.location) ?? str(snap.hqCountry) ?? (fromDoc || undefined);
     })(),
+  };
+}
+
+/** Sequence fields for a CustomerOps contact (prospect id "contact:<uuid>"), scoped to the workspace. */
+async function resolveContactProspect(db: Db, workspaceId: string, prospectId: string): Promise<ResolvedProspect | null> {
+  const contactId = prospectId.slice(CONTACT_PROSPECT_PREFIX.length);
+  const [row] = await db
+    .select({
+      firstName: contacts.firstName,
+      lastName: contacts.lastName,
+      email: contacts.email,
+      phone: contacts.phone,
+      title: contacts.title,
+      linkedinUrl: contacts.linkedinUrl,
+      companyName: companies.name,
+      companyDomain: companies.domain,
+    })
+    .from(contacts)
+    .leftJoin(companies, eq(companies.id, contacts.companyId))
+    .where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.id, contactId), isNull(contacts.deletedAt)))
+    .limit(1)
+    .catch(() => []);
+  if (!row) return null;
+  const firstName = row.firstName ?? "";
+  const lastName = row.lastName ?? "";
+  return {
+    prospectId,
+    email: row.email ?? undefined,
+    phone: row.phone ?? undefined,
+    linkedinUrl: row.linkedinUrl ?? undefined,
+    firstName,
+    lastName,
+    fullName: `${firstName} ${lastName}`.trim(),
+    companyName: row.companyName ?? undefined,
+    companyDomain: row.companyDomain ?? undefined,
+    title: row.title ?? undefined,
   };
 }

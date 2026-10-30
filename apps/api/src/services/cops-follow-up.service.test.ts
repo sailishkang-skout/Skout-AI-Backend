@@ -76,7 +76,7 @@ maybe("COPS-05 follow-up after WelcomeEmailSent (Postgres)", () => {
     const w = await sentWelcome({ prospect: true });
     const fu = await startFollowUp(db, w.event, deps);
     expect(fu).toMatchObject({ mode: "task", enrollment_id: null });
-    expect(fu.task_reason).toMatch(/^contact_blocked/);
+    expect(fu.task_reason).toMatch(/^no_consent/);
     const [task] = await sql`select assigned_to, type, related_entity_id, status from tasks where id = ${fu.task_id}`;
     expect(task).toMatchObject({ assigned_to: ownerId, type: "onboarding_check", related_entity_id: w.accountId, status: "open" });
     expect(await eventsFor(w.accountId, "TaskCreated")).toBe(1);
@@ -113,12 +113,12 @@ maybe("COPS-05 follow-up after WelcomeEmailSent (Postgres)", () => {
 
     it("a contact without a prospect, or with no consent for outreach, gets a task instead", async () => {
       const noProspect = await sentWelcome({ prospect: false });
-      expect((await startFollowUp(db, noProspect.event, deps)).task_reason).toMatch(/^contact_without_prospect/);
+      expect((await startFollowUp(db, noProspect.event, deps)).task_reason).toMatch(/^no_consent/);
 
       const noConsent = await sentWelcome({ prospect: true });
       const fu = await startFollowUp(db, noConsent.event, deps);
       expect(fu.mode).toBe("task");
-      expect(fu.task_reason).toMatch(/^contact_blocked: .*no_consent/);
+      expect(fu.task_reason).toMatch(/^no_consent/);
     });
 
     it("an email sent to someone who is not a contact still produces a task", async () => {

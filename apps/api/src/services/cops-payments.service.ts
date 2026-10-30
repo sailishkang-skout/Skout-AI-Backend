@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
-import { appendCopsEvent, createCopsEvent, nextPaymentStatus, type PaymentRequestStatus } from "@skout/shared";
+import { appendCopsEvent, createCopsEvent, firstInvoiceMinor, nextPaymentStatus, type PaymentRequestStatus } from "@skout/shared";
 import { createLogger } from "@skout/observability";
 import { writeCopsAudit } from "./cops-platform.service.js";
 import { advanceCommercialState, CommercialError, getOpportunity, type CommercialContext } from "./cops-commercial.service.js";
@@ -9,7 +9,7 @@ import type { PspAdapter } from "./psp/psp-adapter.js";
 import { PspRequestError } from "./psp/razorpay.js";
 
 const log = createLogger("cops-payments.service");
-const { paymentRequests, paymentProviderEvents, proposals, proposalVersions } = schema;
+const { paymentRequests, paymentProviderEvents, proposals, proposalVersions, proposalLineItems } = schema;
 
 /** Runs inside the payment transaction after a payment is confirmed (used by the provisioning gate). */
 export type OnPaymentChange = (tx: Db, input: { workspaceId: string; opportunityId: string; requestId: string; paymentRequestId?: string }) => Promise<void>;
@@ -40,7 +40,15 @@ export async function createPaymentRequest(db: Db, psp: PspAdapter, ctx: Commerc
   if (input.proposal_id) {
     // The amount is the total of the proposal's latest sent version: what the customer agreed to.
     const [sent] = await db
-      .select({ total: proposalVersions.totalMinor, currency: proposalVersions.currency, status: proposals.status })
+      .select({
+        versionId: proposalVersions.id,
+        currency: proposalVersions.currency,
+        status: proposals.status,
+        cadence: proposalVersions.billingCadence,
+        termMonths: proposalVersions.termMonths,
+        discountPct: proposalVersions.discountPct,
+        taxPct: proposalVersions.taxPct,
+      })
       .from(proposals)
       .innerJoin(proposalVersions, eq(proposalVersions.proposalId, proposals.id))
       .where(
@@ -67,13 +75,25 @@ export async function createPaymentRequest(db: Db, psp: PspAdapter, ctx: Commerc
     if (!["sent", "accepted"].includes(sent.status)) {
       throw new CommercialError("BUSINESS_STATE_CONFLICT", "Send the proposal before requesting payment for it", { status: sent.status });
     }
+    // The first invoice of the sent version: a year up front on annual billing, one month on monthly.
+    const lines = await db
+      .select({ kind: proposalLineItems.kind, priceBasis: proposalLineItems.priceBasis, netMinor: proposalLineItems.netMinor })
+      .from(proposalLineItems)
+      .where(eq(proposalLineItems.versionId, sent.versionId));
+    const due = firstInvoiceMinor({
+      billing_cadence: sent.cadence,
+      term_months: sent.termMonths,
+      discount_pct: Number(sent.discountPct),
+      tax_pct: Number(sent.taxPct),
+      lines: lines.map((l) => ({ kind: l.kind, price_basis: l.priceBasis, net_minor: Number(l.netMinor) })),
+    });
     // A link for a proposal charges exactly its price; a different amount or currency is refused.
-    if ((input.amount_minor !== undefined && input.amount_minor !== Number(sent.total)) || (input.currency !== undefined && input.currency !== sent.currency)) {
-      throw new CommercialError("VALIDATION_FAILED", "A payment link for a proposal charges its sent total; the amount cannot be changed", {
-        fields: [{ path: "amount_minor", code: "locked", message: `Must be the proposal total (${sent.total} ${sent.currency})` }],
+    if ((input.amount_minor !== undefined && input.amount_minor !== due) || (input.currency !== undefined && input.currency !== sent.currency)) {
+      throw new CommercialError("VALIDATION_FAILED", "A payment link for a proposal charges its sent price; the amount cannot be changed", {
+        fields: [{ path: "amount_minor", code: "locked", message: `Must be the proposal's first invoice (${due} ${sent.currency})` }],
       });
     }
-    amountMinor = Number(sent.total);
+    amountMinor = due;
     currency = sent.currency;
   }
   currency ??= opportunity.currency;

@@ -27,6 +27,7 @@ export async function funnelCohorts(db: Db, workspaceId: string, f: DashboardFil
     f.segment === "mid_market" ? sql`c.employee_count >= 200 and c.employee_count < 1000` : null,
     f.segment === "enterprise" ? sql`c.employee_count >= 1000` : null,
     f.owner ? sql`c.owner_id = ${f.owner}::uuid` : null,
+    f.ownedBy ? sql`(c.owner_id = ${f.ownedBy}::uuid or c.csm_id = ${f.ownedBy}::uuid)` : null,
     f.geo ? sql`c.location ilike ${"%" + f.geo.replace(/[\\%_]/g, (ch) => "\\" + ch) + "%"}` : null,
   ].filter((x): x is NonNullable<typeof x> => x !== null);
   const accountFilter = filter.length ? sql.join(filter, sql` and `) : sql`true`;
