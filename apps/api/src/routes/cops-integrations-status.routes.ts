@@ -5,8 +5,18 @@ import { getMemberPermissions } from "@skout/auth";
 import type { Env } from "../config/env.js";
 import { requireAnyCopsPermission } from "../services/cops-platform.service.js";
 
-/** connected: keys and webhook in place. partial: can call the provider but hears nothing back. */
-export type ProviderStatus = "connected" | "partial" | "sandbox" | "not_configured";
+/**
+ * connected: keys and webhook secret in place AND the provider has sent this workspace a status update.
+ * unverified: fully set up, but no status update has arrived yet, so the round trip is not proven.
+ * partial: can call the provider but hears nothing back.
+ */
+export type ProviderStatus = "connected" | "unverified" | "partial" | "sandbox" | "not_configured";
+
+/** "Connected" only once the provider has called back; keys alone prove nothing. */
+export function webhookProven(configured: ProviderStatus, lastEventAt: Date | string | null | undefined, provider: string): { status: ProviderStatus; missing: string[] } {
+  if (configured !== "connected" || lastEventAt) return { status: configured, missing: [] };
+  return { status: "unverified", missing: [`No status update from ${provider} has reached this workspace yet; check its webhook points to this server`] };
+}
 
 export interface ProviderHealth {
   key: "payments" | "esign" | "email" | "slack" | "teams";
@@ -68,16 +78,18 @@ export async function loadIntegrationsStatus(db: Db, config: Env, workspaceId: s
     {
       key: "payments",
       provider: payKeys ? "razorpay" : null,
-      status: !payKeys ? "not_configured" : payMissing.length ? "partial" : "connected",
-      missing: payMissing,
       ...activity(row?.payments),
+      ...(payMissing.length || !payKeys
+        ? { status: !payKeys ? "not_configured" : "partial", missing: payMissing }
+        : webhookProven("connected", row?.payments?.last_at, "Razorpay")),
     },
     {
       key: "esign",
       provider: docuseal ? "docuseal" : esignSandbox ? "mock" : null,
-      status: docuseal ? (esignMissing.length ? "partial" : "connected") : esignSandbox ? "sandbox" : "not_configured",
-      missing: esignMissing,
       ...activity(row?.esign),
+      ...(docuseal && !esignMissing.length
+        ? webhookProven("connected", row?.esign?.last_at, "DocuSeal")
+        : { status: docuseal ? "partial" : esignSandbox ? "sandbox" : "not_configured", missing: esignMissing }),
     },
     {
       key: "email",
