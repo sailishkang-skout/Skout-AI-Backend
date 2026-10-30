@@ -559,8 +559,11 @@ export async function transitionTicket(db: Db, ctx: TicketContext, ticketId: str
       const missing = [!ticket.qaVerifiedAt && "qa_verification", !ticket.customerVerifiedAt && "customer_verification"].filter(Boolean);
       if (missing.length) throw new TicketError("VERIFICATION_REQUIRED", "Record QA and customer verification before marking the ticket verified", { missing });
     }
-    const reopen = (from === "resolved" || from === "verified") && to === "in_progress";
+    const reopen = (from === "resolved" || from === "verified" || from === "closed") && to === "in_progress";
     if (reopen && !reason?.trim()) throw new TicketError("REASON_REQUIRED", "A reopen needs a reason", { fields: [{ path: "reason", message: "Required" }] });
+    // Closing before any fix (duplicate, not a bug, no response) is a judgement call: say why.
+    const earlyClose = (from === "new" || from === "triage") && to === "closed";
+    if (earlyClose && !reason?.trim()) throw new TicketError("REASON_REQUIRED", "Closing a ticket without a fix needs a reason", { fields: [{ path: "reason", message: "Required" }] });
     await lockAccount(tx as never, ctx.workspaceId, ticket.accountId);
     const now = new Date();
     const [updated] = await tx
