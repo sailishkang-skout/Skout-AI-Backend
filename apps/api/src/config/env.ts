@@ -46,6 +46,11 @@ const envSchema = z
         if (v === "false" || v === "0") return false;
         return process.env.NODE_ENV === "production";
       }),
+    /**
+     * Bearer token for GET /api/v1/metrics. When set, scrapes must send `Authorization: Bearer <token>`.
+     * In production without it, /metrics answers 404 so internal counters are never public.
+     */
+    METRICS_TOKEN: z.string().min(16).optional(),
     RATE_LIMIT_MAX: z.coerce.number().int().positive().default(200),
     RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
     REQUEST_BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(1_048_576),
