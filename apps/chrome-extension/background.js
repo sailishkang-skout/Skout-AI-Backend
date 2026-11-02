@@ -19,6 +19,7 @@ import { registerCaptureBackground } from "./capture-background.js";
 import { getLists, prefetchLists, saveLastListId, getLastListId } from "./lists-cache.js";
 import { log, logError, timeStep, withTimeout } from "./debug.js";
 import {
+  currentApiUrl,
   DEFAULT_API_URL,
   DEFAULT_WEB_URL,
   getStoredSkoutUrls,
@@ -96,6 +97,15 @@ chrome.runtime.onInstalled.addListener((details) => {
       webUrl: DEFAULT_WEB_URL,
       stubEmail: "extension@example.com",
       onboardingComplete: false,
+    });
+  }
+  // An update keeps stored settings: replace a retired production API base saved by an older
+  // version, so existing installs reach the current API (reads also apply currentApiUrl).
+  if (details.reason === "update") {
+    void chrome.storage.sync.get(["apiUrl"]).then(({ apiUrl }) => {
+      const current = currentApiUrl(apiUrl);
+      if (apiUrl && current !== apiUrl) return chrome.storage.sync.set({ apiUrl: current });
+      return undefined;
     });
   }
   void refreshOpenTabs();

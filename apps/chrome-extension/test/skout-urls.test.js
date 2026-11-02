@@ -31,7 +31,7 @@ describe("normalizeSkoutBase", () => {
 describe("production origins", () => {
   it("exposes store default URLs", () => {
     expect(PRODUCTION_WEB_URL).toBe("https://www.skoutai.io");
-    expect(PRODUCTION_API_URL).toMatch(/execute-api\.us-east-1\.amazonaws\.com$/);
+    expect(PRODUCTION_API_URL).toBe("https://www.skoutai.io/app");
   });
 
   it("matches skoutai.io tabs without custom config", () => {
