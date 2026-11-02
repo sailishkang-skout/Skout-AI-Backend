@@ -23,6 +23,30 @@ const BUILTIN_SKOUT_TAB_PATTERNS = [
   "https://*.execute-api.us-east-1.amazonaws.com/*",
 ];
 
+/**
+ * The Skout web app is served under this path on its origin (Next.js basePath "/app", in
+ * development and production alike). Only pages under it run the app, and so the extension
+ * bridge; the site root and any other path are the marketing site or a 404.
+ */
+export const SKOUT_APP_PATH = "/app";
+
+/** Absolute URL of a page inside the Skout web app, e.g. skoutAppUrl(webUrl, "/dashboard"). */
+export function skoutAppUrl(webUrl = DEFAULT_WEB_URL, path = "") {
+  const origin = normalizeSkoutBase(webUrl);
+  const suffix = path && !path.startsWith("/") ? `/${path}` : path;
+  return `${origin}${SKOUT_APP_PATH}${suffix}`;
+}
+
+/** True when the tab shows a page of the Skout web app itself (not the marketing site). */
+export function isSkoutAppTabUrl(url) {
+  try {
+    const { pathname } = new URL(url);
+    return pathname === SKOUT_APP_PATH || pathname.startsWith(`${SKOUT_APP_PATH}/`);
+  } catch {
+    return false;
+  }
+}
+
 export function parseSkoutOrigin(url) {
   try {
     return new URL(String(url || "").trim()).origin;
@@ -88,8 +112,7 @@ export function hostPermissionOrigins(webUrl, apiUrl) {
 }
 
 export function skoutSignInHint(webUrl = DEFAULT_WEB_URL) {
-  const base = normalizeSkoutBase(webUrl);
-  return `open Skout at ${base}, sign in, then click Connect`;
+  return `open Skout at ${skoutAppUrl(webUrl, "/sign-in")}, sign in, then click Connect`;
 }
 
 export async function ensureSkoutHostPermissions(webUrl, apiUrl) {
