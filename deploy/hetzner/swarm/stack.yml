@@ -38,6 +38,8 @@ services:
     image: caddy:2-alpine
     environment:
       PUBLIC_HOST: ${PUBLIC_HOST}
+      # Ops portal host. The .localhost default keeps Caddy from requesting a certificate for a host nobody set.
+      OPS_HOST: ${OPS_HOST:-ops.localhost}
       ACME_EMAIL: ${ACME_EMAIL}
     configs:
       - source: caddyfile
@@ -93,6 +95,16 @@ services:
     <<: *app-defaults
     image: ghcr.io/${GHCR_OWNER}/skout-web:${IMAGE_TAG}
     env_file: ../env/web.env
+    deploy:
+      update_config: { failure_action: rollback, order: start-first }
+      replicas: 1
+      resources: { limits: { memory: 512M } }
+
+  # Internal CustomerOps portal (repo skout-customerops). Same API and CRM service as the web app, on its own host.
+  ops:
+    <<: *app-defaults
+    image: ghcr.io/${GHCR_OWNER}/skout-ops:${IMAGE_TAG}
+    env_file: ../env/ops.env
     deploy:
       update_config: { failure_action: rollback, order: start-first }
       replicas: 1

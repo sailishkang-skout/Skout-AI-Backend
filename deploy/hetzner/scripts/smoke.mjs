@@ -47,6 +47,19 @@ await check("api -> ai over overlay DNS", () => internal("http://ai:8000/health"
 await check("api -> email-intel-api over overlay DNS", () => internal("http://email-intel-api:3001/liveness"));
 await check("api -> warmup-tool-api over overlay DNS", () => internal("http://warmup-tool-api:3010/health"));
 await check("api -> clickhouse over overlay DNS", () => internal("http://clickhouse:8123/ping"));
+await check("ops portal healthy over overlay DNS", () => internal("http://ops:3000/api/health"));
+
+// The public ops host needs its DNS record and certificate, which can lag a first deploy. Report it, but do not
+// fail the deploy (a failure here would roll the whole stack back).
+const opsUrl = process.env.OPS_URL;
+if (opsUrl) {
+  try {
+    const res = await fetch(opsUrl.replace(/\/$/, "") + "/login", { redirect: "manual" });
+    console.log(res.status < 400 ? `INFO ops host ${opsUrl} -> ${res.status}` : `WARN ops host ${opsUrl} -> ${res.status}`);
+  } catch (err) {
+    console.log(`WARN ops host ${opsUrl} not reachable yet: ${err.message} (DNS or certificate may still be pending)`);
+  }
+}
 
 // Outbound workers (email-intel worker, warm-up workers) stay off in staging; the scraper orchestrator has its
 // own switch. The deploy workflow passes the replica counts it asked for, so a deliberate change is checked
