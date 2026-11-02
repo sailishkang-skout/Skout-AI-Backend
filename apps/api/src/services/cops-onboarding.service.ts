@@ -76,13 +76,22 @@ export interface OnboardingDeps {
   supportEmail: string;
 }
 
+/**
+ * The product frontend is served under the Next.js basePath "/app", so customer-facing links
+ * (invite, workspace, guides) need it; without it they 404. Adds it once, never twice.
+ */
+export function productAppUrl(base: string): string {
+  const trimmed = base.replace(/\/+$/, "");
+  return /\/app$/.test(trimmed) ? trimmed : `${trimmed}/app`;
+}
+
 export function defaultOnboardingDeps(config: Env): OnboardingDeps {
-  const app = config.FRONTEND_URL ?? "http://localhost:3000";
+  const app = productAppUrl(config.FRONTEND_URL ?? "http://localhost:3000");
   return {
     config,
     send: (mail) => sendMail(config, mail),
     appBaseUrl: app,
-    inviteBaseUrl: config.INVITE_BASE_URL ?? app,
+    inviteBaseUrl: config.INVITE_BASE_URL ? productAppUrl(config.INVITE_BASE_URL) : app,
     resourcesUrl: `${app.replace(/\/$/, "")}/guides`,
     supportEmail: "support@skoutai.io",
   };
