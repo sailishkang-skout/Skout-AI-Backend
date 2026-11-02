@@ -404,6 +404,8 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
         const [provisioned] = await db
           .select({
             workspaceId: copsProvisionings.provisionedWorkspaceId,
+            // The customer's workspace name, so the account shows "QA Co" and not a bare id.
+            workspaceName: sql<string | null>`(select w.name from workspaces w where w.id = ${copsProvisionings.provisionedWorkspaceId})`,
             request: copsProvisionings.request,
             trialStartsAt: copsProvisionings.trialStartsAt,
             trialEndsAt: copsProvisionings.trialEndsAt,
@@ -443,6 +445,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
           provisioning: provisioned
             ? {
                 workspace_id: provisioned.workspaceId,
+                workspace_name: provisioned.workspaceName ?? null,
                 trial_starts_at: provisioned.trialStartsAt?.toISOString() ?? null,
                 trial_ends_at: provisioned.trialEndsAt?.toISOString() ?? null,
               }
