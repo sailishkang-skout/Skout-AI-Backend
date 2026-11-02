@@ -180,10 +180,31 @@ export function dunningStage(policy: DunningPolicy, input: { day: number; provid
 
 // --- price book ----------------------------------------------------------------------------------
 
+/** One plan or add-on: its own annual and month-to-month price per currency (minor units, per month). */
+const planPriceSchema = z
+  .object({ annual_minor: z.number().int().positive(), monthly_minor: z.number().int().positive() })
+  .strict()
+  .refine((p) => p.monthly_minor >= p.annual_minor, { message: "Month-to-month price cannot be below the annual price" });
+const priceBookItemSchema = z
+  .object({
+    name: z.string().trim().min(2).max(80),
+    /** seats: priced per seat; add_on: priced per unit (for example one extra connected identity). */
+    kind: z.enum(["seats", "add_on"]),
+    /** Plan capacity shown on the proposal; informational, not enforced here. */
+    includes: z.string().trim().max(300).optional(),
+    prices: z.record(currencyCode, planPriceSchema),
+  })
+  .strict();
+
 export const priceBookSchema = z
   .object({
     /** Added to the annual per-seat price when the customer pays month to month. */
     month_to_month_surcharge_pct: z.number().min(0).max(100),
+    /**
+     * Named plans and add-ons (CEO pricing decision, 23 Oct 2026). When present, proposals offer
+     * these instead of the single seat price below. Optional so older versions still load.
+     */
+    plans: z.record(z.string().regex(/^[a-z][a-z0-9_]{1,40}$/), priceBookItemSchema).optional(),
     /** One entry per currency. Prices are never converted between currencies. */
     currencies: z.record(
       currencyCode,
@@ -198,6 +219,13 @@ export const priceBookSchema = z
   })
   .strict();
 export type PriceBook = z.infer<typeof priceBookSchema>;
+
+/** A plan's price per month in minor units for a billing choice; null when it has no price in that currency. */
+export function planMonthMinor(book: PriceBook, planKey: string, currency: string, billing: "annual" | "monthly"): number | null {
+  const price = book.plans?.[planKey]?.prices[currency];
+  if (!price) return null;
+  return billing === "annual" ? price.annual_minor : price.monthly_minor;
+}
 
 /** Per seat, per month, in minor units; null when the currency has no price. */
 export function seatMonthMinor(book: PriceBook, currency: string, billing: "annual" | "monthly"): number | null {

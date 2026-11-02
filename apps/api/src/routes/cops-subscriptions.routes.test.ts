@@ -102,11 +102,11 @@ maybe("COPS-08 subscriptions", () => {
     const res = await subscribe(accountId, opportunityId, { payment_terms_net_days: 30 });
     expect(res.statusCode).toBe(201);
     const sub = res.json().data;
-    // USD 79 a seat on annual billing, plus 20% for month to month.
+    // USD 35 a seat/month on annual billing, plus 20% for month to month.
     expect(sub).toMatchObject({ status: "active", billing: "payment_link", currency: "USD", cadence: "monthly", seats: 10, dunning: null });
-    expect(sub.items[0]).toMatchObject({ kind: "seats", quantity: 10, unit_amount_minor: 9480 });
+    expect(sub.items[0]).toMatchObject({ kind: "seats", quantity: 10, unit_amount_minor: 4200 });
     expect(sub.invoices).toHaveLength(1);
-    expect(sub.invoices[0]).toMatchObject({ amount_minor: 94_800, currency: "USD", status: "open", payment_request_id: null });
+    expect(sub.invoices[0]).toMatchObject({ amount_minor: 42_000, currency: "USD", status: "open", payment_request_id: null });
     expect(new Date(sub.renews_at).getUTCFullYear()).toBe(new Date(sub.term_start).getUTCFullYear() + 1);
     // One subscription per account.
     expect((await subscribe(accountId, opportunityId)).statusCode).toBe(409);
@@ -147,7 +147,7 @@ maybe("COPS-08 subscriptions", () => {
     // A payment link for the bill, through the COPS-03 flow; asking again reuses the live link.
     const link = await call("POST", `/subscription-invoices/${sub.invoices[0].id}/payment-link`);
     expect(link.statusCode).toBe(201);
-    expect(link.json().data.payment_request).toMatchObject({ amount_minor: 94_800, currency: "USD", status: "requested" });
+    expect(link.json().data.payment_request).toMatchObject({ amount_minor: 42_000, currency: "USD", status: "requested" });
     expect(link.json().data.payment_request.checkout_url).toContain("https://rzp.io/i/");
     const again = await call("POST", `/subscription-invoices/${sub.invoices[0].id}/payment-link`);
     expect(again.json().data.payment_request_id).toBe(link.json().data.payment_request_id);
@@ -173,7 +173,7 @@ maybe("COPS-08 subscriptions", () => {
     await billAt(due, 32);
     const after = await currentAt(accountId, due, 32);
     expect(after.invoices).toHaveLength(2);
-    expect(after.invoices[0]).toMatchObject({ status: "open", amount_minor: 94_800 });
+    expect(after.invoices[0]).toMatchObject({ status: "open", amount_minor: 42_000 });
     // The second bill is now overdue by a day or two: day 0 is its own due date, not the first bill's.
     expect(after).toMatchObject({ status: "past_due" });
     expect(after.dunning!.day).toBeLessThan(3);
@@ -184,7 +184,7 @@ maybe("COPS-08 subscriptions", () => {
     const { accountId, opportunityId } = await newAccount();
     const sub = (await subscribe(accountId, opportunityId, { cadence: "annual" })).json().data;
     // Annual billing: the first bill covers twelve months at the annual price.
-    expect(sub.invoices[0]).toMatchObject({ amount_minor: 948_000 });
+    expect(sub.invoices[0]).toMatchObject({ amount_minor: 420_000 });
     await billAt(sub.invoices[0].due_at, 45);
     expect((await current(accountId)).status).toBe("closed");
     await sql`update subscription_invoices set status = 'paid', paid_at = now() where subscription_id = ${sub.id}`;
@@ -225,7 +225,7 @@ maybe("COPS-08 subscriptions", () => {
     expect(renewals).toHaveLength(1);
     // One more term of the current seats: 10 seats x USD 94.80 a month x 12 months.
     expect(renewals[0]).toMatchObject({ name: "Renewal: Subscription deal", currency: "USD", deal_type: "renewal", pipeline_id: pipelineId });
-    expect(Number(renewals[0].amount)).toBe(11_376);
+    expect(Number(renewals[0].amount)).toBe(5_040);
     const events = await sql`select envelope->'payload' as payload from cops_outbox where event_type = 'RenewalOpened' and aggregate_id = ${renewals[0].id}`;
     expect(events).toHaveLength(1);
     expect(events[0].payload).toMatchObject({ subscription_id: sub.id, account_id: accountId, original_opportunity_id: opportunityId });
@@ -271,7 +271,7 @@ maybe("COPS-08 subscriptions", () => {
     await billAt(sub.invoices[0].period_end, 0);
     const later = await currentAt(accountId, sub.invoices[0].period_end, 0);
     expect(later.seats).toBe(15);
-    expect(later.invoices.map((i) => i.amount_minor)).toEqual([142_200, 94_800]);
+    expect(later.invoices.map((i) => i.amount_minor)).toEqual([63_000, 42_000]);
 
     // No way to edit an amendment, even straight in the database.
     await expect(sql`update subscription_amendments set seats = 99 where subscription_id = ${sub.id}`).rejects.toThrow(/append-only/);
@@ -312,7 +312,7 @@ maybe("COPS-08 subscriptions", () => {
     expect(subs.find((x) => x.id === sub.id)).toMatchObject({ seats: 10, status: "active" });
     expect((await call("GET", "/finance/subscriptions?renewing_within_days=30")).json().data.find((x: { id: string }) => x.id === sub.id)).toBeUndefined();
     const payments = (await call("GET", "/finance/payment-requests?status=paid")).json().data as Array<{ id: string; opportunity_name: string; amount_minor: number }>;
-    expect(payments.find((x) => x.id === link.payment_request_id)).toMatchObject({ opportunity_name: "Subscription deal", amount_minor: 94_800, account_id: accountId });
+    expect(payments.find((x) => x.id === link.payment_request_id)).toMatchObject({ opportunity_name: "Subscription deal", amount_minor: 42_000, account_id: accountId });
     expect((await call("GET", "/finance/payment-requests", undefined, OTHER)).json().data).toEqual([]);
   });
 

@@ -16,6 +16,7 @@ import {
   evaluateApprovals,
   materialChanges,
   seatMonthMinor,
+  planMonthMinor,
   type ApprovalTerms,
   type MaterialTerms,
 } from "./cops-commercial-policy.js";
@@ -197,10 +198,24 @@ describe("failed payment timeline", () => {
 describe("price book", () => {
   const book = COMMERCIAL_POLICY_DEFAULTS.price_book;
 
-  it("USD is 79 per seat per month on annual billing, plus 20% month to month", () => {
-    expect(seatMonthMinor(book, "USD", "annual")).toBe(7900);
-    expect(seatMonthMinor(book, "USD", "monthly")).toBe(9480);
+  it("the legacy single USD seat price is the Full plan's annual price", () => {
+    expect(seatMonthMinor(book, "USD", "annual")).toBe(3500);
     expect(seatMonthMinor(book, "INR", "annual")).toBe(599_900);
+  });
+
+  it("plans carry the CEO prices: Full 35/45, Multichannel 55/65, extra identity 7/9 (USD)", () => {
+    expect(planMonthMinor(book, "full", "USD", "annual")).toBe(3500);
+    expect(planMonthMinor(book, "full", "USD", "monthly")).toBe(4500);
+    expect(planMonthMinor(book, "full_multichannel", "USD", "annual")).toBe(5500);
+    expect(planMonthMinor(book, "full_multichannel", "USD", "monthly")).toBe(6500);
+    expect(planMonthMinor(book, "extra_identity", "USD", "monthly")).toBe(900);
+    // No plan price outside USD yet, and nothing is converted.
+    expect(planMonthMinor(book, "full", "INR", "annual")).toBeNull();
+  });
+
+  it("refuses a plan whose month-to-month price is below the annual price", () => {
+    const bad = { ...book, plans: { full: { name: "Skout Full", kind: "seats", prices: { USD: { annual_minor: 4500, monthly_minor: 3500 } } } } };
+    expect(priceBookSchema.safeParse(bad).success).toBe(false);
   });
 
   it("has no price for a currency outside the book, so nothing is converted", () => {

@@ -1,9 +1,11 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
 import { appendCopsEvent, createCopsEvent } from "@skout/shared";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { canContact } from "./cops-can-contact.js";
+import { buildConsentService } from "./consent.service.js";
+import { contactProspectId } from "./prospect-resolver.service.js";
 import { SequenceService } from "./sequence.service.js";
 import { ensureFollowUpSequence, FOLLOW_UP_TEMPLATE_KEY } from "./cops-cadence.service.js";
 
@@ -34,6 +36,7 @@ export type FollowUpTaskReason =
   | "no_sequence_configured"
   | "no_contact"
   | "contact_without_prospect"
+  | "no_consent"
   | "contact_blocked"
   | "enroll_failed";
 
@@ -104,13 +107,44 @@ export async function startFollowUp(db: Db, event: WelcomeEvent, deps: FollowUpD
   let blockedBy: string | null = null;
   if (!sequence) taskReason = "no_sequence_configured";
   else if (!contact) taskReason = "no_contact";
-  else if (!contact.prospectId) taskReason = "contact_without_prospect";
   else {
+    // Consent is mandatory: the contact (or its linked prospect) must have active email consent.
+    // Missing, revoked or unclear consent means a person follows up, never a sequence.
+    const consentSvc = buildConsentService(db);
+    const consented = consentSvc
+      ? (await consentSvc.hasActive(ws, "contact", contact.id, "email")) ||
+        (contact.prospectId ? await consentSvc.hasActive(ws, "prospect", contact.prospectId, "email") : false)
+      : false;
+    if (!consented) taskReason = "no_consent";
+    else if (!contact.prospectId && send?.toEmail) {
+      // Link the contact to the prospect already activated with the same email; never create a duplicate.
+      const [match] = (await db.execute(sql`
+        select prospect_id from prospect_activations
+        where workspace_id = ${ws} and lower(snapshot->>'email') = ${send.toEmail.trim().toLowerCase()}
+        order by activated_at desc limit 1`)) as unknown as Array<{ prospect_id: string }>;
+      if (match?.prospect_id) {
+        await db.update(contacts).set({ sourceProspectId: match.prospect_id }).where(and(eq(contacts.workspaceId, ws), eq(contacts.id, contact.id)));
+        contact.prospectId = match.prospect_id;
+        if (consentSvc && !(await consentSvc.hasActive(ws, "prospect", match.prospect_id, "email"))) {
+          await consentSvc.record({ workspaceId: ws, subjectType: "prospect", subjectId: match.prospect_id, type: "email", basis: `Carried over from CustomerOps contact ${contact.id} consent` });
+        }
+      }
+    }
+    // No corpus prospect: the contact itself is enrolled (consent already checked above), never a duplicate prospect.
+    if (!taskReason && !contact.prospectId) {
+      contact.prospectId = contactProspectId(contact.id);
+      if (consentSvc && !(await consentSvc.hasActive(ws, "prospect", contact.prospectId, "email"))) {
+        await consentSvc.record({ workspaceId: ws, subjectType: "prospect", subjectId: contact.prospectId, type: "email", basis: `Carried over from CustomerOps contact ${contact.id} consent` });
+      }
+    }
+  }
+  if (!taskReason && !contact?.prospectId) taskReason = "contact_without_prospect";
+  if (!taskReason) {
     const gate = await canContact(db, deps.config, {
       workspaceId: ws,
       email: send!.toEmail,
-      contactId: contact.id,
-      prospectId: contact.prospectId,
+      contactId: contact!.id,
+      prospectId: contact!.prospectId,
       purpose: "outreach",
     });
     if (!gate.allowed) {
@@ -180,7 +214,8 @@ export async function startFollowUp(db: Db, event: WelcomeEvent, deps: FollowUpD
     const reasonText: Record<FollowUpTaskReason, string> = {
       no_sequence_configured: "no onboarding follow-up sequence is configured",
       no_contact: "the recipient is not a contact on the account",
-      contact_without_prospect: "the contact cannot be enrolled in a sequence",
+      contact_without_prospect: "the contact has no matching prospect record to enroll in a sequence",
+      no_consent: "the contact has no recorded consent to follow-up email",
       contact_blocked: `the contact must not receive outreach (${blockedBy ?? "blocked"})`,
       enroll_failed: "the sequence enrollment failed",
     };

@@ -1,3 +1,4 @@
+import { COPS_WEBHOOK_EVENTS, dispatchWebhookEvent } from "../services/webhook.service.js";
 import { and, asc, eq, isNull, lte } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { createDb, schema } from "@skout/db";
@@ -105,6 +106,16 @@ export async function startCopsOutboxRelay(db: Db, config: Env): Promise<() => P
               { jobId: eventId }
             );
           });
+          // Fan out to the workspace's outbound webhooks; a webhook problem never fails the publish.
+          const hook = COPS_WEBHOOK_EVENTS[event.event_type];
+          if (hook) {
+            void dispatchWebhookEvent(db, config, hook, event.tenant_id, {
+              event_id: event.event_id,
+              occurred_at: event.occurred_at,
+              aggregate: { type: event.aggregate_type, id: event.aggregate_id },
+              data: event.payload,
+            }).catch((err) => log.warn("cops webhook fan-out failed", { error: String(err), event_type: event.event_type }));
+          }
         });
         consecutiveFailures = 0;
         if (counts.picked > 0) log.info("cops-outbox relay pass", counts);

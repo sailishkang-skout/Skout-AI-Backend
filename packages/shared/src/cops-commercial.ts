@@ -256,6 +256,37 @@ export function nextPaymentStatus(current: PaymentRequestStatus, incoming: Payme
 
 // ---- Total contract value (COPS-08) ----
 
+/** Months the first invoice covers for a billing cadence: annual bills a year up front. */
+export function billingPeriodMonths(cadence: string, termMonths: number): number {
+  const term = Math.max(1, termMonths);
+  if (cadence === "monthly") return 1;
+  if (cadence === "quarterly") return Math.min(3, term);
+  if (cadence === "annual") return Math.min(12, term);
+  return term; // one_time: the whole term at once
+}
+
+/**
+ * What the customer pays first, i.e. what a payment link for the proposal charges: monthly lines for
+ * one billing period (12 months on annual billing, as in "$35 a seat, $420 billed annually"), plus
+ * whole-term and one-time lines in full, after line and header discounts, plus tax.
+ */
+export function firstInvoiceMinor(input: {
+  billing_cadence: string;
+  term_months: number;
+  discount_pct: number;
+  tax_pct: number;
+  lines: Array<{ kind: string; price_basis?: PriceBasis | string | null; net_minor: number }>;
+}): number {
+  const months = billingPeriodMonths(input.billing_cadence, input.term_months);
+  let amount = 0;
+  for (const line of input.lines) {
+    const basis = line.price_basis ?? defaultPriceBasis(line.kind);
+    amount += basis === "per_month" ? line.net_minor * months : line.net_minor;
+  }
+  const afterDiscount = amount - Math.round((amount * input.discount_pct) / 100);
+  return afterDiscount + Math.round((afterDiscount * input.tax_pct) / 100);
+}
+
 /**
  * TCV = recurring lines x term in months + whole-term lines + one-time fees, after line and header
  * discounts, before tax. Every line is first brought to the full term, so ten seats at 79 a month

@@ -208,7 +208,7 @@ describe.skipIf(!hasDatabase)("§10 Dexter / Policy / LinkedIn voice HTTP E2E", 
       method: "PUT",
       url: "/api/v1/automation-policy",
       headers: headers(),
-      payload: { actionKey: "dexter.enroll_list", mode: "approve" },
+      payload: { actionKey: "dexter.enroll_list", mode: "approve", reason: "Enable approved list enrollment" },
     });
     expect(put.statusCode).toBe(200);
 

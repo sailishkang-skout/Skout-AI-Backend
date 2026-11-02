@@ -18,7 +18,7 @@ describe("COPS-06 ticket state machine", () => {
   it("refuses skipping ahead and leaving closed", () => {
     expect(canTransitionTicket("new", "resolved")).toBe(false);
     expect(canTransitionTicket("in_progress", "verified")).toBe(false);
-    expect(TICKET_TRANSITIONS.closed).toEqual([]);
+    expect(TICKET_TRANSITIONS.closed).toEqual(["in_progress"]); // reopen only, with a reason
   });
 
   it("a rejected resolution reopens the work", () => {

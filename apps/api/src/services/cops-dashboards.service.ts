@@ -24,6 +24,8 @@ export interface DashboardFilters {
   segment?: "smb" | "mid_market" | "enterprise";
   owner?: string;
   geo?: string;
+  /** COPS-14 data scope: set by the route, never by the caller. Accounts this user owns or is CSM of. */
+  ownedBy?: string;
 }
 
 export interface MetricRow {
@@ -73,6 +75,7 @@ function accountFilter(f: DashboardFilters): SQL {
   if (f.segment === "enterprise") parts.push(sql`c.employee_count >= 1000`);
   if (f.owner) parts.push(sql`c.owner_id = ${f.owner}::uuid`);
   if (f.geo) parts.push(sql`c.location ilike ${"%" + f.geo.replace(/[\\%_]/g, (ch) => "\\" + ch) + "%"}`);
+  if (f.ownedBy) parts.push(sql`(c.owner_id = ${f.ownedBy}::uuid or c.csm_id = ${f.ownedBy}::uuid)`);
   if (parts.length === 0) return sql`true`;
   return sql`(c.id is not null and ${sql.join(parts, sql` and `)})`;
 }
@@ -286,7 +289,7 @@ const ROWS: Record<string, (db: Db, c: Ctx, d: MetricDefinition) => Promise<Metr
         order by t.priority, t.created_at, t.id`)
     ),
   "engineering.open_incidents": async (db, c) => {
-    const filtered = c.f.segment || c.f.owner || c.f.geo;
+    const filtered = c.f.segment || c.f.owner || c.f.geo || c.f.ownedBy;
     return rowsOf<MetricRow>(
       await db.execute(sql`
         select null::text as account_id, null::text as account_name,

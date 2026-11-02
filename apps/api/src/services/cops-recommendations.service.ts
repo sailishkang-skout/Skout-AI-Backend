@@ -441,7 +441,26 @@ export async function approveRecommendation(db: Db, ctx: RecContext, id: string,
         .where(and(eq(automations.workspaceId, ctx.workspaceId), eq(automations.templateKey, action.params.playbook_key)))
         .limit(1);
       const version = playbook ? await new AutomationService(tx as never).getLatestPublishedVersion(playbook.id) : null;
-      if (playbook && version) {
+      // Enrolment is once per cycle: if this playbook already ran for the account in the last
+      // 7 days (from a health signal or an earlier approval), point at that run instead of a second one.
+      const [recent] = playbook
+        ? await tx
+            .select({ id: automationRuns.id })
+            .from(automationRuns)
+            .where(
+              and(
+                eq(automationRuns.workspaceId, ctx.workspaceId),
+                eq(automationRuns.automationId, playbook.id),
+                eq(automationRuns.subjectId, acc.id),
+                eq(automationRuns.isSimulation, false),
+                sql`${automationRuns.createdAt} > now() - interval '7 days'`,
+              ),
+            )
+            .limit(1)
+        : [];
+      if (recent) {
+        effect = { kind: "workflow_run", id: recent.id };
+      } else if (playbook && version) {
         const { run } = await createAutomationRunOnce(tx as never, {
           automationId: playbook.id,
           automationVersionId: version.id,

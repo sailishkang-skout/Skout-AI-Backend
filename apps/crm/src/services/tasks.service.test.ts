@@ -49,11 +49,17 @@ beforeEach(() => {
   vi.setSystemTime(NOW);
 });
 
+/** The service writes the task and its TaskCreated event in one transaction; the mock runs it inline. */
+function withTx(db: Record<string, unknown>): never {
+  const tx = { ...db, insert: db.insert };
+  return { ...db, transaction: (fn: (t: unknown) => unknown) => fn(tx) } as never;
+}
+
 describe("TasksService.create — workspace-member validation (R21.1 AC1)", () => {
   it("throws 422 and does not insert when assignedTo isn't a workspace member", async () => {
     const select = vi.fn().mockReturnValueOnce(selectChain([])); // membership check: no match
     const insert = vi.fn();
-    const db = { select, insert } as never;
+    const db = withTx({ select, insert });
     const service = new TasksService(db, auditService(), LEAD_HOURS);
 
     await expect(
@@ -71,7 +77,7 @@ describe("TasksService.create — workspace-member validation (R21.1 AC1)", () =
     const select = vi.fn().mockReturnValueOnce(selectChain([{ userId: "member-1" }]));
     const returning = vi.fn().mockResolvedValue([{ ...BASE_TASK_ROW, assignedTo: "member-1" }]);
     const insert = vi.fn().mockReturnValue({ values: vi.fn().mockReturnValue({ returning }) });
-    const db = { select, insert } as never;
+    const db = withTx({ select, insert });
     const service = new TasksService(db, auditService(), LEAD_HOURS);
 
     const result = await service.create(WORKSPACE, undefined, {
@@ -89,7 +95,7 @@ describe("TasksService.create — reminder auto-scheduling (R21.3 AC1)", () => {
     const dueSoon = new Date(NOW.getTime() + 2 * 60 * 60 * 1000);
     const returning = vi.fn().mockResolvedValue([{ ...BASE_TASK_ROW, dueDate: dueSoon }]);
     const insert = vi.fn().mockReturnValue({ values: vi.fn().mockReturnValue({ returning }) });
-    const db = { select: vi.fn(), insert } as never;
+    const db = withTx({ select: vi.fn(), insert });
     const service = new TasksService(db, auditService(), LEAD_HOURS);
 
     await service.create(WORKSPACE, undefined, {
@@ -109,7 +115,7 @@ describe("TasksService.create — reminder auto-scheduling (R21.3 AC1)", () => {
     const farFuture = new Date(NOW.getTime() + 90 * 24 * 60 * 60 * 1000);
     const returning = vi.fn().mockResolvedValue([{ ...BASE_TASK_ROW, dueDate: farFuture }]);
     const insert = vi.fn().mockReturnValue({ values: vi.fn().mockReturnValue({ returning }) });
-    const db = { select: vi.fn(), insert } as never;
+    const db = withTx({ select: vi.fn(), insert });
     const service = new TasksService(db, auditService(), LEAD_HOURS);
 
     await service.create(WORKSPACE, undefined, {
@@ -125,7 +131,7 @@ describe("TasksService.create — reminder auto-scheduling (R21.3 AC1)", () => {
   it("does not schedule a reminder when there is no due date", async () => {
     const returning = vi.fn().mockResolvedValue([{ ...BASE_TASK_ROW }]);
     const insert = vi.fn().mockReturnValue({ values: vi.fn().mockReturnValue({ returning }) });
-    const db = { select: vi.fn(), insert } as never;
+    const db = withTx({ select: vi.fn(), insert });
     const service = new TasksService(db, auditService(), LEAD_HOURS);
 
     await service.create(WORKSPACE, undefined, { title: "No due date", type: "custom", priority: "medium" });
@@ -241,5 +247,31 @@ describe("TasksService.softDelete — cancels the reminder too", () => {
     await service.softDelete(WORKSPACE, "task-1", "actor-1");
 
     expect(resolveNotificationsForEntity).toHaveBeenCalledWith(db, "task", "task-1");
+  });
+});
+
+describe("TasksService.create — CustomerOps TaskCreated event", () => {
+  const TASK_ID = "11111111-1111-4111-8111-111111111111";
+  const ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
+  const WS = "33333333-3333-4333-8333-333333333333";
+
+  it("writes TaskCreated in the same transaction when the task belongs to an account", async () => {
+    const returning = vi.fn().mockResolvedValue([{ ...BASE_TASK_ROW, id: TASK_ID, workspaceId: WS, relatedEntityType: "company", relatedEntityId: ACCOUNT_ID, type: "call" }]);
+    const values = vi.fn().mockReturnValue({ returning });
+    const insert = vi.fn().mockReturnValue({ values });
+    const service = new TasksService(withTx({ select: vi.fn(), insert }), auditService(), LEAD_HOURS);
+    await service.create(WS, undefined, { title: "Kickoff call", type: "call", relatedEntityType: "company", relatedEntityId: ACCOUNT_ID } as never);
+    expect(insert).toHaveBeenCalledTimes(2);
+    const outbox = values.mock.calls[1]![0] as { eventType: string; aggregateId: string };
+    expect(outbox.eventType).toBe("TaskCreated");
+    expect(outbox.aggregateId).toBe(ACCOUNT_ID);
+  });
+
+  it("writes no event for a task that is not tied to an account", async () => {
+    const returning = vi.fn().mockResolvedValue([{ ...BASE_TASK_ROW, id: TASK_ID, workspaceId: WS, relatedEntityType: null, relatedEntityId: null }]);
+    const insert = vi.fn().mockReturnValue({ values: vi.fn().mockReturnValue({ returning }) });
+    const service = new TasksService(withTx({ select: vi.fn(), insert }), auditService(), LEAD_HOURS);
+    await service.create(WS, undefined, { title: "Personal note", type: "todo" } as never);
+    expect(insert).toHaveBeenCalledTimes(1);
   });
 });

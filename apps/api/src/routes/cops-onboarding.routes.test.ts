@@ -167,9 +167,9 @@ maybe("COPS-05 onboarding email routes", () => {
     expect(data).toMatchObject({ account_id: accountId, trial_days_left: 14, follow_up: null, emails: [], blockers: [], handoff: null });
     expect(data.activation).toMatchObject({ template_key: "default_trial", activation_pct: 0 });
     expect(data.integrations).toEqual([
-      { key: "crm", status: "not_connected", detail: null },
-      { key: "email", status: "not_connected", detail: null },
-      { key: "calendar", status: "not_connected", detail: null },
+      { key: "crm", status: "not_connected", detail: null, requested: true },
+      { key: "email", status: "not_connected", detail: null, requested: true },
+      { key: "calendar", status: "not_connected", detail: null, requested: false },
     ]);
     const [prov] = await sql`select provisioned_workspace_id as id from cops_provisionings where account_id = ${accountId}`;
     await sql`insert into inboxes (workspace_id, email_address) values (${prov.id}, ${"sales-" + RUN + "@cust.test"})`;
@@ -179,14 +179,14 @@ maybe("COPS-05 onboarding email routes", () => {
       values (${prov.id}, ${calUser.id}, ${"cal-" + RUN + "@cust.test"}, 'enc', 'enc-refresh')`;
     const again = (await call("GET", `/accounts/${accountId}/onboarding`)).json().data.integrations;
     expect(again).toEqual([
-      { key: "crm", status: "connected", detail: "hubspot" },
-      { key: "email", status: "connected", detail: `sales-${RUN}@cust.test` },
-      { key: "calendar", status: "connected", detail: `cal-${RUN}@cust.test` },
+      { key: "crm", status: "connected", detail: "hubspot", requested: true },
+      { key: "email", status: "connected", detail: `sales-${RUN}@cust.test`, requested: true },
+      { key: "calendar", status: "connected", detail: `cal-${RUN}@cust.test`, requested: false },
     ]);
     // An expired token with no refresh token cannot sync: error, so CS can ask for a reconnect.
     await sql`update calendar_connections set oauth_refresh_token_encrypted = null, oauth_token_expires_at = now() - interval '1 day' where workspace_id = ${prov.id}`;
     const dead = (await call("GET", `/accounts/${accountId}/onboarding`)).json().data.integrations;
-    expect(dead[2]).toEqual({ key: "calendar", status: "error", detail: `cal-${RUN}@cust.test needs reconnecting` });
+    expect(dead[2]).toEqual({ key: "calendar", status: "error", detail: `cal-${RUN}@cust.test needs reconnecting`, requested: false });
 
     const path = `/accounts/${accountId}/activation/milestones`;
     expect((await call("POST", `${path}/success_review/complete`, {})).statusCode).toBe(422);
