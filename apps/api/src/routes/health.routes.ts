@@ -1,4 +1,5 @@
-import type { FastifyInstance } from "fastify";
+import { timingSafeEqual } from "node:crypto";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { formatJourneyMetricsPrometheus } from "../services/journey-metrics.js";
 import { enrichmentMetricsPrometheus } from "../services/enrichment/ops.service.js";
 
@@ -21,6 +22,15 @@ const SLO_TARGETS = {
 } as const;
 
 const startedAt = Date.now();
+
+/** Constant-time check of `Authorization: Bearer <token>`. */
+function hasMetricsToken(request: FastifyRequest, token: string): boolean {
+  const header = request.headers.authorization;
+  if (typeof header !== "string" || !header.startsWith("Bearer ")) return false;
+  const given = Buffer.from(header.slice(7).trim());
+  const expected = Buffer.from(token);
+  return given.length === expected.length && timingSafeEqual(given, expected);
+}
 let healthHits = 0;
 
 export async function healthRoutes(app: FastifyInstance) {
@@ -45,8 +55,14 @@ export async function healthRoutes(app: FastifyInstance) {
   /**
    * Prometheus-compatible scrape for Datadog Agent / Grafana Agent.
    * Import docs/ops/datadog-slo-dashboard.json for a starter dashboard.
+ * Requires METRICS_TOKEN as a bearer token when set; disabled in production without it.
    */
-  app.get("/metrics", async (_request, reply) => {
+  app.get("/metrics", async (request, reply) => {
+    // Metrics expose internal counters, so they are never public in production.
+    const token = app.config.METRICS_TOKEN;
+    if (token ? !hasMetricsToken(request, token) : app.config.NODE_ENV === "production") {
+      return reply.code(404).send({ ok: false, error: "NOT_FOUND", code: "NOT_FOUND", message: "Not found" });
+    }
     const uptime = (Date.now() - startedAt) / 1000;
     const body = [
       "# HELP skout_api_up 1 if process is serving",
