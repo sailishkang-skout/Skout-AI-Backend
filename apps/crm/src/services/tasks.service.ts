@@ -1,3 +1,4 @@
+import { appendCopsEvent, createCopsEvent } from "@skout/shared";
 import { and, eq, gte, isNull, lt, lte } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
@@ -140,19 +141,37 @@ export class TasksService {
     const owner = input.assignedTo ?? assignedTo;
     if (owner) await this.assertWorkspaceMember(workspaceId, owner);
 
-    const [row] = await this.db
-      .insert(tasks)
-      .values({
-        workspaceId,
-        assignedTo: owner,
-        relatedEntityType: input.relatedEntityType,
-        relatedEntityId: input.relatedEntityId,
-        title: input.title,
-        type: input.type,
-        dueDate: input.dueDate ? new Date(input.dueDate) : undefined,
-        priority: input.priority,
-      })
-      .returning();
+    // The task and its TaskCreated event commit together, so CustomerOps (timeline, webhooks)
+    // sees tasks people add by hand, not only the ones automation creates.
+    const row = await this.db.transaction(async (tx) => {
+      const [inserted] = await tx
+        .insert(tasks)
+        .values({
+          workspaceId,
+          assignedTo: owner,
+          relatedEntityType: input.relatedEntityType,
+          relatedEntityId: input.relatedEntityId,
+          title: input.title,
+          type: input.type,
+          dueDate: input.dueDate ? new Date(input.dueDate) : undefined,
+          priority: input.priority,
+        })
+        .returning();
+      if (inserted && (inserted.relatedEntityType === "company" || inserted.relatedEntityType === "account") && inserted.relatedEntityId) {
+        await appendCopsEvent(
+          tx as never,
+          createCopsEvent({
+            eventType: "TaskCreated",
+            tenantId: workspaceId,
+            aggregateType: "account",
+            aggregateId: inserted.relatedEntityId,
+            actor: { type: assignedTo ? "user" : "system", id: assignedTo ?? null },
+            payload: { task_id: inserted.id, account_id: inserted.relatedEntityId, task_type: inserted.type ?? "task" },
+          })
+        );
+      }
+      return inserted;
+    });
 
     const dto = toDto(row!);
     await this.auditService.record(workspaceId, assignedTo, "create", "task", dto.id, null, dto);
