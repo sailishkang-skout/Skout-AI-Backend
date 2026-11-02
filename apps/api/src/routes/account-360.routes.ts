@@ -351,7 +351,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       const accountId = request.params.id;
 
       const [account] = await db
-        .select({ id: companies.id, name: companies.name, ownerId: companies.ownerId, healthScore: companies.healthScore, renewalRisk: companies.renewalRisk, csmId: companies.csmId })
+        .select({ id: companies.id, name: companies.name, ownerId: companies.ownerId, healthScore: companies.healthScore, healthState: companies.healthState, renewalRisk: companies.renewalRisk, csmId: companies.csmId })
         .from(companies)
         .where(and(eq(companies.id, accountId), eq(companies.workspaceId, workspaceId)))
         .limit(1);
@@ -433,8 +433,10 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
           id: account.id,
           name: account.name,
           owner_id: account.ownerId,
-          lifecycle: { account: life.account ?? null, health: life.health ?? null, support: life.support ?? null },
-          health: life.health ?? null,
+          // The health sweep and "Recompute" write companies.health_state; the lifecycle row can lag,
+          // so the stored score's state wins (otherwise a scored account read "Not scored").
+          lifecycle: { account: life.account ?? null, health: account.healthState ?? life.health ?? null, support: life.support ?? null },
+          health: account.healthState ?? life.health ?? null,
           // COPS-11: the explainable score behind the health state, and the Success fields.
           health_score: account.healthScore ?? null,
           renewal_risk: account.renewalRisk ?? null,
