@@ -4,6 +4,16 @@ import { schema, scopedTo } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { SearchService } from "./search.service.js";
 
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md (COPS-14 additions).
+ *   - Tables touched directly: contacts, companies - read (contact sequence recipient and account details)
+ *     (owned by apps/crm)
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: contact-backed sequences need the current CRM recipient and merge fields; this lookup
+ *     is workspace-scoped and read-only, with no transactional write to move behind an API.
+ *   - Review date: revisit when apps/crm's internal API exposes contact lookup for sequence resolution
+ */
 const { enrichmentResults, prospectActivations, contacts, companies } = schema;
 
 /** A CustomerOps contact enrolled straight into a sequence, without a corpus prospect (owner decision, Oct 2026). */

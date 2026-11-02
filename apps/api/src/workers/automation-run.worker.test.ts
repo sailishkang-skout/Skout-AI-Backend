@@ -13,14 +13,18 @@ vi.mock("@skout/db", () => ({
   createDb: vi.fn().mockReturnValue({ db: {}, sql: { end: vi.fn().mockResolvedValue(undefined) } }),
   schema: { automationRuns: {}, automationVersions: {}, automationRunSteps: {} },
 }));
-vi.mock("@skout/shared", () => ({
-  reclaimExpiredLeases: vi.fn().mockResolvedValue({ requeuedIds: [], failedIds: [] }),
-  // advanceAutomationRun's own tests below don't exercise real lease renewal — the handler
-  // resolves synchronously in these tests, so just run the wrapped work directly.
-  withLeaseHeartbeat: vi.fn((_db, _table, _id, _workerId, _leaseMs, work) => work()),
-  buildIdempotencyKey: vi.fn((...parts: string[]) => parts.join(":")),
-  LeaseLostError: class LeaseLostError extends Error {},
-}));
+vi.mock("@skout/shared", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@skout/shared")>();
+  return {
+    ...actual,
+    reclaimExpiredLeases: vi.fn().mockResolvedValue({ requeuedIds: [], failedIds: [] }),
+    // advanceAutomationRun's own tests below don't exercise real lease renewal — the handler
+    // resolves synchronously in these tests, so just run the wrapped work directly.
+    withLeaseHeartbeat: vi.fn((_db, _table, _id, _workerId, _leaseMs, work) => work()),
+    buildIdempotencyKey: vi.fn((...parts: string[]) => parts.join(":")),
+    LeaseLostError: class LeaseLostError extends Error {},
+  };
+});
 vi.mock("../services/automation-triggers.service.js", () => ({
   dispatchWorkflowEvents: vi.fn().mockResolvedValue({ started: [], cancelled: 0 }),
   runScheduledWorkflows: vi.fn().mockResolvedValue([]),

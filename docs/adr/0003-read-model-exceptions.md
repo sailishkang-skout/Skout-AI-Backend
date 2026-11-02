@@ -214,3 +214,4 @@ by apps/api.
 |---|---|---|
 | `apps/api/src/services/cops-data-scope.service.ts` | companies | read only: `owner_id` and `csm_id`, to check before every account route whether a member limited to their own accounts may see it |
 | `apps/api/src/services/cops-roles.db.test.ts`, `apps/api/src/routes/cops-data-scope.routes.test.ts` | companies | test fixtures |
+| `apps/api/src/services/prospect-resolver.service.ts` | contacts, companies | read only: resolve a workspace-scoped CRM contact to sequence recipient and merge fields; revisit when apps/crm's internal API exposes contact lookup for sequence resolution |
