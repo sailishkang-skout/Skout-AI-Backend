@@ -18,7 +18,8 @@ const LOCAL_HOST_PATTERNS = [
 
 const PRODUCTION_DEFAULTS = {
   webUrl: "https://www.skoutai.io",
-  apiUrl: "https://ckoy6iywm0.execute-api.us-east-1.amazonaws.com",
+  // The production API is served under the app's path: https://www.skoutai.io/app/api/v1.
+  apiUrl: "https://www.skoutai.io/app",
 };
 
 /** Bundled by Vite — referenced as dist/<file> in the store manifest. */

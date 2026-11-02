@@ -2,6 +2,7 @@ import { ensureFreshAuth, refreshAuthFromSkoutTabs } from "./auth.js";
 import { safeLocalSet } from "./storage-throttle.js";
 import { log, logError, timeStep } from "./debug.js";
 import {
+  currentApiUrl,
   DEFAULT_API_URL,
   DEFAULT_WEB_URL,
   normalizeSkoutBase,
@@ -106,7 +107,7 @@ export async function getConfig() {
     }
   }
   return {
-    apiUrl: stored.apiUrl || DEFAULT_API_URL,
+    apiUrl: currentApiUrl(stored.apiUrl) || DEFAULT_API_URL,
     webUrl: stored.webUrl || DEFAULT_WEB_URL,
     authToken: localAuth.authToken || "",
     authEmail: localAuth.authEmail || "",
