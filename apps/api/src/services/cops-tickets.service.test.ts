@@ -145,7 +145,7 @@ maybe("COPS-06 engineering tickets (Postgres)", () => {
     await recordTicketRelease(db, ctx, ticket.id, { fixed_in_version: "1.4.2", qa_evidence: "Regression suite green", customer_evidence: "Customer confirmed by email" });
     await transitionTicket(db, ctx, ticket.id, "verified");
     await transitionTicket(db, ctx, ticket.id, "closed");
-    await expect(transitionTicket(db, ctx, ticket.id, "in_progress")).rejects.toMatchObject({ code: "BUSINESS_STATE_CONFLICT" });
+    await expect(transitionTicket(db, ctx, ticket.id, "in_progress")).rejects.toMatchObject({ code: "REASON_REQUIRED" });
     const history = (await getTicket(db, ctx, ticket.id)).history;
     expect(history.map((h) => h.to)).toEqual(["new", "triage", "assigned", "in_progress", "testing", "waiting_on_customer", "resolved", "verified", "closed"]);
     expect(history.find((h) => h.to === "resolved")!.reason).toBe("Index rebuilt");
