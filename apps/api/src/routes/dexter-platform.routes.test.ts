@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-const upsertActionMode = vi.fn(async () => ({ id: "p1" }));
-const setActionRoles = vi.fn(async () => ({ id: "p1" }));
+const upsertActionMode = vi.fn(async (..._args: unknown[]) => ({ id: "p1" }));
+const setActionRoles = vi.fn(async (..._args: unknown[]) => ({ id: "p1" }));
 
 vi.mock("../services/policy-gateway.service.js", () => ({
   AUTOMATION_MODES: ["ask", "auto", "draft", "approve"],
