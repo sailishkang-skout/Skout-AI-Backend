@@ -18,6 +18,7 @@ import { workspaceManageGate } from "./crm-admin-gate.js";
 import { getAccountHealth, getAccountHealthHistory, getHealthModel, HEALTH_DIMENSIONS, recordAccountHealth, saveHealthModel } from "../services/cops-health.service.js";
 import { installSuccessPlaybooks, listPlaybookEnrollments, PLAYBOOK_TEMPLATES } from "../services/cops-playbooks.service.js";
 import { getCustomerSuccessOverview } from "../services/cops-success-overview.service.js";
+import { listChurnRisk, predictAccountChurn } from "../services/cops-churn.service.js";
 
 const { companies, workspaceMembers, auditLogs } = schema;
 
@@ -38,6 +39,20 @@ export async function copsSuccessRoutes(app: FastifyInstance) {
     const [acc] = await db().select({ csmId: companies.csmId }).from(companies).where(and(eq(companies.id, id), eq(companies.workspaceId, request.workspaceId!))).limit(1);
     if (!acc) throw new HttpError("account_not_found", 404);
     return { data: { health: await getAccountHealth(db(), request.workspaceId!, id), csmId: acc.csmId } };
+  });
+
+  /** COPS-14 predicted churn risk for one account, with the signals that drive it. */
+  app.get("/accounts/:id/churn-risk", read, async (request) => {
+    const { id } = accountParams.parse(request.params);
+    const [acc] = await db().select({ id: companies.id }).from(companies).where(and(eq(companies.id, id), eq(companies.workspaceId, request.workspaceId!))).limit(1);
+    if (!acc) throw new HttpError("account_not_found", 404);
+    return { data: await predictAccountChurn(db(), request.workspaceId!, id) };
+  });
+
+  /** COPS-14 accounts most likely to churn, highest first. */
+  app.get("/customer-success/churn-risk", read, async (request) => {
+    const { limit } = z.object({ limit: z.coerce.number().int().min(1).max(100).default(25) }).parse(request.query ?? {});
+    return { data: await listChurnRisk(db(), request.workspaceId!, limit) };
   });
 
   /** Score history for the trend. */
