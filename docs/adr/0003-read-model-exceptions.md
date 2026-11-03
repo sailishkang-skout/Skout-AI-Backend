@@ -215,3 +215,10 @@ by apps/api.
 | `apps/api/src/services/cops-data-scope.service.ts` | companies | read only: `owner_id` and `csm_id`, to check before every account route whether a member limited to their own accounts may see it |
 | `apps/api/src/services/cops-roles.db.test.ts`, `apps/api/src/routes/cops-data-scope.routes.test.ts` | companies | test fixtures |
 | `apps/api/src/services/prospect-resolver.service.ts` | contacts, companies | read only: resolve a workspace-scoped CRM contact to sequence recipient and merge fields; revisit when apps/crm's internal API exposes contact lookup for sequence resolution |
+
+## COPS-14 additions (2026-11-03)
+
+| File | Tables | Access |
+| --- | --- | --- |
+| `apps/api/src/services/cops-churn.service.ts` | companies | read only: lists the accounts the health sweep scored, to rank churn risk |
+| `apps/api/src/services/cops-benchmarks.service.ts` | companies | read only: compares an account's health with its workspace peers (hidden below 5 peers) |

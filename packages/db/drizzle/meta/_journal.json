@@ -1000,7 +1000,7 @@
       "idx": 142,
       "version": "7",
       "when": 1797200000000,
-"tag": "0141_enrichment_attempts_workspace",
+      "tag": "0141_enrichment_attempts_workspace",
       "breakpoints": true
     },
     {
@@ -1015,6 +1015,34 @@
       "version": "7",
       "when": 1797400000000,
       "tag": "0142_cops14_member_data_scopes",
+      "breakpoints": true
+    },
+    {
+      "idx": 145,
+      "version": "7",
+      "when": 1797500000000,
+      "tag": "0143_cops14_apps_api_keys",
+      "breakpoints": true
+    },
+    {
+      "idx": 146,
+      "version": "7",
+      "when": 1797600000000,
+      "tag": "0144_cops14_agent_roles",
+      "breakpoints": true
+    },
+    {
+      "idx": 147,
+      "version": "7",
+      "when": 1797700000000,
+      "tag": "0145_cops14_usage_counters",
+      "breakpoints": true
+    },
+    {
+      "idx": 148,
+      "version": "7",
+      "when": 1797800000000,
+      "tag": "0146_cops14_export_settings",
       "breakpoints": true
     }
   ]

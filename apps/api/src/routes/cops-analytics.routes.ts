@@ -6,6 +6,7 @@ import { DashboardError, dashboard, drill, type DashboardFilters } from "../serv
 import { funnelCohorts } from "../services/cops-funnel.service.js";
 import { getDataScope } from "../services/cops-data-scope.service.js";
 import { feedStatus } from "../services/cops-analytics-feed.service.js";
+import { getExportSettings, setExportSettings } from "../services/cops-export-settings.service.js";
 
 /**
  * COPS-13 analytics (Bible p.59, p.87-88): the metric catalog, role dashboards, drill-through and
@@ -101,6 +102,23 @@ export async function copsAnalyticsRoutes(app: FastifyInstance) {
 
   app.get("/cops/funnel", async (request, reply) =>
     guarded(request, reply, (g) => g.includes("analytics:read"), async () => funnelCohorts(db(), request.workspaceId!, await scoped(request, filterSchema.parse(request.query ?? {}) as DashboardFilters)))
+  );
+
+  /** COPS-14 which of this workspace's events may leave for the warehouse (analytics:admin). */
+  app.get("/cops/analytics/export-settings", async (request, reply) =>
+    guarded(request, reply, (g) => g.includes("analytics:admin"), () => getExportSettings(db(), request.workspaceId!))
+  );
+  app.put("/cops/analytics/export-settings", async (request, reply) =>
+    guarded(request, reply, (g) => g.includes("analytics:admin"), () => {
+      const body = z
+        .object({
+          enabled: z.boolean(),
+          event_types: z.array(z.string().max(80)).max(200).nullable(),
+          reason: z.string().trim().min(8, "Give a reason of at least 8 characters").max(500),
+        })
+        .parse(request.body ?? {});
+      return setExportSettings(db(), { workspaceId: request.workspaceId!, userId: request.userId!, requestId: resolveCorrelationId(request.headers["x-request-id"] as string | undefined) }, body);
+    })
   );
 
   /** Warehouse feed health (analytics:admin): whether it is on and how far behind this workspace's events are. */

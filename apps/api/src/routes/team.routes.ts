@@ -8,6 +8,7 @@ import { enforcePermission } from "@skout/auth";
 import type { WorkspaceRole } from "../services/team.service.js";
 import { writeCopsAudit } from "../services/cops-platform.service.js";
 import { resolveCorrelationId } from "@skout/shared";
+import { productAppUrl } from "../services/cops-onboarding.service.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -142,7 +143,8 @@ export async function teamRoutes(app: FastifyInstance) {
         request.role
       );
 
-      const baseUrl = app.config.INVITE_BASE_URL ?? app.config.FRONTEND_URL ?? "http://localhost:3000";
+      // The product app lives under /app; without it the email link 404s (same fix as onboarding).
+      const baseUrl = productAppUrl(app.config.INVITE_BASE_URL ?? app.config.FRONTEND_URL ?? "http://localhost:3000");
       const acceptUrl = `${baseUrl}/invite/${invite.token}`;
 
       const [ws] = await app.db!

@@ -4,7 +4,7 @@ import { schema, scopedTo } from "@skout/db";
 import { HttpError } from "../utils/http.js";
 import { incrJourneyMetric } from "./journey-metrics.js";
 
-const { automationPolicies, policyDecisions } = schema;
+const { automationPolicies, policyDecisions, workspaceMembers, workspaceMemberRoles } = schema;
 
 /** D7 four modes — distinct from sequence Mode A/B/C. */
 export const AUTOMATION_MODES = ["ask", "auto", "draft", "approve"] as const;
@@ -37,6 +37,50 @@ export async function getActionMode(
     .limit(1);
   if (row && isAutomationMode(row.mode)) return row.mode;
   return DEFAULT_ACTION_MODES[actionKey] ?? "ask";
+}
+
+/**
+ * COPS-14 per-role tool permissions, kept pure for tests: owners always pass, no list means
+ * everyone passes, otherwise the member needs one of the listed roles.
+ */
+export function roleAllowed(allowedRoleIds: string[] | null | undefined, heldRoleIds: string[], baseRole: string | null): boolean {
+  if (!allowedRoleIds || allowedRoleIds.length === 0) return true;
+  if (baseRole === "owner") return true;
+  return heldRoleIds.some((r) => allowedRoleIds.includes(r));
+}
+
+async function actorMayRun(db: Db, workspaceId: string, actionKey: string, userId: string): Promise<boolean> {
+  const [policy] = await db
+    .select({ allowed: automationPolicies.allowedRoleIds })
+    .from(automationPolicies)
+    .where(scopedTo(automationPolicies, workspaceId, eq(automationPolicies.actionKey, actionKey)))
+    .limit(1);
+  const allowed = (policy?.allowed as string[] | null | undefined) ?? null;
+  if (!allowed || allowed.length === 0) return true;
+  const [member] = await db
+    .select({ role: workspaceMembers.role })
+    .from(workspaceMembers)
+    .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)))
+    .limit(1);
+  const held = await db
+    .select({ roleId: workspaceMemberRoles.roleId })
+    .from(workspaceMemberRoles)
+    .where(and(eq(workspaceMemberRoles.workspaceId, workspaceId), eq(workspaceMemberRoles.userId, userId)));
+  return roleAllowed(allowed, held.map((h) => h.roleId), member?.role ?? null);
+}
+
+/** Sets which roles may run an action; null clears the limit. The mode is kept. */
+export async function setActionRoles(db: Db, workspaceId: string, actionKey: string, allowedRoleIds: string[] | null, userId?: string) {
+  const mode = await getActionMode(db, workspaceId, actionKey);
+  const [row] = await db
+    .insert(automationPolicies)
+    .values({ workspaceId, actionKey, mode, allowedRoleIds, updatedBy: userId, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: [automationPolicies.workspaceId, automationPolicies.actionKey],
+      set: { allowedRoleIds, updatedBy: userId, updatedAt: new Date() },
+    })
+    .returning();
+  return row!;
 }
 
 export async function upsertActionMode(
@@ -129,6 +173,7 @@ export async function listPolicies(db: Db, workspaceId: string) {
       id: r.id,
       actionKey: r.actionKey,
       mode: r.mode,
+      allowedRoleIds: (r.allowedRoleIds as string[] | null) ?? null,
       source: "workspace" as const,
       updatedAt: r.updatedAt.toISOString(),
     })),
@@ -141,6 +186,8 @@ export type ClassifyResult = {
   mode: AutomationMode;
   outcome: "allowed" | "denied" | "staged" | "proposed";
   decisionId: string;
+  /** Set when the actor's role, not the mode, caused the denial. */
+  deniedBy?: "role";
 };
 
 /**
@@ -169,6 +216,9 @@ export async function classifyAndRecord(
   else if (mode === "draft") outcome = "staged";
   else if (mode === "approve") outcome = opts.priorApproval ? "allowed" : "denied";
   else outcome = "proposed";
+  // A member without a permitted role is denied whatever the mode; system runs carry no actor.
+  const roleDenied = opts.actorUserId ? !(await actorMayRun(db, opts.workspaceId, opts.actionKey, opts.actorUserId)) : false;
+  if (roleDenied) outcome = "denied";
 
   const [decision] = await db
     .insert(policyDecisions)
@@ -180,7 +230,7 @@ export async function classifyAndRecord(
       actorUserId: opts.actorUserId,
       entityType: opts.entityType,
       entityId: opts.entityId,
-      detail: opts.detail ?? {},
+      detail: roleDenied ? { ...(opts.detail ?? {}), denied_by: "role" } : opts.detail ?? {},
     })
     .returning();
 
@@ -191,6 +241,7 @@ export async function classifyAndRecord(
     mode,
     outcome,
     decisionId: decision!.id,
+    ...(roleDenied ? { deniedBy: "role" as const } : {}),
   };
 }
 
@@ -201,7 +252,9 @@ export async function assertAllowed(
   const result = await classifyAndRecord(db, opts);
   if (result.outcome === "denied") {
     throw new HttpError(
-      `Policy Gateway denied action ${opts.actionKey} (mode=${result.mode}; needs approval)`,
+      result.deniedBy === "role"
+        ? `Your role is not allowed to run ${opts.actionKey}`
+        : `Policy Gateway denied action ${opts.actionKey} (mode=${result.mode}; needs approval)`,
       403,
       { policy: result }
     );

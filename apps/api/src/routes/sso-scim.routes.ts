@@ -7,6 +7,8 @@ import { normalizeEmail } from "@skout/shared";
 import { errorResponse } from "../utils/http.js";
 import { registerScimRoutes } from "../services/scim.service.js";
 import { registerSamlRoutes } from "../services/saml.service.js";
+import { resolveCorrelationId } from "@skout/shared";
+import { writeCopsAudit } from "../services/cops-platform.service.js";
 
 const { workspaceSsoConfigs, users, workspaceMembers, authIdentities } = schema;
 
@@ -184,6 +186,8 @@ const configSchema = z.object({
   scimEnabled: z.boolean().optional(),
   groupRoleMap: z.record(z.string()).optional(),
   notes: z.string().max(2000).optional().nullable(),
+  /** COPS-14: why the sign-in setup changed; kept in the audit log. */
+  reason: z.string().trim().max(500).optional(),
 }).refine(data => data.clerkOrgId || data.orgRef, {
   message: "Either clerkOrgId or orgRef must be provided",
   path: ["clerkOrgId"],
@@ -308,6 +312,18 @@ export async function ssoScimRoutes(app: FastifyInstance) {
         },
       })
       .returning();
+    // Sign-in setup is a security change: always audited (never the secrets, there are none here).
+    await writeCopsAudit(app.db, {
+      tenantId: request.workspaceId,
+      actor: { type: "user", id: request.userId ?? null },
+      entityType: "sso_config",
+      entityId: request.workspaceId,
+      action: "sso.config_saved",
+      after: { idp_provider: parsed.data.idpProvider, scim_enabled: parsed.data.scimEnabled ?? false, group_role_map: parsed.data.groupRoleMap ?? null, metadata_url_set: Boolean(parsed.data.idpMetadataUrl) },
+      reason: parsed.data.reason ?? null,
+      correlationId: resolveCorrelationId(request.headers["x-request-id"] as string | undefined),
+      sourceChannel: "api",
+    }).catch((err) => app.log.warn({ err }, "SSO audit write failed"));
     return reply.send({ data: row });
   });
 
@@ -344,6 +360,17 @@ export async function ssoScimRoutes(app: FastifyInstance) {
       })
       .where(scopedTo(workspaceSsoConfigs, request.workspaceId))
       .returning();
+    await writeCopsAudit(app.db, {
+      tenantId: request.workspaceId,
+      actor: { type: "user", id: request.userId },
+      entityType: "sso_config",
+      entityId: request.workspaceId,
+      action: "sso.activated",
+      after: { status: "active" },
+      reason: null,
+      correlationId: resolveCorrelationId(request.headers["x-request-id"] as string | undefined),
+      sourceChannel: "api",
+    }).catch((err) => app.log.warn({ err }, "SSO audit write failed"));
     return reply.send({
       data: row,
       note: "Workspace SSO marked active. Complete IdP bind in Clerk Dashboard if connection id is a placeholder.",
