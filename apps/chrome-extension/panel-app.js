@@ -610,6 +610,12 @@ export function initPanel() {
     await refreshSequences({ quiet: true });
   })();
 
+  // Any part of the panel that hits a sign-in failure reports it, so the status never keeps
+  // saying "Connected to Skout." after the session is gone.
+  document.addEventListener("skout-auth-lost", (event) => {
+    setStatus(friendlyTabError(String(event.detail || "Session expired — click Reconnect Skout account.")), true);
+  });
+
   chrome.storage.onChanged.addListener((changes, area) => {
     // Auth JWTs live in chrome.storage.local (sync was cleared after hardening).
     if ((area !== "local" && area !== "sync") || !changes.authToken) return;

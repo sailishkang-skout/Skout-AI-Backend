@@ -157,6 +157,21 @@
     return { title: value, companyName: "" };
   }
 
+  // A job's date range ("Jan 2024 - Present", "2019 – 2022 · 3 yrs"). LinkedIn sometimes renders it
+  // in the same text node as the role, glued on with no space ("Senior ConsultantJan 2024 - Present").
+  const MONTH = "(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\\.?";
+  const DATE_TAIL = new RegExp(
+    `(?:\\s+|(?<=[a-z)]))(?:${MONTH}\\s+)?\\d{4}\\s*[-–—]\\s*(?:present|(?:${MONTH}\\s+)?\\d{4}).*$`,
+    "i"
+  );
+
+  /** Split a trailing job date range off a role/company string. */
+  function splitDateTail(text) {
+    const value = clean(text);
+    const stripped = value.replace(DATE_TAIL, "").trim();
+    return { text: stripped, dated: stripped !== value };
+  }
+
   function normalizeCompanyName(name) {
     return clean(name)
       .replace(/\s*·.*$/, "")
@@ -350,6 +365,15 @@
       companyName = clean(companyName.slice(title.length));
     }
 
+    // A "company" that carries the job's dates is really the role line; use it as the title.
+    const datedTitle = splitDateTail(title);
+    title = datedTitle.text;
+    const datedCompany = splitDateTail(companyName);
+    if (datedCompany.dated) {
+      if (!title) title = datedCompany.text;
+      companyName = "";
+    }
+
     return { title: clean(title), companyName: clean(companyName) };
   }
 
@@ -461,12 +485,21 @@
       experience.title ||
       (/\s(?:at|@)\s/i.test(headline) ? "" : headline);
 
+    // The top-card company link can pick up the experience line (role + dates); never use that.
+    const topCardCompany = splitDateTail(companyFromTopCard());
+    if (topCardCompany.dated && !title) title = topCardCompany.text;
+
     let companyName = resolveCompanyName({
       headline,
       parsed,
-      topCard: companyFromTopCard(),
+      topCard: topCardCompany.dated ? "" : topCardCompany.text,
       experience: experience.companyName,
     });
+    const datedCompany = splitDateTail(companyName);
+    if (datedCompany.dated) {
+      if (!title) title = datedCompany.text;
+      companyName = "";
+    }
 
     if (!title && experience.title) title = experience.title;
     if (companyName && title && companyName.toLowerCase() === title.toLowerCase()) {
