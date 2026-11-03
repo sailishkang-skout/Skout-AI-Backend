@@ -133,5 +133,5 @@ paths:
       responses: { "200": { description: OK }, "422": { description: Unknown event type } }
 x-metered-ai-routes:
   description: Counted against the plan's monthly AI actions before the handler runs; 400/422 replies give the action back.
-  routes: [POST /ai/chat, POST /ai/drafts, POST /ai/generate-email, POST /ai/next-best-action, POST /ai/audit, POST /accounts/{id}/recommendations/generate]
+  routes: ["POST /ai/chat", "POST /ai/drafts", "POST /ai/generate-email", "POST /ai/next-best-action", "POST /ai/audit", "POST /accounts/{id}/recommendations/generate"]
   headers: { X-Usage-AI-Actions: "used/limit", X-Usage-Warning: "ai_actions at 80% or more" }
