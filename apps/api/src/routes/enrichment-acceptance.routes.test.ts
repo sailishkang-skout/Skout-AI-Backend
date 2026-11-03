@@ -498,12 +498,12 @@ describe("Release gates", () => {
     }
   });
 
-  it("allows only explicitly configured production test workspaces through the release gate", async () => {
+  it("makes enrichment available to every production workspace in general release", async () => {
     const production = await buildApp({
       ...config,
       NODE_ENV: "production",
-      ENRICHMENT_RELEASE_STAGE: "internal",
-      ENRICHMENT_INTERNAL_TESTER_WORKSPACE_IDS: [WORKSPACE.toUpperCase()],
+      ENRICHMENT_RELEASE_STAGE: "general",
+      ENRICHMENT_LEGAL_APPROVAL_REF: undefined,
     });
     try {
       const call = (url: string, headers = owner) =>
@@ -511,28 +511,28 @@ describe("Release gates", () => {
       expect((await call("/enrichment/capture/status")).statusCode).toBe(200);
       expect((await call("/enrichment/release")).json()).toMatchObject({
         enabled: true,
-        stage: "internal",
+        stage: "general",
         reason: null,
       });
-      expect((await call("/enrichment/people", outsider)).statusCode).toBe(403);
+      expect((await call("/enrichment/people", outsider)).statusCode).toBe(200);
       expect((await call("/enrichment/release", outsider)).json()).toMatchObject({
-        enabled: false,
-        stage: "internal",
+        enabled: true,
+        stage: "general",
       });
     } finally {
       await production.close();
     }
   });
 
-  it("opens to every workspace only with a recorded approval", () => {
+  it("keeps the configured release stage independent from the approval reference", () => {
     const base = {
       NODE_ENV: "production" as const,
       ENRICHMENT_LEGAL_APPROVAL_REF: undefined,
-      ENRICHMENT_INTERNAL_TESTER_WORKSPACE_IDS: [],
     };
-    expect(releaseState({ ...base, ENRICHMENT_RELEASE_STAGE: "general" })).toMatchObject({ stage: "internal", legalApprovalRecorded: false, enforced: true });
-    expect(releaseState({ ...base, ENRICHMENT_RELEASE_STAGE: "general", ENRICHMENT_LEGAL_APPROVAL_REF: "  " })).toMatchObject({ stage: "internal" });
+    expect(releaseState({ ...base, ENRICHMENT_RELEASE_STAGE: "general" })).toMatchObject({ stage: "general", legalApprovalRecorded: false, enforced: true });
+    expect(releaseState({ ...base, ENRICHMENT_RELEASE_STAGE: "general", ENRICHMENT_LEGAL_APPROVAL_REF: "  " })).toMatchObject({ stage: "general" });
     expect(releaseState({ ...base, ENRICHMENT_RELEASE_STAGE: "general", ENRICHMENT_LEGAL_APPROVAL_REF: "LEGAL-142" })).toMatchObject({ stage: "general", legalApprovalRecorded: true });
     expect(releaseState({ ...base, NODE_ENV: "development", ENRICHMENT_RELEASE_STAGE: "internal" })).toMatchObject({ stage: "internal", enforced: false });
   });
+
 });
