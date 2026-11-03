@@ -360,11 +360,10 @@ const envSchema = z
     ENRICHMENT_AI_TIMEOUT_MS: z.coerce.number().default(15000),
     // --- ENR-06: release gate. ---
     /**
-     * "internal" (default): in production, LinkedIn enrichment is available only to workspaces
-     * with the `enrichment.internal_access` entitlement. "general" opens it to every workspace,
-     * and only takes effect when ENRICHMENT_LEGAL_APPROVAL_REF is also set.
+     * "general" makes LinkedIn enrichment available to every workspace; "internal" limits
+     * production access to workspaces with the `enrichment.internal_access` entitlement.
      */
-    ENRICHMENT_RELEASE_STAGE: z.enum(["internal", "general"]).default("internal"),
+    ENRICHMENT_RELEASE_STAGE: z.enum(["internal", "general"]).default("general"),
     /** Reference of the recorded Legal/Product approval (ticket or document id). */
     ENRICHMENT_LEGAL_APPROVAL_REF: z.string().optional(),
     // --- ENR-05: evidence campaigns. ---

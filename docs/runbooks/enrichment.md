@@ -154,8 +154,8 @@ enrichment changes:
 
 | Setting | Development / test | UAT | Production |
 | --- | --- | --- | --- |
-| `ENRICHMENT_RELEASE_STAGE` | not enforced | `internal` | `internal` until the gates are met |
-| `ENRICHMENT_LEGAL_APPROVAL_REF` | unset | unset | set only with the recorded approval |
+| `ENRICHMENT_RELEASE_STAGE` | not enforced | `general` | `general` (default); set `internal` to restrict access |
+| `ENRICHMENT_LEGAL_APPROVAL_REF` | unset | unset | set to the recorded approval reference for audit visibility |
 | `ENRICHMENT_PERMITTED_PROVIDERS` | unset | unset | unset until a provider is approved |
 | `ENRICHMENT_CAMPAIGN_SANDBOX_RECIPIENTS` | a sandbox domain | a sandbox domain | ignored |
 | `LINKEDIN_ENRICHMENT_TEST_MODE` | `true` when exercising the job lifecycle | optional | ignored |
@@ -169,9 +169,9 @@ refuses committed dumps, `.env` files and captured-data files for the same reaso
 
 ### Rollback
 
-- **Fastest: turn the feature off.** Set `ENRICHMENT_RELEASE_STAGE=internal` (and clear
-  `ENRICHMENT_LEGAL_APPROVAL_REF`) and restart; only workspaces with `enrichment.internal_access`
-  keep access. For one workspace, turn on the capture kill switch. Neither needs a deploy of code.
+- **Fastest: turn the feature off.** Set `ENRICHMENT_RELEASE_STAGE=internal` and restart; only
+  workspaces with `enrichment.internal_access` keep access. For one workspace, turn on the capture
+  kill switch. Neither needs a deploy of code.
 - **Roll back the API** to the previous image. Enrichment migrations are additive, so the
   previous image runs against the new schema; do not roll the schema back.
 - **Stop sending**: pause the campaign's sequence in the Sequences screen. Withdrawn approvals

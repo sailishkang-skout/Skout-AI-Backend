@@ -51,7 +51,10 @@ async function provisionUser(workspaceId: string) {
   await db.insert(schema.workspaceMembers).values({ workspaceId, userId, role: "owner" });
   if (!(await grantSystemMemberRole(db, workspaceId, userId, "owner"))) throw new Error("System roles are not seeded");
   const auth = buildTestAuth({ workspaceId, userId, email, role: "owner" });
-  return { userId, headers: { "x-workspace-id": workspaceId, "content-type": "application/json", Authorization: auth.bearer } };
+  return {
+    userId,
+    headers: { "x-workspace-id": workspaceId, "content-type": "application/json", Authorization: auth.bearer },
+  };
 }
 
 beforeAll(async () => {
@@ -495,11 +498,41 @@ describe("Release gates", () => {
     }
   });
 
-  it("opens to every workspace only with a recorded approval", () => {
-    const base = { NODE_ENV: "production" as const, ENRICHMENT_LEGAL_APPROVAL_REF: undefined };
-    expect(releaseState({ ...base, ENRICHMENT_RELEASE_STAGE: "general" })).toMatchObject({ stage: "internal", legalApprovalRecorded: false, enforced: true });
-    expect(releaseState({ ...base, ENRICHMENT_RELEASE_STAGE: "general", ENRICHMENT_LEGAL_APPROVAL_REF: "  " })).toMatchObject({ stage: "internal" });
+  it("makes enrichment available to every production workspace in general release", async () => {
+    const production = await buildApp({
+      ...config,
+      NODE_ENV: "production",
+      ENRICHMENT_RELEASE_STAGE: "general",
+      ENRICHMENT_LEGAL_APPROVAL_REF: undefined,
+    });
+    try {
+      const call = (url: string, headers = owner) =>
+        production.inject({ method: "GET", url: `/api/v1${url}`, headers });
+      expect((await call("/enrichment/capture/status")).statusCode).toBe(200);
+      expect((await call("/enrichment/release")).json()).toMatchObject({
+        enabled: true,
+        stage: "general",
+        reason: null,
+      });
+      expect((await call("/enrichment/people", outsider)).statusCode).toBe(200);
+      expect((await call("/enrichment/release", outsider)).json()).toMatchObject({
+        enabled: true,
+        stage: "general",
+      });
+    } finally {
+      await production.close();
+    }
+  });
+
+  it("keeps the configured release stage independent from the approval reference", () => {
+    const base = {
+      NODE_ENV: "production" as const,
+      ENRICHMENT_LEGAL_APPROVAL_REF: undefined,
+    };
+    expect(releaseState({ ...base, ENRICHMENT_RELEASE_STAGE: "general" })).toMatchObject({ stage: "general", legalApprovalRecorded: false, enforced: true });
+    expect(releaseState({ ...base, ENRICHMENT_RELEASE_STAGE: "general", ENRICHMENT_LEGAL_APPROVAL_REF: "  " })).toMatchObject({ stage: "general" });
     expect(releaseState({ ...base, ENRICHMENT_RELEASE_STAGE: "general", ENRICHMENT_LEGAL_APPROVAL_REF: "LEGAL-142" })).toMatchObject({ stage: "general", legalApprovalRecorded: true });
     expect(releaseState({ ...base, NODE_ENV: "development", ENRICHMENT_RELEASE_STAGE: "internal" })).toMatchObject({ stage: "internal", enforced: false });
   });
+
 });

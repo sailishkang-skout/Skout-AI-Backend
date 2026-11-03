@@ -8,6 +8,13 @@ afterEach(() => {
 });
 
 describe("loadEnv auth mode (AUTH-BE-06)", () => {
+  it("defaults LinkedIn enrichment to general release", () => {
+    vi.stubEnv("NODE_ENV", "test");
+    delete process.env.ENRICHMENT_RELEASE_STAGE;
+
+    expect(loadEnv().ENRICHMENT_RELEASE_STAGE).toBe("general");
+  });
+
   it("derives stub when AUTH_STUB=true and Clerk key is empty (e2e-style)", () => {
     vi.stubEnv("NODE_ENV", "test");
     vi.stubEnv("AUTH_STUB", "true");

@@ -1,9 +1,10 @@
 # LinkedIn enrichment — release gates and sign-off (ENR-06)
 
-The feature is **internal** until every gate below is closed. In production the API enforces
-that: with `ENRICHMENT_RELEASE_STAGE=internal`, only workspaces holding the
-`enrichment.internal_access` entitlement can use capture, research, provider jobs or campaigns.
-`general` takes effect only when `ENRICHMENT_LEGAL_APPROVAL_REF` names the recorded approval.
+The deployment controls availability. `ENRICHMENT_RELEASE_STAGE=general` makes LinkedIn
+enrichment available to every workspace; this is the default. `internal` limits production access
+to workspaces holding the `enrichment.internal_access` entitlement. Both stages still require
+normal authentication, workspace membership, and permissions. `ENRICHMENT_LEGAL_APPROVAL_REF`
+is logged for operational visibility and does not change runtime access.
 
 **Current state (2026-10-12): internal. Gates 2 and 3 are open.**
 
@@ -39,7 +40,8 @@ workspace and expects `404` or an empty list. Security: `enrichment-capture.rout
 
 ## Gate 2 — Legal and Product approval of LinkedIn data use and vendor terms
 
-Not an engineering decision. Until it is recorded here, the release stays internal.
+Legal and Product own this sign-off. Record the approval here for audit purposes before or when
+enabling general availability.
 
 | # | Question | Decision | By | Date |
 | --- | --- | --- | --- | --- |
@@ -71,10 +73,12 @@ It does not cover capture or profile retrieval and is not this approval.
 
 ## Opening the release
 
-1. Close gates 1–3 above and commit this file with the boxes ticked and the table filled in.
-2. Set `ENRICHMENT_LEGAL_APPROVAL_REF` and `ENRICHMENT_RELEASE_STAGE=general` in production.
-3. Deploy. Confirm the start-up log says `release stage: general`.
-4. To go back: set the stage to `internal`. No code deploy is needed.
+1. Record the Legal/Product decisions and complete operational readiness gates above.
+2. Set `ENRICHMENT_RELEASE_STAGE=general` in the production API environment (the default).
+3. Deploy. Confirm the start-up log says `release stage: general` and the release endpoint reports
+   `enabled: true` for a workspace that has normal access.
+4. To turn the feature off for non-entitled workspaces, set the stage to `internal`. No code deploy
+   is needed.
 
 To give one production workspace internal access, a **platform admin** (an email listed in
 `PLATFORM_ADMIN_EMAILS`) calls:
