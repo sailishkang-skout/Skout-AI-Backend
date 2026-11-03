@@ -19,6 +19,7 @@ import { getAccountHealth, getAccountHealthHistory, getHealthModel, HEALTH_DIMEN
 import { installSuccessPlaybooks, listPlaybookEnrollments, PLAYBOOK_TEMPLATES } from "../services/cops-playbooks.service.js";
 import { getCustomerSuccessOverview } from "../services/cops-success-overview.service.js";
 import { listChurnRisk, predictAccountChurn } from "../services/cops-churn.service.js";
+import { accountBenchmarks } from "../services/cops-benchmarks.service.js";
 
 const { companies, workspaceMembers, auditLogs } = schema;
 
@@ -47,6 +48,12 @@ export async function copsSuccessRoutes(app: FastifyInstance) {
     const [acc] = await db().select({ id: companies.id }).from(companies).where(and(eq(companies.id, id), eq(companies.workspaceId, request.workspaceId!))).limit(1);
     if (!acc) throw new HttpError("account_not_found", 404);
     return { data: await predictAccountChurn(db(), request.workspaceId!, id) };
+  });
+
+  /** COPS-14 how this account compares with others in the workspace (hidden below 5 peers). */
+  app.get("/accounts/:id/benchmarks", read, async (request) => {
+    const { id } = accountParams.parse(request.params);
+    return { data: await accountBenchmarks(db(), request.workspaceId!, id) };
   });
 
   /** COPS-14 accounts most likely to churn, highest first. */
