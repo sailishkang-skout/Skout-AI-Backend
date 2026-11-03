@@ -1,0 +1,137 @@
+openapi: 3.1.0
+info:
+  title: COPS-14 enterprise controls, intelligence and extensibility
+  version: 0.1.0
+  description: |
+    The rest of COPS-14 after custom roles and data scope (see copos-14-custom-roles.openapi.yaml):
+
+    - Integration framework: connected apps and scoped API keys (`sk_cops_...`). A key acts for the
+      member who made it, only on the routes its scopes list; admin, auth and billing routes stay
+      closed. Only a SHA-256 is stored; the key is returned once.
+    - Governed AI agents: which roles may run each agent action (`/automation-policy/roles`), on top
+      of the four modes. Owners always may. Every decision is recorded (`/policy/decisions`).
+    - Predictive churn risk with the signals behind it, and benchmarks against the workspace's other
+      accounts (hidden below 5 peers; peers never come from another workspace).
+    - Advanced billing: AI actions metered per month against the plan (warn at 80%, refuse at the
+      limit with 429 USAGE_LIMIT_REACHED) and connected identities capped by plan plus add-ons (402).
+    - Configurable warehouse export per workspace (on/off, event types).
+    - SSO and SCIM setup (existing `/sso/workspaces/current`), now audited.
+
+    Changes that alter access, spend or data leaving Skout need a reason (8+ characters) and write an
+    audit row. Errors use the COPS envelope {code, message, details, request_id, retryable}.
+servers:
+  - url: /api/v1
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer, description: "A session token, or a scoped API key sk_cops_<prefix>_<secret>" }
+  schemas:
+    Reason: { type: string, minLength: 8, maxLength: 500 }
+    ApiKey:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        name: { type: string }
+        key_preview: { type: string, example: "sk_cops_1a2b3c4d5e6f_…" }
+        scopes: { type: array, items: { type: string, enum: [accounts:read, tickets:read, tickets:write, incidents:read, analytics:read] } }
+        expires_at: { type: [string, "null"], format: date-time }
+        last_used_at: { type: [string, "null"], format: date-time }
+        revoked_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+    App:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: [string, "null"] }
+        status: { type: string, enum: [active, disabled] }
+        keys: { type: array, items: { $ref: "#/components/schemas/ApiKey" } }
+    ChurnPrediction:
+      type: object
+      properties:
+        probability: { type: number, minimum: 0, maximum: 1 }
+        band: { type: string, enum: [low, medium, high] }
+        model_version: { type: string, example: churn-explainable-v1 }
+        factors:
+          type: array
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              label: { type: string }
+              contribution: { type: number, description: "Log-odds added; positive raises the risk" }
+              value: { type: [number, string, "null"] }
+    Benchmark:
+      type: object
+      properties:
+        key: { type: string, enum: [health, days_to_activate, open_tickets] }
+        label: { type: string }
+        value: { type: [number, "null"] }
+        peer_median: { type: [number, "null"], description: "Null when fewer than 5 peers" }
+        peers: { type: integer }
+        better_than_pct: { type: [integer, "null"] }
+        higher_is_better: { type: boolean }
+security:
+  - bearer: []
+paths:
+  /cops/api-scopes:
+    get:
+      summary: Scopes a key can be given (admin)
+      responses: { "200": { description: "[{key, label}]" } }
+  /cops/apps:
+    get:
+      summary: Connected apps and their keys (admin); never returns a secret
+      responses: { "200": { description: OK, content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: "#/components/schemas/App" } } } } } } } }
+    post:
+      summary: Add an app (admin)
+      requestBody: { content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string, minLength: 2, maxLength: 60 }, description: { type: string }, homepage_url: { type: string, format: uri } } } } } }
+      responses: { "201": { description: Created }, "409": { description: Name already used }, "422": { description: Validation } }
+  /cops/apps/{id}/status:
+    post:
+      summary: Disable or enable an app; disabling stops all its keys (admin)
+      requestBody: { content: { application/json: { schema: { type: object, required: [status, reason], properties: { status: { type: string, enum: [active, disabled] }, reason: { $ref: "#/components/schemas/Reason" } } } } } }
+      responses: { "200": { description: OK }, "404": { description: Not found } }
+  /cops/apps/{id}/keys:
+    post:
+      summary: Make a scoped key; the response is the only time the key is shown (admin)
+      requestBody: { content: { application/json: { schema: { type: object, required: [name, scopes], properties: { name: { type: string }, scopes: { type: array, items: { type: string } }, expires_in_days: { type: integer, minimum: 1, maximum: 730 } } } } } }
+      responses: { "201": { description: "ApiKey plus `key`" }, "409": { description: App disabled }, "422": { description: Unknown scope } }
+  /cops/api-keys/{id}/revoke:
+    post:
+      summary: Revoke a key at once (admin)
+      requestBody: { content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { $ref: "#/components/schemas/Reason" } } } } } }
+      responses: { "200": { description: OK } }
+  /automation-policy/roles:
+    put:
+      summary: Limit an agent action to roles; null clears the limit (owner or admin)
+      requestBody: { content: { application/json: { schema: { type: object, required: [actionKey, allowedRoleIds, reason], properties: { actionKey: { type: string }, allowedRoleIds: { type: [array, "null"], items: { type: string, format: uuid } }, reason: { $ref: "#/components/schemas/Reason" } } } } } }
+      responses: { "200": { description: OK }, "403": { description: Not owner or admin }, "400": { description: Invalid } }
+  /accounts/{id}/churn-risk:
+    get:
+      summary: Predicted churn risk for one account (crm:read)
+      responses: { "200": { description: OK, content: { application/json: { schema: { type: object, properties: { data: { $ref: "#/components/schemas/ChurnPrediction" } } } } } }, "404": { description: Not found } }
+  /customer-success/churn-risk:
+    get:
+      summary: Scored accounts most likely to churn, highest first (crm:read)
+      parameters: [{ name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }]
+      responses: { "200": { description: "ChurnPrediction plus account_id and name" } }
+  /accounts/{id}/benchmarks:
+    get:
+      summary: This account against the workspace's other accounts (crm:read)
+      responses: { "200": { description: OK, content: { application/json: { schema: { type: object, properties: { data: { type: object, properties: { min_peers: { type: integer }, benchmarks: { type: array, items: { $ref: "#/components/schemas/Benchmark" } } } } } } } } } }
+  /cops/usage:
+    get:
+      summary: This month's metered usage against the plan
+      responses: { "200": { description: "{plan, period, metrics: [{key, label, used, limit, warn}]}" } }
+  /cops/analytics/export-settings:
+    get:
+      summary: Which of this workspace's events go to the warehouse (analytics:admin)
+      responses: { "200": { description: "{enabled, event_types | null, updated_at, available_event_types}" } }
+    put:
+      summary: Turn the export off or limit it to event types (analytics:admin)
+      requestBody: { content: { application/json: { schema: { type: object, required: [enabled, event_types, reason], properties: { enabled: { type: boolean }, event_types: { type: [array, "null"], items: { type: string } }, reason: { $ref: "#/components/schemas/Reason" } } } } } }
+      responses: { "200": { description: OK }, "422": { description: Unknown event type } }
+x-metered-ai-routes:
+  description: Counted against the plan's monthly AI actions before the handler runs; 400/422 replies give the action back.
+  routes: [POST /ai/chat, POST /ai/drafts, POST /ai/generate-email, POST /ai/next-best-action, POST /ai/audit, POST /accounts/{id}/recommendations/generate]
+  headers: { X-Usage-AI-Actions: "used/limit", X-Usage-Warning: "ai_actions at 80% or more" }
