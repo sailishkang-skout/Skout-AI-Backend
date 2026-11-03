@@ -173,6 +173,7 @@ export async function listPolicies(db: Db, workspaceId: string) {
       id: r.id,
       actionKey: r.actionKey,
       mode: r.mode,
+      allowedRoleIds: (r.allowedRoleIds as string[] | null) ?? null,
       source: "workspace" as const,
       updatedAt: r.updatedAt.toISOString(),
     })),
