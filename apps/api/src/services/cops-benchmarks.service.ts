@@ -1,3 +1,11 @@
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md (COPS-14 addition).
+ *   - Tables touched directly: companies (read only: id, workspace_id, health_score, deleted_at)
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: benchmarks compare an account's health with its workspace peers in one query.
+ *   - Review date: 2026-11-03
+ */
 import { sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 

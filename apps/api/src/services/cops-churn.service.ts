@@ -1,3 +1,12 @@
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md (COPS-14 addition).
+ *   - Tables touched directly: companies (read only: id, name, health_score to list scored accounts)
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: churn risk ranks the accounts the health sweep already scored; the same read COPS-11
+ *     health and success routes make.
+ *   - Review date: 2026-11-03
+ */
 import { and, desc, eq, isNotNull } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
 import { gatherHealthInputs, getAccountHealthHistory, type HealthInputs } from "./cops-health.service.js";
