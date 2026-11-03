@@ -331,7 +331,7 @@ export async function enrichmentRoutes(app: FastifyInstance) {
     if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
     const workspaceId = requireWorkspaceId(request);
     if (!request.userId) throw new HttpError("unauthorized", 401);
-    const access = await workspaceReleaseAccess(app.db, app.config, workspaceId);
+    const access = await workspaceReleaseAccess(app.db, app.config, workspaceId, request.userEmail);
     return reply.send({ workspaceId, enabled: access.enabled, stage: access.stage, reason: access.reason });
   });
 

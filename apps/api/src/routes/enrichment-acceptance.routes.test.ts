@@ -37,6 +37,7 @@ let app: FastifyInstance;
 let config: Env;
 let owner: Record<string, string>;
 let ownerId: string;
+let ownerEmail: string;
 /** Approves campaigns: a second person, since the creator and submitter may not approve their own. */
 let reviewerId: string;
 let outsider: Record<string, string>;
@@ -51,7 +52,11 @@ async function provisionUser(workspaceId: string) {
   await db.insert(schema.workspaceMembers).values({ workspaceId, userId, role: "owner" });
   if (!(await grantSystemMemberRole(db, workspaceId, userId, "owner"))) throw new Error("System roles are not seeded");
   const auth = buildTestAuth({ workspaceId, userId, email, role: "owner" });
-  return { userId, headers: { "x-workspace-id": workspaceId, "content-type": "application/json", Authorization: auth.bearer } };
+  return {
+    userId,
+    email,
+    headers: { "x-workspace-id": workspaceId, "content-type": "application/json", Authorization: auth.bearer },
+  };
 }
 
 beforeAll(async () => {
@@ -84,6 +89,7 @@ beforeAll(async () => {
   const o = await provisionUser(WORKSPACE);
   owner = o.headers;
   ownerId = o.userId;
+  ownerEmail = o.email;
   reviewerId = (await provisionUser(WORKSPACE)).userId;
   outsider = (await provisionUser(OTHER_WORKSPACE)).headers;
 }, 60000);
@@ -495,8 +501,34 @@ describe("Release gates", () => {
     }
   });
 
+  it("allows only explicitly configured production test users through the release gate", async () => {
+    const production = await buildApp({
+      ...config,
+      NODE_ENV: "production",
+      ENRICHMENT_RELEASE_STAGE: "internal",
+      ENRICHMENT_INTERNAL_TESTER_EMAILS: [ownerEmail.toUpperCase()],
+    });
+    try {
+      const call = (url: string, headers = owner) =>
+        production.inject({ method: "GET", url: `/api/v1${url}`, headers });
+      expect((await call("/enrichment/capture/status")).statusCode).toBe(200);
+      expect((await call("/enrichment/release")).json()).toMatchObject({
+        enabled: true,
+        stage: "internal",
+        reason: null,
+      });
+      expect((await call("/enrichment/people", outsider)).statusCode).toBe(403);
+    } finally {
+      await production.close();
+    }
+  });
+
   it("opens to every workspace only with a recorded approval", () => {
-    const base = { NODE_ENV: "production" as const, ENRICHMENT_LEGAL_APPROVAL_REF: undefined };
+    const base = {
+      NODE_ENV: "production" as const,
+      ENRICHMENT_LEGAL_APPROVAL_REF: undefined,
+      ENRICHMENT_INTERNAL_TESTER_EMAILS: [],
+    };
     expect(releaseState({ ...base, ENRICHMENT_RELEASE_STAGE: "general" })).toMatchObject({ stage: "internal", legalApprovalRecorded: false, enforced: true });
     expect(releaseState({ ...base, ENRICHMENT_RELEASE_STAGE: "general", ENRICHMENT_LEGAL_APPROVAL_REF: "  " })).toMatchObject({ stage: "internal" });
     expect(releaseState({ ...base, ENRICHMENT_RELEASE_STAGE: "general", ENRICHMENT_LEGAL_APPROVAL_REF: "LEGAL-142" })).toMatchObject({ stage: "general", legalApprovalRecorded: true });
