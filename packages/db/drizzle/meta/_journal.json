@@ -1000,7 +1000,7 @@
       "idx": 142,
       "version": "7",
       "when": 1797200000000,
-"tag": "0141_enrichment_attempts_workspace",
+      "tag": "0141_enrichment_attempts_workspace",
       "breakpoints": true
     },
     {
@@ -1015,6 +1015,13 @@
       "version": "7",
       "when": 1797400000000,
       "tag": "0142_cops14_member_data_scopes",
+      "breakpoints": true
+    },
+    {
+      "idx": 145,
+      "version": "7",
+      "when": 1797500000000,
+      "tag": "0143_cops14_apps_api_keys",
       "breakpoints": true
     }
   ]

@@ -27,6 +27,7 @@ import {
   serviceUnavailableResponse,
 } from "../utils/http.js";
 import type { Env } from "../config/env.js";
+import { KEY_PREFIX as API_KEY_PREFIX, resolveApiKey, scopeAllows } from "../services/cops-api-credentials.service.js";
 
 /** Constant-time string compare so secret checks don't leak timing info. */
 function timingSafeEqualStrings(a: string, b: string): boolean {
@@ -136,6 +137,34 @@ function applyEmailIntelIdentity(
   return true;
 }
 
+/**
+ * COPS-14 scoped API keys (sk_cops_...). "none" when the request carries no such key. A key that
+ * does not resolve is a 401; a route its scopes do not list is a 403, so a key never reaches
+ * routes outside its scopes even when its member could.
+ */
+async function applyApiKeyIdentity(
+  db: NonNullable<FastifyInstance["db"]>,
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<"none" | "ok" | "rejected"> {
+  const authorization = request.headers.authorization;
+  const token = typeof authorization === "string" && authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+  if (!token.startsWith(API_KEY_PREFIX)) return "none";
+  const resolved = await resolveApiKey(db, token);
+  if (!resolved) {
+    reply.code(401).send(authErrorResponse(AuthErrorCode.AUTH_TOKEN_INVALID, AuthErrorMessage.INVALID_AUTHORIZATION, 401));
+    return "rejected";
+  }
+  if (!scopeAllows(resolved.scopes, request.method, request.url)) {
+    reply.code(403).send(errorResponse("This API key's scopes do not allow this request", 403));
+    return "rejected";
+  }
+  request.userId = resolved.userId;
+  request.workspaceId = resolved.workspaceId;
+  request.role = resolved.role;
+  return "ok";
+}
+
 function isPublicRoute(url: string, method?: string): boolean {
   const pathname = url.split("?")[0]!;
   // Only GET /api/v1/team/invites/<token> is public; DELETE and /accept suffix require auth
@@ -233,6 +262,10 @@ export const authPlugin = fp(async (app) => {
       if (applyEmailIntelIdentity(request, config)) {
         return;
       }
+      if (app.db) {
+        const keyed = await applyApiKeyIdentity(app.db, request, reply);
+        if (keyed !== "none") return;
+      }
       const stubEmail = (request.headers["x-stub-user-email"] as string | undefined) ?? config.AUTH_STUB_EMAIL ?? "stub@example.com";
       const db = app.db;
       if (!db) {
@@ -302,6 +335,9 @@ export const authPlugin = fp(async (app) => {
         .code(401)
         .send(authErrorResponse(AuthErrorCode.AUTH_MISSING_TOKEN, AuthErrorMessage.MISSING_BEARER, 401));
     }
+
+    const keyed = await applyApiKeyIdentity(db, request, reply);
+    if (keyed !== "none") return;
 
     // Static-secret admin import auth (/admin/import page in the frontend). Deliberately
     // scoped to import routes only — a leaked ADMIN_IMPORT_SECRET can seed data, nothing else.

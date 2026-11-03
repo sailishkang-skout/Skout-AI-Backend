@@ -89,6 +89,7 @@ import { copsSuccessRoutes } from "./cops-success.routes.js";
 import { copsAnalyticsRoutes } from "./cops-analytics.routes.js";
 import { copsRecommendationsRoutes } from "./cops-recommendations.routes.js";
 import { copsRolesRoutes } from "./cops-roles.routes.js";
+import { copsAppsRoutes } from "./cops-apps.routes.js";
 import { accountScopeGuard } from "../services/cops-data-scope.service.js";
 import { complianceRoutes } from "./compliance.routes.js";
 import { enterpriseControlPlaneRoutes } from "./enterprise-control-plane.routes.js";
@@ -210,6 +211,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(copsAnalyticsRoutes);
     await v1.register(copsRecommendationsRoutes);
     await v1.register(copsRolesRoutes);
+    await v1.register(copsAppsRoutes);
     await v1.register(complianceRoutes);
     await v1.register(enterpriseControlPlaneRoutes);
   }, { prefix: "/api/v1" });

@@ -222,3 +222,53 @@ export const copsMemberDataScopes = pgTable(
   },
   (table) => [primaryKey({ name: "cops_member_data_scopes_pk", columns: [table.workspaceId, table.userId] })]
 );
+
+/**
+ * COPS-14 (integration framework): an app a workspace connects to Skout, and the scoped API keys
+ * it calls with. Disabling the app stops all of its keys. Only a SHA-256 of each key is stored;
+ * the key itself is shown once, when it is made.
+ */
+export const copsApps = pgTable(
+  "cops_apps",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    homepageUrl: text("homepage_url"),
+    /** active | disabled */
+    status: text("status").notNull().default("active"),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("cops_apps_workspace_name_uq").on(t.workspaceId, sql`lower(${t.name})`)]
+);
+
+export const copsApiCredentials = pgTable(
+  "cops_api_credentials",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    appId: uuid("app_id")
+      .notNull()
+      .references(() => copsApps.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /** The public part of the key (sk_cops_<prefix>_...), used to find the row. */
+    prefix: text("prefix").notNull(),
+    keyHash: text("key_hash").notNull(),
+    scopes: jsonb("scopes").notNull().default([]),
+    /** The member the key acts for; their membership must still exist. */
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokeReason: text("revoke_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("cops_api_credentials_prefix_uq").on(t.prefix), index("cops_api_credentials_app_idx").on(t.appId)]
+);
