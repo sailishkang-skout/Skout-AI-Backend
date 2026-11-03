@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, index, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { users } from "./users.js";
 import { workspaces } from "./workspaces.js";
 
@@ -271,4 +271,19 @@ export const copsApiCredentials = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("cops_api_credentials_prefix_uq").on(t.prefix), index("cops_api_credentials_app_idx").on(t.appId)]
+);
+
+/** COPS-14 metered usage: one row per workspace, metric and month (YYYY-MM). */
+export const copsUsageCounters = pgTable(
+  "cops_usage_counters",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    metric: text("metric").notNull(),
+    period: text("period").notNull(),
+    count: integer("count").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.workspaceId, t.metric, t.period] })]
 );
