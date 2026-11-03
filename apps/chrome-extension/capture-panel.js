@@ -280,6 +280,10 @@ export function initCapturePanel() {
     const response = await send("capture-status");
     state.status = response.ok ? response.status : null;
     state.statusError = response.ok ? "" : `Capture status is unavailable: ${response.error}`;
+    // A sign-in failure here means the panel's "Connected to Skout." is stale; tell it.
+    if (!response.ok && /not signed in|session expired|sign in/i.test(response.error || "")) {
+      document.dispatchEvent(new CustomEvent("skout-auth-lost", { detail: response.error }));
+    }
     renderStart();
   }
 

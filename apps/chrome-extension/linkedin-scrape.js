@@ -83,6 +83,58 @@
     return "";
   }
 
+  /**
+   * LinkedIn's 2026 profile layout: generated class names, the name in an h2 (no h1), no
+   * #experience anchor until it lazy-loads. The stable landmark is the profile's own
+   * "Contact info" link (/overlay/contact-info/), which sits only on its top card. Fields are
+   * read from that card's paragraphs in order:
+   *   h2 name · "· 3rd" · headline · "Company · School" · location · Contact info · connections
+   */
+  const DEGREE_RE = /^·?\s*(?:1st|2nd|3rd\+?)$/i;
+  const EDUCATION_RE = /\b(?:university|college|school|institute|academy|polytechnic)\b/i;
+  let topCardV2Cache = null;
+
+  function topCardV2() {
+    if (topCardV2Cache && topCardV2Cache.href === location.href) return topCardV2Cache.value;
+    const value = readTopCardV2();
+    topCardV2Cache = { href: location.href, value };
+    return value;
+  }
+
+  function readTopCardV2() {
+    const main = document.querySelector("main") || document.body;
+    const contactLink = main?.querySelector('a[href*="/overlay/contact-info/"]');
+    const card = contactLink?.closest("section");
+    if (!card) return null;
+
+    const name = clean(card.querySelector("h2")?.textContent);
+    const contactP = contactLink.closest("p") || contactLink;
+    const before = [];
+    const after = [];
+    for (const p of card.querySelectorAll("p")) {
+      if (p.closest("a, button") || p === contactP) continue;
+      const text = clean(p.textContent);
+      if (!text || text === "·" || DEGREE_RE.test(text)) continue;
+      const position = contactP.compareDocumentPosition(p);
+      if (position & Node.DOCUMENT_POSITION_PRECEDING) before.push({ p, text });
+      else if (position & Node.DOCUMENT_POSITION_FOLLOWING) after.push({ p, text });
+    }
+
+    const headline = before[0]?.text || "";
+    const locationText = [...before].reverse().find((entry) => looksLikeLocation(entry.text))?.text || "";
+    const companyLine = before.find(
+      (entry, index) => index > 0 && entry.text !== locationText && entry.text !== headline
+    )?.text || "";
+    // "EY Technology Solutions · Guru Nanak Dev University": current company first, then school.
+    // The chips under Contact info hold the same names as separate spans.
+    const chips = after.flatMap((entry) => [...entry.p.querySelectorAll("span")].map((el) => clean(el.textContent)));
+    const candidates = [companyLine.split(/\s+·\s+/)[0], chips[0]].map((text) => clean(text || ""));
+    const company =
+      candidates.find((text) => text && text.length < 120 && !EDUCATION_RE.test(text) && !/connections?|followers?/i.test(text)) || "";
+
+    return { name, headline, location: locationText, company };
+  }
+
   function nameFromDom() {
     const card = topCardRoot();
     const scopes = card ? [card] : [document.querySelector("main")].filter(Boolean);
@@ -104,7 +156,7 @@
         }
       }
     }
-    return "";
+    return topCardV2()?.name || "";
   }
 
   function headlineFromDom() {
@@ -138,7 +190,7 @@
       const text = clean(el?.textContent);
       if (text && text.length < 300 && !el?.closest("ul, li")) return text;
     }
-    return "";
+    return topCardV2()?.headline || "";
   }
 
   function parseHeadline(headline) {
@@ -155,6 +207,21 @@
     }
 
     return { title: value, companyName: "" };
+  }
+
+  // A job's date range ("Jan 2024 - Present", "2019 – 2022 · 3 yrs"). LinkedIn sometimes renders it
+  // in the same text node as the role, glued on with no space ("Senior ConsultantJan 2024 - Present").
+  const MONTH = "(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\\.?";
+  const DATE_TAIL = new RegExp(
+    `(?:\\s+|(?<=[a-z)]))(?:${MONTH}\\s+)?\\d{4}\\s*[-–—]\\s*(?:present|(?:${MONTH}\\s+)?\\d{4}).*$`,
+    "i"
+  );
+
+  /** Split a trailing job date range off a role/company string. */
+  function splitDateTail(text) {
+    const value = clean(text);
+    const stripped = value.replace(DATE_TAIL, "").trim();
+    return { text: stripped, dated: stripped !== value };
   }
 
   function normalizeCompanyName(name) {
@@ -186,6 +253,8 @@
   }
 
   function companyFromTopCard() {
+    const v2Company = topCardV2()?.company;
+    if (v2Company) return v2Company;
     const card = topCardRoot();
     if (!card) return "";
     const scope = profileHeaderScope(card);
@@ -350,6 +419,15 @@
       companyName = clean(companyName.slice(title.length));
     }
 
+    // A "company" that carries the job's dates is really the role line; use it as the title.
+    const datedTitle = splitDateTail(title);
+    title = datedTitle.text;
+    const datedCompany = splitDateTail(companyName);
+    if (datedCompany.dated) {
+      if (!title) title = datedCompany.text;
+      companyName = "";
+    }
+
     return { title: clean(title), companyName: clean(companyName) };
   }
 
@@ -378,7 +456,7 @@
       const text = clean(el.textContent);
       if (looksLikeLocation(text)) return text;
     }
-    return "";
+    return topCardV2()?.location || "";
   }
 
   function splitLocation(location) {
@@ -461,12 +539,21 @@
       experience.title ||
       (/\s(?:at|@)\s/i.test(headline) ? "" : headline);
 
+    // The top-card company link can pick up the experience line (role + dates); never use that.
+    const topCardCompany = splitDateTail(companyFromTopCard());
+    if (topCardCompany.dated && !title) title = topCardCompany.text;
+
     let companyName = resolveCompanyName({
       headline,
       parsed,
-      topCard: companyFromTopCard(),
+      topCard: topCardCompany.dated ? "" : topCardCompany.text,
       experience: experience.companyName,
     });
+    const datedCompany = splitDateTail(companyName);
+    if (datedCompany.dated) {
+      if (!title) title = datedCompany.text;
+      companyName = "";
+    }
 
     if (!title && experience.title) title = experience.title;
     if (companyName && title && companyName.toLowerCase() === title.toLowerCase()) {

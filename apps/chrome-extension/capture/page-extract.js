@@ -96,15 +96,19 @@ function extractPerson() {
   const contentLines = allParagraphTexts.filter((t) => !isNoiseLine(t) && !isProfileChrome(t) && t.toLocaleLowerCase() !== fullName?.toLocaleLowerCase());
   const headline = contentLines[0];
   const positionLine = contentLines[1]; // e.g. "Align Technology · Tel Aviv University"
-  const headerLocation = text(
-    topcard?.querySelector('[aria-label*="location" i], [data-view-name*="location" i]'),
-  ) || contentLines.find((line) => line.length < 140 && /,/.test(line) && !isProfileChrome(line));
   // LinkedIn sometimes gives a surrounding "company · school" container a
   // location-like attribute. That is not a geographic value.
   const isGeographicLocation = (value) => value && value.length < 140 &&
     !/[·|]/.test(value) &&
     !/\b(university|college|school|student| at |mutual connections?|people you may know)\b/i.test(value);
-  let locationName = isGeographicLocation(headerLocation) ? headerLocation : undefined;
+  const labelledLocation = text(
+    topcard?.querySelector('[aria-label*="location" i], [data-view-name*="location" i]'),
+  );
+  // Take the first line that is actually a place: the "Company · School, City" line also has a
+  // comma and comes before "City, State, Country".
+  let locationName = isGeographicLocation(labelledLocation)
+    ? labelledLocation
+    : contentLines.find((line, index) => index > 0 && /,/.test(line) && isGeographicLocation(line) && !isProfileChrome(line));
 
   const followersText = findCount('followers?');
   const connectionsText = findCount('connections?');
@@ -128,6 +132,12 @@ function extractPerson() {
   // ingest.routes.ts) — sourced from the current job's own company link
   // rather than guessed from the company name text, since names aren't
   // unique but this numeric/slug ID is.
+  // Experience lazy-loads as the page scrolls. Until it has, the top card's position line
+  // ("EY Technology Solutions · Guru Nanak Dev University") still names the current employer.
+  if (!currentCompanyJobs.length) {
+    const fromTopcard = topcardCurrentCompany(positionLine, headline);
+    if (fromTopcard) currentCompanyJobs.push(fromTopcard);
+  }
   const currentCompanyPublicId = currentCompanyJobs.find((j) => j.companyPublicId)?.companyPublicId;
   const roleMetadata = inferRoleMetadata(currentCompanyJobs[0]?.title || currentJobs[0]?.title || headline);
   const educations = extractEducation();
@@ -187,6 +197,21 @@ function extractPerson() {
       experience: experience.length, educations: educations.length, skills: skills.length,
     }),
   };
+}
+
+/**
+ * Current employer from the top card when Experience hasn't rendered. The position line lists
+ * the current company first and the school second; a school is never taken as an employer. The
+ * title comes from a "Title @ Company" / "Title at Company" headline naming the same company.
+ */
+function topcardCurrentCompany(positionLine, headline) {
+  const name = (positionLine || '').split(/\s+·\s+/)[0]?.trim();
+  if (!name || name.length > 120) return undefined;
+  if (/\b(university|college|school|institute|academy|polytechnic)\b/i.test(name)) return undefined;
+  if (/^(https?:\/\/|www\.)/i.test(name) || /\d+\s*(followers?|connections?)/i.test(name)) return undefined;
+  const match = (headline || '').match(/^(.+?)\s+(?:@|at)\s+(.+?)(?:\s+[·|•]\s+.*)?$/i);
+  const title = match && match[2].trim().toLowerCase() === name.toLowerCase() ? match[1].trim() : undefined;
+  return { company: name, title, source: 'topcard' };
 }
 
 function inferRoleMetadata(value) {

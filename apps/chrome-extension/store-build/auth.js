@@ -124,7 +124,8 @@ async function requestAuthViaPostMessage(tabId) {
   for (let i = 0; i < 15; i += 1) {
     await sleep(400);
     const auth = await getStoredAuth();
-    if (auth.authToken) {
+    // Only a live token counts; the expired one we started with must not be handed back.
+    if (auth.authToken && !isTokenExpired(auth.authToken)) {
       log(`requestAuthViaPostMessage: token received on poll ${i + 1}`);
       return { token: auth.authToken, email: auth.authEmail || "" };
     }
@@ -241,10 +242,34 @@ export async function ensureFreshAuth() {
   }
 
   if (stored.authToken || after.authToken) {
+    // Access tokens last 10 minutes and are renewed only from a signed-in Skout tab. Someone who
+    // connected before shouldn't lose the extension just because they closed that tab: open Skout
+    // in a background tab (as Connect does) and read the renewed token from it.
+    const renewed = await renewSessionInBackground(webUrl);
+    if (renewed) return renewed;
     throw new Error(`Session expired — ${skoutSignInHint(webUrl)}.`);
   }
 
   throw new Error(`Not signed in — ${skoutSignInHint(webUrl)}.`);
+}
+
+let backgroundRenewal = null;
+
+/** One background renewal at a time; parallel requests share it. Resolves null on failure. */
+function renewSessionInBackground(webUrl) {
+  if (!backgroundRenewal) {
+    log("ensureFreshAuth: no Skout tab gave a token; renewing in a background tab");
+    backgroundRenewal = ensureSession(webUrl, { focus: false })
+      .then((auth) => (auth?.token ? auth : null))
+      .catch((error) => {
+        log("ensureFreshAuth: background renewal failed", error?.message);
+        return null;
+      })
+      .finally(() => {
+        backgroundRenewal = null;
+      });
+  }
+  return backgroundRenewal;
 }
 
 async function waitForStoredAuth(webUrl, attempts = 30, deadline = Infinity) {

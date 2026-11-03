@@ -142,7 +142,8 @@ function formatApiError(status, body, webUrl) {
 
 /** Hard caps so a stalled network call or auth refresh can never hang the UI forever. */
 const REQUEST_TIMEOUT_MS = 20_000;
-const AUTH_REFRESH_TIMEOUT_MS = 20_000;
+// Covers a background session renewal (auth.js SESSION_BUDGET_MS, 28s) plus a margin.
+const AUTH_REFRESH_TIMEOUT_MS = 32_000;
 
 const READ_METHODS = new Set(["GET", "HEAD"]);
 const READ_RETRY_ATTEMPTS = 5;
