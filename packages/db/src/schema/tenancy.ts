@@ -287,3 +287,19 @@ export const copsUsageCounters = pgTable(
   },
   (t) => [primaryKey({ columns: [t.workspaceId, t.metric, t.period] })]
 );
+
+/**
+ * COPS-14 configurable warehouse export: whether this workspace's events leave for the analytics
+ * warehouse at all, and which event types. No row means the default: on, every type.
+ */
+export const copsExportSettings = pgTable("cops_export_settings", {
+  workspaceId: uuid("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  enabled: boolean("enabled").notNull().default(true),
+  /** Event types to export; null means all. */
+  eventTypes: jsonb("event_types"),
+  updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
+  reason: text("reason"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

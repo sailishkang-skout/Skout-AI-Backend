@@ -1,6 +1,7 @@
 import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
 import { analyticsSafeProperties, serverAnalyticsEventName } from "@skout/shared";
+import { exportAllowed, exportSettingsFor } from "./cops-export-settings.service.js";
 
 /**
  * COPS-13 warehouse feed (Bible p.87): the analytics store is fed from the outbox, not by querying
@@ -69,7 +70,17 @@ export async function runAnalyticsFeed(db: Db, cfg: FeedConfig, now = new Date()
     await upsert(db, sink, { lastRunAt: now });
     return { enabled: true, sent: 0 };
   }
-  const batch = rows.map((r) => toPosthogEvent(r.envelope as Envelope));
+  // COPS-14: each workspace decides whether its events, and which types, leave for the warehouse.
+  const settings = await exportSettingsFor(db, rows.map((r) => (r.envelope as Envelope).tenant_id));
+  const batch = rows
+    .map((r) => r.envelope as Envelope)
+    .filter((e) => exportAllowed(settings.get(e.tenant_id), e.event_type))
+    .map(toPosthogEvent);
+  if (batch.length === 0) {
+    const last = rows[rows.length - 1]!;
+    await upsert(db, sink, { lastRunAt: now, lastError: null, lastCreatedAt: last.publishedAt!, lastEventId: last.id, sentDelta: 0 });
+    return { enabled: true, sent: 0 };
+  }
   let error: string | undefined;
   try {
     const res = await (cfg.fetchImpl ?? fetch)(`${cfg.host.replace(/\/+$/, "")}/batch/`, {
@@ -86,8 +97,8 @@ export async function runAnalyticsFeed(db: Db, cfg: FeedConfig, now = new Date()
     return { enabled: true, sent: 0, error };
   }
   const last = rows[rows.length - 1]!;
-  await upsert(db, sink, { lastRunAt: now, lastError: null, lastCreatedAt: last.publishedAt!, lastEventId: last.id, sentDelta: rows.length });
-  return { enabled: true, sent: rows.length };
+  await upsert(db, sink, { lastRunAt: now, lastError: null, lastCreatedAt: last.publishedAt!, lastEventId: last.id, sentDelta: batch.length });
+  return { enabled: true, sent: batch.length };
 }
 
 async function upsert(db: Db, sink: string, v: { lastRunAt: Date; lastError?: string | null; lastCreatedAt?: Date; lastEventId?: string; sentDelta?: number }) {
