@@ -102,7 +102,7 @@ Service worker logs: `chrome://extensions` → Skout AI Prospector → **Service
 | Symptom | Fix |
 | --- | --- |
 | "Not signed in" | Sign in to Skout at your configured Web URL |
-| "Could not load lists" | Check API URL; click Connect Skout account |
+| "Could not load lists" | Read the panel status for the API/auth error; reconnect to Skout, verify workspace access, then click Refresh lists |
 | Host permission denied | Re-save settings and allow access to your Skout domain |
 | "Not a LinkedIn profile" | Open `/in/username`, not feed or company page |
 | "Cannot reach API" | Verify API URL and that CORS includes your web origin |

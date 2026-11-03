@@ -66,15 +66,21 @@
 
   function populateLists(select, lists, selectedId) {
     if (!select) return;
-    select.innerHTML =
-      lists.length > 0
-        ? lists
-            .map(
-              (list) =>
-                `<option value="${list.id}"${list.id === selectedId ? " selected" : ""}>${list.name}</option>`
-            )
-            .join("")
-        : `<option value="">No lists — create in Skout</option>`;
+    select.replaceChildren();
+    if (lists.length > 0) {
+      for (const list of lists) {
+        const option = document.createElement("option");
+        option.value = list.id;
+        option.textContent = list.name;
+        option.selected = list.id === selectedId;
+        select.append(option);
+      }
+    } else {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "No lists — create in Skout";
+      select.append(option);
+    }
   }
 
   function friendlyRuntimeError(message) {
@@ -123,9 +129,22 @@
     const select = panel.querySelector("#skout-ai-list-select");
     try {
       const response = await safeRuntimeSend({ type: "get-lists" });
+      if (response?.ok === false) {
+        throw new Error(response.error || "List request failed.");
+      }
       populateLists(select, response?.lists || [], response?.lastListId || "");
-    } catch {
-      if (select) select.innerHTML = `<option value="">Sign in to Skout first</option>`;
+    } catch (error) {
+      if (select) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "Could not load lists — reconnect to Skout";
+        select.replaceChildren(option);
+      }
+      setPanelStatus(
+        panel,
+        `Could not load target lists: ${error instanceof Error ? error.message : "request failed"}`,
+        true
+      );
     }
   }
 
@@ -470,6 +489,9 @@
       sessionStorage.setItem("skout-ai-panel-hidden", "1");
     });
 
+    panel.querySelector("#skout-ai-list-select")?.addEventListener("change", () => {
+      panel.__duplicateConfirmedForListId = null;
+    });
     panel.querySelector("#skout-ai-add")?.addEventListener("click", () => void onAdd(panel));
     panel.querySelector("#skout-ai-enrich")?.addEventListener("click", () => void onEnrich(panel));
     panel.querySelector("#skout-ai-score")?.addEventListener("click", () => void onScore(panel));
@@ -622,8 +644,20 @@
     try {
       const profile = getProfile(panel);
       await safeRuntimeSend({ type: "ping" }, 5_000).catch(() => undefined);
-      const result = await safeRuntimeSend({ type: "add-to-list", listId, profile });
+      const confirmDuplicate = panel.__duplicateConfirmedForListId === listId;
+      const result = await safeRuntimeSend({
+        type: "add-to-list",
+        listId,
+        profile,
+        confirmDuplicate,
+      });
       if (!result?.ok) throw new Error(result?.error || "Add failed");
+      if (result.duplicate && !confirmDuplicate) {
+        panel.__duplicateConfirmedForListId = listId;
+        setPanelStatus(panel, `${result.fullName} is already in this list — click Add again to add anyway.`, true);
+        return;
+      }
+      panel.__duplicateConfirmedForListId = null;
       setPanelStatus(panel, `Added ${result.fullName} ✓`);
       safeRuntimeSend({ type: "save-last-list", listId }).catch(() => undefined);
     } catch (error) {
@@ -635,6 +669,74 @@
 
   const FIELD_LABELS = { company: "Company", email: "Email", phone: "Phone", validation: "Validation" };
   const RESULT_FIELD_MAP = { company: "company", email: "email", phone: "phone", validation: "email_status" };
+
+  function displayValueForResult(field, match) {
+    if (field === "company" && match.valueJson && typeof match.valueJson === "object") {
+      const company = match.valueJson;
+      const location = [company.hqCity, company.hqCountry].filter(Boolean).join(", ");
+      const details = [
+        company.companyName,
+        company.industry,
+        Number.isFinite(company.employeeCount) ? `${company.employeeCount} employees` : undefined,
+        location,
+        company.foundedDate ? `Founded ${company.foundedDate}` : undefined,
+      ].filter((value) => typeof value === "string" && value.trim());
+      return details.join(" · ") || match.value;
+    }
+    if (field === "phone" && match.valueJson && typeof match.valueJson === "object") {
+      return (
+        match.value ||
+        [match.valueJson.mobile, match.valueJson.direct, match.valueJson.hq]
+          .filter(Boolean)
+          .join(" · ")
+      );
+    }
+    return match.value;
+  }
+
+  function hasEnrichmentData(results, fields) {
+    return fields.some((field) => {
+      const apiField = RESULT_FIELD_MAP[field] || field;
+      const match = results.find(
+        (result) =>
+          result.field === apiField &&
+          (result.isPrimary !== false || apiField === "email_status")
+      );
+      if (!match || match.validationStatus === "skipped" || match.validationStatus === "error") {
+        return false;
+      }
+      return Boolean(displayValueForResult(field, match));
+    });
+  }
+
+  function noEnrichmentDataMessage(attempts = []) {
+    if (!Array.isArray(attempts)) attempts = [];
+    const failedProviders = [...new Set(
+      attempts.filter((attempt) => attempt.status === "error").map((attempt) => attempt.provider)
+    )];
+    if (failedProviders.length) {
+      return `No data returned; provider requests failed (${failedProviders.join(", ")}). Check provider access and configuration.`;
+    }
+    const phoneGate = attempts.find(
+      (attempt) => attempt.provider === "phone-gate" && attempt.status === "skipped"
+    );
+    if (phoneGate) {
+      if (phoneGate.operation === "name-gate") {
+        return "No contact data matched. Phone lookup was skipped because a full name is required.";
+      }
+      return "No contact data matched. Phone lookup was skipped because the lead score did not meet its threshold.";
+    }
+    return "No matching enrichment data returned. Confirm provider access and the prospect's company details.";
+  }
+
+  function updateUnresolvedEnrichmentRows(panel, message) {
+    panel.querySelectorAll("#skout-ai-enrich-results .skout-result-value").forEach((valueEl) => {
+      if (valueEl.textContent === "⏳" || valueEl.textContent === "Not found") {
+        valueEl.textContent = message;
+        valueEl.style.color = "#fbbf24";
+      }
+    });
+  }
 
   function showEnrichResults(panel, fields) {
     const el = panel.querySelector("#skout-ai-enrich-results");
@@ -665,12 +767,28 @@
       );
       const valueEl = row.querySelector(".skout-result-value");
       const iconEl = row.querySelector(".skout-result-icon");
-      if (!match || !match.value || match.status === "not_found") {
+      if (!match) {
         if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#475569"; }
         if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#475569"; }
+      } else if (match.validationStatus === "skipped") {
+        const reason = match.valueJson?.reason;
+        if (valueEl) {
+          valueEl.textContent = reason ? `Skipped: ${reason}` : "Skipped";
+          valueEl.style.color = "#fbbf24";
+        }
+        if (iconEl) { iconEl.textContent = "⚠"; iconEl.style.color = "#fbbf24"; }
+      } else if (match.validationStatus === "error") {
+        if (valueEl) { valueEl.textContent = "Lookup failed"; valueEl.style.color = "#fca5a5"; }
+        if (iconEl) { iconEl.textContent = "!"; iconEl.style.color = "#fca5a5"; }
       } else {
-        if (valueEl) { valueEl.textContent = match.value; valueEl.style.color = "#e2e8f0"; }
-        if (iconEl) { iconEl.textContent = "✓"; iconEl.style.color = "#86efac"; }
+        const displayValue = displayValueForResult(field, match);
+        if (!displayValue || match.status === "not_found") {
+            if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#475569"; }
+            if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#475569"; }
+        } else {
+          if (valueEl) { valueEl.textContent = displayValue; valueEl.style.color = "#e2e8f0"; }
+          if (iconEl) { iconEl.textContent = "✓"; iconEl.style.color = "#86efac"; }
+        }
       }
     }
   }
@@ -688,12 +806,25 @@
       if (!match) continue;
       const valueEl = row.querySelector(".skout-result-value");
       const iconEl = row.querySelector(".skout-result-icon");
-      if (!match.value || match.status === "not_found") {
+      if (match.validationStatus === "skipped") {
+        const reason = match.valueJson?.reason;
+        if (valueEl) {
+          valueEl.textContent = reason ? `Skipped: ${reason}` : "Skipped";
+          valueEl.style.color = "#fbbf24";
+        }
+        if (iconEl) { iconEl.textContent = "⚠"; iconEl.style.color = "#fbbf24"; }
+      } else if (match.validationStatus === "error") {
+        if (valueEl) { valueEl.textContent = "Lookup failed"; valueEl.style.color = "#fca5a5"; }
+        if (iconEl) { iconEl.textContent = "!"; iconEl.style.color = "#fca5a5"; }
+      } else {
+        const displayValue = displayValueForResult(field, match);
+        if (!displayValue || match.status === "not_found") {
         if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#475569"; }
         if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#475569"; }
-      } else {
-        if (valueEl) { valueEl.textContent = match.value; valueEl.style.color = "#e2e8f0"; }
-        if (iconEl) { iconEl.textContent = "✓"; iconEl.style.color = "#86efac"; }
+        } else {
+          if (valueEl) { valueEl.textContent = displayValue; valueEl.style.color = "#e2e8f0"; }
+          if (iconEl) { iconEl.textContent = "✓"; iconEl.style.color = "#86efac"; }
+        }
       }
     }
   }
@@ -734,7 +865,7 @@
         throw err;
       }
 
-      let lastResults = started.results || [];
+      let outcome = started;
 
       if (started.jobId && started.status !== "completed") {
         // Poll job and update each field row as its step completes.
@@ -742,17 +873,38 @@
           await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
           const job = await safeRuntimeSend(
             { type: "poll-enrich-job", jobId: started.jobId }, 5_000
-          ).catch(() => null);
+          );
+          outcome = { ...outcome, ...job };
           if (job?.results?.length) {
             applyPartialEnrichResults(panel, job.results);
-            lastResults = job.results;
           }
           if (job?.status === "completed" || job?.status === "failed") break;
         }
       }
 
-      applyEnrichResults(panel, lastResults);
-      setPanelStatus(panel, `Enriched ${started.fullName}`);
+      if (outcome.status === "failed") {
+        applyEnrichResults(panel, outcome.results || []);
+        updateUnresolvedEnrichmentRows(panel, "Unavailable");
+        setPanelStatus(
+          panel,
+          `Enrichment failed: ${outcome.errorMessage || "The provider request did not complete."}`,
+          true
+        );
+        return;
+      }
+      if (outcome.status !== "completed") {
+        updateUnresolvedEnrichmentRows(panel, "Still processing");
+        setPanelStatus(panel, "Enrichment is still processing. Check the job again shortly.");
+        return;
+      }
+
+      const results = outcome.results || [];
+      applyEnrichResults(panel, results);
+      if (hasEnrichmentData(results, fields)) {
+        setPanelStatus(panel, `Enrichment completed for ${started.fullName}`);
+      } else {
+        setPanelStatus(panel, noEnrichmentDataMessage(outcome.attempts));
+      }
     } catch (error) {
       panel.querySelectorAll("#skout-ai-enrich-results .skout-result-value").forEach((el) => {
         if (el.textContent === "⏳") { el.textContent = "—"; el.style.color = "#475569"; }

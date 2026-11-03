@@ -1,4 +1,5 @@
 import type { CompanyData, FirmographicsProvider } from "../types.js";
+import { isSyntheticCaptureDomain } from "../capture-domains.js";
 import { fetchJson } from "./http.js";
 
 export const EXPLORIUM_BASE_URL = "https://api.explorium.ai/v1";
@@ -28,14 +29,21 @@ export class ExploriumFirmographics implements FirmographicsProvider {
   ) {}
 
   async fetchCompany(domain: string, name?: string): Promise<CompanyData | null> {
-    const normalizedDomain = normalizeDomain(domain);
+    const syntheticDomain = isSyntheticCaptureDomain(domain);
+    if (syntheticDomain && !name?.trim()) return null;
+    const normalizedDomain = syntheticDomain ? undefined : normalizeDomain(domain);
     const match = await fetchJson<{ matched_businesses?: Array<{ business_id?: string }> }>(
       `${this.baseUrl}/businesses/match`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json", api_key: this.apiKey },
         body: JSON.stringify({
-          businesses_to_match: [{ domain: normalizedDomain, name: name ?? undefined }],
+          businesses_to_match: [
+            {
+              ...(normalizedDomain ? { domain: normalizedDomain } : {}),
+              name: name ?? undefined,
+            },
+          ],
         }),
         timeoutMs: this.timeoutMs,
       }
