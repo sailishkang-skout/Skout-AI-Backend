@@ -2,13 +2,14 @@
 
 The feature is **internal** until every gate below is closed. In production the API enforces
 that: with `ENRICHMENT_RELEASE_STAGE=internal`, only workspaces holding the
-`enrichment.internal_access` entitlement or users in the `ENRICHMENT_INTERNAL_TESTER_EMAILS`
-allowlist can use capture, research, provider jobs or campaigns.
+`enrichment.internal_access` entitlement or listed in the
+`ENRICHMENT_INTERNAL_TESTER_WORKSPACE_IDS` allowlist can use capture, research, provider jobs or
+campaigns.
 `general` takes effect only when `ENRICHMENT_LEGAL_APPROVAL_REF` names the recorded approval.
-For extension testing before general release, `ENRICHMENT_INTERNAL_TESTER_EMAILS` can temporarily
-allow exact authenticated email addresses through the release gate. This is a production-only
-release exception for those users across their workspaces; it does not grant workspace membership
-or enrichment permissions. Keep the list limited to named testers and remove it when testing ends.
+For extension testing before general release, `ENRICHMENT_INTERNAL_TESTER_WORKSPACE_IDS` can
+temporarily allow specific workspace UUIDs through the release gate. This is a production-only
+release exception for those workspaces; it does not grant user membership or enrichment
+permissions. Keep the list limited to test workspaces and remove entries when testing ends.
 
 **Current state (2026-10-12): internal. Gates 2 and 3 are open.**
 
@@ -89,9 +90,9 @@ PUT    /api/v1/admin/workspaces/<workspaceId>/entitlements/enrichment.internal_a
 DELETE /api/v1/admin/workspaces/<workspaceId>/entitlements/enrichment.internal_access   (to revoke)
 ```
 
-For user-scoped extension testing instead, set `ENRICHMENT_INTERNAL_TESTER_EMAILS` to an exact
-comma-separated list of authenticated tester emails and deploy the API. Remove the test email
-after testing. The normal workspace RBAC checks still apply.
+For extension testing instead, set `ENRICHMENT_INTERNAL_TESTER_WORKSPACE_IDS` to a comma-separated
+list of test workspace UUIDs and deploy the API. Remove the workspace IDs after testing. The
+normal workspace RBAC checks still apply.
 
 The admin does not need to be a member of that workspace. Every grant and revoke is written to the
 audit log (`entitlement.platform_grant` / `entitlement.platform_revoke`, with before and after

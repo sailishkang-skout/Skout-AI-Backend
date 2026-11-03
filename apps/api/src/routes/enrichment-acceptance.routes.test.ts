@@ -37,7 +37,6 @@ let app: FastifyInstance;
 let config: Env;
 let owner: Record<string, string>;
 let ownerId: string;
-let ownerEmail: string;
 /** Approves campaigns: a second person, since the creator and submitter may not approve their own. */
 let reviewerId: string;
 let outsider: Record<string, string>;
@@ -54,7 +53,6 @@ async function provisionUser(workspaceId: string) {
   const auth = buildTestAuth({ workspaceId, userId, email, role: "owner" });
   return {
     userId,
-    email,
     headers: { "x-workspace-id": workspaceId, "content-type": "application/json", Authorization: auth.bearer },
   };
 }
@@ -89,7 +87,6 @@ beforeAll(async () => {
   const o = await provisionUser(WORKSPACE);
   owner = o.headers;
   ownerId = o.userId;
-  ownerEmail = o.email;
   reviewerId = (await provisionUser(WORKSPACE)).userId;
   outsider = (await provisionUser(OTHER_WORKSPACE)).headers;
 }, 60000);
@@ -501,12 +498,12 @@ describe("Release gates", () => {
     }
   });
 
-  it("allows only explicitly configured production test users through the release gate", async () => {
+  it("allows only explicitly configured production test workspaces through the release gate", async () => {
     const production = await buildApp({
       ...config,
       NODE_ENV: "production",
       ENRICHMENT_RELEASE_STAGE: "internal",
-      ENRICHMENT_INTERNAL_TESTER_EMAILS: [ownerEmail.toUpperCase()],
+      ENRICHMENT_INTERNAL_TESTER_WORKSPACE_IDS: [WORKSPACE.toUpperCase()],
     });
     try {
       const call = (url: string, headers = owner) =>
@@ -518,6 +515,10 @@ describe("Release gates", () => {
         reason: null,
       });
       expect((await call("/enrichment/people", outsider)).statusCode).toBe(403);
+      expect((await call("/enrichment/release", outsider)).json()).toMatchObject({
+        enabled: false,
+        stage: "internal",
+      });
     } finally {
       await production.close();
     }
@@ -527,7 +528,7 @@ describe("Release gates", () => {
     const base = {
       NODE_ENV: "production" as const,
       ENRICHMENT_LEGAL_APPROVAL_REF: undefined,
-      ENRICHMENT_INTERNAL_TESTER_EMAILS: [],
+      ENRICHMENT_INTERNAL_TESTER_WORKSPACE_IDS: [],
     };
     expect(releaseState({ ...base, ENRICHMENT_RELEASE_STAGE: "general" })).toMatchObject({ stage: "internal", legalApprovalRecorded: false, enforced: true });
     expect(releaseState({ ...base, ENRICHMENT_RELEASE_STAGE: "general", ENRICHMENT_LEGAL_APPROVAL_REF: "  " })).toMatchObject({ stage: "internal" });

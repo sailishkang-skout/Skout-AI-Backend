@@ -368,18 +368,19 @@ const envSchema = z
     /** Reference of the recorded Legal/Product approval (ticket or document id). */
     ENRICHMENT_LEGAL_APPROVAL_REF: z.string().optional(),
     /**
-     * Exact authenticated users allowed to test internally released LinkedIn enrichment in
-     * production. This does not grant workspace permissions; normal RBAC still applies.
+     * Workspaces allowed to test internally released LinkedIn enrichment in production.
+     * This does not grant user membership or workspace permissions; normal RBAC still applies.
      */
-    ENRICHMENT_INTERNAL_TESTER_EMAILS: z
+    ENRICHMENT_INTERNAL_TESTER_WORKSPACE_IDS: z
       .string()
       .default("")
       .transform((value) =>
         value
           .split(",")
-          .map((email) => email.trim().toLowerCase())
+          .map((workspaceId) => workspaceId.trim())
           .filter(Boolean)
-      ),
+      )
+      .pipe(z.array(z.string().uuid())),
     // --- ENR-05: evidence campaigns. ---
     /**
      * Outside production, an evidence-campaign email is sent only to these addresses or

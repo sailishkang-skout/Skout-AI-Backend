@@ -25,7 +25,7 @@ type GateConfig = Pick<
   | "NODE_ENV"
   | "ENRICHMENT_RELEASE_STAGE"
   | "ENRICHMENT_LEGAL_APPROVAL_REF"
-  | "ENRICHMENT_INTERNAL_TESTER_EMAILS"
+  | "ENRICHMENT_INTERNAL_TESTER_WORKSPACE_IDS"
 >;
 
 export interface ReleaseState {
@@ -59,15 +59,12 @@ export async function workspaceReleaseAccess(
   db: Db,
   config: GateConfig,
   workspaceId: string,
-  userEmail?: string
 ): Promise<WorkspaceAccess> {
   const state = releaseState(config);
   if (!state.enforced || state.stage === "general") return { ...state, enabled: true, reason: null };
-  const normalizedEmail = userEmail?.trim().toLowerCase();
   if (
-    normalizedEmail &&
-    config.ENRICHMENT_INTERNAL_TESTER_EMAILS.some(
-      (email) => email.trim().toLowerCase() === normalizedEmail
+    config.ENRICHMENT_INTERNAL_TESTER_WORKSPACE_IDS.some(
+      (allowedWorkspaceId) => allowedWorkspaceId.toLowerCase() === workspaceId.toLowerCase()
     )
   ) {
     return { ...state, enabled: true, reason: null };
@@ -87,7 +84,7 @@ async function refuseUnreleased(app: FastifyInstance, request: FastifyRequest, r
     // No workspace on the request: the route's own authorization answers that.
     return undefined;
   }
-  const access = await workspaceReleaseAccess(app.db, app.config, workspaceId, request.userEmail);
+  const access = await workspaceReleaseAccess(app.db, app.config, workspaceId);
   if (access.enabled) return undefined;
   return reply.status(403).send({ ok: false, error: access.reason, code: "enrichment_not_released", stage: access.stage });
 }

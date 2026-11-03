@@ -156,7 +156,7 @@ enrichment changes:
 | --- | --- | --- | --- |
 | `ENRICHMENT_RELEASE_STAGE` | not enforced | `internal` | `internal` until the gates are met |
 | `ENRICHMENT_LEGAL_APPROVAL_REF` | unset | unset | set only with the recorded approval |
-| `ENRICHMENT_INTERNAL_TESTER_EMAILS` | unset | unset | exact comma-separated emails for temporary internal testing |
+| `ENRICHMENT_INTERNAL_TESTER_WORKSPACE_IDS` | unset | unset | comma-separated workspace UUIDs for temporary internal testing |
 | `ENRICHMENT_PERMITTED_PROVIDERS` | unset | unset | unset until a provider is approved |
 | `ENRICHMENT_CAMPAIGN_SANDBOX_RECIPIENTS` | a sandbox domain | a sandbox domain | ignored |
 | `LINKEDIN_ENRICHMENT_TEST_MODE` | `true` when exercising the job lifecycle | optional | ignored |
