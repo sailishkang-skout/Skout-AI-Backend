@@ -136,6 +136,17 @@ const COMPANY_PEOPLE_HTML = `
 </main>`;
 
 describe("company page extraction", () => {
+  it("captures visible company information from the canonical /home/ page", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/company/acme-robotics/home/",
+      html: "<main><h1>Acme Robotics</h1><p>Robotics Engineering</p><p>Austin, Texas</p></main>",
+      files: EXTRACT_FILES,
+    });
+    const company = window.SkoutCapturePage.extractCompany();
+    expect(company.name).toBe("Acme Robotics");
+    expect(company.sectionCaptures.home.text).toContain("Acme Robotics");
+  });
+
   it("reads the About tab and the exact visible member count", () => {
     const window = loadCapturePage({ url: "https://www.linkedin.com/company/acme-robotics/about/", html: COMPANY_ABOUT_HTML, files: EXTRACT_FILES });
     const company = window.SkoutCapturePage.extractCompany();
@@ -168,6 +179,16 @@ describe("company page extraction", () => {
       { publicId: "sam-lee", sourceUrl: "https://www.linkedin.com/in/sam-lee/", fullName: "Sam Lee", headline: "Engineer at Acme Robotics" },
       { publicId: "ana-ruiz", sourceUrl: "https://www.linkedin.com/in/ana-ruiz/", fullName: "Ana Ruiz", headline: "Sales lead" },
     ]);
+  });
+
+  it("normalizes LinkedIn's /home/ company route to the canonical company root", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/company/acme-robotics/home/",
+      html: "<main><h1>Acme Robotics</h1></main>",
+      files: [...EXTRACT_FILES, "capture/company-capture.js"],
+    });
+    expect(window.SkoutCompanyCapture.pageUrl(window.location.href, "acme-robotics"))
+      .toBe("https://www.linkedin.com/company/acme-robotics/");
   });
 
   it("treats a recommendations rail as no evidence of employment", () => {

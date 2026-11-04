@@ -17,6 +17,60 @@ const stateKey = "company-people-capture:example";
 
 timing.delay = () => Promise.resolve();
 
+describe("company page URL normalization", () => {
+  it("treats LinkedIn's /home/ route as the company root", () => {
+    expect(__test.companyReadUrl("https://www.linkedin.com/company/example/home/", "example"))
+      .toBe("https://www.linkedin.com/company/example/");
+    expect(__test.companyReadUrl("https://www.linkedin.com/company/example/", "example"))
+      .toBe("https://www.linkedin.com/company/example/");
+    expect(__test.companyReadUrl("https://www.linkedin.com/company/other/home/", "example"))
+      .toBeUndefined();
+  });
+
+  it("reads a company page when the initiating LinkedIn tab is on /home/", async () => {
+    const previousChrome = globalThis.chrome;
+    const readMessages = [];
+    globalThis.chrome = {
+      storage: { local: { async get(key) { return { [key]: undefined }; } } },
+      tabs: {
+        async create({ url }) { return { id: 100, url }; },
+        async sendMessage(_tabId, message) {
+          readMessages.push(message);
+          if (message.type === "COMPANY_READER_READY") return { ok: true, url: "https://www.linkedin.com/company/example/" };
+          return {
+            ok: true,
+            data: { publicId: "example", name: "Example Company", sectionCaptures: { home: { text: "Example Company" } } },
+          };
+        },
+        async remove() {},
+      },
+    };
+    __test.deps.skoutFetch = async () => ({ enabled: true });
+
+    try {
+      const result = await handleCaptureMessage({
+        type: "READ_COMPANY_PAGE",
+        companyId: "example",
+        url: "https://www.linkedin.com/company/example/",
+      }, {
+        tab: { id: 7 },
+        frameId: 0,
+        url: "https://www.linkedin.com/company/example/home/",
+      });
+      expect(result).toMatchObject({
+        ok: true,
+        data: { name: "Example Company", sectionCaptures: { home: { text: "Example Company" } } },
+      });
+      expect(readMessages.map((message) => message.type)).toEqual([
+        "COMPANY_READER_READY",
+        "COLLECT_COMPANY_PAGE",
+      ]);
+    } finally {
+      globalThis.chrome = previousChrome;
+    }
+  });
+});
+
 /** A company-filtered people search in a temporary tab, ported from the prototype's harness. */
 function harness(totalPages, { failAdvanceAt, profilesPerPage = 1, api } = {}) {
   const storage = {};

@@ -125,8 +125,9 @@ const companyReadDelay = ms => timing.delay(ms);
 function companyReadUrl(value, companyId) {
   try {
     const u = new URL(value), parts = u.pathname.split('/').filter(Boolean);
-    if (u.protocol !== 'https:' || u.hostname !== 'www.linkedin.com' || parts[0] !== 'company' || parts[1] !== companyId || parts.length > 3 || !['','about','posts','jobs','products','life','people','insights'].includes(parts[2] || '')) return undefined;
-    return `${u.origin}/company/${companyId}/${parts[2] ? parts[2] + '/' : ''}`;
+    const section = parts[2] === 'home' ? '' : parts[2] || '';
+    if (u.protocol !== 'https:' || u.hostname !== 'www.linkedin.com' || parts[0] !== 'company' || parts[1] !== companyId || parts.length > 3 || !['','about','posts','jobs','products','life','people','insights'].includes(section)) return undefined;
+    return `${u.origin}/company/${companyId}/${section ? section + '/' : ''}`;
   } catch { return undefined; }
 }
 async function readCompanyPage(request, sender, collectMessage = 'COLLECT_COMPANY_PAGE') {
@@ -646,4 +647,4 @@ export function registerCaptureBackground({ skoutFetch }) {
   });
 }
 
-export const __test = { commitCompanyPeopleCapture, getCompanyPeopleState, captureBlock, deps };
+export const __test = { commitCompanyPeopleCapture, getCompanyPeopleState, captureBlock, companyReadUrl, deps };
