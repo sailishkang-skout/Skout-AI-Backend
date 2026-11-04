@@ -922,14 +922,24 @@ function extractOrganizations() {
 
 /**
  * Contact Info — LinkedIn shows this in a click-to-open modal, not on the
- * base page. We deliberately don't auto-click it (that would cross from
- * "read what's rendered" into "drive the page"). If the person has already
- * opened it themselves before clicking Capture, we read it; otherwise this
- * comes back empty and that's expected, not a bug.
+ * base page. We deliberately don't auto-click it. Only a visible modal is
+ * read, and its values are kept in the local review draft, not sent to Skout.
  */
 function extractContactInfo() {
   const modal = document.querySelector('[aria-label*="Contact Info" i], [aria-labelledby*="contact-info" i]');
   if (!modal) return undefined;
+  const style = window.getComputedStyle(modal);
+  const rect = modal.getBoundingClientRect();
+  if (
+    modal.closest('[aria-hidden="true"]') ||
+    style.display === "none" ||
+    style.visibility === "hidden" ||
+    style.opacity === "0" ||
+    rect.width <= 0 ||
+    rect.height <= 0
+  ) {
+    return undefined;
+  }
   const website = modal.querySelector('a[href^="http"]:not([href*="linkedin.com"])')?.href;
   const emailMatch = modal.textContent.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
   // Phone — best-effort, unverified against real Contact Info HTML. LinkedIn

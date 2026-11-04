@@ -396,11 +396,19 @@ function withoutInternal(value) {
     !key.startsWith('_') && item !== undefined && item !== null && item !== ''));
 }
 
+export function reviewDraftData(data) {
+  const reviewed = withoutInternal(data);
+  if (data?._contactInfo && typeof data._contactInfo === "object") {
+    reviewed._contactInfo = data._contactInfo;
+  }
+  return reviewed;
+}
+
 async function storeDraft(message, sender) {
   const data = message.data || {};
   const draft = {
     kind: message.kind,
-    data: withoutInternal(data),
+    data: reviewDraftData(data),
     notes: Array.isArray(message.notes) ? message.notes.filter(Boolean).map(String) : [],
     sourceUrl: message.sourceUrl,
     capturedAt: message.capturedAt || new Date().toISOString(),
@@ -413,6 +421,9 @@ async function storeDraft(message, sender) {
       sales: data._salesCapture,
     },
   };
+  if (draft.data._contactInfo && (draft.data._contactInfo.email || draft.data._contactInfo.phone)) {
+    draft.notes.push("Contact details from the already-open Contact Info dialog are review-only and will not be saved to Skout.");
+  }
   await chrome.storage.local.set({ [CAPTURE_DRAFT_KEY]: draft });
   return { ok: true };
 }

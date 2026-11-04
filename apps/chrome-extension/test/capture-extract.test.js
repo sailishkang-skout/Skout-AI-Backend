@@ -79,6 +79,25 @@ describe("person profile extraction", () => {
       expect(serialized).not.toContain(chrome);
     }
   });
+
+  it("reads email and phone only from a visible, already-open Contact Info dialog", () => {
+    const visible = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/",
+      html: '<main><h1>Jane Doe</h1><section aria-label="Contact Info"><a href="mailto:jane@example.com">jane@example.com</a><a href="tel:+15550100">+1 555 0100</a></section></main>',
+      files: EXTRACT_FILES,
+    });
+    expect(visible.SkoutCapturePage.extractPerson()._contactInfo).toMatchObject({
+      email: "jane@example.com",
+      phone: "+15550100",
+    });
+
+    const hidden = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/",
+      html: '<main><h1>Jane Doe</h1><section aria-label="Contact Info" aria-hidden="true"><a href="mailto:jane@example.com">jane@example.com</a></section></main>',
+      files: EXTRACT_FILES,
+    });
+    expect(hidden.SkoutCapturePage.extractPerson()._contactInfo).toBeUndefined();
+  });
 });
 
 const COMPANY_ABOUT_HTML = `

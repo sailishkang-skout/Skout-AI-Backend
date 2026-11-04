@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { CAPTURE_CONTENT_FILES } from "../capture-background.js";
+import { buildCapturePayload, CAPTURE_CONTENT_FILES, reviewDraftData } from "../capture-background.js";
 import { captureKindForUrl, draftSummary, reviewedData } from "../capture-panel.js";
 import { extensionRoot, readSource } from "./helpers/capture-dom.js";
 
@@ -67,6 +67,21 @@ describe("capture compliance guardrails", () => {
 });
 
 describe("side-panel review helpers", () => {
+  it("keeps visible Contact Info details review-only and excludes them from saved capture payloads", () => {
+    const draft = reviewDraftData({
+      fullName: "Jane Doe",
+      _contactInfo: { email: "jane@example.com", phone: "+1 555 0100" },
+      _recentActivity: [{ text: "internal-only" }],
+    });
+
+    expect(draft._contactInfo).toEqual({ email: "jane@example.com", phone: "+1 555 0100" });
+    expect(draft._recentActivity).toBeUndefined();
+    expect(draftSummary("person", draft)).toContain("Contact details available for review only");
+    expect(
+      buildCapturePayload({ kind: "person", capturedAt: "2026-11-04T00:00:00.000Z" }, draft)
+    ).not.toHaveProperty("_contactInfo");
+  });
+
   it("offers a capture only on a profile, a company page or a Sales Navigator people search", () => {
     expect(captureKindForUrl("https://www.linkedin.com/in/jane-doe/")).toBe("person");
     expect(captureKindForUrl("https://www.linkedin.com/company/acme/people/")).toBe("company");

@@ -131,6 +131,12 @@ function formatApiError(status, body, webUrl) {
   if (status === 402) {
     return "Insufficient credits for this action.";
   }
+  if (status === 403 && body?.error === "consent_required") {
+    return "Email consent is required before enrolling this prospect. Record consent in Skout, then try again.";
+  }
+  if (status === 503 && body?.error === "database_unavailable") {
+    return "Skout is temporarily unable to access its database. Try again shortly.";
+  }
   if (body?.error === "VALIDATION_FAILED" || body?.error === "validation_error") {
     return "The captured data did not pass validation.";
   }
@@ -141,6 +147,13 @@ function formatApiError(status, body, webUrl) {
     return body.error;
   }
   return `Request failed (${status})`;
+}
+
+export function readCollectionData(body, resource) {
+  if (!body || typeof body !== "object" || !Array.isArray(body.data)) {
+    throw new Error(`Skout returned an invalid ${resource} response. Refresh the panel or contact support.`);
+  }
+  return body.data;
 }
 
 /** Hard caps so a stalled network call or auth refresh can never hang the UI forever. */
@@ -299,7 +312,7 @@ export async function skoutFetch(path, options = {}) {
 
 export async function listLists() {
   const body = await skoutFetch("/api/v1/lists");
-  return body.data || [];
+  return readCollectionData(body, "target lists");
 }
 
 export async function createList(name) {
@@ -433,7 +446,7 @@ export async function scoreProspect(prospectId, profile) {
 
 export async function listSequences() {
   const body = await skoutFetch("/api/v1/sequences?status=active");
-  return body.data || [];
+  return readCollectionData(body, "active sequences");
 }
 
 export async function enrollInSequence(sequenceId, prospectIds) {

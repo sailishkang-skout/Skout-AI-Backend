@@ -57,6 +57,9 @@ export function draftSummary(kind, data) {
     parts.push(`${size(data.currentCompanies)} current and ${size(data.previousCompanies)} past roles`);
     parts.push(`${size(data.educations)} education`);
     parts.push(`${size(data.skills)} skills`);
+    if (data._contactInfo?.email || data._contactInfo?.phone) {
+      parts.push("Contact details available for review only");
+    }
     for (const [key, label] of [["certifications", "certifications"], ["languages", "languages"], ["recommendations", "recommendations"], ["volunteerExperiences", "volunteering"], ["honors", "honors"], ["publications", "publications"], ["patents", "patents"], ["courses", "courses"], ["organizations", "organizations"]]) {
       if (size(data[key])) parts.push(`${size(data[key])} ${label}`);
     }
