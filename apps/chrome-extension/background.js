@@ -10,6 +10,7 @@ import {
   getEnrichJob,
   scoreProspect,
   resolveProspectId,
+  createList,
   listSequences,
   enrollInSequence,
   skoutFetch,
@@ -231,13 +232,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "get-lists") {
     void (async () => {
       try {
-        const [lists, lastListId] = await Promise.all([getLists(), getLastListId()]);
+        const [lists, lastListId] = await Promise.all([
+          getLists({ force: Boolean(message.force) }),
+          getLastListId(),
+        ]);
         sendResponse({ ok: true, lists, lastListId });
       } catch (error) {
         sendResponse({
           ok: false,
           lists: [],
           error: error instanceof Error ? error.message : "Failed to load lists",
+        });
+      }
+    })();
+    return true;
+  }
+
+  if (message.type === "create-list") {
+    void (async () => {
+      try {
+        await ensureAuthForApi();
+        const name = typeof message.name === "string" ? message.name.trim() : "";
+        if (!name) throw new Error("Enter a name for the new list.");
+        const list = await createList(name);
+        if (!list?.id) throw new Error("Skout did not return the new list.");
+        await saveLastListId(list.id);
+        sendResponse({ ok: true, list });
+      } catch (error) {
+        sendResponse({
+          ok: false,
+          error: friendlyTabError(error instanceof Error ? error.message : "Could not create list"),
         });
       }
     })();
@@ -313,6 +337,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       log("enrich-profile START");
       try {
         let fullName = "";
+        let companyName = "";
         const result = await withTimeout(
           (async () => {
             await ensureAuthForApi();
@@ -320,6 +345,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               resolveProfile(message, sender.tab?.id)
             );
             fullName = profile.fullName;
+            companyName = profile.companyName || "";
             const prospectId = await timeStep("activateProspect", () => activateProspect(profile));
             await ensureAuthForApi();
 
@@ -343,6 +369,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({
           ok: true,
           fullName,
+          companyName,
           jobId: result?.jobId ?? null,
           status: result?.status ?? "completed",
           results: result?.results ?? [],
