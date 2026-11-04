@@ -256,7 +256,13 @@ export async function presignDocumentPut(bucket: string, key: string, opts: { sh
   const url = await getSignedUrl(
     signer(),
     new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: opts.contentType, ContentLength: opts.bytes, ChecksumSHA256: checksum }) as unknown as Parameters<typeof getSignedUrl>[1],
-    { expiresIn: opts.expiresIn, signableHeaders: new Set(["content-type", "x-amz-checksum-sha256"]) }
+    // Keep the checksum as a signed header: by default the presigner moves x-amz-* values into the
+    // query string, and storage then refuses the browser's x-amz-checksum-sha256 header as unsigned.
+    {
+      expiresIn: opts.expiresIn,
+      signableHeaders: new Set(["content-type", "x-amz-checksum-sha256"]),
+      unhoistableHeaders: new Set(["x-amz-checksum-sha256"]),
+    }
   );
   return { url, headers: { "Content-Type": opts.contentType, "x-amz-checksum-sha256": checksum } };
 }
