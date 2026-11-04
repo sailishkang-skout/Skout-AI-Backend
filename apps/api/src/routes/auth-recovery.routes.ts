@@ -12,9 +12,10 @@
  * POST /auth/password/reset      {token, password}  → 200 {data:{reset:true}}
  * POST /auth/otp/send            {email}            → 200 {data:{status:"accepted"}}
  * POST /auth/otp/verify          {email, code}      → 200 {data:{accessToken, expiresIn}} + refresh cookie
- * Links: {FRONTEND_URL}/verify-email?token= and {FRONTEND_URL}/reset-password?token=
+ * Links: {FRONTEND_URL}/app/verify-email?token= and {FRONTEND_URL}/app/reset-password?token=
  * Codes are 6 digits, links and codes expire in 15 minutes, single use.
  */
+import { productAppUrl } from "../services/cops-onboarding.service.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
@@ -58,8 +59,9 @@ function requestMeta(request: FastifyRequest) {
   return { ip: request.ip, userAgent: request.headers["user-agent"] as string | undefined };
 }
 
+// The product frontend is served under the Next.js basePath "/app"; without it these links 404.
 function appBase(config: Env): string {
-  return (config.FRONTEND_URL || "http://localhost:3000").replace(/\/$/, "");
+  return productAppUrl(config.FRONTEND_URL || "http://localhost:3000");
 }
 
 const ACCEPTED = { status: "accepted" as const };

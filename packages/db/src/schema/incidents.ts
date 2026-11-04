@@ -1,4 +1,4 @@
-import { index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { index, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { users } from "./users.js";
 import { workspaces } from "./workspaces.js";
 
@@ -35,6 +35,16 @@ export const incidents = pgTable(
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     resolvedBy: uuid("resolved_by").references(() => users.id, { onDelete: "set null" }),
     resolutionNotes: text("resolution_notes"),
+    /** COPS-12 (Bible p.54): one investigation owner for every linked ticket. */
+    ownerId: uuid("owner_id").references(() => users.id, { onDelete: "set null" }),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    workaround: text("workaround"),
+    rootCause: text("root_cause"),
+    followUps: jsonb("follow_ups").$type<{ text: string; done: boolean }[]>().notNull().default([]),
+    /** The latest customer-safe update, also posted to every linked ticket. */
+    customerUpdate: text("customer_update"),
+    customerUpdateAt: timestamp("customer_update_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

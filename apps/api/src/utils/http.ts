@@ -76,6 +76,49 @@ export function isDatabaseError(error: unknown): boolean {
   return false;
 }
 
+/** Node and postgres-js codes for a connection that could not be made or was lost. */
+const UNAVAILABLE_CODES = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EPIPE",
+  "ETIMEDOUT",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "EAI_AGAIN",
+  "CONNECTION_CLOSED",
+  "CONNECTION_ENDED",
+  "CONNECTION_DESTROYED",
+  "CONNECT_TIMEOUT",
+]);
+/** SQLSTATE: connection exceptions (08xxx), shutdown / starting up (57P01-57P03), too many connections. */
+const UNAVAILABLE_SQLSTATE = /^(?:08[0-9A-Z]{3}|57P0[123]|53300)$/;
+
+/**
+ * True when the database (or another backing service) could not be reached: refused, dropped,
+ * timed out, restarting or out of connections. That is a transient outage, answered 503 and
+ * retryable, not a fault in the request. Drizzle wraps the driver error, so the cause chain and
+ * an AggregateError's errors are searched.
+ */
+export function isServiceUnavailableError(error: unknown, depth = 0): boolean {
+  if (typeof error !== "object" || error === null || depth > 4) return false;
+  const e = error as { code?: unknown; cause?: unknown; errors?: unknown };
+  if (typeof e.code === "string" && (UNAVAILABLE_CODES.has(e.code) || UNAVAILABLE_SQLSTATE.test(e.code))) return true;
+  if (isServiceUnavailableError(e.cause, depth + 1)) return true;
+  return Array.isArray(e.errors) && e.errors.some((inner) => isServiceUnavailableError(inner, depth + 1));
+}
+
+export const SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS = 5;
+
+/** The 503 sent for a transient outage; the client may retry after Retry-After. */
+export function serviceUnavailableResponse(requestId?: string) {
+  return apiError(
+    "SERVICE_UNAVAILABLE",
+    "The service is briefly unavailable. Try again in a few seconds.",
+    503,
+    { requestId, retryable: true }
+  );
+}
+
 /**
  * Standard error envelope used by the global handler, not-found, and method
  * handlers so every API error has the same shape: { error, message, statusCode }.

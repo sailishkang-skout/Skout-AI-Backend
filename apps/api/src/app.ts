@@ -12,7 +12,16 @@ import { dbPlugin } from "./plugins/db.js";
 import { loggingPlugin } from "./plugins/logging.js";
 import { securityPlugin } from "./plugins/security.js";
 import { registerRoutes } from "./routes/index.js";
-import { apiError, defaultCodeForStatus, HttpError, isDatabaseError } from "./utils/http.js";
+import { registerSubscriptionSuspensionGate } from "./services/cops-subscription-access.js";
+import {
+  apiError,
+  defaultCodeForStatus,
+  HttpError,
+  isDatabaseError,
+  isServiceUnavailableError,
+  SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS,
+  serviceUnavailableResponse,
+} from "./utils/http.js";
 
 export async function buildApp(config: Env, options: { onDbQuery?: (query: string) => void } = {}) {
   const app = Fastify({
@@ -101,6 +110,16 @@ export async function buildApp(config: Env, options: { onDbQuery?: (query: strin
         );
     }
 
+    // The database could not be reached (down, restarting, connection lost): a transient
+    // outage, not a fault in the request. 503 + Retry-After tells clients to try again.
+    if (isServiceUnavailableError(error)) {
+      request.log.warn({ err: error }, "backing service unavailable");
+      return reply
+        .code(503)
+        .header("Retry-After", String(SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS))
+        .send(serviceUnavailableResponse(request.id));
+    }
+
     // Database errors (Drizzle/postgres) must never be returned verbatim — they
     // leak SQL statements and schema. Always treat them as opaque 500s.
     const dbError = isDatabaseError(error);
@@ -164,6 +183,8 @@ export async function buildApp(config: Env, options: { onDbQuery?: (query: strin
   app.decorate("onDbQuery", options.onDbQuery ?? null);
   await app.register(dbPlugin);
   await app.register(authPlugin);
+  // COPS-08: a suspended or closed subscription closes product use; billing and sign-in stay open.
+  registerSubscriptionSuspensionGate(app);
 
   const allowedOrigins = config.CORS_ORIGIN.map((o) => o.toLowerCase());
 

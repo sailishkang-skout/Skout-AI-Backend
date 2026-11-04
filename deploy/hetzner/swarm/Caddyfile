@@ -36,3 +36,13 @@
 		}
 	}
 }
+
+# Internal CustomerOps portal on its own host. Access is controlled in the app (verified staff email, invite-only
+# accounts); there is no network restriction because the team works remotely.
+{$OPS_HOST} {
+	handle {
+		reverse_proxy ops:3000 {
+			import proxy
+		}
+	}
+}

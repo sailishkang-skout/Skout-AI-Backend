@@ -12,7 +12,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "lint": "echo \"lint: configure eslint\"",
+    "lint": "eslint src",
     "pretest": "pnpm --filter @skout/db build && pnpm --filter @skout/shared build && pnpm --filter @skout/auth build && pnpm --filter @skout/scraper-orchestrator build && node scripts/ensure-test-postgres.mjs && pnpm --filter @skout/crm-bridge build",
     "test": "vitest run"
   },
@@ -60,13 +60,16 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@eslint/js": "^9",
     "@types/follow-redirects": "^1.14.4",
     "@types/mailparser": "^3.4.6",
     "@types/node": "^22.10.1",
     "@types/nodemailer": "^8.0.1",
     "@types/pdfkit": "^0.17.6",
+    "eslint": "^9",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
+    "typescript-eslint": "^8",
     "vitest": "^2.1.8"
   }
 }

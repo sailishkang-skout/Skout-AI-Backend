@@ -1,0 +1,413 @@
+openapi: 3.0.3
+info:
+  title: CustomerOps COPS-08 approvals, e-sign, subscriptions and finance
+  version: 1.0.0
+  description: >
+    Contract for COPS-08 as built (backend PR 197). All paths are under /api/v1 and use the COPS
+    error envelope {code, message, details, request_id, retryable}. Every POST takes an
+    Idempotency-Key, except the provider webhook. Money is integer minor units with an ISO currency.
+    Policy values (thresholds, unpaid-bill days, prices, renewal lead time) come from the versioned
+    admin config kinds approval_policy, dunning_policy, price_book and renewal_policy, seeded from
+    docs/ops/cops-commercial-policy.default.json. Not built: provider auto-debit
+    (billing "provider" answers 409) and a real e-sign provider (only the mock exists).
+paths:
+  /proposals/{id}/approvals/evaluate:
+    get:
+      summary: What the current proposal version needs, and whether it has it
+      description: >
+        Needs commercial:read. Pure read. `required` false means no approval step. `grandfathered`
+        true means the deal was already sent, signed or paid when approvals were introduced: the
+        rules are shown and not enforced.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: Evaluation, content: { application/json: { schema: { $ref: "#/components/schemas/ApprovalEvaluation" } } } }
+        "404": { description: Proposal not found in this workspace }
+  /proposals/{id}/approvals:
+    get:
+      summary: Approvals of a proposal, newest first
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: List of Approval }
+    post:
+      summary: Request the approvals the current version needs
+      description: Needs commercial:send. Emits ApprovalRequested, which notifies the approver roles in the app.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "201": { description: The Approval, with one pending decision per approver role }
+        "409": { description: "Nothing to approve (under every threshold, or grandfathered), or an approval for this version is already pending or approved" }
+  /approvals:
+    get:
+      summary: Approval queue
+      description: Needs commercial:approve or legal:approve. Each row also carries opportunity_name, account_id and account_name.
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, approved, rejected, voided, expired] } }
+        - { name: role, in: query, description: Only approvals where this role still has to decide, schema: { $ref: "#/components/schemas/ApproverRole" } }
+      responses:
+        "200": { description: List of Approval }
+  /approvals/{id}/decisions:
+    post:
+      summary: Approve or reject as one approver role
+      description: >
+        Needs commercial:approve or legal:approve, and the caller must hold the role: sales_manager,
+        finance or legal_revops decide their own slot; an Admin or the owner decides the executive
+        slot. When the last role approves, the approval is granted, the provisioning gate is
+        re-evaluated and ApprovalDecided is emitted.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role, decision]
+              properties:
+                role: { $ref: "#/components/schemas/ApproverRole" }
+                decision: { type: string, enum: [approved, rejected] }
+                comment: { type: string, maxLength: 2000, description: Required to reject }
+      responses:
+        "200": { description: The Approval after the decision }
+        "403": { description: The caller does not hold that approver role }
+        "409": { description: The approval is not pending, or that role has already decided }
+        "422": { description: A rejection without a comment }
+  /approvals/grandfathered:
+    get:
+      summary: Deals the approval engine skips
+      description: Needs commercial:approve or billing:read. Opportunities that were sent, signed or paid when migration 0126 ran, with the reasons.
+      responses:
+        "200": { description: "List of {opportunity_id, opportunity_name, amount, currency, grandfathered_at, reasons}" }
+  /proposals/{id}/send:
+    post:
+      summary: Send a proposal (COPS-03), now checked for approval
+      description: Unchanged for a deal under every threshold. Over a threshold it answers 409 until the approval is granted.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: Sent }
+        "409": { description: "BUSINESS_STATE_CONFLICT with details {required_approvers, approval_status: not_requested | pending | rejected | voided | expired}" }
+  /proposals/{id}/versions:
+    post:
+      summary: Add a proposal version (COPS-03), with the COPS-08 terms
+      description: >
+        New optional fields: payment_terms_net_days (default 30), free_credits (0), custom_clauses
+        (false), non_standard_sla (false), and price_basis on each line (per_month, per_term,
+        one_time; default one_time for a fee line, per_term otherwise). A material change voids an
+        open approval; a change to notes alone carries it to the new version. 409 when the currency
+        differs from one already sent for this opportunity.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "201": { description: The proposal with the new version }
+        "409": { description: "Currency locked: details {locked_currency, requested_currency}" }
+  /contracts/{id}/envelopes:
+    get:
+      summary: Envelopes of a contract with the provider events of each
+      description: Needs commercial:read or legal:read. Events are ordered by when they happened at the provider.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: List of Envelope, newest first }
+    post:
+      summary: Send the current contract version for signature
+      description: >
+        Needs commercial:send. Refused while a required approval is missing. The template is chosen
+        from the esign_template config by contract kind, deal type and template_context.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [signers]
+              properties:
+                signers:
+                  type: array
+                  minItems: 1
+                  maxItems: 10
+                  items: { type: object, required: [name, email], properties: { name: { type: string }, email: { type: string, format: email }, role: { type: string } } }
+                merge_fields: { type: object, additionalProperties: { type: string }, description: "Added to contract_title, opportunity_name and currency" }
+                template_context: { type: object, properties: { region: { type: string }, segment: { type: string }, legal_entity: { type: string } } }
+                message: { type: string, maxLength: 5000 }
+      responses:
+        "201": { description: The Envelope, status sent }
+        "409": { description: Approval missing, the contract is closed, or this version is already out for signature }
+        "502": { description: The provider did not accept the envelope; retryable }
+        "503": { description: E-signature is not configured in this environment }
+  /contracts/{id}/negotiated-versions:
+    post:
+      summary: Attach a version negotiated outside Skout
+      description: Needs commercial:write or legal:write. A new immutable contract version, and the contract's redline_status.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [document_url, file_sha256, redline_status]
+              properties:
+                document_url: { type: string }
+                file_name: { type: string }
+                file_sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+                redline_status: { type: string, enum: [customer_redline, internal_review, agreed] }
+                note: { type: string, maxLength: 1000 }
+      responses:
+        "201": { description: The contract with the new version }
+  /esign/webhooks/{provider}:
+    post:
+      summary: E-sign provider event
+      description: >
+        No session. The adapter verifies the provider's signature. Events are deduplicated on the
+        provider event id and applied by rank (sent, viewed, expired, declined, signed), so any
+        arrival order ends in the same status. A signature marks the contract signed, emits
+        ContractSigned once and evaluates the provisioning gate. An event for a replaced contract
+        version does not change the contract. The provider is `docuseal` (URL
+        /api/v1/esign/webhooks/docuseal, verified by X-Docuseal-Signature HMAC or the configured
+        secret header) once DOCUSEAL_API_KEY is set, and `mock` in development and tests.
+      parameters: [{ name: provider, in: path, required: true, schema: { type: string, enum: [docuseal, mock] } }]
+      responses:
+        "200": { description: "{ok, duplicate, outcome: applied | no_change | ignored | unmatched, status}" }
+        "401": { description: Bad or missing signature }
+        "404": { description: Unknown provider }
+  /accounts/{id}/contract-fields:
+    get:
+      summary: The account's region, segment and legal entity
+      description: Needs commercial:read or legal:read. Stored as custom fields (object type account); a field with no value is left out.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: "{data: {region?, segment?, legal_entity?}}" }
+    put:
+      summary: Set or clear the account's contract fields
+      description: >
+        Needs commercial:write, legal:write or commercial:send. Only the fields given change; an empty
+        string clears one. Audited (account.contract_fields_updated). Sending for signature picks the
+        template from these; a template_context on the send wins.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, properties: { region: { type: string, maxLength: 100 }, segment: { type: string, maxLength: 100 }, legal_entity: { type: string, maxLength: 200 } } }
+      responses:
+        "200": { description: The fields after the change }
+        "404": { description: Not an account of this workspace }
+        "422": { description: Unknown field or too long }
+  /billing/subscription:
+    get:
+      summary: The customer's own subscription (read-only)
+      description: >
+        Any member of the customer workspace, also while suspended. Status, seats, renewal date,
+        the bills and the dunning block; no internal ids. Null when Skout does not bill this workspace.
+      responses:
+        "200": { description: "{data: {status, billing, currency, cadence, seats, renews_at, invoices, dunning} | null}" }
+  /billing/subscription/invoices/{id}/pay:
+    post:
+      summary: Pay one of the customer's own open bills
+      description: Returns the payment link for the bill (created once, then reused). Refused for an invoiced bill or one already settled.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "201": { description: "{data: {checkout_url, status}}" }
+        "404": { description: Not a bill of this workspace's subscription }
+        "409": { description: Already settled, or invoiced }
+  /accounts/{id}/subscription:
+    get:
+      summary: The account's subscription
+      description: Needs billing:read or commercial:read. The open subscription, else the latest closed one, else null.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: Subscription or null, content: { application/json: { schema: { $ref: "#/components/schemas/Subscription" } } } }
+    post:
+      summary: Create a subscription for an account
+      description: Needs billing:write. Priced from the price book in the opportunity's currency unless seat_month_minor is given. One open subscription per account.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [opportunity_id, seats, cadence, term_months]
+              properties:
+                opportunity_id: { type: string, format: uuid }
+                seats: { type: integer, minimum: 1 }
+                cadence: { type: string, enum: [monthly, annual] }
+                term_months: { type: integer, minimum: 1, maximum: 120 }
+                billing: { type: string, enum: [payment_link, invoiced, provider], default: payment_link }
+                seat_month_minor: { type: integer, minimum: 1 }
+                payment_terms_net_days: { type: integer, minimum: 0, maximum: 365, default: 30 }
+                start_at: { type: string, format: date-time }
+      responses:
+        "201": { description: The Subscription, with a bill for the first period }
+        "409": { description: The account already has a subscription, or billing is provider }
+        "422": { description: The opportunity is not this account's, or the currency has no price }
+  /subscriptions/{id}/amendments:
+    post:
+      summary: Change seats, the term or both
+      description: >
+        Needs billing:write. Appended, never edited (a database trigger rejects UPDATE). A seat change
+        starts with the next billing period; a new term length moves the renewal date at once.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                seats: { type: integer, minimum: 1 }
+                term_months: { type: integer, minimum: 1, maximum: 120 }
+                reason: { type: string, maxLength: 1000 }
+      responses:
+        "201": { description: The Subscription, with the amendment in amendments }
+        "409": { description: Closed subscription, or no later billing period for a seat change to start in }
+  /subscription-invoices/{id}/payment-link:
+    post:
+      summary: A payment link for one bill
+      description: Needs commercial:send or billing:write. Through the COPS-03 payment request; a link that is still payable is reused.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "201": { description: "{invoice_id, payment_request_id, payment_request}" }
+  /subscription-invoices/{id}/mark-paid:
+    post:
+      summary: Record a payment that arrived outside the provider
+      description: Needs billing:write and a reason. Restores access at once.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: Marked paid }
+        "409": { description: The bill is not open }
+  /finance/failed-payments:
+    get:
+      summary: Subscriptions with a bill unpaid past its due date, worst first
+      description: Needs billing:read.
+      responses:
+        "200": { description: List of Subscription }
+  /finance/reconciliation:
+    get:
+      summary: Where a provider and Skout disagree
+      description: >
+        Needs billing:read. Kinds: payment_event_not_applied, bill_paid_at_provider_open_here,
+        envelope_contract_mismatch, envelope_never_confirmed.
+      responses:
+        "200": { description: "{generated_at, counts, issues: [{kind, entity_type, entity_id, provider_state, skout_state, detail, since}]}" }
+  /finance/subscriptions:
+    get:
+      summary: Subscription state and upcoming renewals
+      parameters:
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/SubscriptionStatus" } }
+        - { name: renewing_within_days, in: query, schema: { type: integer, minimum: 1, maximum: 730 } }
+      responses:
+        "200": { description: Rows, soonest renewal first }
+  /finance/payment-requests:
+    get:
+      summary: Payment links across accounts
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [requested, paid, failed, expired, cancelled, refunded] } }
+      responses:
+        "200": { description: Rows, newest first, with the opportunity name }
+  /finance/credit-activity:
+    get:
+      summary: Credit purchases, grants, adjustments and refunds across accounts
+      description: Needs billing:read or credits:read. With actor and reason. Usage is not listed.
+      parameters:
+        - { name: kind, in: query, schema: { type: string, enum: [purchase, grant, adjustment, refund] } }
+      responses:
+        "200": { description: Rows, newest first, with the account name }
+components:
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+  schemas:
+    ApproverRole: { type: string, enum: [sales_manager, finance, legal_revops, executive] }
+    ApprovalRule: { type: string, enum: [discount_pct, seats, contract_value, term_months, free_credits, payment_terms, custom_clauses, non_standard_sla] }
+    SubscriptionStatus: { type: string, enum: [active, past_due, restricted, suspended, closed] }
+    ApprovalTerms:
+      type: object
+      description: The terms the rules read. contract_value_minor is TCV (every line brought to the full term, after discount, before tax); discount_pct is the effective discount on that basis.
+      properties:
+        currency: { type: string }
+        discount_pct: { type: number }
+        seats: { type: integer }
+        contract_value_minor: { type: integer }
+        term_months: { type: integer }
+        free_credits: { type: integer }
+        payment_terms_net_days: { type: integer }
+        custom_clauses: { type: boolean }
+        non_standard_sla: { type: boolean }
+    Approval:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        opportunity_id: { type: string, format: uuid }
+        proposal_id: { type: string, format: uuid }
+        proposal_version: { type: integer }
+        status: { type: string, enum: [pending, approved, rejected, voided, expired] }
+        required_approvers: { type: array, items: { $ref: "#/components/schemas/ApproverRole" } }
+        matched_rules:
+          type: array
+          items: { type: object, properties: { rule: { $ref: "#/components/schemas/ApprovalRule" }, value: { type: number, nullable: true }, approvers: { type: array, items: { $ref: "#/components/schemas/ApproverRole" } } } }
+        terms: { $ref: "#/components/schemas/ApprovalTerms" }
+        requested_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        status_reason: { type: string, nullable: true }
+        decisions:
+          type: array
+          items: { type: object, properties: { role: { $ref: "#/components/schemas/ApproverRole" }, decision: { type: string, enum: [pending, approved, rejected] }, decided_by: { type: string, nullable: true }, decided_at: { type: string, format: date-time, nullable: true }, comment: { type: string, nullable: true } } }
+    ApprovalEvaluation:
+      type: object
+      properties:
+        proposal_id: { type: string, format: uuid }
+        proposal_version: { type: integer }
+        currency: { type: string }
+        terms: { $ref: "#/components/schemas/ApprovalTerms" }
+        required_approvers: { type: array, items: { $ref: "#/components/schemas/ApproverRole" } }
+        matched_rules: { type: array, items: { type: object } }
+        unevaluated: { type: array, description: Rules with nothing configured to check against, items: { $ref: "#/components/schemas/ApprovalRule" } }
+        policy_version: { type: integer, description: 0 is the built-in default }
+        grandfathered: { type: boolean }
+        required: { type: boolean }
+        satisfied: { type: boolean }
+        approval: { allOf: [{ $ref: "#/components/schemas/Approval" }], nullable: true }
+    Envelope:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        contract_id: { type: string, format: uuid }
+        contract_version: { type: integer }
+        provider: { type: string }
+        provider_ref: { type: string, nullable: true }
+        status: { type: string, enum: [pending_send, failed, sent, viewed, expired, declined, signed] }
+        template_key: { type: string, nullable: true }
+        signers: { type: array, items: { type: object } }
+        merge_fields: { type: object }
+        sent_at: { type: string, format: date-time, nullable: true }
+        events:
+          type: array
+          items: { type: object, properties: { event_type: { type: string }, status: { type: string, nullable: true }, occurred_at: { type: string, format: date-time, nullable: true }, received_at: { type: string, format: date-time }, outcome: { type: string } } }
+    Subscription:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        opportunity_id: { type: string, format: uuid }
+        status: { $ref: "#/components/schemas/SubscriptionStatus" }
+        billing: { type: string, enum: [payment_link, invoiced, provider] }
+        currency: { type: string }
+        cadence: { type: string, enum: [monthly, annual] }
+        term_months: { type: integer }
+        term_start: { type: string, format: date-time }
+        renews_at: { type: string, format: date-time }
+        renewal_opportunity_id: { type: string, format: uuid, nullable: true }
+        seats: { type: integer, description: Seats in force now }
+        items: { type: array, items: { type: object, properties: { kind: { type: string }, quantity: { type: integer }, unit_amount_minor: { type: integer, description: Per unit per month } } } }
+        invoices:
+          type: array
+          items: { type: object, properties: { id: { type: string }, period_start: { type: string }, period_end: { type: string }, due_at: { type: string }, amount_minor: { type: integer }, currency: { type: string }, status: { type: string, enum: [open, paid, void] }, payment_request_id: { type: string, nullable: true }, paid_at: { type: string, nullable: true } } }
+        amendments:
+          type: array
+          items: { type: object, properties: { seq: { type: integer }, seats: { type: integer, nullable: true }, term_months: { type: integer, nullable: true }, reason: { type: string }, effective_at: { type: string }, before: { type: object }, after: { type: object } } }
+        dunning:
+          type: object
+          nullable: true
+          description: Present while a bill is unpaid past its due date. Day 0 is that due date.
+          properties:
+            overdue_invoice_id: { type: string }
+            due_at: { type: string, format: date-time }
+            day: { type: integer }
+            next_status: { allOf: [{ $ref: "#/components/schemas/SubscriptionStatus" }], nullable: true }
+            next_status_at: { type: string, format: date-time, nullable: true }

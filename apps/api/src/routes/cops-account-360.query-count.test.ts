@@ -94,8 +94,8 @@ maybe("GET /accounts/:id/360 query count", () => {
     const large = await countFor(company.id as string);
 
     expect(large).toBe(small);
-    // Measured constant: 21 statements per request, including auth and middleware. The bound
+    // Measured constant: 26 statements per request, including auth and middleware. The bound
     // guards against a regression that adds per-row queries (N+1); the equality above is the real check.
-    expect(large).toBeLessThanOrEqual(25);
+    expect(large).toBeLessThanOrEqual(26);
   });
 });

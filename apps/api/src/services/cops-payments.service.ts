@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
-import { appendCopsEvent, createCopsEvent, nextPaymentStatus, type PaymentRequestStatus } from "@skout/shared";
+import { appendCopsEvent, createCopsEvent, firstInvoiceMinor, nextPaymentStatus, type PaymentRequestStatus } from "@skout/shared";
 import { createLogger } from "@skout/observability";
 import { writeCopsAudit } from "./cops-platform.service.js";
 import { advanceCommercialState, CommercialError, getOpportunity, type CommercialContext } from "./cops-commercial.service.js";
@@ -9,10 +9,10 @@ import type { PspAdapter } from "./psp/psp-adapter.js";
 import { PspRequestError } from "./psp/razorpay.js";
 
 const log = createLogger("cops-payments.service");
-const { paymentRequests, paymentProviderEvents, proposals, proposalVersions } = schema;
+const { paymentRequests, paymentProviderEvents, proposals, proposalVersions, proposalLineItems } = schema;
 
 /** Runs inside the payment transaction after a payment is confirmed (used by the provisioning gate). */
-export type OnPaymentChange = (tx: Db, input: { workspaceId: string; opportunityId: string; requestId: string }) => Promise<void>;
+export type OnPaymentChange = (tx: Db, input: { workspaceId: string; opportunityId: string; requestId: string; paymentRequestId?: string }) => Promise<void>;
 
 export interface CreatePaymentRequestInput {
   opportunity_id: string;
@@ -38,21 +38,36 @@ export async function createPaymentRequest(db: Db, psp: PspAdapter, ctx: Commerc
   let amountMinor = input.amount_minor;
   let currency = input.currency;
   if (input.proposal_id) {
-    // Amount defaults to the total of the proposal's latest sent version.
+    // The amount is the total of the proposal's latest sent version: what the customer agreed to.
     const [sent] = await db
-      .select({ total: proposalVersions.totalMinor, currency: proposalVersions.currency, status: proposals.status })
+      .select({
+        versionId: proposalVersions.id,
+        currency: proposalVersions.currency,
+        status: proposals.status,
+        cadence: proposalVersions.billingCadence,
+        termMonths: proposalVersions.termMonths,
+        discountPct: proposalVersions.discountPct,
+        taxPct: proposalVersions.taxPct,
+      })
       .from(proposals)
       .innerJoin(proposalVersions, eq(proposalVersions.proposalId, proposals.id))
       .where(
         and(
           eq(proposals.id, input.proposal_id),
           eq(proposals.workspaceId, ctx.workspaceId),
-          eq(proposals.opportunityId, opportunity.id)
+          eq(proposals.opportunityId, opportunity.id),
+          isNotNull(proposalVersions.sentAt)
         )
       )
       .orderBy(desc(proposalVersions.sentAt))
       .limit(1);
     if (!sent) {
+      const [exists] = await db
+        .select({ id: proposals.id })
+        .from(proposals)
+        .where(and(eq(proposals.id, input.proposal_id), eq(proposals.workspaceId, ctx.workspaceId), eq(proposals.opportunityId, opportunity.id)))
+        .limit(1);
+      if (exists) throw new CommercialError("BUSINESS_STATE_CONFLICT", "Send the proposal before requesting payment for it", { status: "draft" });
       throw new CommercialError("VALIDATION_FAILED", "proposal_id is not a proposal of this opportunity", {
         fields: [{ path: "proposal_id", code: "invalid", message: "Not a proposal of this opportunity" }],
       });
@@ -60,8 +75,26 @@ export async function createPaymentRequest(db: Db, psp: PspAdapter, ctx: Commerc
     if (!["sent", "accepted"].includes(sent.status)) {
       throw new CommercialError("BUSINESS_STATE_CONFLICT", "Send the proposal before requesting payment for it", { status: sent.status });
     }
-    amountMinor ??= Number(sent.total);
-    currency ??= sent.currency;
+    // The first invoice of the sent version: a year up front on annual billing, one month on monthly.
+    const lines = await db
+      .select({ kind: proposalLineItems.kind, priceBasis: proposalLineItems.priceBasis, netMinor: proposalLineItems.netMinor })
+      .from(proposalLineItems)
+      .where(eq(proposalLineItems.versionId, sent.versionId));
+    const due = firstInvoiceMinor({
+      billing_cadence: sent.cadence,
+      term_months: sent.termMonths,
+      discount_pct: Number(sent.discountPct),
+      tax_pct: Number(sent.taxPct),
+      lines: lines.map((l) => ({ kind: l.kind, price_basis: l.priceBasis, net_minor: Number(l.netMinor) })),
+    });
+    // A link for a proposal charges exactly its price; a different amount or currency is refused.
+    if ((input.amount_minor !== undefined && input.amount_minor !== due) || (input.currency !== undefined && input.currency !== sent.currency)) {
+      throw new CommercialError("VALIDATION_FAILED", "A payment link for a proposal charges its sent price; the amount cannot be changed", {
+        fields: [{ path: "amount_minor", code: "locked", message: `Must be the proposal's first invoice (${due} ${sent.currency})` }],
+      });
+    }
+    amountMinor = due;
+    currency = sent.currency;
   }
   currency ??= opportunity.currency;
   if (!amountMinor || amountMinor < 100) {
@@ -159,14 +192,16 @@ export type WebhookOutcome =
  * Provider webhook. Signature first (401 otherwise); then, in one transaction, the event id is
  * recorded (unique per provider, so a replay or a concurrent duplicate stops here), the payment
  * request is locked and its status moves forward only. A paid event emits PaymentSucceeded and runs
- * `onPaid` (gate evaluation) in the same transaction.
+ * `onPaid` (gate evaluation) in the same transaction; a refunded event runs `onRefunded` (credit
+ * purchase reversal) in the same transaction.
  */
 export async function handlePaymentWebhook(
   db: Db,
   psp: PspAdapter,
   rawBody: string,
   headers: Record<string, string | string[] | undefined>,
-  onPaid?: OnPaymentChange
+  onPaid?: OnPaymentChange,
+  onRefunded?: OnPaymentChange
 ): Promise<WebhookOutcome> {
   if (!psp.verifyWebhook(rawBody, headers)) return { kind: "unauthorized" };
   const event = psp.parseWebhook(rawBody, headers);
@@ -253,6 +288,9 @@ export async function handlePaymentWebhook(
         })
       );
       if (onPaid) await onPaid(tx as unknown as Db, { workspaceId: request.workspaceId, opportunityId: request.opportunityId, requestId });
+    }
+    if (next === "refunded" && onRefunded) {
+      await onRefunded(tx as unknown as Db, { workspaceId: request.workspaceId, opportunityId: request.opportunityId, requestId, paymentRequestId: request.id });
     }
     return finish("applied", next);
   });

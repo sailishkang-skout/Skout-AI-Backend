@@ -13,6 +13,7 @@ import {
   type ProspectScore,
 } from "./types.js";
 import { trackCreditAdd, trackCreditSpend } from "../analytics-events.js";
+import { assertSubscriptionAllowsUse } from "../cops-subscription-access.js";
 
 const {
   creditBalances,
@@ -58,6 +59,8 @@ export class DbStore implements EnrichmentStore {
   /** The balance check and the write happen under the wallet lock, so two spends cannot overdraw. */
   async deductCredits(workspaceId: string, amount: number, action: string, ref?: string): Promise<number> {
     if (amount <= 0) return this.getCreditBalance(workspaceId);
+    // COPS-08: a workspace restricted or suspended for an unpaid bill cannot spend new credits.
+    await assertSubscriptionAllowsUse(this.db, workspaceId);
     try {
       const { balance } = await postCreditTransaction(this.db, {
         workspaceId,
@@ -260,24 +263,27 @@ export class DbStore implements EnrichmentStore {
       await this.db.update(enrichmentJobs).set(set).where(eq(enrichmentJobs.id, id));
     }
 
-    if (patch.results !== undefined) {
-      const [job] = await this.db.select().from(enrichmentJobs).where(eq(enrichmentJobs.id, id));
-      if (job) {
-        await this.db.delete(enrichmentResults).where(eq(enrichmentResults.enrichmentJobId, id));
-        if (patch.results.length) {
-          await this.db.insert(enrichmentResults).values(
-            patch.results.map((r) => this.toResultRow(id, job.workspaceId, job.prospectId, r))
-          );
-        }
+    const [job] =
+      patch.results !== undefined || patch.attempts !== undefined
+        ? await this.db.select().from(enrichmentJobs).where(eq(enrichmentJobs.id, id))
+        : [];
+
+    if (patch.results !== undefined && job) {
+      await this.db.delete(enrichmentResults).where(eq(enrichmentResults.enrichmentJobId, id));
+      if (patch.results.length) {
+        await this.db.insert(enrichmentResults).values(
+          patch.results.map((r) => this.toResultRow(id, job.workspaceId, job.prospectId, r))
+        );
       }
     }
 
-    if (patch.attempts !== undefined) {
+    if (patch.attempts !== undefined && job) {
       await this.db.delete(enrichmentAttempts).where(eq(enrichmentAttempts.enrichmentJobId, id));
       if (patch.attempts.length) {
         await this.db.insert(enrichmentAttempts).values(
           patch.attempts.map((a) => ({
             enrichmentJobId: id,
+            workspaceId: job.workspaceId,
             attemptOrder: a.order,
             provider: a.provider,
             operation: a.operation,

@@ -28,7 +28,8 @@ export const TICKET_TRANSITIONS: Record<TicketStatus, readonly TicketStatus[]> =
   // A resolution the customer rejects reopens the work.
   resolved: ["verified", "in_progress"],
   verified: ["closed", "in_progress"],
-  closed: [],
+  // Bible p.55: a closed ticket can be reopened with a reason; history is kept.
+  closed: ["in_progress"],
 };
 
 /** Statuses that count as open for the CRM summary (open count, max severity). */

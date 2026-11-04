@@ -43,7 +43,28 @@ export const WEBHOOK_EVENT_TYPES = [
   "reply.classified",
   "meeting.completed",
   "opportunity.updated",
+  // ── CustomerOps lifecycle (COPS-14 marketplace webhooks) ────────────────
+  "proposal.sent",
+  "contract.signed",
+  "payment.succeeded",
+  "workspace.provisioned",
+  "customer.activated",
+  "task.created",
+  "ticket.created",
+  "ticket.resolved",
 ] as const;
+
+/** CustomerOps domain events that are also sent to customer webhooks, by their public name. */
+export const COPS_WEBHOOK_EVENTS: Record<string, WebhookEventType> = {
+  ProposalSent: "proposal.sent",
+  ContractSigned: "contract.signed",
+  PaymentSucceeded: "payment.succeeded",
+  WorkspaceProvisioned: "workspace.provisioned",
+  CustomerActivated: "customer.activated",
+  TaskCreated: "task.created",
+  TicketCreated: "ticket.created",
+  TicketResolved: "ticket.resolved",
+};
 
 export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];
 

@@ -5,6 +5,7 @@ import type { Env } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
 import { purgeExpiredCaptureEvidence } from "../services/enrichment/capture-evidence.js";
 import { purgeExpiredProviderResponses } from "../services/enrichment/provider-jobs.service.js";
+import { DB_SHUTDOWN_TIMEOUT_SECONDS } from "../plugins/db.js";
 
 const log = createLogger("enrichment-evidence-retention.worker");
 
@@ -49,6 +50,6 @@ export async function startEnrichmentEvidenceRetentionWorker(config: Env) {
   return async () => {
     await worker.close();
     await queue.close();
-    await sql.end();
+    await sql.end({ timeout: DB_SHUTDOWN_TIMEOUT_SECONDS });
   };
 }

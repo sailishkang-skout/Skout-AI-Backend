@@ -37,6 +37,8 @@ let app: FastifyInstance;
 let config: Env;
 let owner: Record<string, string>;
 let ownerId: string;
+/** Approves campaigns: a second person, since the creator and submitter may not approve their own. */
+let reviewerId: string;
 let outsider: Record<string, string>;
 
 const { contacts, emailVerifications, enrichmentCaptureRuns, enrichmentJobs, sequenceEnrollments } = schema;
@@ -49,7 +51,10 @@ async function provisionUser(workspaceId: string) {
   await db.insert(schema.workspaceMembers).values({ workspaceId, userId, role: "owner" });
   if (!(await grantSystemMemberRole(db, workspaceId, userId, "owner"))) throw new Error("System roles are not seeded");
   const auth = buildTestAuth({ workspaceId, userId, email, role: "owner" });
-  return { userId, headers: { "x-workspace-id": workspaceId, "content-type": "application/json", Authorization: auth.bearer } };
+  return {
+    userId,
+    headers: { "x-workspace-id": workspaceId, "content-type": "application/json", Authorization: auth.bearer },
+  };
 }
 
 beforeAll(async () => {
@@ -82,6 +87,7 @@ beforeAll(async () => {
   const o = await provisionUser(WORKSPACE);
   owner = o.headers;
   ownerId = o.userId;
+  reviewerId = (await provisionUser(WORKSPACE)).userId;
   outsider = (await provisionUser(OTHER_WORKSPACE)).headers;
 }, 60000);
 
@@ -91,6 +97,7 @@ afterAll(async () => {
 
 const db = () => app.db!;
 const actor = () => ({ workspaceId: WORKSPACE, userId: ownerId });
+const reviewerActor = () => ({ workspaceId: WORKSPACE, userId: reviewerId });
 const post = (url: string, payload: unknown = {}, headers: Record<string, string> = owner) =>
   app.inject({ method: "POST", url: `/api/v1${url}`, headers, payload: payload as object });
 const get = (url: string, headers = owner) => app.inject({ method: "GET", url: `/api/v1${url}`, headers });
@@ -402,7 +409,7 @@ describe("Case 8 — a campaign with sandbox recipients only", () => {
 
     await updateDraft(db(), actor(), campaign.id, defaultDraft(false).steps.map((step) => ({ ...step, body: step.body.replace(/\[Write[^\]]*\]/, "We help revenue teams.") })));
     await submitCampaign(db(), config, actor(), campaign.id);
-    await reviewCampaign(db(), config, actor(), campaign.id, { decision: "approved", comment: "Sandbox exercise" });
+    await reviewCampaign(db(), config, reviewerActor(), campaign.id, { decision: "approved", comment: "Sandbox exercise" });
     const { newEnrollments } = await launchCampaign(db(), config, actor(), campaign.id);
     const enrollment = Object.fromEntries(newEnrollments.map((entry) => [entry.prospectId, entry.enrollmentId]));
 
@@ -491,11 +498,41 @@ describe("Release gates", () => {
     }
   });
 
-  it("opens to every workspace only with a recorded approval", () => {
-    const base = { NODE_ENV: "production" as const, ENRICHMENT_LEGAL_APPROVAL_REF: undefined };
-    expect(releaseState({ ...base, ENRICHMENT_RELEASE_STAGE: "general" })).toMatchObject({ stage: "internal", legalApprovalRecorded: false, enforced: true });
-    expect(releaseState({ ...base, ENRICHMENT_RELEASE_STAGE: "general", ENRICHMENT_LEGAL_APPROVAL_REF: "  " })).toMatchObject({ stage: "internal" });
+  it("makes enrichment available to every production workspace in general release", async () => {
+    const production = await buildApp({
+      ...config,
+      NODE_ENV: "production",
+      ENRICHMENT_RELEASE_STAGE: "general",
+      ENRICHMENT_LEGAL_APPROVAL_REF: undefined,
+    });
+    try {
+      const call = (url: string, headers = owner) =>
+        production.inject({ method: "GET", url: `/api/v1${url}`, headers });
+      expect((await call("/enrichment/capture/status")).statusCode).toBe(200);
+      expect((await call("/enrichment/release")).json()).toMatchObject({
+        enabled: true,
+        stage: "general",
+        reason: null,
+      });
+      expect((await call("/enrichment/people", outsider)).statusCode).toBe(200);
+      expect((await call("/enrichment/release", outsider)).json()).toMatchObject({
+        enabled: true,
+        stage: "general",
+      });
+    } finally {
+      await production.close();
+    }
+  });
+
+  it("keeps the configured release stage independent from the approval reference", () => {
+    const base = {
+      NODE_ENV: "production" as const,
+      ENRICHMENT_LEGAL_APPROVAL_REF: undefined,
+    };
+    expect(releaseState({ ...base, ENRICHMENT_RELEASE_STAGE: "general" })).toMatchObject({ stage: "general", legalApprovalRecorded: false, enforced: true });
+    expect(releaseState({ ...base, ENRICHMENT_RELEASE_STAGE: "general", ENRICHMENT_LEGAL_APPROVAL_REF: "  " })).toMatchObject({ stage: "general" });
     expect(releaseState({ ...base, ENRICHMENT_RELEASE_STAGE: "general", ENRICHMENT_LEGAL_APPROVAL_REF: "LEGAL-142" })).toMatchObject({ stage: "general", legalApprovalRecorded: true });
     expect(releaseState({ ...base, NODE_ENV: "development", ENRICHMENT_RELEASE_STAGE: "internal" })).toMatchObject({ stage: "internal", enforced: false });
   });
+
 });

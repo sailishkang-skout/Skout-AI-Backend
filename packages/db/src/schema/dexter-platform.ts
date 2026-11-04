@@ -18,6 +18,11 @@ export const automationPolicies = pgTable(
     /** Logical action key, e.g. dexter.enroll_list, sequence.activate, activation_rule.fire */
     actionKey: text("action_key").notNull(),
     mode: text("mode").notNull().default("ask"), // ask | auto | draft | approve
+    /**
+     * COPS-14: role ids (system or custom) whose members may run this agent action. Null means
+     * every member. Workspace owners are always allowed, so a workspace cannot lock itself out.
+     */
+    allowedRoleIds: jsonb("allowed_role_ids"),
     updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

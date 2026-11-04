@@ -61,16 +61,25 @@ export async function inviteAuthRoutes(app: FastifyInstance) {
         expiresAt,
       });
 
-      const mail = await sendMail(
-        app.config,
-        buildOtpEmail({
-          to: invite.email,
-          otp,
-          workspaceName: invite.workspaceName,
-          expiresInMinutes: 10,
-        })
-      );
+      let mail: { sent: boolean } = { sent: false };
+      try {
+        mail = await sendMail(
+          app.config,
+          buildOtpEmail({
+            to: invite.email,
+            otp,
+            workspaceName: invite.workspaceName,
+            expiresInMinutes: 10,
+          })
+        );
+      } catch (err) {
+        app.log.error({ err }, "[send-otp] SMTP delivery failed");
+      }
       if (!mail.sent) {
+        // In dev mode return the OTP directly so testing can proceed without SMTP
+        if (app.config.NODE_ENV !== "production") {
+          return reply.send({ data: { email: invite.email, expiresInMinutes: 10, devOtp: otp } });
+        }
         return reply
           .code(503)
           .send(errorResponse("Email delivery is not configured — cannot send verification code", 503));

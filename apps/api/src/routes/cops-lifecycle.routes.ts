@@ -27,6 +27,7 @@ import {
 } from "../services/cops-platform.service.js";
 import { withCopsIdempotency } from "../services/cops-idempotent.js";
 import { runLifecycleTransition } from "../services/cops-lifecycle.service.js";
+import { assertApprovalsAllowWin } from "../services/cops-approvals.service.js";
 
 const { copsLifecycleStates, copsOutbox } = schema;
 
@@ -131,6 +132,8 @@ export async function copsLifecycleRoutes(app: FastifyInstance, opts: { db: Db }
       const occurredAt = new Date();
       try {
         const result = await db.transaction(async (tx) => {
+          // COPS-08 stage rule: no win while a proposal is waiting for approval.
+          if (dimension === "opportunity" && body.to === "won") await assertApprovalsAllowWin(tx as unknown as Db, workspaceId, entityId, "commercial");
           const transition = await runLifecycleTransition(tx as unknown as Db, {
             workspaceId,
             dimension,

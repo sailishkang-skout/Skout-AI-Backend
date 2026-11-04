@@ -308,6 +308,9 @@ export const enrichmentAttempts = pgTable(
     enrichmentJobId: uuid("enrichment_job_id")
       .notNull()
       .references(() => enrichmentJobs.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
     attemptOrder: integer("attempt_order").notNull(),
     provider: text("provider").notNull(),
     operation: text("operation").notNull(),
@@ -319,7 +322,10 @@ export const enrichmentAttempts = pgTable(
     attemptedAt: timestamp("attempted_at", { withTimezone: true }).notNull().defaultNow(),
     completedAt: timestamp("completed_at", { withTimezone: true }),
   },
-  (table) => [unique().on(table.enrichmentJobId, table.attemptOrder)]
+  (table) => [
+    unique().on(table.enrichmentJobId, table.attemptOrder),
+    index("enrichment_attempts_workspace_job_idx").on(table.workspaceId, table.enrichmentJobId),
+  ]
 );
 
 export const enrichmentResults = pgTable("enrichment_results", {

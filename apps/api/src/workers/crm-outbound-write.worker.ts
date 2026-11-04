@@ -10,9 +10,20 @@ import { ensureFreshTokens, createDefaultCredentialsStore } from "../services/cr
 import {
   isHubSpotMissingScopeError,
   isHubSpotRetryableError,
+  fetchHubSpotObjectProperties,
   updateHubSpotContact,
   updateHubSpotDeal,
 } from "../services/hubspot.client.js";
+import {
+  applyOutboundMapping,
+  DEFAULT_HUBSPOT_CONTACT_MAPPING,
+  DEFAULT_HUBSPOT_DEAL_MAPPING,
+  getResolvedCrmMapping,
+  type CrmObjectMapping,
+} from "../services/crm-mapping.service.js";
+import { evaluateFieldConflict, getPendingConflictFields, recordCrmConflict } from "../services/crm-conflict.service.js";
+import { getCrmSyncScope } from "../services/crm-opt-in.service.js";
+import { persistHubSpotRateLimit } from "../services/crm-alerts.service.js";
 
 const log = createLogger("crm-outbound-write.worker");
 
@@ -23,26 +34,17 @@ const WORKER_ID = `crm-outbound-write-${process.pid}`;
 
 type Db = ReturnType<typeof createDb>["db"];
 
-const CONTACT_FIELD_TO_HUBSPOT: Record<string, string> = {
-  firstName: "firstname",
-  lastName: "lastname",
-  email: "email",
-  phone: "phone",
-  title: "jobtitle",
-};
-const DEAL_FIELD_TO_HUBSPOT: Record<string, string> = {
-  name: "dealname",
-  amount: "amount",
-};
-
-function toHubSpotProperties(entityType: string, patch: Record<string, unknown>): Record<string, string> {
-  const map = entityType === "contact" ? CONTACT_FIELD_TO_HUBSPOT : DEAL_FIELD_TO_HUBSPOT;
-  const props: Record<string, string> = {};
-  for (const [field, value] of Object.entries(patch)) {
-    const hsProp = map[field];
-    if (hsProp && value != null) props[hsProp] = String(value);
+function toHubSpotProperties(
+  entityType: string,
+  patch: Record<string, unknown>,
+  mapping?: CrmObjectMapping
+): Record<string, string> {
+  if (mapping) {
+    const { properties } = applyOutboundMapping(mapping, patch);
+    return properties;
   }
-  return props;
+  const defaultMapping = entityType === "contact" ? DEFAULT_HUBSPOT_CONTACT_MAPPING : DEFAULT_HUBSPOT_DEAL_MAPPING;
+  return applyOutboundMapping(defaultMapping, patch).properties;
 }
 
 /**
@@ -79,24 +81,89 @@ export async function processNextCrmOutboundWrite(db: Db, config: Env): Promise<
       return "pushed";
     }
 
-    // Reverse manual-wins: if the provider's own value changed more recently than the Skout
-    // edit that queued this write, skip the push rather than overwrite a newer provider-side edit.
-    if (link.externalUpdatedAt && link.externalUpdatedAt > claimed.skoutChangedAt) {
-      await recordResult(db, crmOutboundWrites, claimed.id, WORKER_ID, {
-        status: "failed",
-        lastError: "conflict_hubspot_newer",
-      });
-      return "conflict";
+    const entityType = claimed.entityType as "contact" | "deal";
+
+    // ADR 0014: a connection that has sync turned off (or this object type out of scope) pushes nothing.
+    const scope = await getCrmSyncScope(db, claimed.workspaceId, "hubspot");
+    if (!scope?.enabled || !(entityType === "contact" ? scope.contacts : scope.deals)) {
+      await recordResult(db, crmOutboundWrites, claimed.id, WORKER_ID, { status: "failed", lastError: "sync_disabled" });
+      return "pushed";
+    }
+
+    const mapping = await getResolvedCrmMapping(db, claimed.workspaceId, "hubspot", entityType).catch(() => undefined);
+    const patch: Record<string, unknown> = { ...(claimed.patch as Record<string, unknown>) };
+    let held: "blocked_by_pending_conflict" | "conflict_hubspot_newer" | null = null;
+
+    // A field with a pending conflict is not overwritten in either direction until it is resolved.
+    const pending = await getPendingConflictFields(db, claimed.workspaceId, claimed.connectionId, entityType, claimed.entityId);
+    for (const field of Object.keys(patch)) {
+      if (pending.has(field)) {
+        delete patch[field];
+        held = "blocked_by_pending_conflict";
+      }
     }
 
     const credentialsStore = createDefaultCredentialsStore(config);
     const tokens = await ensureFreshTokens(db, config, credentialsStore, claimed.workspaceId);
-    const properties = toHubSpotProperties(claimed.entityType, claimed.patch as Record<string, unknown>);
+    try {
+      // The provider changed the record after this Skout edit: each field's conflict policy
+      // decides, against the provider's current value.
+      if (link.externalUpdatedAt && link.externalUpdatedAt > claimed.skoutChangedAt && Object.keys(patch).length > 0) {
+        const fieldMap = (mapping ?? (entityType === "contact" ? DEFAULT_HUBSPOT_CONTACT_MAPPING : DEFAULT_HUBSPOT_DEAL_MAPPING)).fields;
+        const externalOf = (field: string) => fieldMap.find((f) => f.internalField === field);
+        const current = await fetchHubSpotObjectProperties(
+          tokens.accessToken,
+          entityType === "contact" ? "contacts" : "deals",
+          link.externalId,
+          Object.keys(patch).map((f) => externalOf(f)?.externalField ?? f)
+        );
+        for (const [field, value] of Object.entries(patch)) {
+          const fm = externalOf(field);
+          const externalValue = current[fm?.externalField ?? field] ?? null;
+          const decision = evaluateFieldConflict({
+            fieldName: field,
+            skoutValue: value,
+            externalValue,
+            skoutUpdatedAt: claimed.skoutChangedAt,
+            externalUpdatedAt: link.externalUpdatedAt,
+            policy: fm?.conflictPolicy ?? "most_recent",
+            isFieldProtected: fm?.isProtected,
+          });
+          if (decision.action === "keep_skout") continue;
+          delete patch[field];
+          held = held ?? "conflict_hubspot_newer";
+          if (decision.action === "manual_review") {
+            held = "blocked_by_pending_conflict";
+            await recordCrmConflict(db, {
+              workspaceId: claimed.workspaceId,
+              connectionId: claimed.connectionId,
+              entityType,
+              entityId: claimed.entityId,
+              externalId: link.externalId,
+              fieldName: field,
+              skoutValue: value != null ? String(value) : null,
+              externalValue,
+              skoutUpdatedAt: claimed.skoutChangedAt,
+              externalUpdatedAt: link.externalUpdatedAt,
+              policy: "manual_review",
+            });
+          }
+        }
+      }
 
-    if (claimed.entityType === "contact") {
-      await updateHubSpotContact(tokens.accessToken, link.externalId, properties);
-    } else {
-      await updateHubSpotDeal(tokens.accessToken, link.externalId, properties);
+      if (Object.keys(patch).length === 0) {
+        await recordResult(db, crmOutboundWrites, claimed.id, WORKER_ID, { status: "failed", lastError: held ?? "nothing_to_push" });
+        return "conflict";
+      }
+
+      const properties = toHubSpotProperties(claimed.entityType, patch, mapping);
+      if (entityType === "contact") {
+        await updateHubSpotContact(tokens.accessToken, link.externalId, properties);
+      } else {
+        await updateHubSpotDeal(tokens.accessToken, link.externalId, properties);
+      }
+    } finally {
+      await persistHubSpotRateLimit(db, claimed.connectionId, tokens.accessToken).catch(() => undefined);
     }
 
     await recordResult(db, crmOutboundWrites, claimed.id, WORKER_ID, { status: "succeeded" });

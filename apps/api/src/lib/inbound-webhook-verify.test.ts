@@ -153,3 +153,13 @@ describe("verifyGenericHmacWebhook", () => {
     expect(result.ok).toBe(false);
   });
 });
+
+describe("safeEqual (also used for the SCIM bearer token)", () => {
+  it("matches only identical strings, including on a length mismatch", async () => {
+    const { safeEqual } = await import("./inbound-webhook-verify.js");
+    expect(safeEqual("scim-token-abc", "scim-token-abc")).toBe(true);
+    expect(safeEqual("scim-token-abc", "scim-token-abd")).toBe(false);
+    expect(safeEqual("scim-token-abc", "scim-token")).toBe(false);
+    expect(safeEqual("", "x")).toBe(false);
+  });
+});

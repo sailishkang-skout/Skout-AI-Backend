@@ -547,6 +547,15 @@ export async function reviewCampaign(db: Db, config: Env, actor: CaptureActor, i
     await db.insert(enrichmentCampaignReviews).values({ campaignId: id, workspaceId: actor.workspaceId, reviewerId: actor.userId, decision: "rejected", comment });
     await db.update(enrichmentCampaigns).set({ status: "rejected", reviewComment: comment, approvedFingerprint: null, approvedBy: null, approvedAt: null, updatedAt: now }).where(eq(enrichmentCampaigns.id, id));
   } else {
+    // A second person approves: whoever created the campaign or submitted it for review may
+    // reject (withdraw) it, but not approve their own work.
+    if (actor.userId === row.createdBy || actor.userId === row.submittedBy) {
+      throw new CaptureError(
+        "self_approval_not_allowed",
+        403,
+        "Someone other than the person who created or submitted this campaign must approve it."
+      );
+    }
     const problems = draftProblems(draftOf(row));
     if (problems.length) throw new CaptureError("draft_incomplete", 422, problems.join(" "));
     const recipients = await refresh(db, config, row);

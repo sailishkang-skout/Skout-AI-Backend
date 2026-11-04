@@ -3,6 +3,10 @@ import { dashboardRoutes } from "./dashboard.routes.js";
 import { analyticsRoutes } from "./analytics.routes.js";
 import { aiRoutes } from "./ai.routes.js";
 import { hubspotRoutes } from "./hubspot.routes.js";
+import { crmMappingRoutes } from "./crm-mapping.routes.js";
+import { crmConflictRoutes } from "./crm-conflict.routes.js";
+import { crmObservabilityRoutes } from "./crm-observability.routes.js";
+import { crmImportRoutes } from "./crm-import.routes.js";
 import { crmNativeRoutes } from "./crm-native.routes.js";
 import { workbookColumnRoutes } from "./workbook-column.routes.js";
 import { webhookRoutes } from "./webhooks.routes.js";
@@ -57,6 +61,7 @@ import { competitiveRoutes } from "./competitive.routes.js";
 import { regionalIntelRoutes } from "./regional-intel.routes.js";
 import { stepUpRoutes } from "./step-up.routes.js";
 import { incidentsRoutes } from "./incidents.routes.js";
+import { copsIncidentsRoutes } from "./cops-incidents.routes.js";
 import { modelVersionsRoutes } from "./model-versions.routes.js";
 import { regionalBriefRoutes } from "./regional-brief.routes.js";
 import { dexterPlatformRoutes } from "./dexter-platform.routes.js";
@@ -72,11 +77,21 @@ import { copsOnboardingRoutes } from "./cops-onboarding.routes.js";
 import { copsTicketsRoutes } from "./cops-tickets.routes.js";
 import { copsAdminConfigRoutes } from "./cops-admin-config.routes.js";
 import { copsAdminOpsRoutes } from "./cops-admin-ops.routes.js";
+import { copsIntegrationsStatusRoutes } from "./cops-integrations-status.routes.js";
+import { copsContractDocumentLocalRoutes, copsContractDocumentRoutes } from "./cops-contract-documents.routes.js";
+import { copsOpsAlertRoutes } from "./cops-ops-alerts.routes.js";
 import { requireCopsModule } from "../services/cops-feature-flags.js";
 import { copsOutboxRoutes } from "./cops-outbox.routes.js";
 import { copsLifecycleRoutes } from "./cops-lifecycle.routes.js";
 import { ssoScimRoutes } from "./sso-scim.routes.js";
 import { automationRoutes } from "./automation.routes.js";
+import { copsSuccessRoutes } from "./cops-success.routes.js";
+import { copsAnalyticsRoutes } from "./cops-analytics.routes.js";
+import { copsRecommendationsRoutes } from "./cops-recommendations.routes.js";
+import { copsRolesRoutes } from "./cops-roles.routes.js";
+import { copsAppsRoutes } from "./cops-apps.routes.js";
+import { copsUsageRoutes, registerAiMetering } from "./cops-usage.routes.js";
+import { accountScopeGuard } from "../services/cops-data-scope.service.js";
 import { complianceRoutes } from "./compliance.routes.js";
 import { enterpriseControlPlaneRoutes } from "./enterprise-control-plane.routes.js";
 import { jwksRoutes } from "./jwks.routes.js";
@@ -92,6 +107,11 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(jwksRoutes);
 
   await app.register(async (v1) => {
+    // COPS-14: count AI actions against the plan before any AI route runs.
+    registerAiMetering(v1);
+    // COPS-14 data scope: before any account route, a member limited to their own accounts gets
+    // 404 for other accounts. Runs after the auth preHandlers, which set workspaceId and userId.
+    if (app.db) v1.addHook("preHandler", accountScopeGuard(app.db));
     await v1.register(userRoutes);
     await v1.register(workspaceRoutes);
     await v1.register(dashboardRoutes);
@@ -119,6 +139,10 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(inboxRoutes);
     await v1.register(aiRoutes);
     await v1.register(hubspotRoutes);
+    await v1.register(crmMappingRoutes);
+    await v1.register(crmConflictRoutes);
+    await v1.register(crmObservabilityRoutes);
+    await v1.register(crmImportRoutes);
     await v1.register(crmNativeRoutes);
     await v1.register(webhookRoutes);
     await v1.register(integrationRoutes);
@@ -154,6 +178,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(regionalIntelRoutes);
     await v1.register(stepUpRoutes);
     await v1.register(incidentsRoutes);
+    await v1.register(copsIncidentsRoutes);
     await v1.register(modelVersionsRoutes);
     await v1.register(regionalBriefRoutes);
     await v1.register(dexterPlatformRoutes);
@@ -168,12 +193,16 @@ export async function registerRoutes(app: FastifyInstance) {
         });
       await v1.register(copsAuditRoutes, { db: app.db });
       await gated("crm", [copsTimelineRoutes, copsAccount360Routes, copsSavedViewsRoutes, copsCrmObjectsRoutes]);
-      await gated("commercial", [copsCommercialRoutes]);
+      await gated("commercial", [copsCommercialRoutes, copsContractDocumentRoutes]);
       await gated("provisioning", [copsProvisioningRoutes]);
       await gated("onboarding", [copsOnboardingRoutes]);
       await gated("tickets", [copsTicketsRoutes]);
       await v1.register(copsAdminConfigRoutes, { db: app.db });
       await v1.register(copsAdminOpsRoutes, { db: app.db });
+      await v1.register(copsIntegrationsStatusRoutes, { db: app.db });
+      // Dev-only stand-in for presigned URLs (no bucket); not registered in production.
+      await v1.register(copsContractDocumentLocalRoutes);
+      await v1.register(copsOpsAlertRoutes, { db: app.db });
       await v1.register(copsOutboxRoutes, { db: app.db });
       await v1.register(copsLifecycleRoutes, { db: app.db });
     } else {
@@ -181,6 +210,12 @@ export async function registerRoutes(app: FastifyInstance) {
     }
     await v1.register(ssoScimRoutes);
     await v1.register(automationRoutes);
+    await v1.register(copsSuccessRoutes);
+    await v1.register(copsAnalyticsRoutes);
+    await v1.register(copsRecommendationsRoutes);
+    await v1.register(copsRolesRoutes);
+    await v1.register(copsAppsRoutes);
+    await v1.register(copsUsageRoutes);
     await v1.register(complianceRoutes);
     await v1.register(enterpriseControlPlaneRoutes);
   }, { prefix: "/api/v1" });

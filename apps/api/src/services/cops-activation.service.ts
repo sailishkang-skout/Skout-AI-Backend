@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull, like, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, like, ne, or, sql } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
 import { appendCopsEvent, createCopsEvent } from "@skout/shared";
 import { writeCopsAudit } from "./cops-platform.service.js";
@@ -438,12 +438,18 @@ export async function loadActivation(db: Db, workspaceId: string, accountId: str
 }
 
 /** Open (not activated) instances, oldest first, for the scheduled evaluator. */
-export async function openInstances(db: Db, limit = 200) {
+/**
+ * One page of the onboarding instances not yet activated, in id order after `afterId`. The
+ * evaluator walks every page in a pass: ordering by updated_at alone re-read the same oldest page
+ * forever, because evaluating an instance does not change it, so instances past the first page
+ * were never evaluated once more than one page was open.
+ */
+export async function openInstances(db: Db, limit = 200, afterId?: string) {
   return db
     .select({ id: copsOnboardingInstances.id, workspaceId: copsOnboardingInstances.workspaceId, accountId: copsOnboardingInstances.accountId })
     .from(copsOnboardingInstances)
-    .where(isNull(copsOnboardingInstances.activatedAt))
-    .orderBy(asc(copsOnboardingInstances.updatedAt))
+    .where(afterId ? and(isNull(copsOnboardingInstances.activatedAt), gt(copsOnboardingInstances.id, afterId)) : isNull(copsOnboardingInstances.activatedAt))
+    .orderBy(asc(copsOnboardingInstances.id))
     .limit(limit);
 }
 

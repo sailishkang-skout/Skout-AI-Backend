@@ -15,7 +15,7 @@ import { buildTestAuth, buildTestAuthEnv, grantSystemMemberRole } from "@skout/a
 import { loadEnv, type Env } from "../config/env.js";
 import { buildApp } from "../app.js";
 import { addSuppression, isSuppressed } from "../services/suppression.service.js";
-import { saveAudience, previewAudience } from "../services/enrichment/audience.service.js";
+import { audienceMembers, saveAudience, previewAudience } from "../services/enrichment/audience.service.js";
 import {
   campaignSendGate,
   createCampaign,
@@ -37,6 +37,8 @@ let app: FastifyInstance;
 let config: Env;
 let owner: Record<string, string>;
 let ownerId: string;
+/** Approves campaigns: a second person, since the creator and submitter may not approve their own. */
+let reviewerId: string;
 let outsider: Record<string, string>;
 
 const {
@@ -89,6 +91,7 @@ beforeAll(async () => {
   const o = await provisionUser(WORKSPACE);
   owner = o.headers;
   ownerId = o.userId;
+  reviewerId = (await provisionUser(WORKSPACE)).userId;
   outsider = (await provisionUser(OTHER_WORKSPACE)).headers;
 
   await post("/enrichment/ingest/company", {
@@ -108,6 +111,7 @@ afterAll(async () => {
 
 const db = () => app.db!;
 const actor = () => ({ workspaceId: WORKSPACE, userId: ownerId });
+const reviewerActor = () => ({ workspaceId: WORKSPACE, userId: reviewerId });
 const post = (url: string, payload: unknown = {}, headers: Record<string, string> = owner) =>
   app.inject({ method: "POST", url: `/api/v1${url}`, headers, payload: payload as object });
 const get = (url: string, headers = owner) => app.inject({ method: "GET", url: `/api/v1${url}`, headers });
@@ -179,7 +183,7 @@ async function approvedCampaign(prospectIds: string[]) {
   const campaign = await campaignFor(prospectIds);
   await updateDraft(db(), actor(), campaign.id, READY_STEPS);
   await submitCampaign(db(), config, actor(), campaign.id);
-  await reviewCampaign(db(), config, actor(), campaign.id, { decision: "approved", comment: "Recipients and copy checked." });
+  await reviewCampaign(db(), config, reviewerActor(), campaign.id, { decision: "approved", comment: "Recipients and copy checked." });
   return campaign.id;
 }
 const detail = (id: string) => getCampaign(db(), config, WORKSPACE, id);
@@ -213,6 +217,19 @@ describe("ENR-05 audiences", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().counts.total).toBe(1);
     expect((await post("/enrichment/audiences/preview", { filters: { nope: true } })).statusCode).toBe(422);
+  });
+
+  it("leaves out a person who was added by URL and has not been captured yet", async () => {
+    const before = (await previewAudience(db(), WORKSPACE, {})).counts.total;
+    const added = await post("/enrichment/linkedin-urls", { url: `https://www.linkedin.com/in/pending-${RUN}/` });
+    expect(added.statusCode).toBe(201);
+    const pending = added.json().prospectId as string;
+
+    const after = await previewAudience(db(), WORKSPACE, {});
+    expect(after.counts.total).toBe(before);
+    expect((await audienceMembers(db(), WORKSPACE, {})).map((person) => person.prospectId)).not.toContain(pending);
+    // Still listed under People, where it can be captured.
+    expect((await get(`/enrichment/people/${pending}`)).statusCode).toBe(200);
   });
 
   it("saves an audience into an ordinary list and keeps the list in step when it is saved again", async () => {
@@ -318,13 +335,13 @@ describe("ENR-05 recipients and compliance", () => {
     const campaign = await campaignFor([prospectId]);
     await updateDraft(db(), actor(), campaign.id, READY_STEPS);
     await submitCampaign(db(), enforced, actor(), campaign.id);
-    await expect(reviewCampaign(db(), enforced, actor(), campaign.id, { decision: "approved" })).rejects.toMatchObject({ code: "consent_basis_required" });
-    const approved = await reviewCampaign(db(), enforced, actor(), campaign.id, { decision: "approved", consentBasis: "legitimate_interest" });
+    await expect(reviewCampaign(db(), enforced, reviewerActor(), campaign.id, { decision: "approved" })).rejects.toMatchObject({ code: "consent_basis_required" });
+    const approved = await reviewCampaign(db(), enforced, reviewerActor(), campaign.id, { decision: "approved", consentBasis: "legitimate_interest" });
     expect(approved.campaign).toMatchObject({ status: "approved", consentBasis: "legitimate_interest" });
 
     await launchCampaign(db(), enforced, actor(), campaign.id);
     const consent = await db().select().from(schema.consents).where(and(eq(schema.consents.workspaceId, WORKSPACE), eq(schema.consents.subjectId, prospectId)));
-    expect(consent[0]).toMatchObject({ type: "email", basis: "legitimate_interest", recordedBy: ownerId });
+    expect(consent[0]).toMatchObject({ type: "email", basis: "legitimate_interest", recordedBy: reviewerId }); // the approver stated the basis
   });
 });
 
@@ -364,7 +381,7 @@ describe("ENR-05 approval", () => {
     const id = await approvedCampaign([ok, unverified, lateSuppressed]);
     const approved = await detail(id);
     expect(approved.sendEnabled).toBe(true);
-    expect(approved.campaign.approvedBy).toBe(ownerId);
+    expect(approved.campaign.approvedBy).toBe(reviewerId);
     expect(approved.reviews[0]).toMatchObject({ decision: "approved", recipientCount: 2 });
 
     // Suppressed after approval, before launch: left out at launch.
@@ -393,7 +410,7 @@ describe("ENR-05 approval", () => {
     expect(steps.some((step) => (step.bodyTemplate ?? "").includes(OPENING_TOKEN))).toBe(false);
     const drafts = await db().select().from(aiDrafts).where(and(eq(aiDrafts.workspaceId, WORKSPACE), eq(aiDrafts.prospectId, ok)));
     expect(drafts).toHaveLength(1);
-    expect(drafts[0]).toMatchObject({ status: "approved", reviewedBy: ownerId });
+    expect(drafts[0]).toMatchObject({ status: "approved", reviewedBy: reviewerId });
     expect(drafts[0]!.enrollmentStepId).toBeTruthy();
     expect(drafts[0]!.body).toContain(`I saw that you're Head of Revenue at Initech ${RUN}.`);
 
@@ -427,7 +444,7 @@ describe("ENR-05 approval", () => {
 
     // Reviewed again, it can go out with the new claim.
     await submitCampaign(db(), config, actor(), id);
-    await reviewCampaign(db(), config, actor(), id, { decision: "approved" });
+    await reviewCampaign(db(), config, reviewerActor(), id, { decision: "approved" });
     expect((await launchCampaign(db(), config, actor(), id)).enrolled).toBe(1);
   });
 
@@ -439,7 +456,7 @@ describe("ENR-05 approval", () => {
     await expect(launchCampaign(db(), config, actor(), id)).rejects.toMatchObject({ code: "approval_required" });
 
     await submitCampaign(db(), config, actor(), id);
-    await reviewCampaign(db(), config, actor(), id, { decision: "approved" });
+    await reviewCampaign(db(), config, reviewerActor(), id, { decision: "approved" });
     await setRecipientDecision(db(), actor(), id, b, { decision: "removed" });
     expect((await detail(id)).campaign.status).toBe("changes_required");
     const reviews = await db().select().from(enrichmentCampaignReviews).where(eq(enrichmentCampaignReviews.campaignId, id));
@@ -520,7 +537,7 @@ describe("ENR-05 outcomes", () => {
     const campaign = await createCampaign(db(), config, actor(), { name: `Outcomes ${RUN}`, audienceId: audience.id });
     await updateDraft(db(), actor(), campaign.id, READY_STEPS);
     await submitCampaign(db(), config, actor(), campaign.id);
-    await reviewCampaign(db(), config, actor(), campaign.id, { decision: "approved" });
+    await reviewCampaign(db(), config, reviewerActor(), campaign.id, { decision: "approved" });
     const { newEnrollments } = await launchCampaign(db(), config, actor(), campaign.id);
     const enrollment = Object.fromEntries(newEnrollments.map((entry) => [entry.prospectId, entry.enrollmentId]));
 

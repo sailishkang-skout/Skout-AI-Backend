@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { users } from "./users.js";
 import { workspaces } from "./workspaces.js";
@@ -20,10 +21,15 @@ export const automations = pgTable(
     status: text("status").notNull().default("draft"), // draft | active | archived
     currentVersion: integer("current_version").notNull().default(0),
     createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    /** COPS-11: set when the workflow was seeded from a template (a success playbook). */
+    templateKey: text("template_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("automations_workspace_idx").on(table.workspaceId)]
+  (table) => [
+    index("automations_workspace_idx").on(table.workspaceId),
+    uniqueIndex("automations_template_key_uq").on(table.workspaceId, table.templateKey).where(sql`template_key IS NOT NULL`),
+  ]
 );
 
 /** An immutable, published-or-draft snapshot of an automation's graph. */
@@ -69,12 +75,19 @@ export const automationRuns = pgTable(
     idempotencyKey: text("idempotency_key"),
     isSimulation: boolean("is_simulation").notNull().default(false),
     businessResult: jsonb("business_result"),
+    /** COPS-10: what started the run (event, webhook body, schedule tick, manual input). */
+    triggerPayload: jsonb("trigger_payload"),
+    /** COPS-10: what the run is about, e.g. "account" + the company id, for per-account history. */
+    subjectType: text("subject_type"),
+    subjectId: uuid("subject_id"),
     startedAt: timestamp("started_at", { withTimezone: true }),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index("automation_runs_automation_idx").on(table.automationId, table.createdAt),
+    index("automation_runs_version_idx").on(table.automationVersionId, table.createdAt),
+    index("automation_runs_subject_idx").on(table.workspaceId, table.subjectType, table.subjectId, table.createdAt),
     uniqueIndex("automation_runs_idempotency_uidx").on(table.automationId, table.idempotencyKey),
   ]
 );
@@ -97,6 +110,8 @@ export const automationRunSteps = pgTable(
     leaseOwner: text("lease_owner"),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
     attemptCount: integer("attempt_count").notNull().default(0),
+    /** COPS-10: a waiting delay step is not claimed before this time. */
+    runAfter: timestamp("run_after", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     // $onUpdate is a Drizzle-ORM-level feature (no migration needed): it makes Drizzle include
     // this column in every UPDATE statement it builds going forward, including the shared
@@ -110,9 +125,28 @@ export const automationRunSteps = pgTable(
   },
   (table) => [
     index("automation_run_steps_run_idx").on(table.automationRunId, table.status),
+    index("automation_run_steps_due_idx").on(table.runAfter).where(sql`status = 'pending' AND run_after IS NOT NULL`),
     uniqueIndex("automation_run_steps_idempotency_uidx").on(table.idempotencyKey),
   ]
 );
+
+/**
+ * COPS-10: one row per action step that changed something, written in the same transaction as the
+ * change and keyed by the step's idempotency key, so a step re-run after a crash does not repeat it.
+ */
+export const automationStepEffects = pgTable("automation_step_effects", {
+  stepKey: text("step_key").primaryKey(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  automationRunId: uuid("automation_run_id")
+    .notNull()
+    .references(() => automationRuns.id, { onDelete: "cascade" }),
+  nodeId: text("node_id").notNull(),
+  effectType: text("effect_type").notNull(),
+  output: jsonb("output").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 /** Encrypted credentials an automation's generic HTTP node can reference by id. */
 export const automationSecrets = pgTable(

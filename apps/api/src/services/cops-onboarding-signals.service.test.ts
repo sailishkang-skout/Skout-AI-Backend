@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { createDb } from "@skout/db";
 import { appendCopsEvent, createCopsEvent } from "@skout/shared";
 import { startProvisioning, type ProvisioningContext } from "./cops-provisioning.service.js";
-import { ensureActivationInstance } from "./cops-activation.service.js";
+import { ensureActivationInstance, openInstances } from "./cops-activation.service.js";
 import { evaluateOnboarding, listBlockers, loadHandoff, sweepMissedFollowUps } from "./cops-onboarding-signals.service.js";
 
 const postgres = createRequire(new URL("../../../../packages/db/package.json", import.meta.url))("postgres") as (url: string, options?: object) => any;
@@ -83,6 +83,22 @@ maybe("COPS-05 onboarding signals (Postgres)", () => {
     const [task] = await sql`select t.assigned_to, t.type from cops_onboarding_signals s join tasks t on t.id = s.task_id where s.instance_id = ${a.instanceId} and s.trigger = 'delivered_no_login'`;
     expect(task).toEqual({ assigned_to: ownerId, type: "call" });
     expect((await listBlockers(db, ctx.workspaceId, a.accountId)).map((b) => b.kind)).toContain("delivered_no_login");
+  });
+
+  it("the evaluator pages through every open instance, not only the oldest page", async () => {
+    const mine = new Set([(await account()).instanceId, (await account()).instanceId, (await account()).instanceId]);
+    // Walk one row per page: every open instance comes back exactly once, in id order.
+    const seen: string[] = [];
+    let afterId: string | undefined;
+    for (let i = 0; i < 100_000; i++) {
+      const [row] = await openInstances(db, 1, afterId);
+      if (!row) break;
+      seen.push(row.id);
+      afterId = row.id;
+    }
+    expect([...mine].every((id) => seen.includes(id))).toBe(true);
+    expect(new Set(seen).size).toBe(seen.length);
+    expect([...seen].sort()).toEqual(seen);
   });
 
   it("a hard bounce raises a rep task and stops the follow-up", async () => {

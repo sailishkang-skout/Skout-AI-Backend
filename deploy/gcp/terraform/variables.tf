@@ -120,3 +120,34 @@ variable "browser_upload_origins" {
   default     = ["https://ops-stg.skoutai.io"]
   description = "Origins allowed to PUT/GET objects in the exports bucket straight from the browser (CustomerOps contract PDF upload via presigned URL). Add the prod CustomerOps domain when it goes live."
 }
+
+variable "alert_email" {
+  type        = string
+  default     = ""
+  description = "Where Cloud Monitoring sends alerts. Empty creates the metrics and dashboard but no alert policies."
+}
+
+variable "ops_alert_webhook_secret" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Basic-auth password for the in-app ops alert webhook; must equal OPS_ALERT_WEBHOOK_SECRET in the API env. Empty creates no webhook channel. Pass it with TF_VAR_ops_alert_webhook_secret, never in a committed file."
+}
+
+variable "ops_alert_webhook_url" {
+  type        = string
+  default     = "https://stg.skoutai.io/api/v1/webhooks/ops-alerts"
+  description = "The API's in-app ops alert endpoint."
+}
+
+variable "ignore_payment_webhook_rejections" {
+  type        = bool
+  default     = true
+  description = "Leave payment_webhooks_rejected_24h out of the critical and warn alerts. True on staging, where Razorpay dashboard test payments match no payment request."
+}
+
+variable "alert_on_missing_health_report" {
+  type        = bool
+  default     = false
+  description = "Alert when no CustomerOps health report arrives for 30 minutes. Keep false while the working-hours schedule stops the VM overnight and at weekends, or it pages every night."
+}

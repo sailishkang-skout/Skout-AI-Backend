@@ -19,8 +19,15 @@ import {
 import { buildApiResolveAuthConfig } from "./auth-resolve-config.js";
 import { resolveOrProvisionUser } from "../services/auth.service.js";
 import { verifyInviteSession } from "../services/invite-auth.service.js";
-import { errorResponse, HttpError } from "../utils/http.js";
+import {
+  errorResponse,
+  HttpError,
+  isServiceUnavailableError,
+  SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS,
+  serviceUnavailableResponse,
+} from "../utils/http.js";
 import type { Env } from "../config/env.js";
+import { KEY_PREFIX as API_KEY_PREFIX, resolveApiKey, scopeAllows } from "../services/cops-api-credentials.service.js";
 
 /** Constant-time string compare so secret checks don't leak timing info. */
 function timingSafeEqualStrings(a: string, b: string): boolean {
@@ -130,6 +137,34 @@ function applyEmailIntelIdentity(
   return true;
 }
 
+/**
+ * COPS-14 scoped API keys (sk_cops_...). "none" when the request carries no such key. A key that
+ * does not resolve is a 401; a route its scopes do not list is a 403, so a key never reaches
+ * routes outside its scopes even when its member could.
+ */
+async function applyApiKeyIdentity(
+  db: NonNullable<FastifyInstance["db"]>,
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<"none" | "ok" | "rejected"> {
+  const authorization = request.headers.authorization;
+  const token = typeof authorization === "string" && authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+  if (!token.startsWith(API_KEY_PREFIX)) return "none";
+  const resolved = await resolveApiKey(db, token);
+  if (!resolved) {
+    reply.code(401).send(authErrorResponse(AuthErrorCode.AUTH_TOKEN_INVALID, AuthErrorMessage.INVALID_AUTHORIZATION, 401));
+    return "rejected";
+  }
+  if (!scopeAllows(resolved.scopes, request.method, request.url)) {
+    reply.code(403).send(errorResponse("This API key's scopes do not allow this request", 403));
+    return "rejected";
+  }
+  request.userId = resolved.userId;
+  request.workspaceId = resolved.workspaceId;
+  request.role = resolved.role;
+  return "ok";
+}
+
 function isPublicRoute(url: string, method?: string): boolean {
   const pathname = url.split("?")[0]!;
   // Only GET /api/v1/team/invites/<token> is public; DELETE and /accept suffix require auth
@@ -143,6 +178,12 @@ function isPublicRoute(url: string, method?: string): boolean {
     // COPS-05: product analytics events; the route checks INTERNAL_SERVICE_TOKEN itself.
     pathname === "/api/v1/internal/product-events" ||
     pathname.startsWith("/api/v1/webhooks/unipile/") ||
+    // COPS-07: operational alerts (GCP Cloud Monitoring); the route checks OPS_ALERT_WEBHOOK_SECRET itself.
+    pathname === "/api/v1/webhooks/ops-alerts" ||
+    // COPS-08: e-sign provider events; the adapter verifies the provider's signature.
+    pathname.startsWith("/api/v1/esign/webhooks/") ||
+    // Dev-only signed links for contract files (no bucket); the route checks its own HMAC.
+    pathname.startsWith("/api/v1/contracts/documents/local/") ||
     pathname.startsWith("/api/v1/track/") ||
     pathname.startsWith("/api/v1/unsubscribe/") ||
     pathname.startsWith("/api/v1/invite-auth/send-otp") ||
@@ -221,6 +262,10 @@ export const authPlugin = fp(async (app) => {
       if (applyEmailIntelIdentity(request, config)) {
         return;
       }
+      if (app.db) {
+        const keyed = await applyApiKeyIdentity(app.db, request, reply);
+        if (keyed !== "none") return;
+      }
       const stubEmail = (request.headers["x-stub-user-email"] as string | undefined) ?? config.AUTH_STUB_EMAIL ?? "stub@example.com";
       const db = app.db;
       if (!db) {
@@ -235,6 +280,13 @@ export const authPlugin = fp(async (app) => {
         request.workspaceId = workspace.workspaceId;
         request.role = workspace.role;
       } catch (err) {
+        if (isServiceUnavailableError(err)) {
+          app.log.warn({ err }, "Stub user provisioning: database unavailable");
+          return reply
+            .code(503)
+            .header("Retry-After", String(SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS))
+            .send(serviceUnavailableResponse(request.id));
+        }
         app.log.error({ err }, "Stub user provisioning failed");
         return reply.code(500).send(errorResponse("Stub user provisioning failed", 500));
       }
@@ -283,6 +335,9 @@ export const authPlugin = fp(async (app) => {
         .code(401)
         .send(authErrorResponse(AuthErrorCode.AUTH_MISSING_TOKEN, AuthErrorMessage.MISSING_BEARER, 401));
     }
+
+    const keyed = await applyApiKeyIdentity(db, request, reply);
+    if (keyed !== "none") return;
 
     // Static-secret admin import auth (/admin/import page in the frontend). Deliberately
     // scoped to import routes only — a leaked ADMIN_IMPORT_SECRET can seed data, nothing else.
@@ -361,6 +416,14 @@ export const authPlugin = fp(async (app) => {
       if (error instanceof HttpError) {
         const code = resolveAuthErrorCode(error);
         return reply.code(error.statusCode).send(authErrorResponse(code, error.message, error.statusCode));
+      }
+      // An unreachable database is a transient outage: answer 503 so clients retry, and never
+      // 401, which would tell them the session is invalid.
+      if (isServiceUnavailableError(error)) {
+        return reply
+          .code(503)
+          .header("Retry-After", String(SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS))
+          .send(serviceUnavailableResponse(request.id));
       }
       // DB errors during provisioning are server failures, not invalid tokens.
       const isDbError =

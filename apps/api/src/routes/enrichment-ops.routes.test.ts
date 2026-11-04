@@ -51,6 +51,13 @@ afterAll(async () => {
 
 const db = () => app.db!;
 const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000);
+const minutesFromNow = (minutes: number) => new Date(Date.now() + minutes * 60_000);
+// Other test files run the platform-wide provider-job recovery against the real clock, and it
+// requeues or fails any running job whose lease has expired. So this file's "lost lease" job
+// keeps a lease that runs out LOST_LEASE_IN minutes from now, and the checks that need it lost
+// look at the platform AFTER_LEASE minutes ahead instead.
+const LOST_LEASE_IN = 15;
+const AFTER_LEASE = 16;
 const job = (fields: Partial<typeof enrichmentJobs.$inferInsert>) =>
   db().insert(enrichmentJobs).values({ workspaceId: WORKSPACE, prospectId: `ops-${randomUUID()}`, kind: "linkedin_profile", status: "queued", ...fields });
 const run = (fields: Partial<typeof enrichmentCaptureRuns.$inferInsert>) =>
@@ -134,8 +141,8 @@ describe("enrichment ops snapshot", () => {
     await job({ status: "queued", queuedAt: minutesAgo(10) });
     await job({ status: "queued", queuedAt: minutesAgo(20), nextAttemptAt: new Date(Date.now() + 600_000) }); // retry scheduled: not waiting yet
     await job({ status: "queued", queuedAt: minutesAgo(40), nextAttemptAt: minutesAgo(2) }); // retry now due for two minutes
-    await job({ status: "running", leaseExpiresAt: minutesAgo(1) });
-    await job({ status: "running", leaseExpiresAt: new Date(Date.now() + 60_000) });
+    await job({ status: "running", leaseExpiresAt: minutesFromNow(LOST_LEASE_IN) }); // lost once its lease runs out
+    await job({ status: "running", leaseExpiresAt: minutesFromNow(60) });
     await job({ status: "failed", errorCode: "WORKER_LOST" });
     await job({ status: "failed", errorCode: "PROVIDER_REQUEST_FAILED" });
     await job({ status: "action_required", errorCode: "PROVIDER_CONNECTION_REQUIRED" });
@@ -152,13 +159,18 @@ describe("enrichment ops snapshot", () => {
     expect(snapshot.captureRuns).toMatchObject({ byStatus: { completed: 1, failed: 1, running: 0 }, abandoned: 0, leadsReceived: 45, leadsRejected: 2 });
     expect(snapshot.jobs.byStatus).toEqual({ queued: 3, running: 2, partial: 1, action_required: 1, failed: 2, completed: 0 });
     expect(snapshot.jobs.errorsByCode).toEqual({ WORKER_LOST: 1, PROVIDER_REQUEST_FAILED: 1, PROVIDER_CONNECTION_REQUIRED: 1 });
-    expect(snapshot.jobs.lostLeases).toBe(1);
+    expect(snapshot.jobs.lostLeases).toBe(0);
     expect(snapshot.queue.waiting).toBe(2);
     // The oldest due job has waited ten minutes; the retried one only since it became due.
     expect(snapshot.queue.lagSeconds).toBeGreaterThanOrEqual(595);
     expect(snapshot.queue.lagSeconds).toBeLessThan(700);
     expect(snapshot.campaigns).toEqual({ pendingReview: 1, changesRequired: 1 });
-    expect(names(snapshot)).toEqual(expect.arrayContaining(["enrichment_queue_lag_high", "enrichment_jobs_lost_lease", "enrichment_jobs_worker_lost"]));
+    expect(names(snapshot)).toEqual(expect.arrayContaining(["enrichment_queue_lag_high", "enrichment_jobs_worker_lost"]));
+
+    // Once its lease has run out, the running job nobody renewed counts as lost.
+    const afterLease = await enrichmentOpsSnapshot(db(), WORKSPACE, minutesFromNow(AFTER_LEASE));
+    expect(afterLease.jobs.lostLeases).toBe(1);
+    expect(names(afterLease)).toContain("enrichment_jobs_lost_lease");
   });
 
   it("serves the snapshot and its alerts to workspace administrators only", async () => {
@@ -189,7 +201,7 @@ describe("enrichment ops snapshot", () => {
     const before = await enrichmentOpsSnapshot(db(), WORKSPACE);
     expect(before.captureRuns.abandoned).toBe(1);
 
-    const alerts = await runEnrichmentOpsPass(db());
+    const alerts = await runEnrichmentOpsPass(db(), minutesFromNow(AFTER_LEASE));
     expect(alerts.map((alert) => alert.name)).toEqual(expect.arrayContaining(["enrichment_queue_lag_high", "enrichment_jobs_lost_lease"]));
     const rows = await db().select().from(enrichmentCaptureRuns).where(eq(enrichmentCaptureRuns.workspaceId, WORKSPACE));
     expect(rows.find((row) => row.id === stuck!.id)).toMatchObject({ status: "failed", errorCode: "abandoned" });

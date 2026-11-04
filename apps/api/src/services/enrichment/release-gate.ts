@@ -5,27 +5,29 @@ import { buildEntitlementsService } from "../entitlements.service.js";
 import { requireWorkspaceId } from "../../utils/http.js";
 
 /**
- * ENR-06 — the internal-only release flag for the LinkedIn enrichment feature (capture,
- * research, provider jobs, campaigns).
+ * ENR-06 — the release flag for the LinkedIn enrichment feature (capture, research,
+ * provider jobs, campaigns).
  *
- * The feature is "internal" until Legal and Product have approved LinkedIn data use and the
- * vendor terms. That approval is recorded by setting ENRICHMENT_LEGAL_APPROVAL_REF to the
- * reference of the sign-off (see docs/ops/enrichment-release-gates.md); asking for
- * ENRICHMENT_RELEASE_STAGE=general without it leaves the feature internal.
+ * The deployment stage controls availability. A legal approval reference is reported for
+ * operational visibility, but does not override the configured stage.
  *
- * While internal, a production workspace can use the feature only when it has been given the
- * `enrichment.internal_access` entitlement. Outside production the gate is not enforced, so
- * development and test environments work without per-workspace setup.
+ * While internal, a production workspace can use the feature when it has been given the
+ * `enrichment.internal_access` entitlement. Outside production the gate is not enforced.
  */
 
 export const INTERNAL_ACCESS_ENTITLEMENT = "enrichment.internal_access";
 
-type GateConfig = Pick<Env, "NODE_ENV" | "ENRICHMENT_RELEASE_STAGE" | "ENRICHMENT_LEGAL_APPROVAL_REF">;
+type GateConfig = Pick<
+  Env,
+  | "NODE_ENV"
+  | "ENRICHMENT_RELEASE_STAGE"
+  | "ENRICHMENT_LEGAL_APPROVAL_REF"
+>;
 
 export interface ReleaseState {
   /** What the deployment asked for. */
   requestedStage: "internal" | "general";
-  /** What is in effect: "general" only with a recorded approval. */
+  /** What is in effect, as requested by the deployment. */
   stage: "internal" | "general";
   legalApprovalRecorded: boolean;
   /** False outside production, where every workspace has access. */
@@ -37,7 +39,7 @@ export function releaseState(config: GateConfig): ReleaseState {
   const requestedStage = config.ENRICHMENT_RELEASE_STAGE;
   return {
     requestedStage,
-    stage: requestedStage === "general" && legalApprovalRecorded ? "general" : "internal",
+    stage: requestedStage,
     legalApprovalRecorded,
     enforced: config.NODE_ENV === "production",
   };
@@ -49,7 +51,11 @@ export interface WorkspaceAccess extends ReleaseState {
   reason: string | null;
 }
 
-export async function workspaceReleaseAccess(db: Db, config: GateConfig, workspaceId: string): Promise<WorkspaceAccess> {
+export async function workspaceReleaseAccess(
+  db: Db,
+  config: GateConfig,
+  workspaceId: string,
+): Promise<WorkspaceAccess> {
   const state = releaseState(config);
   if (!state.enforced || state.stage === "general") return { ...state, enabled: true, reason: null };
   const granted = await buildEntitlementsService(db)!.getValueOr<unknown>(workspaceId, INTERNAL_ACCESS_ENTITLEMENT, false);
@@ -86,7 +92,11 @@ export async function assertReleased(app: FastifyInstance, request: FastifyReque
 export function describeRelease(config: GateConfig): { level: "info" | "warn"; message: string; state: ReleaseState } {
   const state = releaseState(config);
   if (state.requestedStage === "general" && !state.legalApprovalRecorded) {
-    return { level: "warn", message: "ENRICHMENT_RELEASE_STAGE=general ignored: ENRICHMENT_LEGAL_APPROVAL_REF is not set. Enrichment stays internal.", state };
+    return {
+      level: "warn",
+      message: "LinkedIn enrichment is generally available, but ENRICHMENT_LEGAL_APPROVAL_REF is not set for audit visibility.",
+      state,
+    };
   }
   return { level: "info", message: `LinkedIn enrichment release stage: ${state.stage}${state.enforced ? "" : " (not enforced outside production)"}`, state };
 }

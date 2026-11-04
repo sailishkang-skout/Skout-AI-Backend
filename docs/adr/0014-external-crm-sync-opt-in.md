@@ -1,7 +1,8 @@
 # ADR 0014: External CRM sync is opt-in per workspace/account
 
 ## Status
-Proposed — pending Aditya review. Author: open (epic open question 7).
+Accepted (2026-10-19, Aditya). Default conflict policies approved at the same time: email Skout wins,
+amount manual review (blocks the overwrite until resolved), every other field most recent wins.
 
 ## Context
 Customers run different CRMs (Salesforce, HubSpot, Pipedrive, Zoho, Dynamics). Syncing everything

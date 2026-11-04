@@ -3,6 +3,10 @@ import { eq } from "drizzle-orm";
 import { schema } from "@skout/db";
 import { createBillingService } from "../services/billing.service.js";
 import { errorResponse } from "../utils/http.js";
+import { customerInvoicePaymentLink, getCustomerSubscription } from "../services/cops-subscriptions.service.js";
+import { CommercialError } from "../services/cops-commercial.service.js";
+import { createRazorpayPaymentLinkAdapter } from "../services/psp/razorpay.js";
+import type { PspAdapter } from "../services/psp/psp-adapter.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -10,7 +14,15 @@ declare module "fastify" {
   }
 }
 
-export async function billingRoutes(app: FastifyInstance) {
+/**
+ * An unsigned Razorpay webhook is accepted only on a developer machine or in tests. Every deployed
+ * environment runs with NODE_ENV=production and must have RAZORPAY_WEBHOOK_SECRET set.
+ */
+export function unsignedRazorpayWebhookAllowed(nodeEnv: string | undefined): boolean {
+  return nodeEnv === "development" || nodeEnv === "test";
+}
+
+export async function billingRoutes(app: FastifyInstance, opts: { psp?: PspAdapter } = {}) {
   if (!app.db) {
     app.log.warn("Database not available — billing routes disabled");
     return;
@@ -18,6 +30,26 @@ export async function billingRoutes(app: FastifyInstance) {
 
   const db = app.db;
   const billing = createBillingService(db, app.config);
+
+  // COPS-08: the customer's own subscription. Open to every member and reachable while suspended
+  // (the suspension gate leaves /billing alone): a customer who cannot see the bill cannot pay it.
+  const psp = opts.psp ?? createRazorpayPaymentLinkAdapter(app.config);
+  app.get("/billing/subscription", async (request, reply) => {
+    if (!request.workspaceId) return reply.code(401).send(errorResponse("Not authenticated", 401));
+    return reply.send({ data: await getCustomerSubscription(db, request.workspaceId) });
+  });
+
+  app.post<{ Params: { id: string } }>("/billing/subscription/invoices/:id/pay", async (request, reply) => {
+    if (!request.workspaceId || !request.userId) return reply.code(401).send(errorResponse("Not authenticated", 401));
+    if (!/^[0-9a-f-]{36}$/i.test(request.params.id)) return reply.code(400).send(errorResponse("Invalid bill id", 400));
+    try {
+      const data = await customerInvoicePaymentLink(db, psp, { workspaceId: request.workspaceId, userId: request.userId, requestId: String(request.id) }, request.params.id);
+      return reply.code(201).send({ data });
+    } catch (error) {
+      if (error instanceof CommercialError) return reply.code(error.status).send({ ...errorResponse(error.message, error.status), code: error.code, details: error.details });
+      throw error;
+    }
+  });
 
   app.get("/billing/config", async (_request, reply) => {
     return reply.send({ data: billing.getConfig() });
@@ -129,8 +161,12 @@ export async function billingRoutes(app: FastifyInstance) {
       if (typeof signature !== "string" || !billing.verifyWebhookSignature(rawBody, signature)) {
         return reply.code(400).send(errorResponse("Invalid webhook signature", 400));
       }
+    } else if (unsignedRazorpayWebhookAllowed(app.config.NODE_ENV)) {
+      app.log.warn("RAZORPAY_WEBHOOK_SECRET not set — skipping signature verification (local development only)");
     } else {
-      app.log.warn("RAZORPAY_WEBHOOK_SECRET not set — skipping signature verification");
+      // Fail closed: without the secret anyone could post a "payment captured" event and be credited.
+      app.log.error("RAZORPAY_WEBHOOK_SECRET not set — refusing the webhook");
+      return reply.code(503).send(errorResponse("Webhook signature verification is not configured", 503));
     }
 
     try {

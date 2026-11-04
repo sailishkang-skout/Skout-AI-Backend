@@ -1,4 +1,5 @@
 import type { CompanyData, FirmographicsProvider } from "../types.js";
+import { isSyntheticCaptureDomain } from "../capture-domains.js";
 import { fetchJson, qs } from "./http.js";
 
 export const CORESIGNAL_BASE_URL = "https://api.coresignal.com/cdapi/v2";
@@ -13,6 +14,7 @@ export class CoresignalFirmographics implements FirmographicsProvider {
   ) {}
 
   async fetchCompany(domain: string, name?: string): Promise<CompanyData | null> {
+    if (isSyntheticCaptureDomain(domain)) return null;
     const url = `${this.baseUrl}/company_multi_source/enrich?${qs({ website: domain })}`;
     const body = await fetchJson<{
       name?: string;

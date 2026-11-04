@@ -117,12 +117,32 @@ jobs:
 
       # The service env files are NOT in the repository (it is public). They are stored as environment secrets
       # (ENV_<SERVICE>) by deploy/hetzner/scripts/publish-env-secrets.sh and written to disk only for this run.
+      - name: Checkout ops portal
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/skout-customerops
+          ref: develop
+          path: ops
+          # The repo is private; the default token cannot read another repository.
+          token: ${{ secrets.OPS_REPO_TOKEN }}
+
+      - name: Build and push Ops portal image
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          OPS_HOST: ${{ vars.OPS_HOST }}
+        run: |
+          set -euo pipefail
+          [ -n "$OPS_HOST" ] || { echo "vars.OPS_HOST is empty" >&2; exit 1; }
+          docker build -f ops/Dockerfile             --build-arg AUTH_API_URL="http://api:3001"             --build-arg CRM_API_URL="http://crm:3002"             --build-arg NEXT_PUBLIC_APP_URL="https://${OPS_HOST}"             -t "ghcr.io/$GHCR_OWNER/skout-ops:$TAG" ops
+          docker push "ghcr.io/$GHCR_OWNER/skout-ops:$TAG"
+
       - name: Write env files from secrets
         env:
           ENV_API: ${{ secrets.ENV_API }}
           ENV_CRM: ${{ secrets.ENV_CRM }}
           ENV_AI: ${{ secrets.ENV_AI }}
           ENV_WEB: ${{ secrets.ENV_WEB }}
+          ENV_OPS: ${{ secrets.ENV_OPS }}
           ENV_SCRAPER_ORCHESTRATOR: ${{ secrets.ENV_SCRAPER_ORCHESTRATOR }}
           ENV_SCRAPER_CLEANER: ${{ secrets.ENV_SCRAPER_CLEANER }}
           ENV_SCRAPER_INGESTOR: ${{ secrets.ENV_SCRAPER_INGESTOR }}
@@ -145,6 +165,7 @@ jobs:
           write crm "$ENV_CRM"
           write ai "$ENV_AI"
           write web "$ENV_WEB"
+          write ops "$ENV_OPS"
           write scraper-orchestrator "$ENV_SCRAPER_ORCHESTRATOR"
           write scraper-cleaner "$ENV_SCRAPER_CLEANER"
           write scraper-ingestor "$ENV_SCRAPER_INGESTOR"
@@ -180,6 +201,13 @@ jobs:
           GHCR_PULL_USER: ${{ vars.GHCR_PULL_USER }}
         run: echo "$GHCR_PULL_TOKEN" | docker login ghcr.io -u "$GHCR_PULL_USER" --password-stdin
 
+      # Every deploy pulls a new image set onto a small disk. Images used by a
+      # running service are kept (so rollback still works); only unused ones go.
+      - name: Free disk on the cluster
+        run: |
+          docker image prune -a -f
+          df -h /
+
       - name: Note time for point-in-time restore
         run: echo "Managed Postgres keeps PITR backups; restore point if needed is before $(date -u +%FT%TZ)"
 
@@ -192,6 +220,7 @@ jobs:
         env:
           IMAGE_TAG: ${{ steps.meta.outputs.tag }}
           ACME_EMAIL: ${{ vars.ACME_EMAIL }}
+          OPS_HOST: ${{ vars.OPS_HOST }}
           DD_API_KEY: ${{ secrets.DD_API_KEY }}
           OUTBOUND_REPLICAS: ${{ inputs.outbound_replicas || '0' }}
           SCRAPER_REPLICAS: ${{ inputs.scraper_replicas || '1' }}
@@ -204,7 +233,7 @@ jobs:
           # Caddy serves HTTPS for this host name (from the STAGING_URL variable, scheme stripped).
           PUBLIC_HOST="${{ vars.STAGING_URL }}"
           PUBLIC_HOST="${PUBLIC_HOST#https://}"
-          export PUBLIC_HOST
+          export PUBLIC_HOST OPS_HOST
           # --detach=false blocks until every service converges (or rolls back), so the checks below
           # never run against the old version.
           docker stack deploy --detach=false --with-registry-auth --prune -c deploy/hetzner/swarm/stack.yml skout
@@ -233,6 +262,7 @@ jobs:
         env:
           EXPECT_OUTBOUND_REPLICAS: ${{ inputs.outbound_replicas || '0' }}
           EXPECT_SCRAPER_REPLICAS: ${{ inputs.scraper_replicas || '1' }}
+          OPS_URL: https://${{ vars.OPS_HOST }}
         run: node deploy/hetzner/scripts/smoke.mjs "${{ vars.STAGING_URL }}"
 
       - name: Roll back on failure

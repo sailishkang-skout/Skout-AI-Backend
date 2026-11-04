@@ -20,6 +20,7 @@ import {
 import { createIntegrationService } from "./integration.service.js";
 import { DEFAULT_UNIPILE_DSN } from "./integration-providers.js";
 import { buildEntitlementsService } from "./entitlements.service.js";
+import { assertIdentityAvailable } from "./cops-usage.service.js";
 
 const { linkedinAccounts } = schema;
 
@@ -77,6 +78,8 @@ export class LinkedinAccountService {
     if (!unipileAccountId) throw new HttpError("unipileAccountId is required", 400);
     const channel: MessagingChannel = input.channel === "whatsapp" ? "whatsapp" : "linkedin";
 
+    // COPS-14: the plan's connected-identity allowance (reconnecting the same account is free).
+    await assertIdentityAvailable(this.db, workspaceId, unipileAccountId);
     const existing = await this.list(workspaceId, channel);
 
     // §5.1 Task 35 — the per-channel default below is unchanged for any workspace that hasn't

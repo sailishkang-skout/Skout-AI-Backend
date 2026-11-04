@@ -13,7 +13,11 @@ const isHubSpotMissingScopeError = vi.fn((...args: unknown[]) => {
   const msg = err instanceof Error ? err.message : String(err);
   return msg.includes("MISSING_SCOPES") || msg.includes("crm.lists.read");
 });
+const fetchHubSpotObjectProperties = vi.fn().mockResolvedValue({});
 vi.mock("../services/hubspot.client.js", () => ({
+  fetchHubSpotObjectProperties: (...args: unknown[]) => fetchHubSpotObjectProperties(...args),
+  getHubSpotRateLimitState: () => ({ isRateLimited: false, lastRateLimitedAt: null, limitedUntil: null, retryAfterMs: null }),
+  hubspotRateLimitKey: () => "default",
   updateHubSpotContact: (...args: unknown[]) => updateHubSpotContact(...args),
   updateHubSpotDeal: (...args: unknown[]) => updateHubSpotDeal(...args),
   isHubSpotRetryableError: (...args: unknown[]) => isHubSpotRetryableError(...args),
@@ -28,7 +32,7 @@ vi.mock("../services/crm-export.runner.js", () => ({
 
 const { processNextCrmOutboundWrite } = await import("./crm-outbound-write.worker.js");
 
-const { workspaces, crmConnections, crmNativeLinks, crmOutboundWrites } = schema;
+const { workspaces, crmConnections, crmNativeLinks, crmOutboundWrites, crmConflicts } = schema;
 
 describe("processNextCrmOutboundWrite", () => {
   const config = loadEnv();
@@ -44,18 +48,21 @@ describe("processNextCrmOutboundWrite", () => {
       .returning();
     workspaceId = ws!.id;
 
-    const [conn] = await db.insert(crmConnections).values({ workspaceId, provider: "hubspot" }).returning();
+    // Sync is opted in (ADR 0014); a connection without it pushes nothing (tested below).
+    const [conn] = await db.insert(crmConnections).values({ workspaceId, provider: "hubspot", settings: { syncEnabled: true } }).returning();
     connectionId = conn!.id;
   });
 
   afterEach(() => {
     updateHubSpotContact.mockClear();
     updateHubSpotDeal.mockClear();
+    fetchHubSpotObjectProperties.mockReset().mockResolvedValue({});
     isHubSpotRetryableError.mockReturnValue(false);
   });
 
   afterAll(async () => {
     await db.delete(crmOutboundWrites).where(eq(crmOutboundWrites.workspaceId, workspaceId));
+    await db.delete(crmConflicts).where(eq(crmConflicts.workspaceId, workspaceId));
     await db.delete(crmNativeLinks).where(eq(crmNativeLinks.workspaceId, workspaceId));
     await db.delete(crmConnections).where(eq(crmConnections.workspaceId, workspaceId));
     await db.delete(workspaces).where(eq(workspaces.id, workspaceId));
@@ -122,6 +129,8 @@ describe("processNextCrmOutboundWrite", () => {
       })
       .returning();
 
+    // HubSpot holds its own, newer title: most-recent wins, so the older Skout edit is not pushed.
+    fetchHubSpotObjectProperties.mockResolvedValue({ jobtitle: "HubSpot Title" });
     const outcome = await processNextCrmOutboundWrite(db, config);
 
     expect(outcome).toBe("conflict");
@@ -313,5 +322,53 @@ describe("processNextCrmOutboundWrite", () => {
     await processNextCrmOutboundWrite(db, config);
 
     expect(updateHubSpotDeal).toHaveBeenCalledWith("token", "hs-deal-1", { amount: "1000", dealname: "Renewed Deal" });
+  });
+
+  async function queue(entityId: string, externalId: string, patch: Record<string, unknown>, skoutChangedAt: string, externalUpdatedAt: string, entityType: "contact" | "deal" = "contact") {
+    await db.insert(crmNativeLinks).values({ workspaceId, connectionId, entityType, entityId, externalId, externalUpdatedAt: new Date(externalUpdatedAt) });
+    const [queued] = await db
+      .insert(crmOutboundWrites)
+      .values({ workspaceId, connectionId, entityType, entityId, patch, skoutChangedAt: new Date(skoutChangedAt), idempotencyKey: `${entityId}-${Date.now()}` })
+      .returning();
+    return queued!.id;
+  }
+
+  it("COPS-09: a field with a pending conflict is not pushed until the conflict is resolved", async () => {
+    const entityId = "33333333-3333-4333-8333-000000000001";
+    await db.insert(crmConflicts).values({ workspaceId, connectionId, entityType: "contact", entityId, externalId: "hs-c1", fieldName: "title", skoutValue: "A", externalValue: "B" });
+    const id = await queue(entityId, "hs-c1", { title: "Skout title", phone: "555-0101" }, "2026-03-05T00:00:00.000Z", "2026-03-01T00:00:00.000Z");
+
+    expect(await processNextCrmOutboundWrite(db, config)).toBe("pushed");
+    // Only the field without a conflict goes out.
+    expect(updateHubSpotContact).toHaveBeenCalledWith("token", "hs-c1", { phone: "555-0101" });
+    const [row] = await db.select().from(crmOutboundWrites).where(eq(crmOutboundWrites.id, id));
+    expect(row?.status).toBe("succeeded");
+  });
+
+  it("COPS-09: a manual-review deal field the provider changed later queues one conflict with both values", async () => {
+    const entityId = "33333333-3333-4333-8333-000000000002";
+    fetchHubSpotObjectProperties.mockResolvedValue({ amount: "900" });
+    const id = await queue(entityId, "hs-d2", { amount: "1200" }, "2026-03-01T00:00:00.000Z", "2026-03-09T00:00:00.000Z", "deal");
+
+    expect(await processNextCrmOutboundWrite(db, config)).toBe("conflict");
+    expect(updateHubSpotDeal).not.toHaveBeenCalled();
+    const [row] = await db.select().from(crmOutboundWrites).where(eq(crmOutboundWrites.id, id));
+    expect(row?.lastError).toBe("blocked_by_pending_conflict");
+    const conflicts = await db.select().from(crmConflicts).where(eq(crmConflicts.entityId, entityId));
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0]).toMatchObject({ fieldName: "amount", skoutValue: "1200", externalValue: "900", status: "pending" });
+  });
+
+  it("COPS-09 / ADR 0014: a connection with sync turned off pushes nothing", async () => {
+    await db.update(crmConnections).set({ settings: { syncEnabled: false } }).where(eq(crmConnections.id, connectionId));
+    try {
+      const id = await queue("33333333-3333-4333-8333-000000000003", "hs-c3", { phone: "1" }, "2026-03-05T00:00:00.000Z", "2026-03-01T00:00:00.000Z");
+      expect(await processNextCrmOutboundWrite(db, config)).toBe("pushed");
+      expect(updateHubSpotContact).not.toHaveBeenCalled();
+      const [row] = await db.select().from(crmOutboundWrites).where(eq(crmOutboundWrites.id, id));
+      expect(row?.lastError).toBe("sync_disabled");
+    } finally {
+      await db.update(crmConnections).set({ settings: { syncEnabled: true } }).where(eq(crmConnections.id, connectionId));
+    }
   });
 });

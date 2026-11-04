@@ -1,0 +1,159 @@
+openapi: 3.0.3
+info:
+  title: CustomerOps COPS-11 customer success health model and playbooks
+  version: 1.0.0
+  description: >
+    Contract for COPS-11 as built (backend PR 209). All paths are under /api/v1 and use the COPS
+    error envelope {code, message, details, request_id, retryable}. Reads need crm:read (or
+    crm:manage). Recompute and CSM changes need crm:manage or workspace:manage. Installing
+    playbooks and changing the health model need workspace:manage. Every write is audited.
+    Health is rule-based, not AI: every point a dimension loses is a factor with its reason.
+    The Customer 360 header (GET /accounts/{id}/360, COPS-02 contract) also carries health_score,
+    renewal_risk and csm_id.
+paths:
+  /accounts/{id}/health:
+    get:
+      summary: The account's latest health score with every contributing factor, and its CSM
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          description: "`health` is null before the first computation"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      health: { nullable: true, allOf: [{ $ref: "#/components/schemas/HealthScore" }] }
+                      csmId: { type: string, format: uuid, nullable: true }
+        "404": { description: Account not found in this workspace }
+  /accounts/{id}/health/history:
+    get:
+      summary: Score history for the trend, newest first (no factor list)
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { name: days, in: query, schema: { type: integer, minimum: 1, maximum: 730, default: 180 } }
+      responses:
+        "200": { description: "List of {score, state, renewalRisk, dimensions, computedAt}" }
+  /accounts/{id}/health/recompute:
+    post:
+      summary: Recompute now (the retention sweep also recomputes every customer account)
+      description: >
+        Writes a history row, the account's Success fields (health_score, health_state,
+        renewal_risk), moves the health lifecycle one allowed step at a time (LifecycleTransitioned),
+        and raises HealthSignalDetected once per account, signal and cycle.
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: "{score, state, renewalRisk, newSignals}" }
+        "404": { description: Account not found }
+  /accounts/{id}/csm:
+    put:
+      summary: Set or clear the account's CSM
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, required: [csm_id], properties: { csm_id: { type: string, format: uuid, nullable: true } } }
+      responses:
+        "200": { description: "{csmId}; audited as account.csm_changed with before and after" }
+        "422": { description: "csm_not_a_member: the user is not in this workspace" }
+  /customer-success/overview:
+    get:
+      summary: The Customer Success screen in one read
+      responses:
+        "200": { description: Overview, content: { application/json: { schema: { $ref: "#/components/schemas/Overview" } } } }
+  /customer-success/playbooks:
+    get:
+      summary: The five playbook templates and whether this workspace has installed each
+      responses:
+        "200": { description: "List of {key, name, description, automationId, status}" }
+  /customer-success/playbooks/install:
+    post:
+      summary: Install the playbooks the workspace does not have yet (published v1, active)
+      description: Running it again changes nothing. Audited as cs_playbooks.installed.
+      responses:
+        "200": { description: "{installed: string[], total}" }
+        "403": { description: Needs workspace:manage }
+  /customer-success/playbooks/enrollments:
+    get:
+      summary: Playbook enrollments (runs of template workflows), newest first
+      parameters:
+        - { name: account_id, in: query, schema: { type: string, format: uuid } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        "200": { description: "List of {runId, automationId, playbook, templateKey, version, status, accountId, trigger, signal, createdAt, finishedAt}" }
+  /customer-success/model:
+    get:
+      summary: The live health model (code defaults until a workspace saves one)
+      responses:
+        "200": { description: HealthModel, content: { application/json: { schema: { $ref: "#/components/schemas/HealthModel" } } } }
+    put:
+      summary: Save a new model version (partial update)
+      requestBody:
+        content: { application/json: { schema: { $ref: "#/components/schemas/HealthModelPatch" } } }
+      responses:
+        "200": { description: The new HealthModel; audited as health_model.updated }
+        "422": { description: "health_thresholds_invalid (atRisk must be below healthy) or health_weights_invalid (all zero)" }
+components:
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+  schemas:
+    Dimension: { type: string, enum: [adoption, relationship, support, commercial, payment] }
+    HealthFactor:
+      type: object
+      properties:
+        dimension: { $ref: "#/components/schemas/Dimension" }
+        key: { type: string, example: open_tickets }
+        kind: { type: string, enum: [leading, lagging] }
+        value: { nullable: true, oneOf: [{ type: number }, { type: string }] }
+        points: { type: integer, description: "0 or negative; a dimension is 100 plus its factors' points, clamped to 0..100" }
+        reason: { type: string, example: "2 open ticket(s)" }
+    HealthScore:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        score: { type: integer, description: Weighted mean of the dimension scores }
+        state: { type: string, enum: [healthy, watch, at_risk] }
+        renewalRisk: { type: string, enum: [low, medium, high] }
+        dimensions: { type: object, additionalProperties: { type: object, properties: { score: { type: integer }, weight: { type: integer } } } }
+        factors: { type: array, items: { $ref: "#/components/schemas/HealthFactor" } }
+        modelVersion: { type: integer, description: 0 means the code defaults }
+        computedAt: { type: string, format: date-time }
+    HealthModel:
+      type: object
+      properties:
+        version: { type: integer }
+        weights: { type: object, additionalProperties: { type: integer }, example: { adoption: 20, relationship: 20, support: 20, commercial: 20, payment: 20 } }
+        thresholds: { type: object, properties: { healthy: { type: integer, example: 70 }, atRisk: { type: integer, example: 40 } } }
+        params: { type: object, properties: { quietDays: { type: integer, example: 21 }, renewalWindowDays: { type: integer, example: 90 }, ticketHeavyOpen: { type: integer, example: 3 } } }
+    HealthModelPatch:
+      type: object
+      properties:
+        weights: { type: object, additionalProperties: { type: integer, minimum: 0, maximum: 100 } }
+        thresholds: { type: object, properties: { healthy: { type: integer }, atRisk: { type: integer } } }
+        params: { type: object }
+    Overview:
+      type: object
+      properties:
+        distribution: { type: object, properties: { healthy: { type: integer }, watch: { type: integer }, at_risk: { type: integer }, unscored: { type: integer } } }
+        renewalExposure:
+          type: array
+          description: Open subscriptions ending within 90 days, with the annual value up for renewal (arrMinor = monthly line items x 12, minor units, in currency)
+          items: { type: object }
+        adoption:
+          type: object
+          properties:
+            total: { type: integer }
+            activated: { type: integer }
+            signedIn: { type: integer }
+            under50: { type: integer }
+            avgPct: { type: integer }
+            milestones: { type: array, items: { type: object, properties: { key: { type: string }, label: { type: string }, reached: { type: integer }, total: { type: integer } } } }
+        atRisk:
+          type: array
+          description: At risk and watch accounts, lowest score first, with the two biggest reasons and the next open task (null when none)
+          items: { type: object }
+        expansionSignals: { type: array, description: "HealthSignalDetected expansion_signal events in 30 days, with evidence", items: { type: object } }
+        playbooks: { type: array, description: Recent enrollments, items: { type: object } }

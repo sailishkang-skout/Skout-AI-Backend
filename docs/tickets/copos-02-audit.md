@@ -82,6 +82,13 @@ Not merged; for review.
 3. Tasks linked to an account use `related_entity_type = 'company'` (new value; existing code used contact, sequence_call_step, wrong_person_escalation).
 4. Internal notes can be written by any CRM user but read only with `crm:admin`.
 5. Two 360 endpoints exist: the page header still reads `/account-360/:companyId`; the new section reads `/accounts/:id/360`. Unifying them means refactoring the existing 697-line page; proposed as a follow-up PR.
+   Update 2026-10-16, decision: keep both. They are two read models, not one read twice.
+   `/account-360/:companyId` is the Dexter intelligence view (company facts, buying committee,
+   signals, deals; person mode uses its sibling `/person-360`). `/accounts/:id/360` is the
+   CustomerOps lifecycle view (lifecycle header, commercial, onboarding, risks, tabs). The page shows
+   each block once; the account timeline already comes only from the COPS timeline. Merging would
+   move buying committee and signals into the COPS endpoint for no user-visible change. Revisit if
+   the intelligence view is retired.
 6. The idempotency fingerprint now covers method and path as well as the body (also fixed on the COPS-01 branch). Keys stored before the change replay as 422 inside their 24h window.
 
 ### Rollout

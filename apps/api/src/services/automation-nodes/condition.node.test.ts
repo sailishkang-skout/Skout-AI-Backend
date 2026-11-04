@@ -36,7 +36,7 @@ describe("conditionNodeHandler", () => {
       ctx({ sourceNodeId: "n0", field: "status", op: "equals", value: "200" }, { n0: { status: 200 } })
     );
     expect(result.branch).toBe("true");
-    expect(result.output).toEqual({ actual: 200, matches: true });
+    expect(result.output).toMatchObject({ actual: 200, matches: true });
   });
 
   it("not_equals branches true when a numeric field differs from the string value", async () => {
@@ -51,5 +51,45 @@ describe("conditionNodeHandler", () => {
       ctx({ sourceNodeId: "n0", field: "missing", op: "equals", value: "200" }, { n0: { status: 200 } })
     );
     expect(result.branch).toBe("false");
+  });
+});
+
+describe("conditionNodeHandler: COPS-10 groups and typed rules", () => {
+  const prior = { t: { account: { tier: "enterprise", seats: "120", renewsAt: "2026-12-01", trial: "true", tags: "fintech, apac" } } };
+
+  it("AND/OR groups with typed rules, and each rule's result on the step", async () => {
+    const config = {
+      match: "all",
+      rules: [
+        { sourceNodeId: "t", field: "account.seats", op: "gte", value: "100", type: "number" },
+        {
+          match: "any",
+          rules: [
+            { sourceNodeId: "t", field: "account.tier", op: "in", value: "growth, enterprise" },
+            { sourceNodeId: "t", field: "account.trial", op: "equals", value: true, type: "boolean" },
+          ],
+        },
+      ],
+    };
+    const result = await conditionNodeHandler(ctx(config, prior));
+    expect(result.branch).toBe("true");
+    const rules = result.output.rules as { field: string; matched: boolean }[];
+    expect(rules.map((r) => [r.field, r.matched])).toEqual([
+      ["account.seats", true],
+      ["account.tier", true],
+      ["account.trial", true],
+    ]);
+  });
+
+  it("compares numbers as numbers and dates as dates, not as text", async () => {
+    // As text "120" < "90"; as numbers it is not.
+    expect((await conditionNodeHandler(ctx({ match: "all", rules: [{ sourceNodeId: "t", field: "account.seats", op: "lt", value: "90", type: "number" }] }, prior))).branch).toBe("false");
+    expect((await conditionNodeHandler(ctx({ match: "all", rules: [{ sourceNodeId: "t", field: "account.renewsAt", op: "lt", value: "2027-01-01", type: "date" }] }, prior))).branch).toBe("true");
+  });
+
+  it("an unreadable value never matches a comparison, and exists checks presence", async () => {
+    expect((await conditionNodeHandler(ctx({ match: "all", rules: [{ sourceNodeId: "t", field: "account.tier", op: "gt", value: "5", type: "number" }] }, prior))).branch).toBe("false");
+    expect((await conditionNodeHandler(ctx({ match: "any", rules: [{ sourceNodeId: "t", field: "account.owner", op: "exists" }] }, prior))).branch).toBe("false");
+    expect((await conditionNodeHandler(ctx({ match: "all", rules: [{ sourceNodeId: "t", field: "account.tags", op: "contains", value: "APAC" }] }, prior))).branch).toBe("true");
   });
 });

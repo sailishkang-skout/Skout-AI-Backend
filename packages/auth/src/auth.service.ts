@@ -159,7 +159,7 @@ export async function resolveOrProvisionUser(
   const legacyClerkId = legacyClerkUserIdColumn(resolved.provider, resolved.subject);
   const emailVerifiedAt = resolved.emailVerified ? new Date() : null;
 
-  return db.transaction(async (tx) => {
+  const provision = () => db.transaction(async (tx) => {
     const existing = await findExistingUser(tx, resolved);
 
     let userId: string;
@@ -345,6 +345,23 @@ export async function resolveOrProvisionUser(
 
     return { userId, userEmail, workspaceId: workspace.id, role: "owner" };
   });
+
+  // Concurrent first sign-ins for the same new user (the app sends several requests at once)
+  // race to insert the same row; the loser hits a unique violation and its transaction rolls
+  // back whole, so nothing is half-created. One retry then finds the user the winner created.
+  try {
+    return await provision();
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+    return provision();
+  }
+}
+
+/** Postgres unique_violation (23505), also when wrapped by Drizzle as the error's cause. */
+function isUniqueViolation(error: unknown, depth = 0): boolean {
+  if (typeof error !== "object" || error === null || depth > 4) return false;
+  const e = error as { code?: unknown; cause?: unknown };
+  return e.code === "23505" || isUniqueViolation(e.cause, depth + 1);
 }
 
 async function autoAcceptPendingInvites(

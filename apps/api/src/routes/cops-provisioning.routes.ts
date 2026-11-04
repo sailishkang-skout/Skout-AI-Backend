@@ -1,3 +1,4 @@
+import { productAppUrl } from "../services/cops-onboarding.service.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { reconcileCreditLedger, type Db } from "@skout/db";
@@ -55,7 +56,7 @@ export async function copsProvisioningRoutes(app: FastifyInstance, opts: { db: D
   const readGate = requireAnyCopsPermission(["onboarding:read", "commercial:read", "credits:read"], perms);
   const adjustGate = requireAnyCopsPermission(["credits:adjust"], perms);
   const idempotency = copsIdempotencyStore(db);
-  const inviteBaseUrl = app.config.INVITE_BASE_URL ?? app.config.FRONTEND_URL ?? "http://localhost:3000";
+  const inviteBaseUrl = productAppUrl(app.config.INVITE_BASE_URL ?? app.config.FRONTEND_URL ?? "http://localhost:3000");
   const deps: ProvisioningDeps = opts.deps ?? {
     inviteBaseUrl,
     sendInvite: async ({ to, workspaceName, acceptUrl }) =>

@@ -3,11 +3,19 @@ import { log, logError, timeStep } from "./debug.js";
 import {
   DEFAULT_WEB_URL,
   getStoredSkoutUrls,
+  isSkoutAppTabUrl,
   normalizeSkoutBase,
+  skoutAppUrl,
   skoutSignInHint,
   skoutTabPatterns,
   urlMatchesSkoutWeb,
 } from "./skout-urls.js";
+
+/**
+ * Longest a connect attempt keeps trying before it reports why it could not sign in. Shorter than
+ * the side panel's wait for the background (35s), so the user sees the reason, not a timeout.
+ */
+const SESSION_BUDGET_MS = 28_000;
 
 /** Refresh this many ms before JWT exp (Skout session tokens are ~10mins; works for any JWT with exp claim). */
 const REFRESH_BUFFER_MS = 15_000;
@@ -116,7 +124,8 @@ async function requestAuthViaPostMessage(tabId) {
   for (let i = 0; i < 15; i += 1) {
     await sleep(400);
     const auth = await getStoredAuth();
-    if (auth.authToken) {
+    // Only a live token counts; the expired one we started with must not be handed back.
+    if (auth.authToken && !isTokenExpired(auth.authToken)) {
       log(`requestAuthViaPostMessage: token received on poll ${i + 1}`);
       return { token: auth.authToken, email: auth.authEmail || "" };
     }
@@ -145,11 +154,11 @@ async function readAuthFromTab(tabId) {
 /** Max time to spend polling a single Skout tab for a Skout auth token. */
 const TAB_AUTH_TIMEOUT_MS = 12_000;
 
-async function readAuthFromTabWithRetry(tabId, webUrl, attempts = 8) {
+async function readAuthFromTabWithRetry(tabId, webUrl, attempts = 8, deadline = Infinity) {
   const hint = skoutSignInHint(webUrl);
   const started = Date.now();
   for (let i = 0; i < attempts; i += 1) {
-    if (Date.now() - started > TAB_AUTH_TIMEOUT_MS) {
+    if (Date.now() - started > TAB_AUTH_TIMEOUT_MS || Date.now() > deadline) {
       log(`readAuthFromTabWithRetry: tab ${tabId} timed out after ${TAB_AUTH_TIMEOUT_MS}ms`);
       break;
     }
@@ -171,28 +180,34 @@ async function readAuthFromTabWithRetry(tabId, webUrl, attempts = 8) {
     await sleep(400);
   }
 
+  if (Date.now() > deadline) return null;
   return requestAuthViaPostMessage(tabId);
 }
 
+/**
+ * Open tabs showing the Skout web app. Only pages under the app path run the app and its
+ * extension bridge, so the marketing site and other pages on the same origin are skipped
+ * (reading them only waited out the timeout).
+ */
 async function findSkoutTabs(webUrl = DEFAULT_WEB_URL) {
+  const isAppTab = (tab) => isUsableTab(tab) && isSkoutAppTabUrl(tab.url);
   const patterns = skoutTabPatterns(webUrl);
-  const byPattern = await chrome.tabs.query({ url: patterns });
-  const usable = byPattern.filter(isUsableTab);
-  if (usable.length > 0) return usable;
+  const byPattern = (await chrome.tabs.query({ url: patterns })).filter(isAppTab);
+  if (byPattern.length > 0) return byPattern;
 
   const all = await chrome.tabs.query({});
-  return all.filter((tab) => isUsableTab(tab) && urlMatchesSkoutWeb(tab.url, webUrl));
+  return all.filter((tab) => isAppTab(tab) && urlMatchesSkoutWeb(tab.url, webUrl));
 }
 
 /** Pull a fresh Skout JWT from an open, signed-in Skout tab. */
-export async function refreshAuthFromSkoutTabs() {
+export async function refreshAuthFromSkoutTabs(deadline = Infinity) {
   const { webUrl } = await getStoredSkoutUrls();
   const tabs = await findSkoutTabs(webUrl);
   log(`refreshAuthFromSkoutTabs: ${tabs.length} Skout tab(s)`, tabs.map((t) => t.id));
   for (const tab of tabs) {
-    if (!tab.id) continue;
+    if (!tab.id || Date.now() > deadline) continue;
     const auth = await timeStep(`refreshAuth tab=${tab.id}`, () =>
-      readAuthFromTabWithRetry(tab.id, webUrl)
+      readAuthFromTabWithRetry(tab.id, webUrl, 8, deadline)
     );
     if (auth) return auth;
   }
@@ -227,22 +242,52 @@ export async function ensureFreshAuth() {
   }
 
   if (stored.authToken || after.authToken) {
+    // Access tokens last 10 minutes and are renewed only from a signed-in Skout tab. Someone who
+    // connected before shouldn't lose the extension just because they closed that tab: open Skout
+    // in a background tab (as Connect does) and read the renewed token from it.
+    const renewed = await renewSessionInBackground(webUrl);
+    if (renewed) return renewed;
     throw new Error(`Session expired — ${skoutSignInHint(webUrl)}.`);
   }
 
   throw new Error(`Not signed in — ${skoutSignInHint(webUrl)}.`);
 }
 
-async function waitForStoredAuth(webUrl, attempts = 30) {
-  for (let i = 0; i < attempts; i += 1) {
+let backgroundRenewal = null;
+
+/** One background renewal at a time; parallel requests share it. Resolves null on failure. */
+function renewSessionInBackground(webUrl) {
+  if (!backgroundRenewal) {
+    log("ensureFreshAuth: no Skout tab gave a token; renewing in a background tab");
+    backgroundRenewal = ensureSession(webUrl, { focus: false })
+      .then((auth) => (auth?.token ? auth : null))
+      .catch((error) => {
+        log("ensureFreshAuth: background renewal failed", error?.message);
+        return null;
+      })
+      .finally(() => {
+        backgroundRenewal = null;
+      });
+  }
+  return backgroundRenewal;
+}
+
+async function waitForStoredAuth(webUrl, attempts = 30, deadline = Infinity) {
+  for (let i = 0; i < attempts && Date.now() <= deadline; i += 1) {
     const auth = await getStoredAuth();
     if (auth.authToken && !isTokenExpired(auth.authToken)) {
       return { token: auth.authToken, email: auth.authEmail || "" };
     }
-    await refreshAuthFromSkoutTabs();
+    await refreshAuthFromSkoutTabs(deadline);
     await sleep(500);
   }
-  throw new Error(`Sign in to Skout in the tab that opened, then try again (${skoutSignInHint(webUrl)}).`);
+  const auth = await getStoredAuth();
+  if (auth.authToken && !isTokenExpired(auth.authToken)) {
+    return { token: auth.authToken, email: auth.authEmail || "" };
+  }
+  throw new Error(
+    `Not signed in to Skout. Sign in at ${skoutAppUrl(webUrl, "/sign-in")} in the Skout tab, then click Connect again.`
+  );
 }
 
 /**
@@ -257,8 +302,9 @@ export async function ensureSession(webUrl = DEFAULT_WEB_URL, { focus = false } 
   if (isAuthFresh(existing)) {
     return { token: existing.authToken, email: existing.authEmail || "" };
   }
+  const deadline = Date.now() + SESSION_BUDGET_MS;
 
-  const refreshed = await refreshAuthFromSkoutTabs();
+  const refreshed = await refreshAuthFromSkoutTabs(deadline);
   if (refreshed) return refreshed;
 
   const tabs = await findSkoutTabs(base);
@@ -268,8 +314,9 @@ export async function ensureSession(webUrl = DEFAULT_WEB_URL, { focus = false } 
     tabs.find((t) => urlMatchesSkoutWeb(t.url, base));
 
   if (!tab?.id) {
-    tab = await chrome.tabs.create({ url: `${base}/dashboard`, active: focus });
-    await waitForTabLoad(tab.id, 20_000);
+    // The app lives under /app; ${base}/dashboard is a 404 with no extension bridge on it.
+    tab = await chrome.tabs.create({ url: skoutAppUrl(base, "/dashboard"), active: focus });
+    await waitForTabLoad(tab.id, Math.max(1_000, Math.min(15_000, deadline - Date.now())));
     await sleep(focus ? 1500 : 3000);
     tab = await chrome.tabs.get(tab.id).catch(() => tab);
   } else if (focus) {
@@ -281,10 +328,10 @@ export async function ensureSession(webUrl = DEFAULT_WEB_URL, { focus = false } 
     throw new Error(`Skout didn't load — ${skoutSignInHint(base)}.`);
   }
 
-  const direct = await readAuthFromTabWithRetry(tab.id, base, 20);
+  const direct = await readAuthFromTabWithRetry(tab.id, base, 20, deadline);
   if (direct) return direct;
 
-  return waitForStoredAuth(base, focus ? 30 : 20);
+  return waitForStoredAuth(base, focus ? 30 : 20, deadline);
 }
 
 /** Use an open Skout tab or open the app — sync happens automatically when signed in. */

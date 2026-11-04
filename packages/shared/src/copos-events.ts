@@ -45,7 +45,7 @@ export const ProvisioningRequestedPayload = z.object({
   opportunity_id: id,
   account_id: id.nullable(),
   policy: z.enum(["trial_approval_only", "signature", "payment", "signature+payment", "manual_override"]),
-  trigger: z.enum(["signature", "payment", "trial_approval", "override", "policy_change"]),
+  trigger: z.enum(["signature", "payment", "trial_approval", "override", "policy_change", "approval"]),
 });
 export const WorkspaceProvisionedPayload = z.object({ account_id: id, workspace_id: id });
 /** COPS-04: optional account_id (additive) so the grant reaches the account timeline. */
@@ -71,6 +71,8 @@ export const CustomerActivatedPayload = z.object({ account_id: id, rule_version:
 export const TicketCreatedPayload = z.object({ ticket_id: id, account_id: id, severity: z.string() });
 export const TicketEscalatedPayload = z.object({ ticket_id: id, account_id: id, severity: z.string() });
 export const TicketResolvedPayload = z.object({ ticket_id: id, account_id: id });
+/** COPS-12: an SLA clock passed its target (once per clock). */
+export const TicketSlaBreachedPayload = z.object({ ticket_id: id, account_id: id, clock: z.enum(["response", "resolution"]), priority: z.string(), target_minutes: z.number().int() });
 export const LifecycleTransitionedPayload = z.object({
   dimension: z.enum(["opportunity", "commercial", "onboarding", "account", "health", "support"]),
   entity_id: z.string().uuid(),
@@ -78,6 +80,56 @@ export const LifecycleTransitionedPayload = z.object({
   to: z.string(),
   source: z.string().min(1),
   reason: z.string().min(1),
+});
+
+/** COPS-08: an approval was asked for; the approver roles it names are who gets notified. */
+export const ApprovalRequestedPayload = z.object({
+  approval_id: z.string().uuid(),
+  proposal_id: z.string().uuid(),
+  opportunity_id: z.string().uuid(),
+  proposal_version: z.number().int().min(1),
+  required_approvers: z.array(z.enum(["sales_manager", "finance", "legal_revops", "executive"])).min(1),
+});
+/** COPS-08: an approval reached an outcome (granted, rejected, or voided by a change of terms). */
+export const ApprovalDecidedPayload = z.object({
+  approval_id: z.string().uuid(),
+  proposal_id: z.string().uuid(),
+  opportunity_id: z.string().uuid(),
+  proposal_version: z.number().int().min(1),
+  status: z.enum(["approved", "rejected", "voided"]),
+  reason: z.string().nullable(),
+});
+
+/** COPS-08: a subscription moved along the failed-payment timeline, or back to active after payment. */
+export const SubscriptionStatusChangedPayload = z.object({
+  subscription_id: z.string().uuid(),
+  account_id: z.string().uuid(),
+  from: z.enum(["active", "past_due", "restricted", "suspended", "closed"]),
+  to: z.enum(["active", "past_due", "restricted", "suspended", "closed"]),
+  /** Days since the due date of the oldest unpaid bill; null when nothing is unpaid. */
+  day: z.number().int().min(0).nullable(),
+});
+
+/** COPS-08 (Bible p.73): a renewal opportunity was opened ahead of the end of a term. Once per term. */
+export const RenewalOpenedPayload = z.object({
+  subscription_id: z.string().uuid(),
+  account_id: z.string().uuid(),
+  opportunity_id: z.string().uuid(),
+  original_opportunity_id: z.string().uuid(),
+  term_end: z.string().datetime(),
+});
+
+/**
+ * COPS-11: the health sweep raised a customer-success signal for an account. One event per account,
+ * signal and cycle (the event id is derived from them), so a success playbook runs once per cycle.
+ */
+export const HEALTH_SIGNALS = ["low_adoption", "ticket_heavy", "renewal_approaching", "expansion_signal"] as const;
+export const HealthSignalDetectedPayload = z.object({
+  account_id: z.string().uuid(),
+  signal: z.enum(HEALTH_SIGNALS),
+  cycle: z.string().min(1),
+  health_score: z.number().int().nullable(),
+  evidence: z.array(z.object({ factor: z.string(), reason: z.string() })),
 });
 
 /** Event type → payload schema. The single registry consumers and outbox writers use. */
@@ -101,8 +153,14 @@ export const COPS_PHASE1_EVENTS = {
   CustomerActivated: CustomerActivatedPayload,
   TicketCreated: TicketCreatedPayload,
   TicketEscalated: TicketEscalatedPayload,
+  TicketSlaBreached: TicketSlaBreachedPayload,
   TicketResolved: TicketResolvedPayload,
   LifecycleTransitioned: LifecycleTransitionedPayload,
+  ApprovalRequested: ApprovalRequestedPayload,
+  ApprovalDecided: ApprovalDecidedPayload,
+  SubscriptionStatusChanged: SubscriptionStatusChangedPayload,
+  RenewalOpened: RenewalOpenedPayload,
+  HealthSignalDetected: HealthSignalDetectedPayload,
 } as const;
 
 export type CopsPhase1EventType = keyof typeof COPS_PHASE1_EVENTS;

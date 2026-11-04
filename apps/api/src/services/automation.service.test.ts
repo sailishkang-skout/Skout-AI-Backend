@@ -10,12 +10,15 @@ function makeDb(overrides: Partial<Record<string, unknown>> = {}) {
   const values = vi.fn().mockReturnValue({ returning });
   const insert = vi.fn().mockReturnValue({ values });
   const limit = vi.fn().mockResolvedValue([{ id: "auto-1", workspaceId: WORKSPACE_ID, currentVersion: 0 }]);
-  const where = vi.fn().mockReturnValue({ limit, orderBy: vi.fn().mockResolvedValue([]) });
+  // publishVersion locks the automation row: select ... for("update").limit(1).
+  const where = vi.fn().mockReturnValue({ limit, orderBy: vi.fn().mockResolvedValue([]), for: vi.fn().mockReturnValue({ limit }) });
   const from = vi.fn().mockReturnValue({ where });
   const select = vi.fn().mockReturnValue({ from });
   const set = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
   const update = vi.fn().mockReturnValue({ set });
-  return { insert, select, update, ...overrides } as any;
+  const db = { insert, select, update, ...overrides } as any;
+  db.transaction = (work: (tx: unknown) => unknown) => work(db);
+  return db;
 }
 
 describe("AutomationService", () => {

@@ -203,15 +203,21 @@ export function initPanel() {
       const result = await runInBackground("get-lists");
       const lists = result.lists || [];
       const lastId = await getLastListId();
-      listSelectEl.innerHTML =
-        lists.length > 0
-          ? lists
-              .map(
-                (list) =>
-                  `<option value="${list.id}"${list.id === lastId ? " selected" : ""}>${list.name}</option>`
-              )
-              .join("")
-          : `<option value="">No lists yet — create one in Skout</option>`;
+      listSelectEl.replaceChildren();
+      if (lists.length > 0) {
+        for (const list of lists) {
+          const option = document.createElement("option");
+          option.value = list.id;
+          option.textContent = list.name;
+          option.selected = list.id === lastId;
+          listSelectEl.append(option);
+        }
+      } else {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "No lists yet — create one in Skout";
+        listSelectEl.append(option);
+      }
 
       if (!quiet) {
         setStatus(lists.length > 0 ? `${lists.length} list(s) ready.` : "Create a list in Skout.");
@@ -219,15 +225,17 @@ export function initPanel() {
     } catch (error) {
       const message = friendlyTabError(error instanceof Error ? error.message : "Failed to load lists");
       const config = await getConfig();
-      listSelectEl.innerHTML = `<option value="">Could not load lists</option>`;
-      if (!quiet) {
-        setStatus(
-          message.includes("signed in") || message.includes("Connect")
-            ? message
-            : `${message} Try Connect Skout account, or ${skoutSignInHint(config.webUrl)}.`,
-          true
-        );
-      }
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "Could not load lists — see status for details";
+      listSelectEl.replaceChildren(option);
+      const needsReconnect = /signed in|connect|session expired|unauthorized/i.test(message);
+      setStatus(
+        needsReconnect
+          ? `Could not load lists: ${message} ${skoutSignInHint(config.webUrl)}.`
+          : `Could not load lists: ${message} Check your workspace access and API URL.`,
+        true
+      );
     }
   }
 
@@ -364,9 +372,23 @@ export function initPanel() {
     const apiField = row.getAttribute("data-field") === "validation" ? "email_status" : null;
     const valueEl = row.querySelector(".enrich-result-value");
     const iconEl = row.querySelector(".enrich-result-icon");
-    if (!match || !match.value || match.status === "not_found") {
+    if (!match) {
       if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#475569"; }
       if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#475569"; }
+      return;
+    }
+    if (match.validationStatus === "skipped") {
+      const reason = match.valueJson?.reason;
+      if (valueEl) {
+        valueEl.textContent = reason ? `Skipped: ${reason}` : "Skipped";
+        valueEl.style.color = "#fbbf24";
+      }
+      if (iconEl) { iconEl.textContent = "⚠"; iconEl.style.color = "#fbbf24"; }
+      return;
+    }
+    if (match.validationStatus === "error") {
+      if (valueEl) { valueEl.textContent = "Lookup failed"; valueEl.style.color = "#fca5a5"; }
+      if (iconEl) { iconEl.textContent = "!"; iconEl.style.color = "#fca5a5"; }
       return;
     }
     if (apiField === "email_status" && match.value !== "valid") {
@@ -374,7 +396,13 @@ export function initPanel() {
       if (iconEl) { iconEl.textContent = "⚠"; iconEl.style.color = "#fbbf24"; }
       return;
     }
-    if (valueEl) { valueEl.textContent = match.value; valueEl.style.color = "#e2e8f0"; }
+    const displayValue = displayValueForResult(row.getAttribute("data-field"), match);
+    if (!displayValue || match.status === "not_found") {
+      if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#475569"; }
+      if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#475569"; }
+      return;
+    }
+    if (valueEl) { valueEl.textContent = displayValue; valueEl.style.color = "#e2e8f0"; }
     if (iconEl) { iconEl.textContent = "✓"; iconEl.style.color = "#86efac"; }
   }
 
@@ -388,6 +416,74 @@ export function initPanel() {
       );
       renderResultCell(row, match);
     }
+  }
+
+  function displayValueForResult(field, match) {
+    if (field === "company" && match.valueJson && typeof match.valueJson === "object") {
+      const company = match.valueJson;
+      const location = [company.hqCity, company.hqCountry].filter(Boolean).join(", ");
+      const details = [
+        company.companyName,
+        company.industry,
+        Number.isFinite(company.employeeCount) ? `${company.employeeCount} employees` : undefined,
+        location,
+        company.foundedDate ? `Founded ${company.foundedDate}` : undefined,
+      ].filter((value) => typeof value === "string" && value.trim());
+      return details.join(" · ") || match.value;
+    }
+    if (field === "phone" && match.valueJson && typeof match.valueJson === "object") {
+      return (
+        match.value ||
+        [match.valueJson.mobile, match.valueJson.direct, match.valueJson.hq]
+          .filter(Boolean)
+          .join(" · ")
+      );
+    }
+    return match.value;
+  }
+
+  function hasEnrichmentData(results, fields) {
+    return fields.some((field) => {
+      const apiField = RESULT_FIELD_MAP[field] || field;
+      const match = results.find(
+        (result) =>
+          result.field === apiField &&
+          (result.isPrimary !== false || apiField === "email_status")
+      );
+      if (!match || match.validationStatus === "skipped" || match.validationStatus === "error") {
+        return false;
+      }
+      return Boolean(displayValueForResult(field, match));
+    });
+  }
+
+  function noEnrichmentDataMessage(attempts = []) {
+    if (!Array.isArray(attempts)) attempts = [];
+    const failedProviders = [...new Set(
+      attempts.filter((attempt) => attempt.status === "error").map((attempt) => attempt.provider)
+    )];
+    if (failedProviders.length) {
+      return `No data returned; provider requests failed (${failedProviders.join(", ")}). Check provider access and configuration.`;
+    }
+    const phoneGate = attempts.find(
+      (attempt) => attempt.provider === "phone-gate" && attempt.status === "skipped"
+    );
+    if (phoneGate) {
+      if (phoneGate.operation === "name-gate") {
+        return "No contact data matched. Phone lookup was skipped because a full name is required.";
+      }
+      return "No contact data matched. Phone lookup was skipped because the lead score did not meet its threshold.";
+    }
+    return "No matching enrichment data returned. Confirm provider access and the prospect's company details.";
+  }
+
+  function updateUnresolvedRows(message) {
+    enrichResultsEl?.querySelectorAll(".enrich-result-value").forEach((valueEl) => {
+      if (valueEl.textContent === "⏳" || valueEl.textContent === "Not found") {
+        valueEl.textContent = message;
+        valueEl.style.color = "#fbbf24";
+      }
+    });
   }
 
   // Updates only rows that have a result — rows still in-flight stay ⏳.
@@ -441,23 +537,40 @@ export function initPanel() {
       // Start enrichment — background responds immediately with jobId.
       const started = await runInBackground("enrich-profile", { tabId, fields });
 
-      let lastResults = started.results || [];
+      let outcome = started;
 
       if (started.jobId && started.status !== "completed") {
         // Poll job and update each field row as its step completes.
         for (let i = 0; i < POLL_MAX; i++) {
           await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-          const job = await runInBackground("poll-enrich-job", { jobId: started.jobId }).catch(() => null);
+          const job = await runInBackground("poll-enrich-job", { jobId: started.jobId });
+          outcome = { ...outcome, ...job };
           if (job?.results?.length) {
             applyPartialResults(job.results);
-            lastResults = job.results;
           }
           if (job?.status === "completed" || job?.status === "failed") break;
         }
       }
 
-      applyEnrichResults(lastResults);
-      setStatus(`Enriched ${started.fullName}.`);
+      if (outcome.status === "failed") {
+        applyEnrichResults(outcome.results || []);
+        updateUnresolvedRows("Unavailable");
+        setStatus(`Enrichment failed: ${outcome.errorMessage || "The provider request did not complete."}`, true);
+        return;
+      }
+      if (outcome.status !== "completed") {
+        updateUnresolvedRows("Still processing");
+        setStatus("Enrichment is still processing. Check the job again shortly.");
+        return;
+      }
+
+      const results = outcome.results || [];
+      applyEnrichResults(results);
+      if (hasEnrichmentData(results, fields)) {
+        setStatus(`Enrichment completed for ${started.fullName}.`);
+      } else {
+        setStatus(noEnrichmentDataMessage(outcome.attempts));
+      }
     } catch (error) {
       enrichResultsEl?.querySelectorAll(".enrich-result-value").forEach((el) => {
         if (el.textContent === "⏳") { el.textContent = "—"; el.style.color = "#475569"; }
@@ -609,6 +722,12 @@ export function initPanel() {
     await refreshLists({ quiet: true });
     await refreshSequences({ quiet: true });
   })();
+
+  // Any part of the panel that hits a sign-in failure reports it, so the status never keeps
+  // saying "Connected to Skout." after the session is gone.
+  document.addEventListener("skout-auth-lost", (event) => {
+    setStatus(friendlyTabError(String(event.detail || "Session expired — click Reconnect Skout account.")), true);
+  });
 
   chrome.storage.onChanged.addListener((changes, area) => {
     // Auth JWTs live in chrome.storage.local (sync was cleared after hardening).

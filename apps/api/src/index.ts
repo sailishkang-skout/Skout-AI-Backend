@@ -35,6 +35,7 @@ import { startIdentityMergeDiscoveryWorker } from "./workers/identity-merge-disc
 import { startDexterEventWorker } from "./workers/dexter-event.worker.js";
 import { startBounceAnomalySweepWorker } from "./workers/bounce-anomaly-sweep.worker.js";
 import { startCrmOutboundWriteWorker } from "./workers/crm-outbound-write.worker.js";
+import { startCrmSyncPollWorker } from "./workers/crm-sync-poll.worker.js";
 import { startGtmLearningSweepWorker } from "./workers/gtm-learning-sweep.worker.js";
 
 async function main() {
@@ -88,9 +89,17 @@ async function main() {
   const stopCopsOutboxRelayWorker = await startCopsOutboxRelayWorker(config);
   const stopBounceAnomalySweepWorker = await startBounceAnomalySweepWorker(config);
   const stopCrmOutboundWriteWorker = await startCrmOutboundWriteWorker(config);
+  const stopCrmSyncPollWorker = await startCrmSyncPollWorker(config);
   const stopGtmLearningSweepWorker = await startGtmLearningSweepWorker(config);
 
   const app = await buildApp(config);
+
+  if (app.db) {
+    const { bootstrapAdmin } = await import("./services/bootstrap-admin.service.js");
+    const outcome = await bootstrapAdmin(app.db, config);
+    if (outcome === "created") app.log.info({ email: config.BOOTSTRAP_ADMIN_EMAIL }, "Bootstrap admin created; remove BOOTSTRAP_ADMIN_PASSWORD from the env");
+    if (outcome === "rejected_policy") app.log.warn("BOOTSTRAP_ADMIN_PASSWORD does not meet the password policy; no admin created");
+  }
 
   if (config.RBAC_ENFORCEMENT_ENABLED && app.db) {
     const { assertRbacBackfillReady } = await import("@skout/auth");
@@ -111,6 +120,7 @@ async function main() {
   const shutdown = async () => {
     await stopGtmLearningSweepWorker();
     await stopCrmOutboundWriteWorker();
+    await stopCrmSyncPollWorker();
     await stopBounceAnomalySweepWorker();
     await stopReportDeliverySweepWorker();
     await stopWorkbookRunWorker();

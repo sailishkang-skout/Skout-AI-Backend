@@ -110,6 +110,15 @@ resource "google_compute_instance" "node" {
     instance_termination_action = var.spot ? "STOP" : null
   }
 
+  # In-place update (the VM is stopped and started, not recreated).
+  dynamic "service_account" {
+    for_each = var.service_account_email == null ? [] : [var.service_account_email]
+    content {
+      email  = service_account.value
+      scopes = ["cloud-platform"]
+    }
+  }
+
   metadata_startup_script   = templatefile("${path.module}/startup.sh", { ssh_user = var.ssh_user })
   allow_stopping_for_update = true
 

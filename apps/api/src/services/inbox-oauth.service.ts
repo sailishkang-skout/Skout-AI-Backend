@@ -1,9 +1,11 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { encryptSecret, decryptSecret } from "@skout/shared";
 import { signOAuthState, verifyOAuthState } from "../utils/oauth-state.js";
 import { HttpError } from "../utils/http.js";
+import { isCrmGrantExpiredError } from "./crm-auth-lifecycle.service.js";
+import { notifyCrmAdmins } from "./crm-alerts.service.js";
 
 type Db = ReturnType<typeof createDb>["db"];
 const { inboxes } = schema;
@@ -278,6 +280,33 @@ export async function handleMicrosoftCallback(
 // Token refresh (call before sending if token is close to expiry)
 // ---------------------------------------------------------------------------
 
+/**
+ * COPS-09 (shared OAuth lifecycle): a rejected refresh (revoked or expired grant) marks the inbox
+ * needs_reauth, so rotation stops sending from it, and alerts the workspace's Admin and Owner once,
+ * on the change, the same way an expired CRM grant does. Any other failure stays a 502 to retry.
+ */
+async function refreshFailed(db: Db, row: typeof inboxes.$inferSelect, provider: string, res: Response): Promise<never> {
+  const text = await res.text().catch(() => "");
+  const revoked = res.status === 400 || res.status === 401 ? isCrmGrantExpiredError(new Error(text)) : false;
+  if (!revoked) throw new HttpError(`${provider} token refresh failed`, 502);
+
+  const [changed] = await db
+    .update(inboxes)
+    .set({ status: "needs_reauth", updatedAt: new Date() })
+    .where(and(eq(inboxes.id, row.id), ne(inboxes.status, "needs_reauth")))
+    .returning({ id: inboxes.id });
+  if (changed) {
+    await notifyCrmAdmins(db, {
+      workspaceId: row.workspaceId,
+      type: "inbox_grant_expired",
+      title: `${provider} inbox needs reconnecting`,
+      body: `Access to ${row.emailAddress} was revoked or has expired, so no email is sent from it. Reconnect it in Settings > Inboxes.`,
+      dedupeKey: `inbox-grant:${row.id}:${new Date().toISOString()}`,
+    }).catch(() => undefined);
+  }
+  throw new HttpError("inbox_needs_reauth", 401);
+}
+
 export async function refreshGoogleToken(
   inboxId: string,
   db: Db,
@@ -304,7 +333,7 @@ export async function refreshGoogleToken(
       grant_type: "refresh_token",
     }),
   });
-  if (!res.ok) throw new HttpError("Google token refresh failed", 502);
+  if (!res.ok) await refreshFailed(db, row, "Google", res);
   const tokens = (await res.json()) as TokenResponse;
 
   const accessEnc = encryptSecret(tokens.access_token, key);
@@ -345,7 +374,7 @@ export async function refreshMicrosoftToken(
       scope: MICROSOFT_SCOPES,
     }),
   });
-  if (!res.ok) throw new HttpError("Microsoft token refresh failed", 502);
+  if (!res.ok) await refreshFailed(db, row, "Microsoft", res);
   const tokens = (await res.json()) as TokenResponse;
 
   const accessEnc = encryptSecret(tokens.access_token, key);

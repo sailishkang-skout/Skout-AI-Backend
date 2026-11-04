@@ -1,5 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { resolveCorrelationId } from "@skout/shared";
+import { writeCopsAudit } from "../services/cops-platform.service.js";
 import { errorResponse, HttpError } from "../utils/http.js";
 import {
   AUTOMATION_MODES,
@@ -7,6 +9,7 @@ import {
   listDecisions,
   listPolicies,
   upsertActionMode,
+  setActionRoles,
 } from "../services/policy-gateway.service.js";
 import {
   completeWorkflowRun,
@@ -51,10 +54,15 @@ export async function dexterPlatformRoutes(app: FastifyInstance) {
     if (!request.workspaceId || !request.userId || !app.db) {
       return reply.code(401).send(errorResponse("Unauthorized", 401));
     }
+    // Agent governance decides what AI may do without a person: owners and admins only, with a reason.
+    if (!request.role || !["owner", "admin"].includes(request.role)) {
+      return reply.code(403).send(errorResponse("Requires role: owner or admin", 403));
+    }
     const body = z
       .object({
         actionKey: z.string().min(1).max(120),
         mode: z.enum(AUTOMATION_MODES),
+        reason: z.string().trim().min(8, "Give a reason of at least 8 characters").max(1000),
       })
       .safeParse(request.body ?? {});
     if (!body.success) return reply.code(400).send(errorResponse("Invalid policy", 400, body.error.flatten()));
@@ -65,6 +73,49 @@ export async function dexterPlatformRoutes(app: FastifyInstance) {
       body.data.mode,
       request.userId
     );
+    await writeCopsAudit(app.db, {
+      tenantId: request.workspaceId,
+      actor: { type: "user", id: request.userId },
+      entityType: "automation_policy",
+      entityId: request.workspaceId,
+      action: "automation_policy.updated",
+      after: { action_key: body.data.actionKey, mode: body.data.mode },
+      reason: body.data.reason,
+      correlationId: resolveCorrelationId(request.headers["x-request-id"] as string | undefined),
+      sourceChannel: "api",
+    });
+    return reply.send({ data: row });
+  });
+
+  // COPS-14 per-role tool permissions: which roles may run an agent action. Owners/admins, with a reason.
+  app.put("/automation-policy/roles", async (request, reply) => {
+    if (!request.workspaceId || !request.userId || !app.db) {
+      return reply.code(401).send(errorResponse("Unauthorized", 401));
+    }
+    if (!request.role || !["owner", "admin"].includes(request.role)) {
+      return reply.code(403).send(errorResponse("Requires role: owner or admin", 403));
+    }
+    const body = z
+      .object({
+        actionKey: z.string().min(1).max(120),
+        allowedRoleIds: z.array(z.string().uuid()).max(50).nullable(),
+        reason: z.string().trim().min(8, "Give a reason of at least 8 characters").max(1000),
+      })
+      .safeParse(request.body ?? {});
+    if (!body.success) return reply.code(400).send(errorResponse("Invalid policy", 400, body.error.flatten()));
+    const ids = body.data.allowedRoleIds && body.data.allowedRoleIds.length ? [...new Set(body.data.allowedRoleIds)] : null;
+    const row = await setActionRoles(app.db, request.workspaceId, body.data.actionKey, ids, request.userId);
+    await writeCopsAudit(app.db, {
+      tenantId: request.workspaceId,
+      actor: { type: "user", id: request.userId },
+      entityType: "automation_policy",
+      entityId: request.workspaceId,
+      action: "automation_policy.roles_updated",
+      after: { action_key: body.data.actionKey, allowed_role_ids: ids },
+      reason: body.data.reason,
+      correlationId: resolveCorrelationId(request.headers["x-request-id"] as string | undefined),
+      sourceChannel: "api",
+    });
     return reply.send({ data: row });
   });
 

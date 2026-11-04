@@ -96,15 +96,19 @@ function extractPerson() {
   const contentLines = allParagraphTexts.filter((t) => !isNoiseLine(t) && !isProfileChrome(t) && t.toLocaleLowerCase() !== fullName?.toLocaleLowerCase());
   const headline = contentLines[0];
   const positionLine = contentLines[1]; // e.g. "Align Technology · Tel Aviv University"
-  const headerLocation = text(
-    topcard?.querySelector('[aria-label*="location" i], [data-view-name*="location" i]'),
-  ) || contentLines.find((line) => line.length < 140 && /,/.test(line) && !isProfileChrome(line));
   // LinkedIn sometimes gives a surrounding "company · school" container a
   // location-like attribute. That is not a geographic value.
   const isGeographicLocation = (value) => value && value.length < 140 &&
     !/[·|]/.test(value) &&
     !/\b(university|college|school|student| at |mutual connections?|people you may know)\b/i.test(value);
-  let locationName = isGeographicLocation(headerLocation) ? headerLocation : undefined;
+  const labelledLocation = text(
+    topcard?.querySelector('[aria-label*="location" i], [data-view-name*="location" i]'),
+  );
+  // Take the first line that is actually a place: the "Company · School, City" line also has a
+  // comma and comes before "City, State, Country".
+  let locationName = isGeographicLocation(labelledLocation)
+    ? labelledLocation
+    : contentLines.find((line, index) => index > 0 && /,/.test(line) && isGeographicLocation(line) && !isProfileChrome(line));
 
   const followersText = findCount('followers?');
   const connectionsText = findCount('connections?');
@@ -128,6 +132,12 @@ function extractPerson() {
   // ingest.routes.ts) — sourced from the current job's own company link
   // rather than guessed from the company name text, since names aren't
   // unique but this numeric/slug ID is.
+  // Experience lazy-loads as the page scrolls. Until it has, the top card's position line
+  // ("EY Technology Solutions · Guru Nanak Dev University") still names the current employer.
+  if (!currentCompanyJobs.length) {
+    const fromTopcard = topcardCurrentCompany(positionLine, headline);
+    if (fromTopcard) currentCompanyJobs.push(fromTopcard);
+  }
   const currentCompanyPublicId = currentCompanyJobs.find((j) => j.companyPublicId)?.companyPublicId;
   const roleMetadata = inferRoleMetadata(currentCompanyJobs[0]?.title || currentJobs[0]?.title || headline);
   const educations = extractEducation();
@@ -187,6 +197,21 @@ function extractPerson() {
       experience: experience.length, educations: educations.length, skills: skills.length,
     }),
   };
+}
+
+/**
+ * Current employer from the top card when Experience hasn't rendered. The position line lists
+ * the current company first and the school second; a school is never taken as an employer. The
+ * title comes from a "Title @ Company" / "Title at Company" headline naming the same company.
+ */
+function topcardCurrentCompany(positionLine, headline) {
+  const name = (positionLine || '').split(/\s+·\s+/)[0]?.trim();
+  if (!name || name.length > 120) return undefined;
+  if (/\b(university|college|school|institute|academy|polytechnic)\b/i.test(name)) return undefined;
+  if (/^(https?:\/\/|www\.)/i.test(name) || /\d+\s*(followers?|connections?)/i.test(name)) return undefined;
+  const match = (headline || '').match(/^(.+?)\s+(?:@|at)\s+(.+?)(?:\s+[·|•]\s+.*)?$/i);
+  const title = match && match[2].trim().toLowerCase() === name.toLowerCase() ? match[1].trim() : undefined;
+  return { company: name, title, source: 'topcard' };
 }
 
 function inferRoleMetadata(value) {
@@ -587,10 +612,32 @@ function companyPublicIdFromEntry(item) {
   return match?.[1];
 }
 
+/**
+ * The profile preview marks its sections `...TopLevelSection`; the /details/<section>/ pages
+ * (opened when LinkedIn shows "Show all") mark them `...DetailsSection`. Without either, fall
+ * back to the section under this page's own heading, never outside <main>.
+ */
+function profileSection(name) {
+  const keyed = document.querySelector(`[componentkey*="${name}TopLevelSection" i], [componentkey*="${name}DetailsSection" i]`);
+  if (keyed) return keyed;
+  const heading = Array.from(document.querySelectorAll('main h1, main h2, main h3'))
+    .find((node) => new RegExp(`^${name}$`, 'i').test(text(node) || ''));
+  return heading?.closest('section') || undefined;
+}
+
 function extractExperience() {
-  const section = document.querySelector('[componentkey*="ExperienceTopLevelSection" i]');
+  const section = profileSection('Experience');
   if (!section) return [];
-  const items = section.querySelectorAll('[componentkey^="entity-collection-item"]');
+  let items = Array.from(section.querySelectorAll('[componentkey^="entity-collection-item"]'));
+  if (!items.length) {
+    // Rows without component keys: one per company link, scoped to its own list item.
+    const rows = new Set();
+    section.querySelectorAll('a[href*="/company/"]').forEach((anchor) => {
+      const row = anchor.closest('li, [data-view-name*="profile-component-entity" i]');
+      if (row && section.contains(row)) rows.add(row);
+    });
+    items = [...rows];
+  }
   const results = [];
   const isExperienceNoise = value => !value || /^(ad options?|why am i seeing this ad\??|manage your ad preferences|hide or report this ad|skills|profile|untitled role)$/i.test(value.trim());
   const addExperience = entry => {
@@ -642,9 +689,8 @@ function extractExperience() {
 }
 
 function extractEducation() {
-  const section = document.querySelector('[componentkey*="EducationTopLevelSection" i]');
+  const section = profileSection('Education');
   if (!section) return [];
-  const anchors = section.querySelectorAll('a[href*="/school/"]');
   const seen = new Set();
   const results = [];
   const isBadSchool = (value) => {
@@ -652,12 +698,19 @@ function extractEducation() {
     return !candidate || /^(?:·\s*)?(?:1st|2nd|3rd|education|profile)$/i.test(candidate) ||
       /^(people you may know|all activity|ad options|hide or report this ad)$/i.test(candidate);
   };
-  anchors.forEach((a) => {
-    // Never climb outside the Education section. A loose climb can reach the
-    // profile header and turn connection degree, headline, and About text
-    // into an education record.
-    const container = a.closest('[componentkey^="entity-collection-item" i], li') || a.parentElement;
-    if (!container || seen.has(container)) return;
+  // Never climb outside the Education section. A loose climb can reach the
+  // profile header and turn connection degree, headline, and About text
+  // into an education record. Rows come from school links and, on current
+  // detail pages, from keyed rows that render a school without a link.
+  const containers = [
+    ...Array.from(section.querySelectorAll('a[href*="/school/"]'))
+      .map((a) => a.closest('[componentkey^="entity-collection-item" i], li') || a.parentElement),
+    ...Array.from(section.querySelectorAll('[componentkey^="entity-collection-item" i]')),
+  ];
+  containers.forEach((container) => {
+    if (!container || !section.contains(container)) return;
+    // A row and an element nested in it are the same entry; read it once.
+    if ([...seen].some((done) => done === container || done.contains(container) || container.contains(done))) return;
     seen.add(container);
     const paras = getItemParagraphs(container);
     const school = paras[0];

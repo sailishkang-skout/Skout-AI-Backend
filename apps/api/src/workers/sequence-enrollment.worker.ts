@@ -15,6 +15,7 @@ import { addSuppression, isSuppressed } from "../services/suppression.service.js
 import { campaignSendGate, recordCampaignOutcome } from "../services/enrichment/campaign-gate.js";
 import { buildUnsubscribeUrl } from "../services/suppression.service.js";
 import { isSendBlockedByEligibility } from "../services/send-eligibility-guard.service.js";
+import { subscriptionAccessBlock } from "../services/cops-subscription-access.js";
 import { pickNextInbox, markInboxUsed } from "../services/inbox-rotation.service.js";
 import { renderTemplate, type MergeData } from "../services/template-render.service.js";
 import { injectTracking } from "../services/tracking.service.js";
@@ -554,6 +555,19 @@ async function executeEmailStep(
     await markStepTerminal(db, pending.enrollmentStepId, "skipped", "not_send_eligible", now);
     log.info("Email step skipped — send-eligibility policy blocked it", { enrollmentId, email: prospect.email });
     return { status: "skipped", reason: "not_send_eligible" };
+  }
+
+  // COPS-08: no outreach while the workspace is restricted or suspended for an unpaid subscription
+  // bill. The step is deferred, not dropped, so the sequence carries on once the bill is paid.
+  const subscriptionBlock = await subscriptionAccessBlock(db, workspaceId);
+  if (subscriptionBlock) {
+    const deferUntil = new Date(now.getTime() + 6 * 60 * 60 * 1000);
+    await db
+      .update(sequenceEnrollmentSteps)
+      .set({ scheduledAt: deferUntil, failureReason: `subscription_${subscriptionBlock}` })
+      .where(eq(sequenceEnrollmentSteps.id, pending.enrollmentStepId));
+    log.info("Email step deferred — subscription has an unpaid bill", { enrollmentId, stage: subscriptionBlock, deferUntil });
+    return { status: "deferred" };
   }
 
   // ENR-05 — an enrollment that came from an evidence campaign is sent only while its recorded

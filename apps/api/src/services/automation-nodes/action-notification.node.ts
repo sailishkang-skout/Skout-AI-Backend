@@ -1,5 +1,7 @@
 import { createNotification } from "../notifications.service.js";
+import type { Db } from "@skout/db";
 import type { NodeHandler } from "./types.js";
+import { withStepEffect } from "./step-effect.js";
 
 /**
  * Config: { title: string; body?: string; type?: string }. `type` defaults here rather than in
@@ -14,11 +16,10 @@ export const notificationActionNodeHandler: NodeHandler = async (ctx) => {
     return { output: { simulated: true, title, body, type } };
   }
 
-  const notification = await createNotification(ctx.db, ctx.config, {
-    workspaceId: ctx.workspaceId,
-    title,
-    body,
-    type,
+  // COPS-10: recorded against the step, so a step re-run after a crash does not notify twice.
+  const output = await withStepEffect(ctx, "notification", async (tx) => {
+    const notification = await createNotification(tx as unknown as Db, ctx.config, { workspaceId: ctx.workspaceId, title, body, type });
+    return { notificationId: notification.id };
   });
-  return { output: { notificationId: notification.id } };
+  return { output };
 };

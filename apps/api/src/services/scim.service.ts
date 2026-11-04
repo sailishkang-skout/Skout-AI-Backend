@@ -8,6 +8,7 @@ import type { Env } from "../config/env.js";
 import { HttpError, errorResponse } from "../utils/http.js";
 import { parse, filter as createScimFilter } from "scim2-parse-filter";
 import { getRedis } from "../lib/redis.js";
+import { safeEqual } from "../lib/inbound-webhook-verify.js";
 
 const { users, workspaceMembers, workspaceSsoConfigs } = schema;
 
@@ -51,7 +52,8 @@ async function validateScimAuth(
       .where(eq(workspaceSsoConfigs.workspaceId, workspaceId))
       .limit(1);
 
-  if (!ssoConfig || !ssoConfig.scimApiToken || ssoConfig.scimApiToken !== token) {
+  // Constant-time: a plain !== leaks how much of the token matched through timing.
+  if (!ssoConfig || !ssoConfig.scimApiToken || !safeEqual(ssoConfig.scimApiToken, token)) {
     reply.code(401).send(errorResponse("Invalid SCIM API token", 401));
     return false;
   }

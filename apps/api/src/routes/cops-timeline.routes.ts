@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { Buffer } from "node:buffer";
 import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -27,13 +27,16 @@ export function decodeTimelineCursor(cursor: string): { occurredAt: string; id: 
   }
 }
 
-/** GET /api/v1/accounts/:id/timeline — crm:read or crm:manage. Internal notes need crm:admin. Newest first. */
+/**
+ * GET /api/v1/accounts/:id/timeline and GET /api/v1/cops/timeline (every account in the workspace,
+ * for the CRM activity feed) — crm:read or crm:manage. Internal notes need crm:admin. Newest first.
+ */
 export async function copsTimelineRoutes(app: FastifyInstance, opts: { db: Db }) {
   const { db } = opts;
   // Same reach as the CRM nav: crm:read, or crm:manage (held by the Member role).
   const gate = requireAnyCopsPermission(["crm:read", "crm:manage"], (ws, user) => getMemberPermissions(db, ws, user));
 
-  app.get<{ Params: { id: string } }>("/accounts/:id/timeline", { preHandler: gate }, async (request, reply) => {
+  const list = async (request: FastifyRequest, reply: FastifyReply, accountId: string | null) => {
     const requestId = resolveCorrelationId(request.headers["x-request-id"]);
     const invalid = (message: string, path: string) =>
       reply.status(copsErrorStatus("VALIDATION_FAILED")).send(
@@ -45,8 +48,9 @@ export async function copsTimelineRoutes(app: FastifyInstance, opts: { db: Db })
         })
       );
 
-    if (!UUID.test(request.params.id)) return invalid("Invalid account id", "id");
-    const q = request.query as { limit?: string; cursor?: string; type?: string | string[] };
+    const q = request.query as { limit?: string; cursor?: string; type?: string | string[]; account_id?: string };
+    accountId = accountId ?? q.account_id ?? null;
+    if (accountId !== null && !UUID.test(accountId)) return invalid("Invalid account id", accountId === q.account_id ? "account_id" : "id");
     const limit = Math.min(LIMIT_MAX, Math.max(1, Number.parseInt(q.limit ?? "25", 10) || 25));
 
     const types = (Array.isArray(q.type) ? q.type : q.type ? q.type.split(",") : []).filter(Boolean);
@@ -64,10 +68,8 @@ export async function copsTimelineRoutes(app: FastifyInstance, opts: { db: Db })
     const permissions = await getMemberPermissions(db, workspaceId, request.userId!);
     const canSeeInternal = permissions.includes("crm:admin");
 
-    const conditions = [
-      eq(copsTimelineEvents.workspaceId, workspaceId),
-      eq(copsTimelineEvents.accountId, request.params.id),
-    ];
+    const conditions = [eq(copsTimelineEvents.workspaceId, workspaceId)];
+    if (accountId) conditions.push(eq(copsTimelineEvents.accountId, accountId));
     if (!canSeeInternal) conditions.push(eq(copsTimelineEvents.visibility, "public"));
     if (types.length) conditions.push(inArray(copsTimelineEvents.type, types));
     if (cursor) {
@@ -82,6 +84,7 @@ export async function copsTimelineRoutes(app: FastifyInstance, opts: { db: Db })
     const rows = await db
       .select({
         id: copsTimelineEvents.id,
+        accountId: copsTimelineEvents.accountId,
         type: copsTimelineEvents.type,
         visibility: copsTimelineEvents.visibility,
         occurredAt: copsTimelineEvents.occurredAt,
@@ -101,6 +104,7 @@ export async function copsTimelineRoutes(app: FastifyInstance, opts: { db: Db })
     return {
       data: page.map((r) => ({
         id: r.id,
+        account_id: r.accountId,
         type: r.type,
         visibility: r.visibility,
         occurred_at: r.occurredAt.toISOString(),
@@ -110,5 +114,9 @@ export async function copsTimelineRoutes(app: FastifyInstance, opts: { db: Db })
       })),
       next_cursor: rows.length > limit && last ? encodeTimelineCursor(last.occurredAtText, last.id) : null,
     };
-  });
+  };
+
+  app.get<{ Params: { id: string } }>("/accounts/:id/timeline", { preHandler: gate }, (request, reply) => list(request, reply, request.params.id));
+  // ?account_id narrows the feed to one account, ?type filters as above.
+  app.get("/cops/timeline", { preHandler: gate }, (request, reply) => list(request, reply, null));
 }

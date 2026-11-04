@@ -1,5 +1,4 @@
 import { createLogger } from "@skout/observability";
-import { createHmac } from "node:crypto";
 import { eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, scopedById, scopedTo } from "@skout/db";
@@ -23,6 +22,7 @@ import {
   searchHubSpotLists,
   type HubSpotContactProperties,
   type HubSpotListSummary,
+  fetchHubSpotPortalId,
 } from "./hubspot.client.js";
 import {
   createHubSpotCredentialsStore,
@@ -219,10 +219,9 @@ export class CrmService {
       code,
     });
 
-    const portalId = createHmac("sha256", this.oauthSecret)
-      .update(tokens.accessToken)
-      .digest("hex")
-      .slice(0, 12);
+    // COPS-09: the real HubSpot portal id, which webhook events carry. (Before, an HMAC of the
+    // access token was stored here, so events could not be matched to a workspace.)
+    const portalId = await fetchHubSpotPortalId(tokens.accessToken);
 
     await saveHubSpotTokens(this.db, this.credentialsStore, parsed.workspaceId, tokens, portalId);
     // Next.js basePath is "/app" — omitting it 404'd this redirect.

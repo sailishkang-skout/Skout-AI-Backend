@@ -1,12 +1,17 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
+const upsertActionMode = vi.fn(async (..._args: unknown[]) => ({ id: "p1" }));
+const setActionRoles = vi.fn(async (..._args: unknown[]) => ({ id: "p1" }));
+
 vi.mock("../services/policy-gateway.service.js", () => ({
   AUTOMATION_MODES: ["ask", "auto", "draft", "approve"],
   classifyAndRecord: vi.fn(),
   listDecisions: vi.fn(async () => []),
   listPolicies: vi.fn(async () => []),
-  upsertActionMode: vi.fn(),
+  upsertActionMode: (...args: unknown[]) => upsertActionMode(...args),
+  setActionRoles: (...args: unknown[]) => setActionRoles(...args),
 }));
+vi.mock("../services/cops-platform.service.js", () => ({ writeCopsAudit: vi.fn(async () => undefined) }));
 vi.mock("../services/decision-workflow.service.js", () => ({
   completeWorkflowRun: vi.fn(),
   createDecisionFromNba: vi.fn(),
@@ -188,5 +193,51 @@ describe("POST /dexter/plans/:id/invoke", () => {
 
     expect(reply.statusCode).toBe(400);
     expect(invokeDexterPlan).not.toHaveBeenCalled();
+  });
+});
+
+describe("agent policy is for owners and admins only, with a reason", () => {
+  const ws = "11111111-1111-4111-8111-111111111111";
+  const user = "22222222-2222-4222-8222-222222222222";
+  const role = "33333333-3333-4333-8333-333333333333";
+
+  it("refuses a member changing a mode (403) and changes nothing", async () => {
+    const handlers = await registerRoutes({});
+    const reply = makeReply();
+    await handlers.get("PUT /automation-policy")!({ workspaceId: ws, userId: user, role: "member", headers: {}, body: { actionKey: "dexter.enroll_list", mode: "auto", reason: "Speed things up" } }, reply);
+    expect(reply.statusCode).toBe(403);
+    expect(upsertActionMode).not.toHaveBeenCalled();
+  });
+
+  it("refuses an admin without a reason (400)", async () => {
+    const handlers = await registerRoutes({});
+    const reply = makeReply();
+    await handlers.get("PUT /automation-policy")!({ workspaceId: ws, userId: user, role: "admin", headers: {}, body: { actionKey: "dexter.enroll_list", mode: "auto" } }, reply);
+    expect(reply.statusCode).toBe(400);
+    expect(upsertActionMode).not.toHaveBeenCalled();
+  });
+
+  it("saves an admin's change that has a reason", async () => {
+    const handlers = await registerRoutes({});
+    const reply = makeReply();
+    await handlers.get("PUT /automation-policy")!({ workspaceId: ws, userId: user, role: "admin", headers: {}, body: { actionKey: "dexter.enroll_list", mode: "auto", reason: "Approved by the sales lead" } }, reply);
+    expect(reply.statusCode).toBe(200);
+    expect(upsertActionMode).toHaveBeenCalledWith(expect.anything(), ws, "dexter.enroll_list", "auto", user);
+  });
+
+  it("refuses a member limiting who can run an action (403)", async () => {
+    const handlers = await registerRoutes({});
+    const reply = makeReply();
+    await handlers.get("PUT /automation-policy/roles")!({ workspaceId: ws, userId: user, role: "viewer", headers: {}, body: { actionKey: "dexter.enroll_list", allowedRoleIds: [role], reason: "Only sales may enrol" } }, reply);
+    expect(reply.statusCode).toBe(403);
+    expect(setActionRoles).not.toHaveBeenCalled();
+  });
+
+  it("lets the owner limit an action to roles", async () => {
+    const handlers = await registerRoutes({});
+    const reply = makeReply();
+    await handlers.get("PUT /automation-policy/roles")!({ workspaceId: ws, userId: user, role: "owner", headers: {}, body: { actionKey: "dexter.enroll_list", allowedRoleIds: [role, role], reason: "Only sales may enrol" } }, reply);
+    expect(reply.statusCode).toBe(200);
+    expect(setActionRoles).toHaveBeenCalledWith(expect.anything(), ws, "dexter.enroll_list", [role], user);
   });
 });

@@ -14,3 +14,8 @@ variable "resource_policies" {
   type    = list(string)
   default = []
 }
+variable "service_account_email" {
+  type        = string
+  default     = null
+  description = "Service account the VM runs as. Without one the VM has no credentials, so the Ops Agent cannot ship logs."
+}

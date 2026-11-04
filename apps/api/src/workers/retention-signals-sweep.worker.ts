@@ -1,4 +1,5 @@
 import { Worker, Queue } from "bullmq";
+import { sweepWorkspaceHealth } from "../services/cops-health.service.js";
 import { and, desc, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
 import { createLogger, withSpan } from "@skout/observability";
@@ -423,13 +424,21 @@ export async function sweepWorkspaceForRetentionSignals(
     positiveSignalLookbackDays: number;
     expansionLookbackDays: number;
   }
-): Promise<{ disengagement: number; renewalRisk: number; expansion: number }> {
+): Promise<{ disengagement: number; renewalRisk: number; expansion: number; health: number }> {
   const [disengagement, renewalRisk, expansion] = await Promise.all([
     sweepDisengagement(db, config, workspaceId, thresholds.disengagementInactivityDays),
     sweepRenewalRisk(db, config, workspaceId, thresholds.renewalWindowDays, thresholds.positiveSignalLookbackDays),
     sweepExpansion(db, config, workspaceId, thresholds.expansionLookbackDays),
   ]);
-  return { disengagement, renewalRisk, expansion };
+  // COPS-11: the same sweep recomputes account health; the expansion rule above is its evidence.
+  let health = 0;
+  try {
+    const candidates = await computeExpansionCandidates(db, workspaceId, thresholds.expansionLookbackDays);
+    health = (await sweepWorkspaceHealth(db, workspaceId, candidates)).scored;
+  } catch (err) {
+    log.error("health sweep failed", err, { workspaceId });
+  }
+  return { disengagement, renewalRisk, expansion, health };
 }
 
 export async function startRetentionSignalsSweepWorker(config: Env) {

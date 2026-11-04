@@ -29,7 +29,8 @@ describe("applyManualEntityPatch", () => {
       .returning();
     otherWorkspaceId = otherWs!.id;
 
-    const [conn] = await db.insert(crmConnections).values({ workspaceId, provider: "hubspot" }).returning();
+    // COPS-09 / ADR 0014: only an opted-in connection queues push-back writes.
+    const [conn] = await db.insert(crmConnections).values({ workspaceId, provider: "hubspot", settings: { syncEnabled: true } }).returning();
     connectionId = conn!.id;
 
     const [contact] = await db

@@ -9,6 +9,7 @@ import { getEvidence } from "../services/evidence.service.js";
 import { createRegionalBriefService } from "../services/regional-brief.service.js";
 import { copsIdempotencyStore, requireAnyCopsPermission, writeCopsAudit } from "../services/cops-platform.service.js";
 import { runLifecycleTransition } from "../services/cops-lifecycle.service.js";
+import { assertApprovalsAllowWin } from "../services/cops-approvals.service.js";
 import { withCopsIdempotentReply } from "../services/cops-idempotent.js";
 import { AccountLinkError, linkAccounts } from "../services/cops-account-relationships.service.js";
 
@@ -292,7 +293,7 @@ const SUMMARY_LIMIT = 5;
  */
 const LIST_FIELDS = {
   account: ["id", "name", "owner_id", "created_at", "updated_at"],
-  contact: ["id", "first_name", "last_name", "email", "company_id", "created_at"],
+  contact: ["id", "first_name", "last_name", "email", "company_id", "created_at", "email_status"],
   opportunity: ["id", "name", "company_id", "pipeline_id", "stage_id", "status", "amount", "currency", "owner_id", "updated_at"],
   task: ["id", "title", "type", "status", "priority", "due_at", "assigned_to", "account_id", "related_entity_type", "related_entity_id", "created_at"],
 } as const;
@@ -350,7 +351,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
       const accountId = request.params.id;
 
       const [account] = await db
-        .select({ id: companies.id, name: companies.name, ownerId: companies.ownerId })
+        .select({ id: companies.id, name: companies.name, ownerId: companies.ownerId, healthScore: companies.healthScore, healthState: companies.healthState, renewalRisk: companies.renewalRisk, csmId: companies.csmId })
         .from(companies)
         .where(and(eq(companies.id, accountId), eq(companies.workspaceId, workspaceId)))
         .limit(1);
@@ -403,6 +404,8 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
         const [provisioned] = await db
           .select({
             workspaceId: copsProvisionings.provisionedWorkspaceId,
+            // The customer's workspace name, so the account shows "QA Co" and not a bare id.
+            workspaceName: sql<string | null>`(select w.name from workspaces w where w.id = ${copsProvisionings.provisionedWorkspaceId})`,
             request: copsProvisionings.request,
             trialStartsAt: copsProvisionings.trialStartsAt,
             trialEndsAt: copsProvisionings.trialEndsAt,
@@ -416,23 +419,40 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
             )
           )
           .limit(1);
+        // Bible p.61 header: onboarding % from the newest activation instance and the renewal date
+        // from the open subscription term. One query for both keeps the 360 query count flat.
+        const [progress] = (await db.execute(sql`
+          select
+            (select oi.activation_pct from cops_onboarding_instances oi
+               where oi.workspace_id = ${workspaceId} and oi.account_id = ${accountId}
+               order by oi.created_at desc limit 1) as onboarding_pct,
+            (select s.term_end from subscriptions s
+               where s.workspace_id = ${workspaceId} and s.account_id = ${accountId} and s.status <> 'closed'
+               order by s.term_end desc limit 1) as renewal_at`)) as unknown as Array<{ onboarding_pct: number | null; renewal_at: Date | string | null }>;
         data.header = {
           id: account.id,
           name: account.name,
           owner_id: account.ownerId,
-          lifecycle: { account: life.account ?? null, health: life.health ?? null, support: life.support ?? null },
-          health: life.health ?? null,
+          // The health sweep and "Recompute" write companies.health_state; the lifecycle row can lag,
+          // so the stored score's state wins (otherwise a scored account read "Not scored").
+          lifecycle: { account: life.account ?? null, health: account.healthState ?? life.health ?? null, support: life.support ?? null },
+          health: account.healthState ?? life.health ?? null,
+          // COPS-11: the explainable score behind the health state, and the Success fields.
+          health_score: account.healthScore ?? null,
+          renewal_risk: account.renewalRisk ?? null,
+          csm_id: account.csmId ?? null,
           commercial_state: commercialState,
-          onboarding_pct: null,
+          onboarding_pct: progress?.onboarding_pct ?? null,
           plan: provisioned ? ((provisioned.request as { plan?: string }).plan ?? null) : null,
           provisioning: provisioned
             ? {
                 workspace_id: provisioned.workspaceId,
+                workspace_name: provisioned.workspaceName ?? null,
                 trial_starts_at: provisioned.trialStartsAt?.toISOString() ?? null,
                 trial_ends_at: provisioned.trialEndsAt?.toISOString() ?? null,
               }
             : null,
-          renewal_at: null,
+          renewal_at: progress?.renewal_at ? new Date(progress.renewal_at).toISOString() : null,
         };
       }
 
@@ -776,6 +796,17 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
           createdAt: contacts.createdAt,
           createdAtText: tsText(contacts.createdAt),
           nameKey,
+          // Bible p.21: suppression and bounce status, worst first; verified vs not. Same rules as canContact().
+          // Outer columns are written table-qualified: a single-table select renders them bare, and a bare
+          // "id"/"email" inside the subqueries would bind to the inner table instead.
+          emailStatus: sql<"none" | "suppressed" | "bounced" | "soft_bounce" | "verified" | "unverified">`case
+            when "contacts"."email" is null or "contacts"."email" = '' then 'none'
+            when exists (select 1 from suppressions sp where sp.workspace_id = "contacts"."workspace_id" and sp.email = lower(trim("contacts"."email"))) then 'suppressed'
+            when exists (select 1 from contact_channels cc where cc.workspace_id = "contacts"."workspace_id" and cc.contact_id = "contacts"."id" and cc.channel = 'email' and cc.suppressed) then 'suppressed'
+            when exists (select 1 from contact_channels cc where cc.workspace_id = "contacts"."workspace_id" and cc.contact_id = "contacts"."id" and cc.channel = 'email' and cc.bounce_status = 'hard') then 'bounced'
+            when exists (select 1 from contact_channels cc where cc.workspace_id = "contacts"."workspace_id" and cc.contact_id = "contacts"."id" and cc.channel = 'email' and cc.bounce_status = 'soft') then 'soft_bounce'
+            when exists (select 1 from contact_channels cc where cc.workspace_id = "contacts"."workspace_id" and cc.contact_id = "contacts"."id" and cc.channel = 'email' and cc.verified) then 'verified'
+            else 'unverified' end`,
         })
         .from(contacts)
         .where(and(...conditions))
@@ -797,6 +828,7 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
           email: r.email,
           company_id: r.companyId,
           created_at: r.createdAt.toISOString(),
+          email_status: r.emailStatus,
         })), fieldList),
         next_cursor: cursorOut,
         applied_filters: filters,
@@ -1170,6 +1202,8 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
             .limit(1);
           const currentState = current?.state ?? "qualified";
           if (state !== currentState) {
+            // COPS-08 stage rule: no win while a proposal is waiting for approval.
+            if (state === "won") await assertApprovalsAllowWin(tx as unknown as Db, workspaceId, deal.id, currentState);
             await runLifecycleTransition(tx as unknown as Db, {
               workspaceId,
               dimension: "opportunity",

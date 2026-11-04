@@ -28,11 +28,30 @@ export function normalizeLinkedinId(value: string): string {
   return decoded.trim().toLowerCase();
 }
 
+/**
+ * The normalized id in one LinkedIn path segment, or undefined when it is not a usable id: an
+ * escape that does not decode, or a decoded value carrying a path separator, query, fragment,
+ * whitespace or control character (`/in/name%2Fother/` would otherwise be stored as
+ * `/in/name/other/`, a URL nobody captured).
+ */
+export function linkedinIdFromSegment(segment: string): string | undefined {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(segment);
+  } catch {
+    return undefined;
+  }
+  const id = decoded.trim().toLowerCase();
+  // eslint-disable-next-line no-control-regex -- control characters are exactly what is refused
+  if (!id || /[/?#\\\s\u0000-\u001f\u007f]/.test(id)) return undefined;
+  return id;
+}
+
 /** Public id of a real `https://www.linkedin.com/in/<id>/` URL; nothing else qualifies. */
 export function publicIdFromProfileUrl(value: string): string | undefined {
   const parts = linkedinPathParts(value);
   if (!parts || parts[0] !== "in" || !parts[1] || parts.length !== 2) return undefined;
-  return normalizeLinkedinId(parts[1]);
+  return linkedinIdFromSegment(parts[1]);
 }
 
 /** Opaque lead id of a `https://www.linkedin.com/sales/lead/<id>,...` URL. */
@@ -45,7 +64,7 @@ export function salesLeadIdFromUrl(value: string): string | undefined {
 export function companyIdFromCompanyUrl(value: string): string | undefined {
   const parts = linkedinPathParts(value);
   if (!parts || parts[0] !== "company" || !parts[1]) return undefined;
-  return normalizeLinkedinId(parts[1]);
+  return linkedinIdFromSegment(parts[1]);
 }
 
 export function isSalesNavigatorUrl(value: string): boolean {

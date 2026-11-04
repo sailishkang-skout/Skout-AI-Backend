@@ -34,6 +34,10 @@ const envSchema = z
     /** Datadog API key — ECS Fargate agent sidecar (not serverless/Lambda). */
     DD_API_KEY: z.string().optional(),
     DD_SITE: z.string().default("us5.datadoghq.com"),
+    /** COPS-07: password the alerting service (GCP Cloud Monitoring, basic-auth webhook) sends; the ops alert endpoint refuses every call without it. */
+    OPS_ALERT_WEBHOOK_SECRET: z.string().min(16).optional(),
+    /** COPS-07: the workspace whose Admin, owner and Engineering members get operational alerts in the app. */
+    OPS_ALERT_WORKSPACE_ID: z.string().uuid().optional(),
     TRUST_PROXY: z
       .string()
       .optional()
@@ -42,6 +46,11 @@ const envSchema = z
         if (v === "false" || v === "0") return false;
         return process.env.NODE_ENV === "production";
       }),
+    /**
+     * Bearer token for GET /api/v1/metrics. When set, scrapes must send `Authorization: Bearer <token>`.
+     * In production without it, /metrics answers 404 so internal counters are never public.
+     */
+    METRICS_TOKEN: z.string().min(16).optional(),
     RATE_LIMIT_MAX: z.coerce.number().int().positive().default(200),
     RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
     REQUEST_BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(1_048_576),
@@ -160,6 +169,12 @@ const envSchema = z
       .optional()
       .transform((v) => v === "true" || v === "1"),
     EXPORTS_BUCKET: z.string().optional(),
+    /** Contract PDFs (POST /contracts/documents). Falls back to EXPORTS_BUCKET, then a local dir in dev. */
+    CONTRACTS_BUCKET: z.string().optional(),
+    /** First admin, created once at startup if the email has no password yet (SOPS env only). */
+    BOOTSTRAP_ADMIN_EMAIL: z.string().email().optional(),
+    BOOTSTRAP_ADMIN_PASSWORD: z.string().min(1).optional(),
+    BOOTSTRAP_ADMIN_NAME: z.string().max(120).optional(),
     SCRAPE_BUCKET: z.string().optional(),
     S3_ENDPOINT: z.string().optional(),
     S3_FORCE_PATH_STYLE: z
@@ -296,6 +311,16 @@ const envSchema = z
     RAZORPAY_KEY_ID: z.string().optional(),
     RAZORPAY_KEY_SECRET: z.string().optional(),
     RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
+    /** COPS-08: signs the events posted to the mock e-sign provider. Development and tests only. */
+    ESIGN_MOCK_WEBHOOK_SECRET: z.string().min(16).optional(),
+    /** COPS-08 DocuSeal (the e-sign provider). With an API key set, DocuSeal replaces the mock. */
+    DOCUSEAL_API_KEY: z.string().min(1).optional(),
+    /** https://api.docuseal.com (global) or https://api.docuseal.eu, by the account's region. */
+    DOCUSEAL_BASE_URL: z.string().url().default("https://api.docuseal.com"),
+    /** The HMAC signing secret (whsec_...), or the value of the secret header when DOCUSEAL_WEBHOOK_HEADER is set. */
+    DOCUSEAL_WEBHOOK_SECRET: z.string().min(16).optional(),
+    /** Name of the secret header configured in DocuSeal; unset means HMAC (X-Docuseal-Signature). */
+    DOCUSEAL_WEBHOOK_HEADER: z.string().min(1).optional(),
     /** JSON array of { id, label, credits, amountInr }. */
     RAZORPAY_CREDIT_PACKS_JSON: z.string().optional(),
     /** Prefix for per-workspace CRM OAuth secrets in AWS Secrets Manager. */
@@ -335,11 +360,10 @@ const envSchema = z
     ENRICHMENT_AI_TIMEOUT_MS: z.coerce.number().default(15000),
     // --- ENR-06: release gate. ---
     /**
-     * "internal" (default): in production, LinkedIn enrichment is available only to workspaces
-     * with the `enrichment.internal_access` entitlement. "general" opens it to every workspace,
-     * and only takes effect when ENRICHMENT_LEGAL_APPROVAL_REF is also set.
+     * "general" makes LinkedIn enrichment available to every workspace; "internal" limits
+     * production access to workspaces with the `enrichment.internal_access` entitlement.
      */
-    ENRICHMENT_RELEASE_STAGE: z.enum(["internal", "general"]).default("internal"),
+    ENRICHMENT_RELEASE_STAGE: z.enum(["internal", "general"]).default("general"),
     /** Reference of the recorded Legal/Product approval (ticket or document id). */
     ENRICHMENT_LEGAL_APPROVAL_REF: z.string().optional(),
     // --- ENR-05: evidence campaigns. ---
@@ -474,6 +498,8 @@ const envSchema = z
     // --- §8.12 CRM sync checkpoint + push-back (ADI-10). ---
     /** How often the outbound-write worker drains pending crm_outbound_writes rows. */
     CRM_OUTBOUND_WRITE_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(5),
+    /** COPS-09: how often the poll worker looks for CRM connections whose poll interval has passed. */
+    CRM_SYNC_POLL_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().max(59).default(5),
   })
   .transform((data) => {
     let next = data;

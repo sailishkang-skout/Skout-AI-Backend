@@ -29,8 +29,12 @@ export function copsErrorStatus(code: string): number {
   switch (code) {
     case "VALIDATION_FAILED":
     case "IDEMPOTENCY_KEY_REUSED":
+    // COPS-12: Verified without verification evidence, a reopen without a reason.
+    case "VERIFICATION_REQUIRED":
+    case "REASON_REQUIRED":
       return 422;
     case "BUSINESS_STATE_CONFLICT":
+    case "TICKET_ALREADY_LINKED":
       return 409;
     case "FORBIDDEN":
       return 403;

@@ -30,6 +30,7 @@ import {
   isSameCompany,
   mergeCompanyCapture,
   normalizedCompanyName,
+  normalizeLinkedinId,
   personPublicKey,
   prospectIdForCanonicalKey,
   publicIdFromProfileUrl,
@@ -977,6 +978,44 @@ async function companyByKeys(tx: Tx, workspaceId: string, keys: string[]): Promi
   return keys.map((key) => rows.find((row) => row.id === targets.get(key))).find(Boolean);
 }
 
+const NUMERIC_ID = /^\d+$/;
+
+/**
+ * The companies among `ids` that are a different LinkedIn company from the incoming capture.
+ * Called after the capture's own keys found nothing, so any saved id of the same kind differs:
+ * two vanity slugs, or two numeric member ids. A numeric id and a vanity slug can name the same
+ * page (LinkedIn redirects one to the other), so that pair is left to the name and domain rules.
+ */
+async function differentLinkedinCompanies(
+  tx: Tx,
+  workspaceId: string,
+  ids: string[],
+  incoming: { publicId: string; memberId?: string }
+): Promise<Set<string>> {
+  if (!ids.length) return new Set();
+  const publicId = normalizeLinkedinId(incoming.publicId);
+  const incomingVanity = !NUMERIC_ID.test(publicId);
+  const incomingMember = !!incoming.memberId || NUMERIC_ID.test(publicId);
+  const rows = await tx
+    .select({ entityId: enrichmentIdentities.entityId, key: enrichmentIdentities.canonicalKey })
+    .from(enrichmentIdentities)
+    .where(
+      and(
+        eq(enrichmentIdentities.workspaceId, workspaceId),
+        eq(enrichmentIdentities.entityType, "company"),
+        inArray(enrichmentIdentities.entityId, ids),
+        sql`(${enrichmentIdentities.canonicalKey} like 'company:%' or ${enrichmentIdentities.canonicalKey} like 'company-member:%')`
+      )
+    );
+  const different = new Set<string>();
+  for (const { entityId, key } of rows) {
+    const value = key.slice(key.indexOf(":") + 1);
+    const savedMember = key.startsWith("company-member:") || NUMERIC_ID.test(value);
+    if (savedMember ? incomingMember : incomingVanity) different.add(entityId);
+  }
+  return different;
+}
+
 /**
  * Employer link for a person. A LinkedIn company id from the role's own link is decisive; a
  * name only links when exactly one saved company carries it. `createIfMissing` is reserved
@@ -1166,14 +1205,27 @@ export async function ingestCompanyCapture(
             ...(capture.name ? await companiesNamed(tx, actor.workspaceId, capture.name) : []),
           ];
           const distinct = [...new Map(candidates.map((row) => [row.id, row])).values()];
+          // A saved company holding another LinkedIn id of the same kind is a different LinkedIn
+          // company: a name, with or without a shared industry or headquarters, never overrides
+          // that, and such a same-name pair is queued for review below instead. The company's own
+          // website does: the same domain is the same company, which is how a rebrand that moved
+          // to a new LinkedIn URL is recognised. (A parent's or acquirer's domain is never this
+          // company's `domain`; only the captured website is compared.)
+          const different = await differentLinkedinCompanies(
+            tx,
+            actor.workspaceId,
+            distinct.map((row) => row.id),
+            { publicId: capture.publicId, memberId: capture.memberId }
+          );
+          const unkeyed = distinct.filter((row) => !different.has(row.id) || (!!domain && row.domain === domain));
           const incoming = { ...capture, domain };
           const like = (row: CompanyRow) => ({ name: row.name, domain: row.domain, industry: row.industry, headquarter: row.location });
-          stored = distinct
+          stored = unkeyed
             .filter((row) => isSameCompany(like(row), incoming))
             .sort((a, b) => companyMatchScore(like(b), incoming) - companyMatchScore(like(a), incoming))[0];
           // A name-only placeholder created from a person capture is this company when it is the only one.
           if (!stored) {
-            const stubs = distinct.filter(isCompanyStub);
+            const stubs = unkeyed.filter(isCompanyStub);
             if (stubs.length === 1 && distinct.length === 1) stored = stubs[0];
           }
         }

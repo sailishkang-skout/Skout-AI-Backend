@@ -1,4 +1,5 @@
-import { boolean, index, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { users } from "./users.js";
 import { workspaces } from "./workspaces.js";
 
@@ -52,7 +53,13 @@ export const roles = pgTable(
     isSystem: boolean("is_system").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("roles_workspace_id_idx").on(table.workspaceId)]
+  (table) => [
+    index("roles_workspace_id_idx").on(table.workspaceId),
+    // COPS-14: custom role names are unique per workspace (case-insensitive).
+    uniqueIndex("roles_workspace_name_uidx")
+      .on(table.workspaceId, sql`lower(${table.name})`)
+      .where(sql`${table.workspaceId} IS NOT NULL`),
+  ]
 );
 
 export const permissions = pgTable("permissions", {
@@ -192,5 +199,107 @@ export const workspaceSsoConfigs = pgTable("workspace_sso_configs", {
   activatedBy: uuid("activated_by").references(() => users.id, { onDelete: "set null" }),
   notes: text("notes"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+/**
+ * COPS-14 part C — a member limited to their own accounts (companies.owner_id or csm_id). No row
+ * means no limit. Enforced on the account read paths by apps/api cops-data-scope.service.ts.
+ */
+export const copsMemberDataScopes = pgTable(
+  "cops_member_data_scopes",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** own_accounts (the only scope so far). */
+    scope: text("scope").notNull(),
+    setBy: uuid("set_by").references(() => users.id, { onDelete: "set null" }),
+    reason: text("reason").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ name: "cops_member_data_scopes_pk", columns: [table.workspaceId, table.userId] })]
+);
+
+/**
+ * COPS-14 (integration framework): an app a workspace connects to Skout, and the scoped API keys
+ * it calls with. Disabling the app stops all of its keys. Only a SHA-256 of each key is stored;
+ * the key itself is shown once, when it is made.
+ */
+export const copsApps = pgTable(
+  "cops_apps",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    homepageUrl: text("homepage_url"),
+    /** active | disabled */
+    status: text("status").notNull().default("active"),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("cops_apps_workspace_name_uq").on(t.workspaceId, sql`lower(${t.name})`)]
+);
+
+export const copsApiCredentials = pgTable(
+  "cops_api_credentials",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    appId: uuid("app_id")
+      .notNull()
+      .references(() => copsApps.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /** The public part of the key (sk_cops_<prefix>_...), used to find the row. */
+    prefix: text("prefix").notNull(),
+    keyHash: text("key_hash").notNull(),
+    scopes: jsonb("scopes").notNull().default([]),
+    /** The member the key acts for; their membership must still exist. */
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokeReason: text("revoke_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("cops_api_credentials_prefix_uq").on(t.prefix), index("cops_api_credentials_app_idx").on(t.appId)]
+);
+
+/** COPS-14 metered usage: one row per workspace, metric and month (YYYY-MM). */
+export const copsUsageCounters = pgTable(
+  "cops_usage_counters",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    metric: text("metric").notNull(),
+    period: text("period").notNull(),
+    count: integer("count").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.workspaceId, t.metric, t.period] })]
+);
+
+/**
+ * COPS-14 configurable warehouse export: whether this workspace's events leave for the analytics
+ * warehouse at all, and which event types. No row means the default: on, every type.
+ */
+export const copsExportSettings = pgTable("cops_export_settings", {
+  workspaceId: uuid("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  enabled: boolean("enabled").notNull().default(true),
+  /** Event types to export; null means all. */
+  eventTypes: jsonb("event_types"),
+  updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
+  reason: text("reason"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

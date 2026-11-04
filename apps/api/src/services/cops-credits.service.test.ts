@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
-import { createDb, type Db } from "@skout/db";
+import { createDb, postCreditTransaction, type Db } from "@skout/db";
 import { startProvisioning, type ProvisioningContext } from "./cops-provisioning.service.js";
-import { applyPaidCreditPurchases, extendTrial, getWallet, postManualCredit, WalletError } from "./cops-credits.service.js";
+import { applyPaidCreditPurchases, extendTrial, getWallet, postManualCredit, reverseRefundedCreditPurchase, WalletError } from "./cops-credits.service.js";
 
 const postgres = createRequire(new URL("../../../../packages/db/package.json", import.meta.url))("postgres") as (url: string, options?: object) => any;
 
@@ -137,6 +137,40 @@ maybe("COPS-04 credit wallet (Postgres)", () => {
     const rows = await sql`select kind, amount, reference_id, actor_type from credit_transactions where workspace_id = ${ws} order by seq`;
     expect(rows.map((r: { kind: string; amount: number }) => [r.kind, r.amount])).toEqual([["purchase", 300], ["purchase", 200]]);
     expect(rows[1].reference_id).toBe(later);
+  });
+
+  it("a refunded payment takes back the credits it bought, once, even when they were spent", async () => {
+    const a = await provisionedAccount(0);
+    const paymentRequestId = await paidCreditsRequest(a.opportunityId, 300, "paid");
+    const ws = await provision(a);
+    // 250 of the 300 were already spent.
+    await db.transaction((tx) =>
+      postCreditTransaction(tx as unknown as Db, { workspaceId: ws, amount: -250, kind: "consume", action: "test_spend", actor: { type: "system", id: null } })
+    );
+    await sql`update payment_requests set status = 'refunded' where id = ${paymentRequestId}`;
+
+    const reversed = await db.transaction(async (tx) => {
+      const t = tx as unknown as Db;
+      const input = { operatorWorkspaceId: ctx.workspaceId, accountId: a.accountId, paymentRequestId, requestId: randomUUID() };
+      return [await reverseRefundedCreditPurchase(t, input), await reverseRefundedCreditPurchase(t, input)];
+    });
+    expect(reversed).toEqual([300, 0]);
+    expect((await getWallet(db, ctx.workspaceId, a.accountId)).balance).toBe(-250);
+
+    const rows = await sql`select kind, amount, compensates_id is not null as compensates from credit_transactions where workspace_id = ${ws} order by seq`;
+    expect(rows.map((r: { kind: string; amount: number }) => [r.kind, r.amount])).toEqual([["purchase", 300], ["consume", -250], ["adjustment", -300]]);
+    expect(rows[2].compensates).toBe(true);
+    const [audit] = await sql`select reason from audit_logs where entity_id = ${ws} and action = 'credits.purchase_reversed'`;
+    expect(audit.reason).toContain(paymentRequestId);
+  });
+
+  it("a refund of a payment that bought no credits changes nothing", async () => {
+    const a = await provisionedAccount(0);
+    await provision(a);
+    const none = await db.transaction((tx) =>
+      reverseRefundedCreditPurchase(tx as unknown as Db, { operatorWorkspaceId: ctx.workspaceId, accountId: a.accountId, paymentRequestId: randomUUID(), requestId: randomUUID() })
+    );
+    expect(none).toBe(0);
   });
 
   it("extending the trial needs a reason, is audited, and updates the trial entitlement", async () => {

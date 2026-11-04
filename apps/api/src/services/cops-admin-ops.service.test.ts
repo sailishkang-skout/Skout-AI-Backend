@@ -164,7 +164,7 @@ maybe("COPS-07 retention, flags and metrics (Postgres)", () => {
       error: (_m: string, fields?: Record<string, unknown>) => lines.push({ level: "error", fields: fields ?? {} }),
     };
     const notOk = await reportPlatformOpsMetrics(db, logger);
-    expect(lines).toHaveLength(12);
+    expect(lines).toHaveLength(14);
     expect(notOk.map((m) => m.key)).toContain("outbox_dead_lettered");
     const dead = lines.find((l) => l.fields.cops_metric === "outbox_dead_lettered")!;
     expect(["warn", "error"]).toContain(dead.level);

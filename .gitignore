@@ -66,3 +66,6 @@ deploy/gcp/terraform/backend.hcl
 
 # env files are stored as GitHub environment secrets, never committed (the repo is public)
 deploy/hetzner/env-enc/
+
+# Contract PDFs stored locally in dev (POST /contracts/documents)
+.cops-documents/

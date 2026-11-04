@@ -12,7 +12,10 @@ const { workspaces, creditBalances } = schema;
 export async function ensureDemoWorkspace(db: Db, workspaceId: string): Promise<void> {
   if (workspaceId !== DEMO_WORKSPACE_ID) return;
 
-  // Concurrent callers (parallel test workers, simultaneous first requests) may race here.
+  // Concurrent callers (parallel test workers, simultaneous first requests) may race here. No
+  // conflict target: with `target: id`, a concurrent insert of the same row can still fail on the
+  // unique slug index instead of the primary key, which failed test files at random on a fresh
+  // database.
   await db
     .insert(workspaces)
     .values({
@@ -20,7 +23,7 @@ export async function ensureDemoWorkspace(db: Db, workspaceId: string): Promise<
       name: "Demo Workspace",
       slug: "demo",
     })
-    .onConflictDoNothing({ target: workspaces.id });
+    .onConflictDoNothing();
 
   // Keeps the demo wallet at 500 credits on first provision through the ledger
   // so the balance equals the sum of its entries (COPS-04 reconciliation).

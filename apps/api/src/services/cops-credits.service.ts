@@ -261,6 +261,62 @@ export async function extendTrial(db: Db, ctx: WalletContext, accountId: string,
 }
 
 /**
+ * COPS-04 Q4: a refunded payment takes back the credits it bought. One compensating adjustment
+ * (ledger rows are never edited) against the purchase entry, keyed on the payment request, so a
+ * replayed or concurrent refund webhook reverses once. The wallet may go below zero when the
+ * credits were already spent: spending then stops until Finance tops it up or writes the rest off.
+ * Returns the credits taken back (0 when the payment bought none or was already reversed).
+ */
+export async function reverseRefundedCreditPurchase(
+  tx: Db,
+  input: { operatorWorkspaceId: string; accountId: string; paymentRequestId: string; requestId: string }
+): Promise<number> {
+  const wallet = await findProvisionedWorkspace(tx, input.operatorWorkspaceId, input.accountId);
+  if (!wallet) return 0;
+  const [purchase] = await tx
+    .select({ id: creditTransactions.id, amount: creditTransactions.amount })
+    .from(creditTransactions)
+    .where(
+      and(
+        eq(creditTransactions.workspaceId, wallet.workspaceId),
+        eq(creditTransactions.idempotencyKey, `cops-payment:${input.paymentRequestId}`)
+      )
+    )
+    .limit(1);
+  if (!purchase || purchase.amount <= 0) return 0;
+
+  const actor = { type: "integration" as const, id: "payment_request" };
+  const reason = `Credits purchase reversed: payment request ${input.paymentRequestId} was refunded`;
+  const posted = await postCreditTransaction(tx, {
+    workspaceId: wallet.workspaceId,
+    amount: -purchase.amount,
+    kind: "adjustment",
+    action: "cops_payment_refund",
+    referenceId: input.paymentRequestId,
+    reason,
+    actor,
+    idempotencyKey: `cops-payment-refund:${input.paymentRequestId}`,
+    compensatesId: purchase.id,
+    correlationId: input.requestId,
+    allowNegativeBalance: true,
+  });
+  if (posted.replayed) return 0;
+  await writeCopsAudit(tx, {
+    tenantId: input.operatorWorkspaceId,
+    actor,
+    entityType: "credit_wallet",
+    entityId: wallet.workspaceId,
+    action: "credits.purchase_reversed",
+    before: { purchase_transaction_id: purchase.id, amount: purchase.amount },
+    after: { amount: -purchase.amount, balance: posted.balance, payment_request_id: input.paymentRequestId, transaction_id: posted.transaction.id },
+    reason,
+    correlationId: input.requestId,
+    sourceChannel: "webhook",
+  });
+  return purchase.amount;
+}
+
+/**
  * Bible p.36: purchased credits reach the wallet only after a confirmed payment. For every paid
  * payment request of the account whose proposal has `credits` lines, post one `purchase` (ledger key
  * = payment request id, so the webhook and the provisioning step can both call this safely). Called

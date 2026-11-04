@@ -31,7 +31,12 @@ export const dbPlugin = fp(async (app: FastifyInstance) => {
 
   app.decorate("db", db);
 
+  // Waits up to 5s for open queries, then closes what is left. Without a timeout, connections a
+  // database outage broke are never released and close() (graceful shutdown) never finishes.
   app.addHook("onClose", async () => {
-    await sql.end();
+    await sql.end({ timeout: DB_SHUTDOWN_TIMEOUT_SECONDS });
   });
 });
+
+/** Seconds a pool waits for open queries on shutdown before closing its connections. */
+export const DB_SHUTDOWN_TIMEOUT_SECONDS = 5;

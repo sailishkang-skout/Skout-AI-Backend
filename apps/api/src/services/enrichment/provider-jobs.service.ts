@@ -323,7 +323,7 @@ export async function getProviderJob(db: Db, workspaceId: string, jobId: string)
   const attempts = await db
     .select()
     .from(enrichmentAttempts)
-    .where(eq(enrichmentAttempts.enrichmentJobId, jobId))
+    .where(and(eq(enrichmentAttempts.workspaceId, workspaceId), eq(enrichmentAttempts.enrichmentJobId, jobId)))
     .orderBy(asc(enrichmentAttempts.attemptOrder));
   return { job: toProviderJobDto(row), attempts: attempts.map(toAttemptDto) };
 }
@@ -334,7 +334,14 @@ export async function getAttemptRawResponse(db: Db, workspaceId: string, jobId: 
     .select({ responseOutput: enrichmentAttempts.responseOutput, attemptedAt: enrichmentAttempts.attemptedAt, provider: enrichmentAttempts.provider })
     .from(enrichmentAttempts)
     .innerJoin(enrichmentJobs, eq(enrichmentJobs.id, enrichmentAttempts.enrichmentJobId))
-    .where(and(providerJob(workspaceId), eq(enrichmentJobs.id, jobId), eq(enrichmentAttempts.id, attemptId)))
+    .where(
+      and(
+        providerJob(workspaceId),
+        eq(enrichmentAttempts.workspaceId, workspaceId),
+        eq(enrichmentJobs.id, jobId),
+        eq(enrichmentAttempts.id, attemptId)
+      )
+    )
     .limit(1);
   if (!row || row.responseOutput === null) return null;
   return { provider: row.provider, retrievedAt: row.attemptedAt.toISOString(), response: row.responseOutput };
@@ -405,6 +412,11 @@ async function claim(db: Db, jobId: string, now: Date): Promise<JobRow | null> {
       startedAt: sql`coalesce(${enrichmentJobs.startedAt}, ${now.toISOString()}::timestamptz)`,
       leaseExpiresAt: new Date(now.getTime() + LEASE_MS),
       nextAttemptAt: null,
+      // The note a waiting job carried ("trying again automatically", "queued again") described
+      // the previous attempt. A running job shows its own state, not that note.
+      errorCode: null,
+      errorMessage: null,
+      completedAt: null,
       updatedAt: now,
     })
     .where(
@@ -480,6 +492,7 @@ async function recordAttempt(
     .insert(enrichmentAttempts)
     .values({
       enrichmentJobId: job.id,
+      workspaceId: job.workspaceId,
       attemptOrder: next,
       provider: attempt.provider,
       operation: attempt.operation,

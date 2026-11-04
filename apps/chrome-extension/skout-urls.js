@@ -5,7 +5,20 @@ export const DEFAULT_API_URL = "http://localhost:3001";
 
 /** Production defaults — injected into store-build by package-chrome-extension.mjs. */
 export const PRODUCTION_WEB_URL = "https://www.skoutai.io";
-export const PRODUCTION_API_URL = "https://ckoy6iywm0.execute-api.us-east-1.amazonaws.com";
+/** Production API base: the app's own path, which serves /api/v1 (www.skoutai.io/app/api/v1). */
+export const PRODUCTION_API_URL = "https://www.skoutai.io/app";
+
+/**
+ * API bases that no longer answer. Installs saved one as their apiUrl on first install, and an
+ * update does not change stored settings, so a stored retired base is read as the current one.
+ */
+const RETIRED_API_URLS = new Set(["https://ckoy6iywm0.execute-api.us-east-1.amazonaws.com"]);
+
+/** The stored API base, with a retired production base replaced by the current one. */
+export function currentApiUrl(stored) {
+  const value = String(stored || "").trim().replace(/\/+$/, "");
+  return RETIRED_API_URLS.has(value) ? PRODUCTION_API_URL : stored;
+}
 
 const LOCAL_WEB_ORIGINS = new Set(["http://localhost:3000", "http://127.0.0.1:3000"]);
 
@@ -23,6 +36,30 @@ const BUILTIN_SKOUT_TAB_PATTERNS = [
   "https://*.execute-api.us-east-1.amazonaws.com/*",
 ];
 
+/**
+ * The Skout web app is served under this path on its origin (Next.js basePath "/app", in
+ * development and production alike). Only pages under it run the app, and so the extension
+ * bridge; the site root and any other path are the marketing site or a 404.
+ */
+export const SKOUT_APP_PATH = "/app";
+
+/** Absolute URL of a page inside the Skout web app, e.g. skoutAppUrl(webUrl, "/dashboard"). */
+export function skoutAppUrl(webUrl = DEFAULT_WEB_URL, path = "") {
+  const origin = normalizeSkoutBase(webUrl);
+  const suffix = path && !path.startsWith("/") ? `/${path}` : path;
+  return `${origin}${SKOUT_APP_PATH}${suffix}`;
+}
+
+/** True when the tab shows a page of the Skout web app itself (not the marketing site). */
+export function isSkoutAppTabUrl(url) {
+  try {
+    const { pathname } = new URL(url);
+    return pathname === SKOUT_APP_PATH || pathname.startsWith(`${SKOUT_APP_PATH}/`);
+  } catch {
+    return false;
+  }
+}
+
 export function parseSkoutOrigin(url) {
   try {
     return new URL(String(url || "").trim()).origin;
@@ -37,15 +74,18 @@ export function normalizeSkoutBase(url, fallback = DEFAULT_WEB_URL) {
 }
 
 /** API base URL must be origin only — strip accidental /api/v1 suffix from CDK output. */
+/**
+ * API base without a trailing slash or an accidental /api/v1 suffix. A base path is kept: the
+ * production API is served under the app's path (https://www.skoutai.io/app), so dropping the
+ * path would send requests to the marketing site.
+ */
 export function normalizeApiUrl(url, fallback = DEFAULT_API_URL) {
   const trimmed = String(url || "").trim().replace(/\/+$/, "");
   if (!trimmed) return fallback;
   try {
     const parsed = new URL(trimmed);
-    if (parsed.pathname === "/api/v1" || parsed.pathname.startsWith("/api/v1/")) {
-      parsed.pathname = "";
-    }
-    return parsed.origin;
+    const path = parsed.pathname.replace(/\/+$/, "").replace(/\/api\/v1(?:\/.*)?$/i, "");
+    return `${parsed.origin}${path}`;
   } catch {
     return trimmed.replace(/\/api\/v1\/?$/i, "") || fallback;
   }
@@ -88,8 +128,7 @@ export function hostPermissionOrigins(webUrl, apiUrl) {
 }
 
 export function skoutSignInHint(webUrl = DEFAULT_WEB_URL) {
-  const base = normalizeSkoutBase(webUrl);
-  return `open Skout at ${base}, sign in, then click Connect`;
+  return `open Skout at ${skoutAppUrl(webUrl, "/sign-in")}, sign in, then click Connect`;
 }
 
 export async function ensureSkoutHostPermissions(webUrl, apiUrl) {
@@ -106,6 +145,6 @@ export async function getStoredSkoutUrls() {
   const stored = await chrome.storage.sync.get(["webUrl", "apiUrl"]);
   return {
     webUrl: stored.webUrl || DEFAULT_WEB_URL,
-    apiUrl: stored.apiUrl || DEFAULT_API_URL,
+    apiUrl: currentApiUrl(stored.apiUrl) || DEFAULT_API_URL,
   };
 }
