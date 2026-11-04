@@ -346,6 +346,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           jobId: result?.jobId ?? null,
           status: result?.status ?? "completed",
           results: result?.results ?? [],
+          attempts: result?.attempts ?? [],
+          errorMessage: result?.errorMessage ?? null,
           email: emailResult?.value ?? null,
           emailStatus: result?.results?.find((r) => r.field === "email_status")?.value ?? null,
         });
@@ -373,6 +375,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           ok: true,
           status: job?.status ?? "pending",
           results: job?.results ?? [],
+          attempts: job?.attempts ?? [],
+          errorMessage: job?.errorMessage ?? null,
         });
       } catch (error) {
         const msg = error instanceof Error ? error.message : "Poll failed";

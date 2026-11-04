@@ -1,4 +1,5 @@
 import type { CompanyData, FirmographicsProvider } from "../types.js";
+import { isSyntheticCaptureDomain } from "../capture-domains.js";
 import { fetchJson, qs } from "./http.js";
 
 export const PDL_BASE_URL = "https://api.peopledatalabs.com/v5";
@@ -17,7 +18,12 @@ export class PeopleDataLabsFirmographics implements FirmographicsProvider {
   ) {}
 
   async fetchCompany(domain: string, name?: string): Promise<CompanyData | null> {
-    const url = `${this.baseUrl}/company/enrich?${qs({ website: domain, name })}`;
+    const syntheticDomain = isSyntheticCaptureDomain(domain);
+    if (syntheticDomain && !name?.trim()) return null;
+    const url = `${this.baseUrl}/company/enrich?${qs({
+      website: syntheticDomain ? undefined : domain,
+      name,
+    })}`;
     const body = await fetchJson<{
       status?: number;
       name?: string;
