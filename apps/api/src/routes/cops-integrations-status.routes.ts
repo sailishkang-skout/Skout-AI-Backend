@@ -69,10 +69,14 @@ export async function loadIntegrationsStatus(db: Db, config: Env, workspaceId: s
   const esignSandbox = !docuseal && Boolean(config.ESIGN_MOCK_WEBHOOK_SECRET) && config.NODE_ENV !== "production";
 
   const emailProvider = config.RESEND_API_KEY ? "resend" : config.SMTP_HOST ? "smtp" : null;
+  // Same rule as sendMail: SMTP without a real username and password sends nothing.
+  const smtpCredsMissing = [config.SMTP_USERNAME, config.SMTP_PASSWORD].some((v) => !v || v === "replace-me");
   const emailMissing = emailProvider
     ? emailProvider === "resend" && !config.RESEND_WEBHOOK_SECRET
       ? ["Resend webhook secret (delivery, bounce and open tracking)"]
-      : []
+      : emailProvider === "smtp" && smtpCredsMissing
+        ? ["SMTP username and password; mail is only logged, nothing is sent"]
+        : []
     : ["An email provider (Resend or SMTP); mail is only logged"];
 
   return [
