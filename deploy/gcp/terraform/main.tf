@@ -119,6 +119,18 @@ resource "google_storage_bucket" "bucket" {
   public_access_prevention    = "enforced"
   force_destroy               = true # staging only
 
+  # Browser-direct presigned uploads (CustomerOps contract PDFs). Only the exports bucket needs it.
+  # response_header "*" covers the preflight request headers (content-type, x-amz-checksum-sha256) and ETag.
+  dynamic "cors" {
+    for_each = each.key == "exports" ? [1] : []
+    content {
+      origin          = var.browser_upload_origins
+      method          = ["PUT", "GET"]
+      response_header = ["*"]
+      max_age_seconds = 3600
+    }
+  }
+
   lifecycle_rule {
     condition {
       age            = each.value.age

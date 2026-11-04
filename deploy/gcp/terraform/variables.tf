@@ -114,3 +114,9 @@ variable "schedule_days" {
   default     = "1-5"
   description = "Cron day-of-week field for the schedule: \"1-5\" = Monday to Friday, \"*\" = every day."
 }
+
+variable "browser_upload_origins" {
+  type        = list(string)
+  default     = ["https://ops-stg.skoutai.io"]
+  description = "Origins allowed to PUT/GET objects in the exports bucket straight from the browser (CustomerOps contract PDF upload via presigned URL). Add the prod CustomerOps domain when it goes live."
+}
