@@ -41,6 +41,8 @@ export function initPanel() {
   const stubEmailEl = document.getElementById("stub-email");
   const useStubAuthEl = document.getElementById("use-stub-auth");
   const listSelectEl = document.getElementById("list-select");
+  const newListNameEl = document.getElementById("new-list-name");
+  const createListBtn = document.getElementById("create-list");
   const sequenceSelectEl = document.getElementById("sequence-select");
   const hitlWarningEl = document.getElementById("hitl-warning");
   const duplicateWarningEl = document.getElementById("duplicate-warning");
@@ -177,7 +179,7 @@ export function initPanel() {
     }
   }
 
-  async function refreshLists({ quiet = false } = {}) {
+  async function refreshLists({ quiet = false, force = false } = {}) {
     if (!listSelectEl) return;
 
     if (!quiet) {
@@ -200,7 +202,7 @@ export function initPanel() {
         return;
       }
 
-      const result = await runInBackground("get-lists");
+      const result = await runInBackground("get-lists", { force });
       const lists = result.lists || [];
       const lastId = await getLastListId();
       listSelectEl.replaceChildren();
@@ -291,7 +293,31 @@ export function initPanel() {
     await refreshLists();
   });
 
-  document.getElementById("refresh-lists")?.addEventListener("click", () => refreshLists());
+  document.getElementById("refresh-lists")?.addEventListener("click", () =>
+    refreshLists({ force: true })
+  );
+
+  createListBtn?.addEventListener("click", async () => {
+    const name = newListNameEl?.value?.trim();
+    if (!name) {
+      setStatus("Enter a name for the new target list.", true);
+      newListNameEl?.focus();
+      return;
+    }
+
+    setBusy(createListBtn, true, "Creating…");
+    try {
+      if (!(await ensurePanelSignedIn())) return;
+      const result = await runInBackground("create-list", { name });
+      if (newListNameEl) newListNameEl.value = "";
+      await refreshLists({ quiet: true, force: true });
+      setStatus(`Created target list "${result.list.name}".`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not create list.", true);
+    } finally {
+      setBusy(createListBtn, false, "Create list");
+    }
+  });
 
   listSelectEl?.addEventListener("change", () => {
     duplicateConfirmedForListId = null;
@@ -368,11 +394,20 @@ export function initPanel() {
   // "don't trust this email." Before this fix, this row rendered any non-empty email_status
   // string with the same green checkmark, so a "risky" or "invalid" result looked identical to a
   // verified one — a silent flag, not a clear one.
-  function renderResultCell(row, match) {
-    const apiField = row.getAttribute("data-field") === "validation" ? "email_status" : null;
+  function renderResultCell(row, match, capturedCompanyName) {
+    const field = row.getAttribute("data-field");
+    const apiField = field === "validation" ? "email_status" : null;
     const valueEl = row.querySelector(".enrich-result-value");
     const iconEl = row.querySelector(".enrich-result-icon");
     if (!match) {
+      if (field === "company" && capturedCompanyName) {
+        if (valueEl) {
+          valueEl.textContent = `Captured from LinkedIn: ${capturedCompanyName}`;
+          valueEl.style.color = "#cbd5e1";
+        }
+        if (iconEl) { iconEl.textContent = "in"; iconEl.style.color = "#60a5fa"; }
+        return;
+      }
       if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#475569"; }
       if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#475569"; }
       return;
@@ -406,7 +441,7 @@ export function initPanel() {
     if (iconEl) { iconEl.textContent = "✓"; iconEl.style.color = "#86efac"; }
   }
 
-  function applyEnrichResults(results) {
+  function applyEnrichResults(results, capturedCompanyName) {
     if (!enrichResultsEl) return;
     for (const row of enrichResultsEl.querySelectorAll(".enrich-result-row")) {
       const field = row.getAttribute("data-field");
@@ -414,7 +449,7 @@ export function initPanel() {
       const match = results.find(
         (r) => r.field === apiField && (r.isPrimary !== false || apiField === "email_status")
       );
-      renderResultCell(row, match);
+      renderResultCell(row, match, capturedCompanyName);
     }
   }
 
@@ -565,7 +600,7 @@ export function initPanel() {
       }
 
       const results = outcome.results || [];
-      applyEnrichResults(results);
+      applyEnrichResults(results, outcome.companyName);
       if (hasEnrichmentData(results, fields)) {
         setStatus(`Enrichment completed for ${started.fullName}.`);
       } else {

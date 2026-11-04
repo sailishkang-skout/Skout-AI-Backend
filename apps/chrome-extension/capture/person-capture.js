@@ -55,10 +55,16 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
     const id = publicIdFromUrl('person'), root = `https://www.linkedin.com/in/${id}/`;
     const ui = globalThis.SkoutCaptureUi.progress('person');
     ui.onStop(() => { message({type:'CANCEL_PERSON_READ'}).catch(() => {}); });
-    // Skills is explicit because the profile preview usually displays only a
-    // subset. This is the same profile's allowlisted detail page and is read
-    // only after the user starts a capture.
-    const queue = [...new Set([root, `${root}details/skills/`, ...links(id)])].slice(0, 12), seen = new Set(), errors = [], warnings = [];
+    // Queue the core detail pages explicitly because the profile preview may
+    // show only a subset. They belong to the same profile and are read only
+    // after the user starts a capture.
+    const queue = [...new Set([
+      root,
+      `${root}details/experience/`,
+      `${root}details/education/`,
+      `${root}details/skills/`,
+      ...links(id),
+    ])].slice(0, 10), seen = new Set(), errors = [], warnings = [];
     let data = extractPerson(), read = 0;
     try {
       while (queue.length && !ui.stopped) {

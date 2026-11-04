@@ -1,4 +1,5 @@
 import { ensureFreshAuth, refreshAuthFromSkoutTabs } from "./auth.js";
+import { canonicalLinkedinProspectId } from "./identity.js";
 import { safeLocalSet } from "./storage-throttle.js";
 import { log, logError, timeStep } from "./debug.js";
 import {
@@ -80,6 +81,8 @@ function buildProspectFields(profile) {
 }
 
 export async function resolveProspectId(profile) {
+  const canonicalId = await canonicalLinkedinProspectId(profile.linkedinUrl);
+  if (canonicalId) return canonicalId;
   const companyDomain = normalizeDomain(slugCompanyDomain(profile.companyName || "linkedin"));
   return sha256(normalizeDomain(`${companyDomain}:${profile.fullName ?? ""}`));
 }
@@ -299,6 +302,14 @@ export async function listLists() {
   return body.data || [];
 }
 
+export async function createList(name) {
+  const body = await skoutFetch("/api/v1/lists", {
+    method: "POST",
+    body: JSON.stringify({ name, mode: "static" }),
+  });
+  return body;
+}
+
 /** Fetch lists and update local cache. */
 export async function listListsCached({ force = false } = {}) {
   const CACHE_KEY = "listsCache";
@@ -323,26 +334,27 @@ export async function listListsCached({ force = false } = {}) {
 }
 
 export async function activateProspect(profile) {
-  const fields = buildProspectFields(profile);
+  const prospectId = await resolveProspectId(profile);
+  const fields = { ...buildProspectFields(profile), prospectId };
   await skoutFetch("/api/v1/prospects/activate", {
     method: "POST",
     body: JSON.stringify({ prospects: [fields] }),
   });
-  return resolveProspectId({ ...profile, companyName: profile.companyName || "linkedin" });
+  return prospectId;
 }
 
 export async function activateProspects(profiles) {
   if (!profiles?.length) return [];
-  const prospects = profiles.map((profile) => buildProspectFields(profile));
+  const prospectIds = await Promise.all(profiles.map((profile) => resolveProspectId(profile)));
+  const prospects = profiles.map((profile, index) => ({
+    ...buildProspectFields(profile),
+    prospectId: prospectIds[index],
+  }));
   await skoutFetch("/api/v1/prospects/activate", {
     method: "POST",
     body: JSON.stringify({ prospects }),
   });
-  return Promise.all(
-    profiles.map((profile) =>
-      resolveProspectId({ ...profile, companyName: profile.companyName || "linkedin" })
-    )
-  );
+  return prospectIds;
 }
 
 export async function getListMemberIds(listId) {

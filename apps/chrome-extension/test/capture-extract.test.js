@@ -195,8 +195,9 @@ describe("person capture run", () => {
     await window.SkoutPersonCapture.start();
     expect(opened).toEqual([
       "https://www.linkedin.com/in/jane-doe/",
-      "https://www.linkedin.com/in/jane-doe/details/skills/",
+      "https://www.linkedin.com/in/jane-doe/details/experience/",
       "https://www.linkedin.com/in/jane-doe/details/education/",
+      "https://www.linkedin.com/in/jane-doe/details/skills/",
     ]);
     const review = sent.find((message) => message.type === "SKOUT_CAPTURE_REVIEW");
     expect(review).toMatchObject({ kind: "person", sourceUrl: "https://www.linkedin.com/in/jane-doe/" });

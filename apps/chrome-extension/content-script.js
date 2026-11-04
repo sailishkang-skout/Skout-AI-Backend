@@ -428,6 +428,10 @@
           width: 100%; box-sizing: border-box; margin-bottom: 8px; border-radius: 8px;
           border: 1px solid #334155; padding: 7px 8px; font-size: 12px; background: #1e293b; color: #f8fafc;
         }
+        #skout-ai-new-list-name {
+          width: 100%; box-sizing: border-box; margin-bottom: 4px; border-radius: 8px;
+          border: 1px solid #334155; padding: 7px 8px; font-size: 12px; background: #1e293b; color: #f8fafc;
+        }
         #skout-ai-list-select option { background: #1e293b; color: #f8fafc; }
         #skout-ai-panel button.action {
           width: 100%; margin-top: 6px; border: 0; border-radius: 8px;
@@ -460,6 +464,9 @@
       <p id="skout-ai-summary">Reading profile…</p>
       <label for="skout-ai-list-select">Target list</label>
       <select id="skout-ai-list-select"><option value="">Loading lists…</option></select>
+      <label for="skout-ai-new-list-name">Create a target list</label>
+      <input id="skout-ai-new-list-name" type="text" maxlength="255" placeholder="List name">
+      <button id="skout-ai-create-list" type="button" class="action">Create list</button>
       <button id="skout-ai-add" type="button" class="action">Add to list</button>
       <div id="skout-ai-field-picker">
         <p>Enrich fields</p>
@@ -492,6 +499,9 @@
     panel.querySelector("#skout-ai-list-select")?.addEventListener("change", () => {
       panel.__duplicateConfirmedForListId = null;
     });
+    panel.querySelector("#skout-ai-create-list")?.addEventListener("click", () =>
+      void createTargetList(panel)
+    );
     panel.querySelector("#skout-ai-add")?.addEventListener("click", () => void onAdd(panel));
     panel.querySelector("#skout-ai-enrich")?.addEventListener("click", () => void onEnrich(panel));
     panel.querySelector("#skout-ai-score")?.addEventListener("click", () => void onScore(panel));
@@ -617,6 +627,48 @@
     panel.querySelector("#skout-ai-add").disabled = busy;
     panel.querySelector("#skout-ai-enrich").disabled = busy;
     panel.querySelector("#skout-ai-score").disabled = busy;
+  }
+
+  async function createTargetList(panel) {
+    const input = panel.querySelector("#skout-ai-new-list-name");
+    const button = panel.querySelector("#skout-ai-create-list");
+    const name = input?.value?.trim();
+    if (!name) {
+      setPanelStatus(panel, "Enter a name for the new target list.", true);
+      input?.focus();
+      return;
+    }
+
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Creating…";
+    }
+    try {
+      const created = await safeRuntimeSend({ type: "create-list", name });
+      if (!created?.ok || !created.list?.id) {
+        throw new Error(created?.error || "Could not create list.");
+      }
+      if (input) input.value = "";
+      const refreshed = await safeRuntimeSend({ type: "get-lists", force: true });
+      if (!refreshed?.ok) throw new Error(refreshed?.error || "List created but refresh failed.");
+      populateLists(
+        panel.querySelector("#skout-ai-list-select"),
+        refreshed.lists || [],
+        created.list.id
+      );
+      setPanelStatus(panel, `Created target list "${created.list.name}".`);
+    } catch (error) {
+      setPanelStatus(
+        panel,
+        error instanceof Error ? error.message : "Could not create list.",
+        true
+      );
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = "Create list";
+      }
+    }
   }
 
   function showIcpBadge(panel, icpScore, icpBand) {
@@ -756,7 +808,7 @@
       .join("");
   }
 
-  function applyEnrichResults(panel, results) {
+  function applyEnrichResults(panel, results, capturedCompanyName) {
     const el = panel.querySelector("#skout-ai-enrich-results");
     if (!el) return;
     for (const row of el.querySelectorAll(".skout-result-row")) {
@@ -768,6 +820,14 @@
       const valueEl = row.querySelector(".skout-result-value");
       const iconEl = row.querySelector(".skout-result-icon");
       if (!match) {
+        if (field === "company" && capturedCompanyName) {
+          if (valueEl) {
+            valueEl.textContent = `Captured from LinkedIn: ${capturedCompanyName}`;
+            valueEl.style.color = "#cbd5e1";
+          }
+          if (iconEl) { iconEl.textContent = "in"; iconEl.style.color = "#60a5fa"; }
+          continue;
+        }
         if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#475569"; }
         if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#475569"; }
       } else if (match.validationStatus === "skipped") {
@@ -899,7 +959,7 @@
       }
 
       const results = outcome.results || [];
-      applyEnrichResults(panel, results);
+      applyEnrichResults(panel, results, outcome.companyName);
       if (hasEnrichmentData(results, fields)) {
         setPanelStatus(panel, `Enrichment completed for ${started.fullName}`);
       } else {
