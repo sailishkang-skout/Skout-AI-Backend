@@ -130,10 +130,22 @@ function companyReadUrl(value, companyId) {
     return `${u.origin}/company/${companyId}/${section ? section + '/' : ''}`;
   } catch { return undefined; }
 }
+// LinkedIn's SPA can leave sender.url stale after client-side navigation.
+async function currentSenderTabUrl(sender) {
+  const tabId = sender.tab?.id;
+  if (tabId == null) return undefined;
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    return tab.url || sender.url;
+  } catch {
+    return undefined;
+  }
+}
 async function readCompanyPage(request, sender, collectMessage = 'COLLECT_COMPANY_PAGE') {
   const owner = sender.tab?.id;
   const url = companyReadUrl(request.url, request.companyId);
-  if (owner == null || sender.frameId !== 0 || !url || !companyReadUrl(sender.url, request.companyId)) return {ok:false,error:'Capture must start on this company’s LinkedIn page.'};
+  const sourceUrl = await currentSenderTabUrl(sender);
+  if (owner == null || sender.frameId !== 0 || !url || !companyReadUrl(sourceUrl, request.companyId)) return {ok:false,error:'Capture must start on this company’s LinkedIn page.'};
   if (companyReads.has(owner)) return {ok:false,error:'A company page is already being read.'};
   const blocked = await captureBlock();
   if (blocked) return {ok:false,error:blocked};
@@ -233,7 +245,8 @@ async function waitForCompanyPeoplePage(tabId, searchKey, afterPage, task) {
 async function readCompanyPeopleSearch(request, sender) {
   const owner = sender.tab?.id;
   const url = companyPeopleSearchUrl(request.url);
-  if (owner == null || sender.frameId !== 0 || !url || !companyReadUrl(sender.url, request.companyId)) return {ok:false,error:'Associated people must be read from the company capture.'};
+  const sourceUrl = await currentSenderTabUrl(sender);
+  if (owner == null || sender.frameId !== 0 || !url || !companyReadUrl(sourceUrl, request.companyId)) return {ok:false,error:'Associated people must be read from the company capture.'};
   if (companyPeopleReads.has(owner)) return {ok:false,error:'Associated people are already being read.'};
   const task = {tabId:null,cancelled:false}; companyPeopleReads.set(owner,task);
   try {

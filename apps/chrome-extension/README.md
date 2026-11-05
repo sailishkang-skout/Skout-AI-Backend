@@ -123,6 +123,10 @@ visible in a Contact Info dialog are shown only in the local review draft, only 
 already opened the dialog, and are not sent to Skout. No hidden or inaccessible profile data is
 read.
 
+Company capture verifies the initiating tab's live URL because LinkedIn's single-page
+navigation can leave the message sender URL stale. Keep the initiating tab on the same company
+page while its sections and associated people are read.
+
 | Step | Where | What happens |
 | --- | --- | --- |
 | Start | Side panel → `capture-background.js` → `capture/capture-content.js` | The user clicks Capture on the open tab. The API's capture status (kill switch, daily limit) is checked first. |
