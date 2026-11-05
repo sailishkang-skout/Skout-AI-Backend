@@ -614,12 +614,18 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
         async () => {
           // COPS-08: a proposal over a threshold goes out only once every approver has agreed.
           await assertApproved(db, ctx.workspaceId, request.params.id);
+          // When people are chosen, the email goes first and the version is locked only once it went
+          // out: a proposal nobody received is never marked sent. Without recipients (API callers)
+          // it is only locked, as before.
+          const ids = parsed.data.recipient_contact_ids ?? [];
+          let emailed: { to: string[]; sent: boolean } | null = null;
+          if (ids.length) {
+            emailed = await emailProposal(db, app.config, ctx.workspaceId, request.params.id, ids, parsed.data.message);
+            if (!emailed.sent) {
+              throw new CommercialError("PROVIDER_UNAVAILABLE", "The email could not be sent (email is not set up on this server), so the proposal was not marked as sent.");
+            }
+          }
           await sendProposal(db, ctx, request.params.id);
-          // The version is locked first; the email goes after, so a mail failure never undoes a send.
-          const emailed = await emailProposal(db, app.config, ctx.workspaceId, request.params.id, parsed.data.recipient_contact_ids ?? [], parsed.data.message).catch((e: unknown) => {
-            request.log.error({ err: e }, "proposal email failed");
-            return { to: [], sent: false, failed: true };
-          });
           const proposal = (await loadProposals(db, ctx.workspaceId, { proposalId: request.params.id }))[0];
           return { ...proposal, emailed };
         },
@@ -855,7 +861,7 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
     }
     const result = await emailPaymentLink(db, app.config, request.workspaceId!, request.params.id, contactId);
     if (!result) return reply.status(404).send(copsErrorBody({ code: "NOT_FOUND", message: "Payment request not found", requestId }));
-    if (!result.to.length) return reply.status(400).send(copsErrorBody({ code: "VALIDATION_FAILED", message: "That contact has no email address", requestId }));
+    if (!result.to.length) return reply.status(400).send(copsErrorBody({ code: "VALIDATION_FAILED", message: "That contact has no email address or is not on this deal's account", requestId }));
     if (!result.sent) return reply.status(503).send(copsErrorBody({ code: "EMAIL_NOT_CONFIGURED", message: "Email is not set up on this server, so nothing was sent. Copy the link instead.", requestId }));
     return { data: result };
   });

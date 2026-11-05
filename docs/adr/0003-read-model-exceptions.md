@@ -227,4 +227,4 @@ by apps/api.
 
 | File | Tables | Access |
 | --- | --- | --- |
-| `apps/api/src/services/cops-commercial-email.service.ts` | contacts | read only: name and email of the contacts a proposal or payment link is emailed to |
+| `apps/api/src/services/cops-commercial-email.service.ts` | contacts, deals | read only: name, email and account of the contacts a proposal or payment link is emailed to; the deal's account, so a payment link only goes to that account's contacts |

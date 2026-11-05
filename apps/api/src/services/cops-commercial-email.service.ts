@@ -1,7 +1,8 @@
 /**
  * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
  * docs/adr/0003-read-model-exceptions.md (COPS commercial email addition, 2026-11-05).
- *   - Tables touched directly: contacts (read only: id, first_name, last_name, email)
+ *   - Tables touched directly: contacts (read only: id, company_id, first_name, last_name, email),
+ *     deals (read only: company_id, to check the contact belongs to the deal's account)
  *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
  *   - Reason: a proposal or payment link is emailed to the account's contacts the rep picked; only
  *     their name and address are read.
@@ -13,6 +14,7 @@ import { defaultPriceBasis, proposalTcv } from "@skout/shared";
 import PDFDocument from "pdfkit";
 import type { Env } from "../config/env.js";
 import { escapeHtml, renderTransactionalLayout, sendMail } from "./mail.service.js";
+import { CommercialError } from "./cops-commercial.service.js";
 
 const { contacts, proposals, proposalVersions, proposalLineItems, paymentRequests } = schema;
 
@@ -31,12 +33,15 @@ const money = (minor: number, currency: string) => {
   }
 };
 
-async function recipients(db: Db, workspaceId: string, contactIds: string[]) {
+/** The chosen contacts that have an email and sit on the deal's account; any other id is dropped. */
+async function recipients(db: Db, workspaceId: string, dealId: string, contactIds: string[]) {
   if (!contactIds.length) return [];
+  const [deal] = await db.select({ companyId: schema.deals.companyId }).from(schema.deals).where(and(eq(schema.deals.workspaceId, workspaceId), eq(schema.deals.id, dealId))).limit(1);
+  if (!deal?.companyId) return [];
   const rows = await db
     .select({ id: contacts.id, firstName: contacts.firstName, lastName: contacts.lastName, email: contacts.email })
     .from(contacts)
-    .where(and(eq(contacts.workspaceId, workspaceId), inArray(contacts.id, contactIds)));
+    .where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.companyId, deal.companyId), inArray(contacts.id, contactIds)));
   return rows.filter((r): r is typeof r & { email: string } => !!r.email);
 }
 
@@ -51,18 +56,29 @@ async function deliver(config: Env, list: { firstName: string; email: string }[]
   return { to: list.map((r) => r.email), sent };
 }
 
-/** Emails the sent version of a proposal (its lines and total) to the chosen contacts. */
+/**
+ * Emails the current draft version of a proposal (its lines, total and a PDF) to the chosen
+ * contacts. Called before the version is locked, so a proposal is only marked sent once it went out.
+ */
 export async function emailProposal(db: Db, config: Env, workspaceId: string, proposalId: string, contactIds: string[], message?: string): Promise<EmailResult> {
-  const list = await recipients(db, workspaceId, contactIds);
-  if (!list.length) return { to: [], sent: false };
   const [proposal] = await db.select().from(proposals).where(and(eq(proposals.workspaceId, workspaceId), eq(proposals.id, proposalId))).limit(1);
-  if (!proposal) return { to: [], sent: false };
+  if (!proposal) throw new CommercialError("NOT_FOUND", "Proposal not found");
+  if (["accepted", "declined", "expired"].includes(proposal.status)) {
+    throw new CommercialError("BUSINESS_STATE_CONFLICT", `Proposal is ${proposal.status}`, { status: proposal.status });
+  }
+  const list = await recipients(db, workspaceId, proposal.opportunityId, contactIds);
+  if (!list.length) {
+    throw new CommercialError("VALIDATION_FAILED", "None of the chosen people is a contact with an email on this account. Add a contact, then send the proposal.");
+  }
   const [version] = await db
     .select()
     .from(proposalVersions)
     .where(and(eq(proposalVersions.proposalId, proposalId), eq(proposalVersions.version, proposal.currentVersion)))
     .limit(1);
-  if (!version) return { to: [], sent: false };
+  if (!version) throw new CommercialError("NOT_FOUND", "Proposal version not found");
+  if (version.sentAt) {
+    throw new CommercialError("BUSINESS_STATE_CONFLICT", "The latest version was already sent; create a new version to change it", { version: version.version });
+  }
   const lines = await db.select().from(proposalLineItems).where(eq(proposalLineItems.versionId, version.id)).orderBy(asc(proposalLineItems.position));
   // Same contract value the deal amount follows (TCV over the term, after every discount).
   const { tcv_minor: total } = proposalTcv({
@@ -103,7 +119,7 @@ export async function emailProposal(db: Db, config: Env, workspaceId: string, pr
 export async function emailPaymentLink(db: Db, config: Env, workspaceId: string, paymentRequestId: string, contactId: string): Promise<EmailResult | null> {
   const [pr] = await db.select().from(paymentRequests).where(and(eq(paymentRequests.workspaceId, workspaceId), eq(paymentRequests.id, paymentRequestId))).limit(1);
   if (!pr || !pr.checkoutUrl) return null;
-  const list = await recipients(db, workspaceId, [contactId]);
+  const list = await recipients(db, workspaceId, pr.opportunityId, [contactId]);
   const amount = money(Number(pr.amountMinor), pr.currency);
   const url = pr.checkoutUrl;
   return deliver(config, list, (first) => ({
