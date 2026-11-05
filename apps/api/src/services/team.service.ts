@@ -5,6 +5,7 @@ import { normalizeEmail } from "@skout/shared";
 import { createLogger } from "@skout/observability";
 import { and, count, eq, gt, inArray, isNull, ne, sql } from "drizzle-orm";
 import { HttpError } from "../utils/http.js";
+import { getCustomerSubscription } from "./cops-subscriptions.service.js";
 
 const log = createLogger("team.service");
 
@@ -161,6 +162,24 @@ export function createTeamService(db: Db) {
           `Workspace has reached the ${WORKSPACE_MEMBER_LIMIT}-member limit.`,
           409
         );
+      }
+
+      // A paying customer's workspace holds only the seats they bought (Skout's own workspace has
+      // no subscription, so only the limit above applies). A re-invite of a pending email is not a
+      // new seat.
+      const subscription = await getCustomerSubscription(db, workspaceId, now).catch(() => null);
+      const seats = subscription?.seats ?? 0;
+      if (seats > 0) {
+        const [samePending] = await db
+          .select({ value: count() })
+          .from(schema.workspaceInvites)
+          .where(
+            scopedTo(schema.workspaceInvites, workspaceId, isNull(schema.workspaceInvites.acceptedAt), gt(schema.workspaceInvites.expiresAt, now), eq(schema.workspaceInvites.email, normalizedEmail))
+          );
+        const used = total - (samePending?.value ?? 0);
+        if (used >= seats) {
+          throw new HttpError(`All ${seats} seats are in use (${used} of ${seats}, counting pending invites). Ask Skout to add seats, or remove someone first.`, 409);
+        }
       }
 
       // check not already a member

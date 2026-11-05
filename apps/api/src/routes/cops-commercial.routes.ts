@@ -37,6 +37,7 @@ import {
   type CommercialContext,
 } from "../services/cops-commercial.service.js";
 import { createPaymentRequest, handlePaymentWebhook, loadPaymentRequests } from "../services/cops-payments.service.js";
+import { emailPaymentLink, emailProposal } from "../services/cops-commercial-email.service.js";
 import { assertApproved, assertContractApproved, decideApproval, evaluateProposalApprovals, listApprovals, requestApproval } from "../services/cops-approvals.service.js";
 import { createRazorpayPaymentLinkAdapter } from "../services/psp/razorpay.js";
 import {
@@ -614,7 +615,13 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
           // COPS-08: a proposal over a threshold goes out only once every approver has agreed.
           await assertApproved(db, ctx.workspaceId, request.params.id);
           await sendProposal(db, ctx, request.params.id);
-          return (await loadProposals(db, ctx.workspaceId, { proposalId: request.params.id }))[0];
+          // The version is locked first; the email goes after, so a mail failure never undoes a send.
+          const emailed = await emailProposal(db, app.config, ctx.workspaceId, request.params.id, parsed.data.recipient_contact_ids ?? [], parsed.data.message).catch((e: unknown) => {
+            request.log.error({ err: e }, "proposal email failed");
+            return { to: [], sent: false, failed: true };
+          });
+          const proposal = (await loadProposals(db, ctx.workspaceId, { proposalId: request.params.id }))[0];
+          return { ...proposal, emailed };
         },
         (proposal) => ({ data: proposal })
       );
@@ -836,6 +843,22 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
       );
     })
   );
+
+  // Emails the link's hosted checkout page to one of the account's contacts.
+  app.post<{ Params: { id: string }; Body: { contact_id?: string } }>("/payment-requests/:id/email", { preHandler: paymentWriteGate }, async (request, reply) => {
+    const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+    const bad = checkId(reply as never, requestId, request.params.id);
+    if (bad) return bad;
+    const contactId = request.body?.contact_id;
+    if (!contactId || !UUID.test(contactId)) {
+      return reply.status(400).send(copsErrorBody({ code: "VALIDATION_FAILED", message: "contact_id is required", requestId }));
+    }
+    const result = await emailPaymentLink(db, app.config, request.workspaceId!, request.params.id, contactId);
+    if (!result) return reply.status(404).send(copsErrorBody({ code: "NOT_FOUND", message: "Payment request not found", requestId }));
+    if (!result.to.length) return reply.status(400).send(copsErrorBody({ code: "VALIDATION_FAILED", message: "That contact has no email address", requestId }));
+    if (!result.sent) return reply.status(503).send(copsErrorBody({ code: "EMAIL_NOT_CONFIGURED", message: "Email is not set up on this server, so nothing was sent. Copy the link instead.", requestId }));
+    return { data: result };
+  });
 
   app.get<{ Params: { id: string } }>("/payment-requests/:id", { preHandler: paymentReadGate }, async (request, reply) => {
     const requestId = resolveCorrelationId(request.headers["x-request-id"]);
