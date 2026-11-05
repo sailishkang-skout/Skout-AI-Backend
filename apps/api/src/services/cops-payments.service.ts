@@ -48,6 +48,7 @@ export async function createPaymentRequest(db: Db, psp: PspAdapter, ctx: Commerc
         termMonths: proposalVersions.termMonths,
         discountPct: proposalVersions.discountPct,
         taxPct: proposalVersions.taxPct,
+        sentAt: proposalVersions.sentAt,
       })
       .from(proposals)
       .innerJoin(proposalVersions, eq(proposalVersions.proposalId, proposals.id))
@@ -95,6 +96,25 @@ export async function createPaymentRequest(db: Db, psp: PspAdapter, ctx: Commerc
     }
     amountMinor = due;
     currency = sent.currency;
+    // One payment per proposal, so a customer is never charged twice: no new link once any version
+    // was paid (later changes go through a subscription amendment, which prorates), and none while
+    // an older link can still be paid (cancel it first).
+    const earlier = await db
+      .select({ id: paymentRequests.id, status: paymentRequests.status, checkoutUrl: paymentRequests.checkoutUrl, expiresAt: paymentRequests.expiresAt })
+      .from(paymentRequests)
+      .where(and(eq(paymentRequests.workspaceId, ctx.workspaceId), eq(paymentRequests.proposalId, input.proposal_id), inArray(paymentRequests.status, ["paid", "requested"])));
+    const paid = earlier.find((r) => r.status === "paid");
+    if (paid) {
+      throw new CommercialError("BUSINESS_STATE_CONFLICT", "This proposal is already paid, so it cannot be charged again. To change the price or seats, amend the subscription in Finance.", { payment_request_id: paid.id, status: "paid" });
+    }
+    const openLink = earlier.find((r) => r.status === "requested" && (!r.expiresAt || r.expiresAt > new Date()));
+    if (openLink) {
+      throw new CommercialError("BUSINESS_STATE_CONFLICT", "A payment link for this proposal is still open. Copy or email it, or cancel it before making a new one.", {
+        payment_request_id: openLink.id,
+        checkout_url: openLink.checkoutUrl,
+        status: "requested",
+      });
+    }
   }
   currency ??= opportunity.currency;
   if (!amountMinor || amountMinor < 100) {
@@ -335,4 +355,38 @@ export async function loadPaymentRequests(db: Db, workspaceId: string, where: { 
     status_changed_at: r.statusChangedAt?.toISOString() ?? null,
     created_at: r.createdAt.toISOString(),
   }));
+}
+
+/** Cancels an unpaid link at the provider and here, so it can no longer be paid. */
+export async function cancelPaymentRequest(db: Db, psp: PspAdapter, ctx: CommercialContext, id: string, reason: string): Promise<void> {
+  const [pr] = await db.select().from(paymentRequests).where(and(eq(paymentRequests.workspaceId, ctx.workspaceId), eq(paymentRequests.id, id))).limit(1);
+  if (!pr) throw new CommercialError("NOT_FOUND", "Payment request not found");
+  if (pr.status !== "requested") {
+    throw new CommercialError("BUSINESS_STATE_CONFLICT", `Only an unpaid link can be cancelled; this one is ${pr.status}`, { status: pr.status });
+  }
+  if (pr.providerRef && psp.cancelPaymentLink) {
+    try {
+      await psp.cancelPaymentLink(pr.providerRef);
+    } catch (error) {
+      if (error instanceof PspRequestError) {
+        throw new CommercialError("PROVIDER_ERROR", "The payment provider did not cancel the link, so it may still be payable. Try again.", { provider_status: error.providerStatus });
+      }
+      throw error;
+    }
+  }
+  const at = new Date();
+  await db.transaction(async (tx) => {
+    await tx.update(paymentRequests).set({ status: "cancelled", statusChangedAt: at, updatedAt: at }).where(eq(paymentRequests.id, id));
+    await writeCopsAudit(tx, {
+      tenantId: ctx.workspaceId,
+      actor: { type: "user", id: ctx.userId },
+      entityType: "payment_request",
+      entityId: id,
+      action: "payment_request.cancelled",
+      before: { status: "requested" },
+      after: { status: "cancelled", reason },
+      correlationId: ctx.requestId,
+      sourceChannel: "api",
+    });
+  });
 }

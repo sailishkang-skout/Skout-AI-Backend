@@ -30,6 +30,8 @@ export interface PspWebhookEvent {
 export interface PspAdapter {
   provider: string;
   isConfigured(): boolean;
+  /** Stops a link from being paid (Razorpay: POST /payment_links/:id/cancel). */
+  cancelPaymentLink?(providerRef: string): Promise<void>;
   createPaymentLink(input: {
     amountMinor: number;
     currency: string;

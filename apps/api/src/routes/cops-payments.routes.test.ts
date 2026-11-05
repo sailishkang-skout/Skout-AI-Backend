@@ -30,6 +30,7 @@ maybe("COPS-03 payment requests and webhook", () => {
   let workspaceId = "";
   let opportunityId = "";
   const linkCalls: Array<Record<string, unknown>> = [];
+  const cancelCalls: string[] = [];
 
   const call = (method: "GET" | "POST", path: string, body?: unknown, key: string | null = randomUUID()) =>
     app.inject({
@@ -79,6 +80,11 @@ maybe("COPS-03 payment requests and webhook", () => {
         if (body.description === "FAIL") return new Response('{"error":{"code":"BAD_REQUEST_ERROR"}}', { status: 400 });
         const id = `plink_${randomUUID().replace(/-/g, "").slice(0, 14)}`;
         return new Response(JSON.stringify({ id, short_url: `https://rzp.io/i/${id}`, status: "created" }), { status: 200 });
+      }
+      const cancel = /^https:\/\/api\.razorpay\.com\/v1\/payment_links\/([^/]+)\/cancel$/.exec(target);
+      if (cancel) {
+        cancelCalls.push(cancel[1]!);
+        return new Response(JSON.stringify({ id: cancel[1], status: "cancelled" }), { status: 200 });
       }
       return realFetch(input, init);
     });
@@ -163,9 +169,29 @@ maybe("COPS-03 payment requests and webhook", () => {
     const ok = await forProposal();
     expect(ok.statusCode).toBe(201);
     expect(ok.json().data).toMatchObject({ amount_minor: 200_000, currency: "INR", proposal_id: proposal.id });
+    // One open link at a time: a second one is refused until the first is cancelled.
+    const second = await forProposal();
+    expect(second.statusCode).toBe(409);
+    expect(second.json().details).toMatchObject({ payment_request_id: ok.json().data.id, status: "requested" });
+    expect((await call("POST", `/payment-requests/${ok.json().data.id}/cancel`, {})).statusCode).toBe(422);
+    const cancelled = await call("POST", `/payment-requests/${ok.json().data.id}/cancel`, { reason: "Sent the wrong link" });
+    expect(cancelled.statusCode).toBe(200);
+    expect(cancelled.json().data.status).toBe("cancelled");
+    expect(cancelCalls).toContain(ok.json().data.provider_ref);
+    expect((await call("POST", `/payment-requests/${ok.json().data.id}/cancel`, { reason: "again" })).statusCode).toBe(409);
     // While the terms are being revised (a new draft version), no link is created.
     await call("POST", `/proposals/${proposal.id}/versions`, { ...terms, title: undefined, line_items: [{ ...terms.line_items[0], quantity: 9 }] });
     expect((await forProposal()).statusCode).toBe(409);
+    // Once paid, the proposal is never charged again, even for a later version.
+    await call("POST", `/proposals/${proposal.id}/send`, {});
+    const link = await forProposal();
+    expect(link.statusCode).toBe(201);
+    expect((await webhook(paidEvent(link.json().data.provider_ref, `pay_once_${RUN}`))).statusCode).toBe(200);
+    await call("POST", `/proposals/${proposal.id}/versions`, { ...terms, title: undefined, line_items: [{ ...terms.line_items[0], quantity: 12 }] });
+    await call("POST", `/proposals/${proposal.id}/send`, {});
+    const again = await forProposal();
+    expect(again.statusCode).toBe(409);
+    expect(again.json().details).toMatchObject({ status: "paid" });
   });
 
   it("rejects a missing or bad signature with 401 and changes nothing", async () => {

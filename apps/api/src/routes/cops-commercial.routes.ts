@@ -36,7 +36,7 @@ import {
   discardDraftContract,
   type CommercialContext,
 } from "../services/cops-commercial.service.js";
-import { createPaymentRequest, handlePaymentWebhook, loadPaymentRequests } from "../services/cops-payments.service.js";
+import { cancelPaymentRequest, createPaymentRequest, handlePaymentWebhook, loadPaymentRequests } from "../services/cops-payments.service.js";
 import { emailPaymentLink, emailProposal } from "../services/cops-commercial-email.service.js";
 import { assertApproved, assertContractApproved, decideApproval, evaluateProposalApprovals, listApprovals, requestApproval } from "../services/cops-approvals.service.js";
 import { createRazorpayPaymentLinkAdapter } from "../services/psp/razorpay.js";
@@ -850,6 +850,28 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
           return (await loadPaymentRequests(db, ctx.workspaceId, { id }))[0];
         },
         (paymentRequest) => reply.status(201).send({ data: paymentRequest })
+      );
+    })
+  );
+
+  // Cancels an unpaid link (at the provider too), with a reason, so it can no longer be paid.
+  app.post<{ Params: { id: string }; Body: { reason?: string } }>(
+    "/payment-requests/:id/cancel",
+    { preHandler: paymentWriteGate },
+    withCopsIdempotentReply<{ Params: { id: string }; Body: { reason?: string } }>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      const parsed = z.object({ reason: reasonText }).strict().safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(
+        reply,
+        ctx.requestId,
+        async () => {
+          await cancelPaymentRequest(db, psp, ctx, request.params.id, parsed.data.reason);
+          return (await loadPaymentRequests(db, ctx.workspaceId, { id: request.params.id }))[0];
+        },
+        (paymentRequest) => ({ data: paymentRequest })
       );
     })
   );
