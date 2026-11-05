@@ -620,7 +620,11 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
           const ids = parsed.data.recipient_contact_ids ?? [];
           let emailed: { to: string[]; sent: boolean } | null = null;
           if (ids.length) {
-            emailed = await emailProposal(db, app.config, ctx.workspaceId, request.params.id, ids, parsed.data.message);
+            emailed = await emailProposal(db, app.config, ctx.workspaceId, request.params.id, ids, parsed.data.message).catch((e: unknown) => {
+              if (e instanceof CommercialError) throw e;
+              request.log.error({ err: e }, "proposal email failed");
+              throw new CommercialError("PROVIDER_ERROR", "The email could not be delivered, so the proposal was not marked as sent. Try again in a moment.");
+            });
             if (!emailed.sent) {
               throw new CommercialError("PROVIDER_UNAVAILABLE", "The email could not be sent (email is not set up on this server), so the proposal was not marked as sent.");
             }
