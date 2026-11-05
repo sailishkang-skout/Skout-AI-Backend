@@ -16,7 +16,7 @@ import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
  */
 import { APPROVER_ROLES, REDLINE_STATUSES, PRICE_BASES, SUBSCRIPTION_BILLING, SUBSCRIPTION_CADENCES, BILLING_CADENCES, COMMERCIAL_GATE_POLICIES, COMMERCIAL_LINE_KINDS, copsErrorBody, copsErrorStatus, resolveCorrelationId } from "@skout/shared";
 import { getMemberPermissions } from "@skout/auth";
-import { copsIdempotencyStore, requireAnyCopsPermission } from "../services/cops-platform.service.js";
+import { copsIdempotencyStore, requireAnyCopsPermission, writeCopsAudit } from "../services/cops-platform.service.js";
 import { withCopsIdempotentReply, type CopsCapturingReply } from "../services/cops-idempotent.js";
 import {
   addContractVersion,
@@ -37,7 +37,7 @@ import {
   type CommercialContext,
 } from "../services/cops-commercial.service.js";
 import { cancelPaymentRequest, createPaymentRequest, handlePaymentWebhook, loadPaymentRequests } from "../services/cops-payments.service.js";
-import { emailPaymentLink, emailProposal } from "../services/cops-commercial-email.service.js";
+import { emailPaymentLink, emailProposal, isInternalEmail } from "../services/cops-commercial-email.service.js";
 import { assertApproved, assertContractApproved, decideApproval, evaluateProposalApprovals, listApprovals, requestApproval } from "../services/cops-approvals.service.js";
 import { createRazorpayPaymentLinkAdapter } from "../services/psp/razorpay.js";
 import {
@@ -89,7 +89,12 @@ const termsSchema = z
   .strict();
 const createProposalSchema = termsSchema.extend({ title: z.string().trim().min(1).max(200) }).strict();
 const sendSchema = z
-  .object({ recipient_contact_ids: z.array(z.string().regex(UUID)).max(50).optional(), message: z.string().max(5000).optional() })
+  .object({
+    recipient_contact_ids: z.array(z.string().regex(UUID)).max(50).optional(),
+    message: z.string().max(5000).optional(),
+    /** Admin only: send to an internal address anyway (testing), with a reason kept in the audit log. */
+    internal_override_reason: z.string().trim().min(8).max(1000).optional(),
+  })
   .strict();
 const reasonText = z.string().trim().min(1, "reason is required").max(1000);
 const proposalStatusSchema = z.object({ status: z.enum(["accepted", "declined", "expired"]), reason: reasonText }).strict();
@@ -620,7 +625,10 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
           const ids = parsed.data.recipient_contact_ids ?? [];
           let emailed: { to: string[]; sent: boolean } | null = null;
           if (ids.length) {
-            emailed = await emailProposal(db, app.config, ctx.workspaceId, request.params.id, ids, parsed.data.message).catch((e: unknown) => {
+            const overrideReason = parsed.data.internal_override_reason;
+            const isAdmin = ["owner", "admin"].includes(String((request as { role?: string }).role ?? ""));
+            if (overrideReason && !isAdmin) throw new CommercialError("FORBIDDEN", "Only an Admin can send a proposal to an internal address");
+            emailed = await emailProposal(db, app.config, ctx.workspaceId, request.params.id, ids, parsed.data.message, { allowInternal: !!overrideReason }).catch((e: unknown) => {
               if (e instanceof CommercialError) throw e;
               request.log.error({ err: e }, "proposal email failed");
               throw new CommercialError("PROVIDER_ERROR", "The email could not be delivered, so the proposal was not marked as sent. Try again in a moment.");
@@ -630,6 +638,19 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
             }
           }
           await sendProposal(db, ctx, request.params.id);
+          const internalTo = (emailed?.to ?? []).filter(isInternalEmail);
+          if (internalTo.length && parsed.data.internal_override_reason) {
+            await writeCopsAudit(db as never, {
+              tenantId: ctx.workspaceId,
+              actor: { type: "user", id: ctx.userId },
+              entityType: "proposal",
+              entityId: request.params.id,
+              action: "proposal.internal_recipient_override",
+              after: { recipients: internalTo, reason: parsed.data.internal_override_reason },
+              correlationId: ctx.requestId,
+              sourceChannel: "api",
+            });
+          }
           const proposal = (await loadProposals(db, ctx.workspaceId, { proposalId: request.params.id }))[0];
           return { ...proposal, emailed };
         },

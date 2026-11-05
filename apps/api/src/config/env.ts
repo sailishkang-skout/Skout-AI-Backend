@@ -311,6 +311,11 @@ const envSchema = z
     RAZORPAY_KEY_ID: z.string().optional(),
     RAZORPAY_KEY_SECRET: z.string().optional(),
     RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
+    /**
+     * Payment links in currencies other than INR need international payments enabled on the
+     * Razorpay account (KYC). "true" turns them on; unset means on outside production, off in it.
+     */
+    PAYMENTS_INTERNATIONAL_ENABLED: z.enum(["true", "false"]).optional(),
     /** COPS-08: signs the events posted to the mock e-sign provider. Development and tests only. */
     ESIGN_MOCK_WEBHOOK_SECRET: z.string().min(16).optional(),
     /** COPS-08 DocuSeal (the e-sign provider). With an API key set, DocuSeal replaces the mock. */

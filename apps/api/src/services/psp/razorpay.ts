@@ -54,6 +54,12 @@ export function createRazorpayPaymentLinkAdapter(config: Env, fetchImpl: FetchLi
       return Boolean(config.RAZORPAY_KEY_ID && config.RAZORPAY_KEY_SECRET);
     },
 
+    supportsCurrency(currency) {
+      if (currency.toUpperCase() === "INR") return true;
+      const flag = config.PAYMENTS_INTERNATIONAL_ENABLED;
+      return flag ? flag === "true" : config.NODE_ENV !== "production";
+    },
+
     async createPaymentLink(input): Promise<PspPaymentLink> {
       const body: Record<string, unknown> = {
         amount: input.amountMinor,
