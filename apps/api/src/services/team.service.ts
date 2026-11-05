@@ -138,8 +138,12 @@ export function createTeamService(db: Db) {
     ) {
       requireMinRole(requestingRole, "owner", "admin");
 
-      // All invited users get "member" role — no exceptions
-      const role: WorkspaceRole = "member";
+      // An invite can make an admin or a member, never an owner. Only the owner may invite an admin,
+      // the same rule as changing a role later.
+      const role: WorkspaceRole = _role === "admin" ? "admin" : "member";
+      if (role === "admin" && requestingRole !== "owner") {
+        throw new HttpError("Only the workspace owner can invite an admin.", 403);
+      }
       const normalizedEmail = normalizeEmail(email);
 
       // Enforce workspace member limit (members + pending invites)
