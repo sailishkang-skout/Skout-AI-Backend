@@ -124,9 +124,19 @@ export async function createPaymentRequest(db: Db, psp: PspAdapter, ctx: Commerc
     });
   } catch (error) {
     if (error instanceof PspRequestError) {
-      log.warn("payment link create failed", { workspaceId: ctx.workspaceId, status: error.providerStatus });
-      throw new CommercialError("PROVIDER_ERROR", "The payment provider rejected the request", {
+      // Razorpay answers {"error":{"code","description"}}; its description says why (for example
+      // international cards or a currency not enabled on the account, or bad API keys).
+      let reason = "";
+      try {
+        reason = String((JSON.parse(error.providerMessage) as { error?: { description?: unknown } }).error?.description ?? "");
+      } catch {
+        reason = "";
+      }
+      if (error.providerStatus === 401) reason = "the payment provider's API keys were refused";
+      log.warn("payment link create failed", { workspaceId: ctx.workspaceId, status: error.providerStatus, reason: reason || error.providerMessage.slice(0, 200) });
+      throw new CommercialError("PROVIDER_ERROR", reason ? `The payment provider rejected the request: ${reason}` : "The payment provider rejected the request", {
         provider_status: error.providerStatus,
+        ...(reason ? { provider_reason: reason } : {}),
       });
     }
     throw error;
