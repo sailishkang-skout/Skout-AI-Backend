@@ -122,7 +122,7 @@ export async function teamRoutes(app: FastifyInstance) {
   });
 
   // POST /team/invites — create invite (owner or admin)
-  app.post<{ Body: { email: string; role: WorkspaceRole } }>(
+  app.post<{ Body: { email: string; role: WorkspaceRole; app?: "customerops" } }>(
     "/team/invites",
     async (request, reply) => {
       if (!request.workspaceId || !request.userId) {
@@ -143,8 +143,10 @@ export async function teamRoutes(app: FastifyInstance) {
         request.role
       );
 
-      // The product app lives under /app; without it the email link 404s (same fix as onboarding).
-      const baseUrl = productAppUrl(app.config.INVITE_BASE_URL ?? app.config.FRONTEND_URL ?? "http://localhost:3000");
+      // Staff invited from CustomerOps (Admin > People) accept in CustomerOps; everyone else in the
+      // product app, which lives under /app (without it the email link 404s).
+      const opsBase = request.body.app === "customerops" ? customerOpsBaseUrl(app.config.COPS_APP_URL, request.headers.origin) : null;
+      const baseUrl = opsBase ?? productAppUrl(app.config.INVITE_BASE_URL ?? app.config.FRONTEND_URL ?? "http://localhost:3000");
       const acceptUrl = `${baseUrl}/invite/${invite.token}`;
 
       const [ws] = await app.db!
@@ -233,4 +235,14 @@ export async function teamRoutes(app: FastifyInstance) {
       return reply.code(204).send();
     }
   );
+}
+
+/**
+ * Where a CustomerOps invite link points: COPS_APP_URL when set, otherwise the Origin the request
+ * came from, but only a Skout domain or localhost so an email link can never point elsewhere.
+ */
+export function customerOpsBaseUrl(configured: string | undefined, origin: string | undefined): string | null {
+  if (configured) return configured.replace(/\/+$/, "");
+  if (origin && /^(https:\/\/([a-z0-9-]+\.)*skoutai\.io|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?)$/.test(origin)) return origin;
+  return null;
 }
