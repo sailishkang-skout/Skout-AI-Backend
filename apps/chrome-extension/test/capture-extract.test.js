@@ -135,7 +135,93 @@ const COMPANY_PEOPLE_HTML = `
   <a href="/in/header-link/">12 mutual connections</a>
 </main>`;
 
+const CURRENT_SDUI_COMPANY_HTML = `
+<main>
+  <div id="pages.topCard.company.69007278">
+    <h2>Drata</h2>
+    <p>Drata is the Agentic Trust Management Platform.</p>
+    <img src="https://media.licdn.com/company-logo/drata" alt="Drata logo">
+    <div>
+      <p>Software Development</p><p>·</p>
+      <p><a href="/products/?productCategory=payroll">Payroll Software</a></p><p>·</p>
+      <p>San Francisco, California</p><p>·</p><p>101K followers</p><p>·</p><p>501-1K employees</p>
+    </div>
+    <a aria-label="Search more employees" href="https://www.linkedin.com/search/results/people/?currentCompany=%5B%2269007278%22%5D">Search more employees</a>
+  </div>
+  <section>
+    <div><h2>Overview</h2><p>Drata provides the trust network that enables businesses to operate, scale, and partner with confidence.</p></div>
+    <div>
+      <div><div><p>Website</p></div><div><p><a href="https://drata.com">https://drata.com</a></p></div></div>
+      <div><div><p>Industry</p></div><div><p>Software Development</p></div></div>
+      <div><div><p>Company size</p></div><div><p>501-1,000 employees</p></div></div>
+      <div><div><p>Headquarters</p></div><div><p>San Francisco, California</p></div></div>
+      <div><div><p>Founded</p></div><div><p>2020</p></div></div>
+      <div><div><p>Specialties</p></div><div><p>compliance, cybersecurity, SOC 2</p></div></div>
+    </div>
+  </section>
+</main>`;
+
 describe("company page extraction", () => {
+  it("extracts current SDUI company top-card and About label/value rows", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/company/drata/about/",
+      html: CURRENT_SDUI_COMPANY_HTML,
+      files: EXTRACT_FILES,
+    });
+    const company = window.SkoutCapturePage.extractCompany();
+
+    expect(company).toMatchObject({
+      publicId: "drata",
+      name: "Drata",
+      tagline: "Drata is the Agentic Trust Management Platform.",
+      industry: "Software Development",
+      headquarter: "San Francisco, California",
+      followers: 101000,
+      size: "501-1,000",
+      logoUrl: "https://media.licdn.com/company-logo/drata",
+      website: "https://drata.com",
+      domain: "drata.com",
+      foundedAt: "2020",
+      specialties: ["compliance", "cybersecurity", "SOC 2"],
+    });
+    expect(company._peopleSearchUrl).toContain("currentCompany=");
+    expect(company.sectionCaptures.about.text).toContain("Company size: 501-1,000 employees");
+  });
+
+  it("collects a current SDUI About page through the full-page reader", async () => {
+    let listener;
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/company/drata/about/",
+      html: CURRENT_SDUI_COMPANY_HTML,
+      chrome: {
+        runtime: {
+          id: "test-extension",
+          onMessage: { addListener(callback) { listener = callback; } },
+          sendMessage: async () => undefined,
+        },
+      },
+      files: [...EXTRACT_FILES, "capture/company-capture.js"],
+    });
+    const result = await new Promise((resolve) => {
+      const asyncResponse = listener(
+        { type: "COLLECT_COMPANY_PAGE", companyId: "drata", url: "https://www.linkedin.com/company/drata/about/" },
+        { id: "test-extension" },
+        resolve,
+      );
+      expect(asyncResponse).toBe(true);
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.data).toMatchObject({
+      name: "Drata",
+      website: "https://drata.com",
+      sectionCaptures: {
+        about: expect.objectContaining({ method: "rendered-dom", sourceUrl: "https://www.linkedin.com/company/drata/about/" }),
+      },
+    });
+    expect(result.data.sectionCaptures.about.text).toContain("Specialties: compliance, cybersecurity, SOC 2");
+  });
+
   it("captures visible company information from the canonical /home/ page", () => {
     const window = loadCapturePage({
       url: "https://www.linkedin.com/company/acme-robotics/home/",
