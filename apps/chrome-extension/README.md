@@ -121,7 +121,10 @@ field counts before saving. **Enrich contact** is a separate, provider-backed lo
 validation validates an email address and is not LinkedIn profile validation. Email/phone
 visible in a Contact Info dialog are shown only in the local review draft, only if the user
 already opened the dialog, and are not sent to Skout. No hidden or inaccessible profile data is
-read.
+read. Education is retained when LinkedIn shows only the school name, including unlinked
+rendered labels; Education/Skills detail pages are given time to render before capture. Empty
+results are called out in the review notes when those sections are visible. Relationship context
+is limited to connection details visible to the signed-in person capturing the profile.
 
 Company capture verifies the initiating tab's live URL because LinkedIn's single-page
 navigation can leave the message sender URL stale. Keep the initiating tab on the same company

@@ -241,8 +241,11 @@ function inferRoleMetadata(value) {
 function extractRelationshipContext(topcard) {
   if (!topcard) return undefined;
   const nodes = Array.from(topcard.querySelectorAll('p, span, div'));
-  const degreeText = nodes.map((node) => text(node)).find((value) => /^(1st|2nd|3rd)$/i.test(value || ''));
-  const degree = degreeText ? Number(degreeText.charAt(0)) : undefined;
+  const degreeText = nodes.map((node) => text(node)).find((value) =>
+    /\b(1st|2nd|3rd)(?:\s*-?\s*degree)?(?:\s+connection)?\b/i.test(value || ''),
+  );
+  const degreeMatch = degreeText?.match(/\b(1st|2nd|3rd)\b/i);
+  const degree = degreeMatch ? Number(degreeMatch[1].charAt(0)) : undefined;
   const mutualNode = nodes.filter((node) => /\bmutual connections?\b/i.test(text(node) || '')).sort((a, b) => (text(a)?.length || 0) - (text(b)?.length || 0))[0];
   const mutualConnectionsText = text(mutualNode);
   const mutualConnections = mutualNode
@@ -716,24 +719,61 @@ function extractEducation() {
     ...Array.from(section.querySelectorAll('a[href*="/school/"]'))
       .map((a) => a.closest('[componentkey^="entity-collection-item" i], li') || a.parentElement),
     ...Array.from(section.querySelectorAll('[componentkey^="entity-collection-item" i]')),
+    ...Array.from(section.querySelectorAll('[data-view-name*="profile-component-entity" i], li')),
+    ...Array.from(section.querySelectorAll('[id]'))
+      .filter((node) => /^com\.linkedin\.sdui\.profile\.education\(/i.test(node.id)),
   ];
+  // Some profile layouts render education rows as plain nested divs without a
+  // school link or LinkedIn component marker. Accept only the innermost groups
+  // with multiple text-bearing children so a wrapper containing several rows
+  // is never treated as one education record.
+  const genericContainers = new Set(
+    Array.from(section.querySelectorAll('div')).filter((container) => {
+      const textChildren = Array.from(container.children).filter((child) => text(child));
+      return textChildren.length >= 2;
+    }),
+  );
+  const genericRows = [...genericContainers].filter((container) => {
+    for (let parent = container.parentElement; parent && parent !== section; parent = parent.parentElement) {
+      if (genericContainers.has(parent)) return false;
+    }
+    return true;
+  });
+  containers.push(...genericRows);
   containers.forEach((container) => {
     if (!container || !section.contains(container)) return;
     // A row and an element nested in it are the same entry; read it once.
     if ([...seen].some((done) => done === container || done.contains(container) || container.contains(done))) return;
     seen.add(container);
     const paras = getItemParagraphs(container);
-    const school = paras[0];
+    const schoolLink = container.querySelector('a[href*="/school/"]');
+    const labels = Array.from(container.querySelectorAll('a, p, span, h3, h4'))
+      .map((node) => text(node))
+      .filter((value, index, all) => value && all.indexOf(value) === index);
+    const school = text(schoolLink) || paras[0] || labels[0];
     if (isBadSchool(school)) return;
-    const degree = paras.slice(1).find((p) => p && !/^\d+(?:st|nd|rd)\b/i.test(p) && !/^activities and societies:/i.test(p));
-    const activities = paras.find((p) => /^activities and societies:/i.test(p));
+    const detailLines = paras.length ? paras : labels;
+    const dates = detailLines.find((p) => p !== school && /\b(?:19|20)\d{2}\b/.test(p));
+    const degree = detailLines.find((p) => p !== school && p !== dates && p && !/^\d+(?:st|nd|rd)\b/i.test(p) && !/^activities and societies:/i.test(p));
+    const activities = detailLines.find((p) => /^activities and societies:/i.test(p));
     const description = getExpandableText(container);
-    // A real education entry has the school anchor inside its own row. The
-    // remaining guard stops a header/title copied from another section from
-    // being saved when LinkedIn serves an incomplete page.
-    if (!degree && !activities && !description) return;
-    results.push({ school, degree, activities, description });
+    results.push({ school, degree, dates, activities, description });
   });
+  if (!results.length) {
+    const visible = Array.from(section.querySelectorAll('p, span, h3, h4'))
+      .map((node) => text(node))
+      .filter((value, index, all) => value && all.indexOf(value) === index)
+      .filter((value) => !/^education$/i.test(value));
+    const school = visible[0];
+    if (!isBadSchool(school)) {
+      const dates = visible.find((value, index) => index > 0 && /\b(?:19|20)\d{2}\b/.test(value));
+      const degree = visible.find((value, index) =>
+        index > 0 && value !== dates && !/^activities and societies:/i.test(value),
+      );
+      const activities = visible.find((value) => /^activities and societies:/i.test(value));
+      results.push({ school, degree, dates, activities });
+    }
+  }
   return results;
 }
 
@@ -744,7 +784,11 @@ function extractSkillsSection() {
   const skillsHeading = Array.from(document.querySelectorAll('h1, h2, h3')).find((heading) => /^skills$/i.test(text(heading) || ''));
   const section = document.querySelector('[componentkey*="Skills" i]') || skillsHeading?.closest('section, main');
   if (!section) return [];
-  const explicitItems = Array.from(section.querySelectorAll('[id^="com.linkedin.sdui.profile.skill(" i], [componentkey^="entity-collection-item" i], [data-view-name*="profile-component-entity" i]'));
+  const explicitItems = [
+    ...Array.from(section.querySelectorAll('[id^="com.linkedin.sdui.profile.skill(" i], [componentkey^="entity-collection-item" i], [data-view-name*="profile-component-entity" i]')),
+    ...Array.from(section.querySelectorAll('a[href*="/skill-insights/"]'))
+      .map((anchor) => anchor.closest('li, [componentkey^="entity-collection-item" i], [data-view-name*="profile-component-entity" i]') || anchor.parentElement),
+  ].filter((item, index, all) => item && all.indexOf(item) === index);
   // Detail pages use nested entity components: the innermost component often
   // holds only "Endorsed by…", while its parent holds the actual skill name.
   // Prefer semantic list rows, then a minimal entity that contains a skill
@@ -770,9 +814,11 @@ function extractSkillsSection() {
       // LinkedIn varies between anchors, paragraphs, and plain spans for the
       // skill label. Prefer the shortest meaningful descendant text; the
       // endorsement caption is explicitly excluded above.
-      const labels = Array.from(item.querySelectorAll('a, p, span'))
+      const labelElements = Array.from(item.querySelectorAll('a, p, span, h3, h4, div'))
+        .filter((element) => isSkillLabel(text(element)))
+        .filter((element) => !Array.from(element.children).some((child) => isSkillLabel(text(child))));
+      const labels = labelElements
         .map((element) => text(element))
-        .filter(isSkillLabel)
         .filter((value, index, all) => all.indexOf(value) === index);
       // Each Skills row starts with its name. Later labels describe where the
       // skill was used or who endorsed it, so preserve DOM order here.
@@ -788,6 +834,17 @@ function extractSkillsSection() {
       return { name, endorsements };
     })
     .filter((s) => isSkillLabel(s.name));
+  // A few layouts render a plain paragraph/span list without semantic rows or
+  // skill links. Use leaf labels only when the structured extraction found no
+  // rows; this keeps endorsement and context text out of otherwise complete data.
+  if (!items.length) {
+    skills.push(
+      ...Array.from(section.querySelectorAll('p, span, h3, h4'))
+        .filter((element) => !element.children.length)
+        .map((element) => ({ name: text(element), endorsements: undefined }))
+        .filter((skill) => isSkillLabel(skill.name)),
+    );
+  }
   const unique = new Map();
   for (const skill of skills) {
     const key = skill.name.trim().toLowerCase();

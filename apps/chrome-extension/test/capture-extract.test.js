@@ -98,6 +98,32 @@ describe("person profile extraction", () => {
     });
     expect(hidden.SkoutCapturePage.extractPerson()._contactInfo).toBeUndefined();
   });
+
+  it("keeps school-only education entries and captures a full connection-degree label", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/",
+      html: `
+        <main>
+          <section id="ProfileTopcard" data-view-name="profile-topcard">
+            <h1>Jane Doe</h1>
+            <p>1st degree connection</p>
+          </section>
+          <div componentkey="profile.EducationTopLevelSection">
+            <ul><li><a href="/school/ut-austin/"></a><p>University of Texas</p></li></ul>
+          </div>
+          <div componentkey="profile.SkillsTopLevelSection">
+            <ul><li><div><div>Discovery Sales</div><div><span>Endorsed by 3 colleagues</span></div></div></li></ul>
+          </div>
+        </main>
+      `,
+      files: EXTRACT_FILES,
+    });
+    const person = window.SkoutCapturePage.extractPerson();
+
+    expect(person.educations).toEqual([{ school: "University of Texas", degree: undefined, dates: undefined, activities: undefined, description: undefined }]);
+    expect(person.skills).toEqual([{ name: "Discovery Sales", endorsements: undefined }]);
+    expect(person.relationshipContext).toMatchObject({ degree: 1, isDirectConnection: true });
+  });
 });
 
 const COMPANY_ABOUT_HTML = `
@@ -285,6 +311,46 @@ describe("company page extraction", () => {
 });
 
 describe("person capture run", () => {
+  async function collectAfterSectionLoads(sectionName, detailPath, sectionMarkup) {
+    let reader;
+    const chrome = {
+      runtime: {
+        id: "test-extension",
+        onMessage: { addListener(listener) { reader = listener; } },
+      },
+    };
+    const window = loadCapturePage({
+      url: `https://www.linkedin.com/in/jane-doe/${detailPath}/`,
+      html: "<main><h1>Jane Doe</h1></main>",
+      chrome,
+      files: [...EXTRACT_FILES, "capture/person-capture.js"],
+    });
+    window.scrollTo = () => {};
+    window.scrollBy = () => {};
+    window.setTimeout(() => {
+      const section = window.document.createElement("div");
+      section.innerHTML = sectionMarkup;
+      window.document.querySelector("main").append(section);
+    }, 650);
+
+    try {
+      return await new Promise((resolve, reject) => {
+        reader(
+          {
+            type: "COLLECT_PERSON_PAGE",
+            personId: "jane-doe",
+            url: `https://www.linkedin.com/in/jane-doe/${detailPath}/`,
+          },
+          { id: "test-extension" },
+          resolve,
+        );
+        window.setTimeout(() => reject(new Error(`${sectionName} section did not resolve`)), 8_000);
+      });
+    } finally {
+      window.close();
+    }
+  }
+
   it("only opens this profile's own allowlisted pages and hands the result over for review", async () => {
     const opened = [];
     const sent = [];
@@ -332,6 +398,85 @@ describe("person capture run", () => {
     // The detail page's higher endorsement count wins; names are not duplicated.
     expect(review.data.skills.map((skill) => `${skill.name}:${skill.endorsements}`).sort()).toEqual(["Forecasting:3", "Negotiation:undefined", "enterprise sales:40"]);
     expect(sent.at(-1)).toMatchObject({ type: "SKOUT_CAPTURE_PROGRESS", active: false });
+  });
+
+  it("waits for the Education section to hydrate after the profile shell", async () => {
+    const result = await collectAfterSectionLoads(
+      "Education",
+      "details/education",
+      '<div componentkey="profile.EducationDetailsSection"><div id="com.linkedin.sdui.profile.education(1)"><p>IIT Bombay</p><p>B.Tech</p></div></div>',
+    );
+
+    expect(result.data.educations).toEqual([
+      { school: "IIT Bombay", degree: "B.Tech", activities: undefined, description: undefined },
+    ]);
+  });
+
+  it("waits for the Skills section to hydrate before collecting the rendered list", async () => {
+    const result = await collectAfterSectionLoads(
+      "Skills",
+      "details/skills",
+      '<div componentkey="profile.SkillsDetailsSection"><ul><li><p>Revenue Operations</p></li></ul></div>',
+    );
+
+    expect(result.data.skills).toEqual([{ name: "Revenue Operations", endorsements: undefined }]);
+  });
+
+  it("extracts unlinked education labels and skill-insight links without list rows", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/details/education/",
+      html: `
+        <main>
+          <div componentkey="profile.EducationDetailsSection">
+            <div data-view-name="profile-component-entity">
+              <span>University of Toronto</span><span>Master of Science</span><span>2019 - 2021</span>
+            </div>
+          </div>
+          <div componentkey="profile.SkillsDetailsSection">
+            <div><a href="/in/jane-doe/skill-insights/forecasting/">Forecasting</a></div>
+          </div>
+        </main>
+      `,
+      files: EXTRACT_FILES,
+    });
+    const person = window.SkoutCapturePage.extractPerson();
+
+    expect(person.educations).toEqual([
+      { school: "University of Toronto", degree: "Master of Science", dates: "2019 - 2021", activities: undefined, description: undefined },
+    ]);
+    expect(person.skills).toEqual([{ name: "Forecasting", endorsements: undefined }]);
+  });
+
+  it("captures multiple plain education rows and unstructured skill labels", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/details/education/",
+      html: `
+        <main>
+          <div componentkey="profile.EducationDetailsSection">
+            <div id="com.linkedin.sdui.profile.education(1)">
+              <p>University of Toronto</p><p>Master of Science</p><p>2019 - 2021</p>
+            </div>
+            <div class="plain-education-row">
+              <p>University of Waterloo</p><p>Bachelor of Mathematics</p><p>2015 - 2019</p>
+            </div>
+          </div>
+          <div componentkey="profile.SkillsDetailsSection">
+            <p>Forecasting</p><p>SQL</p><p>Endorsed by 3 colleagues</p>
+          </div>
+        </main>
+      `,
+      files: EXTRACT_FILES,
+    });
+    const person = window.SkoutCapturePage.extractPerson();
+
+    expect(person.educations).toEqual([
+      { school: "University of Toronto", degree: "Master of Science", dates: "2019 - 2021", activities: undefined, description: undefined },
+      { school: "University of Waterloo", degree: "Bachelor of Mathematics", dates: "2015 - 2019", activities: undefined, description: undefined },
+    ]);
+    expect(person.skills).toEqual([
+      { name: "Forecasting", endorsements: undefined },
+      { name: "SQL", endorsements: undefined },
+    ]);
   });
 });
 
