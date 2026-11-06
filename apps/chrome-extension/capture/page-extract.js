@@ -719,6 +719,7 @@ function extractEducation() {
     ...Array.from(section.querySelectorAll('a[href*="/school/"]'))
       .map((a) => a.closest('[componentkey^="entity-collection-item" i], li') || a.parentElement),
     ...Array.from(section.querySelectorAll('[componentkey^="entity-collection-item" i]')),
+    ...Array.from(section.querySelectorAll('[data-view-name*="profile-component-entity" i], li')),
     ...Array.from(section.querySelectorAll('[id]'))
       .filter((node) => /^com\.linkedin\.sdui\.profile\.education\(/i.test(node.id)),
   ];
@@ -729,13 +730,33 @@ function extractEducation() {
     seen.add(container);
     const paras = getItemParagraphs(container);
     const schoolLink = container.querySelector('a[href*="/school/"]');
-    const school = text(schoolLink) || paras[0];
+    const labels = Array.from(container.querySelectorAll('a, p, span, h3, h4'))
+      .map((node) => text(node))
+      .filter((value, index, all) => value && all.indexOf(value) === index);
+    const school = text(schoolLink) || paras[0] || labels[0];
     if (isBadSchool(school)) return;
-    const degree = paras.find((p) => p !== school && p && !/^\d+(?:st|nd|rd)\b/i.test(p) && !/^activities and societies:/i.test(p));
-    const activities = paras.find((p) => /^activities and societies:/i.test(p));
+    const detailLines = paras.length ? paras : labels;
+    const dates = detailLines.find((p) => p !== school && /\b(?:19|20)\d{2}\b/.test(p));
+    const degree = detailLines.find((p) => p !== school && p !== dates && p && !/^\d+(?:st|nd|rd)\b/i.test(p) && !/^activities and societies:/i.test(p));
+    const activities = detailLines.find((p) => /^activities and societies:/i.test(p));
     const description = getExpandableText(container);
-    results.push({ school, degree, activities, description });
+    results.push({ school, degree, dates, activities, description });
   });
+  if (!results.length) {
+    const visible = Array.from(section.querySelectorAll('p, span, h3, h4'))
+      .map((node) => text(node))
+      .filter((value, index, all) => value && all.indexOf(value) === index)
+      .filter((value) => !/^education$/i.test(value));
+    const school = visible[0];
+    if (!isBadSchool(school)) {
+      const dates = visible.find((value, index) => index > 0 && /\b(?:19|20)\d{2}\b/.test(value));
+      const degree = visible.find((value, index) =>
+        index > 0 && value !== dates && !/^activities and societies:/i.test(value),
+      );
+      const activities = visible.find((value) => /^activities and societies:/i.test(value));
+      results.push({ school, degree, dates, activities });
+    }
+  }
   return results;
 }
 
@@ -746,7 +767,11 @@ function extractSkillsSection() {
   const skillsHeading = Array.from(document.querySelectorAll('h1, h2, h3')).find((heading) => /^skills$/i.test(text(heading) || ''));
   const section = document.querySelector('[componentkey*="Skills" i]') || skillsHeading?.closest('section, main');
   if (!section) return [];
-  const explicitItems = Array.from(section.querySelectorAll('[id^="com.linkedin.sdui.profile.skill(" i], [componentkey^="entity-collection-item" i], [data-view-name*="profile-component-entity" i]'));
+  const explicitItems = [
+    ...Array.from(section.querySelectorAll('[id^="com.linkedin.sdui.profile.skill(" i], [componentkey^="entity-collection-item" i], [data-view-name*="profile-component-entity" i]')),
+    ...Array.from(section.querySelectorAll('a[href*="/skill-insights/"]'))
+      .map((anchor) => anchor.closest('li, [componentkey^="entity-collection-item" i], [data-view-name*="profile-component-entity" i]') || anchor.parentElement),
+  ].filter((item, index, all) => item && all.indexOf(item) === index);
   // Detail pages use nested entity components: the innermost component often
   // holds only "Endorsed by…", while its parent holds the actual skill name.
   // Prefer semantic list rows, then a minimal entity that contains a skill

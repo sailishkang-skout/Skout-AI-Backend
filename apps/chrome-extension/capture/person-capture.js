@@ -97,7 +97,7 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
     let combined = {}, stablePasses = 0, previousCount = 0;
     window.scrollTo(0, 0);
     await pause(500);
-    for (let pass = 0; pass < 25; pass++) {
+    for (let pass = 0; pass < 30; pass++) {
       combined = merge(combined, extractPerson());
       const count = Array.isArray(combined.skills) ? combined.skills.length : 0;
       // On some Skills pages LinkedIn uses a generic "Show more" label.
@@ -108,7 +108,7 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
       const atBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 8;
       stablePasses = count === previousCount ? stablePasses + 1 : 0;
       previousCount = count;
-      if (atBottom && stablePasses >= 2 && !showMore) break;
+      if (atBottom && stablePasses >= 2 && !showMore && (count > 0 || pass >= 15)) break;
       window.scrollBy({top: Math.max(520, Math.floor(window.innerHeight * 0.8)), behavior: 'auto'});
       await pause(650);
     }
@@ -132,7 +132,7 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
       let stableEducationPasses = 0;
       let sectionFound = !detailName;
 
-      for (let attempt = 0; attempt < 12; attempt++) {
+      for (let attempt = 0; attempt < 40; attempt++) {
         if (pageUrl(location.href, id) !== expectedUrl) throw new Error('Profile page changed during capture.');
         sectionFound ||= hasRenderedSection(detailName);
         if (isSkillsPage && sectionFound) {
@@ -145,7 +145,7 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
           const currentEducation = JSON.stringify(data.educations || []);
           stableEducationPasses = currentEducation === previousEducation ? stableEducationPasses + 1 : 0;
           previousEducation = currentEducation;
-          if (stableEducationPasses >= 2 && (data.educations?.length || stableEducationPasses >= 3)) break;
+          if (data.educations?.length && stableEducationPasses >= 3) break;
         } else if (!detailName) {
           const hasSection = ['experience','educations','skills','certifications','languages','volunteerExperiences','honors','publications','patents','courses','organizations']
             .some((key) => Array.isArray(data[key]) && data[key].length);
@@ -158,6 +158,12 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
       const warnings = [];
       if (detailName && !sectionFound) {
         warnings.push(`LinkedIn's ${detailName} section did not finish loading. Capture again if the section is visible on the profile.`);
+      }
+      if (detailName === 'Education' && !data.educations?.length) {
+        warnings.push("No education records were detected. If education is visible on LinkedIn, leave the profile open and capture again.");
+      }
+      if (detailName === 'Skills' && !data.skills?.length) {
+        warnings.push("No skills were detected. If skills are visible on LinkedIn, leave the profile open and capture again.");
       }
       if (isSkillsPage) warnings.push(`Collected ${data.skills?.length || 0} skills from LinkedIn's Skills detail page.`);
       if (data.fullName || data.headline || document.querySelector('main') || sectionFound) {

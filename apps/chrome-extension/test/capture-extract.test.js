@@ -120,7 +120,7 @@ describe("person profile extraction", () => {
     });
     const person = window.SkoutCapturePage.extractPerson();
 
-    expect(person.educations).toEqual([{ school: "University of Texas", degree: undefined, activities: undefined, description: undefined }]);
+    expect(person.educations).toEqual([{ school: "University of Texas", degree: undefined, dates: undefined, activities: undefined, description: undefined }]);
     expect(person.skills).toEqual([{ name: "Discovery Sales", endorsements: undefined }]);
     expect(person.relationshipContext).toMatchObject({ degree: 1, isDirectConnection: true });
   });
@@ -420,6 +420,31 @@ describe("person capture run", () => {
     );
 
     expect(result.data.skills).toEqual([{ name: "Revenue Operations", endorsements: undefined }]);
+  });
+
+  it("extracts unlinked education labels and skill-insight links without list rows", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/details/education/",
+      html: `
+        <main>
+          <div componentkey="profile.EducationDetailsSection">
+            <div data-view-name="profile-component-entity">
+              <span>University of Toronto</span><span>Master of Science</span><span>2019 - 2021</span>
+            </div>
+          </div>
+          <div componentkey="profile.SkillsDetailsSection">
+            <div><a href="/in/jane-doe/skill-insights/forecasting/">Forecasting</a></div>
+          </div>
+        </main>
+      `,
+      files: EXTRACT_FILES,
+    });
+    const person = window.SkoutCapturePage.extractPerson();
+
+    expect(person.educations).toEqual([
+      { school: "University of Toronto", degree: "Master of Science", dates: "2019 - 2021", activities: undefined, description: undefined },
+    ]);
+    expect(person.skills).toEqual([{ name: "Forecasting", endorsements: undefined }]);
   });
 });
 
