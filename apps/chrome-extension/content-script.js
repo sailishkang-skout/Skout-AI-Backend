@@ -761,7 +761,7 @@
     });
   }
 
-  function noEnrichmentDataMessage(attempts = []) {
+  function noEnrichmentDataMessage(attempts = [], fields = []) {
     if (!Array.isArray(attempts)) attempts = [];
     const failedProviders = [...new Set(
       attempts.filter((attempt) => attempt.status === "error").map((attempt) => attempt.provider)
@@ -777,6 +777,9 @@
         return "No contact data matched. Phone lookup was skipped because a full name is required.";
       }
       return "No contact data matched. Phone lookup was skipped because the lead score did not meet its threshold.";
+    }
+    if (fields.includes("email") || fields.includes("phone") || fields.includes("validation")) {
+      return "No contact match returned. Check that an authorized enrichment provider is configured in Skout. Email validation only runs when an email address is available; it does not validate a LinkedIn profile.";
     }
     return "No matching enrichment data returned. Confirm provider access and the prospect's company details.";
   }
@@ -963,7 +966,7 @@
       if (hasEnrichmentData(results, fields)) {
         setPanelStatus(panel, `Enrichment completed for ${started.fullName}`);
       } else {
-        setPanelStatus(panel, noEnrichmentDataMessage(outcome.attempts));
+        setPanelStatus(panel, noEnrichmentDataMessage(outcome.attempts, fields));
       }
     } catch (error) {
       panel.querySelectorAll("#skout-ai-enrich-results .skout-result-value").forEach((el) => {
@@ -980,7 +983,7 @@
           hint.innerHTML = `⚠ Insufficient credits — <a href="#" target="_blank" rel="noopener" style="color:#60a5fa;text-decoration:underline">top up in Skout →</a>`;
           chrome.storage.sync.get(["webUrl"]).then(({ webUrl }) => {
             const link = hint.querySelector("a");
-            if (link && webUrl) link.href = `${webUrl.replace(/\/$/, "")}/billing`;
+            if (link && webUrl) link.href = new URL("/app/billing", webUrl).toString();
           }).catch(() => undefined);
         }
         setPanelStatus(panel, "Insufficient credits.", true);

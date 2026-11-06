@@ -257,6 +257,7 @@ function extractRelationshipContext(topcard) {
 
 function extractCompany() {
   const publicId = publicIdFromUrl('company');
+  const sduiTopCard = window.SkoutCompanySections.topCard();
 
   // Unlike person profiles, company pages use LinkedIn's older,
   // stable BEM-style class names (org-top-card-summary__...) rather
@@ -265,16 +266,17 @@ function extractCompany() {
   // The legacy company layout has org-top-card-summary classes; newer
   // LinkedIn pages render the company name as the main h1 instead.
   const nameEl = document.querySelector('h1.org-top-card-summary__title') ||
-    document.querySelector('main [data-anonymize="company-name"]') ||
-    document.querySelector('main h1');
-  const name = text(nameEl) || nameEl?.getAttribute('title');
+    document.querySelector('main [data-anonymize="company-name"]');
+  const legacyName = text(nameEl) || nameEl?.getAttribute('title');
+  const name = legacyName || sduiTopCard.name || text(document.querySelector('main h1'));
 
   const tagline = text(document.querySelector('p.org-top-card-summary__tagline')) ||
-    text(nameEl?.parentElement?.querySelector('p'));
+    text(nameEl?.parentElement?.querySelector('p')) ||
+    sduiTopCard.tagline;
 
   const logoUrl = document
     .querySelector('img.org-top-card-primary-content__logo, img[class*="org-top-card-primary-content__logo"]')
-    ?.getAttribute('src');
+    ?.getAttribute('src') || sduiTopCard.logoUrl;
 
   // The info-list mixes industry, an optional product-category link,
   // headquarters, followers, and an employee-count link all under the
@@ -296,8 +298,9 @@ function extractCompany() {
 
   const industry = remaining[0]?.text;
   const headquarter = remaining[1]?.text;
-  const followers = parseCount(followersItem?.text);
-  const size = employeesItem?.text?.replace(/\s*employees?$/i, '').trim();
+  const followers = parseCount(followersItem?.text || sduiTopCard.followersText);
+  const size = employeesItem?.text?.replace(/\s*employees?$/i, '').trim() ||
+    sduiTopCard.size?.replace(/\s*employees?$/i, '').trim();
 
   // Website/overview — best-effort, not yet verified against real captured
   // HTML the way the topcard fields above were.
@@ -316,7 +319,8 @@ function extractCompany() {
     const dd = dt.nextElementSibling;
     if (label && dd && dd.tagName === 'DD') detailMap[label.toLowerCase()] = text(dd);
   });
-  const aboutWebsite = detailMap['website'];
+  const sduiAbout = window.SkoutCompanySections.aboutDetails();
+  const aboutWebsite = detailMap['website'] || sduiAbout.website;
   const companyWebsite = website || aboutWebsite;
   let domain;
   try { domain = new URL(companyWebsite).hostname.replace(/^www\./, ''); } catch {}
@@ -330,15 +334,16 @@ function extractCompany() {
   // rendered "N associated members" control before any generic people link.
   const associatedMemberLink = peopleSearchLinks.find((link) => /[\d,]+\s+associated members/i.test(text(link) || ''));
   const employeeLink = associatedMemberLink || peopleSearchLinks.find((link) => /[?&]currentCompany=/.test(link.href)) ||
-    document.querySelector('main dd a[href*="currentCompany"]') || peopleSearchLinks[0];
+    document.querySelector('main dd a[href*="currentCompany"]') || peopleSearchLinks[0] ||
+    (sduiTopCard.employeeSearchUrl ? { href: sduiTopCard.employeeSearchUrl } : undefined);
   // "501-1,000 employees" is LinkedIn's company-size band, not a member
   // count. Only persist an exact rendered employee/associated-member count.
   const employeeLinkText = text(employeeLink);
   const employeesOnLi = /^\s*[\d,]+\s+(?:associated members|employees)\s*$/i.test(employeeLinkText || '')
     ? parseCount(employeeLinkText)
     : undefined;
-  const foundedAt = detailMap['founded'];
-  const specialtiesText = detailMap['specialties'];
+  const foundedAt = detailMap['founded'] || sduiAbout.foundedAt;
+  const specialtiesText = detailMap['specialties'] || sduiAbout.specialties;
   const specialties = specialtiesText ? specialtiesText.split(',').map((s) => s.trim()) : undefined;
 
   const recentPosts = extractCompanyPosts();
@@ -362,10 +367,11 @@ function extractCompany() {
     name,
     tagline,
     logoUrl,
-    industry: detailMap['industry'] || industry,
-    headquarter: detailMap['headquarters'] || headquarter,
+    industry: detailMap['industry'] || industry || sduiAbout.industry || sduiTopCard.industry,
+    headquarter: detailMap['headquarters'] || headquarter || sduiAbout.headquarter || sduiTopCard.headquarter,
     followers,
-    size: detailMap['company size']?.replace(/\s*employees?$/i, '').trim() || size,
+    size: detailMap['company size']?.replace(/\s*employees?$/i, '').trim() ||
+      sduiAbout.size?.replace(/\s*employees?$/i, '').trim() || size,
     website: companyWebsite,
     domain,
     phone: detailMap['phone'],
@@ -373,7 +379,7 @@ function extractCompany() {
     // Used only by the user-triggered company capture to read the rendered
     // associated-members result. It is never saved as company data.
     _peopleSearchUrl: employeeLink?.href,
-    overview,
+    overview: overview || sduiAbout.overview,
     foundedAt,
     specialties,
     // Best-effort/unverified (see comments on the extractor functions
@@ -388,7 +394,11 @@ function extractCompany() {
     peopleStats,
     peopleProfiles: peopleProfiles.length ? peopleProfiles : undefined,
     insights,
-    _fieldsFound: countTruthy({ name, tagline, logoUrl, industry, headquarter, followers, size, website, foundedAt }),
+    _fieldsFound: countTruthy({
+      name, tagline, logoUrl, industry: detailMap['industry'] || industry || sduiAbout.industry || sduiTopCard.industry,
+      headquarter: detailMap['headquarters'] || headquarter || sduiAbout.headquarter || sduiTopCard.headquarter,
+      followers, size, website: companyWebsite, foundedAt,
+    }),
   };
   company.sectionCaptures = window.SkoutCompanySections.captures(company);
   return company;
@@ -922,14 +932,24 @@ function extractOrganizations() {
 
 /**
  * Contact Info — LinkedIn shows this in a click-to-open modal, not on the
- * base page. We deliberately don't auto-click it (that would cross from
- * "read what's rendered" into "drive the page"). If the person has already
- * opened it themselves before clicking Capture, we read it; otherwise this
- * comes back empty and that's expected, not a bug.
+ * base page. We deliberately don't auto-click it. Only a visible modal is
+ * read, and its values are kept in the local review draft, not sent to Skout.
  */
 function extractContactInfo() {
   const modal = document.querySelector('[aria-label*="Contact Info" i], [aria-labelledby*="contact-info" i]');
   if (!modal) return undefined;
+  const style = window.getComputedStyle(modal);
+  const rect = modal.getBoundingClientRect();
+  if (
+    modal.closest('[aria-hidden="true"]') ||
+    style.display === "none" ||
+    style.visibility === "hidden" ||
+    style.opacity === "0" ||
+    rect.width <= 0 ||
+    rect.height <= 0
+  ) {
+    return undefined;
+  }
   const website = modal.querySelector('a[href^="http"]:not([href*="linkedin.com"])')?.href;
   const emailMatch = modal.textContent.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
   // Phone — best-effort, unverified against real Contact Info HTML. LinkedIn

@@ -180,7 +180,7 @@ registerCaptureBackground({ skoutFetch });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "ping") {
-    sendResponse({ ok: true, version: "0.7.0" });
+    sendResponse({ ok: true, version: chrome.runtime.getManifest().version });
     return true;
   }
 
@@ -564,16 +564,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             );
             const prospectId = await timeStep("activateProspect", () => activateProspect(profile));
             await ensureAuthForApi();
-            await timeStep("enrollInSequence", () =>
+            const enrollment = await timeStep("enrollInSequence", () =>
               enrollInSequence(message.sequenceId, [prospectId])
             );
-            return { fullName: profile.fullName, prospectId };
+            return { fullName: profile.fullName, prospectId, enrollment };
           })(),
           HANDLER_TIMEOUT_MS,
           "Enroll timed out — open Skout, sign in, and connect your account."
         );
         log(`enroll-sequence DONE (${Date.now() - t0}ms)`);
-        sendResponse({ ok: true, fullName: result.fullName, prospectId: result.prospectId });
+        sendResponse({
+          ok: true,
+          fullName: result.fullName,
+          prospectId: result.prospectId,
+          enrollment: result.enrollment,
+        });
       } catch (error) {
         logError(`enroll-sequence FAILED (${Date.now() - t0}ms):`, error);
         sendResponse({

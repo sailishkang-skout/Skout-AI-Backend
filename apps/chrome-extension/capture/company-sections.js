@@ -27,6 +27,68 @@ window.SkoutCompanySections = (() => {
   function url(a) {
     try { const u = new URL(a?.getAttribute('href'), location.origin); return /^https?:$/.test(u.protocol) ? u.href : undefined; } catch { return undefined; }
   }
+  function topCard() {
+    // LinkedIn's current SDUI company layout identifies this card by its
+    // component id and uses an h2 for the company name. Keep this isolated
+    // from the legacy BEM selectors used by the main extractor.
+    const root = document.querySelector('[id^="pages.topCard."]');
+    if (!root) return {};
+    const name = compact(root.querySelector('h1, h2'));
+    const paragraphs = Array.from(root.querySelectorAll('p')).map(compact).filter(Boolean);
+    const followerElement = Array.from(root.querySelectorAll('p')).find(element =>
+      /^\s*[\d,.]+[KMB]?\s+followers?\s*$/i.test(compact(element) || ''));
+    const metadataElements = Array.from(followerElement?.parentElement?.children || [])
+      .filter(element => {
+        const value = compact(element);
+        return value && value !== '·';
+      });
+    const metadata = metadataElements.map(compact);
+    // A linked product category can appear between industry and location.
+    // Exclude it so the headquarters value remains in its correct position.
+    const summary = metadataElements.filter(element => {
+      const value = compact(element);
+      const ownHref = element.getAttribute?.('href') || '';
+      const categoryLink = /productCategory/i.test(ownHref) ||
+        !!element.querySelector?.('a[href*="productCategory"]');
+      return !categoryLink && !/\b(?:followers?|employees?)$/i.test(value || '');
+    }).map(compact);
+    const tagline = paragraphs.find(value => value !== '·' && !metadata.includes(value) &&
+      !/\bconnections?\b.*\b(?:follow|work)\b.*\b(?:page|here)\b/i.test(value));
+    return {
+      name,
+      tagline,
+      industry:summary[0],
+      headquarter:summary.length > 1 ? summary[summary.length - 1] : undefined,
+      followersText:metadata.find(value => /\bfollowers?$/i.test(value)),
+      size:metadata.find(value => /\bemployees?$/i.test(value)),
+      logoUrl:root.querySelector('img[src*="company-logo"]')?.getAttribute('src') || undefined,
+      employeeSearchUrl:root.querySelector('a[aria-label="Search more employees"][href*="currentCompany"]')?.href,
+    };
+  }
+  function aboutDetails() {
+    const labels = ['Website','Industry','Company size','Headquarters','Founded','Specialties'];
+    const details = {};
+    for (const label of labels) {
+      const element = Array.from(document.querySelectorAll('main p')).find(node => compact(node) === label);
+      const row = element?.parentElement?.parentElement;
+      const values = Array.from(row?.children || []).slice(1).map(compact).filter(Boolean);
+      if (values[0]) details[label] = values[0];
+    }
+    const overviewHeading = Array.from(document.querySelectorAll('main h2, main h3'))
+      .find(node => compact(node) === 'Overview');
+    const overviewCard = overviewHeading?.parentElement?.parentElement;
+    const overview = Array.from(overviewCard?.querySelectorAll('p') || []).map(compact)
+      .find(value => value && value.length > 100 && !labels.includes(value));
+    return {
+      overview,
+      website:details.Website,
+      industry:details.Industry,
+      size:details['Company size'],
+      headquarter:details.Headquarters,
+      foundedAt:details.Founded,
+      specialties:details.Specialties,
+    };
+  }
   function products() {
     const cards = [...document.querySelectorAll('main [data-inmon-company-products]')];
     const home = section('Products');
@@ -102,7 +164,19 @@ window.SkoutCompanySections = (() => {
     add('home', [data.name,data.tagline,data.industry,data.headquarter,data.size,data.followers != null ? `${data.followers} followers` : null].filter(Boolean).join('\n'));
     add('overview',data.overview);
     const about = document.querySelector('main .org-page-details-module__card-spacing');
-    add('about', clean(about));
+    const details = aboutDetails();
+    const currentAbout = [
+      details.overview && `Overview\n${details.overview}`,
+      ...[
+        ['Website', details.website],
+        ['Industry', details.industry],
+        ['Company size', details.size],
+        ['Headquarters', details.headquarter],
+        ['Founded', details.foundedAt],
+        ['Specialties', details.specialties],
+      ].filter(([, value]) => value).map(([label, value]) => `${label}: ${value}`),
+    ].filter(Boolean).join('\n');
+    add('about', clean(about) || currentAbout);
     if (data.recentPosts?.length) add('posts',list(data.recentPosts));
     if (data.openJobs?.length) add('jobs',list(data.openJobs));
     if (data.products?.length) add('products',list(data.products));
@@ -135,5 +209,5 @@ window.SkoutCompanySections = (() => {
     if (insightModules.length) add('exclusiveInsights',Array.from(insightModules).map(clean).filter(Boolean).join('\n\n'));
     return result;
   }
-  return {clean,section,products,life,people,peopleProfiles,captures};
+  return {clean,section,topCard,aboutDetails,products,life,people,peopleProfiles,captures};
 })();
