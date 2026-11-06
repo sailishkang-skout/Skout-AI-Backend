@@ -250,6 +250,14 @@ maybe("COPS-08 subscriptions", () => {
 
     expect((await call("POST", `/subscriptions/${sub.id}/amendments`, { seats: 15 })).statusCode).toBe(422);
     expect((await call("POST", `/subscriptions/${sub.id}/amendments`, { reason: "nothing to change" })).statusCode).toBe(422);
+    // The preview shows the next bill before and after, and writes nothing.
+    const preview = await call("POST", `/subscriptions/${sub.id}/amendments/preview`, { seats: 15 });
+    expect(preview.statusCode).toBe(200);
+    const p = preview.json().data;
+    expect(p).toMatchObject({ seats: { before: 10, after: 15 }, proration: "none" });
+    expect(p.next_bill_minor.after).toBe((p.next_bill_minor.before / 10) * 15);
+    expect(p.change_minor).toBe(p.next_bill_minor.after - p.next_bill_minor.before);
+    expect((await sql`select count(*)::int as n from subscription_amendments where subscription_id = ${sub.id}`)[0].n).toBe(0);
     const first = await call("POST", `/subscriptions/${sub.id}/amendments`, { seats: 15, reason: "Five more reps joined" });
     expect(first.statusCode).toBe(201);
     const amended = first.json().data;

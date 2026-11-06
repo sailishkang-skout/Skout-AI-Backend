@@ -584,3 +584,35 @@ export async function customerInvoicePaymentLink(db: Db, psp: PspAdapter, custom
   if (!request) throw new CommercialError("PROVIDER_ERROR", "The payment link could not be created; try again");
   return { checkout_url: request.checkoutUrl, status: request.status };
 }
+
+/**
+ * What a seat or term change would do, before it is made (CEO sign-off: show the charge or credit
+ * first). Seats change from the next billing period with no proration, so the preview is that
+ * period's bill before and after the change. Nothing is written.
+ */
+export async function previewAmendment(db: Db, ctx: CommercialContext, subscriptionId: string, input: { seats?: number; term_months?: number }, now: Date = new Date()) {
+  const [sub] = await db.select().from(subscriptions).where(and(eq(subscriptions.id, subscriptionId), eq(subscriptions.workspaceId, ctx.workspaceId))).limit(1);
+  if (!sub) throw new CommercialError("NOT_FOUND", "Subscription not found");
+  const items = await db.select().from(subscriptionItems).where(eq(subscriptionItems.subscriptionId, sub.id));
+  const earlier = await db.select().from(subscriptionAmendments).where(eq(subscriptionAmendments.subscriptionId, sub.id));
+  const seatsBefore = effectiveSeats(originalSeats(items), seatChanges(earlier), new Date(8_640_000_000_000_000));
+  const seatsAfter = input.seats ?? seatsBefore;
+  const termMonths = input.term_months ?? sub.termMonths;
+  const next = nextPeriodStart(sub.termStart, sub.cadence as SubscriptionCadence, termMonths, now);
+  const period = next ? periodsStarted(sub.termStart, sub.cadence as SubscriptionCadence, termMonths, next).at(-1) : undefined;
+  const bill = (seats: number) =>
+    period ? periodAmountMinor(items.map((i) => ({ quantity: i.kind === "seats" ? seats : i.quantity, unit_amount_minor: Number(i.unitAmountMinor) })), period.months) : null;
+  const before = bill(seatsBefore);
+  const after = bill(seatsAfter);
+  return {
+    currency: sub.currency,
+    seats: { before: seatsBefore, after: seatsAfter },
+    term_months: { before: sub.termMonths, after: termMonths },
+    renews_at: { before: sub.termEnd.toISOString(), after: addMonthsUtc(sub.termStart, termMonths).toISOString() },
+    next_period: period ? { start: period.start.toISOString(), end: period.end.toISOString() } : null,
+    next_bill_minor: { before, after },
+    /** Positive: the next bill goes up by this much (a charge). Negative: it goes down (a credit). */
+    change_minor: before !== null && after !== null ? after - before : null,
+    proration: "none" as const,
+  };
+}

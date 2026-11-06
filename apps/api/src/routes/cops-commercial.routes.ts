@@ -56,7 +56,7 @@ import { handleEsignWebhook, listEnvelopes, sendEnvelope } from "../services/cop
 import { removeContractDocumentIfUnused, resolveContractDocumentForProvider } from "./cops-contract-documents.routes.js";
 import { getAccountContractFields, setAccountContractFields } from "../services/cops-account-fields.service.js";
 import { CREDIT_ACTIVITY_KINDS, listCreditActivity, listSubscriptionsForFinance, loadReconciliation } from "../services/cops-finance.service.js";
-import { amendSubscription, createSubscription, getAccountSubscription, issueInvoicePaymentLink, listFailedPayments, markInvoicePaid } from "../services/cops-subscriptions.service.js";
+import { amendSubscription, createSubscription, previewAmendment, getAccountSubscription, issueInvoicePaymentLink, listFailedPayments, markInvoicePaid } from "../services/cops-subscriptions.service.js";
 import { applyPaidCreditPurchases, reverseRefundedCreditPurchase } from "../services/cops-credits.service.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -360,6 +360,17 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
     const bad = checkId(reply as unknown as Reply, ctx.requestId, request.params.id);
     if (bad) return bad;
     return { data: await getAccountSubscription(db, ctx.workspaceId, request.params.id) };
+  });
+
+  // What a seat or term change would cost, before it is made. Writes nothing.
+  app.post<IdOnly>("/subscriptions/:id/amendments/preview", { preHandler: billingWriteGate }, async (request, rawReply) => {
+    const reply = rawReply as never;
+    const ctx = ctxOf(request);
+    const bad = checkId(reply, ctx.requestId, request.params.id);
+    if (bad) return bad;
+    const parsed = amendmentSchema.omit({ reason: true }).safeParse(request.body ?? {});
+    if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+    return run(reply, ctx.requestId, () => previewAmendment(db, ctx, request.params.id, parsed.data), (data) => ({ data }));
   });
 
   app.post<IdOnly>(
