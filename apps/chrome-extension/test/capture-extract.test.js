@@ -446,6 +446,38 @@ describe("person capture run", () => {
     ]);
     expect(person.skills).toEqual([{ name: "Forecasting", endorsements: undefined }]);
   });
+
+  it("captures multiple plain education rows and unstructured skill labels", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/details/education/",
+      html: `
+        <main>
+          <div componentkey="profile.EducationDetailsSection">
+            <div id="com.linkedin.sdui.profile.education(1)">
+              <p>University of Toronto</p><p>Master of Science</p><p>2019 - 2021</p>
+            </div>
+            <div class="plain-education-row">
+              <p>University of Waterloo</p><p>Bachelor of Mathematics</p><p>2015 - 2019</p>
+            </div>
+          </div>
+          <div componentkey="profile.SkillsDetailsSection">
+            <p>Forecasting</p><p>SQL</p><p>Endorsed by 3 colleagues</p>
+          </div>
+        </main>
+      `,
+      files: EXTRACT_FILES,
+    });
+    const person = window.SkoutCapturePage.extractPerson();
+
+    expect(person.educations).toEqual([
+      { school: "University of Toronto", degree: "Master of Science", dates: "2019 - 2021", activities: undefined, description: undefined },
+      { school: "University of Waterloo", degree: "Bachelor of Mathematics", dates: "2015 - 2019", activities: undefined, description: undefined },
+    ]);
+    expect(person.skills).toEqual([
+      { name: "Forecasting", endorsements: undefined },
+      { name: "SQL", endorsements: undefined },
+    ]);
+  });
 });
 
 describe("LinkedIn warning detection", () => {

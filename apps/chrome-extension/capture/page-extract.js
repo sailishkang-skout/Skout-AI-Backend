@@ -723,6 +723,23 @@ function extractEducation() {
     ...Array.from(section.querySelectorAll('[id]'))
       .filter((node) => /^com\.linkedin\.sdui\.profile\.education\(/i.test(node.id)),
   ];
+  // Some profile layouts render education rows as plain nested divs without a
+  // school link or LinkedIn component marker. Accept only the innermost groups
+  // with multiple text-bearing children so a wrapper containing several rows
+  // is never treated as one education record.
+  const genericContainers = new Set(
+    Array.from(section.querySelectorAll('div')).filter((container) => {
+      const textChildren = Array.from(container.children).filter((child) => text(child));
+      return textChildren.length >= 2;
+    }),
+  );
+  const genericRows = [...genericContainers].filter((container) => {
+    for (let parent = container.parentElement; parent && parent !== section; parent = parent.parentElement) {
+      if (genericContainers.has(parent)) return false;
+    }
+    return true;
+  });
+  containers.push(...genericRows);
   containers.forEach((container) => {
     if (!container || !section.contains(container)) return;
     // A row and an element nested in it are the same entry; read it once.
@@ -817,6 +834,17 @@ function extractSkillsSection() {
       return { name, endorsements };
     })
     .filter((s) => isSkillLabel(s.name));
+  // A few layouts render a plain paragraph/span list without semantic rows or
+  // skill links. Use leaf labels only when the structured extraction found no
+  // rows; this keeps endorsement and context text out of otherwise complete data.
+  if (!items.length) {
+    skills.push(
+      ...Array.from(section.querySelectorAll('p, span, h3, h4'))
+        .filter((element) => !element.children.length)
+        .map((element) => ({ name: text(element), endorsements: undefined }))
+        .filter((skill) => isSkillLabel(skill.name)),
+    );
+  }
   const unique = new Map();
   for (const skill of skills) {
     const key = skill.name.trim().toLowerCase();
