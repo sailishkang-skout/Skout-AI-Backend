@@ -354,7 +354,18 @@ export async function decideApproval(
   }
   await expireDueApprovals(db, ctx.workspaceId);
   const deciderKeys = await memberRoleKeys(db, ctx.workspaceId, ctx.userId);
-  if (!mayDecide(deciderKeys, input.role)) {
+  if (input.role === "executive") {
+    const [exists] = await db.select({ id: approvals.id }).from(approvals).where(and(eq(approvals.id, approvalId), eq(approvals.workspaceId, ctx.workspaceId))).limit(1);
+    if (!exists) throw new CommercialError("NOT_FOUND", "Approval not found");
+    // Only the named Executive approvers decide this slot; being Admin or owner is not enough.
+    const named = (await loadPolicy(db, ctx.workspaceId)).policy.executive_approver_ids ?? [];
+    if (!named.length) {
+      throw new CommercialError("BUSINESS_STATE_CONFLICT", "No Executive approver is named yet. An Admin must name them in Admin → Commercial policy → Approval rules.", { role: "executive" });
+    }
+    if (!named.includes(ctx.userId)) {
+      throw new CommercialError("FORBIDDEN", "Only a named Executive approver can decide this approval", { role: "executive" });
+    }
+  } else if (!mayDecide(deciderKeys, input.role)) {
     throw new CommercialError("FORBIDDEN", `Only ${APPROVER_DECIDED_BY[input.role] === "admin" ? "an Admin" : `the ${input.role} role`} can decide this approval`, { role: input.role });
   }
 

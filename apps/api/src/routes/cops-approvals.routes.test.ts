@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { COMMERCIAL_POLICY_DEFAULTS } from "@skout/shared";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
@@ -319,10 +320,18 @@ maybe("COPS-08 approval engine", () => {
     expect((await call("POST", `/proposals/${id}/approvals`)).statusCode).toBe(201);
   });
 
-  it("an Admin or owner decides the executive slot", async () => {
+  it("only a named Executive approver decides the executive slot", async () => {
     const id = await create(terms({}, 35));
     const approval = (await call("POST", `/proposals/${id}/approvals`)).json().data;
     expect(approval.required_approvers).toEqual(["sales_manager", "finance", "executive"]);
+    // Nobody named yet: not even the owner can decide it.
+    expect((await decide(approval.id, "executive", "approved", OWNER)).statusCode).toBe(409);
+    const [owner] = await sql`select id from users where email = ${OWNER}`;
+    const named = await call("PUT", "/admin/config/approval_policy/default", {
+      value: { ...COMMERCIAL_POLICY_DEFAULTS.approval_policy, executive_approver_ids: [owner.id] },
+      reason: "Name the Executive approver",
+    });
+    expect(named.statusCode).toBe(201);
     expect((await decide(approval.id, "executive", "approved", FINANCE)).statusCode).toBe(403);
     expect((await decide(approval.id, "executive", "approved", OWNER)).statusCode).toBe(200);
   });
