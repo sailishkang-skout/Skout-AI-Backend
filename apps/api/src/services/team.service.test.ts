@@ -2,6 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import { createTeamService } from "./team.service.js";
 import { HttpError } from "../utils/http.js";
 
+// Seats come from the customer's subscription; by default these workspaces have none.
+const subscription = vi.hoisted(() => ({ seats: null as number | null }));
+vi.mock("./cops-subscriptions.service.js", () => ({
+  getCustomerSubscription: vi.fn(async () => (subscription.seats === null ? null : { seats: subscription.seats })),
+}));
+
 // ── Mock DB chain builders ────────────────────────────────────────────────
 
 function selectChain(result: unknown[]) {
@@ -177,11 +183,48 @@ describe("createTeamService", () => {
       expect(result.email).toBe("new@acme.com");
     });
 
-    it("always assigns member role regardless of requested role", async () => {
+    it("keeps the admin role when the owner invites an admin", async () => {
       const db = makeMockDb({ selects: [[{ value: 5 }], [{ value: 0 }], [], []], withInsert: true });
       const svc = createTeamService(db as any);
       const result = await svc.inviteMember("ws-1", "uid", "new@acme.com", "admin", "owner");
+      expect(result.role).toBe("admin");
+    });
+
+    it("refuses an admin invite from an admin (403)", async () => {
+      const db = makeMockDb({ selects: [] });
+      const svc = createTeamService(db as any);
+      await expect(svc.inviteMember("ws-1", "uid", "new@acme.com", "admin", "admin")).rejects.toMatchObject({ statusCode: 403 });
+    });
+
+    it("never invites an owner; it becomes a member", async () => {
+      const db = makeMockDb({ selects: [[{ value: 5 }], [{ value: 0 }], [], []], withInsert: true });
+      const svc = createTeamService(db as any);
+      const result = await svc.inviteMember("ws-1", "uid", "new@acme.com", "owner", "owner");
       expect(result.role).toBe("member");
+    });
+
+    it("refuses a new invite once the subscription's seats are used (409)", async () => {
+      subscription.seats = 5;
+      try {
+        // 4 members + 1 pending = 5 of 5 seats; no pending invite for this email.
+        const db = makeMockDb({ selects: [[{ value: 4 }], [{ value: 1 }], [{ value: 0 }]] });
+        const svc = createTeamService(db as any);
+        await expect(svc.inviteMember("ws-1", "uid", "sixth@acme.com", "member", "owner")).rejects.toMatchObject({ statusCode: 409 });
+      } finally {
+        subscription.seats = null;
+      }
+    });
+
+    it("lets a pending invite be re-sent when seats are full", async () => {
+      subscription.seats = 5;
+      try {
+        // 4 members + 1 pending (this email) = 5, but re-sending it is not a new seat.
+        const db = makeMockDb({ selects: [[{ value: 4 }], [{ value: 1 }], [{ value: 1 }], [], [{ id: "inv-1" }]], withUpdate: true });
+        const svc = createTeamService(db as any);
+        await expect(svc.inviteMember("ws-1", "uid", "pending@acme.com", "member", "owner")).resolves.toMatchObject({ email: "pending@acme.com" });
+      } finally {
+        subscription.seats = null;
+      }
     });
   });
 

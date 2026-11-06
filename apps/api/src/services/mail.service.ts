@@ -9,6 +9,8 @@ export interface MailOptions {
   subject: string;
   text: string;
   html: string;
+  /** Files sent with the email, such as a proposal PDF. */
+  attachments?: { filename: string; content: Buffer; contentType: string }[];
 }
 
 export interface SendMailResult {
@@ -151,6 +153,7 @@ export async function sendMail(config: Env, opts: MailOptions): Promise<SendMail
       subject: opts.subject,
       text: opts.text,
       html: opts.html,
+      ...(opts.attachments?.length ? { attachments: opts.attachments } : {}),
     });
     log.info("system email sent", {
       to: opts.to,
@@ -333,7 +336,14 @@ async function sendViaResendApi(config: Env, opts: MailOptions): Promise<SendMai
         Authorization: `Bearer ${config.RESEND_API_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ from, to: [opts.to], subject: opts.subject, text: opts.text, html: opts.html }),
+      body: JSON.stringify({
+        from,
+        to: [opts.to],
+        subject: opts.subject,
+        text: opts.text,
+        html: opts.html,
+        ...(opts.attachments?.length ? { attachments: opts.attachments.map((a) => ({ filename: a.filename, content: a.content.toString("base64"), content_type: a.contentType })) } : {}),
+      }),
       signal: controller.signal,
     });
     if (!res.ok) throw new Error(`resend responded ${res.status}`);

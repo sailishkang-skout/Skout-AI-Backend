@@ -222,3 +222,9 @@ by apps/api.
 | --- | --- | --- |
 | `apps/api/src/services/cops-churn.service.ts` | companies | read only: lists the accounts the health sweep scored, to rank churn risk |
 | `apps/api/src/services/cops-benchmarks.service.ts` | companies | read only: compares an account's health with its workspace peers (hidden below 5 peers) |
+
+## COPS commercial email additions (2026-11-05)
+
+| File | Tables | Access |
+| --- | --- | --- |
+| `apps/api/src/services/cops-commercial-email.service.ts` | contacts, deals | read only: name, email and account of the contacts a proposal or payment link is emailed to; the deal's account, so a payment link only goes to that account's contacts |
