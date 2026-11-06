@@ -854,7 +854,7 @@ function extractSkillsSection() {
   // skill links. Fall back when structured rows did not yield labels.
   if (!skills.length) {
     skills.push(
-      ...Array.from(section.querySelectorAll('p, span, h3, h4'))
+      ...Array.from(section.querySelectorAll('p, span, h3, h4, div'))
         .filter((element) => !element.children.length)
         .map((element) => ({ name: text(element), endorsements: undefined }))
         .filter((skill) => isSkillLabel(skill.name)),
