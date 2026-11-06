@@ -241,8 +241,11 @@ function inferRoleMetadata(value) {
 function extractRelationshipContext(topcard) {
   if (!topcard) return undefined;
   const nodes = Array.from(topcard.querySelectorAll('p, span, div'));
-  const degreeText = nodes.map((node) => text(node)).find((value) => /^(1st|2nd|3rd)$/i.test(value || ''));
-  const degree = degreeText ? Number(degreeText.charAt(0)) : undefined;
+  const degreeText = nodes.map((node) => text(node)).find((value) =>
+    /\b(1st|2nd|3rd)(?:\s*-?\s*degree)?(?:\s+connection)?\b/i.test(value || ''),
+  );
+  const degreeMatch = degreeText?.match(/\b(1st|2nd|3rd)\b/i);
+  const degree = degreeMatch ? Number(degreeMatch[1].charAt(0)) : undefined;
   const mutualNode = nodes.filter((node) => /\bmutual connections?\b/i.test(text(node) || '')).sort((a, b) => (text(a)?.length || 0) - (text(b)?.length || 0))[0];
   const mutualConnectionsText = text(mutualNode);
   const mutualConnections = mutualNode
@@ -723,15 +726,12 @@ function extractEducation() {
     if ([...seen].some((done) => done === container || done.contains(container) || container.contains(done))) return;
     seen.add(container);
     const paras = getItemParagraphs(container);
-    const school = paras[0];
+    const schoolLink = container.querySelector('a[href*="/school/"]');
+    const school = text(schoolLink) || paras[0];
     if (isBadSchool(school)) return;
-    const degree = paras.slice(1).find((p) => p && !/^\d+(?:st|nd|rd)\b/i.test(p) && !/^activities and societies:/i.test(p));
+    const degree = paras.find((p) => p !== school && p && !/^\d+(?:st|nd|rd)\b/i.test(p) && !/^activities and societies:/i.test(p));
     const activities = paras.find((p) => /^activities and societies:/i.test(p));
     const description = getExpandableText(container);
-    // A real education entry has the school anchor inside its own row. The
-    // remaining guard stops a header/title copied from another section from
-    // being saved when LinkedIn serves an incomplete page.
-    if (!degree && !activities && !description) return;
     results.push({ school, degree, activities, description });
   });
   return results;
@@ -770,9 +770,11 @@ function extractSkillsSection() {
       // LinkedIn varies between anchors, paragraphs, and plain spans for the
       // skill label. Prefer the shortest meaningful descendant text; the
       // endorsement caption is explicitly excluded above.
-      const labels = Array.from(item.querySelectorAll('a, p, span'))
+      const labelElements = Array.from(item.querySelectorAll('a, p, span, h3, h4, div'))
+        .filter((element) => isSkillLabel(text(element)))
+        .filter((element) => !Array.from(element.children).some((child) => isSkillLabel(text(child))));
+      const labels = labelElements
         .map((element) => text(element))
-        .filter(isSkillLabel)
         .filter((value, index, all) => all.indexOf(value) === index);
       // Each Skills row starts with its name. Later labels describe where the
       // skill was used or who endorsed it, so preserve DOM order here.

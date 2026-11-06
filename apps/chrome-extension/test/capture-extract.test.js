@@ -98,6 +98,32 @@ describe("person profile extraction", () => {
     });
     expect(hidden.SkoutCapturePage.extractPerson()._contactInfo).toBeUndefined();
   });
+
+  it("keeps school-only education entries and captures a full connection-degree label", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/",
+      html: `
+        <main>
+          <section id="ProfileTopcard" data-view-name="profile-topcard">
+            <h1>Jane Doe</h1>
+            <p>1st degree connection</p>
+          </section>
+          <div componentkey="profile.EducationTopLevelSection">
+            <ul><li><a href="/school/ut-austin/"></a><p>University of Texas</p></li></ul>
+          </div>
+          <div componentkey="profile.SkillsTopLevelSection">
+            <ul><li><div><div>Discovery Sales</div><div><span>Endorsed by 3 colleagues</span></div></div></li></ul>
+          </div>
+        </main>
+      `,
+      files: EXTRACT_FILES,
+    });
+    const person = window.SkoutCapturePage.extractPerson();
+
+    expect(person.educations).toEqual([{ school: "University of Texas", degree: undefined, activities: undefined, description: undefined }]);
+    expect(person.skills).toEqual([{ name: "Discovery Sales", endorsements: undefined }]);
+    expect(person.relationshipContext).toMatchObject({ degree: 1, isDirectConnection: true });
+  });
 });
 
 const COMPANY_ABOUT_HTML = `
