@@ -633,7 +633,10 @@ function companyPublicIdFromEntry(item) {
  */
 function profileSection(name) {
   const main = document.querySelector('main') || document.body;
-  const keyed = main.querySelector(`[componentkey*="${name}TopLevelSection" i], [componentkey*="${name}DetailsSection" i]`);
+  const detailKey = name === 'Skills' ? 'SkillDetails' : `${name}Details`;
+  const keyed = main.querySelector(
+    `[componentkey*="${name}TopLevelSection" i], [componentkey*="${name}DetailsSection" i], [componentkey*="${detailKey}" i]`,
+  );
   if (keyed) return keyed;
   const heading = Array.from(main.querySelectorAll('h1, h2, h3, [role="heading"]'))
     .find((node) => new RegExp(`^${name}$`, 'i').test(text(node) || ''));
@@ -860,6 +863,15 @@ function extractSkillsSection() {
         .filter((skill) => isSkillLabel(skill.name)),
     );
   }
+  // Current LinkedIn Skills detail pages mix a keyed first skill row with
+  // standalone paragraph rows. Include those rendered labels even when one
+  // structured row was found, rather than silently dropping the rest.
+  skills.push(
+    ...Array.from(section.querySelectorAll('p, span, h3, h4'))
+      .filter((element) => !element.children.length)
+      .map((element) => ({ name: text(element), endorsements: undefined }))
+      .filter((skill) => isSkillLabel(skill.name)),
+  );
   const unique = new Map();
   for (const skill of skills) {
     const key = skill.name.trim().toLowerCase();

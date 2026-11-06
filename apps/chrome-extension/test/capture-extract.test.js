@@ -458,6 +458,16 @@ describe("person capture run", () => {
     expect(result.data.skills).toEqual([{ name: "Revenue Operations", endorsements: undefined }]);
   });
 
+  it("recognizes the current singular SkillDetails component while collecting", async () => {
+    const result = await collectAfterSectionLoads(
+      "Skills",
+      "details/skills",
+      '<div componentkey="com.linkedin.sdui.profile.card.ref123SkillDetails"><p>HR Operations</p><p>Microsoft Office</p></div>',
+    );
+
+    expect(result.data.skills?.map((skill) => skill.name)).toEqual(["HR Operations", "Microsoft Office"]);
+  });
+
   it("extracts unlinked education labels and skill-insight links without list rows", () => {
     const window = loadCapturePage({
       url: "https://www.linkedin.com/in/jane-doe/details/education/",
@@ -539,6 +549,54 @@ describe("person capture run", () => {
     expect(person.skills).toEqual([
       { name: "Forecasting", endorsements: undefined },
       { name: "SQL", endorsements: undefined },
+    ]);
+  });
+
+  it("extracts Education and mixed Skills rows from LinkedIn's current detail-page components", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/in/aditya-chauhan-4a3aa2b9/details/education/",
+      html: `
+        <main>
+          <div componentkey="com.linkedin.sdui.profile.card.ref123EducationDetailsSection">
+            <div componentkey="education-row-one">
+              <a href="/school/9059894/"><figure></figure></a>
+              <div><a href="/school/9059894/"><div><div>
+                <p>Amity University Gurugram</p>
+                <p>Master of Business Administration (M.B.A.), HR &amp; International business</p>
+                <p>2013 – 2015</p>
+              </div></div></a><p>Grade: A</p></div>
+            </div>
+            <div componentkey="education-row-two">
+              <a href="/school/13191775/"><figure></figure></a>
+              <div><a href="/school/13191775/"><div><div>
+                <p>Chetana's Institute of Management &amp; Research</p>
+                <p>BMS, Business Administration and Management, General</p>
+                <p>2009 – 2012</p>
+              </div></div></a></div>
+            </div>
+          </div>
+          <div componentkey="com.linkedin.sdui.profile.card.ref123SkillDetails">
+            <div><p>Skills</p><nav><button>All</button><button>Industry Knowledge</button><button>Tools &amp; Technologies</button></nav></div>
+            <div id="com.linkedin.sdui.profile.skill(profile123, 2141250545)">
+              <p>HR Operations</p>
+              <ul><li><p>2 experiences at Paytm and 1 other company</p></li></ul>
+            </div>
+            <p>Microsoft Office</p><p>Management</p><p>Microsoft Excel</p><p>Microsoft Word</p>
+            <p>Research</p><p>PowerPoint</p><p>Sales</p><p>Photoshop</p>
+          </div>
+        </main>
+      `,
+      files: EXTRACT_FILES,
+    });
+    const person = window.SkoutCapturePage.extractPerson();
+
+    expect(person.educations).toEqual([
+      { school: "Amity University Gurugram", degree: "Master of Business Administration (M.B.A.), HR & International business", dates: "2013 – 2015", activities: undefined, description: undefined },
+      { school: "Chetana's Institute of Management & Research", degree: "BMS, Business Administration and Management, General", dates: "2009 – 2012", activities: undefined, description: undefined },
+    ]);
+    expect(person.skills?.map((skill) => skill.name)).toEqual([
+      "HR Operations", "Microsoft Office", "Management", "Microsoft Excel",
+      "Microsoft Word", "Research", "PowerPoint", "Sales", "Photoshop",
     ]);
   });
 

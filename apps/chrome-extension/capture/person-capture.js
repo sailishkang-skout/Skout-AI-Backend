@@ -142,9 +142,15 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
       const detailName = detailMatch?.[1] === 'education' ? 'Education' : detailMatch?.[1] === 'skills' ? 'Skills' : undefined;
       const isSkillsPage = detailMatch?.[1] === 'skills';
       const hasRenderedSection = (name) =>
-        !!document.querySelector(`[componentkey*="${name}TopLevelSection" i], [componentkey*="${name}DetailsSection" i]`) ||
-        Array.from(document.querySelectorAll('main h1, main h2, main h3'))
+        !!document.querySelector(
+          `[componentkey*="${name}TopLevelSection" i], [componentkey*="${name}DetailsSection" i], [componentkey*="${name === 'Skills' ? 'SkillDetails' : `${name}Details`}" i]`,
+        ) ||
+        Array.from(document.querySelectorAll('main h1, main h2, main h3, main [role="heading"]'))
           .some((heading) => new RegExp(`^${name}$`, 'i').test(heading.textContent?.trim() || ''));
+      const hasDetailsPageTitle = (name) =>
+        location.pathname.endsWith(`/details/${name.toLowerCase()}/`) &&
+        Array.from(document.querySelectorAll('main p'))
+          .some((paragraph) => new RegExp(`^${name}$`, 'i').test(paragraph.textContent?.trim() || ''));
       let data;
       let previousEducation = '';
       let stableEducationPasses = 0;
@@ -152,7 +158,7 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
 
       for (let attempt = 0; attempt < 40; attempt++) {
         if (pageUrl(location.href, id) !== expectedUrl) throw new Error('Profile page changed during capture.');
-        sectionFound ||= hasRenderedSection(detailName);
+        sectionFound ||= hasRenderedSection(detailName) || hasDetailsPageTitle(detailName);
         if (isSkillsPage && sectionFound) {
           data = await collectFullyRenderedSkills();
           break;
