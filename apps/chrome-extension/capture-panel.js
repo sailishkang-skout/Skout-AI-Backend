@@ -79,6 +79,20 @@ export function draftSummary(kind, data) {
   return parts.join(" · ");
 }
 
+export function personReviewPreview(data) {
+  const educations = (Array.isArray(data.educations) ? data.educations : []).map((education) =>
+    [education.school, education.degree, education.dates, education.activities, education.description]
+      .filter((value) => typeof value === "string" && value.trim())
+      .join(" · ")
+  );
+  const skills = (Array.isArray(data.skills) ? data.skills : []).map((skill) => {
+    const name = typeof skill?.name === "string" ? skill.name.trim() : "";
+    if (!name) return "";
+    return skill.endorsements ? `${name} (${skill.endorsements} endorsements)` : name;
+  }).filter(Boolean);
+  return { educations, skills };
+}
+
 const EDITABLE_FIELDS = {
   person: [["fullName", "Name"], ["headline", "Headline"], ["locationName", "Location"], ["summary", "About", true], ["email", "Email"], ["phone", "Phone"]],
   company: [["name", "Name"], ["industry", "Industry"], ["headquarter", "Headquarters"], ["size", "Company size"], ["website", "Website"]],
@@ -112,6 +126,7 @@ export function initCapturePanel() {
   const reviewEl = $("capture-review");
   const reviewTitleEl = $("capture-review-title");
   const reviewNotesEl = $("capture-review-notes");
+  const personPreviewEl = $("capture-person-preview");
   const reviewFieldsEl = $("capture-review-fields");
   const reviewLeadsEl = $("capture-review-leads");
   const reviewJsonEl = $("capture-review-json");
@@ -213,6 +228,31 @@ export function initCapturePanel() {
         ...(draft.notes || []),
       ].map((note) => Object.assign(document.createElement("li"), { textContent: note }))
     );
+
+    const personPreview = personReviewPreview(data);
+    personPreviewEl.classList.toggle("hidden", draft.kind !== "person");
+    personPreviewEl.replaceChildren();
+    if (draft.kind === "person") {
+      personPreviewEl.appendChild(Object.assign(document.createElement("p"), {
+        className: "vision-desc",
+        textContent: "Education and skills shown here are what will be saved to your workspace.",
+      }));
+      for (const [title, entries] of [["Education", personPreview.educations], ["Skills", personPreview.skills]]) {
+        const section = document.createElement("section");
+        const heading = document.createElement("h3");
+        heading.textContent = `${title} (${entries.length})`;
+        const list = document.createElement("ul");
+        const visibleEntries = entries.length ? entries : [
+          `No ${title.toLowerCase()} detected. Nothing from this section will be saved.`,
+        ];
+        if (!entries.length) list.classList.add("capture-empty");
+        list.replaceChildren(...visibleEntries.map((entry) =>
+          Object.assign(document.createElement("li"), { textContent: entry })
+        ));
+        section.append(heading, list);
+        personPreviewEl.appendChild(section);
+      }
+    }
 
     reviewFieldsEl.replaceChildren(
       ...EDITABLE_FIELDS[draft.kind].map(([field, label, multiline]) => {

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { buildCapturePayload, CAPTURE_CONTENT_FILES, reviewDraftData } from "../capture-background.js";
-import { captureKindForUrl, draftSummary, reviewedData } from "../capture-panel.js";
+import { captureKindForUrl, draftSummary, personReviewPreview, reviewedData } from "../capture-panel.js";
 import { extensionRoot, readSource } from "./helpers/capture-dom.js";
 
 const manifest = JSON.parse(readSource("manifest.json"));
@@ -67,6 +67,17 @@ describe("capture compliance guardrails", () => {
 });
 
 describe("side-panel review helpers", () => {
+  it("shows the actual Education and Skills values that will be saved", () => {
+    expect(personReviewPreview({
+      educations: [{ school: "University of Toronto", degree: "MSc", dates: "2019 - 2021" }],
+      skills: [{ name: "Forecasting", endorsements: 3 }, { name: "SQL" }],
+    })).toEqual({
+      educations: ["University of Toronto · MSc · 2019 - 2021"],
+      skills: ["Forecasting (3 endorsements)", "SQL"],
+    });
+    expect(personReviewPreview({})).toEqual({ educations: [], skills: [] });
+  });
+
   it("keeps Contact Info details reviewable and includes confirmed values in saved capture payloads", () => {
     const draft = reviewDraftData({
       fullName: "Jane Doe",
