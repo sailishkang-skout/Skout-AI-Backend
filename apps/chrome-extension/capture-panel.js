@@ -57,8 +57,8 @@ export function draftSummary(kind, data) {
     parts.push(`${size(data.currentCompanies)} current and ${size(data.previousCompanies)} past roles`);
     parts.push(`${size(data.educations)} education`);
     parts.push(`${size(data.skills)} skills`);
-    if (data._contactInfo?.email || data._contactInfo?.phone) {
-      parts.push("Contact details available for review only");
+    if (data.email || data.phone) {
+      parts.push("Contact details ready to save after review");
     }
     for (const [key, label] of [["certifications", "certifications"], ["languages", "languages"], ["recommendations", "recommendations"], ["volunteerExperiences", "volunteering"], ["honors", "honors"], ["publications", "publications"], ["patents", "patents"], ["courses", "courses"], ["organizations", "organizations"]]) {
       if (size(data[key])) parts.push(`${size(data[key])} ${label}`);
@@ -80,7 +80,7 @@ export function draftSummary(kind, data) {
 }
 
 const EDITABLE_FIELDS = {
-  person: [["fullName", "Name"], ["headline", "Headline"], ["locationName", "Location"], ["summary", "About", true]],
+  person: [["fullName", "Name"], ["headline", "Headline"], ["locationName", "Location"], ["summary", "About", true], ["email", "Email"], ["phone", "Phone"]],
   company: [["name", "Name"], ["industry", "Industry"], ["headquarter", "Headquarters"], ["size", "Company size"], ["website", "Website"]],
   sales: [],
 };

@@ -67,19 +67,23 @@ describe("capture compliance guardrails", () => {
 });
 
 describe("side-panel review helpers", () => {
-  it("keeps visible Contact Info details review-only and excludes them from saved capture payloads", () => {
+  it("keeps Contact Info details reviewable and includes confirmed values in saved capture payloads", () => {
     const draft = reviewDraftData({
       fullName: "Jane Doe",
+      email: "jane@example.com",
+      phone: "+1 555 0100",
       _contactInfo: { email: "jane@example.com", phone: "+1 555 0100" },
       _recentActivity: [{ text: "internal-only" }],
     });
 
     expect(draft._contactInfo).toEqual({ email: "jane@example.com", phone: "+1 555 0100" });
     expect(draft._recentActivity).toBeUndefined();
-    expect(draftSummary("person", draft)).toContain("Contact details available for review only");
-    expect(
-      buildCapturePayload({ kind: "person", capturedAt: "2026-11-04T00:00:00.000Z" }, draft)
-    ).not.toHaveProperty("_contactInfo");
+    expect(draftSummary("person", draft)).toContain("Contact details ready to save after review");
+    expect(buildCapturePayload({ kind: "person", capturedAt: "2026-11-04T00:00:00.000Z" }, draft)).toMatchObject({
+      email: "jane@example.com",
+      phone: "+1 555 0100",
+    });
+    expect(buildCapturePayload({ kind: "person", capturedAt: "2026-11-04T00:00:00.000Z" }, draft)).not.toHaveProperty("_contactInfo");
   });
 
   it("offers a capture only on a profile, a company page or a Sales Navigator people search", () => {

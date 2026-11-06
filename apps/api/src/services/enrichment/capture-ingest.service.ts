@@ -769,6 +769,8 @@ interface PersonRecordInput {
   fullName?: string;
   headline?: string;
   title?: string;
+  email?: string;
+  phone?: string;
   companyName?: string;
   companyDomain?: string;
   companyId?: string | null;
@@ -828,13 +830,19 @@ async function upsertPersonRecord(
         workspaceId,
         firstName,
         lastName,
+        email: profile ? input.email ?? null : null,
+        phone: profile ? input.phone ?? null : null,
         title: input.title,
         linkedinUrl: publicUrl,
         companyId: input.companyId ?? null,
         // Only the person's own profile verifies a current employer.
         employmentStatus: profile && input.companyId ? "verified_employment" : "discovery_candidate",
         sourceProspectId: prospectId,
-        fieldSources: {},
+        fieldSources: Object.fromEntries(
+          (["email", "phone"] as const)
+            .filter((field) => input[field] !== undefined)
+            .map((field) => [field, { source: "linkedin_contact_info", confidence: 0.9, setAt: input.evidence.observedAt.toISOString() }])
+        ),
       })
       .returning();
     contact = row!;
@@ -858,6 +866,29 @@ async function upsertPersonRecord(
     }
     if (profile && input.companyId && contact.employmentStatus !== "verified_employment") {
       update.employmentStatus = "verified_employment";
+    }
+    if (profile) {
+      const fieldSources = (contact.fieldSources ?? {}) as Record<string, { source?: string } | undefined>;
+      const sourceUpdates: Record<string, { source: string; confidence: number; setAt: string }> = {};
+      for (const field of ["email", "phone"] as const) {
+        const value = input[field];
+        const existingSource = fieldSources[field]?.source;
+        if (
+          value &&
+          !isManual(contact.fieldSources, field) &&
+          (!contact[field] || existingSource === "linkedin_contact_info")
+        ) {
+          if (contact[field] !== value) update[field] = value;
+          sourceUpdates[field] = {
+            source: "linkedin_contact_info",
+            confidence: 0.9,
+            setAt: input.evidence.observedAt.toISOString(),
+          };
+        }
+      }
+      if (Object.keys(sourceUpdates).length) {
+        update.fieldSources = { ...fieldSources, ...sourceUpdates };
+      }
     }
     if (Object.keys(update).length) {
       await tx
@@ -1090,6 +1121,8 @@ export async function ingestPersonCapture(db: Db, actor: CaptureActor, input: Pe
           publicId,
           fullName,
           headline,
+          email: data.email,
+          phone: data.phone,
           title: typeof role?.title === "string" ? role.title : undefined,
           companyName: employerName ?? employer?.name,
           companyDomain: employer?.domain ?? undefined,
