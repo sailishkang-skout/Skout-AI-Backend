@@ -1044,6 +1044,13 @@
       "when": 1797800000000,
       "tag": "0146_cops14_export_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 149,
+      "version": "7",
+      "when": 1797900000000,
+      "tag": "0147_activation_first_campaign",
+      "breakpoints": true
     }
   ]
 }

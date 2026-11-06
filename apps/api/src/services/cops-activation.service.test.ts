@@ -76,8 +76,9 @@ maybe("COPS-05 activation (Postgres)", () => {
     const a = await provisioned();
     expect(await ensureActivationInstance(db, ctx.workspaceId, a.accountId)).toBe(a.instanceId);
     const act = (await loadActivation(db, ctx.workspaceId, a.accountId))!;
-    expect(act).toMatchObject({ template_key: "default_trial", template_version: 1, activation_pct: 0, activated_at: null });
-    expect(act.milestones.filter((m) => m.required).map((m) => m.key).sort()).toEqual(["crm_connected", "first_export", "first_search"]);
+    expect(act).toMatchObject({ template_key: "default_trial", template_version: 2, activation_pct: 0, activated_at: null });
+    // CEO sign-off: only the first campaign sent activates; the rest is tracked, not required.
+    expect(act.milestones.filter((m) => m.required).map((m) => m.key)).toEqual(["first_campaign_sent"]);
   });
 
   it("login alone never activates: first login is recorded (FirstLogin) but activation stays 0%", async () => {
@@ -103,10 +104,15 @@ maybe("COPS-05 activation (Postgres)", () => {
 
     await sql`insert into crm_connections (workspace_id, provider, status) values (${a.customerWs}, 'hubspot', 'connected')`;
     await productUse(a.customerWs, "search");
-    expect((await evaluateActivation(db, ctx.workspaceId, a.instanceId, randomUUID())).activated).toBe(false);
-    expect((await loadActivation(db, ctx.workspaceId, a.accountId))!.activation_pct).toBe(65);
-
     await productUse(a.customerWs, "export_hubspot");
+    // Search, export and CRM are tracked but do not activate on their own (CEO sign-off).
+    expect((await evaluateActivation(db, ctx.workspaceId, a.instanceId, randomUUID())).activated).toBe(false);
+    expect((await loadActivation(db, ctx.workspaceId, a.accountId))!.activation_pct).toBe(0);
+
+    // The first email the customer actually sends activates them.
+    const [inbox] = await sql`insert into inboxes (workspace_id, email_address, display_name, provider) values (${a.customerWs}, ${"rep-" + randomUUID().slice(0, 8) + "@acme.example"}, 'Rep', 'smtp') returning id`;
+    const [thread] = await sql`insert into inbox_threads (workspace_id, inbox_id, subject) values (${a.customerWs}, ${inbox.id}, 'Hello') returning id`;
+    await sql`insert into inbox_messages (thread_id, direction, from_address, to_address) values (${thread.id}, 'outbound', 'rep@acme.example', 'lead@prospect.example')`;
     const r = await evaluateActivation(db, ctx.workspaceId, a.instanceId, randomUUID());
     expect(r.activated).toBe(true);
     const act = (await loadActivation(db, ctx.workspaceId, a.accountId))!;
@@ -118,22 +124,22 @@ maybe("COPS-05 activation (Postgres)", () => {
     await evaluateActivation(db, ctx.workspaceId, a.instanceId, randomUUID());
     expect((await sql`select count(*)::int as n from cops_outbox where event_type = 'CustomerActivated' and aggregate_id = ${a.accountId}`)[0].n).toBe(1);
     const [rule] = await sql`select envelope->'payload'->>'rule_version' as v from cops_outbox where event_type = 'CustomerActivated' and aggregate_id = ${a.accountId}`;
-    expect(rule.v).toBe("default_trial@v1");
+    expect(rule.v).toBe("default_trial@v2");
     const [e] = await sql`select status, stop_reason from sequence_enrollments where id = ${enr.id}`;
     expect(e).toEqual({ status: "stopped", stop_reason: "ACTIVATED" });
   });
 
   it("a new template version does not touch an existing instance or its past activation", async () => {
     const a = await provisioned();
-    const [sys] = await sql`select milestones from cops_activation_templates where workspace_id is null and key = 'default_trial' and version = 1`;
-    const v2 = (sys.milestones as Array<Record<string, unknown>>).map((m) => (m.key === "team_invited" ? { ...m, required: true, weight: 20 } : m));
-    await sql`insert into cops_activation_templates (workspace_id, key, version, milestones) values (${ctx.workspaceId}, 'default_trial', 2, ${sql.json(v2)})`;
+    const [sys] = await sql`select milestones from cops_activation_templates where workspace_id is null and key = 'default_trial' and version = 2`;
+    const v3 = (sys.milestones as Array<Record<string, unknown>>).map((m) => (m.key === "team_invited" ? { ...m, required: true, weight: 20 } : m));
+    await sql`insert into cops_activation_templates (workspace_id, key, version, milestones) values (${ctx.workspaceId}, 'default_trial', 3, ${sql.json(v3)})`;
     const before = (await loadActivation(db, ctx.workspaceId, a.accountId))!;
-    expect(before.template_version).toBe(1);
+    expect(before.template_version).toBe(2);
     expect(before.milestones.find((m) => m.key === "team_invited")!.required).toBe(false);
     // A newly provisioned account takes the newest version.
     const b = await provisioned();
-    expect((await loadActivation(db, ctx.workspaceId, b.accountId))!.template_version).toBe(2);
+    expect((await loadActivation(db, ctx.workspaceId, b.accountId))!.template_version).toBe(3);
   });
 
   it("an enterprise account takes the enterprise activation template when one exists", async () => {
