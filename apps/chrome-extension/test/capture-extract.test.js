@@ -325,7 +325,7 @@ describe("company page extraction", () => {
 });
 
 describe("person capture run", () => {
-  async function collectAfterSectionLoads(sectionName, detailPath, sectionMarkup) {
+  async function collectAfterSectionLoads(sectionName, detailPath, sectionMarkup, onScroll = () => {}) {
     let reader;
     const chrome = {
       runtime: {
@@ -340,7 +340,7 @@ describe("person capture run", () => {
       files: [...EXTRACT_FILES, "capture/person-capture.js"],
     });
     window.scrollTo = () => {};
-    window.scrollBy = () => {};
+    window.scrollBy = (...args) => onScroll(window, ...args);
     window.setTimeout(() => {
       const section = window.document.createElement("div");
       section.innerHTML = sectionMarkup;
@@ -423,6 +423,28 @@ describe("person capture run", () => {
 
     expect(result.data.educations).toEqual([
       { school: "IIT Bombay", degree: "B.Tech", activities: undefined, description: undefined },
+    ]);
+  });
+
+  it("collects education entries that render as the detail page scrolls", async () => {
+    let appended = false;
+    const result = await collectAfterSectionLoads(
+      "Education",
+      "details/education",
+      '<div componentkey="profile.EducationDetailsSection"><div componentkey="entity-collection-item-1"><p>University of Toronto</p><p>Master of Science</p></div></div>',
+      (window) => {
+        if (appended) return;
+        appended = true;
+        const row = window.document.createElement("div");
+        row.setAttribute("componentkey", "entity-collection-item-2");
+        row.innerHTML = "<p>University of Waterloo</p><p>Bachelor of Mathematics</p>";
+        window.document.querySelector('[componentkey="profile.EducationDetailsSection"]').append(row);
+      },
+    );
+
+    expect(result.data.educations?.map((item) => item.school)).toEqual([
+      "University of Toronto",
+      "University of Waterloo",
     ]);
   });
 
@@ -515,6 +537,25 @@ describe("person capture run", () => {
       { school: "University of Waterloo", degree: "Bachelor of Mathematics", dates: "2015 - 2019", activities: undefined, description: undefined },
     ]);
     expect(person.skills).toEqual([
+      { name: "Forecasting", endorsements: undefined },
+      { name: "SQL", endorsements: undefined },
+    ]);
+  });
+
+  it("extracts skills rendered as plain div labels on the Skills detail page", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/details/skills/",
+      html: `
+        <main>
+          <div componentkey="profile.SkillsDetailsSection">
+            <div>Forecasting</div><div>SQL</div><div>Endorsed by 3 colleagues</div>
+          </div>
+        </main>
+      `,
+      files: EXTRACT_FILES,
+    });
+
+    expect(window.SkoutCapturePage.extractPerson().skills).toEqual([
       { name: "Forecasting", endorsements: undefined },
       { name: "SQL", endorsements: undefined },
     ]);

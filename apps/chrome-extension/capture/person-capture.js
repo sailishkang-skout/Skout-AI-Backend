@@ -116,6 +116,24 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
     window.scrollTo(0, 0);
     return combined;
   }
+  async function collectFullyRenderedEducation() {
+    let combined = {}, stablePasses = 0, previousCount = 0;
+    window.scrollTo(0, 0);
+    await pause(500);
+    for (let pass = 0; pass < 30; pass++) {
+      combined = merge(combined, extractPerson());
+      const count = Array.isArray(combined.educations) ? combined.educations.length : 0;
+      const atBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 8;
+      stablePasses = count === previousCount ? stablePasses + 1 : 0;
+      previousCount = count;
+      if (atBottom && stablePasses >= 2) break;
+      window.scrollBy({top: Math.max(520, Math.floor(window.innerHeight * 0.8)), behavior: 'auto'});
+      await pause(650);
+    }
+    combined = merge(combined, extractPerson());
+    window.scrollTo(0, 0);
+    return combined;
+  }
   async function collect(id, expectedUrl) {
     if (collecting) throw new Error('This page is already being read.');
     collecting = true;
@@ -137,6 +155,10 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
         sectionFound ||= hasRenderedSection(detailName);
         if (isSkillsPage && sectionFound) {
           data = await collectFullyRenderedSkills();
+          break;
+        }
+        if (detailName === 'Education' && sectionFound) {
+          data = await collectFullyRenderedEducation();
           break;
         }
 
