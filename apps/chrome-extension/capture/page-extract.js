@@ -185,10 +185,11 @@ function extractPerson() {
     patents: patents.length ? patents : undefined,
     courses: courses.length ? courses : undefined,
     organizations: organizations.length ? organizations : undefined,
-    // contactInfo and recentActivity aren't in the ingest schema's storable
-    // fields yet — surfaced in the review panel for now so you can see them
-    // before deciding whether they're worth adding to the backend schema.
+    // Keep the full contact section local for the review note; only the
+    // validated email and phone values are sent to the capture endpoint.
     _contactInfo: contactInfo,
+    email: contactInfo?.email,
+    phone: contactInfo?.phone,
     _recentActivity: recentActivity.length ? recentActivity : undefined,
     openToWork: openToWork || undefined,
     _fieldsFound: countTruthy({
@@ -631,11 +632,27 @@ function companyPublicIdFromEntry(item) {
  * back to the section under this page's own heading, never outside <main>.
  */
 function profileSection(name) {
-  const keyed = document.querySelector(`[componentkey*="${name}TopLevelSection" i], [componentkey*="${name}DetailsSection" i]`);
+  const main = document.querySelector('main') || document.body;
+  const keyed = main.querySelector(`[componentkey*="${name}TopLevelSection" i], [componentkey*="${name}DetailsSection" i]`);
   if (keyed) return keyed;
-  const heading = Array.from(document.querySelectorAll('main h1, main h2, main h3'))
+  const heading = Array.from(main.querySelectorAll('h1, h2, h3, [role="heading"]'))
     .find((node) => new RegExp(`^${name}$`, 'i').test(text(node) || ''));
-  return heading?.closest('section') || undefined;
+  if (!heading) return undefined;
+  const semanticContainer = heading.closest('section, [role="region"], [data-view-name*="profile-component" i]');
+  if (semanticContainer) return semanticContainer;
+
+  // Some LinkedIn layouts use only generic divs around a section heading. Walk
+  // up while the subtree still belongs to this heading, but never use all of
+  // <main> (which also contains recommendations and other people's content).
+  let container = heading.parentElement;
+  let candidate = container;
+  while (container && container !== main) {
+    const headings = container.querySelectorAll('h1, h2, h3, [role="heading"]');
+    if (headings.length > 1) break;
+    candidate = container;
+    container = container.parentElement;
+  }
+  return candidate || undefined;
 }
 
 function extractExperience() {
@@ -734,10 +751,7 @@ function extractEducation() {
     }),
   );
   const genericRows = [...genericContainers].filter((container) => {
-    for (let parent = container.parentElement; parent && parent !== section; parent = parent.parentElement) {
-      if (genericContainers.has(parent)) return false;
-    }
-    return true;
+    return ![...genericContainers].some((other) => other !== container && container.contains(other));
   });
   containers.push(...genericRows);
   containers.forEach((container) => {
@@ -747,7 +761,8 @@ function extractEducation() {
     seen.add(container);
     const paras = getItemParagraphs(container);
     const schoolLink = container.querySelector('a[href*="/school/"]');
-    const labels = Array.from(container.querySelectorAll('a, p, span, h3, h4'))
+    const labels = Array.from(container.querySelectorAll('a, p, span, h3, h4, div, [aria-label]'))
+      .filter((node) => !Array.from(node.children).some((child) => text(child)))
       .map((node) => text(node))
       .filter((value, index, all) => value && all.indexOf(value) === index);
     const school = text(schoolLink) || paras[0] || labels[0];
@@ -781,8 +796,9 @@ function extractSkillsSection() {
   // The profile preview and /details/skills/ use different component keys.
   // Scope the fallback to the closest Skills heading so names from sidebars
   // and recommendations cannot be saved as skills.
-  const skillsHeading = Array.from(document.querySelectorAll('h1, h2, h3')).find((heading) => /^skills$/i.test(text(heading) || ''));
-  const section = document.querySelector('[componentkey*="Skills" i]') || skillsHeading?.closest('section, main');
+  const skillsHeading = Array.from((document.querySelector('main') || document).querySelectorAll('h1, h2, h3, [role="heading"]'))
+    .find((heading) => /^skills$/i.test(text(heading) || ''));
+  const section = profileSection('Skills') || skillsHeading?.closest('section');
   if (!section) return [];
   const explicitItems = [
     ...Array.from(section.querySelectorAll('[id^="com.linkedin.sdui.profile.skill(" i], [componentkey^="entity-collection-item" i], [data-view-name*="profile-component-entity" i]')),
@@ -835,9 +851,8 @@ function extractSkillsSection() {
     })
     .filter((s) => isSkillLabel(s.name));
   // A few layouts render a plain paragraph/span list without semantic rows or
-  // skill links. Use leaf labels only when the structured extraction found no
-  // rows; this keeps endorsement and context text out of otherwise complete data.
-  if (!items.length) {
+  // skill links. Fall back when structured rows did not yield labels.
+  if (!skills.length) {
     skills.push(
       ...Array.from(section.querySelectorAll('p, span, h3, h4'))
         .filter((element) => !element.children.length)
@@ -990,35 +1005,45 @@ function extractOrganizations() {
 /**
  * Contact Info — LinkedIn shows this in a click-to-open modal, not on the
  * base page. We deliberately don't auto-click it. Only a visible modal is
- * read, and its values are kept in the local review draft, not sent to Skout.
+ * read, and its values are sent only after the user reviews and saves capture.
  */
 function extractContactInfo() {
-  const modal = document.querySelector('[aria-label*="Contact Info" i], [aria-labelledby*="contact-info" i]');
+  const candidates = [
+    ...document.querySelectorAll('[aria-label*="contact info" i], [aria-labelledby*="contact-info" i]'),
+    ...Array.from(document.querySelectorAll('[role="dialog"]')).filter((dialog) =>
+      Array.from(dialog.querySelectorAll('h1, h2, h3, h4, [role="heading"]'))
+        .some((heading) => /^contact info$/i.test(text(heading) || '')),
+    ),
+  ];
+  const modal = [...new Set(candidates)].find((candidate) => {
+    const style = window.getComputedStyle(candidate);
+    const rect = candidate.getBoundingClientRect();
+    return !candidate.closest('[aria-hidden="true"]') &&
+      style.display !== "none" &&
+      style.visibility !== "hidden" &&
+      style.opacity !== "0" &&
+      rect.width > 0 &&
+      rect.height > 0;
+  });
   if (!modal) return undefined;
-  const style = window.getComputedStyle(modal);
-  const rect = modal.getBoundingClientRect();
-  if (
-    modal.closest('[aria-hidden="true"]') ||
-    style.display === "none" ||
-    style.visibility === "hidden" ||
-    style.opacity === "0" ||
-    rect.width <= 0 ||
-    rect.height <= 0
-  ) {
-    return undefined;
-  }
   const website = modal.querySelector('a[href^="http"]:not([href*="linkedin.com"])')?.href;
+  const emailLink = modal.querySelector('a[href^="mailto:"]')?.getAttribute('href')?.replace(/^mailto:/i, '').split('?')[0];
   const emailMatch = modal.textContent.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
-  // Phone — best-effort, unverified against real Contact Info HTML. LinkedIn
-  // typically renders phone numbers as tel: links; falls back to a loose
-  // digit-pattern scan if that's not present.
   const telLink = modal.querySelector('a[href^="tel:"]');
-  const phone = telLink
-    ? telLink.getAttribute('href').replace(/^tel:/, '')
-    : modal.textContent.match(/\+?\d[\d\s().-]{7,}\d/)?.[0]?.trim();
+  let phone;
+  if (telLink) {
+    const rawPhone = telLink.getAttribute('href').replace(/^tel:/i, '');
+    try {
+      phone = decodeURIComponent(rawPhone);
+    } catch {
+      phone = rawPhone;
+    }
+  } else {
+    phone = modal.textContent.match(/\+?\d[\d\s().-]{7,}\d/)?.[0]?.trim();
+  }
   return {
     website,
-    email: emailMatch?.[0],
+    email: emailLink || emailMatch?.[0],
     phone,
   };
 }

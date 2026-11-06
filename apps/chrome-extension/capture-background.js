@@ -436,7 +436,7 @@ async function storeDraft(message, sender) {
     },
   };
   if (draft.data._contactInfo && (draft.data._contactInfo.email || draft.data._contactInfo.phone)) {
-    draft.notes.push("Contact details from the already-open Contact Info dialog are review-only and will not be saved to Skout.");
+    draft.notes.push("Contact details came from the already-open Contact Info dialog. They are saved only after your review and remain unverified.");
   }
   await chrome.storage.local.set({ [CAPTURE_DRAFT_KEY]: draft });
   return { ok: true };

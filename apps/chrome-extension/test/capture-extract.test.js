@@ -90,6 +90,20 @@ describe("person profile extraction", () => {
       email: "jane@example.com",
       phone: "+15550100",
     });
+    expect(visible.SkoutCapturePage.extractPerson()).toMatchObject({
+      email: "jane@example.com",
+      phone: "+15550100",
+    });
+
+    const headingModal = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/",
+      html: '<main><h1>Jane Doe</h1><div role="dialog"><h2>Contact info</h2><a href="mailto:jane@example.com?subject=Profile">Email</a><a href="tel:%2B15550100">Phone</a></div></main>',
+      files: EXTRACT_FILES,
+    });
+    expect(headingModal.SkoutCapturePage.extractPerson()).toMatchObject({
+      email: "jane@example.com",
+      phone: "+15550100",
+    });
 
     const hidden = loadCapturePage({
       url: "https://www.linkedin.com/in/jane-doe/",
@@ -445,6 +459,33 @@ describe("person capture run", () => {
       { school: "University of Toronto", degree: "Master of Science", dates: "2019 - 2021", activities: undefined, description: undefined },
     ]);
     expect(person.skills).toEqual([{ name: "Forecasting", endorsements: undefined }]);
+  });
+
+  it("finds education and skills below generic section headings without component keys", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/details/education/",
+      html: `
+        <main>
+          <div>
+            <div role="heading" aria-level="2">Education</div>
+            <div class="education-row"><div>University of Toronto</div><div>Master of Science</div><div>2019 - 2021</div></div>
+            <div class="education-row"><div>University of Waterloo</div><div>Bachelor of Mathematics</div><div>2015 - 2019</div></div>
+          </div>
+          <div>
+            <div role="heading" aria-level="2">Skills</div>
+            <p>Forecasting</p><p>SQL</p><p>Endorsed by 3 colleagues</p>
+          </div>
+          <aside><h2>People you may know</h2><p>Suggested contact</p></aside>
+        </main>
+      `,
+      files: EXTRACT_FILES,
+    });
+    const person = window.SkoutCapturePage.extractPerson();
+
+    expect(person.educations).toHaveLength(2);
+    expect(person.educations?.map((item) => item.school)).toEqual(["University of Toronto", "University of Waterloo"]);
+    expect(person.skills?.map((skill) => skill.name)).toEqual(["Forecasting", "SQL"]);
+    expect(JSON.stringify(person)).not.toContain("Suggested contact");
   });
 
   it("captures multiple plain education rows and unstructured skill labels", () => {
