@@ -719,6 +719,8 @@ function extractEducation() {
     ...Array.from(section.querySelectorAll('a[href*="/school/"]'))
       .map((a) => a.closest('[componentkey^="entity-collection-item" i], li') || a.parentElement),
     ...Array.from(section.querySelectorAll('[componentkey^="entity-collection-item" i]')),
+    ...Array.from(section.querySelectorAll('[id]'))
+      .filter((node) => /^com\.linkedin\.sdui\.profile\.education\(/i.test(node.id)),
   ];
   containers.forEach((container) => {
     if (!container || !section.contains(container)) return;

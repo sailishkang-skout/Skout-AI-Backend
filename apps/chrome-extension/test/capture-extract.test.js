@@ -311,6 +311,46 @@ describe("company page extraction", () => {
 });
 
 describe("person capture run", () => {
+  async function collectAfterSectionLoads(sectionName, detailPath, sectionMarkup) {
+    let reader;
+    const chrome = {
+      runtime: {
+        id: "test-extension",
+        onMessage: { addListener(listener) { reader = listener; } },
+      },
+    };
+    const window = loadCapturePage({
+      url: `https://www.linkedin.com/in/jane-doe/${detailPath}/`,
+      html: "<main><h1>Jane Doe</h1></main>",
+      chrome,
+      files: [...EXTRACT_FILES, "capture/person-capture.js"],
+    });
+    window.scrollTo = () => {};
+    window.scrollBy = () => {};
+    window.setTimeout(() => {
+      const section = window.document.createElement("div");
+      section.innerHTML = sectionMarkup;
+      window.document.querySelector("main").append(section);
+    }, 650);
+
+    try {
+      return await new Promise((resolve, reject) => {
+        reader(
+          {
+            type: "COLLECT_PERSON_PAGE",
+            personId: "jane-doe",
+            url: `https://www.linkedin.com/in/jane-doe/${detailPath}/`,
+          },
+          { id: "test-extension" },
+          resolve,
+        );
+        window.setTimeout(() => reject(new Error(`${sectionName} section did not resolve`)), 8_000);
+      });
+    } finally {
+      window.close();
+    }
+  }
+
   it("only opens this profile's own allowlisted pages and hands the result over for review", async () => {
     const opened = [];
     const sent = [];
@@ -358,6 +398,28 @@ describe("person capture run", () => {
     // The detail page's higher endorsement count wins; names are not duplicated.
     expect(review.data.skills.map((skill) => `${skill.name}:${skill.endorsements}`).sort()).toEqual(["Forecasting:3", "Negotiation:undefined", "enterprise sales:40"]);
     expect(sent.at(-1)).toMatchObject({ type: "SKOUT_CAPTURE_PROGRESS", active: false });
+  });
+
+  it("waits for the Education section to hydrate after the profile shell", async () => {
+    const result = await collectAfterSectionLoads(
+      "Education",
+      "details/education",
+      '<div componentkey="profile.EducationDetailsSection"><div id="com.linkedin.sdui.profile.education(1)"><p>IIT Bombay</p><p>B.Tech</p></div></div>',
+    );
+
+    expect(result.data.educations).toEqual([
+      { school: "IIT Bombay", degree: "B.Tech", activities: undefined, description: undefined },
+    ]);
+  });
+
+  it("waits for the Skills section to hydrate before collecting the rendered list", async () => {
+    const result = await collectAfterSectionLoads(
+      "Skills",
+      "details/skills",
+      '<div componentkey="profile.SkillsDetailsSection"><ul><li><p>Revenue Operations</p></li></ul></div>',
+    );
+
+    expect(result.data.skills).toEqual([{ name: "Revenue Operations", endorsements: undefined }]);
   });
 });
 
