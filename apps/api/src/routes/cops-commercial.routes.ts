@@ -36,7 +36,7 @@ import {
   discardDraftContract,
   type CommercialContext,
 } from "../services/cops-commercial.service.js";
-import { cancelPaymentRequest, createPaymentRequest, handlePaymentWebhook, loadPaymentRequests } from "../services/cops-payments.service.js";
+import { cancelPaymentRequest, createPaymentRequest, handlePaymentWebhook, loadPaymentRequests, refundPaymentRequest } from "../services/cops-payments.service.js";
 import { emailPaymentLink, emailProposal, isInternalEmail } from "../services/cops-commercial-email.service.js";
 import { assertApproved, assertContractApproved, decideApproval, evaluateProposalApprovals, listApprovals, requestApproval } from "../services/cops-approvals.service.js";
 import { createRazorpayPaymentLinkAdapter } from "../services/psp/razorpay.js";
@@ -962,6 +962,45 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
     return { data: paymentRequest };
   });
 
+  // COPS-04 Q4: a refund takes back the credits that payment bought (provider event or our refund).
+  const onPaymentRefunded = async (tx: Db, refunded: { workspaceId: string; opportunityId: string; requestId: string; paymentRequestId?: string }) => {
+    const [deal] = await tx
+      .select({ companyId: schema.deals.companyId })
+      .from(schema.deals)
+      .where(and(eq(schema.deals.id, refunded.opportunityId), eq(schema.deals.workspaceId, refunded.workspaceId)))
+      .limit(1);
+    if (deal?.companyId && refunded.paymentRequestId) {
+      await reverseRefundedCreditPurchase(tx as never, {
+        operatorWorkspaceId: refunded.workspaceId,
+        accountId: deal.companyId,
+        paymentRequestId: refunded.paymentRequestId,
+        requestId: refunded.requestId,
+      });
+    }
+  };
+
+  // Refund a paid link in full, with a reason (Finance only: money goes back to the customer).
+  app.post<{ Params: { id: string }; Body: { reason?: string } }>(
+    "/payment-requests/:id/refund",
+    { preHandler: billingWriteGate },
+    withCopsIdempotentReply<{ Params: { id: string }; Body: { reason?: string } }>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      const parsed = z.object({ reason: reasonText }).strict().safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(
+        reply,
+        ctx.requestId,
+        async () => {
+          await refundPaymentRequest(db, psp, ctx, request.params.id, parsed.data.reason, onPaymentRefunded);
+          return (await loadPaymentRequests(db, ctx.workspaceId, { id: request.params.id }))[0];
+        },
+        (paymentRequest) => ({ data: paymentRequest })
+      );
+    })
+  );
+
   /**
    * Provider webhook. Public under /billing/webhooks/ (plugins/auth.ts) and authenticated by the
    * HMAC signature instead: missing secret, missing or bad signature -> 401.
@@ -986,22 +1025,7 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
       if (deal?.companyId) {
         await applyPaidCreditPurchases(tx, { operatorWorkspaceId: paid.workspaceId, accountId: deal.companyId, requestId: paid.requestId });
       }
-    }, async (tx, refunded) => {
-      // COPS-04 Q4: a refund takes back the credits that payment bought.
-      const [deal] = await tx
-        .select({ companyId: schema.deals.companyId })
-        .from(schema.deals)
-        .where(and(eq(schema.deals.id, refunded.opportunityId), eq(schema.deals.workspaceId, refunded.workspaceId)))
-        .limit(1);
-      if (deal?.companyId && refunded.paymentRequestId) {
-        await reverseRefundedCreditPurchase(tx, {
-          operatorWorkspaceId: refunded.workspaceId,
-          accountId: deal.companyId,
-          paymentRequestId: refunded.paymentRequestId,
-          requestId: refunded.requestId,
-        });
-      }
-    });
+    }, onPaymentRefunded);
     if (result.kind === "unauthorized") {
       return reply.status(401).send(copsErrorBody({ code: "UNAUTHENTICATED", message: "Invalid webhook signature", requestId }));
     }

@@ -89,6 +89,17 @@ export function createRazorpayPaymentLinkAdapter(config: Env, fetchImpl: FetchLi
       return { providerRef: link.id, checkoutUrl: link.short_url };
     },
 
+    async refundPayment(providerPaymentId, amountMinor, notes) {
+      const res = await fetchImpl(`${RAZORPAY_API}/payments/${encodeURIComponent(providerPaymentId)}/refund`, {
+        method: "POST",
+        headers: { Authorization: razorpayAuthHeader(config.RAZORPAY_KEY_ID!, config.RAZORPAY_KEY_SECRET!), "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: amountMinor, speed: "normal", notes }),
+      });
+      if (!res.ok) throw new PspRequestError(res.status, (await res.text()).slice(0, 300));
+      const refund = (await res.json()) as { id: string };
+      return { refundId: refund.id };
+    },
+
     async cancelPaymentLink(providerRef) {
       const res = await fetchImpl(`${RAZORPAY_API}/payment_links/${encodeURIComponent(providerRef)}/cancel`, {
         method: "POST",

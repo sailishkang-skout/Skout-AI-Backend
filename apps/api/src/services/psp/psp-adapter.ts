@@ -32,6 +32,8 @@ export interface PspAdapter {
   isConfigured(): boolean;
   /** Stops a link from being paid (Razorpay: POST /payment_links/:id/cancel). */
   cancelPaymentLink?(providerRef: string): Promise<void>;
+  /** Refunds a captured payment in full (Razorpay: POST /payments/:id/refund). Returns the refund id. */
+  refundPayment?(providerPaymentId: string, amountMinor: number, notes: Record<string, string>): Promise<{ refundId: string }>;
   /** False when links in this currency cannot be paid yet (international payments not enabled). */
   supportsCurrency?(currency: string): boolean;
   createPaymentLink(input: {

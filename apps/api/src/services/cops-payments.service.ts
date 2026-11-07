@@ -394,3 +394,48 @@ export async function cancelPaymentRequest(db: Db, psp: PspAdapter, ctx: Commerc
     });
   });
 }
+
+/**
+ * Refunds a paid link in full at the provider, then marks it refunded here and runs the same
+ * follow-up as a provider "refunded" event (credits it bought are taken back). The provider's own
+ * refunded webhook arriving later changes nothing.
+ */
+export async function refundPaymentRequest(db: Db, psp: PspAdapter, ctx: CommercialContext, id: string, reason: string, onRefunded?: OnPaymentChange): Promise<void> {
+  const [pr] = await db.select().from(paymentRequests).where(and(eq(paymentRequests.workspaceId, ctx.workspaceId), eq(paymentRequests.id, id))).limit(1);
+  if (!pr) throw new CommercialError("NOT_FOUND", "Payment request not found");
+  if (pr.status !== "paid") throw new CommercialError("BUSINESS_STATE_CONFLICT", `Only a paid link can be refunded; this one is ${pr.status}`, { status: pr.status });
+  if (!pr.providerPaymentId || !psp.refundPayment) {
+    throw new CommercialError("BUSINESS_STATE_CONFLICT", "The provider's payment id is missing, so this refund has to be made in the provider's dashboard", {});
+  }
+  let refundId: string;
+  try {
+    ({ refundId } = await psp.refundPayment(pr.providerPaymentId, Number(pr.amountMinor), { payment_request_id: pr.id, reason: reason.slice(0, 200) }));
+  } catch (error) {
+    if (error instanceof PspRequestError) {
+      let why = "";
+      try {
+        why = String((JSON.parse(error.providerMessage) as { error?: { description?: unknown } }).error?.description ?? "");
+      } catch {
+        why = "";
+      }
+      throw new CommercialError("PROVIDER_ERROR", why ? `The payment provider did not refund: ${why}` : "The payment provider did not refund this payment", { provider_status: error.providerStatus });
+    }
+    throw error;
+  }
+  const at = new Date();
+  await db.transaction(async (tx) => {
+    await tx.update(paymentRequests).set({ status: "refunded", statusChangedAt: at, updatedAt: at }).where(eq(paymentRequests.id, pr.id));
+    await writeCopsAudit(tx, {
+      tenantId: ctx.workspaceId,
+      actor: { type: "user", id: ctx.userId },
+      entityType: "payment_request",
+      entityId: pr.id,
+      action: "payment_request.refunded",
+      before: { status: "paid" },
+      after: { status: "refunded", amount_minor: Number(pr.amountMinor), currency: pr.currency, provider_refund_id: refundId, reason },
+      correlationId: ctx.requestId,
+      sourceChannel: "api",
+    });
+    if (onRefunded) await onRefunded(tx as unknown as Db, { workspaceId: pr.workspaceId, opportunityId: pr.opportunityId, requestId: ctx.requestId, paymentRequestId: pr.id });
+  });
+}
