@@ -67,6 +67,35 @@ body.side-panel {
   padding-left: 16px;
 }
 
+.capture-person-preview {
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #0f172a;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.capture-person-preview section + section {
+  margin-top: 8px;
+}
+
+.capture-person-preview h3 {
+  margin: 0 0 4px;
+  font-size: 11px;
+}
+
+.capture-person-preview ul {
+  margin: 0;
+  padding-left: 16px;
+  color: #cbd5e1;
+}
+
+.capture-person-preview .capture-empty {
+  color: #fcd34d;
+}
+
 .capture-banner {
   margin: 0 0 8px;
   padding: 8px;

@@ -79,6 +79,65 @@ describe("person profile extraction", () => {
       expect(serialized).not.toContain(chrome);
     }
   });
+
+  it("reads email and phone only from a visible, already-open Contact Info dialog", () => {
+    const visible = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/",
+      html: '<main><h1>Jane Doe</h1><section aria-label="Contact Info"><a href="mailto:jane@example.com">jane@example.com</a><a href="tel:+15550100">+1 555 0100</a></section></main>',
+      files: EXTRACT_FILES,
+    });
+    expect(visible.SkoutCapturePage.extractPerson()._contactInfo).toMatchObject({
+      email: "jane@example.com",
+      phone: "+15550100",
+    });
+    expect(visible.SkoutCapturePage.extractPerson()).toMatchObject({
+      email: "jane@example.com",
+      phone: "+15550100",
+    });
+
+    const headingModal = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/",
+      html: '<main><h1>Jane Doe</h1><div role="dialog"><h2>Contact info</h2><a href="mailto:jane@example.com?subject=Profile">Email</a><a href="tel:%2B15550100">Phone</a></div></main>',
+      files: EXTRACT_FILES,
+    });
+    expect(headingModal.SkoutCapturePage.extractPerson()).toMatchObject({
+      email: "jane@example.com",
+      phone: "+15550100",
+    });
+
+    const hidden = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/",
+      html: '<main><h1>Jane Doe</h1><section aria-label="Contact Info" aria-hidden="true"><a href="mailto:jane@example.com">jane@example.com</a></section></main>',
+      files: EXTRACT_FILES,
+    });
+    expect(hidden.SkoutCapturePage.extractPerson()._contactInfo).toBeUndefined();
+  });
+
+  it("keeps school-only education entries and captures a full connection-degree label", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/",
+      html: `
+        <main>
+          <section id="ProfileTopcard" data-view-name="profile-topcard">
+            <h1>Jane Doe</h1>
+            <p>1st degree connection</p>
+          </section>
+          <div componentkey="profile.EducationTopLevelSection">
+            <ul><li><a href="/school/ut-austin/"></a><p>University of Texas</p></li></ul>
+          </div>
+          <div componentkey="profile.SkillsTopLevelSection">
+            <ul><li><div><div>Discovery Sales</div><div><span>Endorsed by 3 colleagues</span></div></div></li></ul>
+          </div>
+        </main>
+      `,
+      files: EXTRACT_FILES,
+    });
+    const person = window.SkoutCapturePage.extractPerson();
+
+    expect(person.educations).toEqual([{ school: "University of Texas", degree: undefined, dates: undefined, activities: undefined, description: undefined }]);
+    expect(person.skills).toEqual([{ name: "Discovery Sales", endorsements: undefined }]);
+    expect(person.relationshipContext).toMatchObject({ degree: 1, isDirectConnection: true });
+  });
 });
 
 const COMPANY_ABOUT_HTML = `
@@ -116,7 +175,104 @@ const COMPANY_PEOPLE_HTML = `
   <a href="/in/header-link/">12 mutual connections</a>
 </main>`;
 
+const CURRENT_SDUI_COMPANY_HTML = `
+<main>
+  <div id="pages.topCard.company.69007278">
+    <h2>Drata</h2>
+    <p>Drata is the Agentic Trust Management Platform.</p>
+    <img src="https://media.licdn.com/company-logo/drata" alt="Drata logo">
+    <div>
+      <p>Software Development</p><p>·</p>
+      <p><a href="/products/?productCategory=payroll">Payroll Software</a></p><p>·</p>
+      <p>San Francisco, California</p><p>·</p><p>101K followers</p><p>·</p><p>501-1K employees</p>
+    </div>
+    <a aria-label="Search more employees" href="https://www.linkedin.com/search/results/people/?currentCompany=%5B%2269007278%22%5D">Search more employees</a>
+  </div>
+  <section>
+    <div><h2>Overview</h2><p>Drata provides the trust network that enables businesses to operate, scale, and partner with confidence.</p></div>
+    <div>
+      <div><div><p>Website</p></div><div><p><a href="https://drata.com">https://drata.com</a></p></div></div>
+      <div><div><p>Industry</p></div><div><p>Software Development</p></div></div>
+      <div><div><p>Company size</p></div><div><p>501-1,000 employees</p></div></div>
+      <div><div><p>Headquarters</p></div><div><p>San Francisco, California</p></div></div>
+      <div><div><p>Founded</p></div><div><p>2020</p></div></div>
+      <div><div><p>Specialties</p></div><div><p>compliance, cybersecurity, SOC 2</p></div></div>
+    </div>
+  </section>
+</main>`;
+
 describe("company page extraction", () => {
+  it("extracts current SDUI company top-card and About label/value rows", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/company/drata/about/",
+      html: CURRENT_SDUI_COMPANY_HTML,
+      files: EXTRACT_FILES,
+    });
+    const company = window.SkoutCapturePage.extractCompany();
+
+    expect(company).toMatchObject({
+      publicId: "drata",
+      name: "Drata",
+      tagline: "Drata is the Agentic Trust Management Platform.",
+      industry: "Software Development",
+      headquarter: "San Francisco, California",
+      followers: 101000,
+      size: "501-1,000",
+      logoUrl: "https://media.licdn.com/company-logo/drata",
+      website: "https://drata.com",
+      domain: "drata.com",
+      foundedAt: "2020",
+      specialties: ["compliance", "cybersecurity", "SOC 2"],
+    });
+    expect(company._peopleSearchUrl).toContain("currentCompany=");
+    expect(company.sectionCaptures.about.text).toContain("Company size: 501-1,000 employees");
+  });
+
+  it("collects a current SDUI About page through the full-page reader", async () => {
+    let listener;
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/company/drata/about/",
+      html: CURRENT_SDUI_COMPANY_HTML,
+      chrome: {
+        runtime: {
+          id: "test-extension",
+          onMessage: { addListener(callback) { listener = callback; } },
+          sendMessage: async () => undefined,
+        },
+      },
+      files: [...EXTRACT_FILES, "capture/company-capture.js"],
+    });
+    const result = await new Promise((resolve) => {
+      const asyncResponse = listener(
+        { type: "COLLECT_COMPANY_PAGE", companyId: "drata", url: "https://www.linkedin.com/company/drata/about/" },
+        { id: "test-extension" },
+        resolve,
+      );
+      expect(asyncResponse).toBe(true);
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.data).toMatchObject({
+      name: "Drata",
+      website: "https://drata.com",
+      sectionCaptures: {
+        about: expect.objectContaining({ method: "rendered-dom", sourceUrl: "https://www.linkedin.com/company/drata/about/" }),
+      },
+    });
+    expect(result.data.sectionCaptures.about.text).toContain("Specialties: compliance, cybersecurity, SOC 2");
+  });
+
+  it("captures visible company information from the canonical /home/ page", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/company/acme-robotics/home/",
+      html: "<main><h1>Acme Robotics</h1><p>Robotics Engineering</p><p>Austin, Texas</p></main>",
+      files: EXTRACT_FILES,
+    });
+    const company = window.SkoutCapturePage.extractCompany();
+    expect(company.name).toBe("Acme Robotics");
+    expect(company.sectionCaptures.home.text).toContain("Acme Robotics");
+  });
+
   it("reads the About tab and the exact visible member count", () => {
     const window = loadCapturePage({ url: "https://www.linkedin.com/company/acme-robotics/about/", html: COMPANY_ABOUT_HTML, files: EXTRACT_FILES });
     const company = window.SkoutCapturePage.extractCompany();
@@ -151,6 +307,16 @@ describe("company page extraction", () => {
     ]);
   });
 
+  it("normalizes LinkedIn's /home/ company route to the canonical company root", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/company/acme-robotics/home/",
+      html: "<main><h1>Acme Robotics</h1></main>",
+      files: [...EXTRACT_FILES, "capture/company-capture.js"],
+    });
+    expect(window.SkoutCompanyCapture.pageUrl(window.location.href, "acme-robotics"))
+      .toBe("https://www.linkedin.com/company/acme-robotics/");
+  });
+
   it("treats a recommendations rail as no evidence of employment", () => {
     const html = COMPANY_PEOPLE_HTML.replace("<main>", "<main><h2>People you may know</h2>");
     const window = loadCapturePage({ url: "https://www.linkedin.com/company/acme-robotics/people/", html, files: EXTRACT_FILES });
@@ -159,6 +325,46 @@ describe("company page extraction", () => {
 });
 
 describe("person capture run", () => {
+  async function collectAfterSectionLoads(sectionName, detailPath, sectionMarkup, onScroll = () => {}) {
+    let reader;
+    const chrome = {
+      runtime: {
+        id: "test-extension",
+        onMessage: { addListener(listener) { reader = listener; } },
+      },
+    };
+    const window = loadCapturePage({
+      url: `https://www.linkedin.com/in/jane-doe/${detailPath}/`,
+      html: "<main><h1>Jane Doe</h1></main>",
+      chrome,
+      files: [...EXTRACT_FILES, "capture/person-capture.js"],
+    });
+    window.scrollTo = () => {};
+    window.scrollBy = (...args) => onScroll(window, ...args);
+    window.setTimeout(() => {
+      const section = window.document.createElement("div");
+      section.innerHTML = sectionMarkup;
+      window.document.querySelector("main").append(section);
+    }, 650);
+
+    try {
+      return await new Promise((resolve, reject) => {
+        reader(
+          {
+            type: "COLLECT_PERSON_PAGE",
+            personId: "jane-doe",
+            url: `https://www.linkedin.com/in/jane-doe/${detailPath}/`,
+          },
+          { id: "test-extension" },
+          resolve,
+        );
+        window.setTimeout(() => reject(new Error(`${sectionName} section did not resolve`)), 8_000);
+      });
+    } finally {
+      window.close();
+    }
+  }
+
   it("only opens this profile's own allowlisted pages and hands the result over for review", async () => {
     const opened = [];
     const sent = [];
@@ -206,6 +412,211 @@ describe("person capture run", () => {
     // The detail page's higher endorsement count wins; names are not duplicated.
     expect(review.data.skills.map((skill) => `${skill.name}:${skill.endorsements}`).sort()).toEqual(["Forecasting:3", "Negotiation:undefined", "enterprise sales:40"]);
     expect(sent.at(-1)).toMatchObject({ type: "SKOUT_CAPTURE_PROGRESS", active: false });
+  });
+
+  it("waits for the Education section to hydrate after the profile shell", async () => {
+    const result = await collectAfterSectionLoads(
+      "Education",
+      "details/education",
+      '<div componentkey="profile.EducationDetailsSection"><div id="com.linkedin.sdui.profile.education(1)"><p>IIT Bombay</p><p>B.Tech</p></div></div>',
+    );
+
+    expect(result.data.educations).toEqual([
+      { school: "IIT Bombay", degree: "B.Tech", activities: undefined, description: undefined },
+    ]);
+  });
+
+  it("collects education entries that render as the detail page scrolls", async () => {
+    let appended = false;
+    const result = await collectAfterSectionLoads(
+      "Education",
+      "details/education",
+      '<div componentkey="profile.EducationDetailsSection"><div componentkey="entity-collection-item-1"><p>University of Toronto</p><p>Master of Science</p></div></div>',
+      (window) => {
+        if (appended) return;
+        appended = true;
+        const row = window.document.createElement("div");
+        row.setAttribute("componentkey", "entity-collection-item-2");
+        row.innerHTML = "<p>University of Waterloo</p><p>Bachelor of Mathematics</p>";
+        window.document.querySelector('[componentkey="profile.EducationDetailsSection"]').append(row);
+      },
+    );
+
+    expect(result.data.educations?.map((item) => item.school)).toEqual([
+      "University of Toronto",
+      "University of Waterloo",
+    ]);
+  });
+
+  it("waits for the Skills section to hydrate before collecting the rendered list", async () => {
+    const result = await collectAfterSectionLoads(
+      "Skills",
+      "details/skills",
+      '<div componentkey="profile.SkillsDetailsSection"><ul><li><p>Revenue Operations</p></li></ul></div>',
+    );
+
+    expect(result.data.skills).toEqual([{ name: "Revenue Operations", endorsements: undefined }]);
+  });
+
+  it("recognizes the current singular SkillDetails component while collecting", async () => {
+    const result = await collectAfterSectionLoads(
+      "Skills",
+      "details/skills",
+      '<div componentkey="com.linkedin.sdui.profile.card.ref123SkillDetails"><p>HR Operations</p><p>Microsoft Office</p></div>',
+    );
+
+    expect(result.data.skills?.map((skill) => skill.name)).toEqual(["HR Operations", "Microsoft Office"]);
+  });
+
+  it("extracts unlinked education labels and skill-insight links without list rows", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/details/education/",
+      html: `
+        <main>
+          <div componentkey="profile.EducationDetailsSection">
+            <div data-view-name="profile-component-entity">
+              <span>University of Toronto</span><span>Master of Science</span><span>2019 - 2021</span>
+            </div>
+          </div>
+          <div componentkey="profile.SkillsDetailsSection">
+            <div><a href="/in/jane-doe/skill-insights/forecasting/">Forecasting</a></div>
+          </div>
+        </main>
+      `,
+      files: EXTRACT_FILES,
+    });
+    const person = window.SkoutCapturePage.extractPerson();
+
+    expect(person.educations).toEqual([
+      { school: "University of Toronto", degree: "Master of Science", dates: "2019 - 2021", activities: undefined, description: undefined },
+    ]);
+    expect(person.skills).toEqual([{ name: "Forecasting", endorsements: undefined }]);
+  });
+
+  it("finds education and skills below generic section headings without component keys", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/details/education/",
+      html: `
+        <main>
+          <div>
+            <div role="heading" aria-level="2">Education</div>
+            <div class="education-row"><div>University of Toronto</div><div>Master of Science</div><div>2019 - 2021</div></div>
+            <div class="education-row"><div>University of Waterloo</div><div>Bachelor of Mathematics</div><div>2015 - 2019</div></div>
+          </div>
+          <div>
+            <div role="heading" aria-level="2">Skills</div>
+            <p>Forecasting</p><p>SQL</p><p>Endorsed by 3 colleagues</p>
+          </div>
+          <aside><h2>People you may know</h2><p>Suggested contact</p></aside>
+        </main>
+      `,
+      files: EXTRACT_FILES,
+    });
+    const person = window.SkoutCapturePage.extractPerson();
+
+    expect(person.educations).toHaveLength(2);
+    expect(person.educations?.map((item) => item.school)).toEqual(["University of Toronto", "University of Waterloo"]);
+    expect(person.skills?.map((skill) => skill.name)).toEqual(["Forecasting", "SQL"]);
+    expect(JSON.stringify(person)).not.toContain("Suggested contact");
+  });
+
+  it("captures multiple plain education rows and unstructured skill labels", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/details/education/",
+      html: `
+        <main>
+          <div componentkey="profile.EducationDetailsSection">
+            <div id="com.linkedin.sdui.profile.education(1)">
+              <p>University of Toronto</p><p>Master of Science</p><p>2019 - 2021</p>
+            </div>
+            <div class="plain-education-row">
+              <p>University of Waterloo</p><p>Bachelor of Mathematics</p><p>2015 - 2019</p>
+            </div>
+          </div>
+          <div componentkey="profile.SkillsDetailsSection">
+            <p>Forecasting</p><p>SQL</p><p>Endorsed by 3 colleagues</p>
+          </div>
+        </main>
+      `,
+      files: EXTRACT_FILES,
+    });
+    const person = window.SkoutCapturePage.extractPerson();
+
+    expect(person.educations).toEqual([
+      { school: "University of Toronto", degree: "Master of Science", dates: "2019 - 2021", activities: undefined, description: undefined },
+      { school: "University of Waterloo", degree: "Bachelor of Mathematics", dates: "2015 - 2019", activities: undefined, description: undefined },
+    ]);
+    expect(person.skills).toEqual([
+      { name: "Forecasting", endorsements: undefined },
+      { name: "SQL", endorsements: undefined },
+    ]);
+  });
+
+  it("extracts Education and mixed Skills rows from LinkedIn's current detail-page components", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/in/aditya-chauhan-4a3aa2b9/details/education/",
+      html: `
+        <main>
+          <div componentkey="com.linkedin.sdui.profile.card.ref123EducationDetailsSection">
+            <div componentkey="education-row-one">
+              <a href="/school/9059894/"><figure></figure></a>
+              <div><a href="/school/9059894/"><div><div>
+                <p>Amity University Gurugram</p>
+                <p>Master of Business Administration (M.B.A.), HR &amp; International business</p>
+                <p>2013 – 2015</p>
+              </div></div></a><p>Grade: A</p></div>
+            </div>
+            <div componentkey="education-row-two">
+              <a href="/school/13191775/"><figure></figure></a>
+              <div><a href="/school/13191775/"><div><div>
+                <p>Chetana's Institute of Management &amp; Research</p>
+                <p>BMS, Business Administration and Management, General</p>
+                <p>2009 – 2012</p>
+              </div></div></a></div>
+            </div>
+          </div>
+          <div componentkey="com.linkedin.sdui.profile.card.ref123SkillDetails">
+            <div><p>Skills</p><nav><button>All</button><button>Industry Knowledge</button><button>Tools &amp; Technologies</button></nav></div>
+            <div id="com.linkedin.sdui.profile.skill(profile123, 2141250545)">
+              <p>HR Operations</p>
+              <ul><li><p>2 experiences at Paytm and 1 other company</p></li></ul>
+            </div>
+            <p>Microsoft Office</p><p>Management</p><p>Microsoft Excel</p><p>Microsoft Word</p>
+            <p>Research</p><p>PowerPoint</p><p>Sales</p><p>Photoshop</p>
+          </div>
+        </main>
+      `,
+      files: EXTRACT_FILES,
+    });
+    const person = window.SkoutCapturePage.extractPerson();
+
+    expect(person.educations).toEqual([
+      { school: "Amity University Gurugram", degree: "Master of Business Administration (M.B.A.), HR & International business", dates: "2013 – 2015", activities: undefined, description: undefined },
+      { school: "Chetana's Institute of Management & Research", degree: "BMS, Business Administration and Management, General", dates: "2009 – 2012", activities: undefined, description: undefined },
+    ]);
+    expect(person.skills?.map((skill) => skill.name)).toEqual([
+      "HR Operations", "Microsoft Office", "Management", "Microsoft Excel",
+      "Microsoft Word", "Research", "PowerPoint", "Sales", "Photoshop",
+    ]);
+  });
+
+  it("extracts skills rendered as plain div labels on the Skills detail page", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/details/skills/",
+      html: `
+        <main>
+          <div componentkey="profile.SkillsDetailsSection">
+            <div>Forecasting</div><div>SQL</div><div>Endorsed by 3 colleagues</div>
+          </div>
+        </main>
+      `,
+      files: EXTRACT_FILES,
+    });
+
+    expect(window.SkoutCapturePage.extractPerson().skills).toEqual([
+      { name: "Forecasting", endorsements: undefined },
+      { name: "SQL", endorsements: undefined },
+    ]);
   });
 });
 

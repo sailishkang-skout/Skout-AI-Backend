@@ -17,8 +17,87 @@ const stateKey = "company-people-capture:example";
 
 timing.delay = () => Promise.resolve();
 
+describe("company page URL normalization", () => {
+  it("treats LinkedIn's /home/ route as the company root", () => {
+    expect(__test.companyReadUrl("https://www.linkedin.com/company/example/home/", "example"))
+      .toBe("https://www.linkedin.com/company/example/");
+    expect(__test.companyReadUrl("https://www.linkedin.com/company/example/", "example"))
+      .toBe("https://www.linkedin.com/company/example/");
+    expect(__test.companyReadUrl("https://www.linkedin.com/company/other/home/", "example"))
+      .toBeUndefined();
+  });
+
+  it("reads a company page when the initiating LinkedIn tab is on /home/", async () => {
+    const previousChrome = globalThis.chrome;
+    const readMessages = [];
+    globalThis.chrome = {
+      storage: { local: { async get(key) { return { [key]: undefined }; } } },
+      tabs: {
+        async create({ url }) { return { id: 100, url }; },
+        async get() { return { url: "https://www.linkedin.com/company/example/home/" }; },
+        async sendMessage(_tabId, message) {
+          readMessages.push(message);
+          if (message.type === "COMPANY_READER_READY") return { ok: true, url: "https://www.linkedin.com/company/example/" };
+          return {
+            ok: true,
+            data: { publicId: "example", name: "Example Company", sectionCaptures: { home: { text: "Example Company" } } },
+          };
+        },
+        async remove() {},
+      },
+    };
+    __test.deps.skoutFetch = async () => ({ enabled: true });
+
+    try {
+      const result = await handleCaptureMessage({
+        type: "READ_COMPANY_PAGE",
+        companyId: "example",
+        url: "https://www.linkedin.com/company/example/",
+      }, {
+        tab: { id: 7 },
+        frameId: 0,
+        url: "https://www.linkedin.com/feed/",
+      });
+      expect(result).toMatchObject({
+        ok: true,
+        data: { name: "Example Company", sectionCaptures: { home: { text: "Example Company" } } },
+      });
+      expect(readMessages.map((message) => message.type)).toEqual([
+        "COMPANY_READER_READY",
+        "COLLECT_COMPANY_PAGE",
+      ]);
+    } finally {
+      globalThis.chrome = previousChrome;
+    }
+  });
+
+  it("rejects a matching but stale sender URL when the live tab is on another company", async () => {
+    const previousChrome = globalThis.chrome;
+    globalThis.chrome = {
+      tabs: {
+        async get() { return { url: "https://www.linkedin.com/company/other-company/" }; },
+      },
+    };
+
+    try {
+      const result = await handleCaptureMessage({
+        type: "READ_COMPANY_PAGE",
+        companyId: "example",
+        url: "https://www.linkedin.com/company/example/",
+      }, {
+        tab: { id: 7 },
+        frameId: 0,
+        url: "https://www.linkedin.com/company/example/home/",
+      });
+      expect(result).toEqual({ ok: false, error: "Capture must start on this company’s LinkedIn page." });
+    } finally {
+      globalThis.chrome = previousChrome;
+    }
+  });
+});
+
 /** A company-filtered people search in a temporary tab, ported from the prototype's harness. */
-function harness(totalPages, { failAdvanceAt, profilesPerPage = 1, api } = {}) {
+function harness(totalPages, { failAdvanceAt, profilesPerPage = 1, api, ownerUrl = companyUrl, senderUrl = companyUrl } = {}) {
   const storage = {};
   const tabs = new Map();
   let nextTab = 100;
@@ -28,6 +107,10 @@ function harness(totalPages, { failAdvanceAt, profilesPerPage = 1, api } = {}) {
   globalThis.chrome = {
     runtime: { id: "test-extension" },
     tabs: {
+      async get(id) {
+        if (id === companyTab.tab.id) return { id, url: ownerUrl };
+        throw new Error("Tab closed");
+      },
       async create({ url }) {
         const id = nextTab++;
         tabs.set(id, { page: Number(new URL(url).searchParams.get("page") || 1) });
@@ -85,12 +168,22 @@ function harness(totalPages, { failAdvanceAt, profilesPerPage = 1, api } = {}) {
     return { enabled: true, caps: { dailyLeadLimit: 1000 }, usage: { remainingToday: 1000 } };
   };
   const read = (expectedAssociatedMembers) =>
-    handleCaptureMessage({ type: "READ_COMPANY_PEOPLE_SEARCH", companyId: "example", url: searchUrl, expectedAssociatedMembers }, companyTab);
+    handleCaptureMessage({ type: "READ_COMPANY_PEOPLE_SEARCH", companyId: "example", url: searchUrl, expectedAssociatedMembers }, { ...companyTab, url: senderUrl });
   const commit = (token) => __test.commitCompanyPeopleCapture({ companyId: "example", token });
   return { storage, read, commit, requests, tabs };
 }
 
 describe("company people discovery", () => {
+  it("reads associated people when LinkedIn's sender URL is stale but the live tab is still the company", async () => {
+    const { read } = harness(1, {
+      ownerUrl: "https://www.linkedin.com/company/example/home/",
+      senderUrl: "https://www.linkedin.com/feed/",
+    });
+    const result = await read(1);
+    expect(result.ok).toBe(true);
+    expect(result.peopleProfiles).toHaveLength(1);
+  });
+
   it("reviews 10-page batches and commits a cursor until the final visible page", async () => {
     const { read, commit, storage } = harness(43);
     const ids = [];
