@@ -48,7 +48,16 @@ export async function copsRolesRoutes(app: FastifyInstance) {
   const userParams = z.object({ userId: z.string().uuid() });
 
   async function ctxOf(r: { workspaceId?: string; userId?: string; headers: Record<string, unknown> }): Promise<RoleCtx> {
-    return { workspaceId: r.workspaceId!, userId: r.userId!, requestId: resolveCorrelationId(r.headers["x-request-id"] as string | undefined), permissions: await perms(r.workspaceId!, r.userId!) };
+    const internalWorkspace = !!app.config.INTERNAL_WORKSPACE_ID && r.workspaceId === app.config.INTERNAL_WORKSPACE_ID;
+    const role = String((r as { role?: string }).role ?? "");
+    return {
+      workspaceId: r.workspaceId!,
+      userId: r.userId!,
+      requestId: resolveCorrelationId(r.headers["x-request-id"] as string | undefined),
+      permissions: await perms(r.workspaceId!, r.userId!),
+      internalWorkspace,
+      opsAccessGrantor: internalWorkspace && (role === "owner" || role === "admin"),
+    };
   }
   async function run(reply: Reply, requestId: string, fn: () => Promise<unknown>) {
     try {
@@ -72,7 +81,8 @@ export async function copsRolesRoutes(app: FastifyInstance) {
 
   app.get("/cops/roles", gate, async (request, reply) => {
     const ctx = await ctxOf(request);
-    return run(reply, ctx.requestId, async () => ({ data: await listRoles(db(), ctx.workspaceId) }));
+    // The Ops access role exists only in the internal workspace.
+    return run(reply, ctx.requestId, async () => ({ data: (await listRoles(db(), ctx.workspaceId)).filter((r) => ctx.internalWorkspace || r.key !== "ops_access") }));
   });
 
   app.post("/cops/roles", gate, async (request, reply) => {

@@ -38,6 +38,13 @@ const envSchema = z
     OPS_ALERT_WEBHOOK_SECRET: z.string().min(16).optional(),
     /** COPS-07: the workspace whose Admin, owner and Engineering members get operational alerts in the app. */
     OPS_ALERT_WORKSPACE_ID: z.string().uuid().optional(),
+    /** COPS-15: the internal Skout workspace; only its members can hold ops:access. */
+    INTERNAL_WORKSPACE_ID: z.string().uuid().optional(),
+    /**
+     * COPS-15: "true" refuses CustomerOps routes (403) without ops:access in the internal workspace.
+     * Unset or "false" is shadow mode: the guard only logs who it would refuse (safe rollout).
+     */
+    OPS_ACCESS_ENFORCED: z.enum(["true", "false"]).optional(),
     TRUST_PROXY: z
       .string()
       .optional()
