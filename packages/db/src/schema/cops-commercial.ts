@@ -403,6 +403,8 @@ export const subscriptionItems = pgTable(
     quantity: integer("quantity").notNull(),
     /** Per unit per month, in minor units of the subscription currency. */
     unitAmountMinor: bigint("unit_amount_minor", { mode: "number" }).notNull(),
+    /** What the customer bought, as the proposal named it (e.g. "Skout Full Multichannel"). */
+    description: text("description"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("subscription_items_subscription_idx").on(t.subscriptionId), index("subscription_items_workspace_idx").on(t.workspaceId)]
