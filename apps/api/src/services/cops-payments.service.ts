@@ -117,6 +117,10 @@ export async function createPaymentRequest(db: Db, psp: PspAdapter, ctx: Commerc
     }
   }
   currency ??= opportunity.currency;
+  // International checkout stays off until the account can accept it (Razorpay KYC).
+  if (psp.supportsCurrency && !psp.supportsCurrency(currency)) {
+    throw new CommercialError("BUSINESS_STATE_CONFLICT", `International payments are not enabled yet, so a ${currency} payment link cannot be made. Use INR, or ask Finance.`, { currency });
+  }
   if (!amountMinor || amountMinor < 100) {
     throw new CommercialError("VALIDATION_FAILED", "amount_minor is required (at least 100 minor units)", {
       fields: [{ path: "amount_minor", code: "required", message: "Required unless proposal_id is given" }],

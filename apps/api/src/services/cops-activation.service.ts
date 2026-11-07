@@ -372,6 +372,15 @@ export async function collectProductSignals(db: Db, instance: { customerWorkspac
     .limit(1);
   if (team) signals.push({ key: "team_invited", sourceRef: team.id, sourceType: "invite.sent", occurredAt: team.at });
 
+  // Activation (CEO sign-off): the first email the customer's workspace actually sent to a prospect.
+  const sent = await db.execute(sql`
+    select m.id::text as id, m.sent_at as at
+      from inbox_messages m join inbox_threads th on th.id = m.thread_id
+     where th.workspace_id = ${ws} and m.direction = 'outbound'
+     order by m.sent_at asc limit 1`);
+  const [campaign] = (Array.isArray(sent) ? sent : ((sent as { rows?: unknown[] }).rows ?? [])) as { id: string; at: Date | string }[];
+  if (campaign) signals.push({ key: "first_campaign_sent", sourceRef: campaign.id, sourceType: "product.campaign_sent", occurredAt: new Date(campaign.at) });
+
   return signals;
 }
 

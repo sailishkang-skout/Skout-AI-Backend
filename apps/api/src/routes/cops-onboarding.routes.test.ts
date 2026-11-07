@@ -331,7 +331,8 @@ maybe("COPS-05 onboarding email routes", () => {
     const m = act.milestones.find((x: { key: string }) => x.key === "first_export");
     expect(m.completed_at).not.toBeNull();
     expect(m.evidence).toMatchObject({ source_type: "product.export", analytics_event_id: `ph-${RUN}-1` });
-    expect(act.activation_pct).toBe(35);
+    // Export is tracked but no longer counts toward activation (only the first campaign sent does).
+    expect(act.activation_pct).toBe(0);
   });
 
   it("Engineering cannot send or read onboarding email", async () => {

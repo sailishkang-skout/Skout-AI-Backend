@@ -41,6 +41,11 @@ export const slaPolicySchema = z
     pauseStatuses: z.array(z.string()).default(["waiting_on_customer"]),
     /** Share of the target after which the clock is at risk and escalated. */
     atRiskRatio: z.number().gt(0).lt(1).default(0.75),
+    /**
+     * Round-the-clock targets (P1 24x7) need someone on call. Until an on-call rota exists they run
+     * on business hours instead (CEO sign-off: internal targets, not contractual SLAs).
+     */
+    onCallRota: z.boolean().default(false),
   })
   .strict();
 export type SlaPolicy = z.infer<typeof slaPolicySchema>;
@@ -56,15 +61,18 @@ export const DEFAULT_SLA_POLICY: SlaPolicy = {
     p4: { response: BD, resolution: 5 * BD, calendar: "business" },
   },
   tierOverrides: {},
-  calendar: { timezone: "UTC", days: [1, 2, 3, 4, 5], start: "09:00", end: "18:00", holidays: [] },
+  calendar: { timezone: "Asia/Kolkata", days: [1, 2, 3, 4, 5], start: "09:00", end: "18:00", holidays: [] },
   pauseStatuses: ["waiting_on_customer"],
   atRiskRatio: 0.75,
+  onCallRota: false,
 };
 
 export function resolveSlaTarget(policy: SlaPolicy, priority: string, tier: string): SlaTarget {
   const p = (SLA_PRIORITIES as readonly string[]).includes(priority) ? (priority as SlaPriority) : "p3";
   const override = (policy.tierOverrides as Record<string, Partial<Record<SlaPriority, SlaTarget>>>)[tier]?.[p];
-  return override ?? policy.targets[p];
+  const t = override ?? policy.targets[p];
+  // Without an on-call rota nobody works nights, so a 24x7 clock would only ever be missed.
+  return t.calendar === "24x7" && !policy.onCallRota ? { ...t, calendar: "business" } : t;
 }
 
 // ---------- timezone helpers ----------

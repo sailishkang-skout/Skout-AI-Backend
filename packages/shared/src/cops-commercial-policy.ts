@@ -58,6 +58,11 @@ export const approvalPolicySchema = z
     payment_terms_net_days: bands,
     custom_clauses: flagRule.nullable(),
     non_standard_sla: flagRule.nullable(),
+    /**
+     * The people who decide the Executive slot, by user id. Nobody is assumed: until someone is
+     * named, a deal that needs Executive approval cannot get it.
+     */
+    executive_approver_ids: z.array(z.string().uuid()).max(20).optional(),
   })
   .strict();
 export type ApprovalPolicy = z.infer<typeof approvalPolicySchema>;

@@ -107,7 +107,9 @@ describe("COPS-12 SLA clock state", () => {
 describe("COPS-12 SLA policy", () => {
   it("defaults follow the Bible table and validate", () => {
     expect(slaPolicySchema.parse(DEFAULT_SLA_POLICY)).toBeTruthy();
-    expect(resolveSlaTarget(DEFAULT_SLA_POLICY, "p1", "smb")).toEqual({ response: 15, resolution: 240, calendar: "24x7" });
+    // No on-call rota by default, so P1 runs on business hours; with a rota it is 24x7.
+    expect(resolveSlaTarget(DEFAULT_SLA_POLICY, "p1", "smb")).toEqual({ response: 15, resolution: 240, calendar: "business" });
+    expect(resolveSlaTarget({ ...DEFAULT_SLA_POLICY, onCallRota: true }, "p1", "smb")).toEqual({ response: 15, resolution: 240, calendar: "24x7" });
     expect(resolveSlaTarget(DEFAULT_SLA_POLICY, "p2", "smb")).toEqual({ response: 60, resolution: 540, calendar: "business" });
     expect(resolveSlaTarget(DEFAULT_SLA_POLICY, "p4", "smb").resolution).toBe(2700);
   });
