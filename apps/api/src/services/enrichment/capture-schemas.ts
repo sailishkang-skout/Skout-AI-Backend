@@ -93,6 +93,10 @@ export const personIngestSchema = z
     lastName: name.optional(),
     headline: text(500).optional(),
     summary: text(20_000).optional(),
+    email: z.string().trim().email().max(320).optional(),
+    phone: text(80)
+      .refine((value) => (value.match(/\d/g)?.length ?? 0) >= 7 && (value.match(/\d/g)?.length ?? 0) <= 15, "Expected a phone number with 7 to 15 digits")
+      .optional(),
     industry: name.optional(),
     locationName: name.optional(),
     locationCountry: name.optional(),

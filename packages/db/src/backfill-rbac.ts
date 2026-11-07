@@ -44,6 +44,8 @@ const PERMISSION_CATALOG: Array<{ key: string; description: string; category: st
   { key: "enrichment:export", description: "Export workspace enrichment data.", category: "enrichment" },
   { key: "enrichment:delete", description: "Delete workspace enrichment data.", category: "enrichment" },
   { key: "enrichment:admin", description: "Manage enrichment provider connections and settings.", category: "enrichment" },
+  // COPS-15: entry to the CustomerOps portal. Granted explicitly, never through owner/admin.
+  { key: "ops:access", description: "Use the CustomerOps portal (Skout staff only).", category: "ops" },
   ...(["crm", "commercial", "legal", "billing", "credits", "onboarding", "tickets", "analytics", "admin"] as const).flatMap(
     (resource) =>
       (["read", "write", "send", "approve", "refund", "adjust", "export", "admin"] as const).map((verb) => ({
@@ -59,14 +61,15 @@ const SYSTEM_ROLES: Array<{ key: string; name: string; description: string; perm
     key: "owner",
     name: "Owner",
     description: "Full control of the workspace, including billing and team management.",
-    permissionKeys: PERMISSION_CATALOG.map((p) => p.key),
+    permissionKeys: PERMISSION_CATALOG.filter((p) => p.key !== "ops:access").map((p) => p.key),
   },
   {
     key: "admin",
     name: "Admin",
     description: "Manages team, automation, and day-to-day workspace operation. Cannot manage billing.",
-    permissionKeys: PERMISSION_CATALOG.filter((p) => p.key !== "billing:manage").map((p) => p.key),
+    permissionKeys: PERMISSION_CATALOG.filter((p) => p.key !== "billing:manage" && p.key !== "ops:access").map((p) => p.key),
   },
+  { key: "ops_access", name: "Ops access", description: "Can use the CustomerOps portal. Internal Skout workspace only.", permissionKeys: ["ops:access"] },
   {
     key: "member",
     name: "Member",

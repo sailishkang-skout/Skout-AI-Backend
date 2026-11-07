@@ -3,7 +3,7 @@ import { clearAuthToken, getStoredAuth, isAuthFresh, ensureSession } from "./aut
 import { getConfig } from "./api.js";
 import { getLastListId, saveLastListId } from "./lists-cache.js";
 import { friendlyTabError, findLinkedInProfileTabId } from "./tab-utils.js";
-import { ensureSkoutHostPermissions, normalizeSkoutBase, normalizeApiUrl, skoutSignInHint, DEFAULT_API_URL, DEFAULT_WEB_URL } from "./skout-urls.js";
+import { ensureSkoutHostPermissions, normalizeSkoutBase, normalizeApiUrl, skoutAppUrl, skoutSignInHint, DEFAULT_API_URL, DEFAULT_WEB_URL } from "./skout-urls.js";
 import { withTimeout } from "./debug.js";
 
 const BACKGROUND_TIMEOUT_MS = 35_000;
@@ -49,6 +49,8 @@ export function initPanel() {
   const enrollBtn = document.getElementById("enroll-sequence");
   const enrollConfirmEl = document.getElementById("enroll-confirm");
   const enrollConfirmLinkEl = document.getElementById("enroll-confirm-link");
+  const sequenceEmptyGuidanceEl = document.getElementById("sequence-empty-guidance");
+  const openSequencesLinkEl = document.getElementById("open-sequences-link");
 
   // Tracks the HITL state from the most recent ICP score so enroll can gate on it.
   let lastRequiresHitl = false;
@@ -492,7 +494,7 @@ export function initPanel() {
     });
   }
 
-  function noEnrichmentDataMessage(attempts = []) {
+  function noEnrichmentDataMessage(attempts = [], fields = []) {
     if (!Array.isArray(attempts)) attempts = [];
     const failedProviders = [...new Set(
       attempts.filter((attempt) => attempt.status === "error").map((attempt) => attempt.provider)
@@ -508,6 +510,9 @@ export function initPanel() {
         return "No contact data matched. Phone lookup was skipped because a full name is required.";
       }
       return "No contact data matched. Phone lookup was skipped because the lead score did not meet its threshold.";
+    }
+    if (fields.includes("email") || fields.includes("phone") || fields.includes("validation")) {
+      return "No contact match returned. Check that an authorized enrichment provider is configured in Skout. Email validation only runs when an email address is available; it does not validate a LinkedIn profile.";
     }
     return "No matching enrichment data returned. Confirm provider access and the prospect's company details.";
   }
@@ -604,7 +609,7 @@ export function initPanel() {
       if (hasEnrichmentData(results, fields)) {
         setStatus(`Enrichment completed for ${started.fullName}.`);
       } else {
-        setStatus(noEnrichmentDataMessage(outcome.attempts));
+        setStatus(noEnrichmentDataMessage(outcome.attempts, fields));
       }
     } catch (error) {
       enrichResultsEl?.querySelectorAll(".enrich-result-value").forEach((el) => {
@@ -617,7 +622,7 @@ export function initPanel() {
         enrichCreditsHintEl.classList.remove("hidden");
         const config = await getConfig();
         if (enrichTopupLinkEl && config.webUrl) {
-          enrichTopupLinkEl.href = `${config.webUrl.replace(/\/$/, "")}/billing`;
+          enrichTopupLinkEl.href = skoutAppUrl(config.webUrl, "/billing");
         }
         setStatus("Insufficient credits.", true);
       } else {
@@ -662,6 +667,7 @@ export function initPanel() {
 
   async function refreshSequences({ quiet = false } = {}) {
     if (!sequenceSelectEl) return;
+    sequenceEmptyGuidanceEl?.classList.add("hidden");
     if (!quiet) {
       sequenceSelectEl.innerHTML = `<option value="">Loading sequences…</option>`;
       setStatus("Loading sequences…");
@@ -674,22 +680,40 @@ export function initPanel() {
       }
       if (!(await isSignedIn())) {
         sequenceSelectEl.innerHTML = `<option value="">Sign in to Skout first</option>`;
+        sequenceEmptyGuidanceEl?.classList.add("hidden");
         return;
       }
       const result = await runInBackground("get-sequences");
       const sequences = result.sequences || [];
-      sequenceSelectEl.innerHTML =
-        sequences.length > 0
-          ? sequences
-              .map((s) => `<option value="${s.id}">${s.name}</option>`)
-              .join("")
-          : `<option value="">No active sequences — create one in Skout</option>`;
+      sequenceSelectEl.replaceChildren();
+      if (sequences.length > 0) {
+        for (const sequence of sequences) {
+          const option = document.createElement("option");
+          option.value = sequence.id;
+          option.textContent = sequence.name;
+          sequenceSelectEl.append(option);
+        }
+        sequenceEmptyGuidanceEl?.classList.add("hidden");
+      } else {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "No active sequences";
+        sequenceSelectEl.append(option);
+        sequenceEmptyGuidanceEl?.classList.remove("hidden");
+        const config = await getConfig();
+        if (openSequencesLinkEl) openSequencesLinkEl.href = skoutAppUrl(config.webUrl, "/sequences");
+      }
       if (!quiet) {
-        setStatus(sequences.length > 0 ? `${sequences.length} sequence(s) ready.` : "Create a sequence in Skout.");
+        setStatus(
+          sequences.length > 0
+            ? `${sequences.length} active sequence(s) ready.`
+            : "No active sequences found. Create or activate one in Skout."
+        );
       }
     } catch (error) {
       const message = friendlyTabError(error instanceof Error ? error.message : "Failed to load sequences");
       sequenceSelectEl.innerHTML = `<option value="">Could not load sequences</option>`;
+      sequenceEmptyGuidanceEl?.classList.add("hidden");
       if (!quiet) setStatus(message, true);
     }
   }
@@ -723,8 +747,12 @@ export function initPanel() {
       const tabId = await findLinkedInTabId();
       await runInBackground("ping").catch(() => undefined);
       const result = await runInBackground("enroll-sequence", { sequenceId, tabId });
+      if (result.enrollment?.enrolled === 0 && result.enrollment?.skipped > 0) {
+        setStatus(`${result.fullName} is already enrolled in this sequence; no new enrollment was created.`);
+        return;
+      }
       const config = await getConfig();
-      const sequenceUrl = `${config.webUrl.replace(/\/$/, "")}/sequences/${sequenceId}`;
+      const sequenceUrl = skoutAppUrl(config.webUrl, `/sequences/${sequenceId}`);
       if (enrollConfirmLinkEl) enrollConfirmLinkEl.href = sequenceUrl;
       if (enrollConfirmEl) enrollConfirmEl.classList.remove("hidden");
       setStatus(`Enrolled ${result.fullName} in sequence.`);

@@ -54,6 +54,11 @@
         prohibits scraping or automating activity with browser extensions: the 10-page / 250-lead cap is a workload
         control, not a safety guarantee. Stop if LinkedIn warns or restricts your account.
       </p>
+      <p class="vision-desc">
+        Use <strong>Capture this profile</strong> for education and work-history details. Email/phone enrichment
+        from an already-open LinkedIn Contact Info dialog can also be saved after review. Captured contact details
+        remain unverified; use the email verification action to check an email address.
+      </p>
       <div id="capture-halt" class="capture-banner hidden" role="alert">
         <p id="capture-halt-text"></p>
         <button id="capture-halt-ack" type="button">I have reviewed this — allow capture again</button>
@@ -81,6 +86,7 @@
       <div id="capture-review" class="hidden">
         <p id="capture-review-title" class="vision-title"></p>
         <ul id="capture-review-notes" class="capture-notes"></ul>
+        <div id="capture-person-preview" class="capture-person-preview hidden" aria-live="polite"></div>
         <div id="capture-review-fields" class="capture-fields"></div>
         <div id="capture-review-leads" class="capture-leads hidden"></div>
         <details class="dev-details">
@@ -133,6 +139,9 @@
       </select>
       <p id="hitl-warning" class="hitl-warning hidden" role="alert">
         ⚠ Low-confidence ICP score — this prospect is flagged for human review. Click Enroll again to confirm.
+      </p>
+      <p id="sequence-empty-guidance" class="vision-desc hidden">
+        Only active sequences are available here. <a id="open-sequences-link" href="#" target="_blank" rel="noopener">Open sequences in Skout</a> to create or activate one.
       </p>
       <button id="enroll-sequence" type="button" class="primary">Enroll in sequence</button>
       <button id="refresh-sequences" type="button">Refresh sequences</button>

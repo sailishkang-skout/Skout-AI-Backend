@@ -92,6 +92,8 @@ import { copsRolesRoutes } from "./cops-roles.routes.js";
 import { copsAppsRoutes } from "./cops-apps.routes.js";
 import { copsUsageRoutes, registerAiMetering } from "./cops-usage.routes.js";
 import { accountScopeGuard } from "../services/cops-data-scope.service.js";
+import { opsAccessGuard } from "../services/ops-access.service.js";
+import { isPublicRoute } from "../plugins/auth.js";
 import { complianceRoutes } from "./compliance.routes.js";
 import { enterpriseControlPlaneRoutes } from "./enterprise-control-plane.routes.js";
 import { jwksRoutes } from "./jwks.routes.js";
@@ -178,7 +180,6 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(regionalIntelRoutes);
     await v1.register(stepUpRoutes);
     await v1.register(incidentsRoutes);
-    await v1.register(copsIncidentsRoutes);
     await v1.register(modelVersionsRoutes);
     await v1.register(regionalBriefRoutes);
     await v1.register(dexterPlatformRoutes);
@@ -186,36 +187,46 @@ export async function registerRoutes(app: FastifyInstance) {
     if (app.db) {
       const db = app.db;
       // COPS-07 feature flags: each module's routes sit behind its workspace switch.
+      // COPS-15: every CustomerOps plugin sits behind the ops:access guard (internal staff only).
+      const guard = opsAccessGuard(db, app.config, isPublicRoute);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ops = (plugin: any, opts?: Record<string, unknown>) =>
+        v1.register(async (scope) => {
+          scope.addHook("preHandler", guard);
+          await scope.register(plugin, opts ?? {});
+        });
       const gated = (module: Parameters<typeof requireCopsModule>[1], plugins: Array<(scope: FastifyInstance, opts: { db: typeof db }) => Promise<void>>) =>
         v1.register(async (scope) => {
+          scope.addHook("preHandler", guard);
           scope.addHook("preHandler", requireCopsModule(db, module));
           for (const plugin of plugins) await scope.register(plugin, { db });
         });
-      await v1.register(copsAuditRoutes, { db: app.db });
+      await ops(copsIncidentsRoutes);
+      await ops(copsAuditRoutes, { db: app.db });
       await gated("crm", [copsTimelineRoutes, copsAccount360Routes, copsSavedViewsRoutes, copsCrmObjectsRoutes]);
       await gated("commercial", [copsCommercialRoutes, copsContractDocumentRoutes]);
       await gated("provisioning", [copsProvisioningRoutes]);
       await gated("onboarding", [copsOnboardingRoutes]);
       await gated("tickets", [copsTicketsRoutes]);
-      await v1.register(copsAdminConfigRoutes, { db: app.db });
-      await v1.register(copsAdminOpsRoutes, { db: app.db });
-      await v1.register(copsIntegrationsStatusRoutes, { db: app.db });
+      await ops(copsAdminConfigRoutes, { db: app.db });
+      await ops(copsAdminOpsRoutes, { db: app.db });
+      await ops(copsIntegrationsStatusRoutes, { db: app.db });
       // Dev-only stand-in for presigned URLs (no bucket); not registered in production.
       await v1.register(copsContractDocumentLocalRoutes);
       await v1.register(copsOpsAlertRoutes, { db: app.db });
-      await v1.register(copsOutboxRoutes, { db: app.db });
-      await v1.register(copsLifecycleRoutes, { db: app.db });
+      await ops(copsOutboxRoutes, { db: app.db });
+      await ops(copsLifecycleRoutes, { db: app.db });
+      await ops(copsSuccessRoutes);
+      await ops(copsAnalyticsRoutes);
+      await ops(copsRecommendationsRoutes);
+      await ops(copsRolesRoutes);
+      await ops(copsAppsRoutes);
+      await ops(copsUsageRoutes);
     } else {
       app.log.warn("COPS audit and outbox routes disabled because DATABASE_URL is not configured");
     }
     await v1.register(ssoScimRoutes);
     await v1.register(automationRoutes);
-    await v1.register(copsSuccessRoutes);
-    await v1.register(copsAnalyticsRoutes);
-    await v1.register(copsRecommendationsRoutes);
-    await v1.register(copsRolesRoutes);
-    await v1.register(copsAppsRoutes);
-    await v1.register(copsUsageRoutes);
     await v1.register(complianceRoutes);
     await v1.register(enterpriseControlPlaneRoutes);
   }, { prefix: "/api/v1" });

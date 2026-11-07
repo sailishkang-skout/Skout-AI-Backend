@@ -38,6 +38,13 @@ const envSchema = z
     OPS_ALERT_WEBHOOK_SECRET: z.string().min(16).optional(),
     /** COPS-07: the workspace whose Admin, owner and Engineering members get operational alerts in the app. */
     OPS_ALERT_WORKSPACE_ID: z.string().uuid().optional(),
+    /** COPS-15: the internal Skout workspace; only its members can hold ops:access. */
+    INTERNAL_WORKSPACE_ID: z.string().uuid().optional(),
+    /**
+     * COPS-15: "true" refuses CustomerOps routes (403) without ops:access in the internal workspace.
+     * Unset or "false" is shadow mode: the guard only logs who it would refuse (safe rollout).
+     */
+    OPS_ACCESS_ENFORCED: z.enum(["true", "false"]).optional(),
     TRUST_PROXY: z
       .string()
       .optional()
@@ -347,6 +354,8 @@ const envSchema = z
     FRONTEND_URL: z.string().optional(),
     /** Base URL used in invite-accept links (defaults to FRONTEND_URL). */
     INVITE_BASE_URL: z.string().optional(),
+    /** CustomerOps app origin (e.g. https://ops-stg.skoutai.io) for staff invites sent from it. */
+    COPS_APP_URL: z.string().optional(),
     /** From-address for transactional emails (invites, OTP). */
     SES_FROM_EMAIL: z.string().default("noreply@skoutai.io"),
     /** AWS SES SMTP credentials. When SMTP_HOST absent, emails are logged only. */

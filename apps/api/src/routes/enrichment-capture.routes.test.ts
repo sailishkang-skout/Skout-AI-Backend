@@ -241,6 +241,52 @@ describe("ENR-02 capture ingest", () => {
     expect(snapshot.educations).toHaveLength(1);
     expect(snapshot.sourceUrl).toBe("https://www.linkedin.com/in/jane-doe-3b2a1/");
     expect(snapshot.capturedAt).toBeTruthy();
+
+    const evidence = await app.db!
+      .select()
+      .from(schema.evidenceLedger)
+      .where(and(eq(schema.evidenceLedger.workspaceId, WORKSPACE), eq(schema.evidenceLedger.entityId, body.person.prospectId)));
+    expect(evidence.map((fact) => fact.attribute)).toEqual(expect.arrayContaining(["educations", "skills"]));
+  });
+
+  it("saves reviewed Contact Info values with LinkedIn provenance but without claiming verification", async () => {
+    const publicId = `contact-capture-${randomUUID()}`;
+    const res = await post("/enrichment/ingest/person", person({
+      publicId,
+      sourceUrl: `https://www.linkedin.com/in/${publicId}/`,
+      currentCompanyPublicId: undefined,
+      currentCompanies: [],
+      email: "jane.contact@example.com",
+      phone: "+1 (555) 010-1234",
+    }));
+    expect(res.statusCode).toBe(201);
+    const { prospectId, contactId } = res.json().person;
+    const [contact] = await app.db!
+      .select()
+      .from(schema.contacts)
+      .where(and(eq(schema.contacts.workspaceId, WORKSPACE), eq(schema.contacts.id, contactId)));
+    expect(contact).toMatchObject({
+      email: "jane.contact@example.com",
+      phone: "+1 (555) 010-1234",
+      fieldSources: {
+        email: { source: "linkedin_contact_info", confidence: 0.9 },
+        phone: { source: "linkedin_contact_info", confidence: 0.9 },
+      },
+    });
+
+    const contactData = await get(`/enrichment/people/${prospectId}/contact-data`);
+    expect(contactData.json().contactData).toMatchObject({
+      email: {
+        value: "jane.contact@example.com",
+        provenance: { kind: "linkedin_profile", provider: "linkedin_contact_info" },
+        verification: { status: "unverified", provider: null },
+      },
+      phone: {
+        value: "+1 (555) 010-1234",
+        provenance: { kind: "linkedin_profile", provider: "linkedin_contact_info" },
+        verification: { status: "unverified", provider: null },
+      },
+    });
   });
 
   it("rejects a capture whose name is page chrome or whose URL does not match", async () => {
@@ -249,8 +295,10 @@ describe("ENR-02 capture ingest", () => {
     expect(chrome.json().code).toBe("profile_not_readable");
     const mismatch = await post("/enrichment/ingest/person", person({ publicId: "someone-else" }));
     expect(mismatch.statusCode).toBe(422);
-    const unknownField = await post("/enrichment/ingest/person", person({ email: "jane@example.com" }));
-    expect(unknownField.statusCode).toBe(422);
+    const invalidEmail = await post("/enrichment/ingest/person", person({ email: "not-an-email" }));
+    expect(invalidEmail.statusCode).toBe(422);
+    const invalidPhone = await post("/enrichment/ingest/person", person({ phone: "123" }));
+    expect(invalidPhone.statusCode).toBe(422);
   });
 
   it("is idempotent on the canonical profile key and records a job change", async () => {

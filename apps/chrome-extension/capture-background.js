@@ -125,14 +125,27 @@ const companyReadDelay = ms => timing.delay(ms);
 function companyReadUrl(value, companyId) {
   try {
     const u = new URL(value), parts = u.pathname.split('/').filter(Boolean);
-    if (u.protocol !== 'https:' || u.hostname !== 'www.linkedin.com' || parts[0] !== 'company' || parts[1] !== companyId || parts.length > 3 || !['','about','posts','jobs','products','life','people','insights'].includes(parts[2] || '')) return undefined;
-    return `${u.origin}/company/${companyId}/${parts[2] ? parts[2] + '/' : ''}`;
+    const section = parts[2] === 'home' ? '' : parts[2] || '';
+    if (u.protocol !== 'https:' || u.hostname !== 'www.linkedin.com' || parts[0] !== 'company' || parts[1] !== companyId || parts.length > 3 || !['','about','posts','jobs','products','life','people','insights'].includes(section)) return undefined;
+    return `${u.origin}/company/${companyId}/${section ? section + '/' : ''}`;
   } catch { return undefined; }
+}
+// LinkedIn's SPA can leave sender.url stale after client-side navigation.
+async function currentSenderTabUrl(sender) {
+  const tabId = sender.tab?.id;
+  if (tabId == null) return undefined;
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    return tab.url || sender.url;
+  } catch {
+    return undefined;
+  }
 }
 async function readCompanyPage(request, sender, collectMessage = 'COLLECT_COMPANY_PAGE') {
   const owner = sender.tab?.id;
   const url = companyReadUrl(request.url, request.companyId);
-  if (owner == null || sender.frameId !== 0 || !url || !companyReadUrl(sender.url, request.companyId)) return {ok:false,error:'Capture must start on this company’s LinkedIn page.'};
+  const sourceUrl = await currentSenderTabUrl(sender);
+  if (owner == null || sender.frameId !== 0 || !url || !companyReadUrl(sourceUrl, request.companyId)) return {ok:false,error:'Capture must start on this company’s LinkedIn page.'};
   if (companyReads.has(owner)) return {ok:false,error:'A company page is already being read.'};
   const blocked = await captureBlock();
   if (blocked) return {ok:false,error:blocked};
@@ -232,7 +245,8 @@ async function waitForCompanyPeoplePage(tabId, searchKey, afterPage, task) {
 async function readCompanyPeopleSearch(request, sender) {
   const owner = sender.tab?.id;
   const url = companyPeopleSearchUrl(request.url);
-  if (owner == null || sender.frameId !== 0 || !url || !companyReadUrl(sender.url, request.companyId)) return {ok:false,error:'Associated people must be read from the company capture.'};
+  const sourceUrl = await currentSenderTabUrl(sender);
+  if (owner == null || sender.frameId !== 0 || !url || !companyReadUrl(sourceUrl, request.companyId)) return {ok:false,error:'Associated people must be read from the company capture.'};
   if (companyPeopleReads.has(owner)) return {ok:false,error:'Associated people are already being read.'};
   const task = {tabId:null,cancelled:false}; companyPeopleReads.set(owner,task);
   try {
@@ -396,11 +410,19 @@ function withoutInternal(value) {
     !key.startsWith('_') && item !== undefined && item !== null && item !== ''));
 }
 
+export function reviewDraftData(data) {
+  const reviewed = withoutInternal(data);
+  if (data?._contactInfo && typeof data._contactInfo === "object") {
+    reviewed._contactInfo = data._contactInfo;
+  }
+  return reviewed;
+}
+
 async function storeDraft(message, sender) {
   const data = message.data || {};
   const draft = {
     kind: message.kind,
-    data: withoutInternal(data),
+    data: reviewDraftData(data),
     notes: Array.isArray(message.notes) ? message.notes.filter(Boolean).map(String) : [],
     sourceUrl: message.sourceUrl,
     capturedAt: message.capturedAt || new Date().toISOString(),
@@ -413,6 +435,9 @@ async function storeDraft(message, sender) {
       sales: data._salesCapture,
     },
   };
+  if (draft.data._contactInfo && (draft.data._contactInfo.email || draft.data._contactInfo.phone)) {
+    draft.notes.push("Contact details came from the already-open Contact Info dialog. They are saved only after your review and remain unverified.");
+  }
   await chrome.storage.local.set({ [CAPTURE_DRAFT_KEY]: draft });
   return { ok: true };
 }
@@ -635,4 +660,4 @@ export function registerCaptureBackground({ skoutFetch }) {
   });
 }
 
-export const __test = { commitCompanyPeopleCapture, getCompanyPeopleState, captureBlock, deps };
+export const __test = { commitCompanyPeopleCapture, getCompanyPeopleState, captureBlock, companyReadUrl, deps };

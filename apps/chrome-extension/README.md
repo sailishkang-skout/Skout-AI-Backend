@@ -116,6 +116,21 @@ After code changes: `chrome://extensions` → **Reload** → hard-refresh open t
 The side panel's **Capture** section saves a LinkedIn person profile, a company page, or a
 Sales Navigator people search to Skout after the user reviews it.
 
+For education and work-history detail, use **Capture this profile** and review the captured
+field counts before saving. **Enrich contact** is a separate, provider-backed lookup: email
+validation validates an email address and is not LinkedIn profile validation. Email/phone
+visible in a Contact Info dialog are included only if the user already opened that dialog and
+confirms them in the capture review. They are saved as unverified values with LinkedIn source
+provenance; the extension does not mark them verified. No hidden or inaccessible profile data
+is read. Education is retained when LinkedIn shows only the school name, including unlinked
+rendered labels; Education/Skills detail pages are given time to render before capture. Empty
+results are called out in the review notes when those sections are visible. Relationship context
+is limited to connection details visible to the signed-in person capturing the profile.
+
+Company capture verifies the initiating tab's live URL because LinkedIn's single-page
+navigation can leave the message sender URL stale. Keep the initiating tab on the same company
+page while its sections and associated people are read.
+
 | Step | Where | What happens |
 | --- | --- | --- |
 | Start | Side panel → `capture-background.js` → `capture/capture-content.js` | The user clicks Capture on the open tab. The API's capture status (kill switch, daily limit) is checked first. |

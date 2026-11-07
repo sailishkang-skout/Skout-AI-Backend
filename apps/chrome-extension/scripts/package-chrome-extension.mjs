@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /** Package Chrome extension for Web Store upload (R9.7). */
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
+import { tmpdir } from "node:os";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const dist = join(root, "dist");
-const store = join(root, "store-build");
 
 const LOCAL_HOST_PATTERNS = [
   "http://localhost:3000/*",
@@ -72,55 +72,60 @@ function patchStoreBackground(source) {
 
 execSync("pnpm build", { cwd: root, stdio: "inherit" });
 
-rmSync(store, { recursive: true, force: true });
-mkdirSync(store, { recursive: true });
-
-// `capture/` holds the ENR-02 page readers: plain content scripts, shipped unbundled.
-for (const file of ["sidepanel.html", "manifest.json", "panel.css", "popup.css", "icons", "capture"]) {
-  cpSync(join(root, file), join(store, file), { recursive: true });
-}
-for (const js of ROOT_MODULES) {
-  cpSync(join(root, js), join(store, js));
-}
-
-const manifest = JSON.parse(readFileSync(join(store, "manifest.json"), "utf8"));
-manifest.background.service_worker = "dist/background.js";
-manifest.content_scripts = manifest.content_scripts.map((cs) => ({
-  ...cs,
-  js: cs.js.map(resolveContentScriptPath),
-  matches: stripLocalhostPatterns(cs.matches),
-}));
-manifest.host_permissions = stripLocalhostPatterns(manifest.host_permissions ?? []);
-manifest.externally_connectable = {
-  matches: stripLocalhostPatterns(manifest.externally_connectable?.matches ?? []),
-};
-delete manifest.optional_host_permissions;
-manifest.side_panel.default_path = "sidepanel.html";
-
-// The side panel loads its bundled entry: the unbundled sidepanel.js imports modules
-// (panel-app.js, capture-panel.js) that are not copied to the store root.
-const sidepanelHtml = readFileSync(join(store, "sidepanel.html"), "utf8");
-const storeSidepanelHtml = sidepanelHtml.replace('src="sidepanel.js"', 'src="dist/sidepanel.js"');
-if (storeSidepanelHtml === sidepanelHtml) {
-  throw new Error("Failed to point store sidepanel.html at dist/sidepanel.js.");
-}
-writeFileSync(join(store, "sidepanel.html"), storeSidepanelHtml);
-
-writeFileSync(join(store, "manifest.json"), JSON.stringify(manifest, null, 2));
-
-cpSync(dist, join(store, "dist"), { recursive: true });
-
-const bundledBackground = readFileSync(join(dist, "background.js"), "utf8");
-writeFileSync(join(store, "dist", "background.js"), patchStoreBackground(bundledBackground));
-
-for (const required of ["dist/background.js", "dist/sidepanel.js", ...manifest.content_scripts.flatMap((cs) => cs.js)]) {
-  if (!existsSync(join(store, required))) {
-    throw new Error(`Missing ${required} in the store build.`);
+const store = mkdtempSync(join(tmpdir(), "skout-extension-store-"));
+try {
+  // `capture/` holds the ENR-02 page readers: plain content scripts, shipped unbundled.
+  for (const file of ["sidepanel.html", "manifest.json", "panel.css", "popup.css", "icons", "capture"]) {
+    cpSync(join(root, file), join(store, file), { recursive: true });
   }
-}
+  for (const js of ROOT_MODULES) {
+    cpSync(join(root, js), join(store, js));
+  }
 
-const zipName = `skout-extension-v${manifest.version}.zip`;
-rmSync(join(root, zipName), { force: true });
-execSync(`cd "${store}" && zip -r "../${zipName}" .`, { stdio: "inherit" });
-console.log(`Created ${join(root, zipName)}`);
-console.log("Store defaults:", PRODUCTION_DEFAULTS);
+  const manifest = JSON.parse(readFileSync(join(store, "manifest.json"), "utf8"));
+  manifest.background.service_worker = "dist/background.js";
+  manifest.content_scripts = manifest.content_scripts.map((cs) => ({
+    ...cs,
+    js: cs.js.map(resolveContentScriptPath),
+    matches: stripLocalhostPatterns(cs.matches),
+  }));
+  manifest.host_permissions = stripLocalhostPatterns(manifest.host_permissions ?? []);
+  manifest.externally_connectable = {
+    matches: stripLocalhostPatterns(manifest.externally_connectable?.matches ?? []),
+  };
+  delete manifest.optional_host_permissions;
+  manifest.side_panel.default_path = "sidepanel.html";
+
+  // The side panel loads its bundled entry: the unbundled sidepanel.js imports modules
+  // (panel-app.js, capture-panel.js) that are not copied to the store root.
+  const sidepanelHtml = readFileSync(join(store, "sidepanel.html"), "utf8");
+  const storeSidepanelHtml = sidepanelHtml.replace('src="sidepanel.js"', 'src="dist/sidepanel.js"');
+  if (storeSidepanelHtml === sidepanelHtml) {
+    throw new Error("Failed to point store sidepanel.html at dist/sidepanel.js.");
+  }
+  writeFileSync(join(store, "sidepanel.html"), storeSidepanelHtml);
+
+  writeFileSync(join(store, "manifest.json"), JSON.stringify(manifest, null, 2));
+
+  cpSync(dist, join(store, "dist"), { recursive: true });
+
+  const bundledBackground = readFileSync(join(dist, "background.js"), "utf8");
+  writeFileSync(join(store, "dist", "background.js"), patchStoreBackground(bundledBackground));
+
+  for (const required of ["dist/background.js", "dist/sidepanel.js", ...manifest.content_scripts.flatMap((cs) => cs.js)]) {
+    if (!existsSync(join(store, required))) {
+      throw new Error(`Missing ${required} in the store build.`);
+    }
+  }
+
+  const zipName = `skout-extension-v${manifest.version}.zip`;
+  const zipPath = join(root, zipName);
+  if (existsSync(zipPath)) {
+    throw new Error(`${zipName} already exists; move it or choose a new version before packaging.`);
+  }
+  execSync(`cd "${store}" && zip -r "${zipPath}" .`, { stdio: "inherit" });
+  console.log(`Created ${zipPath}`);
+  console.log("Store defaults:", PRODUCTION_DEFAULTS);
+} finally {
+  rmSync(store, { recursive: true, force: true });
+}

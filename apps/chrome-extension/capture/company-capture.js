@@ -8,8 +8,9 @@ globalThis.SkoutCompanyCapture = globalThis.SkoutCompanyCapture || (() => {
     try {
       const url = new URL(value, location.origin);
       const parts = url.pathname.split('/').filter(Boolean);
-      if (url.protocol !== 'https:' || url.hostname !== 'www.linkedin.com' || parts[0] !== 'company' || parts[1] !== companyId || parts.length > 3 || !sections.has(parts[2] || '')) return undefined;
-      return `${url.origin}/company/${companyId}/${parts[2] ? parts[2] + '/' : ''}`;
+      const section = parts[2] === 'home' ? '' : parts[2] || '';
+      if (url.protocol !== 'https:' || url.hostname !== 'www.linkedin.com' || parts[0] !== 'company' || parts[1] !== companyId || parts.length > 3 || !sections.has(section)) return undefined;
+      return `${url.origin}/company/${companyId}/${section ? section + '/' : ''}`;
     } catch { return undefined; }
   }
   function links(companyId) {

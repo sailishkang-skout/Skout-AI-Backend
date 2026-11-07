@@ -324,6 +324,14 @@ export function createTeamService(db: Db) {
           userId,
         });
       }
+      // COPS-15: an ops-portal invite with Ops access grants it now (the inviter was checked then).
+      if (invite.grantOpsAccess) {
+        const [opsRole] = await db.select({ id: schema.roles.id }).from(schema.roles).where(and(isNull(schema.roles.workspaceId), eq(schema.roles.key, "ops_access"))).limit(1);
+        if (opsRole) {
+          await db.insert(schema.workspaceMemberRoles).values({ workspaceId: invite.workspaceId, userId, roleId: opsRole.id }).onConflictDoNothing();
+          await db.insert(schema.auditLogs).values({ workspaceId: invite.workspaceId, actorId: userId, actorType: "user", action: "ops_access.granted", entityType: "workspace_member", entityId: userId, afterState: { via: "invite", invite_id: invite.id } } as never);
+        }
+      }
 
       await db
         .update(schema.workspaceInvites)

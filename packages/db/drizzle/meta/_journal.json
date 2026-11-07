@@ -1058,6 +1058,20 @@
       "when": 1798000000000,
       "tag": "0148_subscription_cancel",
       "breakpoints": true
+    },
+    {
+      "idx": 151,
+      "version": "7",
+      "when": 1798100000000,
+      "tag": "0149_ops_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 153,
+      "version": "7",
+      "when": 1798300000000,
+      "tag": "0151_invite_ops_access",
+      "breakpoints": true
     }
   ]
 }

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Skout AI Prospector",
-  "version": "0.9.6",
+  "version": "0.11.6",
   "description": "Capture reviewed LinkedIn profiles, companies and Sales Navigator results into Skout, and enrich contacts.",
   "permissions": [
     "storage",
@@ -23,8 +23,7 @@
     "https://www.linkedin.com/*",
     "https://linkedin.com/*",
     "https://www.skoutai.io/*",
-    "https://skoutai.io/*",
-    "https://ckoy6iywm0.execute-api.us-east-1.amazonaws.com/*"
+    "https://skoutai.io/*"
   ],
   "action": {
     "default_title": "Open Skout AI panel"

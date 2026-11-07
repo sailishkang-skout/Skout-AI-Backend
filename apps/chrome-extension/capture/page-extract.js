@@ -185,10 +185,11 @@ function extractPerson() {
     patents: patents.length ? patents : undefined,
     courses: courses.length ? courses : undefined,
     organizations: organizations.length ? organizations : undefined,
-    // contactInfo and recentActivity aren't in the ingest schema's storable
-    // fields yet — surfaced in the review panel for now so you can see them
-    // before deciding whether they're worth adding to the backend schema.
+    // Keep the full contact section local for the review note; only the
+    // validated email and phone values are sent to the capture endpoint.
     _contactInfo: contactInfo,
+    email: contactInfo?.email,
+    phone: contactInfo?.phone,
     _recentActivity: recentActivity.length ? recentActivity : undefined,
     openToWork: openToWork || undefined,
     _fieldsFound: countTruthy({
@@ -241,8 +242,11 @@ function inferRoleMetadata(value) {
 function extractRelationshipContext(topcard) {
   if (!topcard) return undefined;
   const nodes = Array.from(topcard.querySelectorAll('p, span, div'));
-  const degreeText = nodes.map((node) => text(node)).find((value) => /^(1st|2nd|3rd)$/i.test(value || ''));
-  const degree = degreeText ? Number(degreeText.charAt(0)) : undefined;
+  const degreeText = nodes.map((node) => text(node)).find((value) =>
+    /\b(1st|2nd|3rd)(?:\s*-?\s*degree)?(?:\s+connection)?\b/i.test(value || ''),
+  );
+  const degreeMatch = degreeText?.match(/\b(1st|2nd|3rd)\b/i);
+  const degree = degreeMatch ? Number(degreeMatch[1].charAt(0)) : undefined;
   const mutualNode = nodes.filter((node) => /\bmutual connections?\b/i.test(text(node) || '')).sort((a, b) => (text(a)?.length || 0) - (text(b)?.length || 0))[0];
   const mutualConnectionsText = text(mutualNode);
   const mutualConnections = mutualNode
@@ -257,6 +261,7 @@ function extractRelationshipContext(topcard) {
 
 function extractCompany() {
   const publicId = publicIdFromUrl('company');
+  const sduiTopCard = window.SkoutCompanySections.topCard();
 
   // Unlike person profiles, company pages use LinkedIn's older,
   // stable BEM-style class names (org-top-card-summary__...) rather
@@ -265,16 +270,17 @@ function extractCompany() {
   // The legacy company layout has org-top-card-summary classes; newer
   // LinkedIn pages render the company name as the main h1 instead.
   const nameEl = document.querySelector('h1.org-top-card-summary__title') ||
-    document.querySelector('main [data-anonymize="company-name"]') ||
-    document.querySelector('main h1');
-  const name = text(nameEl) || nameEl?.getAttribute('title');
+    document.querySelector('main [data-anonymize="company-name"]');
+  const legacyName = text(nameEl) || nameEl?.getAttribute('title');
+  const name = legacyName || sduiTopCard.name || text(document.querySelector('main h1'));
 
   const tagline = text(document.querySelector('p.org-top-card-summary__tagline')) ||
-    text(nameEl?.parentElement?.querySelector('p'));
+    text(nameEl?.parentElement?.querySelector('p')) ||
+    sduiTopCard.tagline;
 
   const logoUrl = document
     .querySelector('img.org-top-card-primary-content__logo, img[class*="org-top-card-primary-content__logo"]')
-    ?.getAttribute('src');
+    ?.getAttribute('src') || sduiTopCard.logoUrl;
 
   // The info-list mixes industry, an optional product-category link,
   // headquarters, followers, and an employee-count link all under the
@@ -296,8 +302,9 @@ function extractCompany() {
 
   const industry = remaining[0]?.text;
   const headquarter = remaining[1]?.text;
-  const followers = parseCount(followersItem?.text);
-  const size = employeesItem?.text?.replace(/\s*employees?$/i, '').trim();
+  const followers = parseCount(followersItem?.text || sduiTopCard.followersText);
+  const size = employeesItem?.text?.replace(/\s*employees?$/i, '').trim() ||
+    sduiTopCard.size?.replace(/\s*employees?$/i, '').trim();
 
   // Website/overview — best-effort, not yet verified against real captured
   // HTML the way the topcard fields above were.
@@ -316,7 +323,8 @@ function extractCompany() {
     const dd = dt.nextElementSibling;
     if (label && dd && dd.tagName === 'DD') detailMap[label.toLowerCase()] = text(dd);
   });
-  const aboutWebsite = detailMap['website'];
+  const sduiAbout = window.SkoutCompanySections.aboutDetails();
+  const aboutWebsite = detailMap['website'] || sduiAbout.website;
   const companyWebsite = website || aboutWebsite;
   let domain;
   try { domain = new URL(companyWebsite).hostname.replace(/^www\./, ''); } catch {}
@@ -330,15 +338,16 @@ function extractCompany() {
   // rendered "N associated members" control before any generic people link.
   const associatedMemberLink = peopleSearchLinks.find((link) => /[\d,]+\s+associated members/i.test(text(link) || ''));
   const employeeLink = associatedMemberLink || peopleSearchLinks.find((link) => /[?&]currentCompany=/.test(link.href)) ||
-    document.querySelector('main dd a[href*="currentCompany"]') || peopleSearchLinks[0];
+    document.querySelector('main dd a[href*="currentCompany"]') || peopleSearchLinks[0] ||
+    (sduiTopCard.employeeSearchUrl ? { href: sduiTopCard.employeeSearchUrl } : undefined);
   // "501-1,000 employees" is LinkedIn's company-size band, not a member
   // count. Only persist an exact rendered employee/associated-member count.
   const employeeLinkText = text(employeeLink);
   const employeesOnLi = /^\s*[\d,]+\s+(?:associated members|employees)\s*$/i.test(employeeLinkText || '')
     ? parseCount(employeeLinkText)
     : undefined;
-  const foundedAt = detailMap['founded'];
-  const specialtiesText = detailMap['specialties'];
+  const foundedAt = detailMap['founded'] || sduiAbout.foundedAt;
+  const specialtiesText = detailMap['specialties'] || sduiAbout.specialties;
   const specialties = specialtiesText ? specialtiesText.split(',').map((s) => s.trim()) : undefined;
 
   const recentPosts = extractCompanyPosts();
@@ -362,10 +371,11 @@ function extractCompany() {
     name,
     tagline,
     logoUrl,
-    industry: detailMap['industry'] || industry,
-    headquarter: detailMap['headquarters'] || headquarter,
+    industry: detailMap['industry'] || industry || sduiAbout.industry || sduiTopCard.industry,
+    headquarter: detailMap['headquarters'] || headquarter || sduiAbout.headquarter || sduiTopCard.headquarter,
     followers,
-    size: detailMap['company size']?.replace(/\s*employees?$/i, '').trim() || size,
+    size: detailMap['company size']?.replace(/\s*employees?$/i, '').trim() ||
+      sduiAbout.size?.replace(/\s*employees?$/i, '').trim() || size,
     website: companyWebsite,
     domain,
     phone: detailMap['phone'],
@@ -373,7 +383,7 @@ function extractCompany() {
     // Used only by the user-triggered company capture to read the rendered
     // associated-members result. It is never saved as company data.
     _peopleSearchUrl: employeeLink?.href,
-    overview,
+    overview: overview || sduiAbout.overview,
     foundedAt,
     specialties,
     // Best-effort/unverified (see comments on the extractor functions
@@ -388,7 +398,11 @@ function extractCompany() {
     peopleStats,
     peopleProfiles: peopleProfiles.length ? peopleProfiles : undefined,
     insights,
-    _fieldsFound: countTruthy({ name, tagline, logoUrl, industry, headquarter, followers, size, website, foundedAt }),
+    _fieldsFound: countTruthy({
+      name, tagline, logoUrl, industry: detailMap['industry'] || industry || sduiAbout.industry || sduiTopCard.industry,
+      headquarter: detailMap['headquarters'] || headquarter || sduiAbout.headquarter || sduiTopCard.headquarter,
+      followers, size, website: companyWebsite, foundedAt,
+    }),
   };
   company.sectionCaptures = window.SkoutCompanySections.captures(company);
   return company;
@@ -618,11 +632,30 @@ function companyPublicIdFromEntry(item) {
  * back to the section under this page's own heading, never outside <main>.
  */
 function profileSection(name) {
-  const keyed = document.querySelector(`[componentkey*="${name}TopLevelSection" i], [componentkey*="${name}DetailsSection" i]`);
+  const main = document.querySelector('main') || document.body;
+  const detailKey = name === 'Skills' ? 'SkillDetails' : `${name}Details`;
+  const keyed = main.querySelector(
+    `[componentkey*="${name}TopLevelSection" i], [componentkey*="${name}DetailsSection" i], [componentkey*="${detailKey}" i]`,
+  );
   if (keyed) return keyed;
-  const heading = Array.from(document.querySelectorAll('main h1, main h2, main h3'))
+  const heading = Array.from(main.querySelectorAll('h1, h2, h3, [role="heading"]'))
     .find((node) => new RegExp(`^${name}$`, 'i').test(text(node) || ''));
-  return heading?.closest('section') || undefined;
+  if (!heading) return undefined;
+  const semanticContainer = heading.closest('section, [role="region"], [data-view-name*="profile-component" i]');
+  if (semanticContainer) return semanticContainer;
+
+  // Some LinkedIn layouts use only generic divs around a section heading. Walk
+  // up while the subtree still belongs to this heading, but never use all of
+  // <main> (which also contains recommendations and other people's content).
+  let container = heading.parentElement;
+  let candidate = container;
+  while (container && container !== main) {
+    const headings = container.querySelectorAll('h1, h2, h3, [role="heading"]');
+    if (headings.length > 1) break;
+    candidate = container;
+    container = container.parentElement;
+  }
+  return candidate || undefined;
 }
 
 function extractExperience() {
@@ -706,24 +739,59 @@ function extractEducation() {
     ...Array.from(section.querySelectorAll('a[href*="/school/"]'))
       .map((a) => a.closest('[componentkey^="entity-collection-item" i], li') || a.parentElement),
     ...Array.from(section.querySelectorAll('[componentkey^="entity-collection-item" i]')),
+    ...Array.from(section.querySelectorAll('[data-view-name*="profile-component-entity" i], li')),
+    ...Array.from(section.querySelectorAll('[id]'))
+      .filter((node) => /^com\.linkedin\.sdui\.profile\.education\(/i.test(node.id)),
   ];
+  // Some profile layouts render education rows as plain nested divs without a
+  // school link or LinkedIn component marker. Accept only the innermost groups
+  // with multiple text-bearing children so a wrapper containing several rows
+  // is never treated as one education record.
+  const genericContainers = new Set(
+    Array.from(section.querySelectorAll('div')).filter((container) => {
+      const textChildren = Array.from(container.children).filter((child) => text(child));
+      return textChildren.length >= 2;
+    }),
+  );
+  const genericRows = [...genericContainers].filter((container) => {
+    return ![...genericContainers].some((other) => other !== container && container.contains(other));
+  });
+  containers.push(...genericRows);
   containers.forEach((container) => {
     if (!container || !section.contains(container)) return;
     // A row and an element nested in it are the same entry; read it once.
     if ([...seen].some((done) => done === container || done.contains(container) || container.contains(done))) return;
     seen.add(container);
     const paras = getItemParagraphs(container);
-    const school = paras[0];
+    const schoolLink = container.querySelector('a[href*="/school/"]');
+    const labels = Array.from(container.querySelectorAll('a, p, span, h3, h4, div, [aria-label]'))
+      .filter((node) => !Array.from(node.children).some((child) => text(child)))
+      .map((node) => text(node))
+      .filter((value, index, all) => value && all.indexOf(value) === index);
+    const school = text(schoolLink) || paras[0] || labels[0];
     if (isBadSchool(school)) return;
-    const degree = paras.slice(1).find((p) => p && !/^\d+(?:st|nd|rd)\b/i.test(p) && !/^activities and societies:/i.test(p));
-    const activities = paras.find((p) => /^activities and societies:/i.test(p));
+    const detailLines = paras.length ? paras : labels;
+    const dates = detailLines.find((p) => p !== school && /\b(?:19|20)\d{2}\b/.test(p));
+    const degree = detailLines.find((p) => p !== school && p !== dates && p && !/^\d+(?:st|nd|rd)\b/i.test(p) && !/^activities and societies:/i.test(p));
+    const activities = detailLines.find((p) => /^activities and societies:/i.test(p));
     const description = getExpandableText(container);
-    // A real education entry has the school anchor inside its own row. The
-    // remaining guard stops a header/title copied from another section from
-    // being saved when LinkedIn serves an incomplete page.
-    if (!degree && !activities && !description) return;
-    results.push({ school, degree, activities, description });
+    results.push({ school, degree, dates, activities, description });
   });
+  if (!results.length) {
+    const visible = Array.from(section.querySelectorAll('p, span, h3, h4'))
+      .map((node) => text(node))
+      .filter((value, index, all) => value && all.indexOf(value) === index)
+      .filter((value) => !/^education$/i.test(value));
+    const school = visible[0];
+    if (!isBadSchool(school)) {
+      const dates = visible.find((value, index) => index > 0 && /\b(?:19|20)\d{2}\b/.test(value));
+      const degree = visible.find((value, index) =>
+        index > 0 && value !== dates && !/^activities and societies:/i.test(value),
+      );
+      const activities = visible.find((value) => /^activities and societies:/i.test(value));
+      results.push({ school, degree, dates, activities });
+    }
+  }
   return results;
 }
 
@@ -731,10 +799,15 @@ function extractSkillsSection() {
   // The profile preview and /details/skills/ use different component keys.
   // Scope the fallback to the closest Skills heading so names from sidebars
   // and recommendations cannot be saved as skills.
-  const skillsHeading = Array.from(document.querySelectorAll('h1, h2, h3')).find((heading) => /^skills$/i.test(text(heading) || ''));
-  const section = document.querySelector('[componentkey*="Skills" i]') || skillsHeading?.closest('section, main');
+  const skillsHeading = Array.from((document.querySelector('main') || document).querySelectorAll('h1, h2, h3, [role="heading"]'))
+    .find((heading) => /^skills$/i.test(text(heading) || ''));
+  const section = profileSection('Skills') || skillsHeading?.closest('section');
   if (!section) return [];
-  const explicitItems = Array.from(section.querySelectorAll('[id^="com.linkedin.sdui.profile.skill(" i], [componentkey^="entity-collection-item" i], [data-view-name*="profile-component-entity" i]'));
+  const explicitItems = [
+    ...Array.from(section.querySelectorAll('[id^="com.linkedin.sdui.profile.skill(" i], [componentkey^="entity-collection-item" i], [data-view-name*="profile-component-entity" i]')),
+    ...Array.from(section.querySelectorAll('a[href*="/skill-insights/"]'))
+      .map((anchor) => anchor.closest('li, [componentkey^="entity-collection-item" i], [data-view-name*="profile-component-entity" i]') || anchor.parentElement),
+  ].filter((item, index, all) => item && all.indexOf(item) === index);
   // Detail pages use nested entity components: the innermost component often
   // holds only "Endorsed by…", while its parent holds the actual skill name.
   // Prefer semantic list rows, then a minimal entity that contains a skill
@@ -760,9 +833,11 @@ function extractSkillsSection() {
       // LinkedIn varies between anchors, paragraphs, and plain spans for the
       // skill label. Prefer the shortest meaningful descendant text; the
       // endorsement caption is explicitly excluded above.
-      const labels = Array.from(item.querySelectorAll('a, p, span'))
+      const labelElements = Array.from(item.querySelectorAll('a, p, span, h3, h4, div'))
+        .filter((element) => isSkillLabel(text(element)))
+        .filter((element) => !Array.from(element.children).some((child) => isSkillLabel(text(child))));
+      const labels = labelElements
         .map((element) => text(element))
-        .filter(isSkillLabel)
         .filter((value, index, all) => all.indexOf(value) === index);
       // Each Skills row starts with its name. Later labels describe where the
       // skill was used or who endorsed it, so preserve DOM order here.
@@ -778,6 +853,25 @@ function extractSkillsSection() {
       return { name, endorsements };
     })
     .filter((s) => isSkillLabel(s.name));
+  // A few layouts render a plain paragraph/span list without semantic rows or
+  // skill links. Fall back when structured rows did not yield labels.
+  if (!skills.length) {
+    skills.push(
+      ...Array.from(section.querySelectorAll('p, span, h3, h4, div'))
+        .filter((element) => !element.children.length)
+        .map((element) => ({ name: text(element), endorsements: undefined }))
+        .filter((skill) => isSkillLabel(skill.name)),
+    );
+  }
+  // Current LinkedIn Skills detail pages mix a keyed first skill row with
+  // standalone paragraph rows. Include those rendered labels even when one
+  // structured row was found, rather than silently dropping the rest.
+  skills.push(
+    ...Array.from(section.querySelectorAll('p, span, h3, h4'))
+      .filter((element) => !element.children.length)
+      .map((element) => ({ name: text(element), endorsements: undefined }))
+      .filter((skill) => isSkillLabel(skill.name)),
+  );
   const unique = new Map();
   for (const skill of skills) {
     const key = skill.name.trim().toLowerCase();
@@ -922,26 +1016,46 @@ function extractOrganizations() {
 
 /**
  * Contact Info — LinkedIn shows this in a click-to-open modal, not on the
- * base page. We deliberately don't auto-click it (that would cross from
- * "read what's rendered" into "drive the page"). If the person has already
- * opened it themselves before clicking Capture, we read it; otherwise this
- * comes back empty and that's expected, not a bug.
+ * base page. We deliberately don't auto-click it. Only a visible modal is
+ * read, and its values are sent only after the user reviews and saves capture.
  */
 function extractContactInfo() {
-  const modal = document.querySelector('[aria-label*="Contact Info" i], [aria-labelledby*="contact-info" i]');
+  const candidates = [
+    ...document.querySelectorAll('[aria-label*="contact info" i], [aria-labelledby*="contact-info" i]'),
+    ...Array.from(document.querySelectorAll('[role="dialog"]')).filter((dialog) =>
+      Array.from(dialog.querySelectorAll('h1, h2, h3, h4, [role="heading"]'))
+        .some((heading) => /^contact info$/i.test(text(heading) || '')),
+    ),
+  ];
+  const modal = [...new Set(candidates)].find((candidate) => {
+    const style = window.getComputedStyle(candidate);
+    const rect = candidate.getBoundingClientRect();
+    return !candidate.closest('[aria-hidden="true"]') &&
+      style.display !== "none" &&
+      style.visibility !== "hidden" &&
+      style.opacity !== "0" &&
+      rect.width > 0 &&
+      rect.height > 0;
+  });
   if (!modal) return undefined;
   const website = modal.querySelector('a[href^="http"]:not([href*="linkedin.com"])')?.href;
+  const emailLink = modal.querySelector('a[href^="mailto:"]')?.getAttribute('href')?.replace(/^mailto:/i, '').split('?')[0];
   const emailMatch = modal.textContent.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
-  // Phone — best-effort, unverified against real Contact Info HTML. LinkedIn
-  // typically renders phone numbers as tel: links; falls back to a loose
-  // digit-pattern scan if that's not present.
   const telLink = modal.querySelector('a[href^="tel:"]');
-  const phone = telLink
-    ? telLink.getAttribute('href').replace(/^tel:/, '')
-    : modal.textContent.match(/\+?\d[\d\s().-]{7,}\d/)?.[0]?.trim();
+  let phone;
+  if (telLink) {
+    const rawPhone = telLink.getAttribute('href').replace(/^tel:/i, '');
+    try {
+      phone = decodeURIComponent(rawPhone);
+    } catch {
+      phone = rawPhone;
+    }
+  } else {
+    phone = modal.textContent.match(/\+?\d[\d\s().-]{7,}\d/)?.[0]?.trim();
+  }
   return {
     website,
-    email: emailMatch?.[0],
+    email: emailLink || emailMatch?.[0],
     phone,
   };
 }

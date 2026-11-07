@@ -50,9 +50,10 @@ export interface ContactValue {
      * workspace_record — already on the workspace's record when enrichment ran;
      * pattern_verified — built from a name pattern and then confirmed by the verifier;
      * manual — entered by a teammate;
+     * linkedin_profile — captured from the profile's already-open Contact Info dialog;
      * crm_record — on the CRM contact with no recorded source.
      */
-    kind: "provider" | "workspace_record" | "pattern_verified" | "manual" | "crm_record";
+    kind: "provider" | "workspace_record" | "pattern_verified" | "manual" | "linkedin_profile" | "crm_record";
     provider: string;
     jobId: string | null;
     correlationId: string | null;
@@ -108,7 +109,7 @@ function recordValue(value: string | null | undefined, fieldSources: unknown, fi
   return {
     value: trimmed,
     provenance: {
-      kind: manual ? "manual" : "crm_record",
+      kind: manual ? "manual" : entry?.source === "linkedin_contact_info" ? "linkedin_profile" : "crm_record",
       provider: entry?.source ?? "unattributed",
       jobId: null,
       correlationId: null,
