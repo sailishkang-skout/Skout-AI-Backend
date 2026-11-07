@@ -3,21 +3,20 @@
  * Chrome extension package validation (ENR-06). Run after `pnpm --filter
  * @skout/chrome-extension package:store`.
  *
- * Checks the store build that would be uploaded:
- *   - one version everywhere: package.json, manifest.json, the store manifest, the zip name
+ * Checks the generated archive that would be uploaded:
+ *   - one version everywhere: package.json, source manifest, archive manifest, archive name
  *   - the version is a plain x.y.z, and is higher than the base branch's when extension code
  *     changed (a warning on a pull request; an error with --release)
  *   - Manifest V3; permissions and host permissions are within the reviewed lists below, so a
  *     new permission cannot ship without this file being changed in the same review
  *   - no localhost or development origin anywhere in the store manifest
- *   - every script the manifest names is in the build
+ *   - every script and icon the manifest names is in the archive
  */
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const ROOT = "apps/chrome-extension";
-const STORE = join(ROOT, "store-build");
 const release = process.argv.includes("--release");
 
 /** Reviewed in ENR-01. Adding to either list is a security review, not a build fix. */
@@ -46,30 +45,50 @@ const source = json(join(ROOT, "manifest.json"));
 if (!/^\d+\.\d+\.\d+$/.test(source.version)) errors.push(`manifest.json version "${source.version}" is not x.y.z.`);
 if (pkg.version !== source.version) errors.push(`package.json is ${pkg.version} but manifest.json is ${source.version}. They must match.`);
 
-if (!existsSync(join(STORE, "manifest.json"))) {
-  errors.push(`${STORE}/manifest.json is missing. Run: pnpm --filter @skout/chrome-extension package:store`);
+const zipPath = join(ROOT, `skout-extension-v${source.version}.zip`);
+if (!existsSync(zipPath)) {
+  errors.push(`skout-extension-v${source.version}.zip was not produced.`);
 } else {
-  const store = json(join(STORE, "manifest.json"));
-  if (store.version !== source.version) errors.push(`The store build is ${store.version} but the source manifest is ${source.version}. Rebuild the package.`);
-  if (store.manifest_version !== 3) errors.push(`The store manifest is Manifest V${store.manifest_version}; it must be V3.`);
-  for (const permission of store.permissions ?? []) {
-    if (!ALLOWED_PERMISSIONS.has(permission)) errors.push(`Permission "${permission}" is not in the reviewed list.`);
+  try {
+    execFileSync("unzip", ["-tq", zipPath], { stdio: "ignore" });
+    const entries = new Set(
+      execFileSync("unzip", ["-Z1", zipPath], { encoding: "utf8" }).split("\n").filter(Boolean)
+    );
+    const store = JSON.parse(execFileSync("unzip", ["-p", zipPath, "manifest.json"], { encoding: "utf8" }));
+    if (store.version !== source.version) errors.push(`The archive is ${store.version} but the source manifest is ${source.version}. Rebuild the package.`);
+    if (store.manifest_version !== 3) errors.push(`The store manifest is Manifest V${store.manifest_version}; it must be V3.`);
+    for (const permission of store.permissions ?? []) {
+      if (!ALLOWED_PERMISSIONS.has(permission)) errors.push(`Permission "${permission}" is not in the reviewed list.`);
+    }
+    for (const host of store.host_permissions ?? []) {
+      if (!ALLOWED_HOSTS.has(host)) errors.push(`Host permission "${host}" is not in the reviewed list.`);
+    }
+    if (store.optional_host_permissions) errors.push("The store manifest still has optional_host_permissions (development origins).");
+    const origins = [
+      ...(store.host_permissions ?? []),
+      ...(store.externally_connectable?.matches ?? []),
+      ...(store.content_scripts ?? []).flatMap((script) => script.matches ?? []),
+    ];
+    for (const origin of origins) if (DEV_ORIGIN.test(origin)) errors.push(`Development origin "${origin}" is in the store manifest.`);
+    const scripts = [
+      store.background?.service_worker,
+      store.side_panel?.default_path,
+      ...(store.content_scripts ?? []).flatMap((script) => script.js ?? []),
+      ...Object.values(store.icons ?? {}),
+    ].filter(Boolean);
+    for (const script of scripts) {
+      if (!entries.has(script)) errors.push(`The manifest names ${script}, which is not in the store archive.`);
+    }
+    const backgroundPath = store.background?.service_worker;
+    const background = backgroundPath && entries.has(backgroundPath)
+      ? execFileSync("unzip", ["-p", zipPath, backgroundPath], { encoding: "utf8" })
+      : "";
+    if (/apiUrl:"http:\/\/(localhost|127\.0\.0\.1)/.test(background)) {
+      errors.push("The store background script still defaults to a localhost API URL.");
+    }
+  } catch (error) {
+    errors.push(`Could not inspect skout-extension-v${source.version}.zip: ${error.message}`);
   }
-  for (const host of store.host_permissions ?? []) {
-    if (!ALLOWED_HOSTS.has(host)) errors.push(`Host permission "${host}" is not in the reviewed list.`);
-  }
-  if (store.optional_host_permissions) errors.push("The store manifest still has optional_host_permissions (development origins).");
-  const origins = [
-    ...(store.host_permissions ?? []),
-    ...(store.externally_connectable?.matches ?? []),
-    ...(store.content_scripts ?? []).flatMap((script) => script.matches ?? []),
-  ];
-  for (const origin of origins) if (DEV_ORIGIN.test(origin)) errors.push(`Development origin "${origin}" is in the store manifest.`);
-  const scripts = [store.background?.service_worker, store.side_panel?.default_path, ...(store.content_scripts ?? []).flatMap((script) => script.js ?? [])].filter(Boolean);
-  for (const script of scripts) if (!existsSync(join(STORE, script))) errors.push(`The manifest names ${script}, which is not in the store build.`);
-  const background = store.background?.service_worker && existsSync(join(STORE, store.background.service_worker)) ? readFileSync(join(STORE, store.background.service_worker), "utf8") : "";
-  if (/apiUrl:"http:\/\/(localhost|127\.0\.0\.1)/.test(background)) errors.push("The store background script still defaults to a localhost API URL.");
-  if (!existsSync(join(ROOT, `skout-extension-v${source.version}.zip`))) errors.push(`skout-extension-v${source.version}.zip was not produced.`);
 }
 
 // Version must move when shipped code moves.

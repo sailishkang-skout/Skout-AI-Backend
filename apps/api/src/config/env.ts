@@ -354,6 +354,8 @@ const envSchema = z
     FRONTEND_URL: z.string().optional(),
     /** Base URL used in invite-accept links (defaults to FRONTEND_URL). */
     INVITE_BASE_URL: z.string().optional(),
+    /** CustomerOps app origin (e.g. https://ops-stg.skoutai.io) for staff invites sent from it. */
+    COPS_APP_URL: z.string().optional(),
     /** From-address for transactional emails (invites, OTP). */
     SES_FROM_EMAIL: z.string().default("noreply@skoutai.io"),
     /** AWS SES SMTP credentials. When SMTP_HOST absent, emails are logged only. */

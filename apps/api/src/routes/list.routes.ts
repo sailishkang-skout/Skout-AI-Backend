@@ -55,7 +55,7 @@ export async function listRoutes(app: FastifyInstance) {
   app.get("/lists", async (request, reply) => {
     const workspaceId = requireWorkspaceId(request);
     const svc = buildListService(app.db, osConfig(app.config));
-    if (!svc) return reply.send({ workspaceId, data: [], total: 0 });
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const data = await svc.getLists(workspaceId);
     return reply.send({ workspaceId, data, total: data.length });
   });

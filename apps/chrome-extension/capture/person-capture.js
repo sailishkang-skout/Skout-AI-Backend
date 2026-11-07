@@ -97,7 +97,7 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
     let combined = {}, stablePasses = 0, previousCount = 0;
     window.scrollTo(0, 0);
     await pause(500);
-    for (let pass = 0; pass < 25; pass++) {
+    for (let pass = 0; pass < 30; pass++) {
       combined = merge(combined, extractPerson());
       const count = Array.isArray(combined.skills) ? combined.skills.length : 0;
       // On some Skills pages LinkedIn uses a generic "Show more" label.
@@ -108,7 +108,25 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
       const atBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 8;
       stablePasses = count === previousCount ? stablePasses + 1 : 0;
       previousCount = count;
-      if (atBottom && stablePasses >= 2 && !showMore) break;
+      if (atBottom && stablePasses >= 2 && !showMore && (count > 0 || pass >= 15)) break;
+      window.scrollBy({top: Math.max(520, Math.floor(window.innerHeight * 0.8)), behavior: 'auto'});
+      await pause(650);
+    }
+    combined = merge(combined, extractPerson());
+    window.scrollTo(0, 0);
+    return combined;
+  }
+  async function collectFullyRenderedEducation() {
+    let combined = {}, stablePasses = 0, previousCount = 0;
+    window.scrollTo(0, 0);
+    await pause(500);
+    for (let pass = 0; pass < 30; pass++) {
+      combined = merge(combined, extractPerson());
+      const count = Array.isArray(combined.educations) ? combined.educations.length : 0;
+      const atBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 8;
+      stablePasses = count === previousCount ? stablePasses + 1 : 0;
+      previousCount = count;
+      if (atBottom && stablePasses >= 2) break;
       window.scrollBy({top: Math.max(520, Math.floor(window.innerHeight * 0.8)), behavior: 'auto'});
       await pause(650);
     }
@@ -117,9 +135,68 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
     return combined;
   }
   async function collect(id, expectedUrl) {
-    if (collecting) throw new Error('This page is already being read.'); collecting = true;
+    if (collecting) throw new Error('This page is already being read.');
+    collecting = true;
     try {
-      for (let attempt = 0; attempt < 12; attempt++) { if (pageUrl(location.href,id) !== expectedUrl) throw new Error('Profile page changed during capture.'); const isSkillsPage = expectedUrl.includes('/details/skills/'); const data = isSkillsPage ? await collectFullyRenderedSkills() : extractPerson(); const hasSection = ['experience','educations','skills','certifications','languages','volunteerExperiences','honors','publications','patents','courses','organizations'].some(key => Array.isArray(data[key]) && data[key].length); if (data.fullName || data.headline || hasSection || document.querySelector('main')) return {ok:true,data,links:links(id),warnings:isSkillsPage ? [`Collected ${data.skills?.length || 0} skills from LinkedIn's Skills detail page.`] : []}; await pause(500); }
+      const detailMatch = expectedUrl.match(/\/details\/(education|skills)\/$/);
+      const detailName = detailMatch?.[1] === 'education' ? 'Education' : detailMatch?.[1] === 'skills' ? 'Skills' : undefined;
+      const isSkillsPage = detailMatch?.[1] === 'skills';
+      const hasRenderedSection = (name) =>
+        !!document.querySelector(
+          `[componentkey*="${name}TopLevelSection" i], [componentkey*="${name}DetailsSection" i], [componentkey*="${name === 'Skills' ? 'SkillDetails' : `${name}Details`}" i]`,
+        ) ||
+        Array.from(document.querySelectorAll('main h1, main h2, main h3, main [role="heading"]'))
+          .some((heading) => new RegExp(`^${name}$`, 'i').test(heading.textContent?.trim() || ''));
+      const hasDetailsPageTitle = (name) =>
+        location.pathname.endsWith(`/details/${name.toLowerCase()}/`) &&
+        Array.from(document.querySelectorAll('main p'))
+          .some((paragraph) => new RegExp(`^${name}$`, 'i').test(paragraph.textContent?.trim() || ''));
+      let data;
+      let previousEducation = '';
+      let stableEducationPasses = 0;
+      let sectionFound = !detailName;
+
+      for (let attempt = 0; attempt < 40; attempt++) {
+        if (pageUrl(location.href, id) !== expectedUrl) throw new Error('Profile page changed during capture.');
+        sectionFound ||= hasRenderedSection(detailName) || hasDetailsPageTitle(detailName);
+        if (isSkillsPage && sectionFound) {
+          data = await collectFullyRenderedSkills();
+          break;
+        }
+        if (detailName === 'Education' && sectionFound) {
+          data = await collectFullyRenderedEducation();
+          break;
+        }
+
+        data = extractPerson();
+        if (detailName === 'Education' && sectionFound) {
+          const currentEducation = JSON.stringify(data.educations || []);
+          stableEducationPasses = currentEducation === previousEducation ? stableEducationPasses + 1 : 0;
+          previousEducation = currentEducation;
+          if (data.educations?.length && stableEducationPasses >= 3) break;
+        } else if (!detailName) {
+          const hasSection = ['experience','educations','skills','certifications','languages','volunteerExperiences','honors','publications','patents','courses','organizations']
+            .some((key) => Array.isArray(data[key]) && data[key].length);
+          if (data.fullName || data.headline || hasSection || document.querySelector('main')) break;
+        }
+        await pause(500);
+      }
+
+      data ||= extractPerson();
+      const warnings = [];
+      if (detailName && !sectionFound) {
+        warnings.push(`LinkedIn's ${detailName} section did not finish loading. Capture again if the section is visible on the profile.`);
+      }
+      if (detailName === 'Education' && !data.educations?.length) {
+        warnings.push("No education records were detected. If education is visible on LinkedIn, leave the profile open and capture again.");
+      }
+      if (detailName === 'Skills' && !data.skills?.length) {
+        warnings.push("No skills were detected. If skills are visible on LinkedIn, leave the profile open and capture again.");
+      }
+      if (isSkillsPage) warnings.push(`Collected ${data.skills?.length || 0} skills from LinkedIn's Skills detail page.`);
+      if (data.fullName || data.headline || document.querySelector('main') || sectionFound) {
+        return {ok:true,data,links:links(id),warnings};
+      }
       throw new Error('Profile content did not load. Check sign-in or access.');
     } finally { collecting = false; }
   }

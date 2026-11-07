@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { workspaces } from "./workspaces.js";
 import { users } from "./users.js";
 
@@ -12,6 +12,8 @@ export const workspaceInvites = pgTable("workspace_invites", {
   role: text("role").notNull().default("member"),
   token: text("token").notNull().unique(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  /** COPS-15: an internal Owner/Admin invited this person with Ops access; granted on accept. */
+  grantOpsAccess: boolean("grant_ops_access").notNull().default(false),
   acceptedAt: timestamp("accepted_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

@@ -138,7 +138,7 @@ export async function sequenceRoutes(app: FastifyInstance) {
     const workspaceId = requireWorkspaceId(request);
     const { status } = request.query as { status?: string };
     const svc = buildSequenceService(app.db);
-    if (!svc) return reply.send({ workspaceId, data: [], total: 0 });
+    if (!svc) return reply.status(503).send({ error: "database_unavailable" });
     const data = await svc.listSequences(workspaceId, status);
     return reply.send({ workspaceId, data, total: data.length });
   });

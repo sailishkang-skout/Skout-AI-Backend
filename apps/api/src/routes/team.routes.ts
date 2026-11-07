@@ -122,7 +122,7 @@ export async function teamRoutes(app: FastifyInstance) {
   });
 
   // POST /team/invites — create invite (owner or admin)
-  app.post<{ Body: { email: string; role: WorkspaceRole } }>(
+  app.post<{ Body: { email: string; role: WorkspaceRole; app?: "customerops"; ops_access?: boolean } }>(
     "/team/invites",
     async (request, reply) => {
       if (!request.workspaceId || !request.userId) {
@@ -130,6 +130,14 @@ export async function teamRoutes(app: FastifyInstance) {
       }
       await shadowCheckTeamManage(request.workspaceId, request.userId, "create-invite");
       const { email, role } = request.body;
+      // COPS-15: Ops access can ride on an invite only from the ops portal, by an internal Owner/Admin.
+      const wantsOps = request.body.ops_access === true;
+      if (wantsOps) {
+        const internal = !!app.config.INTERNAL_WORKSPACE_ID && request.workspaceId === app.config.INTERNAL_WORKSPACE_ID;
+        if (request.body.app !== "customerops" || !internal || !["owner", "admin"].includes(String(request.role ?? ""))) {
+          return reply.code(403).send(errorResponse("Only an Owner or Admin of the internal Skout workspace can invite with Ops access", 403));
+        }
+      }
       if (!email || typeof email !== "string") {
         return reply.code(400).send(errorResponse("email is required", 400));
       }
@@ -143,9 +151,14 @@ export async function teamRoutes(app: FastifyInstance) {
         request.role
       );
 
-      // The product app lives under /app; without it the email link 404s (same fix as onboarding).
-      const baseUrl = productAppUrl(app.config.INVITE_BASE_URL ?? app.config.FRONTEND_URL ?? "http://localhost:3000");
+      // Staff invited from CustomerOps (Admin > People) accept in CustomerOps; everyone else in the
+      // product app, which lives under /app (without it the email link 404s).
+      const opsBase = request.body.app === "customerops" ? customerOpsBaseUrl(app.config.COPS_APP_URL, request.headers.origin) : null;
+      const baseUrl = opsBase ?? productAppUrl(app.config.INVITE_BASE_URL ?? app.config.FRONTEND_URL ?? "http://localhost:3000");
       const acceptUrl = `${baseUrl}/invite/${invite.token}`;
+      if (wantsOps) {
+        await app.db!.update(schema.workspaceInvites).set({ grantOpsAccess: true }).where(eq(schema.workspaceInvites.token, invite.token));
+      }
 
       const [ws] = await app.db!
         .select({ name: schema.workspaces.name })
@@ -233,4 +246,14 @@ export async function teamRoutes(app: FastifyInstance) {
       return reply.code(204).send();
     }
   );
+}
+
+/**
+ * Where a CustomerOps invite link points: COPS_APP_URL when set, otherwise the Origin the request
+ * came from, but only a Skout domain or localhost so an email link can never point elsewhere.
+ */
+export function customerOpsBaseUrl(configured: string | undefined, origin: string | undefined): string | null {
+  if (configured) return configured.replace(/\/+$/, "");
+  if (origin && /^(https:\/\/([a-z0-9-]+\.)*skoutai\.io|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?)$/.test(origin)) return origin;
+  return null;
 }

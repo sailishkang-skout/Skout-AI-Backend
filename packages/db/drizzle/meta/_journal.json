@@ -1072,6 +1072,13 @@
       "when": 1798200000000,
       "tag": "0150_subscription_item_description",
       "breakpoints": true
+    },
+    {
+      "idx": 153,
+      "version": "7",
+      "when": 1798300000000,
+      "tag": "0151_invite_ops_access",
+      "breakpoints": true
     }
   ]
 }
