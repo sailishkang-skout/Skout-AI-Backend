@@ -982,7 +982,8 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
   // Refund a paid link in full, with a reason (Finance only: money goes back to the customer).
   app.post<{ Params: { id: string }; Body: { reason?: string } }>(
     "/payment-requests/:id/refund",
-    { preHandler: billingWriteGate },
+    // Money goes back to the customer: only roles with billing:refund (Finance, Owner, Admin).
+    { preHandler: requireAnyCopsPermission(["billing:refund"], perms) },
     withCopsIdempotentReply<{ Params: { id: string }; Body: { reason?: string } }>(idempotency, async (request, reply) => {
       const ctx = ctxOf(request);
       const bad = checkId(reply, ctx.requestId, request.params.id);
