@@ -208,7 +208,8 @@ maybe("COPS-03 payment requests and webhook", () => {
     const refunded = await call("POST", `/payment-requests/${pr.id}/refund`, { reason: "Customer cancelled within the trial" });
     expect(refunded.statusCode).toBe(200);
     expect(refunded.json().data.status).toBe("refunded");
-    expect(refundCalls.at(-1)).toMatchObject({ paymentId: `pay_refund_${RUN}`, body: { amount: pr.amount_minor } });
+    const [row] = await sql`select amount_minor from payment_requests where id = ${pr.id}`;
+    expect(refundCalls.at(-1)).toMatchObject({ paymentId: `pay_refund_${RUN}`, body: { amount: Number(row.amount_minor) } });
     expect((await call("POST", `/payment-requests/${pr.id}/refund`, { reason: "again" })).statusCode).toBe(409);
     const [audit] = await sql`select action from audit_logs where entity_id = ${pr.id} and action = 'payment_request.refunded'`;
     expect(audit.action).toBe("payment_request.refunded");
