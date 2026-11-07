@@ -376,6 +376,11 @@ export const subscriptions = pgTable(
     /** The renewal opportunity opened for this term; set once. */
     renewalOpportunityId: uuid("renewal_opportunity_id").references(() => deals.id, { onDelete: "set null" }),
     renewalOpenedAt: timestamp("renewal_opened_at", { withTimezone: true }),
+    /** Set when the customer cancels: the moment it ends (term end, or the cancel time when immediate). */
+    cancelAt: timestamp("cancel_at", { withTimezone: true }),
+    cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true }),
+    cancelReason: text("cancel_reason"),
+    cancelledBy: uuid("cancelled_by").references(() => users.id, { onDelete: "set null" }),
     statusChangedAt: timestamp("status_changed_at", { withTimezone: true }).notNull().defaultNow(),
     createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

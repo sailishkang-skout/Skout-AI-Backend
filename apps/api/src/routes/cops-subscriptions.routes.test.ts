@@ -242,6 +242,34 @@ maybe("COPS-08 subscriptions", () => {
     expect((await sql`select count(*)::int as n from deals where company_id = ${accountId}`)[0].n).toBe(1);
   });
 
+  it("a subscription can be cancelled at the end of its term (no renewal) or now, and an end-of-term cancel withdrawn", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    const sub = (await subscribe(accountId, opportunityId, {})).json().data;
+    // A reason and a valid "when" are required.
+    expect((await call("POST", `/subscriptions/${sub.id}/cancel`, { when: "end_of_term" })).statusCode).toBe(422);
+    expect((await call("POST", `/subscriptions/${sub.id}/cancel`, { when: "someday", reason: "x" })).statusCode).toBe(422);
+
+    const later = await call("POST", `/subscriptions/${sub.id}/cancel`, { when: "end_of_term", reason: "Customer is moving to another tool" });
+    expect(later.statusCode).toBe(200);
+    expect(later.json().data).toMatchObject({ status: "active", cancel_at: sub.renews_at, cancel_reason: "Customer is moving to another tool" });
+    // No renewal opens for a cancelled subscription, even inside the lead window.
+    await runRenewals(db, new Date(new Date(sub.renews_at).getTime() - 10 * DAY), { workspaceId });
+    expect((await sql`select renewal_opportunity_id from subscriptions where id = ${sub.id}`)[0].renewal_opportunity_id).toBeNull();
+    // Withdrawn before it closes: it renews again.
+    const resumed = await call("POST", `/subscriptions/${sub.id}/resume`, { reason: "They stayed after the call" });
+    expect(resumed.statusCode).toBe(200);
+    expect(resumed.json().data.cancel_at).toBeNull();
+    expect((await call("POST", `/subscriptions/${sub.id}/resume`, { reason: "again" })).statusCode).toBe(409);
+
+    const now = await call("POST", `/subscriptions/${sub.id}/cancel`, { when: "now", reason: "Contract ended early by agreement" });
+    expect(now.statusCode).toBe(200);
+    expect(now.json().data.status).toBe("closed");
+    expect((await call("POST", `/subscriptions/${sub.id}/cancel`, { when: "now", reason: "twice" })).statusCode).toBe(409);
+    expect((await call("POST", `/subscriptions/${sub.id}/resume`, { reason: "too late" })).statusCode).toBe(409);
+    const audit = await sql`select action from audit_logs where entity_id = ${sub.id} and action like 'subscription.cancel%' order by created_at`;
+    expect(audit.map((a: { action: string }) => a.action)).toEqual(["subscription.cancelled", "subscription.cancel_withdrawn", "subscription.cancelled"]);
+  });
+
   it("amendments are appended and never edited; seats change with the next period and the original contract is untouched", async () => {
     const { accountId, opportunityId } = await newAccount();
     const contract = (await call("POST", `/opportunities/${opportunityId}/contracts`, { kind: "msa", document_url: "https://docs.example.test/msa.pdf", file_sha256: "c".repeat(64) })).json().data;

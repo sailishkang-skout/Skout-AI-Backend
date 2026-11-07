@@ -1051,6 +1051,13 @@
       "when": 1797900000000,
       "tag": "0147_activation_first_campaign",
       "breakpoints": true
+    },
+    {
+      "idx": 150,
+      "version": "7",
+      "when": 1798000000000,
+      "tag": "0148_subscription_cancel",
+      "breakpoints": true
     }
   ]
 }
