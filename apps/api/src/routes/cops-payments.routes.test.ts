@@ -31,6 +31,7 @@ maybe("COPS-03 payment requests and webhook", () => {
   let opportunityId = "";
   const linkCalls: Array<Record<string, unknown>> = [];
   const cancelCalls: string[] = [];
+  const refundCalls: { paymentId: string; body: { amount?: number } }[] = [];
 
   const call = (method: "GET" | "POST", path: string, body?: unknown, key: string | null = randomUUID()) =>
     app.inject({
@@ -80,6 +81,11 @@ maybe("COPS-03 payment requests and webhook", () => {
         if (body.description === "FAIL") return new Response('{"error":{"code":"BAD_REQUEST_ERROR"}}', { status: 400 });
         const id = `plink_${randomUUID().replace(/-/g, "").slice(0, 14)}`;
         return new Response(JSON.stringify({ id, short_url: `https://rzp.io/i/${id}`, status: "created" }), { status: 200 });
+      }
+      const refund = /^https:\/\/api\.razorpay\.com\/v1\/payments\/([^/]+)\/refund$/.exec(target);
+      if (refund) {
+        refundCalls.push({ paymentId: refund[1]!, body: JSON.parse(String(init?.body ?? "{}")) });
+        return new Response(JSON.stringify({ id: `rfnd_${randomUUID().slice(0, 8)}`, status: "processed" }), { status: 200 });
       }
       const cancel = /^https:\/\/api\.razorpay\.com\/v1\/payment_links\/([^/]+)\/cancel$/.exec(target);
       if (cancel) {
@@ -192,6 +198,21 @@ maybe("COPS-03 payment requests and webhook", () => {
     const again = await forProposal();
     expect(again.statusCode).toBe(409);
     expect(again.json().details).toMatchObject({ status: "paid" });
+  });
+
+  it("refunds a paid link in full with a reason; an unpaid or already refunded link is refused", async () => {
+    const pr = await newRequest();
+    expect((await call("POST", `/payment-requests/${pr.id}/refund`, { reason: "Not paid yet" })).statusCode).toBe(409);
+    expect((await webhook(paidEvent(pr.provider_ref, `pay_refund_${RUN}`))).statusCode).toBe(200);
+    expect((await call("POST", `/payment-requests/${pr.id}/refund`, {})).statusCode).toBe(422);
+    const refunded = await call("POST", `/payment-requests/${pr.id}/refund`, { reason: "Customer cancelled within the trial" });
+    expect(refunded.statusCode).toBe(200);
+    expect(refunded.json().data.status).toBe("refunded");
+    const [row] = await sql`select amount_minor from payment_requests where id = ${pr.id}`;
+    expect(refundCalls.at(-1)).toMatchObject({ paymentId: `pay_refund_${RUN}`, body: { amount: Number(row.amount_minor) } });
+    expect((await call("POST", `/payment-requests/${pr.id}/refund`, { reason: "again" })).statusCode).toBe(409);
+    const [audit] = await sql`select action from audit_logs where entity_id = ${pr.id} and action = 'payment_request.refunded'`;
+    expect(audit.action).toBe("payment_request.refunded");
   });
 
   it("rejects a missing or bad signature with 401 and changes nothing", async () => {

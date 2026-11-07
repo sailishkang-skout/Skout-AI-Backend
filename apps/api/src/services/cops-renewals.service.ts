@@ -36,6 +36,8 @@ export async function runRenewals(db: Db, now: Date = new Date(), scope: { works
       and(
         ne(subscriptions.status, "closed"),
         isNull(subscriptions.renewalOpportunityId),
+        // A cancelled subscription does not renew.
+        isNull(subscriptions.cancelAt),
         // The widest lead time allowed by the config schema; the exact one is checked per workspace below.
         lte(subscriptions.termEnd, new Date(now.getTime() + 366 * 86_400_000)),
         scope.workspaceId ? eq(subscriptions.workspaceId, scope.workspaceId) : undefined
@@ -55,7 +57,7 @@ export async function runRenewals(db: Db, now: Date = new Date(), scope: { works
     await db.transaction(async (tx) => {
       // The row lock is what makes this once per term: a concurrent pass waits here, then sees the mark.
       const [sub] = await tx.select().from(subscriptions).where(eq(subscriptions.id, candidate.id)).for("update").limit(1);
-      if (!sub || sub.status === "closed" || sub.renewalOpportunityId) return;
+      if (!sub || sub.status === "closed" || sub.renewalOpportunityId || sub.cancelAt) return;
       const [origin] = await tx
         .select({ name: deals.name, ownerId: deals.ownerId, pipelineId: deals.pipelineId, stageId: deals.stageId })
         .from(deals)

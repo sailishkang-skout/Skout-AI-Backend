@@ -76,6 +76,9 @@ function subscriptionDto(row: SubscriptionRow, items: ItemRow[], invoices: Invoi
     term_start: row.termStart.toISOString(),
     /** The renewal date: the end of the term. */
     renews_at: row.termEnd.toISOString(),
+    /** When a cancelled subscription ends (or ended); null while it renews. */
+    cancel_at: row.cancelAt?.toISOString() ?? null,
+    cancel_reason: row.cancelReason ?? null,
     payment_terms_net_days: row.paymentTermsNetDays,
     provider_subscription_id: row.providerSubscriptionId,
     provider_plan_id: row.providerPlanId,
@@ -406,7 +409,9 @@ export async function runSubscriptionBilling(db: Db, now: Date = new Date(), sco
         .where(and(eq(subscriptionInvoices.subscriptionId, sub.id), eq(subscriptionInvoices.status, "open"), lte(subscriptionInvoices.dueAt, now)))
         .orderBy(asc(subscriptionInvoices.dueAt))
         .limit(1);
-      const next = subscriptionStatusFor(policy, { billing: sub.billing as SubscriptionBilling, oldest_overdue_due_at: overdue?.dueAt ?? null, now });
+      const dunned = subscriptionStatusFor(policy, { billing: sub.billing as SubscriptionBilling, oldest_overdue_due_at: overdue?.dueAt ?? null, now });
+      // A cancelled subscription closes once its cancel date has passed.
+      const next = sub.cancelAt && sub.cancelAt.getTime() <= now.getTime() ? { ...dunned, status: "closed" as SubscriptionStatus } : dunned;
       const from = sub.status as SubscriptionStatus;
       await syncAccountFromSubscription(tx, sub, next.status, effectiveSeats(originalSeats(items), seatChanges(amendments), now), now, requestId);
       if (next.status === from) return;
@@ -562,6 +567,8 @@ export async function getCustomerSubscription(db: Db, customerWorkspaceId: strin
     cadence: dto.cadence,
     seats: dto.seats,
     renews_at: dto.renews_at,
+    /** When a cancelled subscription ends; the customer sees it in Skout AI. */
+    cancel_at: dto.cancel_at,
     invoices: dto.invoices.map(({ payment_request_id: _p, ...bill }) => bill),
     dunning: dto.dunning,
   };
@@ -615,4 +622,69 @@ export async function previewAmendment(db: Db, ctx: CommercialContext, subscript
     change_minor: before !== null && after !== null ? after - before : null,
     proration: "none" as const,
   };
+}
+
+/** One subscription of this workspace as its DTO. */
+async function subscriptionById(db: Db, workspaceId: string, id: string, now: Date): Promise<SubscriptionDto> {
+  const [row] = await db.select().from(subscriptions).where(and(eq(subscriptions.id, id), eq(subscriptions.workspaceId, workspaceId))).limit(1);
+  if (!row) throw new CommercialError("NOT_FOUND", "Subscription not found");
+  return loadDto(db, row, now);
+}
+
+/**
+ * Cancels a subscription, with a reason. "end_of_term" keeps it running and billing to the end of
+ * the paid term, then it closes and no renewal opens; "now" closes it at once. Nothing is deleted.
+ */
+export async function cancelSubscription(db: Db, ctx: CommercialContext, subscriptionId: string, input: { when: "end_of_term" | "now"; reason: string }, now: Date = new Date()): Promise<SubscriptionDto> {
+  await db.transaction(async (tx) => {
+    const [sub] = await tx.select().from(subscriptions).where(and(eq(subscriptions.id, subscriptionId), eq(subscriptions.workspaceId, ctx.workspaceId))).for("update").limit(1);
+    if (!sub) throw new CommercialError("NOT_FOUND", "Subscription not found");
+    if (sub.status === "closed") throw new CommercialError("BUSINESS_STATE_CONFLICT", "This subscription is already closed", { status: sub.status });
+    const cancelAt = input.when === "now" ? now : sub.termEnd;
+    const status = input.when === "now" ? "closed" : sub.status;
+    await tx
+      .update(subscriptions)
+      .set({ cancelAt, cancelRequestedAt: now, cancelReason: input.reason, cancelledBy: ctx.userId, updatedAt: now, ...(status !== sub.status ? { status, statusChangedAt: now } : {}) })
+      .where(eq(subscriptions.id, sub.id));
+    if (status !== sub.status) {
+      const items = await tx.select().from(subscriptionItems).where(eq(subscriptionItems.subscriptionId, sub.id));
+      const amendments = await tx.select().from(subscriptionAmendments).where(eq(subscriptionAmendments.subscriptionId, sub.id));
+      await syncAccountFromSubscription(tx as never, sub, status as SubscriptionStatus, effectiveSeats(originalSeats(items), seatChanges(amendments), now), now, ctx.requestId);
+    }
+    await writeCopsAudit(tx, {
+      tenantId: ctx.workspaceId,
+      actor: { type: "user", id: ctx.userId },
+      entityType: "subscription",
+      entityId: sub.id,
+      action: "subscription.cancelled",
+      before: { status: sub.status, cancel_at: sub.cancelAt?.toISOString() ?? null },
+      after: { status, cancel_at: cancelAt.toISOString(), when: input.when, reason: input.reason },
+      correlationId: ctx.requestId,
+      sourceChannel: "api",
+    });
+  });
+  return subscriptionById(db, ctx.workspaceId, subscriptionId, now);
+}
+
+/** Withdraws an end-of-term cancellation before the subscription has closed. */
+export async function resumeSubscription(db: Db, ctx: CommercialContext, subscriptionId: string, reason: string, now: Date = new Date()): Promise<SubscriptionDto> {
+  await db.transaction(async (tx) => {
+    const [sub] = await tx.select().from(subscriptions).where(and(eq(subscriptions.id, subscriptionId), eq(subscriptions.workspaceId, ctx.workspaceId))).for("update").limit(1);
+    if (!sub) throw new CommercialError("NOT_FOUND", "Subscription not found");
+    if (sub.status === "closed") throw new CommercialError("BUSINESS_STATE_CONFLICT", "A closed subscription cannot be resumed; start a new one", { status: sub.status });
+    if (!sub.cancelAt) throw new CommercialError("BUSINESS_STATE_CONFLICT", "This subscription is not cancelled", {});
+    await tx.update(subscriptions).set({ cancelAt: null, cancelRequestedAt: null, cancelReason: null, cancelledBy: null, updatedAt: now }).where(eq(subscriptions.id, sub.id));
+    await writeCopsAudit(tx, {
+      tenantId: ctx.workspaceId,
+      actor: { type: "user", id: ctx.userId },
+      entityType: "subscription",
+      entityId: sub.id,
+      action: "subscription.cancel_withdrawn",
+      before: { cancel_at: sub.cancelAt.toISOString(), reason: sub.cancelReason },
+      after: { cancel_at: null, reason },
+      correlationId: ctx.requestId,
+      sourceChannel: "api",
+    });
+  });
+  return subscriptionById(db, ctx.workspaceId, subscriptionId, now);
 }

@@ -36,7 +36,7 @@ import {
   discardDraftContract,
   type CommercialContext,
 } from "../services/cops-commercial.service.js";
-import { cancelPaymentRequest, createPaymentRequest, handlePaymentWebhook, loadPaymentRequests } from "../services/cops-payments.service.js";
+import { cancelPaymentRequest, createPaymentRequest, handlePaymentWebhook, loadPaymentRequests, refundPaymentRequest } from "../services/cops-payments.service.js";
 import { emailPaymentLink, emailProposal, isInternalEmail } from "../services/cops-commercial-email.service.js";
 import { assertApproved, assertContractApproved, decideApproval, evaluateProposalApprovals, listApprovals, requestApproval } from "../services/cops-approvals.service.js";
 import { createRazorpayPaymentLinkAdapter } from "../services/psp/razorpay.js";
@@ -56,7 +56,7 @@ import { handleEsignWebhook, listEnvelopes, sendEnvelope } from "../services/cop
 import { removeContractDocumentIfUnused, resolveContractDocumentForProvider } from "./cops-contract-documents.routes.js";
 import { getAccountContractFields, setAccountContractFields } from "../services/cops-account-fields.service.js";
 import { CREDIT_ACTIVITY_KINDS, listCreditActivity, listSubscriptionsForFinance, loadReconciliation } from "../services/cops-finance.service.js";
-import { amendSubscription, createSubscription, previewAmendment, getAccountSubscription, issueInvoicePaymentLink, listFailedPayments, markInvoicePaid } from "../services/cops-subscriptions.service.js";
+import { amendSubscription, cancelSubscription, createSubscription, previewAmendment, resumeSubscription, getAccountSubscription, issueInvoicePaymentLink, listFailedPayments, markInvoicePaid } from "../services/cops-subscriptions.service.js";
 import { applyPaidCreditPurchases, reverseRefundedCreditPurchase } from "../services/cops-credits.service.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -361,6 +361,33 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
     if (bad) return bad;
     return { data: await getAccountSubscription(db, ctx.workspaceId, request.params.id) };
   });
+
+  // Cancel a subscription (at the end of its term, or now) and withdraw an end-of-term cancel.
+  const cancelSchema = z.object({ when: z.enum(["end_of_term", "now"]), reason: reasonText }).strict();
+  app.post<IdOnly>(
+    "/subscriptions/:id/cancel",
+    { preHandler: billingWriteGate },
+    withCopsIdempotentReply<IdOnly>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      const parsed = cancelSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(reply, ctx.requestId, () => cancelSubscription(db, ctx, request.params.id, parsed.data), (subscription) => ({ data: subscription }));
+    })
+  );
+  app.post<IdOnly>(
+    "/subscriptions/:id/resume",
+    { preHandler: billingWriteGate },
+    withCopsIdempotentReply<IdOnly>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      const parsed = z.object({ reason: reasonText }).strict().safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(reply, ctx.requestId, () => resumeSubscription(db, ctx, request.params.id, parsed.data.reason), (subscription) => ({ data: subscription }));
+    })
+  );
 
   // What a seat or term change would cost, before it is made. Writes nothing.
   app.post<IdOnly>("/subscriptions/:id/amendments/preview", { preHandler: billingWriteGate }, async (request, rawReply) => {
@@ -935,6 +962,46 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
     return { data: paymentRequest };
   });
 
+  // COPS-04 Q4: a refund takes back the credits that payment bought (provider event or our refund).
+  const onPaymentRefunded = async (tx: Db, refunded: { workspaceId: string; opportunityId: string; requestId: string; paymentRequestId?: string }) => {
+    const [deal] = await tx
+      .select({ companyId: schema.deals.companyId })
+      .from(schema.deals)
+      .where(and(eq(schema.deals.id, refunded.opportunityId), eq(schema.deals.workspaceId, refunded.workspaceId)))
+      .limit(1);
+    if (deal?.companyId && refunded.paymentRequestId) {
+      await reverseRefundedCreditPurchase(tx as never, {
+        operatorWorkspaceId: refunded.workspaceId,
+        accountId: deal.companyId,
+        paymentRequestId: refunded.paymentRequestId,
+        requestId: refunded.requestId,
+      });
+    }
+  };
+
+  // Refund a paid link in full, with a reason (Finance only: money goes back to the customer).
+  app.post<{ Params: { id: string }; Body: { reason?: string } }>(
+    "/payment-requests/:id/refund",
+    // Money goes back to the customer: only roles with billing:refund (Finance, Owner, Admin).
+    { preHandler: requireAnyCopsPermission(["billing:refund"], perms) },
+    withCopsIdempotentReply<{ Params: { id: string }; Body: { reason?: string } }>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      const parsed = z.object({ reason: reasonText }).strict().safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(
+        reply,
+        ctx.requestId,
+        async () => {
+          await refundPaymentRequest(db, psp, ctx, request.params.id, parsed.data.reason, onPaymentRefunded);
+          return (await loadPaymentRequests(db, ctx.workspaceId, { id: request.params.id }))[0];
+        },
+        (paymentRequest) => ({ data: paymentRequest })
+      );
+    })
+  );
+
   /**
    * Provider webhook. Public under /billing/webhooks/ (plugins/auth.ts) and authenticated by the
    * HMAC signature instead: missing secret, missing or bad signature -> 401.
@@ -959,22 +1026,7 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
       if (deal?.companyId) {
         await applyPaidCreditPurchases(tx, { operatorWorkspaceId: paid.workspaceId, accountId: deal.companyId, requestId: paid.requestId });
       }
-    }, async (tx, refunded) => {
-      // COPS-04 Q4: a refund takes back the credits that payment bought.
-      const [deal] = await tx
-        .select({ companyId: schema.deals.companyId })
-        .from(schema.deals)
-        .where(and(eq(schema.deals.id, refunded.opportunityId), eq(schema.deals.workspaceId, refunded.workspaceId)))
-        .limit(1);
-      if (deal?.companyId && refunded.paymentRequestId) {
-        await reverseRefundedCreditPurchase(tx, {
-          operatorWorkspaceId: refunded.workspaceId,
-          accountId: deal.companyId,
-          paymentRequestId: refunded.paymentRequestId,
-          requestId: refunded.requestId,
-        });
-      }
-    });
+    }, onPaymentRefunded);
     if (result.kind === "unauthorized") {
       return reply.status(401).send(copsErrorBody({ code: "UNAUTHENTICATED", message: "Invalid webhook signature", requestId }));
     }
