@@ -1,3 +1,4 @@
+import { planFromItems } from "../services/cops-subscriptions.service.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -240,6 +241,52 @@ maybe("COPS-08 subscriptions", () => {
     await billAt(sub.invoices[0].due_at, 45);
     await runRenewals(db, new Date(new Date(sub.renews_at).getTime() - 10 * DAY), { workspaceId });
     expect((await sql`select count(*)::int as n from deals where company_id = ${accountId}`)[0].n).toBe(1);
+  });
+
+  it("is built from the sent proposal's monthly lines (any plan, not only seats); one-time lines stay out", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    const line = (description: string, kind: string, quantity: number, unit: number, price_basis: string) => ({ kind, description, quantity, unit_amount_minor: unit, price_basis });
+    const proposal = (
+      await call("POST", `/opportunities/${opportunityId}/proposals`, {
+        title: "Mixed plan",
+        currency: "USD",
+        billing_cadence: "monthly",
+        term_months: 12,
+        discount_pct: 0,
+        line_items: [
+          line("Skout Full", "seats", 3, 3_500, "per_month"),
+          line("Skout Full Multichannel", "seats", 2, 5_500, "per_month"),
+          line("Additional connected identity", "product", 1, 700, "per_month"),
+          line("Premium support", "product", 1, 2_000, "per_month"),
+          line("Implementation fee", "fee", 1, 50_000, "one_time"),
+        ],
+      })
+    ).json().data;
+    // Without a sent proposal and without seats there is nothing to bill.
+    expect((await call("POST", `/accounts/${accountId}/subscription`, { opportunity_id: opportunityId, cadence: "monthly", term_months: 12 })).statusCode).toBe(422);
+    await call("POST", `/proposals/${proposal.id}/send`, {});
+    const res = await call("POST", `/accounts/${accountId}/subscription`, { opportunity_id: opportunityId, cadence: "monthly", term_months: 12, payment_terms_net_days: 0 });
+    expect(res.statusCode).toBe(201);
+    const sub = res.json().data;
+    expect(sub.items.map((i: { description: string; quantity: number }) => `${i.description} x${i.quantity}`)).toEqual([
+      "Skout Full x3",
+      "Skout Full Multichannel x2",
+      "Additional connected identity x1",
+      "Premium support x1",
+    ]);
+    // Seat limit counts every seat plan; the first month bills every monthly line, not the one-time fee.
+    expect(sub.seats).toBe(5);
+    expect(sub.invoices[0].amount_minor).toBe(3 * 3_500 + 2 * 5_500 + 700 + 2_000);
+  });
+
+  it("maps what was sold to the customer's Skout AI plan limits", () => {
+    expect(planFromItems([{ kind: "seats", description: "Skout Full", quantity: 3 }])).toEqual({ plan: "full", extraIdentities: 0 });
+    expect(planFromItems([
+      { kind: "seats", description: "Skout Full Multichannel", quantity: 2 },
+      { kind: "product", description: "Additional connected identity", quantity: 2 },
+    ])).toEqual({ plan: "multichannel", extraIdentities: 2 });
+    // Only support bought, no seats: still the Full limits, nothing extra.
+    expect(planFromItems([{ kind: "product", description: "Premium support", quantity: 1 }])).toEqual({ plan: "full", extraIdentities: 0 });
   });
 
   it("a subscription can be cancelled at the end of its term (no renewal) or now, and an end-of-term cancel withdrawn", async () => {

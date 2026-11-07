@@ -161,7 +161,7 @@ const envelopeSchema = z
 const subscriptionSchema = z
   .object({
     opportunity_id: z.string().regex(UUID),
-    seats: z.number().int().min(1).max(100_000),
+    seats: z.number().int().min(1).max(100_000).optional(),
     cadence: z.enum(SUBSCRIPTION_CADENCES),
     term_months: z.number().int().min(1).max(120),
     billing: z.enum(SUBSCRIPTION_BILLING).optional(),
