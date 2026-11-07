@@ -144,6 +144,9 @@ export async function emailPaymentLink(db: Db, config: Env, workspaceId: string,
 /** A one-page proposal PDF: the same lines and total as the email. */
 export function proposalPdf(p: { title: string; version: number; termMonths: number; discount: string; rows: { label: string; amount: string }[]; total: string }): Promise<Buffer> {
   return new Promise((resolve, reject) => {
+    // The built-in PDF font has no rupee glyph (€ and £ are fine), so ₹ is written as "INR".
+    const safe = (t: string) => t.replace(/₹\s?/g, "INR ");
+    p = { ...p, rows: p.rows.map((r) => ({ label: safe(r.label), amount: safe(r.amount) })), total: safe(p.total), title: safe(p.title) };
     const doc = new PDFDocument({ margin: 56, size: "A4", info: { Title: `${p.title} v${p.version}` } });
     const chunks: Buffer[] = [];
     doc.on("data", (c: Buffer) => chunks.push(c));
