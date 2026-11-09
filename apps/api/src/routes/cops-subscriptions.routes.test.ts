@@ -279,6 +279,29 @@ maybe("COPS-08 subscriptions", () => {
     expect(sub.invoices[0].amount_minor).toBe(3 * 3_500 + 2 * 5_500 + 700 + 2_000);
   });
 
+  it("the paid proposal payment settles the first bill instead of billing it again", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    const proposal = (
+      await call("POST", `/opportunities/${opportunityId}/proposals`, {
+        title: "Paid up front",
+        currency: "USD",
+        billing_cadence: "monthly",
+        term_months: 12,
+        discount_pct: 0,
+        line_items: [
+          { kind: "seats", description: "Skout Full", quantity: 1, unit_amount_minor: 1_000, price_basis: "per_month" },
+          { kind: "fee", description: "Implementation fee", quantity: 1, unit_amount_minor: 500, price_basis: "one_time" },
+        ],
+      })
+    ).json().data;
+    await call("POST", `/proposals/${proposal.id}/send`, {});
+    // The proposal's payment link (first month + one-time fee) was paid before the subscription started.
+    const [paid] = await sql`insert into payment_requests (workspace_id, opportunity_id, proposal_id, amount_minor, currency, status, provider, provider_ref, checkout_url, provider_payment_id, paid_at)
+      values (${workspaceId}, ${opportunityId}, ${proposal.id}, 1500, 'USD', 'paid', 'razorpay', ${`plink_${opportunityId}`}, 'https://rzp.io/test', 'pay_upfront', now()) returning id`;
+    const sub = (await call("POST", `/accounts/${accountId}/subscription`, { opportunity_id: opportunityId, cadence: "monthly", term_months: 12, payment_terms_net_days: 0 })).json().data;
+    expect(sub.invoices[0]).toMatchObject({ amount_minor: 1_000, status: "paid", payment_request_id: paid.id });
+  });
+
   it("maps what was sold to the customer's Skout AI plan limits", () => {
     expect(planFromItems([{ kind: "seats", description: "Skout Full", quantity: 3 }])).toEqual({ plan: "full", extraIdentities: 0 });
     expect(planFromItems([
@@ -311,6 +334,9 @@ maybe("COPS-08 subscriptions", () => {
     const now = await call("POST", `/subscriptions/${sub.id}/cancel`, { when: "now", reason: "Contract ended early by agreement" });
     expect(now.statusCode).toBe(200);
     expect(now.json().data.status).toBe("closed");
+    // Closing now voids the bills not yet paid, so the customer is not asked to pay them.
+    expect(sub.invoices[0].status).toBe("open");
+    expect(now.json().data.invoices.map((i: { status: string }) => i.status)).toEqual(["void"]);
     expect((await call("POST", `/subscriptions/${sub.id}/cancel`, { when: "now", reason: "twice" })).statusCode).toBe(409);
     expect((await call("POST", `/subscriptions/${sub.id}/resume`, { reason: "too late" })).statusCode).toBe(409);
     const audit = await sql`select action from audit_logs where entity_id = ${sub.id} and action like 'subscription.cancel%' order by created_at`;

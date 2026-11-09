@@ -249,6 +249,33 @@ async function ensurePeriodInvoices(tx: Tx, sub: SubscriptionRow, items: ItemRow
   return rows.length;
 }
 
+/**
+ * The proposal's payment link charges the first bill (a year up front on annual billing). When the
+ * deal has already paid it, that payment settles the first period instead of billing it again.
+ * Returns the settled invoice id, or null when there is nothing to settle.
+ */
+async function settleFirstPeriodFromProposalPayment(tx: Tx, sub: SubscriptionRow, now: Date): Promise<string | null> {
+  if (!sub.opportunityId) return null;
+  const [paid] = await tx
+    .select({ id: paymentRequests.id, paidAt: paymentRequests.paidAt, amountMinor: paymentRequests.amountMinor, currency: paymentRequests.currency })
+    .from(paymentRequests)
+    .where(and(eq(paymentRequests.workspaceId, sub.workspaceId), eq(paymentRequests.opportunityId, sub.opportunityId), isNotNull(paymentRequests.proposalId), eq(paymentRequests.status, "paid")))
+    .orderBy(desc(paymentRequests.paidAt))
+    .limit(1);
+  if (!paid || paid.currency !== sub.currency) return null;
+  const [used] = await tx.select({ id: subscriptionInvoices.id }).from(subscriptionInvoices).where(eq(subscriptionInvoices.paymentRequestId, paid.id)).limit(1);
+  if (used) return null;
+  const [first] = await tx
+    .select()
+    .from(subscriptionInvoices)
+    .where(and(eq(subscriptionInvoices.subscriptionId, sub.id), eq(subscriptionInvoices.status, "open")))
+    .orderBy(asc(subscriptionInvoices.periodStart))
+    .limit(1);
+  if (!first || first.periodStart.getTime() !== sub.termStart.getTime() || Number(paid.amountMinor) < Number(first.amountMinor)) return null;
+  await tx.update(subscriptionInvoices).set({ status: "paid", paidAt: paid.paidAt ?? now, paymentRequestId: paid.id }).where(eq(subscriptionInvoices.id, first.id));
+  return first.id;
+}
+
 export interface CreateSubscriptionInput {
   opportunity_id: string;
   seats?: number;
@@ -320,6 +347,7 @@ export async function createSubscription(db: Db, ctx: CommercialContext, account
       : [{ workspaceId: ctx.workspaceId, subscriptionId: sub!.id, kind: "seats", description: "Seats", quantity: input.seats!, unitAmountMinor: unit! }];
     const items = await tx.insert(subscriptionItems).values(rows).returning();
     await ensurePeriodInvoices(tx, sub!, items, now);
+    const settledInvoiceId = await settleFirstPeriodFromProposalPayment(tx, sub!, now);
     await syncAccountFromSubscription(tx, sub!, "active", originalSeats(items), now, ctx.requestId);
     await applyPlanEntitlements(tx, sub!, items, now);
     await writeCopsAudit(tx, {
@@ -328,7 +356,7 @@ export async function createSubscription(db: Db, ctx: CommercialContext, account
       entityType: "subscription",
       entityId: sub!.id,
       action: "subscription.created",
-      after: { account_id: accountId, seats: input.seats, seat_month_minor: unit, currency, cadence: input.cadence, term_months: input.term_months, billing },
+      after: { account_id: accountId, seats: input.seats, seat_month_minor: unit, currency, cadence: input.cadence, term_months: input.term_months, billing, first_bill_settled_by_proposal_payment: settledInvoiceId },
       correlationId: ctx.requestId,
       sourceChannel: "api",
     });
@@ -699,6 +727,15 @@ export async function cancelSubscription(db: Db, ctx: CommercialContext, subscri
       .update(subscriptions)
       .set({ cancelAt, cancelRequestedAt: now, cancelReason: input.reason, cancelledBy: ctx.userId, updatedAt: now, ...(status !== sub.status ? { status, statusChangedAt: now } : {}) })
       .where(eq(subscriptions.id, sub.id));
+    // Closing now ends billing: bills not yet paid are voided so the customer is not asked to pay them.
+    const voided =
+      input.when === "now"
+        ? await tx
+            .update(subscriptionInvoices)
+            .set({ status: "void" })
+            .where(and(eq(subscriptionInvoices.subscriptionId, sub.id), eq(subscriptionInvoices.status, "open")))
+            .returning({ id: subscriptionInvoices.id })
+        : [];
     if (status !== sub.status) {
       const items = await tx.select().from(subscriptionItems).where(eq(subscriptionItems.subscriptionId, sub.id));
       const amendments = await tx.select().from(subscriptionAmendments).where(eq(subscriptionAmendments.subscriptionId, sub.id));
@@ -711,7 +748,7 @@ export async function cancelSubscription(db: Db, ctx: CommercialContext, subscri
       entityId: sub.id,
       action: "subscription.cancelled",
       before: { status: sub.status, cancel_at: sub.cancelAt?.toISOString() ?? null },
-      after: { status, cancel_at: cancelAt.toISOString(), when: input.when, reason: input.reason },
+      after: { status, cancel_at: cancelAt.toISOString(), when: input.when, reason: input.reason, voided_invoice_ids: voided.map((v) => v.id) },
       correlationId: ctx.requestId,
       sourceChannel: "api",
     });
