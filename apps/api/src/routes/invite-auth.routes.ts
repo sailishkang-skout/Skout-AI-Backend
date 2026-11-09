@@ -1,3 +1,4 @@
+import { grantOpsAccessFromInvite } from "../services/ops-access.service.js";
 import { randomBytes } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { and, eq, gt } from "drizzle-orm";
@@ -177,6 +178,8 @@ export async function inviteAuthRoutes(app: FastifyInstance) {
           role: invite.role,
         });
         await grantSystemMemberRole(db, invite.workspaceId, userId, invite.role);
+        // COPS-15: Ops access chosen at invite time is granted on accept.
+        await grantOpsAccessFromInvite(db, invite, userId);
       }
 
       // Mark invite accepted

@@ -1,5 +1,6 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
-import type { Db } from "@skout/db";
+import { schema, type Db } from "@skout/db";
+import { and, eq, isNull } from "drizzle-orm";
 import { getMemberPermissions } from "@skout/auth";
 import { copsErrorBody, resolveCorrelationId } from "@skout/shared";
 import type { Env } from "../config/env.js";
@@ -45,4 +46,16 @@ export function opsAccessGuard(db: Db, config: Pick<Env, "INTERNAL_WORKSPACE_ID"
     const requestId = resolveCorrelationId(request.headers["x-request-id"]);
     return reply.status(403).send(copsErrorBody({ code: "FORBIDDEN", message: "CustomerOps is only for Skout staff with Ops access. Ask your Admin.", requestId }));
   };
+}
+
+/**
+ * COPS-15: an invite sent from the ops portal with Ops access grants the Ops access role when it
+ * is accepted, whichever accept path runs (team API or the invite code/password flow). Audited.
+ */
+export async function grantOpsAccessFromInvite(db: Db, invite: { id: string; workspaceId: string; grantOpsAccess?: boolean | null }, userId: string): Promise<void> {
+  if (!invite.grantOpsAccess) return;
+  const [opsRole] = await db.select({ id: schema.roles.id }).from(schema.roles).where(and(isNull(schema.roles.workspaceId), eq(schema.roles.key, OPS_ACCESS_ROLE_KEY))).limit(1);
+  if (!opsRole) return;
+  await db.insert(schema.workspaceMemberRoles).values({ workspaceId: invite.workspaceId, userId, roleId: opsRole.id }).onConflictDoNothing();
+  await db.insert(schema.auditLogs).values({ workspaceId: invite.workspaceId, actorId: userId, actorType: "user", action: "ops_access.granted", entityType: "workspace_member", entityId: userId, afterState: { via: "invite", invite_id: invite.id } } as never);
 }
