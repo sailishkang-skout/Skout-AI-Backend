@@ -177,6 +177,7 @@ export async function teamRoutes(app: FastifyInstance) {
             workspaceName: ws?.name ?? "Skout workspace",
             role: invite.role,
             acceptUrl,
+            product: opsBase ? "customerops" : undefined,
           })
         );
         emailSent = mail.sent;

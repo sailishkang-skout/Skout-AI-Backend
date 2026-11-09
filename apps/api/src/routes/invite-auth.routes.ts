@@ -27,7 +27,7 @@ function requestMeta(request: FastifyRequest): { ip: string; userAgent?: string 
 export async function inviteAuthRoutes(app: FastifyInstance) {
   // POST /invite-auth/send-otp  — public
   // Validates invite, sends 6-digit OTP to the invite email
-  app.post<{ Body: { inviteToken: string } }>(
+  app.post<{ Body: { inviteToken: string; app?: "customerops" } }>(
     "/invite-auth/send-otp",
     async (request, reply) => {
       const { inviteToken } = request.body ?? {};
@@ -71,6 +71,7 @@ export async function inviteAuthRoutes(app: FastifyInstance) {
             otp,
             workspaceName: invite.workspaceName,
             expiresInMinutes: 10,
+            product: request.body?.app === "customerops" ? "customerops" : undefined,
           })
         );
       } catch (err) {
