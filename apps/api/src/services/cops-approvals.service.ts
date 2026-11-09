@@ -6,11 +6,16 @@ import {
   approvalPolicySchema,
   createCopsEvent,
   canonicalJson,
+  defaultPriceBasis,
   CopsIllegalTransitionError,
   COPS_TRANSITIONS,
   evaluateApprovals,
   materialChanges,
+  planMonthMinor,
+  priceBookSchema,
   proposalTcv,
+  seatMonthMinor,
+  type PriceBook,
   sha256Hex,
   type ApprovalEvaluation,
   type ApproverRole,
@@ -46,11 +51,18 @@ const ADMIN_ROLE_KEYS = ["admin", "owner"];
  * line brought to the full term, after discount, before tax. The discount is the effective one on
  * that basis, line and header discounts together, so a discount cannot be hidden in line items.
  */
-export function approvalTermsOf(version: VersionRow, lines: LineRow[]): MaterialTerms {
+export function approvalTermsOf(version: VersionRow, lines: LineRow[], book?: PriceBook | null): MaterialTerms {
   const tcv = proposalTcv({
     term_months: version.termMonths,
     discount_pct: Number(version.discountPct),
-    lines: lines.map((l) => ({ kind: l.kind, price_basis: l.priceBasis, gross_minor: Number(l.grossMinor), net_minor: Number(l.netMinor) })),
+    lines: lines.map((l) => {
+      // A seat price typed below the price book is a discount too: count the line at list price so
+      // the gap shows in discount_pct and needs the same approval (it cannot be hidden in the price).
+      const list = book ? listSeatUnitMinor(book, l, version.currency, version.billingCadence, version.termMonths) : null;
+      const gross = Number(l.grossMinor);
+      const listGross = list !== null ? l.quantity * list : 0;
+      return { kind: l.kind, price_basis: l.priceBasis, gross_minor: Math.max(gross, listGross), net_minor: Number(l.netMinor) };
+    }),
   });
   return {
     currency: version.currency,
@@ -70,6 +82,28 @@ export function approvalTermsOf(version: VersionRow, lines: LineRow[]): Material
   };
 }
 
+/**
+ * The price book's list price for one unit of a seat line, on the line's own basis: a month for a
+ * per-month line, the whole term for a per-term line. Uses the named plan when the description
+ * matches one, else the single seat price. Null for other lines or a currency with no price.
+ */
+export function listSeatUnitMinor(book: PriceBook, line: Pick<LineRow, "kind" | "priceBasis" | "description">, currency: string, cadence: string, termMonths: number): number | null {
+  if (line.kind !== "seats") return null;
+  const basis = line.priceBasis ?? defaultPriceBasis(line.kind);
+  if (basis === "one_time") return null;
+  const billing = cadence === "annual" ? "annual" : "monthly";
+  const name = (line.description ?? "").trim().toLowerCase();
+  const planKey = Object.entries(book.plans ?? {}).find(([, p]) => p.name.toLowerCase() === name)?.[0];
+  const month = (planKey ? planMonthMinor(book, planKey, currency, billing) : null) ?? seatMonthMinor(book, currency, billing);
+  if (month === null) return null;
+  return basis === "per_month" ? month : month * termMonths;
+}
+
+async function loadPriceBook(db: Reader, workspaceId: string): Promise<PriceBook | null> {
+  const parsed = priceBookSchema.safeParse((await getConfig(db as Db, workspaceId, "price_book", "default"))?.value);
+  return parsed.success ? parsed.data : null;
+}
+
 async function loadCurrent(db: Reader, workspaceId: string, proposalId: string) {
   const [proposal] = await db
     .select()
@@ -84,7 +118,7 @@ async function loadCurrent(db: Reader, workspaceId: string, proposalId: string) 
     .limit(1);
   if (!version) throw new CommercialError("NOT_FOUND", "Proposal version not found");
   const lines = await db.select().from(proposalLineItems).where(eq(proposalLineItems.versionId, version.id));
-  return { proposal, version, terms: approvalTermsOf(version, lines) };
+  return { proposal, version, terms: approvalTermsOf(version, lines, await loadPriceBook(db, workspaceId)) };
 }
 
 /**

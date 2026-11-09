@@ -122,6 +122,18 @@ maybe("COPS-08 approval engine", () => {
     expect(state.satisfied).toBe(false);
   });
 
+  it("a seat price typed below the price book counts as a discount, so it cannot dodge the approval", async () => {
+    // Skout Full is USD 45 a seat month to month in the price book; USD 1 is a 97.78% discount.
+    const cheap = await create(terms({ billing_cadence: "monthly", line_items: [{ kind: "seats", description: "Skout Full", quantity: 1, unit_amount_minor: 100, price_basis: "per_month" }] }));
+    const state = await evaluate(cheap);
+    expect(state.terms.discount_pct).toBe(97.78);
+    expect(state.matched_rules.map((m: { rule: string }) => m.rule)).toContain("discount_pct");
+    expect(state.required).toBe(true);
+    // At list price nothing is needed.
+    const list = await create(terms({ billing_cadence: "monthly", line_items: [{ kind: "seats", description: "Skout Full", quantity: 1, unit_amount_minor: 4_500, price_basis: "per_month" }] }));
+    expect((await evaluate(list)).terms.discount_pct).toBe(0);
+  });
+
   it("request, then each role decides its own slot; the approval is granted only when all have", async () => {
     const id = await create(terms({}, 25));
     const requested = await call("POST", `/proposals/${id}/approvals`);

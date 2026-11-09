@@ -254,8 +254,9 @@ maybe("COPS-08 subscriptions", () => {
         term_months: 12,
         discount_pct: 0,
         line_items: [
-          line("Skout Full", "seats", 3, 3_500, "per_month"),
-          line("Skout Full Multichannel", "seats", 2, 5_500, "per_month"),
+          // Month-to-month list prices (price book): below them the proposal would need a discount approval.
+          line("Skout Full", "seats", 3, 4_500, "per_month"),
+          line("Skout Full Multichannel", "seats", 2, 6_500, "per_month"),
           line("Additional connected identity", "product", 1, 700, "per_month"),
           line("Premium support", "product", 1, 2_000, "per_month"),
           line("Implementation fee", "fee", 1, 50_000, "one_time"),
@@ -276,7 +277,7 @@ maybe("COPS-08 subscriptions", () => {
     ]);
     // Seat limit counts every seat plan; the first month bills every monthly line, not the one-time fee.
     expect(sub.seats).toBe(5);
-    expect(sub.invoices[0].amount_minor).toBe(3 * 3_500 + 2 * 5_500 + 700 + 2_000);
+    expect(sub.invoices[0].amount_minor).toBe(3 * 4_500 + 2 * 6_500 + 700 + 2_000);
   });
 
   it("the paid proposal payment settles the first bill instead of billing it again", async () => {
@@ -289,7 +290,7 @@ maybe("COPS-08 subscriptions", () => {
         term_months: 12,
         discount_pct: 0,
         line_items: [
-          { kind: "seats", description: "Skout Full", quantity: 1, unit_amount_minor: 1_000, price_basis: "per_month" },
+          { kind: "seats", description: "Skout Full", quantity: 1, unit_amount_minor: 4_500, price_basis: "per_month" },
           { kind: "fee", description: "Implementation fee", quantity: 1, unit_amount_minor: 500, price_basis: "one_time" },
         ],
       })
@@ -297,9 +298,9 @@ maybe("COPS-08 subscriptions", () => {
     await call("POST", `/proposals/${proposal.id}/send`, {});
     // The proposal's payment link (first month + one-time fee) was paid before the subscription started.
     const [paid] = await sql`insert into payment_requests (workspace_id, opportunity_id, proposal_id, amount_minor, currency, status, provider, provider_ref, checkout_url, provider_payment_id, paid_at)
-      values (${workspaceId}, ${opportunityId}, ${proposal.id}, 1500, 'USD', 'paid', 'razorpay', ${`plink_${opportunityId}`}, 'https://rzp.io/test', 'pay_upfront', now()) returning id`;
+      values (${workspaceId}, ${opportunityId}, ${proposal.id}, 5000, 'USD', 'paid', 'razorpay', ${`plink_${opportunityId}`}, 'https://rzp.io/test', 'pay_upfront', now()) returning id`;
     const sub = (await call("POST", `/accounts/${accountId}/subscription`, { opportunity_id: opportunityId, cadence: "monthly", term_months: 12, payment_terms_net_days: 0 })).json().data;
-    expect(sub.invoices[0]).toMatchObject({ amount_minor: 1_000, status: "paid", payment_request_id: paid.id });
+    expect(sub.invoices[0]).toMatchObject({ amount_minor: 4_500, status: "paid", payment_request_id: paid.id });
   });
 
   it("maps what was sold to the customer's Skout AI plan limits", () => {
