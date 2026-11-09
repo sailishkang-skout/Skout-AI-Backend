@@ -1,3 +1,9 @@
+import { and, eq } from "drizzle-orm";
+import { schema } from "@skout/db";
+import { customerOpsBaseUrl } from "./team.routes.js";
+import { productAppUrl } from "../services/cops-onboarding.service.js";
+import { VERIFICATION_TTL_MINUTES, issueVerificationToken } from "../services/auth-recovery.service.js";
+import { buildAuthLinkEmail, sendMail } from "../services/mail.service.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getMemberPermissions } from "@skout/auth";
@@ -112,6 +118,38 @@ export async function copsRolesRoutes(app: FastifyInstance) {
     return run(reply, ctx.requestId, async () => {
       const { userId } = userParams.parse(request.params);
       return { data: await getMemberRoles(db(), ctx.workspaceId, userId) };
+    });
+  });
+
+  // COPS-15: an Admin/Owner sends a staff member a password-reset link to the ops portal. The
+  // admin never sees or sets the password; the reason is audited.
+  app.post("/cops/members/:userId/password-reset", gate, async (request, reply) => {
+    const ctx = await ctxOf(request);
+    return run(reply, ctx.requestId, async () => {
+      const { userId } = userParams.parse(request.params);
+      const body = z.object({ reason }).parse(request.body ?? {});
+      const [member] = await db()
+        .select({ email: schema.users.email })
+        .from(schema.workspaceMembers)
+        .innerJoin(schema.users, eq(schema.users.id, schema.workspaceMembers.userId))
+        .where(and(eq(schema.workspaceMembers.workspaceId, ctx.workspaceId), eq(schema.workspaceMembers.userId, userId)))
+        .limit(1);
+      if (!member?.email) throw new RoleError("NOT_FOUND", "That person is not a member of this workspace");
+      const base = customerOpsBaseUrl(app.config.COPS_APP_URL, request.headers.origin) ?? productAppUrl(app.config.FRONTEND_URL || "http://localhost:3000");
+      const raw = await issueVerificationToken(db(), app.config, userId, "password_reset");
+      const sent = await sendMail(
+        app.config,
+        buildAuthLinkEmail({
+          to: member.email,
+          url: `${base}/reset-password?token=${encodeURIComponent(raw)}`,
+          title: "Reset your Skout CustomerOps password",
+          intro: "Your admin sent you a link to set a new Skout CustomerOps password.",
+          buttonLabel: "Set a new password",
+          expiresInMinutes: VERIFICATION_TTL_MINUTES,
+        })
+      );
+      await db().insert(schema.auditLogs).values({ workspaceId: ctx.workspaceId, actorId: ctx.userId, actorType: "user", action: "member.password_reset_sent", entityType: "workspace_member", entityId: userId, afterState: { reason: body.reason, email_sent: sent.sent } } as never);
+      return { data: { sent: sent.sent, email: member.email } };
     });
   });
 

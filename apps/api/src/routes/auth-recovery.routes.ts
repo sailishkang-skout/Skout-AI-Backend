@@ -15,6 +15,7 @@
  * Links: {FRONTEND_URL}/app/verify-email?token= and {FRONTEND_URL}/app/reset-password?token=
  * Codes are 6 digits, links and codes expire in 15 minutes, single use.
  */
+import { customerOpsBaseUrl } from "./team.routes.js";
 import { productAppUrl } from "../services/cops-onboarding.service.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
@@ -43,7 +44,8 @@ import { issueOwnAuthSession } from "./auth-core.routes.js";
 const log = createLogger("auth-recovery.routes");
 const { users, userCredentials } = schema;
 
-const emailBody = z.object({ email: z.string().trim().email() });
+// app: "customerops" sends the link to the ops portal instead of the product app (COPS-15).
+const emailBody = z.object({ email: z.string().trim().email(), app: z.literal("customerops").optional() });
 const tokenBody = z.object({ token: z.string().trim().min(1) });
 const resetBody = z.object({ token: z.string().trim().min(1), password: z.string() });
 const otpVerifyBody = z.object({
@@ -145,16 +147,17 @@ export async function authRecoveryRoutes(app: FastifyInstance) {
     "/auth/password/forgot",
     { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } },
     async (request, reply) =>
-      sendForPurpose(request, reply, "password_reset", (email, raw) =>
-        buildAuthLinkEmail({
+      sendForPurpose(request, reply, "password_reset", (email, raw) => {
+        const ops = (request.body as { app?: string } | null)?.app === "customerops" ? customerOpsBaseUrl(app.config.COPS_APP_URL, request.headers.origin) : null;
+        return buildAuthLinkEmail({
           to: email,
-          url: `${appBase(app.config)}/reset-password?token=${encodeURIComponent(raw)}`,
-          title: "Reset your Skout AI password",
-          intro: "We received a request to reset your Skout AI password.",
+          url: `${ops ?? appBase(app.config)}/reset-password?token=${encodeURIComponent(raw)}`,
+          title: ops ? "Reset your Skout CustomerOps password" : "Reset your Skout AI password",
+          intro: ops ? "We received a request to reset your Skout CustomerOps password." : "We received a request to reset your Skout AI password.",
           buttonLabel: "Reset password",
           expiresInMinutes: VERIFICATION_TTL_MINUTES,
-        })
-      )
+        });
+      })
   );
 
   app.post(
