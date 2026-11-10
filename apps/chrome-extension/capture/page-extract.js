@@ -115,6 +115,8 @@ function extractPerson() {
   const relationshipContext = extractRelationshipContext(topcard);
 
   const openToWork = !!topcard?.querySelector('[aria-label*="Open to work" i]');
+  const hiring = !!topcard?.querySelector('[aria-label*="hiring" i]') || allParagraphTexts.some((t) => /^#?hiring$/i.test(t));
+  const pronoun = allParagraphTexts.find((t) => /^(?:he|she|they|xe|ze)\/[a-z]{2,6}$/i.test(t));
 
   // Deeper sections — only present once their part of the page has
   // rendered/scrolled into view; safe to call even if empty (each
@@ -157,6 +159,7 @@ function extractPerson() {
   const patents = extractPatents();
   const courses = extractCourses();
   const organizations = extractOrganizations();
+  const projects = extractProjects();
   const contactInfo = contactInfoEarly;
   const recentActivity = extractRecentActivity();
 
@@ -190,6 +193,11 @@ function extractPerson() {
     patents: patents.length ? patents : undefined,
     courses: courses.length ? courses : undefined,
     organizations: organizations.length ? organizations : undefined,
+    projects: projects.length ? projects : undefined,
+    pronoun,
+    hiring: hiring || undefined,
+    // "City, Region, Country": the last part is the country.
+    locationCountry: locationName && locationName.split(',').length >= 3 ? locationName.split(',').pop().trim() : undefined,
     // Keep the full contact section local for the review note; only the
     // validated email and phone values are sent to the capture endpoint.
     _contactInfo: contactInfo,
@@ -659,18 +667,41 @@ function companyPublicIdFromEntry(item) {
  * (opened when LinkedIn shows "Show all") mark them `...DetailsSection`. Without either, fall
  * back to the section under this page's own heading, never outside <main>.
  */
+// How each profile section is marked: component-key stems (singular and
+// plural), visible titles, and its /details/<slug>/ "Show all" page.
+const PROFILE_SECTIONS = {
+  Experience: { keys: ['Experience'], titles: ['Experience'], slug: 'experience' },
+  Education: { keys: ['Education'], titles: ['Education'], slug: 'education' },
+  Skills: { keys: ['Skill', 'Skills'], titles: ['Skills'], slug: 'skills' },
+  Certifications: { keys: ['Certification', 'Certifications', 'License', 'Licenses'], titles: ['Licenses & certifications', 'Licenses and certifications', 'Certifications'], slug: 'certifications' },
+  Languages: { keys: ['Language', 'Languages'], titles: ['Languages'], slug: 'languages' },
+  Volunteering: { keys: ['VolunteerExperience', 'VolunteerExperiences', 'Volunteering'], titles: ['Volunteering', 'Volunteer experience'], slug: 'volunteering-experiences' },
+  Honors: { keys: ['Honor', 'Honors', 'Award', 'Awards'], titles: ['Honors & awards', 'Honors and awards'], slug: 'honors' },
+  Publications: { keys: ['Publication', 'Publications'], titles: ['Publications'], slug: 'publications' },
+  Patents: { keys: ['Patent', 'Patents'], titles: ['Patents'], slug: 'patents' },
+  Courses: { keys: ['Course', 'Courses'], titles: ['Courses'], slug: 'courses' },
+  Organizations: { keys: ['Organization', 'Organizations'], titles: ['Organizations'], slug: 'organizations' },
+  Projects: { keys: ['Project', 'Projects'], titles: ['Projects'], slug: 'projects' },
+};
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * The profile preview marks its sections `...TopLevelSection`; the /details/<section>/ pages
+ * (opened when LinkedIn shows "Show all") mark them `...DetailsSection`, or show only a
+ * plain-text title. Without a marker, use the section under its title, never all of <main>.
+ */
 function profileSection(name) {
+  const spec = PROFILE_SECTIONS[name] || { keys: [name], titles: [name], slug: name.toLowerCase() };
   const main = document.querySelector('main') || document.body;
-  const detailKey = name === 'Skills' ? 'SkillDetails' : `${name}Details`;
-  const keyed = main.querySelector(
-    `[componentkey*="${name}TopLevelSection" i], [componentkey*="${name}DetailsSection" i], [componentkey*="${detailKey}" i]`,
-  );
+  const selector = spec.keys
+    .flatMap((key) => [`[componentkey*="${key}TopLevel" i]`, `[componentkey*="${key}Details" i]`])
+    .join(', ');
+  const keyed = main.querySelector(selector);
   if (keyed) return keyed;
-  const titleMatch = (node) => new RegExp(`^${name}$`, 'i').test(text(node) || '');
+  const titleRe = new RegExp(`^(?:${spec.titles.map(escapeRegExp).join('|')})$`, 'i');
+  const titleMatch = (node) => titleRe.test(text(node) || '');
   let heading = Array.from(main.querySelectorAll('h1, h2, h3, [role="heading"]')).find(titleMatch);
-  // Current /details/<section>/ pages render the page title as a plain <p>
-  // with no section marker. Accept a leaf paragraph title only on that page.
-  if (!heading && location.pathname.toLowerCase().includes(`/details/${name.toLowerCase()}/`)) {
+  if (!heading && location.pathname.toLowerCase().includes(`/details/${spec.slug}/`)) {
     heading = Array.from(main.querySelectorAll('p, span, div, h4'))
       .find((node) => !Array.from(node.children).some((child) => text(child)) && titleMatch(node));
   }
@@ -678,9 +709,7 @@ function profileSection(name) {
   const semanticContainer = heading.closest('section, [role="region"], [data-view-name*="profile-component" i]');
   if (semanticContainer) return semanticContainer;
 
-  // Some LinkedIn layouts use only generic divs around a section heading. Walk
-  // up while the subtree still belongs to this heading, but never use all of
-  // <main> (which also contains recommendations and other people's content).
+  // Generic divs only: walk up while the subtree still belongs to this title.
   let container = heading.parentElement;
   let candidate = container;
   while (container && container !== main) {
@@ -955,18 +984,43 @@ function extractAboutSection() {
 // it'll get fixed the same way everything above did.
 // ---------------------------------------------------------------------------
 
-function extractGenericEntities(componentkeySubstring) {
-  const section = document.querySelector(`[componentkey*="${componentkeySubstring}" i]`);
+// Rows of a section: marked entity rows, list items, or (on plain-markup
+// detail pages) the innermost divs holding several text lines. The section
+// title bar ("Back", "Projects") is never a row.
+function sectionRows(section, titles) {
+  const titleRe = new RegExp(`^(?:${titles.map(escapeRegExp).join('|')})$`, 'i');
+  let rows = Array.from(section.querySelectorAll('[componentkey^="entity-collection-item" i], [id^="com.linkedin.sdui.profile." i], [data-view-name*="profile-component-entity" i]'));
+  if (!rows.length) rows = Array.from(section.querySelectorAll('li'));
+  if (!rows.length) {
+    const groups = Array.from(section.querySelectorAll('div'))
+      .filter((div) => Array.from(div.children).filter((child) => text(child)).length >= 2);
+    rows = groups.filter((div) => !groups.some((other) => other !== div && div.contains(other)));
+  }
+  // Keep outermost rows only, so a nested marker is not read twice.
+  rows = rows.filter((row) => !rows.some((other) => other !== row && other.contains(row)));
+  return rows
+    .map((row) => {
+      let paragraphs = getItemParagraphs(row);
+      if (!paragraphs.length) {
+        paragraphs = Array.from(row.querySelectorAll('a, p, span, h3, h4, div'))
+          .filter((node) => !Array.from(node.children).some((child) => text(child)))
+          .map((node) => text(node))
+          .filter((value, index, all) => value && all.indexOf(value) === index);
+      }
+      return { paragraphs, description: getExpandableText(row) };
+    })
+    .filter(({ paragraphs }) => paragraphs.length && !paragraphs.some((value) => titleRe.test(value)) &&
+      !/^(show all|show more|see all)\b/i.test(paragraphs[0]));
+}
+
+function extractGenericEntities(name) {
+  const section = profileSection(name);
   if (!section) return [];
-  const items = section.querySelectorAll('[componentkey^="entity-collection-item"], [id^="com.linkedin.sdui.profile." i]');
-  return Array.from(items).map((item) => ({
-    paragraphs: getItemParagraphs(item),
-    description: getExpandableText(item),
-  }));
+  return sectionRows(section, PROFILE_SECTIONS[name]?.titles || [name]);
 }
 
 function extractCertifications() {
-  return extractGenericEntities('CertificationTopLevel').map(({ paragraphs, description }) => {
+  return extractGenericEntities('Certifications').map(({ paragraphs, description }) => {
     const name = paragraphs[0];
     const issuer = paragraphs[1];
     const dateLine = paragraphs.find((p, i) => i >= 2 && /\d{4}/.test(p));
@@ -982,31 +1036,32 @@ function extractCertifications() {
 }
 
 function extractLanguages() {
-  return extractGenericEntities('LanguageTopLevel').map(({ paragraphs }) => ({
+  return extractGenericEntities('Languages').map(({ paragraphs }) => ({
     language: paragraphs[0],
     proficiency: paragraphs[1],
   }));
 }
 
 function extractVolunteerExperience() {
-  // Volunteer entries follow the same role/org/dates/description shape as
-  // Experience, so reuse the same positional logic.
-  const section = document.querySelector('[componentkey*="VolunteerExperienceTopLevel" i]');
-  if (!section) return [];
-  const items = section.querySelectorAll('[componentkey^="entity-collection-item"]');
-  return Array.from(items).map((item) => {
-    const paras = getItemParagraphs(item);
+  // Same role / organization · cause / dates / description shape as Experience.
+  return extractGenericEntities('Volunteering').map(({ paragraphs: paras, description }) => {
     const role = paras[0];
-    const orgAndCause = paras[1];
-    const [organization, cause] = (orgAndCause || '').split(' · ');
+    const [organization, cause] = (paras[1] || '').split(' · ');
     const dates = paras.find((p, i) => i >= 2 && /\d{4}|present/i.test(p));
-    const description = getExpandableText(item);
     return { role, organization, cause, dates, description };
   });
 }
 
+function extractProjects() {
+  return extractGenericEntities('Projects').map(({ paragraphs, description }) => ({
+    title: paragraphs[0],
+    dates: paragraphs.find((p, i) => i >= 1 && /\d{4}|present/i.test(p)),
+    description,
+  }));
+}
+
 function extractHonors() {
-  return extractGenericEntities('HonorsTopLevel').map(({ paragraphs, description }) => ({
+  return extractGenericEntities('Honors').map(({ paragraphs, description }) => ({
     title: paragraphs[0],
     issuer: paragraphs[1],
     date: paragraphs.find((p, i) => i >= 2 && /\d{4}/.test(p)),
@@ -1015,7 +1070,7 @@ function extractHonors() {
 }
 
 function extractPublications() {
-  return extractGenericEntities('PublicationTopLevelSection').map(({ paragraphs, description }) => ({
+  return extractGenericEntities('Publications').map(({ paragraphs, description }) => ({
     title: paragraphs[0],
     publisher: paragraphs[1],
     date: paragraphs.find((p, i) => i >= 2 && /\d{4}/.test(p)),
@@ -1033,7 +1088,7 @@ function extractPatents() {
 }
 
 function extractCourses() {
-  return extractGenericEntities('CourseTopLevelSection').map(({ paragraphs }) => ({
+  return extractGenericEntities('Courses').map(({ paragraphs }) => ({
     name: paragraphs[0],
     number: paragraphs[1],
   }));

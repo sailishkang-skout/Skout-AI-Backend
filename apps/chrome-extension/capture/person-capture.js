@@ -71,7 +71,7 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
       `${root}details/skills/`,
       `${root}overlay/contact-info/`,
       ...links(id),
-    ])].slice(0, 10), seen = new Set(), errors = [], warnings = [];
+    ])].slice(0, 16), seen = new Set(), errors = [], warnings = [];
     let data = extractPerson(), read = 0;
     try {
       while (queue.length && !ui.stopped) {
@@ -84,7 +84,7 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
           if (result.cancelled) { ui.stop(); break; }
           data = merge(data, result.data); read++;
           warnings.push(...(result.warnings || []));
-          for (const link of result.links || []) { const safe = pageUrl(link,id); if (safe && !seen.has(safe) && !queue.includes(safe) && seen.size + queue.length < 12) queue.push(safe); }
+          for (const link of result.links || []) { const safe = pageUrl(link,id); if (safe && !seen.has(safe) && !queue.includes(safe) && seen.size + queue.length < 18) queue.push(safe); }
         } catch (error) { errors.push(`${new URL(url).pathname}: ${error.message}`); }
       }
       data.publicId = id; data.sourceUrl = root;
@@ -116,6 +116,32 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
       stablePasses = count === previousCount ? stablePasses + 1 : 0;
       previousCount = count;
       if (atBottom && stablePasses >= 2 && !showMore && (count > 0 || pass >= 15)) break;
+      window.scrollBy({top: Math.max(520, Math.floor(window.innerHeight * 0.8)), behavior: 'auto'});
+      await pause(650);
+    }
+    combined = merge(combined, extractPerson());
+    window.scrollTo(0, 0);
+    return combined;
+  }
+  // Detail-page slug -> fields it fills, for the generic "Show all" pages.
+  const DETAIL_FIELDS = {
+    experience: ['currentCompanies', 'previousCompanies'], certifications: ['certifications'], languages: ['languages'],
+    'volunteering-experiences': ['volunteerExperiences'], honors: ['honors'], publications: ['publications'],
+    patents: ['patents'], courses: ['courses'], projects: ['projects'], organizations: ['organizations'],
+  };
+  const countFields = (data, fields) => fields.reduce((sum, key) => sum + (Array.isArray(data?.[key]) ? data[key].length : 0), 0);
+  // Scroll a detail page so LinkedIn renders every row, reading as it goes.
+  async function collectFullyRenderedSection(fields) {
+    let combined = {}, stablePasses = 0, previousCount = 0;
+    window.scrollTo(0, 0);
+    await pause(500);
+    for (let pass = 0; pass < 30; pass++) {
+      combined = merge(combined, extractPerson());
+      const count = countFields(combined, fields);
+      const atBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 8;
+      stablePasses = count === previousCount ? stablePasses + 1 : 0;
+      previousCount = count;
+      if (atBottom && stablePasses >= 2) break;
       window.scrollBy({top: Math.max(520, Math.floor(window.innerHeight * 0.8)), behavior: 'auto'});
       await pause(650);
     }
@@ -163,6 +189,7 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
       let previousEducation = '';
       let stableEducationPasses = 0;
       let sectionFound = !detailName;
+      const otherDetail = Object.keys(DETAIL_FIELDS).find((slug) => expectedUrl.endsWith(`/details/${slug}/`));
 
       for (let attempt = 0; attempt < 40; attempt++) {
         if (pageUrl(location.href, id) !== expectedUrl) throw new Error('Profile page changed during capture.');
@@ -182,11 +209,17 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
           stableEducationPasses = currentEducation === previousEducation ? stableEducationPasses + 1 : 0;
           previousEducation = currentEducation;
           if (data.educations?.length && stableEducationPasses >= 3) break;
+        } else if (otherDetail) {
+          // Wait until the section's rows render (~6s at most), then read it all.
+          if (countFields(data, DETAIL_FIELDS[otherDetail]) || attempt >= 12) {
+            data = await collectFullyRenderedSection(DETAIL_FIELDS[otherDetail]);
+            break;
+          }
         } else if (expectedUrl.endsWith('/overlay/contact-info/')) {
           // Wait for the Contact info modal; profiles without one stop after ~6s.
           if (data._contactInfo || attempt >= 12) break;
         } else if (!detailName) {
-          const hasSection = ['experience','educations','skills','certifications','languages','volunteerExperiences','honors','publications','patents','courses','organizations']
+          const hasSection = ['currentCompanies','previousCompanies','projects','educations','skills','certifications','languages','volunteerExperiences','honors','publications','patents','courses','organizations']
             .some((key) => Array.isArray(data[key]) && data[key].length);
           if (data.fullName || data.headline || hasSection || document.querySelector('main')) break;
         }

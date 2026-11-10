@@ -175,6 +175,40 @@ describe("person profile extraction", () => {
     expect(header.locationName).toBe("London, England, United Kingdom");
   });
 
+  it("reads every section from plain-markup Show all pages and the main profile", () => {
+    const certs = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/details/certifications/",
+      html: `<main><div><div><a href="/in/jane-doe/">Back</a><span>Licenses & certifications</span></div>
+        <div><div><p>AWS Solutions Architect</p><p>Amazon Web Services</p><p>Issued Jan 2023</p><p>Credential ID ABC-123</p></div></div>
+        <div><div><p>Scrum Master</p><p>Scrum Alliance</p><p>Issued 2021</p></div></div></div>
+        <aside><p>People also viewed</p><div><p>Other Person</p><p>Some Cert</p></div></aside></main>`,
+      files: EXTRACT_FILES,
+    }).SkoutCapturePage.extractPerson();
+    expect(certs.certifications).toMatchObject([
+      { name: "AWS Solutions Architect", issuer: "Amazon Web Services", dates: "Issued Jan 2023", credentialId: "ABC-123" },
+      { name: "Scrum Master", issuer: "Scrum Alliance" },
+    ]);
+
+    const profile = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/",
+      html: `<main>
+        <section data-view-name="profile-topcard"><h1>Jane Doe</h1><p>She/Her</p><p>Head of Sales</p><p>Acme</p><p>London, England, United Kingdom</p><div aria-label="Hiring"></div></section>
+        <section><h2>Projects</h2><ul><li><p>CRM migration</p><p>Mar 2022 - Present</p><span data-testid="expandable-text-box">Moved 40k accounts.</span></li></ul></section>
+        <section><h2>Languages</h2><ul><li><p>German</p><p>Native or bilingual proficiency</p></li></ul></section>
+      </main>`,
+      files: EXTRACT_FILES,
+    }).SkoutCapturePage.extractPerson();
+    expect(profile).toMatchObject({
+      pronoun: "She/Her",
+      hiring: true,
+      locationName: "London, England, United Kingdom",
+      locationCountry: "United Kingdom",
+      projects: [{ title: "CRM migration", dates: "Mar 2022 - Present" }],
+      languages: [{ language: "German", proficiency: "Native or bilingual proficiency" }],
+    });
+    expect(profile.headline).toBe("Head of Sales");
+  });
+
   it("keeps school-only education entries and captures a full connection-degree label", () => {
     const window = loadCapturePage({
       url: "https://www.linkedin.com/in/jane-doe/",
