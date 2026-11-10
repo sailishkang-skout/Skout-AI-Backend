@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createDocusealAdapter, docusealSignature } from "./docuseal-adapter.js";
+import { createDocusealAdapter, pdfPageCount, docusealSignature } from "./docuseal-adapter.js";
 
 const SECRET = "whsec_test_secret_0123456789";
 const NOW = Date.parse("2026-10-14T10:00:00Z");
@@ -88,6 +88,23 @@ describe("DocuSeal sending", () => {
     await expect(a.createEnvelope({ ...send, templateId: null, mergeFields: { contract_title: "Acme MSA", currency: "USD" } })).resolves.toEqual({ providerRef: "55" });
     // Merge fields travel as DocuSeal variables.
     expect(calls.find((c) => c.method === "POST")!.body).toMatchObject({ documents: [{ name: "Acme MSA", file: "https://files.test/msa.pdf" }], variables: { contract_title: "Acme MSA", currency: "USD" } });
+  });
+
+  it("without a template, every signer gets a signature and a date field on the last page", async () => {
+    const { a, calls } = adapter({ "GET https://api.docuseal.com/submitters": { data: [] }, "POST https://api.docuseal.com/submissions/pdf": { id: 56 } });
+    // A two-page PDF passed inline (local dev sends base64).
+    const pdf = Buffer.from(["%PDF-1.4", "1 0 obj << /Type /Pages /Count 2 >> endobj", "2 0 obj << /Type /Page >> endobj", "3 0 obj << /Type /Page >> endobj"].join(" ")).toString("base64");
+    await a.createEnvelope({ ...send, documentUrl: pdf, templateId: null, signers: [...send.signers, { name: "Sam Lee", email: "sam@skout.test" }] });
+    const body = calls.find((c) => c.method === "POST")!.body as { documents: Array<{ fields: Array<{ type: string; role: string; areas: Array<{ page: number }> }> }>; submitters: Array<{ role: string }> };
+    expect(body.submitters.map((s) => s.role)).toEqual(["Signer 1", "Signer 2"]);
+    const fields = body.documents[0]!.fields;
+    expect(fields.map((f) => `${f.type}:${f.role}`)).toEqual(["signature:Signer 1", "date:Signer 1", "signature:Signer 2", "date:Signer 2"]);
+    expect(fields.every((f) => f.areas[0]!.page === 2)).toBe(true);
+  });
+
+  it("counts PDF pages from page objects, not the page tree", () => {
+    expect(pdfPageCount(new TextEncoder().encode("<< /Type /Pages >> << /Type /Page >> << /Type/Page >>"))).toBe(2);
+    expect(pdfPageCount(new TextEncoder().encode("no pages here"))).toBeNull();
   });
 
   it("a repeated send finds the submission already made and sends nothing", async () => {
