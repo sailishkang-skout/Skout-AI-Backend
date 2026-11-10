@@ -638,8 +638,14 @@ function profileSection(name) {
     `[componentkey*="${name}TopLevelSection" i], [componentkey*="${name}DetailsSection" i], [componentkey*="${detailKey}" i]`,
   );
   if (keyed) return keyed;
-  const heading = Array.from(main.querySelectorAll('h1, h2, h3, [role="heading"]'))
-    .find((node) => new RegExp(`^${name}$`, 'i').test(text(node) || ''));
+  const titleMatch = (node) => new RegExp(`^${name}$`, 'i').test(text(node) || '');
+  let heading = Array.from(main.querySelectorAll('h1, h2, h3, [role="heading"]')).find(titleMatch);
+  // Current /details/<section>/ pages render the page title as a plain <p>
+  // with no section marker. Accept a leaf paragraph title only on that page.
+  if (!heading && location.pathname.toLowerCase().includes(`/details/${name.toLowerCase()}/`)) {
+    heading = Array.from(main.querySelectorAll('p, span'))
+      .find((node) => !Array.from(node.children).some((child) => text(child)) && titleMatch(node));
+  }
   if (!heading) return undefined;
   const semanticContainer = heading.closest('section, [role="region"], [data-view-name*="profile-component" i]');
   if (semanticContainer) return semanticContainer;
@@ -652,6 +658,8 @@ function profileSection(name) {
   while (container && container !== main) {
     const headings = container.querySelectorAll('h1, h2, h3, [role="heading"]');
     if (headings.length > 1) break;
+    // Never pull in sidebars such as "People also viewed".
+    if (container.querySelector('aside') || /\bpeople (?:also viewed|you may know)\b/i.test(text(container) || '')) break;
     candidate = container;
     container = container.parentElement;
   }

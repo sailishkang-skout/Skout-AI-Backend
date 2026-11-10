@@ -113,6 +113,27 @@ describe("person profile extraction", () => {
     expect(hidden.SkoutCapturePage.extractPerson()._contactInfo).toBeUndefined();
   });
 
+  it("extracts Education from a detail page whose title is a plain paragraph", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/details/education/",
+      html: `
+        <main>
+          <div>
+            <div><p>Education</p></div>
+            <div>
+              <div><div><p>Stanford University</p><p>BS, Computer Science</p><p>2010 - 2014</p></div></div>
+              <div><div><p>Lincoln High School</p><p>2006 - 2010</p></div></div>
+            </div>
+          </div>
+          <aside><p>People also viewed</p><div><p>Someone Else</p><p>2015</p></div></aside>
+        </main>
+      `,
+      files: EXTRACT_FILES,
+    });
+    const schools = window.SkoutCapturePage.extractPerson().educations.map((e) => e.school);
+    expect(schools).toEqual(["Stanford University", "Lincoln High School"]);
+  });
+
   it("keeps school-only education entries and captures a full connection-degree label", () => {
     const window = loadCapturePage({
       url: "https://www.linkedin.com/in/jane-doe/",
