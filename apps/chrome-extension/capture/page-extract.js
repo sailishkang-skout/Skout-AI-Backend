@@ -643,7 +643,7 @@ function profileSection(name) {
   // Current /details/<section>/ pages render the page title as a plain <p>
   // with no section marker. Accept a leaf paragraph title only on that page.
   if (!heading && location.pathname.toLowerCase().includes(`/details/${name.toLowerCase()}/`)) {
-    heading = Array.from(main.querySelectorAll('p, span'))
+    heading = Array.from(main.querySelectorAll('p, span, div, h4'))
       .find((node) => !Array.from(node.children).some((child) => text(child)) && titleMatch(node));
   }
   if (!heading) return undefined;
@@ -776,6 +776,8 @@ function extractEducation() {
       .filter((node) => !Array.from(node.children).some((child) => text(child)))
       .map((node) => text(node))
       .filter((value, index, all) => value && all.indexOf(value) === index);
+    // The section title bar ("Back", "Education") is not a record.
+    if (!schoolLink && labels.some((label) => /^education$/i.test(label))) return;
     const school = text(schoolLink) || paras[0] || labels[0];
     if (isBadSchool(school)) return;
     const detailLines = paras.length ? paras : labels;

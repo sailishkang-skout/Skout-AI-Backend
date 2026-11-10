@@ -134,6 +134,22 @@ describe("person profile extraction", () => {
     expect(schools).toEqual(["Stanford University", "Lincoln High School"]);
   });
 
+  it("extracts Education when the detail page title is a span inside a div", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/details/education/",
+      html: `
+        <main>
+          <div><div><a href="/in/jane-doe/">Back</a><span>Education</span></div>
+            <div><div><a href="/school/mit/"><span>MIT</span></a><span>MBA</span><span>2018 - 2020</span></div></div>
+          </div>
+          <aside><p>People you may know</p></aside>
+        </main>
+      `,
+      files: EXTRACT_FILES,
+    });
+    expect(window.SkoutCapturePage.extractPerson().educations).toMatchObject([{ school: "MIT", degree: "MBA", dates: "2018 - 2020" }]);
+  });
+
   it("keeps school-only education entries and captures a full connection-degree label", () => {
     const window = loadCapturePage({
       url: "https://www.linkedin.com/in/jane-doe/",

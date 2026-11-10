@@ -149,8 +149,9 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
           .some((heading) => new RegExp(`^${name}$`, 'i').test(heading.textContent?.trim() || ''));
       const hasDetailsPageTitle = (name) =>
         location.pathname.endsWith(`/details/${name.toLowerCase()}/`) &&
-        Array.from(document.querySelectorAll('main p'))
-          .some((paragraph) => new RegExp(`^${name}$`, 'i').test(paragraph.textContent?.trim() || ''));
+        Array.from(document.querySelectorAll('main p, main span, main div, main h4'))
+          .some((node) => !Array.from(node.children).some((child) => child.textContent?.trim()) &&
+            new RegExp(`^${name}$`, 'i').test(node.textContent?.trim() || ''));
       let data;
       let previousEducation = '';
       let stableEducationPasses = 0;
