@@ -567,6 +567,8 @@ export async function getCustomerSubscription(db: Db, customerWorkspaceId: strin
     cadence: dto.cadence,
     seats: dto.seats,
     renews_at: dto.renews_at,
+    /** When a cancelled subscription ends; the customer sees it in Skout AI. */
+    cancel_at: dto.cancel_at,
     invoices: dto.invoices.map(({ payment_request_id: _p, ...bill }) => bill),
     dunning: dto.dunning,
   };
