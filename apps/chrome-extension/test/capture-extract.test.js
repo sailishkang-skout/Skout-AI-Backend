@@ -150,6 +150,31 @@ describe("person profile extraction", () => {
     expect(window.SkoutCapturePage.extractPerson().educations).toMatchObject([{ school: "MIT", degree: "MBA", dates: "2018 - 2020" }]);
   });
 
+  it("never uses a date like Present as a location and falls back to the current job, contact info, then bio", () => {
+    const load = (html) => loadCapturePage({ url: "https://www.linkedin.com/in/jane-doe/", html, files: EXTRACT_FILES })
+      .SkoutCapturePage.extractPerson();
+    const experience = (lines) => `<div componentkey="profile.ExperienceTopLevelSection"><ul><li componentkey="entity-collection-item-1">${lines.map((l) => `<p>${l}</p>`).join("")}</li></ul></div>`;
+    const top = `<section data-view-name="profile-topcard"><h1>Jane Doe</h1><p>Head of Sales</p></section>`;
+
+    // "Present" split from the date range is not a place.
+    const split = load(`<main>${top}${experience(["Head of Sales", "Acme · Full-time", "Jan 2022 -", "Present", "3 yrs 2 mos"])}</main>`);
+    expect(split.locationName).toBeUndefined();
+    expect(split.currentCompanies?.[0]?.location).toBeUndefined();
+
+    const job = load(`<main>${top}${experience(["Head of Sales", "Acme · Full-time", "Jan 2022 - Present", "Berlin, Germany · Hybrid"])}</main>`);
+    expect(job.locationName).toBe("Berlin, Germany");
+
+    const contact = load(`<main>${top}${experience(["Head of Sales", "Acme · Full-time", "Jan 2022 - Present", "Berlin, Germany"])}
+      <div role="dialog"><h2>Contact info</h2><h3>Email</h3><a href="mailto:jane@acme.example">jane@acme.example</a><h3>Phone</h3><span>+49 30 1234567</span><h3>Address</h3><p>Munich, Bavaria</p></div></main>`);
+    expect(contact).toMatchObject({ locationName: "Munich, Bavaria", email: "jane@acme.example", phone: "+49 30 1234567" });
+
+    const bio = load(`<main>${top}<div componentkey="profile.AboutTopLevelSection"><span data-testid="expandable-text-box">Sales leader based in Austin, Texas. Ex-Oracle.</span></div></main>`);
+    expect(bio.locationName).toBe("Austin, Texas");
+
+    const header = load(`<main><section data-view-name="profile-topcard"><h1>Jane Doe</h1><p>Head of Sales</p><p>Acme</p><p>London, England, United Kingdom</p></section>${experience(["Head of Sales", "Acme", "2022 - Present", "Berlin, Germany"])}</main>`);
+    expect(header.locationName).toBe("London, England, United Kingdom");
+  });
+
   it("keeps school-only education entries and captures a full connection-degree label", () => {
     const window = loadCapturePage({
       url: "https://www.linkedin.com/in/jane-doe/",
@@ -433,7 +458,8 @@ describe("person capture run", () => {
       return 0;
     };
     expect(window.SkoutPersonCapture.pageUrl("/in/stranger-person/", "jane-doe")).toBeUndefined();
-    expect(window.SkoutPersonCapture.pageUrl("/in/jane-doe/overlay/contact-info/", "jane-doe")).toBeUndefined();
+    expect(window.SkoutPersonCapture.pageUrl("/in/stranger-person/overlay/contact-info/", "jane-doe")).toBeUndefined();
+    expect(window.SkoutPersonCapture.pageUrl("/in/jane-doe/overlay/contact-info/", "jane-doe")).toBe("https://www.linkedin.com/in/jane-doe/overlay/contact-info/");
 
     await window.SkoutPersonCapture.start();
     expect(opened).toEqual([
@@ -441,6 +467,7 @@ describe("person capture run", () => {
       "https://www.linkedin.com/in/jane-doe/details/experience/",
       "https://www.linkedin.com/in/jane-doe/details/education/",
       "https://www.linkedin.com/in/jane-doe/details/skills/",
+      "https://www.linkedin.com/in/jane-doe/overlay/contact-info/",
     ]);
     const review = sent.find((message) => message.type === "SKOUT_CAPTURE_REVIEW");
     expect(review).toMatchObject({ kind: "person", sourceUrl: "https://www.linkedin.com/in/jane-doe/" });

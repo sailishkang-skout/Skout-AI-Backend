@@ -3,7 +3,7 @@
 globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
   const { publicIdFromUrl } = window.SkoutCaptureExtract;
   const { extractPerson } = globalThis.SkoutCapturePage;
-  const allowed = new Set(['', 'details/experience', 'details/education', 'details/skills', 'details/certifications', 'details/languages', 'details/volunteering-experiences', 'details/honors', 'details/publications', 'details/patents', 'details/courses', 'details/projects', 'details/organizations', 'recent-activity']);
+  const allowed = new Set(['', 'details/experience', 'details/education', 'details/skills', 'details/certifications', 'details/languages', 'details/volunteering-experiences', 'details/honors', 'details/publications', 'details/patents', 'details/courses', 'details/projects', 'details/organizations', 'recent-activity', 'overlay/contact-info']);
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const pageUrl = (value, id) => {
     try {
@@ -17,7 +17,11 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
   const links = id => [...new Set([...document.querySelectorAll('main a[href]')].map(a => pageUrl(a.getAttribute('href'), id)).filter(Boolean))];
   const merge = (a, b) => {
     const out = {...a};
+    // Keep the most reliable location seen across pages (header > Contact info > job > bio).
+    const rankA = a?._locationRank ?? (a?.locationName ? 1 : 99), rankB = b?._locationRank ?? 99;
     for (const [key, value] of Object.entries(b || {})) {
+      if (key === '_locationRank') continue;
+      if (key === 'locationName' && rankB > rankA) continue;
       if (key.startsWith('_') || value === undefined || value === null || value === '') continue;
       if (Array.isArray(value)) out[key] = [...(out[key] || []), ...value];
       else out[key] = value;
@@ -40,6 +44,8 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
         out[key] = out[key].filter(item => { const sig = JSON.stringify(item); if (seen.has(sig)) return false; seen.add(sig); return true; });
       }
     }
+    if (b?.locationName && rankB <= rankA) out._locationRank = rankB;
+    else if (a?._locationRank !== undefined) out._locationRank = a._locationRank;
     return out;
   };
   const message = payload => new Promise((resolve, reject) => chrome.runtime.sendMessage(payload, response => {
@@ -63,6 +69,7 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
       `${root}details/experience/`,
       `${root}details/education/`,
       `${root}details/skills/`,
+      `${root}overlay/contact-info/`,
       ...links(id),
     ])].slice(0, 10), seen = new Set(), errors = [], warnings = [];
     let data = extractPerson(), read = 0;
@@ -175,6 +182,9 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
           stableEducationPasses = currentEducation === previousEducation ? stableEducationPasses + 1 : 0;
           previousEducation = currentEducation;
           if (data.educations?.length && stableEducationPasses >= 3) break;
+        } else if (expectedUrl.endsWith('/overlay/contact-info/')) {
+          // Wait for the Contact info modal; profiles without one stop after ~6s.
+          if (data._contactInfo || attempt >= 12) break;
         } else if (!detailName) {
           const hasSection = ['experience','educations','skills','certifications','languages','volunteerExperiences','honors','publications','patents','courses','organizations']
             .some((key) => Array.isArray(data[key]) && data[key].length);

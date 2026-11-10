@@ -309,6 +309,7 @@ const PAGE_CHROME_PHRASE =
   /\b(people you may know|people also viewed|more profiles for you|suggested for you|you might like|ad options?|why am i seeing this ad|manage your ad preferences|hide or report this ad|promoted by)\b/i;
 const PAGE_CHROME_LABEL =
   /^(profile|skills?|top skills?|all activity|activity|experience|education|show all|show more|untitled role|view|message|connect|follow|save|promoted|sponsored|contact info)$/i;
+const DATE_OR_DURATION = /^(?:present|current|now)$|\b(?:19|20)\d{2}\b|\b\d+\s*(?:yrs?|years?|mos?|months?)\b|\bpresent\b/i;
 const ENDORSEMENT_HELPER = /^(endorsed by\b|\d+[+,]?\s+endorsements?\b|\d+ experiences? at\b|\d+[+,]?$)/i;
 
 export function isPageChrome(value: unknown): boolean {
@@ -355,6 +356,11 @@ export function sanitizePersonCapture(input: PersonIngestInput): SanitizedPerson
       rejected.push(field);
       delete data[field];
     }
+  }
+  // A date or duration ("Present", "Jan 2022 - Present", "3 yrs") is not a place.
+  if (typeof data.locationName === "string" && DATE_OR_DURATION.test(data.locationName.trim())) {
+    rejected.push("locationName");
+    delete data.locationName;
   }
 
   if (Array.isArray(input.skills)) {
