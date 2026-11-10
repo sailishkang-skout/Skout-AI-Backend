@@ -412,13 +412,18 @@ export async function refundPaymentRequest(db: Db, psp: PspAdapter, ctx: Commerc
     ({ refundId } = await psp.refundPayment(pr.providerPaymentId, Number(pr.amountMinor), { payment_request_id: pr.id, reason: reason.slice(0, 200) }));
   } catch (error) {
     if (error instanceof PspRequestError) {
+      // Razorpay's description alone is often generic ("invalid request sent"); reason and field say why.
       let why = "";
+      let reason: string | null = null;
       try {
-        why = String((JSON.parse(error.providerMessage) as { error?: { description?: unknown } }).error?.description ?? "");
+        const e = (JSON.parse(error.providerMessage) as { error?: { description?: unknown; reason?: unknown; field?: unknown; code?: unknown } }).error ?? {};
+        reason = [e.reason, e.field].filter((x) => typeof x === "string" && x && x !== "NA").join(" / ") || null;
+        why = [String(e.description ?? ""), reason ? `(${reason})` : ""].filter(Boolean).join(" ");
       } catch {
         why = "";
       }
-      throw new CommercialError("PROVIDER_ERROR", why ? `The payment provider did not refund: ${why}` : "The payment provider did not refund this payment", { provider_status: error.providerStatus });
+      // A refund moves money: never retried automatically, whatever the provider answered.
+      throw new CommercialError("PROVIDER_ERROR", why ? `The payment provider did not refund: ${why}` : "The payment provider did not refund this payment", { provider_status: error.providerStatus, provider_reason: reason, no_retry: true });
     }
     throw error;
   }

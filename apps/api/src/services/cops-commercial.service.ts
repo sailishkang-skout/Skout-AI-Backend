@@ -77,8 +77,14 @@ export class CommercialError extends Error {
     }
   }
 
+  /**
+   * Only a provider failure that may pass on a second try: not a 4xx answer (the request itself was
+   * refused) and not an action that moves money (a blind retry could repeat it).
+   */
   get retryable(): boolean {
-    return this.code === "PROVIDER_ERROR";
+    if (this.code !== "PROVIDER_ERROR" || this.details.no_retry === true) return false;
+    const status = Number(this.details.provider_status);
+    return !(status >= 400 && status < 500);
   }
 }
 

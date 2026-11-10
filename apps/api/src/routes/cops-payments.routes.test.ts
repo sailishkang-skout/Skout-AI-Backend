@@ -79,12 +79,16 @@ maybe("COPS-03 payment requests and webhook", () => {
         const body = JSON.parse(String(init?.body ?? "{}"));
         linkCalls.push(body);
         if (body.description === "FAIL") return new Response('{"error":{"code":"BAD_REQUEST_ERROR"}}', { status: 400 });
+        if (body.description === "DOWN") return new Response('{"error":{"code":"SERVER_ERROR"}}', { status: 503 });
         const id = `plink_${randomUUID().replace(/-/g, "").slice(0, 14)}`;
         return new Response(JSON.stringify({ id, short_url: `https://rzp.io/i/${id}`, status: "created" }), { status: 200 });
       }
       const refund = /^https:\/\/api\.razorpay\.com\/v1\/payments\/([^/]+)\/refund$/.exec(target);
       if (refund) {
         refundCalls.push({ paymentId: refund[1]!, body: JSON.parse(String(init?.body ?? "{}")) });
+        if (refund[1]!.startsWith("pay_norefund")) {
+          return new Response(JSON.stringify({ error: { code: "BAD_REQUEST_ERROR", description: "invalid request sent", reason: "insufficient_balance", field: "amount" } }), { status: 400 });
+        }
         return new Response(JSON.stringify({ id: `rfnd_${randomUUID().slice(0, 8)}`, status: "processed" }), { status: 200 });
       }
       const cancel = /^https:\/\/api\.razorpay\.com\/v1\/payment_links\/([^/]+)\/cancel$/.exec(target);
@@ -148,10 +152,13 @@ maybe("COPS-03 payment requests and webhook", () => {
     expect(state.state).toBe("payment_pending");
   });
 
-  it("returns 502 retryable when the provider rejects, and 422 without an amount", async () => {
+  it("returns 502 when the provider fails: retryable only when it was down, not when it refused; 422 without an amount", async () => {
     const res = await call("POST", "/payment-requests", { opportunity_id: opportunityId, amount_minor: 50_000, description: "FAIL" });
     expect(res.statusCode).toBe(502);
-    expect(res.json()).toMatchObject({ code: "PROVIDER_ERROR", retryable: true });
+    // A 4xx refusal fails the same way again, so the client must not retry it.
+    expect(res.json()).toMatchObject({ code: "PROVIDER_ERROR", retryable: false });
+    const down = await call("POST", "/payment-requests", { opportunity_id: opportunityId, amount_minor: 50_000, description: "DOWN" });
+    expect(down.json()).toMatchObject({ code: "PROVIDER_ERROR", retryable: true });
     expect((await call("POST", "/payment-requests", { opportunity_id: opportunityId })).statusCode).toBe(422);
   });
 
@@ -213,6 +220,19 @@ maybe("COPS-03 payment requests and webhook", () => {
     expect((await call("POST", `/payment-requests/${pr.id}/refund`, { reason: "again" })).statusCode).toBe(409);
     const [audit] = await sql`select action from audit_logs where entity_id = ${pr.id} and action = 'payment_request.refunded'`;
     expect(audit.action).toBe("payment_request.refunded");
+  });
+
+  it("a refund the provider refuses is not retryable and says why; the link stays paid", async () => {
+    const pr = await newRequest();
+    expect((await webhook(paidEvent(pr.provider_ref, `pay_norefund_${RUN}`))).statusCode).toBe(200);
+    const before = refundCalls.length;
+    const res = await call("POST", `/payment-requests/${pr.id}/refund`, { reason: "Customer cancelled" });
+    expect(res.statusCode).toBe(502);
+    expect(res.json()).toMatchObject({ code: "PROVIDER_ERROR", retryable: false, details: { provider_status: 400, provider_reason: "insufficient_balance / amount" } });
+    expect(res.json().message).toContain("insufficient_balance");
+    expect(refundCalls.length - before).toBe(1);
+    const [row] = await sql`select status from payment_requests where id = ${pr.id}`;
+    expect(row.status).toBe("paid");
   });
 
   it("rejects a missing or bad signature with 401 and changes nothing", async () => {
