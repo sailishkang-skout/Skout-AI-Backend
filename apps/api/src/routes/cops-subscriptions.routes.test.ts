@@ -2,7 +2,7 @@ import { planFromItems } from "../services/cops-subscriptions.service.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { Db } from "@skout/db";
 import { loadEnv } from "../config/env.js";
@@ -298,9 +298,21 @@ maybe("COPS-08 subscriptions", () => {
     await call("POST", `/proposals/${proposal.id}/send`, {});
     // The proposal's payment link (first month + one-time fee) was paid before the subscription started.
     const [paid] = await sql`insert into payment_requests (workspace_id, opportunity_id, proposal_id, amount_minor, currency, status, provider, provider_ref, checkout_url, provider_payment_id, paid_at)
-      values (${workspaceId}, ${opportunityId}, ${proposal.id}, 5000, 'USD', 'paid', 'razorpay', ${`plink_${opportunityId}`}, 'https://rzp.io/test', 'pay_upfront', now()) returning id`;
+      values (${workspaceId}, ${opportunityId}, ${proposal.id}, 5000, 'USD', 'paid', 'razorpay', ${`plink_${opportunityId}`}, 'https://rzp.io/test', ${`pay_upfront_${opportunityId}`}, now()) returning id`;
     const sub = (await call("POST", `/accounts/${accountId}/subscription`, { opportunity_id: opportunityId, cadence: "monthly", term_months: 12, payment_terms_net_days: 0 })).json().data;
     expect(sub.invoices[0]).toMatchObject({ amount_minor: 4_500, status: "paid", payment_request_id: paid.id });
+
+    // Cancelled now, then the payment is refunded: the bill it paid is not "paid" any more.
+    expect((await call("POST", `/subscriptions/${sub.id}/cancel`, { when: "now", reason: "Left in the first week" })).statusCode).toBe(200);
+    const raw = JSON.stringify({ event: "refund.processed", payload: { refund: { entity: { id: `rfnd_${opportunityId}`, payment_id: `pay_upfront_${opportunityId}`, amount: 5000, currency: "USD" } } } });
+    const refund = await app.inject({
+      method: "POST",
+      url: "/api/v1/billing/webhooks/razorpay/payment-links",
+      headers: { "content-type": "application/json", "x-razorpay-event-id": `evt_${randomUUID()}`, "x-razorpay-signature": createHmac("sha256", "whsec_test_subscriptions").update(raw).digest("hex") },
+      payload: raw,
+    });
+    expect(refund.json()).toMatchObject({ outcome: "applied", status: "refunded" });
+    expect((await current(accountId)).invoices[0].status).toBe("void");
   });
 
   it("maps what was sold to the customer's Skout AI plan limits", () => {

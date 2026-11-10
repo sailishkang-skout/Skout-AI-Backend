@@ -56,7 +56,7 @@ import { handleEsignWebhook, listEnvelopes, sendEnvelope } from "../services/cop
 import { removeContractDocumentIfUnused, resolveContractDocumentForProvider } from "./cops-contract-documents.routes.js";
 import { getAccountContractFields, setAccountContractFields } from "../services/cops-account-fields.service.js";
 import { CREDIT_ACTIVITY_KINDS, listCreditActivity, listSubscriptionsForFinance, loadReconciliation } from "../services/cops-finance.service.js";
-import { amendSubscription, cancelSubscription, createSubscription, previewAmendment, resumeSubscription, getAccountSubscription, issueInvoicePaymentLink, listFailedPayments, markInvoicePaid } from "../services/cops-subscriptions.service.js";
+import { amendSubscription, cancelSubscription, createSubscription, previewAmendment, resumeSubscription, getAccountSubscription, issueInvoicePaymentLink, listFailedPayments, markInvoicePaid, unsettleInvoicesForRefund } from "../services/cops-subscriptions.service.js";
 import { applyPaidCreditPurchases, reverseRefundedCreditPurchase } from "../services/cops-credits.service.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -977,6 +977,8 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
         requestId: refunded.requestId,
       });
     }
+    // A subscription bill this payment settled is not paid any more.
+    if (refunded.paymentRequestId) await unsettleInvoicesForRefund(tx as never, refunded.workspaceId, refunded.paymentRequestId, refunded.requestId);
   };
 
   // Refund a paid link in full, with a reason (Finance only: money goes back to the customer).

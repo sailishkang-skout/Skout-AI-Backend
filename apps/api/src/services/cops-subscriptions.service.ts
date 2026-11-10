@@ -276,6 +276,36 @@ async function settleFirstPeriodFromProposalPayment(tx: Tx, sub: SubscriptionRow
   return first.id;
 }
 
+/**
+ * A bill paid by a payment that has now been refunded is no longer paid: on a closed subscription
+ * it is voided, on a running one it is open again (the customer owes it). Returns the bills changed.
+ */
+export async function unsettleInvoicesForRefund(tx: Tx, workspaceId: string, paymentRequestId: string, requestId: string): Promise<Array<{ id: string; status: "void" | "open" }>> {
+  const rows = await tx
+    .select({ id: subscriptionInvoices.id, subscriptionId: subscriptionInvoices.subscriptionId, subStatus: subscriptions.status })
+    .from(subscriptionInvoices)
+    .innerJoin(subscriptions, eq(subscriptions.id, subscriptionInvoices.subscriptionId))
+    .where(and(eq(subscriptionInvoices.workspaceId, workspaceId), eq(subscriptionInvoices.paymentRequestId, paymentRequestId), eq(subscriptionInvoices.status, "paid")));
+  const changed: Array<{ id: string; status: "void" | "open" }> = [];
+  for (const row of rows) {
+    const status = row.subStatus === "closed" ? "void" : "open";
+    await tx.update(subscriptionInvoices).set({ status, paidAt: null }).where(eq(subscriptionInvoices.id, row.id));
+    await writeCopsAudit(tx, {
+      tenantId: workspaceId,
+      actor: { type: "system", id: null },
+      entityType: "subscription_invoice",
+      entityId: row.id,
+      action: "subscription_invoice.refunded",
+      before: { status: "paid" },
+      after: { status, payment_request_id: paymentRequestId, subscription_id: row.subscriptionId },
+      correlationId: requestId,
+      sourceChannel: "api",
+    });
+    changed.push({ id: row.id, status });
+  }
+  return changed;
+}
+
 export interface CreateSubscriptionInput {
   opportunity_id: string;
   seats?: number;
