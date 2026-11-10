@@ -36,7 +36,7 @@ import {
   discardDraftContract,
   type CommercialContext,
 } from "../services/cops-commercial.service.js";
-import { cancelPaymentRequest, createPaymentRequest, handlePaymentWebhook, loadPaymentRequests, refundPaymentRequest } from "../services/cops-payments.service.js";
+import { cancelPaymentRequest, createPaymentRequest, handlePaymentWebhook, loadPaymentRequests, previewRefund, refundPaymentRequest } from "../services/cops-payments.service.js";
 import { emailPaymentLink, emailProposal, isInternalEmail } from "../services/cops-commercial-email.service.js";
 import { assertApproved, assertContractApproved, decideApproval, evaluateProposalApprovals, listApprovals, requestApproval } from "../services/cops-approvals.service.js";
 import { createRazorpayPaymentLinkAdapter } from "../services/psp/razorpay.js";
@@ -982,6 +982,19 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
   };
 
   // Refund a paid link in full, with a reason (Finance only: money goes back to the customer).
+  // Before a refund: the amount and whether the provider balance covers it (read-only).
+  app.get<{ Params: { id: string } }>("/payment-requests/:id/refund-preview", { preHandler: requireAnyCopsPermission(["billing:refund"], perms) }, async (request, reply) => {
+    const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+    const bad = checkId(reply as never, requestId, request.params.id);
+    if (bad) return bad;
+    try {
+      return { data: await previewRefund(db, psp, request.workspaceId!, request.params.id) };
+    } catch (error) {
+      if (error instanceof CommercialError) return reply.status(error.status).send(copsErrorBody({ code: error.code, message: error.message, requestId }));
+      throw error;
+    }
+  });
+
   app.post<{ Params: { id: string }; Body: { reason?: string } }>(
     "/payment-requests/:id/refund",
     // Money goes back to the customer: only roles with billing:refund (Finance, Owner, Admin).

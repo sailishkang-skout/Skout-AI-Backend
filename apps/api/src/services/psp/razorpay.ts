@@ -47,6 +47,14 @@ const STATUS_BY_EVENT: Record<string, PspWebhookEvent["status"]> = {
  * RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET / RAZORPAY_WEBHOOK_SECRET as credit-pack billing.
  */
 export function createRazorpayPaymentLinkAdapter(config: Env, fetchImpl: FetchLike = fetch): PspAdapter {
+  /** The merchant balance refunds are paid from; null when Razorpay does not answer. */
+  async function getBalance(): Promise<{ balanceMinor: number; currency: string } | null> {
+    const res = await fetchImpl(`${RAZORPAY_API}/balance`, { headers: { Authorization: razorpayAuthHeader(config.RAZORPAY_KEY_ID!, config.RAZORPAY_KEY_SECRET!) } }).catch(() => null);
+    if (!res?.ok) return null;
+    const body = (await res.json().catch(() => null)) as { balance?: number; currency?: string } | null;
+    return typeof body?.balance === "number" ? { balanceMinor: body.balance, currency: body.currency ?? "INR" } : null;
+  }
+
   return {
     provider: "razorpay",
 
@@ -89,6 +97,8 @@ export function createRazorpayPaymentLinkAdapter(config: Env, fetchImpl: FetchLi
       return { providerRef: link.id, checkoutUrl: link.short_url };
     },
 
+    getBalance,
+
     async refundPayment(providerPaymentId, amountMinor, notes) {
       const res = await fetchImpl(`${RAZORPAY_API}/payments/${encodeURIComponent(providerPaymentId)}/refund`, {
         method: "POST",
@@ -100,11 +110,10 @@ export function createRazorpayPaymentLinkAdapter(config: Env, fetchImpl: FetchLi
         // Razorpay refuses a refund larger than the account balance with a bare "invalid request
         // sent" (payments land net of fees), so check the balance and say so plainly.
         if (res.status === 400) {
-          const balance = await fetchImpl(`${RAZORPAY_API}/balance`, { headers: { Authorization: razorpayAuthHeader(config.RAZORPAY_KEY_ID!, config.RAZORPAY_KEY_SECRET!) } })
-            .then((b) => (b.ok ? (b.json() as Promise<{ balance?: number; currency?: string }>) : null))
-            .catch(() => null);
-          if (balance && typeof balance.balance === "number" && balance.balance < amountMinor) {
-            const cur = balance.currency ?? "INR";
+          const found = await getBalance();
+          const balance = found ? { balance: found.balanceMinor, currency: found.currency } : null;
+          if (balance && balance.balance < amountMinor) {
+            const cur = balance.currency;
             const fmt = (minor: number) => `${cur} ${(minor / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
             throw new PspRequestError(400, JSON.stringify({ error: { description: `the Razorpay balance (${fmt(balance.balance)}) is lower than the refund (${fmt(amountMinor)}); add funds in Razorpay or refund after the next payments settle`, reason: "insufficient_balance", field: "amount" } }));
           }

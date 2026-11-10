@@ -400,6 +400,24 @@ export async function cancelPaymentRequest(db: Db, psp: PspAdapter, ctx: Commerc
  * follow-up as a provider "refunded" event (credits it bought are taken back). The provider's own
  * refunded webhook arriving later changes nothing.
  */
+/**
+ * What a refund would take, before it is made: the amount and whether the provider balance covers it
+ * (payments land net of fees, so a full refund can exceed it). Balance fields are null when unknown.
+ */
+export async function previewRefund(db: Db, psp: PspAdapter, workspaceId: string, id: string) {
+  const [pr] = await db.select().from(paymentRequests).where(and(eq(paymentRequests.workspaceId, workspaceId), eq(paymentRequests.id, id))).limit(1);
+  if (!pr) throw new CommercialError("NOT_FOUND", "Payment request not found");
+  const balance = psp.getBalance ? await psp.getBalance().catch(() => null) : null;
+  const sameCurrency = balance && balance.currency === pr.currency;
+  return {
+    amount_minor: Number(pr.amountMinor),
+    currency: pr.currency,
+    refundable: pr.status === "paid",
+    provider_balance_minor: sameCurrency ? balance.balanceMinor : null,
+    balance_covers_refund: sameCurrency ? balance.balanceMinor >= Number(pr.amountMinor) : null,
+  };
+}
+
 export async function refundPaymentRequest(db: Db, psp: PspAdapter, ctx: CommercialContext, id: string, reason: string, onRefunded?: OnPaymentChange): Promise<void> {
   const [pr] = await db.select().from(paymentRequests).where(and(eq(paymentRequests.workspaceId, ctx.workspaceId), eq(paymentRequests.id, id))).limit(1);
   if (!pr) throw new CommercialError("NOT_FOUND", "Payment request not found");

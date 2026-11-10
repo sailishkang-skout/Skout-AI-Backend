@@ -239,6 +239,16 @@ maybe("COPS-03 payment requests and webhook", () => {
     expect(row.status).toBe("paid");
   });
 
+  it("the refund preview says whether the Razorpay balance covers the refund", async () => {
+    const small = await newRequest();
+    expect((await webhook(paidEvent(small.provider_ref, `pay_preview_${RUN}`))).statusCode).toBe(200);
+    const res = await call("GET", `/payment-requests/${small.id}/refund-preview`);
+    expect(res.statusCode).toBe(200);
+    const [row] = await sql`select amount_minor from payment_requests where id = ${small.id}`;
+    // The stub balance is INR 300.00 (30,000 minor units).
+    expect(res.json().data).toEqual({ amount_minor: Number(row.amount_minor), currency: "INR", refundable: true, provider_balance_minor: 30_000, balance_covers_refund: Number(row.amount_minor) <= 30_000 });
+  });
+
   it("a refund larger than the Razorpay balance says so instead of 'invalid request sent'", async () => {
     const pr = await newRequest();
     expect((await webhook(paidEvent(pr.provider_ref, `pay_lowbalance_${RUN}`))).statusCode).toBe(200);

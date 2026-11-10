@@ -36,6 +36,8 @@ export interface PspAdapter {
   refundPayment?(providerPaymentId: string, amountMinor: number, notes: Record<string, string>): Promise<{ refundId: string }>;
   /** False when links in this currency cannot be paid yet (international payments not enabled). */
   supportsCurrency?(currency: string): boolean;
+  /** The merchant account balance refunds are paid from (minor units); null when unknown. */
+  getBalance?(): Promise<{ balanceMinor: number; currency: string } | null>;
   createPaymentLink(input: {
     amountMinor: number;
     currency: string;
