@@ -19,7 +19,10 @@ const maybe = url ? describe : describe.skip;
 maybe("COPS-13 dashboards (Postgres)", () => {
   const sql = postgres(url as string, { max: 1, onnotice: () => {} });
   const { db, sql: dbSql } = createDb(url as string);
-  const now = new Date();
+  // Pinned to the 20th (this month, or last month before the 20th) so the events 2-10 days back
+  // fall in one monthly cohort; with the real date they split across months early in a month.
+  const today = new Date();
+  const now = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - (today.getUTCDate() < 20 ? 1 : 0), 20, 12));
   const days = (n: number) => new Date(now.getTime() + n * 86_400_000).toISOString();
   let ws: string;
   let owner: string;
