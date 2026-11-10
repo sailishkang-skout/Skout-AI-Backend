@@ -83,9 +83,13 @@ maybe("COPS-03 payment requests and webhook", () => {
         const id = `plink_${randomUUID().replace(/-/g, "").slice(0, 14)}`;
         return new Response(JSON.stringify({ id, short_url: `https://rzp.io/i/${id}`, status: "created" }), { status: 200 });
       }
+      if (target === "https://api.razorpay.com/v1/balance") return new Response(JSON.stringify({ balance: 30_000, currency: "INR" }), { status: 200 });
       const refund = /^https:\/\/api\.razorpay\.com\/v1\/payments\/([^/]+)\/refund$/.exec(target);
       if (refund) {
         refundCalls.push({ paymentId: refund[1]!, body: JSON.parse(String(init?.body ?? "{}")) });
+        if (refund[1]!.startsWith("pay_lowbalance")) {
+          return new Response(JSON.stringify({ error: { code: "BAD_REQUEST_ERROR", description: "invalid request sent", reason: "NA", field: "NA" } }), { status: 400 });
+        }
         if (refund[1]!.startsWith("pay_norefund")) {
           return new Response(JSON.stringify({ error: { code: "BAD_REQUEST_ERROR", description: "invalid request sent", reason: "insufficient_balance", field: "amount" } }), { status: 400 });
         }
@@ -233,6 +237,15 @@ maybe("COPS-03 payment requests and webhook", () => {
     expect(refundCalls.length - before).toBe(1);
     const [row] = await sql`select status from payment_requests where id = ${pr.id}`;
     expect(row.status).toBe("paid");
+  });
+
+  it("a refund larger than the Razorpay balance says so instead of 'invalid request sent'", async () => {
+    const pr = await newRequest();
+    expect((await webhook(paidEvent(pr.provider_ref, `pay_lowbalance_${RUN}`))).statusCode).toBe(200);
+    const res = await call("POST", `/payment-requests/${pr.id}/refund`, { reason: "Customer cancelled" });
+    expect(res.statusCode).toBe(502);
+    expect(res.json().message).toContain("Razorpay balance (INR 300.00) is lower than the refund");
+    expect(res.json()).toMatchObject({ retryable: false, details: { provider_reason: "insufficient_balance / amount" } });
   });
 
   it("rejects a missing or bad signature with 401 and changes nothing", async () => {

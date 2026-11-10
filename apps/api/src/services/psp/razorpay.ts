@@ -95,7 +95,22 @@ export function createRazorpayPaymentLinkAdapter(config: Env, fetchImpl: FetchLi
         headers: { Authorization: razorpayAuthHeader(config.RAZORPAY_KEY_ID!, config.RAZORPAY_KEY_SECRET!), "Content-Type": "application/json" },
         body: JSON.stringify({ amount: amountMinor, speed: "normal", notes }),
       });
-      if (!res.ok) throw new PspRequestError(res.status, (await res.text()).slice(0, 300));
+      if (!res.ok) {
+        const text = (await res.text()).slice(0, 300);
+        // Razorpay refuses a refund larger than the account balance with a bare "invalid request
+        // sent" (payments land net of fees), so check the balance and say so plainly.
+        if (res.status === 400) {
+          const balance = await fetchImpl(`${RAZORPAY_API}/balance`, { headers: { Authorization: razorpayAuthHeader(config.RAZORPAY_KEY_ID!, config.RAZORPAY_KEY_SECRET!) } })
+            .then((b) => (b.ok ? (b.json() as Promise<{ balance?: number; currency?: string }>) : null))
+            .catch(() => null);
+          if (balance && typeof balance.balance === "number" && balance.balance < amountMinor) {
+            const cur = balance.currency ?? "INR";
+            const fmt = (minor: number) => `${cur} ${(minor / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+            throw new PspRequestError(400, JSON.stringify({ error: { description: `the Razorpay balance (${fmt(balance.balance)}) is lower than the refund (${fmt(amountMinor)}); add funds in Razorpay or refund after the next payments settle`, reason: "insufficient_balance", field: "amount" } }));
+          }
+        }
+        throw new PspRequestError(res.status, text);
+      }
       const refund = (await res.json()) as { id: string };
       return { refundId: refund.id };
     },
