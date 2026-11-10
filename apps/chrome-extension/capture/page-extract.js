@@ -98,9 +98,7 @@ function extractPerson() {
   const positionLine = contentLines[1]; // e.g. "Align Technology · Tel Aviv University"
   // LinkedIn sometimes gives a surrounding "company · school" container a
   // location-like attribute. That is not a geographic value.
-  const isGeographicLocation = (value) => value && value.length < 140 &&
-    !/[·|]/.test(value) &&
-    !/\b(university|college|school|student| at |mutual connections?|people you may know)\b/i.test(value);
+  const isGeographicLocation = (value) => isPlaceText(value);
   const labelledLocation = text(
     topcard?.querySelector('[aria-label*="location" i], [data-view-name*="location" i]'),
   );
@@ -109,12 +107,16 @@ function extractPerson() {
   let locationName = isGeographicLocation(labelledLocation)
     ? labelledLocation
     : contentLines.find((line, index) => index > 0 && /,/.test(line) && isGeographicLocation(line) && !isProfileChrome(line));
+  // 1 = profile header, 2 = Contact info, 3 = current job, 4 = bio. Lower wins when pages are merged.
+  let locationRank = locationName ? 1 : undefined;
 
   const followersText = findCount('followers?');
   const connectionsText = findCount('connections?');
   const relationshipContext = extractRelationshipContext(topcard);
 
   const openToWork = !!topcard?.querySelector('[aria-label*="Open to work" i]');
+  const hiring = !!topcard?.querySelector('[aria-label*="hiring" i]') || allParagraphTexts.some((t) => /^#?hiring$/i.test(t));
+  const pronoun = allParagraphTexts.find((t) => /^(?:he|she|they|xe|ze)\/[a-z]{2,6}$/i.test(t));
 
   // Deeper sections — only present once their part of the page has
   // rendered/scrolled into view; safe to call even if empty (each
@@ -127,7 +129,12 @@ function extractPerson() {
   // company record or current-employer link.
   const isCompanyName = (value) => !!value && !/^(https?:\/\/|www\.)/i.test(value.trim());
   const currentCompanyJobs = currentJobs.filter((job) => isCompanyName(job.company));
-  if (!locationName && isGeographicLocation(currentJobs[0]?.location)) locationName = currentJobs[0].location;
+  // Fallbacks, in order: Contact info address, current job, then the bio.
+  const contactInfoEarly = extractContactInfo();
+  if (!locationName && isGeographicLocation(contactInfoEarly?.address)) [locationName, locationRank] = [contactInfoEarly.address, 2];
+  if (!locationName) [locationName, locationRank] = [currentJobs.map((job) => job.location).find(isGeographicLocation), 3];
+  if (!locationName) [locationName, locationRank] = [placeFromBio(extractAboutSection()) || placeFromBio(headline), 4];
+  if (!locationName) locationRank = undefined;
   // Used by the backend to link this person to a Company record (see
   // ingest.routes.ts) — sourced from the current job's own company link
   // rather than guessed from the company name text, since names aren't
@@ -152,7 +159,8 @@ function extractPerson() {
   const patents = extractPatents();
   const courses = extractCourses();
   const organizations = extractOrganizations();
-  const contactInfo = extractContactInfo();
+  const projects = extractProjects();
+  const contactInfo = contactInfoEarly;
   const recentActivity = extractRecentActivity();
 
   return {
@@ -185,9 +193,15 @@ function extractPerson() {
     patents: patents.length ? patents : undefined,
     courses: courses.length ? courses : undefined,
     organizations: organizations.length ? organizations : undefined,
+    projects: projects.length ? projects : undefined,
+    pronoun,
+    hiring: hiring || undefined,
+    // "City, Region, Country": the last part is the country.
+    locationCountry: locationName && locationName.split(',').length >= 3 ? locationName.split(',').pop().trim() : undefined,
     // Keep the full contact section local for the review note; only the
     // validated email and phone values are sent to the capture endpoint.
     _contactInfo: contactInfo,
+    _locationRank: locationRank,
     email: contactInfo?.email,
     phone: contactInfo?.phone,
     _recentActivity: recentActivity.length ? recentActivity : undefined,
@@ -618,6 +632,28 @@ function getItemParagraphs(item) {
 
 const EMPLOYMENT_TYPES = /^(full-time|part-time|self-employed|freelance|contract|internship|apprenticeship|seasonal)$/i;
 const WORKPLACE_TYPES = /\b(remote|hybrid|on[- ]site)\b/i;
+// Date ranges, "Present" and durations ("2 yrs 3 mos") are not places.
+const DATE_OR_DURATION = /^(?:present|current|now)$|\b(?:19|20)\d{2}\b|\b\d+\s*(?:yrs?|years?|mos?|months?)\b|\bpresent\b/i;
+function isPlaceText(value) {
+  const candidate = (value || '').replace(/\s+/g, ' ').trim();
+  return !!candidate && candidate.length < 140 && /\p{L}{2}/u.test(candidate) &&
+    !DATE_OR_DURATION.test(candidate) && !EMPLOYMENT_TYPES.test(candidate) &&
+    !/^(?:remote|hybrid|on[- ]site)$/i.test(candidate) &&
+    !/[·|@]/.test(candidate) && !/https?:|www\./i.test(candidate) &&
+    !/\b(university|college|school|student| at |mutual connections?|people you may know|followers?|connections?|contact info)\b/i.test(candidate);
+}
+// A job's location line, ignoring date, duration and employment-type lines.
+function jobLocation(lines, skip) {
+  const line = lines.find((p) => !skip.includes(p) && !DATE_OR_DURATION.test(p) && !EMPLOYMENT_TYPES.test(p));
+  const workplaceType = line?.match(WORKPLACE_TYPES)?.[1]?.replace('-', ' ');
+  const place = line?.replace(/\s*[·|]\s*(remote|hybrid|on[- ]site)\s*$/i, '').trim();
+  return { workplaceType, location: isPlaceText(place) ? place : undefined };
+}
+// "Based in London, UK" / "located in Austin, Texas" in a bio.
+function placeFromBio(value) {
+  const match = (value || '').match(/\b(?:based|located|living|residing)\s+(?:in|out of)\s+([\p{Lu}][\p{L}'-]*(?:[ -][\p{Lu}][\p{L}'-]*)*(?:,\s*[\p{Lu}][\p{L}'-]*(?:[ -][\p{Lu}][\p{L}'-]*)*){0,2})/u);
+  return match && isPlaceText(match[1]) ? match[1] : undefined;
+}
 
 function companyPublicIdFromEntry(item) {
   const href = item.querySelector('a[href*="/company/"]')?.getAttribute('href');
@@ -631,27 +667,56 @@ function companyPublicIdFromEntry(item) {
  * (opened when LinkedIn shows "Show all") mark them `...DetailsSection`. Without either, fall
  * back to the section under this page's own heading, never outside <main>.
  */
+// How each profile section is marked: component-key stems (singular and
+// plural), visible titles, and its /details/<slug>/ "Show all" page.
+const PROFILE_SECTIONS = {
+  Experience: { keys: ['Experience'], titles: ['Experience'], slug: 'experience' },
+  Education: { keys: ['Education'], titles: ['Education'], slug: 'education' },
+  Skills: { keys: ['Skill', 'Skills'], titles: ['Skills'], slug: 'skills' },
+  Certifications: { keys: ['Certification', 'Certifications', 'License', 'Licenses'], titles: ['Licenses & certifications', 'Licenses and certifications', 'Certifications'], slug: 'certifications' },
+  Languages: { keys: ['Language', 'Languages'], titles: ['Languages'], slug: 'languages' },
+  Volunteering: { keys: ['VolunteerExperience', 'VolunteerExperiences', 'Volunteering'], titles: ['Volunteering', 'Volunteer experience'], slug: 'volunteering-experiences' },
+  Honors: { keys: ['Honor', 'Honors', 'Award', 'Awards'], titles: ['Honors & awards', 'Honors and awards'], slug: 'honors' },
+  Publications: { keys: ['Publication', 'Publications'], titles: ['Publications'], slug: 'publications' },
+  Patents: { keys: ['Patent', 'Patents'], titles: ['Patents'], slug: 'patents' },
+  Courses: { keys: ['Course', 'Courses'], titles: ['Courses'], slug: 'courses' },
+  Organizations: { keys: ['Organization', 'Organizations'], titles: ['Organizations'], slug: 'organizations' },
+  Projects: { keys: ['Project', 'Projects'], titles: ['Projects'], slug: 'projects' },
+};
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * The profile preview marks its sections `...TopLevelSection`; the /details/<section>/ pages
+ * (opened when LinkedIn shows "Show all") mark them `...DetailsSection`, or show only a
+ * plain-text title. Without a marker, use the section under its title, never all of <main>.
+ */
 function profileSection(name) {
+  const spec = PROFILE_SECTIONS[name] || { keys: [name], titles: [name], slug: name.toLowerCase() };
   const main = document.querySelector('main') || document.body;
-  const detailKey = name === 'Skills' ? 'SkillDetails' : `${name}Details`;
-  const keyed = main.querySelector(
-    `[componentkey*="${name}TopLevelSection" i], [componentkey*="${name}DetailsSection" i], [componentkey*="${detailKey}" i]`,
-  );
+  const selector = spec.keys
+    .flatMap((key) => [`[componentkey*="${key}TopLevel" i]`, `[componentkey*="${key}Details" i]`])
+    .join(', ');
+  const keyed = main.querySelector(selector);
   if (keyed) return keyed;
-  const heading = Array.from(main.querySelectorAll('h1, h2, h3, [role="heading"]'))
-    .find((node) => new RegExp(`^${name}$`, 'i').test(text(node) || ''));
+  const titleRe = new RegExp(`^(?:${spec.titles.map(escapeRegExp).join('|')})$`, 'i');
+  const titleMatch = (node) => titleRe.test(text(node) || '');
+  let heading = Array.from(main.querySelectorAll('h1, h2, h3, [role="heading"]')).find(titleMatch);
+  if (!heading && location.pathname.toLowerCase().includes(`/details/${spec.slug}/`)) {
+    heading = Array.from(main.querySelectorAll('p, span, div, h4'))
+      .find((node) => !Array.from(node.children).some((child) => text(child)) && titleMatch(node));
+  }
   if (!heading) return undefined;
   const semanticContainer = heading.closest('section, [role="region"], [data-view-name*="profile-component" i]');
   if (semanticContainer) return semanticContainer;
 
-  // Some LinkedIn layouts use only generic divs around a section heading. Walk
-  // up while the subtree still belongs to this heading, but never use all of
-  // <main> (which also contains recommendations and other people's content).
+  // Generic divs only: walk up while the subtree still belongs to this title.
   let container = heading.parentElement;
   let candidate = container;
   while (container && container !== main) {
     const headings = container.querySelectorAll('h1, h2, h3, [role="heading"]');
     if (headings.length > 1) break;
+    // Never pull in sidebars such as "People also viewed".
+    if (container.querySelector('aside') || /\bpeople (?:also viewed|you may know)\b/i.test(text(container) || '')) break;
     candidate = container;
     container = container.parentElement;
   }
@@ -698,9 +763,7 @@ function extractExperience() {
         const rest = paras.slice(1);
         const employmentType = rest.find((p) => EMPLOYMENT_TYPES.test(p));
         const dates = rest.find((p) => /\d{4}|present/i.test(p));
-        const locationLine = rest.find((p) => p !== employmentType && p !== dates);
-        const workplaceType = locationLine?.match(WORKPLACE_TYPES)?.[1]?.replace('-', ' ');
-        const location = locationLine?.replace(/\s*[·|]\s*(remote|hybrid|on[- ]site)\s*$/i, '').trim();
+        const { location, workplaceType } = jobLocation(rest, [employmentType, dates]);
         const description = getExpandableText(li);
         addExperience({ title, company, companyPublicId, employmentType, dates, location, workplaceType, description });
       });
@@ -710,9 +773,7 @@ function extractExperience() {
       const companyAndType = paras[1];
       const [company, employmentType] = (companyAndType || '').split(' · ');
       const dates = paras.find((p, i) => i >= 2 && /\d{4}|present/i.test(p));
-      const locationLine = paras.find((p, i) => i >= 2 && p !== dates);
-      const workplaceType = locationLine?.match(WORKPLACE_TYPES)?.[1]?.replace('-', ' ');
-      const location = locationLine?.replace(/\s*[·|]\s*(remote|hybrid|on[- ]site)\s*$/i, '').trim();
+      const { location, workplaceType } = jobLocation(paras.slice(2), [dates]);
       const description = getExpandableText(item);
       addExperience({ title, company, companyPublicId, employmentType, dates, location, workplaceType, description });
     }
@@ -768,6 +829,8 @@ function extractEducation() {
       .filter((node) => !Array.from(node.children).some((child) => text(child)))
       .map((node) => text(node))
       .filter((value, index, all) => value && all.indexOf(value) === index);
+    // The section title bar ("Back", "Education") is not a record.
+    if (!schoolLink && labels.some((label) => /^education$/i.test(label))) return;
     const school = text(schoolLink) || paras[0] || labels[0];
     if (isBadSchool(school)) return;
     const detailLines = paras.length ? paras : labels;
@@ -921,18 +984,43 @@ function extractAboutSection() {
 // it'll get fixed the same way everything above did.
 // ---------------------------------------------------------------------------
 
-function extractGenericEntities(componentkeySubstring) {
-  const section = document.querySelector(`[componentkey*="${componentkeySubstring}" i]`);
+// Rows of a section: marked entity rows, list items, or (on plain-markup
+// detail pages) the innermost divs holding several text lines. The section
+// title bar ("Back", "Projects") is never a row.
+function sectionRows(section, titles) {
+  const titleRe = new RegExp(`^(?:${titles.map(escapeRegExp).join('|')})$`, 'i');
+  let rows = Array.from(section.querySelectorAll('[componentkey^="entity-collection-item" i], [id^="com.linkedin.sdui.profile." i], [data-view-name*="profile-component-entity" i]'));
+  if (!rows.length) rows = Array.from(section.querySelectorAll('li'));
+  if (!rows.length) {
+    const groups = Array.from(section.querySelectorAll('div'))
+      .filter((div) => Array.from(div.children).filter((child) => text(child)).length >= 2);
+    rows = groups.filter((div) => !groups.some((other) => other !== div && div.contains(other)));
+  }
+  // Keep outermost rows only, so a nested marker is not read twice.
+  rows = rows.filter((row) => !rows.some((other) => other !== row && other.contains(row)));
+  return rows
+    .map((row) => {
+      let paragraphs = getItemParagraphs(row);
+      if (!paragraphs.length) {
+        paragraphs = Array.from(row.querySelectorAll('a, p, span, h3, h4, div'))
+          .filter((node) => !Array.from(node.children).some((child) => text(child)))
+          .map((node) => text(node))
+          .filter((value, index, all) => value && all.indexOf(value) === index);
+      }
+      return { paragraphs, description: getExpandableText(row) };
+    })
+    .filter(({ paragraphs }) => paragraphs.length && !paragraphs.some((value) => titleRe.test(value)) &&
+      !/^(show all|show more|see all)\b/i.test(paragraphs[0]));
+}
+
+function extractGenericEntities(name) {
+  const section = profileSection(name);
   if (!section) return [];
-  const items = section.querySelectorAll('[componentkey^="entity-collection-item"], [id^="com.linkedin.sdui.profile." i]');
-  return Array.from(items).map((item) => ({
-    paragraphs: getItemParagraphs(item),
-    description: getExpandableText(item),
-  }));
+  return sectionRows(section, PROFILE_SECTIONS[name]?.titles || [name]);
 }
 
 function extractCertifications() {
-  return extractGenericEntities('CertificationTopLevel').map(({ paragraphs, description }) => {
+  return extractGenericEntities('Certifications').map(({ paragraphs, description }) => {
     const name = paragraphs[0];
     const issuer = paragraphs[1];
     const dateLine = paragraphs.find((p, i) => i >= 2 && /\d{4}/.test(p));
@@ -948,31 +1036,32 @@ function extractCertifications() {
 }
 
 function extractLanguages() {
-  return extractGenericEntities('LanguageTopLevel').map(({ paragraphs }) => ({
+  return extractGenericEntities('Languages').map(({ paragraphs }) => ({
     language: paragraphs[0],
     proficiency: paragraphs[1],
   }));
 }
 
 function extractVolunteerExperience() {
-  // Volunteer entries follow the same role/org/dates/description shape as
-  // Experience, so reuse the same positional logic.
-  const section = document.querySelector('[componentkey*="VolunteerExperienceTopLevel" i]');
-  if (!section) return [];
-  const items = section.querySelectorAll('[componentkey^="entity-collection-item"]');
-  return Array.from(items).map((item) => {
-    const paras = getItemParagraphs(item);
+  // Same role / organization · cause / dates / description shape as Experience.
+  return extractGenericEntities('Volunteering').map(({ paragraphs: paras, description }) => {
     const role = paras[0];
-    const orgAndCause = paras[1];
-    const [organization, cause] = (orgAndCause || '').split(' · ');
+    const [organization, cause] = (paras[1] || '').split(' · ');
     const dates = paras.find((p, i) => i >= 2 && /\d{4}|present/i.test(p));
-    const description = getExpandableText(item);
     return { role, organization, cause, dates, description };
   });
 }
 
+function extractProjects() {
+  return extractGenericEntities('Projects').map(({ paragraphs, description }) => ({
+    title: paragraphs[0],
+    dates: paragraphs.find((p, i) => i >= 1 && /\d{4}|present/i.test(p)),
+    description,
+  }));
+}
+
 function extractHonors() {
-  return extractGenericEntities('HonorsTopLevel').map(({ paragraphs, description }) => ({
+  return extractGenericEntities('Honors').map(({ paragraphs, description }) => ({
     title: paragraphs[0],
     issuer: paragraphs[1],
     date: paragraphs.find((p, i) => i >= 2 && /\d{4}/.test(p)),
@@ -981,7 +1070,7 @@ function extractHonors() {
 }
 
 function extractPublications() {
-  return extractGenericEntities('PublicationTopLevelSection').map(({ paragraphs, description }) => ({
+  return extractGenericEntities('Publications').map(({ paragraphs, description }) => ({
     title: paragraphs[0],
     publisher: paragraphs[1],
     date: paragraphs.find((p, i) => i >= 2 && /\d{4}/.test(p)),
@@ -999,7 +1088,7 @@ function extractPatents() {
 }
 
 function extractCourses() {
-  return extractGenericEntities('CourseTopLevelSection').map(({ paragraphs }) => ({
+  return extractGenericEntities('Courses').map(({ paragraphs }) => ({
     name: paragraphs[0],
     number: paragraphs[1],
   }));
@@ -1015,10 +1104,25 @@ function extractOrganizations() {
 }
 
 /**
- * Contact Info — LinkedIn shows this in a click-to-open modal, not on the
- * base page. We deliberately don't auto-click it. Only a visible modal is
- * read, and its values are sent only after the user reviews and saves capture.
+ * Contact Info — LinkedIn shows this in a modal. We never click it; a user-
+ * started person capture opens the profile's own /overlay/contact-info/ page.
+ * Only a visible modal is read, and its values are sent only after the user
+ * reviews and saves the capture.
  */
+/** A syntactically valid email, lower-cased, or undefined. */
+function cleanEmail(value) {
+  const candidate = (value || '').trim().replace(/^mailto:/i, '').toLowerCase();
+  return /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$/.test(candidate) && candidate.length <= 320 ? candidate : undefined;
+}
+
+/** A phone number with 7 to 15 digits (E.164 range), or undefined. */
+function cleanPhone(value) {
+  const candidate = (value || '').replace(/\s+/g, ' ').trim();
+  const digits = candidate.replace(/\D/g, '');
+  if (!/^\+?[\d\s().-]+$/.test(candidate) || digits.length < 7 || digits.length > 15) return undefined;
+  return candidate;
+}
+
 function extractContactInfo() {
   const candidates = [
     ...document.querySelectorAll('[aria-label*="contact info" i], [aria-labelledby*="contact-info" i]'),
@@ -1039,25 +1143,29 @@ function extractContactInfo() {
   });
   if (!modal) return undefined;
   const website = modal.querySelector('a[href^="http"]:not([href*="linkedin.com"])')?.href;
-  const emailLink = modal.querySelector('a[href^="mailto:"]')?.getAttribute('href')?.replace(/^mailto:/i, '').split('?')[0];
-  const emailMatch = modal.textContent.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
-  const telLink = modal.querySelector('a[href^="tel:"]');
-  let phone;
-  if (telLink) {
-    const rawPhone = telLink.getAttribute('href').replace(/^tel:/i, '');
-    try {
-      phone = decodeURIComponent(rawPhone);
-    } catch {
-      phone = rawPhone;
-    }
-  } else {
-    phone = modal.textContent.match(/\+?\d[\d\s().-]{7,}\d/)?.[0]?.trim();
-  }
-  return {
-    website,
-    email: emailLink || emailMatch?.[0],
-    phone,
+  // The modal lists "Label / value" pairs (Email, Phone, Address, ...).
+  const leaves = Array.from(modal.querySelectorAll('h3, p, span, div, a'))
+    .filter((node) => !Array.from(node.children).some((child) => text(child)))
+    .map((node) => text(node))
+    .filter(Boolean);
+  const LABELS = /^(?:email|phone|address|website|websites|birthday|connected|profile|your profile|im|twitter)$/i;
+  const valueAfter = (label) => {
+    const index = leaves.findIndex((value) => label.test(value));
+    return index >= 0 ? leaves.slice(index + 1).find((value) => !LABELS.test(value)) : undefined;
   };
+  const emailLink = modal.querySelector('a[href^="mailto:"]')?.getAttribute('href')?.replace(/^mailto:/i, '').split('?')[0];
+  const email = [emailLink, valueAfter(/^email$/i), modal.textContent.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/)?.[0]]
+    .map((value) => cleanEmail(value))
+    .find(Boolean);
+  const telLink = modal.querySelector('a[href^="tel:"]')?.getAttribute('href')?.replace(/^tel:/i, '');
+  let telValue = telLink;
+  try { telValue = telLink && decodeURIComponent(telLink); } catch { /* keep raw */ }
+  // Only the Phone entry is a phone; never pick up a random number (e.g. a date).
+  const phone = [telValue, valueAfter(/^phone$/i)?.replace(/\s*\((?:mobile|work|home)\)\s*$/i, '')]
+    .map((value) => cleanPhone(value))
+    .find(Boolean);
+  const address = valueAfter(/^address$/i);
+  return { website, email, phone, address };
 }
 
 /**

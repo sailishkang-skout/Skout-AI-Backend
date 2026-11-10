@@ -326,12 +326,14 @@ async function readCompanyPeopleSearch(request, sender) {
 }
 
 // ── Person profile detail pages ───────────────────────────────────────────────
-function personReadUrl(value, personId) {
+export function personReadUrl(value, personId) {
   try {
     const u = new URL(value), parts = u.pathname.split('/').filter(Boolean);
-    const allowed = new Set(['','details','recent-activity']);
+    const allowed = new Set(['','details','recent-activity','overlay']);
     if (u.protocol !== 'https:' || u.hostname !== 'www.linkedin.com' || parts[0] !== 'in' || parts[1] !== personId || parts.length > 4) return undefined;
     if (parts[2] === 'details' && !['experience','education','skills','certifications','languages','volunteering-experiences','honors','publications','patents','courses','projects','organizations'].includes(parts[3])) return undefined;
+    // The only overlay read is this person's own Contact info.
+    if (parts[2] === 'overlay' && parts[3] !== 'contact-info') return undefined;
     if (parts[2] && !allowed.has(parts[2])) return undefined;
     return `${u.origin}/in/${personId}/${parts.slice(2).join('/')}${parts[2] ? '/' : ''}`;
   } catch { return undefined; }

@@ -133,3 +133,14 @@ describe("capture progress", () => {
     }
   });
 });
+
+describe("person page allowlist", () => {
+  it("reads this person's Contact info overlay and detail pages, nothing else", async () => {
+    const { personReadUrl } = await import("../capture-background.js");
+    const base = "https://www.linkedin.com/in/jane-doe/";
+    expect(personReadUrl(`${base}overlay/contact-info/`, "jane-doe")).toBe(`${base}overlay/contact-info/`);
+    expect(personReadUrl(`${base}details/projects/`, "jane-doe")).toBe(`${base}details/projects/`);
+    expect(personReadUrl(`${base}overlay/background-photo/`, "jane-doe")).toBeUndefined();
+    expect(personReadUrl("https://www.linkedin.com/in/someone-else/overlay/contact-info/", "jane-doe")).toBeUndefined();
+  });
+});

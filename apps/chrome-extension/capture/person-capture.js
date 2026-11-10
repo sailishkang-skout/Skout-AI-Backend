@@ -3,7 +3,7 @@
 globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
   const { publicIdFromUrl } = window.SkoutCaptureExtract;
   const { extractPerson } = globalThis.SkoutCapturePage;
-  const allowed = new Set(['', 'details/experience', 'details/education', 'details/skills', 'details/certifications', 'details/languages', 'details/volunteering-experiences', 'details/honors', 'details/publications', 'details/patents', 'details/courses', 'details/projects', 'details/organizations', 'recent-activity']);
+  const allowed = new Set(['', 'details/experience', 'details/education', 'details/skills', 'details/certifications', 'details/languages', 'details/volunteering-experiences', 'details/honors', 'details/publications', 'details/patents', 'details/courses', 'details/projects', 'details/organizations', 'recent-activity', 'overlay/contact-info']);
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const pageUrl = (value, id) => {
     try {
@@ -17,7 +17,11 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
   const links = id => [...new Set([...document.querySelectorAll('main a[href]')].map(a => pageUrl(a.getAttribute('href'), id)).filter(Boolean))];
   const merge = (a, b) => {
     const out = {...a};
+    // Keep the most reliable location seen across pages (header > Contact info > job > bio).
+    const rankA = a?._locationRank ?? (a?.locationName ? 1 : 99), rankB = b?._locationRank ?? 99;
     for (const [key, value] of Object.entries(b || {})) {
+      if (key === '_locationRank') continue;
+      if (key === 'locationName' && rankB > rankA) continue;
       if (key.startsWith('_') || value === undefined || value === null || value === '') continue;
       if (Array.isArray(value)) out[key] = [...(out[key] || []), ...value];
       else out[key] = value;
@@ -40,6 +44,8 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
         out[key] = out[key].filter(item => { const sig = JSON.stringify(item); if (seen.has(sig)) return false; seen.add(sig); return true; });
       }
     }
+    if (b?.locationName && rankB <= rankA) out._locationRank = rankB;
+    else if (a?._locationRank !== undefined) out._locationRank = a._locationRank;
     return out;
   };
   const message = payload => new Promise((resolve, reject) => chrome.runtime.sendMessage(payload, response => {
@@ -63,8 +69,9 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
       `${root}details/experience/`,
       `${root}details/education/`,
       `${root}details/skills/`,
+      `${root}overlay/contact-info/`,
       ...links(id),
-    ])].slice(0, 10), seen = new Set(), errors = [], warnings = [];
+    ])].slice(0, 16), seen = new Set(), errors = [], warnings = [];
     let data = extractPerson(), read = 0;
     try {
       while (queue.length && !ui.stopped) {
@@ -77,7 +84,7 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
           if (result.cancelled) { ui.stop(); break; }
           data = merge(data, result.data); read++;
           warnings.push(...(result.warnings || []));
-          for (const link of result.links || []) { const safe = pageUrl(link,id); if (safe && !seen.has(safe) && !queue.includes(safe) && seen.size + queue.length < 12) queue.push(safe); }
+          for (const link of result.links || []) { const safe = pageUrl(link,id); if (safe && !seen.has(safe) && !queue.includes(safe) && seen.size + queue.length < 18) queue.push(safe); }
         } catch (error) { errors.push(`${new URL(url).pathname}: ${error.message}`); }
       }
       data.publicId = id; data.sourceUrl = root;
@@ -109,6 +116,32 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
       stablePasses = count === previousCount ? stablePasses + 1 : 0;
       previousCount = count;
       if (atBottom && stablePasses >= 2 && !showMore && (count > 0 || pass >= 15)) break;
+      window.scrollBy({top: Math.max(520, Math.floor(window.innerHeight * 0.8)), behavior: 'auto'});
+      await pause(650);
+    }
+    combined = merge(combined, extractPerson());
+    window.scrollTo(0, 0);
+    return combined;
+  }
+  // Detail-page slug -> fields it fills, for the generic "Show all" pages.
+  const DETAIL_FIELDS = {
+    experience: ['currentCompanies', 'previousCompanies'], certifications: ['certifications'], languages: ['languages'],
+    'volunteering-experiences': ['volunteerExperiences'], honors: ['honors'], publications: ['publications'],
+    patents: ['patents'], courses: ['courses'], projects: ['projects'], organizations: ['organizations'],
+  };
+  const countFields = (data, fields) => fields.reduce((sum, key) => sum + (Array.isArray(data?.[key]) ? data[key].length : 0), 0);
+  // Scroll a detail page so LinkedIn renders every row, reading as it goes.
+  async function collectFullyRenderedSection(fields) {
+    let combined = {}, stablePasses = 0, previousCount = 0;
+    window.scrollTo(0, 0);
+    await pause(500);
+    for (let pass = 0; pass < 30; pass++) {
+      combined = merge(combined, extractPerson());
+      const count = countFields(combined, fields);
+      const atBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 8;
+      stablePasses = count === previousCount ? stablePasses + 1 : 0;
+      previousCount = count;
+      if (atBottom && stablePasses >= 2) break;
       window.scrollBy({top: Math.max(520, Math.floor(window.innerHeight * 0.8)), behavior: 'auto'});
       await pause(650);
     }
@@ -149,12 +182,14 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
           .some((heading) => new RegExp(`^${name}$`, 'i').test(heading.textContent?.trim() || ''));
       const hasDetailsPageTitle = (name) =>
         location.pathname.endsWith(`/details/${name.toLowerCase()}/`) &&
-        Array.from(document.querySelectorAll('main p'))
-          .some((paragraph) => new RegExp(`^${name}$`, 'i').test(paragraph.textContent?.trim() || ''));
+        Array.from(document.querySelectorAll('main p, main span, main div, main h4'))
+          .some((node) => !Array.from(node.children).some((child) => child.textContent?.trim()) &&
+            new RegExp(`^${name}$`, 'i').test(node.textContent?.trim() || ''));
       let data;
       let previousEducation = '';
       let stableEducationPasses = 0;
       let sectionFound = !detailName;
+      const otherDetail = Object.keys(DETAIL_FIELDS).find((slug) => expectedUrl.endsWith(`/details/${slug}/`));
 
       for (let attempt = 0; attempt < 40; attempt++) {
         if (pageUrl(location.href, id) !== expectedUrl) throw new Error('Profile page changed during capture.');
@@ -174,8 +209,17 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
           stableEducationPasses = currentEducation === previousEducation ? stableEducationPasses + 1 : 0;
           previousEducation = currentEducation;
           if (data.educations?.length && stableEducationPasses >= 3) break;
+        } else if (otherDetail) {
+          // Wait until the section's rows render (~6s at most), then read it all.
+          if (countFields(data, DETAIL_FIELDS[otherDetail]) || attempt >= 12) {
+            data = await collectFullyRenderedSection(DETAIL_FIELDS[otherDetail]);
+            break;
+          }
+        } else if (expectedUrl.endsWith('/overlay/contact-info/')) {
+          // Wait for the Contact info modal; profiles without one stop after ~6s.
+          if (data._contactInfo || attempt >= 12) break;
         } else if (!detailName) {
-          const hasSection = ['experience','educations','skills','certifications','languages','volunteerExperiences','honors','publications','patents','courses','organizations']
+          const hasSection = ['currentCompanies','previousCompanies','projects','educations','skills','certifications','languages','volunteerExperiences','honors','publications','patents','courses','organizations']
             .some((key) => Array.isArray(data[key]) && data[key].length);
           if (data.fullName || data.headline || hasSection || document.querySelector('main')) break;
         }

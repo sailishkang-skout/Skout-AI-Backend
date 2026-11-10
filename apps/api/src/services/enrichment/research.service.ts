@@ -122,6 +122,9 @@ export interface PersonSummary {
   companyId: string | null;
   companyName: string | null;
   location: string | null;
+  /** Email and phone from the CRM contact (e.g. read from LinkedIn Contact info). */
+  email: string | null;
+  phone: string | null;
   /** A real public profile URL, or null. Never derived from a Sales lead id. */
   linkedinUrl: string | null;
   salesNavigatorLeadUrl: string | null;
@@ -138,6 +141,24 @@ export interface PersonSummary {
 
 const text = (value: unknown): string | null => (typeof value === "string" && value.trim() ? value : null);
 
+// Dates, durations and "Present" were once captured as a location; never show them as one.
+const DATE_OR_DURATION = /^(?:present|current|now)$|\b(?:19|20)\d{2}\b|\b\d+\s*(?:yrs?|years?|mos?|months?)\b|\bpresent\b/i;
+const place = (value: unknown): string | null => {
+  const candidate = text(value)?.trim();
+  return candidate && !DATE_OR_DURATION.test(candidate) ? candidate : null;
+};
+/** Profile location, else the current job's location. */
+function personLocation(snapshot: Json): string | null {
+  const direct = place(snapshot.location) ?? place(snapshot.locationName);
+  if (direct) return direct;
+  const jobs = Array.isArray(snapshot.currentCompanies) ? snapshot.currentCompanies : [];
+  for (const job of jobs) {
+    const location = place((job as Json | null)?.location);
+    if (location) return location;
+  }
+  return null;
+}
+
 export function toPersonSummary(row: {
   prospectId: string;
   snapshot: unknown;
@@ -145,6 +166,8 @@ export function toPersonSummary(row: {
   contactId: string | null;
   contactTitle: string | null;
   contactLinkedinUrl: string | null;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
   employmentStatus: string | null;
   companyId: string | null;
   companyName: string | null;
@@ -161,7 +184,9 @@ export function toPersonSummary(row: {
     title: text(snapshot.title) ?? row.contactTitle,
     companyId: row.companyId,
     companyName: row.companyName ?? text(snapshot.companyName),
-    location: text(snapshot.location) ?? text(snapshot.locationName),
+    location: personLocation(snapshot),
+    email: text(row.contactEmail) ?? text(snapshot.email),
+    phone: text(row.contactPhone) ?? text(snapshot.phone),
     linkedinUrl: publicUrl,
     salesNavigatorLeadUrl,
     identity: publicUrl ? "public_profile" : salesNavigatorLeadUrl ? "sales_lead" : "none",
@@ -225,6 +250,8 @@ export const personColumns = {
   contactId: contacts.id,
   contactTitle: contacts.title,
   contactLinkedinUrl: contacts.linkedinUrl,
+  contactEmail: contacts.email,
+  contactPhone: contacts.phone,
   employmentStatus: contacts.employmentStatus,
   companyId: companies.id,
   companyName: companies.name,

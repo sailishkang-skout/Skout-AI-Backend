@@ -85,7 +85,8 @@ maybe("COPS-13 dashboards (Postgres)", () => {
     await sql`insert into incident_ticket_links (workspace_id, incident_id, ticket_id) values (${ws}, ${inc.id}, ${t1.id})`;
 
     await event(ws, "OpportunityQualified", { opportunity_id: acmeDeal, account_id: acme }, days(-10));
-    await event(ws, "OpportunityQualified", { opportunity_id: globexDeal, account_id: globex }, days(-9));
+    // One second after Acme so both land in the same monthly cohort on any run date.
+    await event(ws, "OpportunityQualified", { opportunity_id: globexDeal, account_id: globex }, new Date(new Date(days(-10)).getTime() + 1_000).toISOString());
     await event(ws, "ProposalSent", { proposal_id: randomUUID(), opportunity_id: acmeDeal }, days(-9));
     await event(ws, "WorkspaceProvisioned", { account_id: acme, workspace_id: randomUUID() }, days(-8));
     await event(ws, "WorkspaceProvisioned", { account_id: initech, workspace_id: randomUUID() }, days(-7));
