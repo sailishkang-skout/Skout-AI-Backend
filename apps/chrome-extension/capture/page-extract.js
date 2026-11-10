@@ -1109,6 +1109,20 @@ function extractOrganizations() {
  * Only a visible modal is read, and its values are sent only after the user
  * reviews and saves the capture.
  */
+/** A syntactically valid email, lower-cased, or undefined. */
+function cleanEmail(value) {
+  const candidate = (value || '').trim().replace(/^mailto:/i, '').toLowerCase();
+  return /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$/.test(candidate) && candidate.length <= 320 ? candidate : undefined;
+}
+
+/** A phone number with 7 to 15 digits (E.164 range), or undefined. */
+function cleanPhone(value) {
+  const candidate = (value || '').replace(/\s+/g, ' ').trim();
+  const digits = candidate.replace(/\D/g, '');
+  if (!/^\+?[\d\s().-]+$/.test(candidate) || digits.length < 7 || digits.length > 15) return undefined;
+  return candidate;
+}
+
 function extractContactInfo() {
   const candidates = [
     ...document.querySelectorAll('[aria-label*="contact info" i], [aria-labelledby*="contact-info" i]'),
@@ -1129,33 +1143,29 @@ function extractContactInfo() {
   });
   if (!modal) return undefined;
   const website = modal.querySelector('a[href^="http"]:not([href*="linkedin.com"])')?.href;
-  const emailLink = modal.querySelector('a[href^="mailto:"]')?.getAttribute('href')?.replace(/^mailto:/i, '').split('?')[0];
-  const emailMatch = modal.textContent.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
-  const telLink = modal.querySelector('a[href^="tel:"]');
-  let phone;
-  if (telLink) {
-    const rawPhone = telLink.getAttribute('href').replace(/^tel:/i, '');
-    try {
-      phone = decodeURIComponent(rawPhone);
-    } catch {
-      phone = rawPhone;
-    }
-  } else {
-    phone = modal.textContent.match(/\+?\d[\d\s().-]{7,}\d/)?.[0]?.trim();
-  }
-  // The modal lists "Label / value" pairs; an Address entry is a place.
+  // The modal lists "Label / value" pairs (Email, Phone, Address, ...).
   const leaves = Array.from(modal.querySelectorAll('h3, p, span, div, a'))
     .filter((node) => !Array.from(node.children).some((child) => text(child)))
     .map((node) => text(node))
     .filter(Boolean);
-  const addressIndex = leaves.findIndex((value) => /^address$/i.test(value));
-  const address = addressIndex >= 0 ? leaves.slice(addressIndex + 1).find((value) => !/^address$/i.test(value)) : undefined;
-  return {
-    website,
-    email: emailLink || emailMatch?.[0],
-    phone,
-    address,
+  const LABELS = /^(?:email|phone|address|website|websites|birthday|connected|profile|your profile|im|twitter)$/i;
+  const valueAfter = (label) => {
+    const index = leaves.findIndex((value) => label.test(value));
+    return index >= 0 ? leaves.slice(index + 1).find((value) => !LABELS.test(value)) : undefined;
   };
+  const emailLink = modal.querySelector('a[href^="mailto:"]')?.getAttribute('href')?.replace(/^mailto:/i, '').split('?')[0];
+  const email = [emailLink, valueAfter(/^email$/i), modal.textContent.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/)?.[0]]
+    .map((value) => cleanEmail(value))
+    .find(Boolean);
+  const telLink = modal.querySelector('a[href^="tel:"]')?.getAttribute('href')?.replace(/^tel:/i, '');
+  let telValue = telLink;
+  try { telValue = telLink && decodeURIComponent(telLink); } catch { /* keep raw */ }
+  // Only the Phone entry is a phone; never pick up a random number (e.g. a date).
+  const phone = [telValue, valueAfter(/^phone$/i)?.replace(/\s*\((?:mobile|work|home)\)\s*$/i, '')]
+    .map((value) => cleanPhone(value))
+    .find(Boolean);
+  const address = valueAfter(/^address$/i);
+  return { website, email, phone, address };
 }
 
 /**

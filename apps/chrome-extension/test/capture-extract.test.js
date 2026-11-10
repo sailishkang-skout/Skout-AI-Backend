@@ -209,6 +209,22 @@ describe("person profile extraction", () => {
     expect(profile.headline).toBe("Head of Sales");
   });
 
+  it("reads only valid email and phone values from Contact info", () => {
+    const load = (modal) => loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/overlay/contact-info/",
+      html: `<main><h1>Jane Doe</h1><div role="dialog"><h2>Contact info</h2>${modal}</div></main>`,
+      files: EXTRACT_FILES,
+    }).SkoutCapturePage.extractPerson();
+
+    expect(load(`<h3>Your Profile</h3><a href="https://www.linkedin.com/in/jane-doe">linkedin.com/in/jane-doe</a>
+      <h3>Phone</h3><span>+1 (415) 555-0100 (Mobile)</span><h3>Email</h3><a href="mailto:Jane.Doe@Acme.example">Jane.Doe@Acme.example</a>
+      <h3>Connected</h3><span>March 3, 2021</span>`)).toMatchObject({ email: "jane.doe@acme.example", phone: "+1 (415) 555-0100" });
+
+    const bad = load(`<h3>Phone</h3><span>call me</span><h3>Email</h3><span>jane at acme</span><h3>Connected</h3><span>2021 2022 2023 2024</span>`);
+    expect(bad.email).toBeUndefined();
+    expect(bad.phone).toBeUndefined();
+  });
+
   it("keeps school-only education entries and captures a full connection-degree label", () => {
     const window = loadCapturePage({
       url: "https://www.linkedin.com/in/jane-doe/",
