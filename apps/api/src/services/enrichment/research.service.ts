@@ -650,6 +650,8 @@ export async function listJobChanges(
           return before.company ? before : roleOf(person.previousCompanies);
         })(),
         to: roleOf(change.newValue),
+        // "capture_comparison": two captures differ; "work_history": one capture shows a recent move.
+        detectedBy: change.field === "workHistory" ? ("work_history" as const) : ("capture_comparison" as const),
         requiresReview: !change.reviewedAt,
         // A detected change is surfaced for a person to review. It starts no outreach.
         automation: "none" as const,

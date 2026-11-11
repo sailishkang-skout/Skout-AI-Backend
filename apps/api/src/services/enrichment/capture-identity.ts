@@ -279,6 +279,42 @@ export function isCurrentEmployerChange(previous: unknown, next: unknown): boole
   );
 }
 
+/** Change-event field for a job change read from one capture's work history. */
+export const WORK_HISTORY_FIELD = "workHistory";
+
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+/** Start of a LinkedIn date range ("Mar 2026 - Present · 8 mos", "2026 - Present"), as UTC. */
+export function roleStartDate(dates: unknown): Date | null {
+  if (typeof dates !== "string") return null;
+  const match = dates.trim().match(/^(?:([a-z]{3})[a-z]*\.?\s+)?((?:19|20)\d{2})\b/i);
+  if (!match) return null;
+  const month = match[1] ? MONTHS.indexOf(match[1].toLowerCase()) : 0;
+  return new Date(Date.UTC(Number(match[2]), Math.max(month, 0), 1));
+}
+
+/**
+ * A recent move shown in one capture's work history: the current role started within
+ * `withinDays` and the latest past role was at another company. Lets a person captured only
+ * once still surface a job change, with the company they came from.
+ */
+export function recentMoveFromHistory(
+  data: { currentCompanies?: unknown; previousCompanies?: unknown },
+  now: Date,
+  withinDays = 90
+): { from: Json; to: Json[] } | null {
+  const current = records(data.currentCompanies).filter((role) => typeof role.name === "string" && role.name.trim());
+  if (!current.length) return null;
+  const start = roleStartDate(current[0]!.dates);
+  // Month precision: a role "Mar 2026" counts from the 1st, so allow the partial month.
+  if (!start || now.getTime() - start.getTime() > (withinDays + 31) * 86_400_000 || start.getTime() > now.getTime()) return null;
+  const currentNames = new Set(current.map((role) => normalizedCompanyName(role.name as string)));
+  const from = records(data.previousCompanies).find(
+    (role) => typeof role.name === "string" && role.name.trim() && !currentNames.has(normalizedCompanyName(role.name))
+  );
+  return from ? { from, to: current } : null;
+}
+
 export function currentEmployerSignature(currentCompanies: unknown): string {
   return records(currentCompanies)
     .map((role) => {
