@@ -44,6 +44,7 @@ function palConfigFromEnv(config: Env): PalConfig {
     lushaApiKey: config.LUSHA_API_KEY,
     contactOutApiKey: config.CONTACTOUT_API_KEY,
     cognismApiKey: config.COGNISM_API_KEY,
+    wizaApiKey: config.WIZA_API_KEY,
     hunterBaseUrl: config.HUNTER_BASE_URL,
     millionVerifierBaseUrl: config.MILLIONVERIFIER_BASE_URL,
     zeroBounceBaseUrl: config.ZEROBOUNCE_BASE_URL,
@@ -57,6 +58,7 @@ function palConfigFromEnv(config: Env): PalConfig {
     lushaBaseUrl: config.LUSHA_BASE_URL,
     contactOutBaseUrl: config.CONTACTOUT_BASE_URL,
     cognismBaseUrl: config.COGNISM_BASE_URL,
+    wizaBaseUrl: config.WIZA_BASE_URL,
     requestTimeoutMs: config.ENRICHMENT_REQUEST_TIMEOUT_MS,
   };
 }

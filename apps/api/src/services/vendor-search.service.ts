@@ -340,7 +340,9 @@ export function toProspectDocument(p: VendorPerson & { vendors?: VendorName[] })
     title: p.title,
     seniority: p.seniority?.toLowerCase().replace(/[\s-]+/g, "_"),
     linkedinUrl: p.linkedinUrl,
-    companyDomain: domain,
+    // Placeholder when the vendor gave no website: the enrichment engine treats this as a
+    // LinkedIn-only identity (resolves via profile URL / company name) and the API requires a value.
+    companyDomain: domain || "linkedin-capture.local",
     companyName: p.companyName,
     industry: p.industry,
     country: p.country ?? lastPart,
