@@ -22,7 +22,7 @@ export interface OpsAccessState {
   hasPermission: boolean;
 }
 
-type OpsAccessConfig = Pick<Env, "INTERNAL_WORKSPACE_ID" | "OPS_ACCESS_ENFORCED"> & { NODE_ENV?: Env["NODE_ENV"] };
+type OpsAccessConfig = Pick<Env, "INTERNAL_WORKSPACE_ID" | "OPS_ACCESS_ENFORCED"> & { NODE_ENV?: Env["NODE_ENV"]; BOOTSTRAP_ADMIN_EMAIL?: string };
 
 /**
  * Whether the guard refuses. Production always does (no setting needed); OPS_ACCESS_ENFORCED=false is
@@ -76,7 +76,24 @@ export async function opsAccessState(db: Db, config: OpsAccessConfig, workspaceI
   };
   const state = await read();
   if (state.allowed || config.INTERNAL_WORKSPACE_ID) return state;
-  return (await claimFirstOpsAccess(db, workspaceId, userId)) ? read() : state;
+  return (await claimFirstOpsAccess(db, workspaceId, userId, config.BOOTSTRAP_ADMIN_EMAIL)) ? read() : state;
+}
+
+/**
+ * The workspace where this person may use CustomerOps, when it is not the one their session
+ * opened (a staff member who also owns a workspace of their own). Null when there is none.
+ */
+export async function findOpsWorkspace(db: Db, config: OpsAccessConfig, userId: string): Promise<{ workspaceId: string; role: string } | null> {
+  const rows = await db
+    .select({ workspaceId: schema.workspaceMembers.workspaceId, role: schema.workspaceMembers.role })
+    .from(schema.workspaceMemberRoles)
+    .innerJoin(schema.roles, eq(schema.roles.id, schema.workspaceMemberRoles.roleId))
+    .innerJoin(schema.workspaceMembers, and(eq(schema.workspaceMembers.workspaceId, schema.workspaceMemberRoles.workspaceId), eq(schema.workspaceMembers.userId, schema.workspaceMemberRoles.userId)))
+    .where(and(eq(schema.workspaceMemberRoles.userId, userId), isNull(schema.roles.workspaceId), eq(schema.roles.key, OPS_ACCESS_ROLE_KEY)));
+  for (const row of rows) {
+    if (await isInternalWorkspace(db, config, row.workspaceId)) return row;
+  }
+  return null;
 }
 
 /** Skout staff sign in with a Skout work email (the ops portal only lets this domain in, too). */
@@ -84,12 +101,13 @@ export const SKOUT_STAFF_EMAIL_DOMAIN = "skoutai.io";
 
 /**
  * The very first holder, when nobody has ever been given Ops access (a new environment where
- * migration 0152 found no Skout workspace): the first workspace Owner with a verified
- * @skoutai.io email who signs in gets it, audited `first_owner`. A customer cannot: their email is
- * not a Skout one. Once anyone has ever held it, this never grants again; from then on only a
+ * migration 0152 found no Skout workspace). When the deploy sets BOOTSTRAP_ADMIN_EMAIL, only that
+ * account can be first, so another staff member signing in earlier cannot make their own workspace
+ * the Skout one. Without it, the first workspace Owner with a verified @skoutai.io email who signs
+ * in gets it. Audited `first_owner`. A customer cannot: their email is not a Skout one. Once anyone has ever held it, this never grants again; from then on only a
  * holder gives it (invite or People).
  */
-export async function claimFirstOpsAccess(db: Db, workspaceId: string, userId: string): Promise<boolean> {
+export async function claimFirstOpsAccess(db: Db, workspaceId: string, userId: string, bootstrapAdminEmail?: string): Promise<boolean> {
   const [member] = await db
     .select({ role: schema.workspaceMembers.role, email: schema.users.email })
     .from(schema.workspaceMembers)
@@ -97,7 +115,9 @@ export async function claimFirstOpsAccess(db: Db, workspaceId: string, userId: s
     .where(and(eq(schema.workspaceMembers.workspaceId, workspaceId), eq(schema.workspaceMembers.userId, userId)))
     .limit(1);
   const email = member?.email.trim().toLowerCase() ?? "";
-  if (member?.role !== "owner" || !email.endsWith(`@${SKOUT_STAFF_EMAIL_DOMAIN}`)) return false;
+  const bootstrap = bootstrapAdminEmail?.trim().toLowerCase();
+  const eligible = bootstrap ? email === bootstrap : email.endsWith(`@${SKOUT_STAFF_EMAIL_DOMAIN}`);
+  if (member?.role !== "owner" || !eligible) return false;
   const [verified] = await db
     .select({ id: schema.authIdentities.id })
     .from(schema.authIdentities)

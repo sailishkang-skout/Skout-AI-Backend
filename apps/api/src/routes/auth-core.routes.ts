@@ -15,7 +15,7 @@
  * email with AUTH_EMAIL_NOT_VERIFIED after the password checks out. Signup still records
  * auth_identities.emailVerifiedAt as null until verify-email/confirm or otp/verify sets it.
  */
-import { opsAccessState } from "../services/ops-access.service.js";
+import { findOpsWorkspace, opsAccessState } from "../services/ops-access.service.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { createHmac, randomBytes } from "node:crypto";
 import { z } from "zod";
@@ -582,6 +582,9 @@ export async function authCoreRoutes(app: FastifyInstance) {
       const identity = await requireOwnAuthUser(request, app);
       // COPS-15: the ops portal decides at sign-in from these two flags.
       const ops = app.db && identity.workspaceId ? await opsAccessState(app.db, app.config, identity.workspaceId, identity.userId) : null;
+      // A staff member who also has their own workspace: Ops access lives in the Skout workspace,
+      // so the ops portal works there (opsWorkspaceId). The product app keeps using workspaceId.
+      const opsWorkspace = app.db && !ops?.allowed ? await findOpsWorkspace(app.db, app.config, identity.userId) : null;
       return reply.send(
         successResponse({
           userId: identity.userId,
@@ -589,7 +592,9 @@ export async function authCoreRoutes(app: FastifyInstance) {
           fullName: identity.fullName,
           workspaceId: identity.workspaceId,
           role: identity.role,
-          opsAccess: ops?.allowed ?? false,
+          opsAccess: (ops?.allowed ?? false) || !!opsWorkspace,
+          opsWorkspaceId: ops?.allowed ? identity.workspaceId : opsWorkspace?.workspaceId ?? null,
+          opsRole: ops?.allowed ? identity.role : opsWorkspace?.role ?? null,
           opsAccessEnforced: ops?.enforced ?? false,
         })
       );
