@@ -79,6 +79,23 @@ export async function opsAccessState(db: Db, config: OpsAccessConfig, workspaceI
   return (await claimFirstOpsAccess(db, workspaceId, userId)) ? read() : state;
 }
 
+/**
+ * The workspace where this person may use CustomerOps, when it is not the one their session
+ * opened (a staff member who also owns a workspace of their own). Null when there is none.
+ */
+export async function findOpsWorkspace(db: Db, config: OpsAccessConfig, userId: string): Promise<{ workspaceId: string; role: string } | null> {
+  const rows = await db
+    .select({ workspaceId: schema.workspaceMembers.workspaceId, role: schema.workspaceMembers.role })
+    .from(schema.workspaceMemberRoles)
+    .innerJoin(schema.roles, eq(schema.roles.id, schema.workspaceMemberRoles.roleId))
+    .innerJoin(schema.workspaceMembers, and(eq(schema.workspaceMembers.workspaceId, schema.workspaceMemberRoles.workspaceId), eq(schema.workspaceMembers.userId, schema.workspaceMemberRoles.userId)))
+    .where(and(eq(schema.workspaceMemberRoles.userId, userId), isNull(schema.roles.workspaceId), eq(schema.roles.key, OPS_ACCESS_ROLE_KEY)));
+  for (const row of rows) {
+    if (await isInternalWorkspace(db, config, row.workspaceId)) return row;
+  }
+  return null;
+}
+
 /** Skout staff sign in with a Skout work email (the ops portal only lets this domain in, too). */
 export const SKOUT_STAFF_EMAIL_DOMAIN = "skoutai.io";
 
