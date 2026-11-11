@@ -106,8 +106,12 @@ async function main() {
     const { bootstrapOpsAccess } = await import("./services/ops-access.service.js");
     const granted = await bootstrapOpsAccess(app.db, config);
     if (granted > 0) app.log.info({ granted }, "COPS-15: first rollout gave Ops access to every internal workspace member");
-  } else if (config.NODE_ENV === "production") {
-    app.log.error("COPS-15: INTERNAL_WORKSPACE_ID is not set, so CustomerOps is not protected (anyone with a Skout AI login could use it); set it to the Skout workspace id");
+  } else if (app.db && config.NODE_ENV === "production") {
+    // Chain of trust: with nobody holding Ops access, no one can open CustomerOps or give it.
+    const { anyOpsAccessHolder } = await import("./services/ops-access.service.js");
+    if (!(await anyOpsAccessHolder(app.db))) {
+      app.log.error("COPS-15: nobody holds Ops access yet, so nobody can use CustomerOps. Give one Skout Owner the 'Ops access' role once; after that they give it from People.");
+    }
   }
 
   if (config.RBAC_ENFORCEMENT_ENABLED && app.db) {

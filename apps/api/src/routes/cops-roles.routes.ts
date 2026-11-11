@@ -1,3 +1,4 @@
+import { canGrantOpsAccess, isInternalWorkspace } from "../services/ops-access.service.js";
 import { and, eq } from "drizzle-orm";
 import { schema } from "@skout/db";
 import { customerOpsBaseUrl } from "./team.routes.js";
@@ -54,7 +55,7 @@ export async function copsRolesRoutes(app: FastifyInstance) {
   const userParams = z.object({ userId: z.string().uuid() });
 
   async function ctxOf(r: { workspaceId?: string; userId?: string; headers: Record<string, unknown> }): Promise<RoleCtx> {
-    const internalWorkspace = !!app.config.INTERNAL_WORKSPACE_ID && r.workspaceId === app.config.INTERNAL_WORKSPACE_ID;
+    const internalWorkspace = await isInternalWorkspace(db(), app.config, r.workspaceId!);
     const role = String((r as { role?: string }).role ?? "");
     return {
       workspaceId: r.workspaceId!,
@@ -62,7 +63,7 @@ export async function copsRolesRoutes(app: FastifyInstance) {
       requestId: resolveCorrelationId(r.headers["x-request-id"] as string | undefined),
       permissions: await perms(r.workspaceId!, r.userId!),
       internalWorkspace,
-      opsAccessGrantor: internalWorkspace && (role === "owner" || role === "admin"),
+      opsAccessGrantor: await canGrantOpsAccess(db(), app.config, r.workspaceId!, r.userId!, role),
     };
   }
   async function run(reply: Reply, requestId: string, fn: () => Promise<unknown>) {

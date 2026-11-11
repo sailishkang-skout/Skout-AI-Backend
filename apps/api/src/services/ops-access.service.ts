@@ -22,19 +22,54 @@ export interface OpsAccessState {
   hasPermission: boolean;
 }
 
-type OpsAccessConfig = Pick<Env, "INTERNAL_WORKSPACE_ID" | "OPS_ACCESS_ENFORCED">;
+type OpsAccessConfig = Pick<Env, "INTERNAL_WORKSPACE_ID" | "OPS_ACCESS_ENFORCED"> & { NODE_ENV?: Env["NODE_ENV"] };
 
 /**
- * Whether the guard refuses: on as soon as INTERNAL_WORKSPACE_ID is set (the one setting COPS-15
- * needs). OPS_ACCESS_ENFORCED is only an emergency switch: "false" drops back to logging only.
+ * Whether the guard refuses. Production always does (no setting needed); OPS_ACCESS_ENFORCED=false is
+ * an emergency switch only. Elsewhere (local, tests) it refuses when INTERNAL_WORKSPACE_ID or
+ * OPS_ACCESS_ENFORCED=true is set, and otherwise only logs.
  */
-export function opsAccessEnforced(config: Pick<Env, "INTERNAL_WORKSPACE_ID" | "OPS_ACCESS_ENFORCED">): boolean {
+export function opsAccessEnforced(config: Pick<Env, "INTERNAL_WORKSPACE_ID" | "OPS_ACCESS_ENFORCED"> & { NODE_ENV?: Env["NODE_ENV"] }): boolean {
   if (config.OPS_ACCESS_ENFORCED === "false") return false;
-  return config.OPS_ACCESS_ENFORCED === "true" || !!config.INTERNAL_WORKSPACE_ID;
+  return config.OPS_ACCESS_ENFORCED === "true" || config.NODE_ENV === "production" || !!config.INTERNAL_WORKSPACE_ID;
+}
+
+/**
+ * Chain of trust: the Skout workspace is INTERNAL_WORKSPACE_ID when it is set, otherwise the workspace
+ * whose members hold Ops access. Only a holder can grant it (canGrantOpsAccess), so a customer
+ * workspace never gets its first holder; the first ones come from migration 0152 or the first start.
+ */
+export async function isInternalWorkspace(db: Db, config: Pick<Env, "INTERNAL_WORKSPACE_ID">, workspaceId: string): Promise<boolean> {
+  if (config.INTERNAL_WORKSPACE_ID) return workspaceId === config.INTERNAL_WORKSPACE_ID;
+  const [holder] = await db
+    .select({ userId: schema.workspaceMemberRoles.userId })
+    .from(schema.workspaceMemberRoles)
+    .innerJoin(schema.roles, eq(schema.roles.id, schema.workspaceMemberRoles.roleId))
+    .where(and(eq(schema.workspaceMemberRoles.workspaceId, workspaceId), isNull(schema.roles.workspaceId), eq(schema.roles.key, OPS_ACCESS_ROLE_KEY)))
+    .limit(1);
+  return !!holder;
+}
+
+/** True when anyone, in any workspace, holds Ops access (the chain of trust has a start). */
+export async function anyOpsAccessHolder(db: Db): Promise<boolean> {
+  const [holder] = await db
+    .select({ userId: schema.workspaceMemberRoles.userId })
+    .from(schema.workspaceMemberRoles)
+    .innerJoin(schema.roles, eq(schema.roles.id, schema.workspaceMemberRoles.roleId))
+    .where(and(isNull(schema.roles.workspaceId), eq(schema.roles.key, OPS_ACCESS_ROLE_KEY)))
+    .limit(1);
+  return !!holder;
+}
+
+/** Who may give Ops access (invite with it, or tick it in People): an Owner or Admin who holds it. */
+export async function canGrantOpsAccess(db: Db, config: Pick<Env, "INTERNAL_WORKSPACE_ID">, workspaceId: string, userId: string, workspaceRole: string): Promise<boolean> {
+  if (!["owner", "admin"].includes(workspaceRole)) return false;
+  if (!(await isInternalWorkspace(db, config, workspaceId))) return false;
+  return (await getMemberPermissions(db, workspaceId, userId)).includes(OPS_ACCESS);
 }
 
 export async function opsAccessState(db: Db, config: OpsAccessConfig, workspaceId: string, userId: string): Promise<OpsAccessState> {
-  const internalWorkspace = !!config.INTERNAL_WORKSPACE_ID && workspaceId === config.INTERNAL_WORKSPACE_ID;
+  const internalWorkspace = await isInternalWorkspace(db, config, workspaceId);
   const hasPermission = (await getMemberPermissions(db, workspaceId, userId)).includes(OPS_ACCESS);
   return { allowed: internalWorkspace && hasPermission, enforced: opsAccessEnforced(config), internalWorkspace, hasPermission };
 }
@@ -80,7 +115,7 @@ export function opsAccessGuard(db: Db, config: OpsAccessConfig, isPublic: (url: 
     if (!request.workspaceId || !request.userId) return; // the auth plugin has already answered 401
     const state = await opsAccessState(db, config, request.workspaceId, request.userId);
     if (state.allowed) return;
-    const why = !config.INTERNAL_WORKSPACE_ID ? "internal workspace not configured" : !state.internalWorkspace ? "not the internal workspace" : "no ops:access";
+    const why = !state.internalWorkspace ? "not the Skout workspace" : "no ops:access";
     if (!state.enforced) {
       request.log.warn({ workspaceId: request.workspaceId, userId: request.userId, url: request.url, why }, "ops:access shadow-mode: this CustomerOps request would be refused");
       return;

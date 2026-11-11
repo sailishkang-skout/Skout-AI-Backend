@@ -1079,6 +1079,13 @@
       "when": 1798300000000,
       "tag": "0151_invite_ops_access",
       "breakpoints": true
+    },
+    {
+      "idx": 154,
+      "version": "7",
+      "when": 1798300100000,
+      "tag": "0152_ops_access_first_holders",
+      "breakpoints": true
     }
   ]
 }

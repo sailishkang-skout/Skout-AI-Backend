@@ -1,3 +1,4 @@
+import { canGrantOpsAccess } from "../services/ops-access.service.js";
 import type { FastifyInstance } from "fastify";
 import { eq } from "drizzle-orm";
 import { schema } from "@skout/db";
@@ -130,12 +131,13 @@ export async function teamRoutes(app: FastifyInstance) {
       }
       await shadowCheckTeamManage(request.workspaceId, request.userId, "create-invite");
       const { email, role } = request.body;
-      // COPS-15: Ops access can ride on an invite only from the ops portal, by an internal Owner/Admin.
+      // COPS-15: Ops access can ride on an invite only from the ops portal, by an Owner/Admin who
+      // holds it themselves (chain of trust: a customer workspace never has a holder).
       const wantsOps = request.body.ops_access === true;
       if (wantsOps) {
-        const internal = !!app.config.INTERNAL_WORKSPACE_ID && request.workspaceId === app.config.INTERNAL_WORKSPACE_ID;
-        if (request.body.app !== "customerops" || !internal || !["owner", "admin"].includes(String(request.role ?? ""))) {
-          return reply.code(403).send(errorResponse("Only an Owner or Admin of the internal Skout workspace can invite with Ops access", 403));
+        const may = request.body.app === "customerops" && !!app.db && (await canGrantOpsAccess(app.db, app.config, request.workspaceId!, request.userId!, String(request.role ?? "")));
+        if (!may) {
+          return reply.code(403).send(errorResponse("Only an Owner or Admin of the Skout workspace who has Ops access can invite with Ops access", 403));
         }
       }
       if (!email || typeof email !== "string") {
