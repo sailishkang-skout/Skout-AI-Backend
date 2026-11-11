@@ -22,7 +22,7 @@ import {
   type MaterialTerms,
 } from "@skout/shared";
 import { writeCopsAudit } from "./cops-platform.service.js";
-import { getConfig } from "./cops-admin-config.service.js";
+import { getConfig, getConfigAsOf } from "./cops-admin-config.service.js";
 import { CommercialError, storedApprovalTerms, type CommercialContext } from "./cops-commercial.service.js";
 import { evaluateGate } from "./cops-gate.service.js";
 
@@ -99,8 +99,12 @@ export function listSeatUnitMinor(book: PriceBook, line: Pick<LineRow, "kind" | 
   return basis === "per_month" ? month : month * termMonths;
 }
 
-async function loadPriceBook(db: Reader, workspaceId: string): Promise<PriceBook | null> {
-  const parsed = priceBookSchema.safeParse((await getConfig(db as Db, workspaceId, "price_book", "default"))?.value);
+/**
+ * The price book as it stood when this version was written: a later list-price change must not
+ * change a proposal's discount (and void its approval) after the fact.
+ */
+async function loadPriceBook(db: Reader, workspaceId: string, at: Date): Promise<PriceBook | null> {
+  const parsed = priceBookSchema.safeParse((await getConfigAsOf(db as Db, workspaceId, "price_book", "default", at))?.value);
   return parsed.success ? parsed.data : null;
 }
 
@@ -118,7 +122,7 @@ async function loadCurrent(db: Reader, workspaceId: string, proposalId: string) 
     .limit(1);
   if (!version) throw new CommercialError("NOT_FOUND", "Proposal version not found");
   const lines = await db.select().from(proposalLineItems).where(eq(proposalLineItems.versionId, version.id));
-  return { proposal, version, terms: approvalTermsOf(version, lines, await loadPriceBook(db, workspaceId)) };
+  return { proposal, version, terms: approvalTermsOf(version, lines, await loadPriceBook(db, workspaceId, version.createdAt)) };
 }
 
 /**

@@ -59,11 +59,30 @@ export function docusealSignature(secret: string, timestamp: number, rawBody: st
   return `${timestamp}.${createHmac("sha256", secret).update(`${timestamp}.${rawBody}`).digest("hex")}`;
 }
 
-/** Pages in a PDF, counted from its page objects; null when it cannot be read (then page 1 is used). */
+/**
+ * Pages in a PDF by a byte scan of its page objects. A fallback only: it misses pages inside
+ * compressed object streams and can double-count after incremental saves. Null when none are seen.
+ */
 export function pdfPageCount(bytes: Uint8Array): number | null {
   const text = Buffer.from(bytes).toString("latin1");
   const n = (text.match(/\/Type\s*\/Page(?![a-zA-Z])/g) ?? []).length;
   return n > 0 ? n : null;
+}
+
+/** Pages in a PDF, read by a real PDF parser (handles compressed object streams and incremental saves). */
+export async function countPdfPages(bytes: Uint8Array): Promise<number | null> {
+  try {
+    const { PDFParse } = await import("pdf-parse");
+    const parser = new PDFParse({ data: Buffer.from(bytes) });
+    try {
+      const info = await parser.getInfo();
+      return typeof info.total === "number" && info.total > 0 ? info.total : pdfPageCount(bytes);
+    } finally {
+      await parser.destroy();
+    }
+  } catch {
+    return pdfPageCount(bytes);
+  }
 }
 
 /**
@@ -136,7 +155,7 @@ export function createDocusealAdapter(config: DocusealConfig): EsignAdapter {
       // Fields need a role on every submitter; signers without one become "Signer 1", "Signer 2"...
       const roles = input.signers.map((s, i) => s.role ?? `Signer ${i + 1}`);
       const bytes = await pdfBytes();
-      const lastPage = (bytes && pdfPageCount(bytes)) || 1;
+      const lastPage = (bytes && (await countPdfPages(bytes))) || 1;
       const created = await call<{ id?: number }>("POST", "/submissions/pdf", {
         name: input.title,
         send_email: true,

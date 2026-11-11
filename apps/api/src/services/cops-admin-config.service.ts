@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { lte, and, desc, eq, sql } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
 import { COPS_CONFIG_DEFAULTS, COPS_CONFIG_KEY, COPS_CONFIG_SCHEMAS, type CopsConfigKind } from "@skout/shared";
 import { writeCopsAudit } from "./cops-platform.service.js";
@@ -82,6 +82,19 @@ export async function getConfig(db: Db, workspaceId: string, kind: CopsConfigKin
     .select()
     .from(copsConfigVersions)
     .where(and(eq(copsConfigVersions.workspaceId, workspaceId), eq(copsConfigVersions.kind, kind), eq(copsConfigVersions.key, key)))
+    .orderBy(desc(copsConfigVersions.version))
+    .limit(1);
+  if (row) return dto(row);
+  const fallback = COPS_CONFIG_DEFAULTS[kind]?.[key];
+  return fallback === undefined ? null : defaultDto(kind, key, fallback);
+}
+
+/** The config as it stood at `at`: the newest version saved by then, else the built-in default. */
+export async function getConfigAsOf(db: Db, workspaceId: string, kind: CopsConfigKind, key: string, at: Date): Promise<ConfigVersionDto | null> {
+  const [row] = await db
+    .select()
+    .from(copsConfigVersions)
+    .where(and(eq(copsConfigVersions.workspaceId, workspaceId), eq(copsConfigVersions.kind, kind), eq(copsConfigVersions.key, key), lte(copsConfigVersions.createdAt, at)))
     .orderBy(desc(copsConfigVersions.version))
     .limit(1);
   if (row) return dto(row);

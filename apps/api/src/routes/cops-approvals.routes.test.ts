@@ -381,4 +381,18 @@ maybe("COPS-08 approval engine", () => {
     const [any] = await sql`select id from approvals where workspace_id = ${workspaceId} limit 1`;
     expect((await decide(any.id, "executive", "approved", OTHER)).statusCode).toBe(404);
   });
+
+  it("a later price-book change does not change an existing proposal's discount", async () => {
+    const id = await create(terms({ billing_cadence: "monthly", line_items: [{ kind: "seats", description: "Skout Full", quantity: 1, unit_amount_minor: 4_500, price_basis: "per_month" }] }));
+    expect((await evaluate(id)).terms.discount_pct).toBe(0);
+    const book = COMMERCIAL_POLICY_DEFAULTS.price_book as unknown as { plans: Record<string, { prices: Record<string, unknown> }> };
+    const raised = { ...book, plans: { ...book.plans, full: { ...book.plans.full!, prices: { ...book.plans.full!.prices, USD: { annual_minor: 3_500, monthly_minor: 6_000 } } } } };
+    expect((await call("PUT", "/admin/config/price_book/default", { value: raised, reason: "Raise Skout Full month to month" })).statusCode).toBe(201);
+    try {
+      // Written before the change: still judged on the price book of its day.
+      expect((await evaluate(id)).terms.discount_pct).toBe(0);
+    } finally {
+      await call("PUT", "/admin/config/price_book/default", { value: COMMERCIAL_POLICY_DEFAULTS.price_book, reason: "Back to the default" });
+    }
+  });
 });

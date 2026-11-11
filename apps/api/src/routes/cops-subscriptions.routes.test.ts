@@ -1,4 +1,4 @@
-import { planFromItems } from "../services/cops-subscriptions.service.js";
+import { planFromItems, pricedItems } from "../services/cops-subscriptions.service.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -336,6 +336,21 @@ maybe("COPS-08 subscriptions", () => {
     expect(sub.seats).toBe(2);
     // A year up front: 2 seats x USD 35 a month x 12.
     expect(sub.invoices[0].amount_minor).toBe(2 * 3_500 * 12);
+  });
+
+  it("a seat change across two seat plans always bills the seats in force", () => {
+    const items = [
+      { kind: "seats", quantity: 3, unitAmountMinor: 3_500 },
+      { kind: "seats", quantity: 2, unitAmountMinor: 5_500 },
+      { kind: "product", quantity: 1, unitAmountMinor: 2_000 },
+    ] as never;
+    const seatsBilled = (seats: number) => pricedItems(items, seats).slice(0, 2).reduce((n, i) => n + i.quantity, 0);
+    // 5 seats down to 1: both plans give seats back (the second first), never 2 left on the second.
+    expect(pricedItems(items, 1).map((i) => i.quantity)).toEqual([1, 0, 1]);
+    expect(seatsBilled(1)).toBe(1);
+    expect(seatsBilled(4)).toBe(4);
+    // Added seats land on the first plan; the non-seat item never changes.
+    expect(pricedItems(items, 7).map((i) => i.quantity)).toEqual([5, 2, 1]);
   });
 
   it("maps what was sold to the customer's Skout AI plan limits", () => {

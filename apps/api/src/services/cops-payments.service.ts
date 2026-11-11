@@ -447,7 +447,14 @@ export async function refundPaymentRequest(db: Db, psp: PspAdapter, ctx: Commerc
   }
   const at = new Date();
   await db.transaction(async (tx) => {
-    await tx.update(paymentRequests).set({ status: "refunded", statusChangedAt: at, updatedAt: at }).where(eq(paymentRequests.id, pr.id));
+    // Only from paid: when the provider's refund webhook got here first, the side effects (credits
+    // taken back, the bill un-settled) have already run and must not run twice.
+    const moved = await tx
+      .update(paymentRequests)
+      .set({ status: "refunded", statusChangedAt: at, updatedAt: at })
+      .where(and(eq(paymentRequests.id, pr.id), eq(paymentRequests.status, "paid")))
+      .returning({ id: paymentRequests.id });
+    const firstToRefund = moved.length > 0;
     await writeCopsAudit(tx, {
       tenantId: ctx.workspaceId,
       actor: { type: "user", id: ctx.userId },
@@ -455,10 +462,10 @@ export async function refundPaymentRequest(db: Db, psp: PspAdapter, ctx: Commerc
       entityId: pr.id,
       action: "payment_request.refunded",
       before: { status: "paid" },
-      after: { status: "refunded", amount_minor: Number(pr.amountMinor), currency: pr.currency, provider_refund_id: refundId, reason },
+      after: { status: "refunded", amount_minor: Number(pr.amountMinor), currency: pr.currency, provider_refund_id: refundId, reason, ...(firstToRefund ? {} : { already_refunded_by_provider_event: true }) },
       correlationId: ctx.requestId,
       sourceChannel: "api",
     });
-    if (onRefunded) await onRefunded(tx as unknown as Db, { workspaceId: pr.workspaceId, opportunityId: pr.opportunityId, requestId: ctx.requestId, paymentRequestId: pr.id });
+    if (firstToRefund && onRefunded) await onRefunded(tx as unknown as Db, { workspaceId: pr.workspaceId, opportunityId: pr.opportunityId, requestId: ctx.requestId, paymentRequestId: pr.id });
   });
 }

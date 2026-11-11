@@ -54,13 +54,23 @@ type AmendmentRow = typeof subscriptionAmendments.$inferSelect;
 const seatChanges = (amendments: AmendmentRow[]) => amendments.map((a) => ({ seq: a.seq, seats: a.seats, effective_at: a.effectiveAt }));
 const originalSeats = (items: ItemRow[]) => items.filter((i) => i.kind === "seats").reduce((sum, i) => sum + i.quantity, 0);
 /**
- * Items priced for a period with `seats` in force. A seat change lands on the first seat line
- * only; other seat plans (e.g. Multichannel next to Full) and non-seat items keep their quantity.
+ * Items priced for a period with `seats` in force. Added seats land on the first seat line; a
+ * reduction takes seats off the seat lines from the last one up, so the billed seats always add up
+ * to `seats` (a cut bigger than one plan's seats used to leave the other plan billed in full).
+ * Non-seat items keep their quantity.
  */
-const pricedItems = (items: ItemRow[], seats: number) => {
-  const firstSeat = items.find((i) => i.kind === "seats");
-  const delta = seats - originalSeats(items);
-  return items.map((i) => ({ quantity: i === firstSeat ? Math.max(0, i.quantity + delta) : i.quantity, unit_amount_minor: Number(i.unitAmountMinor) }));
+export const pricedItems = (items: ItemRow[], seats: number) => {
+  const quantities = items.map((i) => i.quantity);
+  const seatIdx = items.map((i, idx) => (i.kind === "seats" ? idx : -1)).filter((idx) => idx >= 0);
+  let delta = seats - originalSeats(items);
+  if (delta > 0 && seatIdx.length) quantities[seatIdx[0]!]! += delta;
+  for (let k = seatIdx.length - 1; delta < 0 && k >= 0; k--) {
+    const idx = seatIdx[k]!;
+    const take = Math.min(quantities[idx]!, -delta);
+    quantities[idx]! -= take;
+    delta += take;
+  }
+  return items.map((i, idx) => ({ quantity: quantities[idx]!, unit_amount_minor: Number(i.unitAmountMinor) }));
 };
 
 async function loadDunningPolicy(db: Db, workspaceId: string): Promise<DunningPolicy> {

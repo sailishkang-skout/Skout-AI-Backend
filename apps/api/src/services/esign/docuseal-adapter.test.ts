@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { createDocusealAdapter, pdfPageCount, docusealSignature } from "./docuseal-adapter.js";
+import { countPdfPages, createDocusealAdapter, pdfPageCount, docusealSignature } from "./docuseal-adapter.js";
+import PDFDocument from "pdfkit";
 
 const SECRET = "whsec_test_secret_0123456789";
 const NOW = Date.parse("2026-10-14T10:00:00Z");
@@ -100,6 +101,19 @@ describe("DocuSeal sending", () => {
     const fields = body.documents[0]!.fields;
     expect(fields.map((f) => `${f.type}:${f.role}`)).toEqual(["signature:Signer 1", "date:Signer 1", "signature:Signer 2", "date:Signer 2"]);
     expect(fields.every((f) => f.areas[0]!.page === 2)).toBe(true);
+  });
+
+  it("counts the pages of a real PDF with a parser (compressed streams included)", async () => {
+    const doc = new PDFDocument({ compress: true });
+    const chunks: Buffer[] = [];
+    doc.on("data", (c: Buffer) => chunks.push(c));
+    const done = new Promise<void>((r) => doc.on("end", () => r()));
+    doc.text("Page one");
+    doc.addPage().text("Page two");
+    doc.addPage().text("Signature: ____");
+    doc.end();
+    await done;
+    expect(await countPdfPages(new Uint8Array(Buffer.concat(chunks)))).toBe(3);
   });
 
   it("counts PDF pages from page objects, not the page tree", () => {

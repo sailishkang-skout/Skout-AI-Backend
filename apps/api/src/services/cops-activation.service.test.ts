@@ -109,9 +109,16 @@ maybe("COPS-05 activation (Postgres)", () => {
     expect((await evaluateActivation(db, ctx.workspaceId, a.instanceId, randomUUID())).activated).toBe(false);
     expect((await loadActivation(db, ctx.workspaceId, a.accountId))!.activation_pct).toBe(0);
 
-    // The first email the customer actually sends activates them.
     const [inbox] = await sql`insert into inboxes (workspace_id, email_address, display_name, provider) values (${a.customerWs}, ${"rep-" + randomUUID().slice(0, 8) + "@acme.example"}, 'Rep', 'smtp') returning id`;
-    const [thread] = await sql`insert into inbox_threads (workspace_id, inbox_id, subject) values (${a.customerWs}, ${inbox.id}, 'Hello') returning id`;
+    // A hand-written email (or mail synced from a Sent folder) is not a campaign: no activation.
+    const [manual] = await sql`insert into inbox_threads (workspace_id, inbox_id, subject) values (${a.customerWs}, ${inbox.id}, 'Quick question') returning id`;
+    await sql`insert into inbox_messages (thread_id, direction, from_address, to_address) values (${manual.id}, 'outbound', 'rep@acme.example', 'friend@example.com')`;
+    expect((await evaluateActivation(db, ctx.workspaceId, a.instanceId, randomUUID())).activated).toBe(false);
+
+    // The first campaign email (a thread a sequence enrollment started) activates them.
+    const [outbound] = await sql`insert into sequences (workspace_id, name) values (${a.customerWs}, 'Outbound Q4') returning id`;
+    const [enrollment] = await sql`insert into sequence_enrollments (workspace_id, sequence_id, prospect_id) values (${a.customerWs}, ${outbound.id}, 'prospect-1') returning id`;
+    const [thread] = await sql`insert into inbox_threads (workspace_id, inbox_id, subject, enrollment_id) values (${a.customerWs}, ${inbox.id}, 'Hello', ${enrollment.id}) returning id`;
     await sql`insert into inbox_messages (thread_id, direction, from_address, to_address) values (${thread.id}, 'outbound', 'rep@acme.example', 'lead@prospect.example')`;
     const r = await evaluateActivation(db, ctx.workspaceId, a.instanceId, randomUUID());
     expect(r.activated).toBe(true);
