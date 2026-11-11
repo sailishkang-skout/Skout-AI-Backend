@@ -3,6 +3,7 @@ import { seniorityEnum, type SearchProspectsRequest, type SearchProspectsRespons
 import {
   buildDemoCorpus,
   filterDemoCorpus,
+  bulkCreateProspects,
   getProspectById as osGetById,
   searchProspects as osSearch,
   type OpenSearchConfig,
@@ -13,6 +14,7 @@ import { createLogger } from "@skout/observability";
 import type { Db } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
+import { enabledVendors, searchVendors, toProspectDocument } from "./vendor-search.service.js";
 import { 
   listSignalsForEntities, 
   computeSignalStackScore, 
@@ -256,6 +258,12 @@ export class SearchService {
     const pageSize = body.pageSize ?? 25;
     const cfg = osConfig(this.env);
 
+    // Real data: when any vendor key is configured, serve real people only — from our own
+    // index first (free), topping up from Wiza/ContactOut/Datagma when the index is thin.
+    if (enabledVendors(this.env).length > 0) {
+      return this.vendorBackedSearch(body, page, pageSize, cfg);
+    }
+
     if (cfg) {
       try {
         const res = await osSearch(cfg, toFilters(body), page, pageSize);
@@ -329,6 +337,73 @@ export class SearchService {
     }
 
     return this.demoSearch(body, page, pageSize);
+  }
+
+  /**
+   * Index-first, vendor-top-up search. Stored vendor docs (dataSource "vendor") cost nothing to
+   * serve. Only when the index can't fill the requested page do we spend vendor credits (page N
+   * asks ContactOut for page N), and every result is saved create-only so later searches — and
+   * deeper pages — are answered from our own index. Index order is oldest-first so pages stay
+   * stable while the index grows.
+   */
+  private async vendorBackedSearch(
+    body: SearchProspectsRequest,
+    page: number,
+    pageSize: number,
+    cfg: OpenSearchConfig | null
+  ): Promise<SearchProspectsResponse> {
+    const filters = toFilters(body);
+    const storedFilters = { ...filters, dataSource: "vendor", stableOrder: true };
+    const lookup = async () => {
+      if (!cfg) return { hits: [] as ProspectDocument[], total: 0 };
+      try {
+        return await osSearch(cfg, storedFilters, page, pageSize);
+      } catch (err) {
+        log.error("stored vendor-prospect lookup failed", err, { page, pageSize });
+        return { hits: [] as ProspectDocument[], total: 0 };
+      }
+    };
+
+    let stored = await lookup();
+    if (stored.hits.length >= pageSize) {
+      return { results: stored.hits.map((h) => mapDocToSummary(h)), total: stored.total, page, pageSize, cached: false, source: "opensearch" };
+    }
+
+    const outcome = await searchVendors(this.env, filters, pageSize, page);
+    if (outcome.attempted.length > 0 && outcome.failed.length === outcome.attempted.length && stored.hits.length === 0) {
+      throw new HttpError(
+        "vendor_search_unavailable",
+        502,
+        `Prospect data providers failed: ${outcome.failed.map((f) => `${f.vendor} (${f.error})`).join("; ")}`
+      );
+    }
+
+    const fresh = outcome.people.map(toProspectDocument);
+    let hits = stored.hits;
+    let total = Math.max(stored.total, outcome.total ?? 0);
+    if (fresh.length > 0) {
+      if (cfg) {
+        try {
+          const r = await bulkCreateProspects(cfg, fresh);
+          log.info("vendor prospects saved", { ...r, vendors: outcome.attempted, page });
+          stored = await lookup(); // now includes the new docs, in stable order
+          hits = stored.hits;
+        } catch (err) {
+          log.error("saving vendor prospects failed", err);
+        }
+      }
+      if (hits.length === 0) hits = fresh.slice(0, pageSize); // no index / save failed: serve directly
+      total = Math.max(total, stored.total, hits.length);
+    }
+
+    return {
+      results: hits.map((h) => mapDocToSummary(h)),
+      total,
+      page,
+      pageSize,
+      cached: false,
+      source: fresh.length > 0 ? "vendor" : "opensearch",
+    };
   }
 
   async getProspectById(prospectId: string) {

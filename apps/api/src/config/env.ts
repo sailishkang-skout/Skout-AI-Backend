@@ -279,6 +279,7 @@ const envSchema = z
     KASPR_API_KEY: z.string().optional(),
     LUSHA_API_KEY: z.string().optional(),
     CONTACTOUT_API_KEY: z.string().optional(),
+    WIZA_API_KEY: z.string().optional(),
     COGNISM_API_KEY: z.string().optional(),
     // --- Enrichment provider base URLs (override per environment / sandbox). ---
     HUNTER_BASE_URL: z.string().default("https://api.hunter.io/v2"),
@@ -293,6 +294,7 @@ const envSchema = z
     KASPR_BASE_URL: z.string().default("https://api.developers.kaspr.io"),
     LUSHA_BASE_URL: z.string().default("https://api.lusha.com"),
     CONTACTOUT_BASE_URL: z.string().default("https://api.contactout.com"),
+    WIZA_BASE_URL: z.string().default("https://wiza.co"),
     COGNISM_BASE_URL: z.string().default("https://app.cognism.com/api"),
     HUBSPOT_CLIENT_ID: z.string().optional(),
     HUBSPOT_CLIENT_SECRET: z.string().optional(),
