@@ -12,6 +12,8 @@ import {
   resolveAuthErrorCode,
   resolveOrProvisionUser,
 } from "@skout/auth";
+import { schema } from "@skout/db";
+import { and, eq } from "drizzle-orm";
 import { errorResponse, HttpError } from "../utils/http.js";
 
 declare module "fastify" {
@@ -125,10 +127,29 @@ export const authPlugin = fp(async (app) => {
       const identity = await resolveAuth(token, resolveAuthConfig);
       const result = await resolveOrProvisionUser(db, identity);
 
+      // Same rule as the main API: X-Workspace-Id picks one of the caller's workspaces (the ops
+      // portal sends the Skout workspace for staff who also own a workspace of their own).
+      let workspaceId = result.workspaceId;
+      let role = result.role;
+      const requested = request.headers["x-workspace-id"];
+      if (requested !== undefined && requested !== workspaceId) {
+        if (typeof requested !== "string" || !/^[0-9a-f-]{36}$/i.test(requested)) {
+          return reply.code(400).send(errorResponse("Invalid workspace selection", 400));
+        }
+        const [membership] = await db
+          .select({ role: schema.workspaceMembers.role })
+          .from(schema.workspaceMembers)
+          .where(and(eq(schema.workspaceMembers.workspaceId, requested), eq(schema.workspaceMembers.userId, result.userId)))
+          .limit(1);
+        if (!membership) return reply.code(403).send(errorResponse("Workspace access denied", 403));
+        workspaceId = requested;
+        role = membership.role;
+      }
+
       request.userId = result.userId;
       request.userEmail = result.userEmail;
-      request.workspaceId = result.workspaceId;
-      request.role = result.role;
+      request.workspaceId = workspaceId;
+      request.role = role;
     } catch (error) {
       app.log.error({ err: error }, "Auth failed");
       if (error instanceof AuthTokenInvalidError) {
