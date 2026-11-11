@@ -427,7 +427,7 @@ export async function refundPaymentRequest(db: Db, psp: PspAdapter, ctx: Commerc
   }
   let refundId: string;
   try {
-    ({ refundId } = await psp.refundPayment(pr.providerPaymentId, Number(pr.amountMinor), { payment_request_id: pr.id, reason: reason.slice(0, 200) }));
+    ({ refundId } = await psp.refundPayment(pr.providerPaymentId, Number(pr.amountMinor), { payment_request_id: pr.id, reason: reason.slice(0, 200) }, pr.currency));
   } catch (error) {
     if (error instanceof PspRequestError) {
       // Razorpay's description alone is often generic ("invalid request sent"); reason and field say why.

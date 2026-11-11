@@ -315,6 +315,29 @@ maybe("COPS-08 subscriptions", () => {
     expect((await current(accountId)).invoices[0].status).toBe("void");
   });
 
+  it("an annual proposal priced per term bills monthly from the term price, in the proposal's currency", async () => {
+    const { accountId, opportunityId } = await newAccount("INR");
+    const proposal = (
+      await call("POST", `/opportunities/${opportunityId}/proposals`, {
+        title: "Annual, per term",
+        currency: "USD",
+        billing_cadence: "annual",
+        term_months: 12,
+        discount_pct: 0,
+        // No price_basis: seats default to per term (the whole year per seat, USD 35 x 12).
+        line_items: [{ kind: "seats", description: "Skout Full", quantity: 2, unit_amount_minor: 42_000 }],
+      })
+    ).json().data;
+    await call("POST", `/proposals/${proposal.id}/send`, {});
+    const res = await call("POST", `/accounts/${accountId}/subscription`, { opportunity_id: opportunityId, cadence: "annual", term_months: 12, payment_terms_net_days: 0 });
+    expect(res.statusCode).toBe(201);
+    const sub = res.json().data;
+    expect(sub.currency).toBe("USD");
+    expect(sub.seats).toBe(2);
+    // A year up front: 2 seats x USD 35 a month x 12.
+    expect(sub.invoices[0].amount_minor).toBe(2 * 3_500 * 12);
+  });
+
   it("maps what was sold to the customer's Skout AI plan limits", () => {
     expect(planFromItems([{ kind: "seats", description: "Skout Full", quantity: 3 }])).toEqual({ plan: "full", extraIdentities: 0 });
     expect(planFromItems([

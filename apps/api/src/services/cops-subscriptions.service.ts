@@ -327,14 +327,15 @@ export async function createSubscription(db: Db, ctx: CommercialContext, account
   if (opportunity.companyId !== accountId) {
     throw new CommercialError("VALIDATION_FAILED", "opportunity_id is not an opportunity of this account", { fields: [{ path: "opportunity_id", code: "invalid", message: "Not an opportunity of this account" }] });
   }
-  // The deal's currency is the subscription's currency. Nothing is converted.
-  const currency = opportunity.currency;
-  if (!currency) throw new CommercialError("VALIDATION_FAILED", "The opportunity has no currency", { fields: [{ path: "opportunity_id", code: "invalid", message: "Set the opportunity currency first" }] });
   // What was sold: the recurring lines of the deal's latest sent proposal. Without one, the old
   // single seat line (seats x price book) is used.
   const recurring = await recurringProposalLines(db, ctx.workspaceId, opportunity.id);
+  // The subscription bills in the currency the proposal was sent in (its prices are in that
+  // currency); without a proposal, the deal's. Nothing is converted.
+  const currency = recurring?.currency ?? opportunity.currency;
+  if (!currency) throw new CommercialError("VALIDATION_FAILED", "The opportunity has no currency", { fields: [{ path: "opportunity_id", code: "invalid", message: "Set the opportunity currency first" }] });
   if (recurring && !recurring.lines.length) {
-    throw new CommercialError("BUSINESS_STATE_CONFLICT", "The sent proposal has nothing billed monthly, so there is nothing to subscribe to; one-time items are charged through the payment link", {});
+    throw new CommercialError("BUSINESS_STATE_CONFLICT", "The sent proposal has no recurring lines (only one-time items), so there is nothing to subscribe to; one-time items are charged through the payment link", {});
   }
   if (!recurring && !(input.seats && input.seats > 0)) {
     throw new CommercialError("VALIDATION_FAILED", "Send a proposal for this deal first, or give the number of seats", { fields: [{ path: "seats", code: "required", message: "Give seats or send a proposal" }] });
@@ -817,7 +818,7 @@ export async function resumeSubscription(db: Db, ctx: CommercialContext, subscri
  */
 async function recurringProposalLines(db: Db, workspaceId: string, opportunityId: string) {
   const [version] = await db
-    .select({ id: proposalVersions.id, discountPct: proposalVersions.discountPct, currency: proposalVersions.currency })
+    .select({ id: proposalVersions.id, discountPct: proposalVersions.discountPct, currency: proposalVersions.currency, termMonths: proposalVersions.termMonths })
     .from(proposals)
     .innerJoin(proposalVersions, eq(proposalVersions.proposalId, proposals.id))
     .where(and(eq(proposals.workspaceId, workspaceId), eq(proposals.opportunityId, opportunityId), inArray(proposals.status, ["sent", "accepted"]), isNotNull(proposalVersions.sentAt)))
@@ -826,15 +827,21 @@ async function recurringProposalLines(db: Db, workspaceId: string, opportunityId
   if (!version) return null;
   const lines = await db.select().from(proposalLineItems).where(eq(proposalLineItems.versionId, version.id)).orderBy(asc(proposalLineItems.position));
   const keep = 1 - Number(version.discountPct) / 100;
+  // A per-term line (the default for seats, and how annual deals are usually priced) is the whole
+  // term's price: spread over its months, so it bills like a per-month line. One-time lines stay out.
+  const months = Math.max(1, version.termMonths ?? 12);
   return {
     currency: version.currency,
     lines: lines
-      .filter((l) => (l.priceBasis ?? defaultPriceBasis(l.kind)) === "per_month" && l.quantity > 0)
-      .map((l) => ({
-        kind: l.kind === "seats" ? "seats" : "product",
-        description: l.description,
-        quantity: l.quantity,
-        unitMinor: Math.round((Number(l.netMinor) / l.quantity) * keep),
-      })),
+      .filter((l) => (l.priceBasis ?? defaultPriceBasis(l.kind)) !== "one_time" && l.quantity > 0)
+      .map((l) => {
+        const perMonth = (l.priceBasis ?? defaultPriceBasis(l.kind)) === "per_month";
+        return {
+          kind: l.kind === "seats" ? "seats" : "product",
+          description: l.description,
+          quantity: l.quantity,
+          unitMinor: Math.round(((Number(l.netMinor) / l.quantity) * keep) / (perMonth ? 1 : months)),
+        };
+      }),
   };
 }

@@ -99,7 +99,7 @@ export function createRazorpayPaymentLinkAdapter(config: Env, fetchImpl: FetchLi
 
     getBalance,
 
-    async refundPayment(providerPaymentId, amountMinor, notes) {
+    async refundPayment(providerPaymentId, amountMinor, notes, currency) {
       const res = await fetchImpl(`${RAZORPAY_API}/payments/${encodeURIComponent(providerPaymentId)}/refund`, {
         method: "POST",
         headers: { Authorization: razorpayAuthHeader(config.RAZORPAY_KEY_ID!, config.RAZORPAY_KEY_SECRET!), "Content-Type": "application/json" },
@@ -112,7 +112,9 @@ export function createRazorpayPaymentLinkAdapter(config: Env, fetchImpl: FetchLi
         if (res.status === 400) {
           const found = await getBalance();
           const balance = found ? { balance: found.balanceMinor, currency: found.currency } : null;
-          if (balance && balance.balance < amountMinor) {
+          // Only when the balance is in the payment's currency: otherwise the amounts do not compare
+          // and the provider's own error is kept.
+          if (balance && (!currency || balance.currency === currency) && balance.balance < amountMinor) {
             const cur = balance.currency;
             const fmt = (minor: number) => `${cur} ${(minor / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
             throw new PspRequestError(400, JSON.stringify({ error: { description: `the Razorpay balance (${fmt(balance.balance)}) is lower than the refund (${fmt(amountMinor)}); add funds in Razorpay or refund after the next payments settle`, reason: "insufficient_balance", field: "amount" } }));
