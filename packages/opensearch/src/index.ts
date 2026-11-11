@@ -54,11 +54,19 @@ export interface ProspectDocument {
   intentScore?: number;
   painPoints?: string[];
   outreachReadiness?: string;
+  /** "vendor" = real person saved from a live data-vendor search; absent = seeded/demo data. */
+  dataSource?: string;
+  /** Which vendors returned this person (wiza | contactout | datagma). */
+  dataVendors?: string[];
   updatedAt: string;
 }
 
 export interface SearchFilters {
   query?: string;
+  /** Restrict to documents with this dataSource (e.g. "vendor" = real people only). */
+  dataSource?: string;
+  /** Oldest-first order so pages stay stable while new documents are added (vendor pagination). */
+  stableOrder?: boolean;
   // Contact
   fullName?: string;
   jobTitle?: string;
@@ -203,6 +211,8 @@ export async function ensureProspectsIndex(cfg: OpenSearchConfig): Promise<void>
           intentScore: { type: "integer" },
           painPoints: { type: "keyword" },
           outreachReadiness: { type: "keyword" },
+          dataSource: { type: "keyword" },
+          dataVendors: { type: "keyword" },
           updatedAt: { type: "date" },
         },
       },
@@ -231,6 +241,40 @@ export async function bulkUpsertProspects(
   const items = res.items ?? [];
   const failed = items.filter((i) => i.index?.error).length;
   return { ingested: docs.length - failed, failed };
+}
+
+/**
+ * Bulk create-only: documents that already exist are left untouched (HTTP 409 is expected, not
+ * a failure). Used for vendor search results so a re-search never overwrites a prospect whose
+ * email/phone was already revealed and stored.
+ */
+export async function bulkCreateProspects(
+  cfg: OpenSearchConfig,
+  docs: ProspectDocument[]
+): Promise<{ created: number; existing: number; failed: number }> {
+  if (!docs.length) return { created: 0, existing: 0, failed: 0 };
+  const index = cfg.index ?? PROSPECTS_INDEX;
+  const lines: string[] = [];
+  for (const doc of docs) {
+    lines.push(JSON.stringify({ create: { _index: index, _id: doc.prospectId } }));
+    lines.push(JSON.stringify(doc));
+  }
+  // refresh=wait_for: the caller re-queries immediately, so new documents must be searchable.
+  const res = await osFetch<{ items?: { create?: { status?: number; error?: unknown } }[] }>(cfg, "/_bulk?refresh=wait_for", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-ndjson" },
+    body: lines.join("\n") + "\n",
+  });
+  let created = 0;
+  let existing = 0;
+  let failed = 0;
+  for (const item of res.items ?? []) {
+    const c = item.create;
+    if (!c?.error) created++;
+    else if (c.status === 409) existing++;
+    else failed++;
+  }
+  return { created, existing, failed };
 }
 
 export interface ProspectScorePatch {
@@ -302,6 +346,7 @@ export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25
       },
     });
   }
+  if (filters.dataSource) filter.push({ term: { dataSource: filters.dataSource } });
   // Contact information
   if (filters.fullName?.trim()) {
     filter.push({ match_phrase_prefix: { fullName: filters.fullName.trim() } });
@@ -458,7 +503,9 @@ export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25
         return bool;
       })(),
     },
-    sort: [{ updatedAt: "desc" }],
+    sort: filters.stableOrder
+      ? [{ updatedAt: "asc" }, { prospectId: "asc" }]
+      : [{ updatedAt: "desc" }],
   };
 }
 
