@@ -94,9 +94,10 @@ maybe("GET /accounts/:id/360 query count", () => {
     const large = await countFor(company.id as string);
 
     expect(large).toBe(small);
-    // Measured constant: 28 statements per request, including auth and middleware (the COPS-15
-    // Ops access guard reads the member's roles: +2). The bound guards against a regression that
-    // adds per-row queries (N+1); the equality above is the real check.
-    expect(large).toBeLessThanOrEqual(28);
+    // Measured constant: 29 statements per request, including auth and middleware (the COPS-15
+    // Ops access guard reads the member's roles and whether the workspace holds Ops access: +3).
+    // The bound guards against a regression that adds per-row queries (N+1); the equality above is
+    // the real check.
+    expect(large).toBeLessThanOrEqual(29);
   });
 });
