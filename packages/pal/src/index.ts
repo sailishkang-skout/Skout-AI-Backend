@@ -22,3 +22,4 @@ export { CoresignalFirmographics, CORESIGNAL_BASE_URL } from "./adapters/coresig
 export { DatagmaPhone, DATAGMA_BASE_URL } from "./adapters/datagma.js";
 export { ContactOutPhone, CONTACTOUT_BASE_URL } from "./adapters/contactout.js";
 export { CognismPhone, COGNISM_BASE_URL } from "./adapters/cognism.js";
+export { WizaEmailFinder, WizaPhone, WIZA_BASE_URL } from "./adapters/wiza.js";

@@ -11,6 +11,7 @@ import { KasprPhone } from "./adapters/kaspr.js";
 import { LushaPhone } from "./adapters/lusha.js";
 import { ContactOutPhone } from "./adapters/contactout.js";
 import { CognismPhone } from "./adapters/cognism.js";
+import { WizaEmailFinder, WizaPhone } from "./adapters/wiza.js";
 import {
   StubEmailFinder,
   StubEmailVerifier,
@@ -40,6 +41,7 @@ export interface PalConfig {
   lushaApiKey?: string;
   contactOutApiKey?: string;
   cognismApiKey?: string;
+  wizaApiKey?: string;
 
   hunterBaseUrl?: string;
   millionVerifierBaseUrl?: string;
@@ -54,6 +56,7 @@ export interface PalConfig {
   lushaBaseUrl?: string;
   contactOutBaseUrl?: string;
   cognismBaseUrl?: string;
+  wizaBaseUrl?: string;
 
   requestTimeoutMs?: number;
 }
@@ -82,6 +85,17 @@ export function createRegistryWithByok(
   if (isLiveApiKey(platformCfg.hunterApiKey)) {
     emailFinders.push(
       withCredential(new HunterEmailFinder(platformCfg.hunterApiKey, platformCfg.hunterBaseUrl, t), "platform")
+    );
+  }
+  // Wiza reveal runs after Hunter: it is slower (async) and billed per reveal.
+  if (isLiveApiKey(workspaceCfg.wizaApiKey)) {
+    emailFinders.push(
+      withCredential(new WizaEmailFinder(workspaceCfg.wizaApiKey, platformCfg.wizaBaseUrl, t), "workspace")
+    );
+  }
+  if (isLiveApiKey(platformCfg.wizaApiKey)) {
+    emailFinders.push(
+      withCredential(new WizaEmailFinder(platformCfg.wizaApiKey, platformCfg.wizaBaseUrl, t), "platform")
     );
   }
   if (emailFinders.length === 0) emailFinders.push(new StubEmailFinder());
@@ -169,6 +183,9 @@ export function createRegistryWithByok(
   addPhone(workspaceCfg.datagmaApiKey, platformCfg.datagmaApiKey, (key) =>
     new DatagmaPhone(key, platformCfg.datagmaBaseUrl, t)
   );
+  addPhone(workspaceCfg.wizaApiKey, platformCfg.wizaApiKey, (key) =>
+    new WizaPhone(key, platformCfg.wizaBaseUrl, t)
+  );
   addPhone(workspaceCfg.kasprApiKey, platformCfg.kasprApiKey, (key) =>
     new KasprPhone(key, platformCfg.kasprBaseUrl, t)
   );
@@ -209,5 +226,6 @@ export function hasLiveProviders(cfg: PalConfig): boolean {
     cfg.lushaApiKey,
     cfg.contactOutApiKey,
     cfg.cognismApiKey,
+    cfg.wizaApiKey,
   ].some(isLiveApiKey);
 }
