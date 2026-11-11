@@ -22,17 +22,59 @@ export interface OpsAccessState {
   hasPermission: boolean;
 }
 
-export async function opsAccessState(db: Db, config: Pick<Env, "INTERNAL_WORKSPACE_ID" | "OPS_ACCESS_ENFORCED">, workspaceId: string, userId: string): Promise<OpsAccessState> {
+type OpsAccessConfig = Pick<Env, "INTERNAL_WORKSPACE_ID" | "OPS_ACCESS_ENFORCED">;
+
+/**
+ * Whether the guard refuses: on as soon as INTERNAL_WORKSPACE_ID is set (the one setting COPS-15
+ * needs). OPS_ACCESS_ENFORCED is only an emergency switch: "false" drops back to logging only.
+ */
+export function opsAccessEnforced(config: Pick<Env, "INTERNAL_WORKSPACE_ID" | "OPS_ACCESS_ENFORCED">): boolean {
+  if (config.OPS_ACCESS_ENFORCED === "false") return false;
+  return config.OPS_ACCESS_ENFORCED === "true" || !!config.INTERNAL_WORKSPACE_ID;
+}
+
+export async function opsAccessState(db: Db, config: OpsAccessConfig, workspaceId: string, userId: string): Promise<OpsAccessState> {
   const internalWorkspace = !!config.INTERNAL_WORKSPACE_ID && workspaceId === config.INTERNAL_WORKSPACE_ID;
   const hasPermission = (await getMemberPermissions(db, workspaceId, userId)).includes(OPS_ACCESS);
-  return { allowed: internalWorkspace && hasPermission, enforced: config.OPS_ACCESS_ENFORCED === "true", internalWorkspace, hasPermission };
+  return { allowed: internalWorkspace && hasPermission, enforced: opsAccessEnforced(config), internalWorkspace, hasPermission };
+}
+
+/**
+ * First rollout: while nobody in the internal workspace holds Ops access yet, every member gets it
+ * once (audited), so the guard can enforce from day one without locking staff out. After that it
+ * does nothing: new staff get Ops access through an invite or People, and a removal is never undone.
+ * Returns how many members were granted.
+ */
+export async function bootstrapOpsAccess(db: Db, config: Pick<Env, "INTERNAL_WORKSPACE_ID">): Promise<number> {
+  const ws = config.INTERNAL_WORKSPACE_ID;
+  if (!ws) return 0;
+  const [opsRole] = await db.select({ id: schema.roles.id }).from(schema.roles).where(and(isNull(schema.roles.workspaceId), eq(schema.roles.key, OPS_ACCESS_ROLE_KEY))).limit(1);
+  if (!opsRole) return 0;
+  const [anyHolder] = await db
+    .select({ userId: schema.workspaceMemberRoles.userId })
+    .from(schema.workspaceMemberRoles)
+    .where(and(eq(schema.workspaceMemberRoles.workspaceId, ws), eq(schema.workspaceMemberRoles.roleId, opsRole.id)))
+    .limit(1);
+  // Ever granted (even if since removed from some) = past the first rollout: never grant again.
+  const [everGranted] = await db
+    .select({ id: schema.auditLogs.id })
+    .from(schema.auditLogs)
+    .where(and(eq(schema.auditLogs.workspaceId, ws), eq(schema.auditLogs.action, "ops_access.granted")))
+    .limit(1);
+  if (anyHolder || everGranted) return 0;
+  const members = await db.select({ userId: schema.workspaceMembers.userId }).from(schema.workspaceMembers).where(eq(schema.workspaceMembers.workspaceId, ws));
+  for (const m of members) {
+    await db.insert(schema.workspaceMemberRoles).values({ workspaceId: ws, userId: m.userId, roleId: opsRole.id }).onConflictDoNothing();
+    await db.insert(schema.auditLogs).values({ workspaceId: ws, actorId: null, actorType: "system", action: "ops_access.granted", entityType: "workspace_member", entityId: m.userId, afterState: { via: "first_rollout" } } as never);
+  }
+  return members.length;
 }
 
 /**
  * preHandler for every CustomerOps route. Public routes in the same plugins (provider webhooks,
  * signed document links) are skipped: they authenticate by signature, not by a staff session.
  */
-export function opsAccessGuard(db: Db, config: Pick<Env, "INTERNAL_WORKSPACE_ID" | "OPS_ACCESS_ENFORCED">, isPublic: (url: string, method?: string) => boolean) {
+export function opsAccessGuard(db: Db, config: OpsAccessConfig, isPublic: (url: string, method?: string) => boolean) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
     if (isPublic(request.url, request.method)) return;
     if (!request.workspaceId || !request.userId) return; // the auth plugin has already answered 401

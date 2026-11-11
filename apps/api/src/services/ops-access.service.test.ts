@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const perms = vi.hoisted(() => ({ value: [] as string[] }));
 vi.mock("@skout/auth", () => ({ getMemberPermissions: vi.fn(async () => perms.value) }));
 
-import { opsAccessGuard, opsAccessState } from "./ops-access.service.js";
+import { opsAccessEnforced, opsAccessGuard, opsAccessState } from "./ops-access.service.js";
 
 const INTERNAL = "11111111-1111-4111-8111-111111111111";
 const CUSTOMER = "22222222-2222-4222-8222-222222222222";
@@ -47,8 +47,8 @@ describe("COPS-15 ops:access guard", () => {
     expect(r.status).toBe(403);
   });
 
-  it("only logs in shadow mode", async () => {
-    const r = await call(opsAccessGuard(db, { INTERNAL_WORKSPACE_ID: INTERNAL, OPS_ACCESS_ENFORCED: undefined }, isPublic), CUSTOMER);
+  it("only logs when switched off for an emergency (OPS_ACCESS_ENFORCED=false)", async () => {
+    const r = await call(opsAccessGuard(db, { INTERNAL_WORKSPACE_ID: INTERNAL, OPS_ACCESS_ENFORCED: "false" }, isPublic), CUSTOMER);
     expect(r.status).toBe(200);
     expect(r.warned).toBe(true);
   });
@@ -62,5 +62,16 @@ describe("COPS-15 ops:access guard", () => {
     perms.value = ["ops:access"];
     expect(await opsAccessState(db, { INTERNAL_WORKSPACE_ID: INTERNAL, OPS_ACCESS_ENFORCED: "false" }, INTERNAL, "u-1")).toEqual({ allowed: true, enforced: false, internalWorkspace: true, hasPermission: true });
     expect((await opsAccessState(db, { INTERNAL_WORKSPACE_ID: INTERNAL, OPS_ACCESS_ENFORCED: "true" }, CUSTOMER, "u-1")).allowed).toBe(false);
+  });
+
+  it("refuses a customer with only the internal workspace set (no other setting needed)", async () => {
+    const r = await call(opsAccessGuard(db, { INTERNAL_WORKSPACE_ID: INTERNAL, OPS_ACCESS_ENFORCED: undefined }, isPublic), CUSTOMER);
+    expect(r.status).toBe(403);
+  });
+
+  it("enforces as soon as the internal workspace is set; OPS_ACCESS_ENFORCED=false is only an emergency switch", () => {
+    expect(opsAccessEnforced({ INTERNAL_WORKSPACE_ID: INTERNAL, OPS_ACCESS_ENFORCED: undefined })).toBe(true);
+    expect(opsAccessEnforced({ INTERNAL_WORKSPACE_ID: INTERNAL, OPS_ACCESS_ENFORCED: "false" })).toBe(false);
+    expect(opsAccessEnforced({ INTERNAL_WORKSPACE_ID: undefined, OPS_ACCESS_ENFORCED: undefined })).toBe(false);
   });
 });

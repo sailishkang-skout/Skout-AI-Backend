@@ -41,8 +41,8 @@ const envSchema = z
     /** COPS-15: the internal Skout workspace; only its members can hold ops:access. */
     INTERNAL_WORKSPACE_ID: z.string().uuid().optional(),
     /**
-     * COPS-15: "true" refuses CustomerOps routes (403) without ops:access in the internal workspace.
-     * Unset or "false" is shadow mode: the guard only logs who it would refuse (safe rollout).
+     * COPS-15 emergency switch only. The guard enforces as soon as INTERNAL_WORKSPACE_ID is set (and on
+     * first start every internal member gets Ops access once); "false" drops back to logging only.
      */
     OPS_ACCESS_ENFORCED: z.enum(["true", "false"]).optional(),
     TRUST_PROXY: z

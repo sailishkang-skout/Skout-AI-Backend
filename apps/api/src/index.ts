@@ -101,6 +101,15 @@ async function main() {
     if (outcome === "rejected_policy") app.log.warn("BOOTSTRAP_ADMIN_PASSWORD does not meet the password policy; no admin created");
   }
 
+  if (app.db && config.INTERNAL_WORKSPACE_ID) {
+    // COPS-15 first rollout: current staff get Ops access once, so enforcing never locks them out.
+    const { bootstrapOpsAccess } = await import("./services/ops-access.service.js");
+    const granted = await bootstrapOpsAccess(app.db, config);
+    if (granted > 0) app.log.info({ granted }, "COPS-15: first rollout gave Ops access to every internal workspace member");
+  } else if (config.NODE_ENV === "production") {
+    app.log.error("COPS-15: INTERNAL_WORKSPACE_ID is not set, so CustomerOps is not protected (anyone with a Skout AI login could use it); set it to the Skout workspace id");
+  }
+
   if (config.RBAC_ENFORCEMENT_ENABLED && app.db) {
     const { assertRbacBackfillReady } = await import("@skout/auth");
     const gate = await assertRbacBackfillReady(app.db);
