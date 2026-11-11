@@ -13,7 +13,7 @@ import { and, count, desc, eq, gte, inArray, isNotNull, isNull, sql, type SQL } 
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { recordPrivilegedAction } from "@skout/auth";
-import { prospectIdForCanonicalKey, publicIdFromProfileUrl } from "./capture-identity.js";
+import { normalizedCompanyName, prospectIdForCanonicalKey, publicIdFromProfileUrl } from "./capture-identity.js";
 import { deleteCaptureEvidence } from "./capture-evidence.js";
 import { CaptureError, type CaptureActor } from "./capture-ingest.service.js";
 
@@ -608,9 +608,40 @@ export async function listCompanyPeople(db: Db, workspaceId: string, companyId: 
 
 // ── Job changes ───────────────────────────────────────────────────────────────
 
-function roleOf(value: unknown): { company: string | null; title: string | null } {
-  const role = Array.isArray(value) ? (value[0] as Json | undefined) : undefined;
+type Role = { company: string | null; title: string | null };
+
+function roleOf(value: unknown): Role {
+  const roles = Array.isArray(value) ? (value as Json[]) : [];
+  const role = roles.find((entry) => text(entry?.name)) ?? roles[0];
   return { company: text(role?.name), title: text(role?.title) };
+}
+
+/**
+ * The company a person left, when the change event itself does not name it. Looks through
+ * captures newest first: a past role, or an earlier current role, at a company other than
+ * the new one. Captures taken after the change only count for their past roles.
+ */
+export function previousRoleFromCaptures(
+  captures: { rawData: unknown; capturedAt: Date }[],
+  newCompany: string | null,
+  detectedAt: Date
+): Role | null {
+  const target = normalizedCompanyName(newCompany ?? undefined);
+  const other = (value: unknown): Role | null => {
+    const roles = Array.isArray(value) ? (value as Json[]) : [];
+    const role = roles.find((entry) => {
+      const name = text(entry?.name);
+      return name && normalizedCompanyName(name) !== target;
+    });
+    return role ? { company: text(role.name), title: text(role.title) } : null;
+  };
+  const sorted = [...captures].sort((a, b) => b.capturedAt.getTime() - a.capturedAt.getTime());
+  for (const capture of sorted) {
+    const data = (capture.rawData ?? {}) as Json;
+    const found = other(data.previousCompanies) ?? (capture.capturedAt < detectedAt ? other(data.currentCompanies) : null);
+    if (found) return found;
+  }
+  return null;
 }
 
 export async function listJobChanges(
@@ -636,9 +667,26 @@ export async function listJobChanges(
     .orderBy(desc(enrichmentChangeEvents.detectedAt))
     .limit(filters.pageSize)
     .offset((filters.page - 1) * filters.pageSize);
+  // Rows whose change event does not name the old company are filled from capture history.
+  const missingFrom = rows
+    .filter(({ change }) => !roleOf(change.oldValue).company)
+    .map(({ change }) => change.entityId);
+  const history = missingFrom.length
+    ? await db
+        .select({ entityId: enrichmentSnapshots.entityId, rawData: enrichmentSnapshots.rawData, capturedAt: enrichmentSnapshots.capturedAt })
+        .from(enrichmentSnapshots)
+        .where(
+          and(
+            eq(enrichmentSnapshots.workspaceId, workspaceId),
+            eq(enrichmentSnapshots.entityType, "person"),
+            inArray(enrichmentSnapshots.entityId, [...new Set(missingFrom)])
+          )
+        )
+    : [];
   return {
     jobChanges: rows.map(({ change, snapshot }) => {
       const person = (snapshot ?? {}) as Json;
+      const to = roleOf(change.newValue);
       return {
         ...toChange(change),
         prospectId: change.entityId,
@@ -647,9 +695,14 @@ export async function listJobChanges(
         // Older records can lack the earlier employer; the profile's latest past role names it.
         from: (() => {
           const before = roleOf(change.oldValue);
-          return before.company ? before : roleOf(person.previousCompanies);
+          if (before.company) return before;
+          const captures = [
+            { rawData: { previousCompanies: person.previousCompanies }, capturedAt: change.detectedAt },
+            ...history.filter((row) => row.entityId === change.entityId),
+          ];
+          return previousRoleFromCaptures(captures, to.company, change.detectedAt) ?? before;
         })(),
-        to: roleOf(change.newValue),
+        to,
         // "capture_comparison": two captures differ; "work_history": one capture shows a recent move.
         detectedBy: change.field === "workHistory" ? ("work_history" as const) : ("capture_comparison" as const),
         requiresReview: !change.reviewedAt,
