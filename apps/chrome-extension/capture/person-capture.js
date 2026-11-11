@@ -44,6 +44,10 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
         out[key] = out[key].filter(item => { const sig = JSON.stringify(item); if (seen.has(sig)) return false; seen.add(sig); return true; });
       }
     }
+    // Header-only entries are stand-ins until the real Education/Experience rows load.
+    for (const key of ['educations', 'currentCompanies']) {
+      if (Array.isArray(out[key]) && out[key].some((item) => item?.source !== 'topcard')) out[key] = out[key].filter((item) => item?.source !== 'topcard');
+    }
     if (b?.locationName && rankB <= rankA) out._locationRank = rankB;
     else if (a?._locationRank !== undefined) out._locationRank = a._locationRank;
     return out;
@@ -159,7 +163,8 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
       const atBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 8;
       stablePasses = count === previousCount ? stablePasses + 1 : 0;
       previousCount = count;
-      if (atBottom && stablePasses >= 2) break;
+      // Rows can render a few seconds after the title: keep waiting while none have shown.
+      if (atBottom && stablePasses >= 2 && (count > 0 || pass >= 16)) break;
       window.scrollBy({top: Math.max(520, Math.floor(window.innerHeight * 0.8)), behavior: 'auto'});
       await pause(650);
     }
@@ -203,7 +208,8 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
           data = await collectFullyRenderedSkills();
           break;
         }
-        if (detailName === 'Education' && sectionFound) {
+        // Collect once Education rows exist (or after ~8s, for people with none listed).
+        if (detailName === 'Education' && sectionFound && (extractPerson().educations?.some((e) => e.source !== 'topcard') || attempt >= 16)) {
           data = await collectFullyRenderedEducation();
           break;
         }
@@ -231,7 +237,11 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
         } else if (!detailName) {
           const hasSection = ['currentCompanies','previousCompanies','projects','educations','skills','certifications','languages','volunteerExperiences','honors','publications','patents','courses','organizations']
             .some((key) => Array.isArray(data[key]) && data[key].length);
-          if (data.fullName || data.headline || hasSection || document.querySelector('main')) break;
+          // Experience and Education load as the page scrolls; scroll through once to read them.
+          if (data.fullName || data.headline || hasSection || document.querySelector('main')) {
+            data = merge(data, await collectFullyRenderedSection(['educations', 'currentCompanies', 'previousCompanies']));
+            break;
+          }
         }
         await pause(500);
       }
