@@ -63,6 +63,10 @@ const str = (v: unknown): string | undefined =>
 
 const root = (u: string) => u.replace(/\/$/, "");
 
+/** Wiza returns LinkedIn URLs without a scheme; the UI needs a clickable absolute URL. */
+const absoluteUrl = (v: string | undefined): string | undefined =>
+  v ? (/^https?:\/\//i.test(v) ? v : `https://${v.replace(/^\/+/, "")}`) : undefined;
+
 // ---------------------------------------------------------------------------
 // Filter translation helpers
 // ---------------------------------------------------------------------------
@@ -176,7 +180,7 @@ async function searchWiza(env: Env, f: SearchFilters, size: number, page: number
       vendor: "wiza",
       fullName,
       title: str(p.job_title) ?? str(p.title),
-      linkedinUrl: str(p.linkedin_url),
+      linkedinUrl: absoluteUrl(str(p.linkedin_url)),
       companyName: str(p.job_company_name) ?? str(p.company),
       companyDomain: str(p.job_company_website),
       industry: str(p.industry),

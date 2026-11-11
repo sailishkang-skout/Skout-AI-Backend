@@ -91,6 +91,19 @@ describe("searchVendors", () => {
     expect(wizaCall[1]).toMatchObject({ headers: { Authorization: "Bearer w-key" } });
   });
 
+  it("makes scheme-less Wiza LinkedIn URLs absolute", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url.includes("wiza.test")
+          ? new Response(JSON.stringify({ data: { profiles: [{ full_name: "Z", linkedin_url: "linkedin.com/in/z" }] } }), { status: 200 })
+          : new Response(JSON.stringify({ profiles: {} }), { status: 200 })
+      )
+    );
+    const out = await searchVendors(env(), { jobTitle: "CTO" }, 5);
+    expect(out.people[0]!.linkedinUrl).toBe("https://linkedin.com/in/z");
+  });
+
   it("tolerates one vendor failing", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => (url.includes("wiza.test") ? new Response("no", { status: 403 }) : coOk())));
     const out = await searchVendors(env(), { jobTitle: "CTO" }, 25);
