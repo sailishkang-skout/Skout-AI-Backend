@@ -102,8 +102,14 @@ export async function resolveContractDocumentForProvider(config: Env, workspaceI
   const { sha, place } = ref;
   const bucket = contractsBucket(config);
   if (bucket) return presignDocumentGet(bucket, contractDocumentKey(workspaceId, sha, place), { expiresIn: PROVIDER_TTL_SECONDS });
-  // Local dev: the API's own signed link, absolute so a provider (or the mock) can follow it.
-  return `${(config.API_PUBLIC_URL ?? "http://localhost:3001").replace(/\/$/, "")}${localUrl("GET", workspaceId, sha, PROVIDER_TTL_SECONDS, place)}`;
+  const link = `${(config.API_PUBLIC_URL ?? "http://localhost:3001").replace(/\/$/, "")}${localUrl("GET", workspaceId, sha, PROVIDER_TTL_SECONDS, place)}`;
+  // Local dev with a real provider: a hosted provider cannot reach this machine, so hand it the
+  // file itself (DocuSeal takes a URL or the PDF as base64). A public API_PUBLIC_URL keeps the link.
+  if (config.NODE_ENV !== "production" && /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/)/.test(link)) {
+    const bytes = await readLocalDocument(contractDocumentKey(workspaceId, sha, place));
+    if (bytes) return Buffer.from(bytes).toString("base64");
+  }
+  return link;
 }
 
 /**

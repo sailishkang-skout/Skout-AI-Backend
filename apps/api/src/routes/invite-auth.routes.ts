@@ -1,3 +1,4 @@
+import { grantOpsAccessFromInvite } from "../services/ops-access.service.js";
 import { randomBytes } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { and, eq, gt } from "drizzle-orm";
@@ -26,7 +27,7 @@ function requestMeta(request: FastifyRequest): { ip: string; userAgent?: string 
 export async function inviteAuthRoutes(app: FastifyInstance) {
   // POST /invite-auth/send-otp  — public
   // Validates invite, sends 6-digit OTP to the invite email
-  app.post<{ Body: { inviteToken: string } }>(
+  app.post<{ Body: { inviteToken: string; app?: "customerops" } }>(
     "/invite-auth/send-otp",
     async (request, reply) => {
       const { inviteToken } = request.body ?? {};
@@ -70,6 +71,7 @@ export async function inviteAuthRoutes(app: FastifyInstance) {
             otp,
             workspaceName: invite.workspaceName,
             expiresInMinutes: 10,
+            product: request.body?.app === "customerops" ? "customerops" : undefined,
           })
         );
       } catch (err) {
@@ -177,6 +179,8 @@ export async function inviteAuthRoutes(app: FastifyInstance) {
           role: invite.role,
         });
         await grantSystemMemberRole(db, invite.workspaceId, userId, invite.role);
+        // COPS-15: Ops access chosen at invite time is granted on accept.
+        await grantOpsAccessFromInvite(db, invite, userId);
       }
 
       // Mark invite accepted

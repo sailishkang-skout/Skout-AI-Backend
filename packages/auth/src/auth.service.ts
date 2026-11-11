@@ -286,6 +286,7 @@ export async function resolveOrProvisionUser(
         id: schema.workspaceInvites.id,
         workspaceId: schema.workspaceInvites.workspaceId,
         role: schema.workspaceInvites.role,
+        grantOpsAccess: schema.workspaceInvites.grantOpsAccess,
       })
       .from(schema.workspaceInvites)
       .where(
@@ -303,6 +304,7 @@ export async function resolveOrProvisionUser(
           .values({ workspaceId: invite.workspaceId, userId, role: invite.role })
           .onConflictDoNothing();
         await grantSystemMemberRole(tx, invite.workspaceId, userId, invite.role);
+        await grantInviteOpsAccess(tx, invite, userId);
         await tx
           .update(schema.workspaceInvites)
           .set({ acceptedAt: now })
@@ -377,6 +379,7 @@ async function autoAcceptPendingInvites(
       id: schema.workspaceInvites.id,
       workspaceId: schema.workspaceInvites.workspaceId,
       role: schema.workspaceInvites.role,
+      grantOpsAccess: schema.workspaceInvites.grantOpsAccess,
     })
     .from(schema.workspaceInvites)
     .where(
@@ -410,6 +413,24 @@ async function autoAcceptPendingInvites(
       await grantSystemMemberRole(tx, invite.workspaceId, userId, invite.role);
     }
 
+    await grantInviteOpsAccess(tx, invite, userId);
     await tx.update(schema.workspaceInvites).set({ acceptedAt: now }).where(eq(schema.workspaceInvites.id, invite.id));
   }
+}
+
+/**
+ * COPS-15: an invite sent with Ops access (from the ops portal, by someone who holds it) grants it
+ * on whichever path accepts the invite: Google/SSO sign-up and auto-accept included. Audited. Same
+ * effect as apps/api grantOpsAccessFromInvite (this package cannot import the API).
+ */
+async function grantInviteOpsAccess(tx: Tx, invite: { id: string; workspaceId: string; grantOpsAccess: boolean | null }, userId: string): Promise<void> {
+  if (!invite.grantOpsAccess) return;
+  const [opsRole] = await tx
+    .select({ id: schema.roles.id })
+    .from(schema.roles)
+    .where(and(isNull(schema.roles.workspaceId), eq(schema.roles.key, "ops_access")))
+    .limit(1);
+  if (!opsRole) return;
+  await tx.insert(schema.workspaceMemberRoles).values({ workspaceId: invite.workspaceId, userId, roleId: opsRole.id }).onConflictDoNothing();
+  await tx.insert(schema.auditLogs).values({ workspaceId: invite.workspaceId, actorId: userId, actorType: "user", action: "ops_access.granted", entityType: "workspace_member", entityId: userId, afterState: { via: "invite", invite_id: invite.id } } as never);
 }

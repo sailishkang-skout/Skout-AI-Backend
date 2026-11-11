@@ -32,6 +32,13 @@ export interface PspAdapter {
   isConfigured(): boolean;
   /** Stops a link from being paid (Razorpay: POST /payment_links/:id/cancel). */
   cancelPaymentLink?(providerRef: string): Promise<void>;
+  /** Refunds a captured payment in full (Razorpay: POST /payments/:id/refund). Returns the refund id. */
+  /** `currency` = the payment's, so an insufficient-balance hint is only given in the balance's currency. */
+  refundPayment?(providerPaymentId: string, amountMinor: number, notes: Record<string, string>, currency?: string): Promise<{ refundId: string }>;
+  /** False when links in this currency cannot be paid yet (international payments not enabled). */
+  supportsCurrency?(currency: string): boolean;
+  /** The merchant account balance refunds are paid from (minor units); null when unknown. */
+  getBalance?(): Promise<{ balanceMinor: number; currency: string } | null>;
   createPaymentLink(input: {
     amountMinor: number;
     currency: string;

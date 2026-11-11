@@ -181,15 +181,19 @@ export function buildInviteEmail(opts: {
   workspaceName: string;
   role: string;
   acceptUrl: string;
+  /** "customerops" for invites sent from the ops portal (COPS-15). */
+  product?: "customerops";
 }): MailOptions {
+  const ops = opts.product === "customerops";
+  const productName = ops ? "Skout CustomerOps" : "Skout AI";
   const inviter = escapeHtml(opts.inviterName);
   const workspace = escapeHtml(opts.workspaceName);
   const role = escapeHtml(opts.role);
 
   const bodyHtml = `
     <p style="margin:0 0 16px;">Hi,</p>
-    <p style="margin:0 0 16px;"><strong>${inviter}</strong> invited you to join <strong>${workspace}</strong> on Skout AI as a <strong>${role}</strong>.</p>
-    <p style="margin:0 0 24px;">Accept the invitation to access prospects, sequences, and inbox with your team.</p>
+    <p style="margin:0 0 16px;"><strong>${inviter}</strong> invited you to join <strong>${workspace}</strong> on ${productName} as a <strong>${role}</strong>.</p>
+    <p style="margin:0 0 24px;">${ops ? "Accept the invitation to work customer accounts, deals, onboarding and billing with your team." : "Accept the invitation to access prospects, sequences, and inbox with your team."}</p>
     <p style="margin:0 0 8px;">${ctaButton(opts.acceptUrl, "Accept invitation")}</p>
     <p style="margin:20px 0 0;font-size:12px;color:#71717a;word-break:break-all;">Or paste this link into your browser:<br /><a href="${escapeHtml(opts.acceptUrl)}" style="color:#3f3f46;">${escapeHtml(opts.acceptUrl)}</a></p>
     <p style="margin:20px 0 0;font-size:12px;color:#71717a;">This link expires in 7 days. If you weren't expecting this email, you can ignore it.</p>
@@ -197,7 +201,7 @@ export function buildInviteEmail(opts: {
 
   return {
     to: opts.to,
-    subject: `Join ${opts.workspaceName} on Skout AI`,
+    subject: `Join ${opts.workspaceName} on ${productName}`,
     text: [
       `${opts.inviterName} invited you to join "${opts.workspaceName}" as a ${opts.role}.`,
       "",
@@ -219,12 +223,14 @@ export function buildOtpEmail(opts: {
   otp: string;
   workspaceName: string;
   expiresInMinutes: number;
+  product?: "customerops";
 }): MailOptions {
+  const productName = opts.product === "customerops" ? "Skout CustomerOps" : "Skout AI";
   const workspace = escapeHtml(opts.workspaceName);
   const otp = escapeHtml(opts.otp);
 
   const bodyHtml = `
-    <p style="margin:0 0 16px;">Use this code to join <strong>${workspace}</strong> on Skout AI:</p>
+    <p style="margin:0 0 16px;">Use this code to join <strong>${workspace}</strong> on ${productName}:</p>
     <div style="margin:8px 0 24px;text-align:center;">
       <div style="display:inline-block;padding:16px 28px;background:#f4f4f5;border:1px solid #e4e4e7;border-radius:10px;font-size:32px;font-weight:700;letter-spacing:0.35em;color:#09090b;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;">
         ${otp}
@@ -235,7 +241,7 @@ export function buildOtpEmail(opts: {
 
   return {
     to: opts.to,
-    subject: `Your Skout AI code: ${opts.otp}`,
+    subject: `Your ${productName} code: ${opts.otp}`,
     text: [
       `Your Skout verification code is: ${opts.otp}`,
       "",

@@ -7,8 +7,9 @@ import type { EsignAdapter, EsignWebhookEvent } from "./esign-adapter.js";
  * submission:
  *  - with an e-sign template (CustomerOps admin, provider_template_id = the DocuSeal template id),
  *    POST /submissions from that template;
- *  - without one, POST /submissions/pdf with the uploaded contract version by URL. The PDF must
- *    then carry DocuSeal text tags such as {{Signature;role=First Party}}.
+ *  - without one, POST /submissions/pdf with the uploaded contract version (URL, or base64 in local
+ *    dev). An uploaded contract has no DocuSeal fields, so each signer gets a signature and a date
+ *    field at the foot of the last page (otherwise DocuSeal shows the PDF with nothing to sign).
  * Each submitter carries external_id "<envelope id>:<n>", so a repeated send finds the submission
  * already made (GET /submitters?external_id=) instead of mailing the signers twice, and webhooks
  * lead back to the envelope.
@@ -58,6 +59,46 @@ export function docusealSignature(secret: string, timestamp: number, rawBody: st
   return `${timestamp}.${createHmac("sha256", secret).update(`${timestamp}.${rawBody}`).digest("hex")}`;
 }
 
+/**
+ * Pages in a PDF by a byte scan of its page objects. A fallback only: it misses pages inside
+ * compressed object streams and can double-count after incremental saves. Null when none are seen.
+ */
+export function pdfPageCount(bytes: Uint8Array): number | null {
+  const text = Buffer.from(bytes).toString("latin1");
+  const n = (text.match(/\/Type\s*\/Page(?![a-zA-Z])/g) ?? []).length;
+  return n > 0 ? n : null;
+}
+
+/** Pages in a PDF, read by a real PDF parser (handles compressed object streams and incremental saves). */
+export async function countPdfPages(bytes: Uint8Array): Promise<number | null> {
+  try {
+    const { PDFParse } = await import("pdf-parse");
+    const parser = new PDFParse({ data: Buffer.from(bytes) });
+    try {
+      const info = await parser.getInfo();
+      return typeof info.total === "number" && info.total > 0 ? info.total : pdfPageCount(bytes);
+    } finally {
+      await parser.destroy();
+    }
+  } catch {
+    return pdfPageCount(bytes);
+  }
+}
+
+/**
+ * One signature and one date field per signer at the foot of the last page, stacked so several
+ * signers do not overlap. Coordinates are fractions of the page, as DocuSeal expects.
+ */
+export function signatureFields(roles: string[], lastPage: number) {
+  return roles.flatMap((role, i) => {
+    const y = Math.max(0.05, 0.86 - i * 0.09);
+    return [
+      { name: `Signature (${role})`, type: "signature", role, required: true, areas: [{ page: lastPage, x: 0.08, y, w: 0.42, h: 0.07 }] },
+      { name: `Date (${role})`, type: "date", role, required: true, areas: [{ page: lastPage, x: 0.6, y: y + 0.02, w: 0.25, h: 0.04 }] },
+    ];
+  });
+}
+
 export function createDocusealAdapter(config: DocusealConfig): EsignAdapter {
   const base = config.baseUrl.replace(/\/$/, "");
   const doFetch = config.fetchImpl ?? fetch;
@@ -91,6 +132,15 @@ export function createDocusealAdapter(config: DocusealConfig): EsignAdapter {
         ...(s.role ? { role: s.role } : {}),
         external_id: `${input.referenceId}:${i}`,
       }));
+      const pdfBytes = async (): Promise<Uint8Array | null> => {
+        try {
+          if (!/^https?:\/\//.test(input.documentUrl)) return new Uint8Array(Buffer.from(input.documentUrl, "base64"));
+          const res = await doFetch(input.documentUrl, { signal: AbortSignal.timeout(20_000) });
+          return res.ok ? new Uint8Array(await res.arrayBuffer()) : null;
+        } catch {
+          return null;
+        }
+      };
       const message = input.message ? { message: { subject: input.title, body: input.message } } : {};
       // Merge fields go in as DocuSeal variables ([[contract_title]] in a template or document).
       const variables = Object.keys(input.mergeFields).length > 0 ? { variables: input.mergeFields } : {};
@@ -102,11 +152,15 @@ export function createDocusealAdapter(config: DocusealConfig): EsignAdapter {
         if (!ref) throw new Error("DocuSeal returned no submission id");
         return { providerRef: String(ref) };
       }
+      // Fields need a role on every submitter; signers without one become "Signer 1", "Signer 2"...
+      const roles = input.signers.map((s, i) => s.role ?? `Signer ${i + 1}`);
+      const bytes = await pdfBytes();
+      const lastPage = (bytes && (await countPdfPages(bytes))) || 1;
       const created = await call<{ id?: number }>("POST", "/submissions/pdf", {
         name: input.title,
         send_email: true,
-        documents: [{ name: input.title, file: input.documentUrl }],
-        submitters,
+        documents: [{ name: input.title, file: input.documentUrl, fields: signatureFields(roles, lastPage) }],
+        submitters: submitters.map((s, i) => ({ ...s, role: roles[i] })),
         ...variables,
         ...message,
       });

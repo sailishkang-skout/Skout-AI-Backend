@@ -1,7 +1,8 @@
+import { planFromItems, pricedItems } from "../services/cops-subscriptions.service.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { Db } from "@skout/db";
 import { loadEnv } from "../config/env.js";
@@ -242,6 +243,157 @@ maybe("COPS-08 subscriptions", () => {
     expect((await sql`select count(*)::int as n from deals where company_id = ${accountId}`)[0].n).toBe(1);
   });
 
+  it("is built from the sent proposal's monthly lines (any plan, not only seats); one-time lines stay out", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    const line = (description: string, kind: string, quantity: number, unit: number, price_basis: string) => ({ kind, description, quantity, unit_amount_minor: unit, price_basis });
+    const proposal = (
+      await call("POST", `/opportunities/${opportunityId}/proposals`, {
+        title: "Mixed plan",
+        currency: "USD",
+        billing_cadence: "monthly",
+        term_months: 12,
+        discount_pct: 0,
+        line_items: [
+          // Month-to-month list prices (price book): below them the proposal would need a discount approval.
+          line("Skout Full", "seats", 3, 4_500, "per_month"),
+          line("Skout Full Multichannel", "seats", 2, 6_500, "per_month"),
+          line("Additional connected identity", "product", 1, 700, "per_month"),
+          line("Premium support", "product", 1, 2_000, "per_month"),
+          line("Implementation fee", "fee", 1, 50_000, "one_time"),
+        ],
+      })
+    ).json().data;
+    // Without a sent proposal and without seats there is nothing to bill.
+    expect((await call("POST", `/accounts/${accountId}/subscription`, { opportunity_id: opportunityId, cadence: "monthly", term_months: 12 })).statusCode).toBe(422);
+    await call("POST", `/proposals/${proposal.id}/send`, {});
+    const res = await call("POST", `/accounts/${accountId}/subscription`, { opportunity_id: opportunityId, cadence: "monthly", term_months: 12, payment_terms_net_days: 0 });
+    expect(res.statusCode).toBe(201);
+    const sub = res.json().data;
+    expect(sub.items.map((i: { description: string; quantity: number }) => `${i.description} x${i.quantity}`)).toEqual([
+      "Skout Full x3",
+      "Skout Full Multichannel x2",
+      "Additional connected identity x1",
+      "Premium support x1",
+    ]);
+    // Seat limit counts every seat plan; the first month bills every monthly line, not the one-time fee.
+    expect(sub.seats).toBe(5);
+    expect(sub.invoices[0].amount_minor).toBe(3 * 4_500 + 2 * 6_500 + 700 + 2_000);
+  });
+
+  it("the paid proposal payment settles the first bill instead of billing it again", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    const proposal = (
+      await call("POST", `/opportunities/${opportunityId}/proposals`, {
+        title: "Paid up front",
+        currency: "USD",
+        billing_cadence: "monthly",
+        term_months: 12,
+        discount_pct: 0,
+        line_items: [
+          { kind: "seats", description: "Skout Full", quantity: 1, unit_amount_minor: 4_500, price_basis: "per_month" },
+          { kind: "fee", description: "Implementation fee", quantity: 1, unit_amount_minor: 500, price_basis: "one_time" },
+        ],
+      })
+    ).json().data;
+    await call("POST", `/proposals/${proposal.id}/send`, {});
+    // The proposal's payment link (first month + one-time fee) was paid before the subscription started.
+    const [paid] = await sql`insert into payment_requests (workspace_id, opportunity_id, proposal_id, amount_minor, currency, status, provider, provider_ref, checkout_url, provider_payment_id, paid_at)
+      values (${workspaceId}, ${opportunityId}, ${proposal.id}, 5000, 'USD', 'paid', 'razorpay', ${`plink_${opportunityId}`}, 'https://rzp.io/test', ${`pay_upfront_${opportunityId}`}, now()) returning id`;
+    const sub = (await call("POST", `/accounts/${accountId}/subscription`, { opportunity_id: opportunityId, cadence: "monthly", term_months: 12, payment_terms_net_days: 0 })).json().data;
+    expect(sub.invoices[0]).toMatchObject({ amount_minor: 4_500, status: "paid", payment_request_id: paid.id });
+
+    // Cancelled now, then the payment is refunded: the bill it paid is not "paid" any more.
+    expect((await call("POST", `/subscriptions/${sub.id}/cancel`, { when: "now", reason: "Left in the first week" })).statusCode).toBe(200);
+    const raw = JSON.stringify({ event: "refund.processed", payload: { refund: { entity: { id: `rfnd_${opportunityId}`, payment_id: `pay_upfront_${opportunityId}`, amount: 5000, currency: "USD" } } } });
+    const refund = await app.inject({
+      method: "POST",
+      url: "/api/v1/billing/webhooks/razorpay/payment-links",
+      headers: { "content-type": "application/json", "x-razorpay-event-id": `evt_${randomUUID()}`, "x-razorpay-signature": createHmac("sha256", "whsec_test_subscriptions").update(raw).digest("hex") },
+      payload: raw,
+    });
+    expect(refund.json()).toMatchObject({ outcome: "applied", status: "refunded" });
+    expect((await current(accountId)).invoices[0].status).toBe("void");
+  });
+
+  it("an annual proposal priced per term bills monthly from the term price, in the proposal's currency", async () => {
+    const { accountId, opportunityId } = await newAccount("INR");
+    const proposal = (
+      await call("POST", `/opportunities/${opportunityId}/proposals`, {
+        title: "Annual, per term",
+        currency: "USD",
+        billing_cadence: "annual",
+        term_months: 12,
+        discount_pct: 0,
+        // No price_basis: seats default to per term (the whole year per seat, USD 35 x 12).
+        line_items: [{ kind: "seats", description: "Skout Full", quantity: 2, unit_amount_minor: 42_000 }],
+      })
+    ).json().data;
+    await call("POST", `/proposals/${proposal.id}/send`, {});
+    const res = await call("POST", `/accounts/${accountId}/subscription`, { opportunity_id: opportunityId, cadence: "annual", term_months: 12, payment_terms_net_days: 0 });
+    expect(res.statusCode).toBe(201);
+    const sub = res.json().data;
+    expect(sub.currency).toBe("USD");
+    expect(sub.seats).toBe(2);
+    // A year up front: 2 seats x USD 35 a month x 12.
+    expect(sub.invoices[0].amount_minor).toBe(2 * 3_500 * 12);
+  });
+
+  it("a seat change across two seat plans always bills the seats in force", () => {
+    const items = [
+      { kind: "seats", quantity: 3, unitAmountMinor: 3_500 },
+      { kind: "seats", quantity: 2, unitAmountMinor: 5_500 },
+      { kind: "product", quantity: 1, unitAmountMinor: 2_000 },
+    ] as never;
+    const seatsBilled = (seats: number) => pricedItems(items, seats).slice(0, 2).reduce((n, i) => n + i.quantity, 0);
+    // 5 seats down to 1: both plans give seats back (the second first), never 2 left on the second.
+    expect(pricedItems(items, 1).map((i) => i.quantity)).toEqual([1, 0, 1]);
+    expect(seatsBilled(1)).toBe(1);
+    expect(seatsBilled(4)).toBe(4);
+    // Added seats land on the first plan; the non-seat item never changes.
+    expect(pricedItems(items, 7).map((i) => i.quantity)).toEqual([5, 2, 1]);
+  });
+
+  it("maps what was sold to the customer's Skout AI plan limits", () => {
+    expect(planFromItems([{ kind: "seats", description: "Skout Full", quantity: 3 }])).toEqual({ plan: "full", extraIdentities: 0 });
+    expect(planFromItems([
+      { kind: "seats", description: "Skout Full Multichannel", quantity: 2 },
+      { kind: "product", description: "Additional connected identity", quantity: 2 },
+    ])).toEqual({ plan: "multichannel", extraIdentities: 2 });
+    // Only support bought, no seats: still the Full limits, nothing extra.
+    expect(planFromItems([{ kind: "product", description: "Premium support", quantity: 1 }])).toEqual({ plan: "full", extraIdentities: 0 });
+  });
+
+  it("a subscription can be cancelled at the end of its term (no renewal) or now, and an end-of-term cancel withdrawn", async () => {
+    const { accountId, opportunityId } = await newAccount();
+    const sub = (await subscribe(accountId, opportunityId, {})).json().data;
+    // A reason and a valid "when" are required.
+    expect((await call("POST", `/subscriptions/${sub.id}/cancel`, { when: "end_of_term" })).statusCode).toBe(422);
+    expect((await call("POST", `/subscriptions/${sub.id}/cancel`, { when: "someday", reason: "x" })).statusCode).toBe(422);
+
+    const later = await call("POST", `/subscriptions/${sub.id}/cancel`, { when: "end_of_term", reason: "Customer is moving to another tool" });
+    expect(later.statusCode).toBe(200);
+    expect(later.json().data).toMatchObject({ status: "active", cancel_at: sub.renews_at, cancel_reason: "Customer is moving to another tool" });
+    // No renewal opens for a cancelled subscription, even inside the lead window.
+    await runRenewals(db, new Date(new Date(sub.renews_at).getTime() - 10 * DAY), { workspaceId });
+    expect((await sql`select renewal_opportunity_id from subscriptions where id = ${sub.id}`)[0].renewal_opportunity_id).toBeNull();
+    // Withdrawn before it closes: it renews again.
+    const resumed = await call("POST", `/subscriptions/${sub.id}/resume`, { reason: "They stayed after the call" });
+    expect(resumed.statusCode).toBe(200);
+    expect(resumed.json().data.cancel_at).toBeNull();
+    expect((await call("POST", `/subscriptions/${sub.id}/resume`, { reason: "again" })).statusCode).toBe(409);
+
+    const now = await call("POST", `/subscriptions/${sub.id}/cancel`, { when: "now", reason: "Contract ended early by agreement" });
+    expect(now.statusCode).toBe(200);
+    expect(now.json().data.status).toBe("closed");
+    // Closing now voids the bills not yet paid, so the customer is not asked to pay them.
+    expect(sub.invoices[0].status).toBe("open");
+    expect(now.json().data.invoices.map((i: { status: string }) => i.status)).toEqual(["void"]);
+    expect((await call("POST", `/subscriptions/${sub.id}/cancel`, { when: "now", reason: "twice" })).statusCode).toBe(409);
+    expect((await call("POST", `/subscriptions/${sub.id}/resume`, { reason: "too late" })).statusCode).toBe(409);
+    const audit = await sql`select action from audit_logs where entity_id = ${sub.id} and action like 'subscription.cancel%' order by created_at`;
+    expect(audit.map((a: { action: string }) => a.action)).toEqual(["subscription.cancelled", "subscription.cancel_withdrawn", "subscription.cancelled"]);
+  });
+
   it("amendments are appended and never edited; seats change with the next period and the original contract is untouched", async () => {
     const { accountId, opportunityId } = await newAccount();
     const contract = (await call("POST", `/opportunities/${opportunityId}/contracts`, { kind: "msa", document_url: "https://docs.example.test/msa.pdf", file_sha256: "c".repeat(64) })).json().data;
@@ -250,6 +402,14 @@ maybe("COPS-08 subscriptions", () => {
 
     expect((await call("POST", `/subscriptions/${sub.id}/amendments`, { seats: 15 })).statusCode).toBe(422);
     expect((await call("POST", `/subscriptions/${sub.id}/amendments`, { reason: "nothing to change" })).statusCode).toBe(422);
+    // The preview shows the next bill before and after, and writes nothing.
+    const preview = await call("POST", `/subscriptions/${sub.id}/amendments/preview`, { seats: 15 });
+    expect(preview.statusCode).toBe(200);
+    const p = preview.json().data;
+    expect(p).toMatchObject({ seats: { before: 10, after: 15 }, proration: "none" });
+    expect(p.next_bill_minor.after).toBe((p.next_bill_minor.before / 10) * 15);
+    expect(p.change_minor).toBe(p.next_bill_minor.after - p.next_bill_minor.before);
+    expect((await sql`select count(*)::int as n from subscription_amendments where subscription_id = ${sub.id}`)[0].n).toBe(0);
     const first = await call("POST", `/subscriptions/${sub.id}/amendments`, { seats: 15, reason: "Five more reps joined" });
     expect(first.statusCode).toBe(201);
     const amended = first.json().data;

@@ -39,6 +39,10 @@ export interface RoleCtx {
   requestId: string;
   /** The caller's own permission keys, for the escalation check. */
   permissions: string[];
+  /** COPS-15: the caller is an Owner/Admin of the internal workspace, so may grant Ops access. */
+  opsAccessGrantor?: boolean;
+  /** COPS-15: this is the internal workspace (the Ops access role is shown only there). */
+  internalWorkspace?: boolean;
 }
 
 type RoleRow = typeof roles.$inferSelect;
@@ -211,8 +215,12 @@ export async function setMemberRoles(db: Db, ctx: RoleCtx, userId: string, roleI
   if (missing.length) throw new RoleError("NOT_FOUND", "Some roles are not available in this workspace", { role_ids: missing });
   const base = rows.filter((r) => isBase(r.key));
   if (base.length) throw new RoleError("VALIDATION_FAILED", "The owner, admin and member roles are set in team settings", { role_ids: base.map((r) => r.id) });
+  if (rows.some((r) => r.key === "ops_access") && !ctx.opsAccessGrantor) {
+    throw new RoleError("FORBIDDEN", "Only an Owner or Admin of the internal Skout workspace can grant Ops access", {});
+  }
   const granted = await permissionsOf(db, wanted);
-  const escalation = granted.filter((k) => !ctx.permissions.includes(k));
+  // Nobody holds ops:access through a role, so its grantor is checked above instead.
+  const escalation = granted.filter((k) => !ctx.permissions.includes(k) && !(k === "ops:access" && ctx.opsAccessGrantor));
   if (escalation.length) throw new RoleError("FORBIDDEN", "You cannot grant a role with permissions you do not hold", { missing: escalation });
 
   const before = await getMemberRoles(db, ctx.workspaceId, userId);

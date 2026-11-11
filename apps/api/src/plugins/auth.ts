@@ -165,7 +165,7 @@ async function applyApiKeyIdentity(
   return "ok";
 }
 
-function isPublicRoute(url: string, method?: string): boolean {
+export function isPublicRoute(url: string, method?: string): boolean {
   const pathname = url.split("?")[0]!;
   // Only GET /api/v1/team/invites/<token> is public; DELETE and /accept suffix require auth
   const isInviteTokenLookup =

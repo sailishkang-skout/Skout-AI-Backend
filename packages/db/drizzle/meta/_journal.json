@@ -1044,6 +1044,48 @@
       "when": 1797800000000,
       "tag": "0146_cops14_export_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 149,
+      "version": "7",
+      "when": 1797900000000,
+      "tag": "0147_activation_first_campaign",
+      "breakpoints": true
+    },
+    {
+      "idx": 150,
+      "version": "7",
+      "when": 1798000000000,
+      "tag": "0148_subscription_cancel",
+      "breakpoints": true
+    },
+    {
+      "idx": 151,
+      "version": "7",
+      "when": 1798100000000,
+      "tag": "0149_ops_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 152,
+      "version": "7",
+      "when": 1798200000000,
+      "tag": "0150_subscription_item_description",
+      "breakpoints": true
+    },
+    {
+      "idx": 153,
+      "version": "7",
+      "when": 1798300000000,
+      "tag": "0151_invite_ops_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 154,
+      "version": "7",
+      "when": 1798300100000,
+      "tag": "0152_ops_access_first_holders",
+      "breakpoints": true
     }
   ]
 }

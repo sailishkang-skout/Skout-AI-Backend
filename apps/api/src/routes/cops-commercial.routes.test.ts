@@ -46,7 +46,8 @@ maybe("COPS-03 proposals and contracts", () => {
     term_months: 12,
     tax_pct: 18,
     line_items: [
-      { kind: "seats", description: "Seats", quantity: 10, unit_amount_minor: 100_000, discount_pct: 10 },
+      // INR list price for a year (price book: 5,999 a seat a month); a lower price would need a discount approval.
+      { kind: "seats", description: "Seats", quantity: 10, unit_amount_minor: 7_198_800, discount_pct: 10 },
       { kind: "fee", description: "Onboarding", quantity: 1, unit_amount_minor: 50_000 },
     ],
   };
@@ -90,7 +91,7 @@ maybe("COPS-03 proposals and contracts", () => {
     expect(res.statusCode).toBe(201);
     const p = res.json().data;
     expect(p).toMatchObject({ status: "draft", current_version: 1 });
-    expect(p.versions[0].totals).toEqual({ subtotal_minor: 1_050_000, discount_minor: 100_000, tax_minor: 171_000, total_minor: 1_121_000 });
+    expect(p.versions[0].totals).toEqual({ subtotal_minor: 72_038_000, discount_minor: 7_198_800, tax_minor: 11_671_056, total_minor: 76_510_256 });
     expect(p.versions[0]).toMatchObject({ sent_at: null, content_hash: null, hash_valid: null });
   });
 

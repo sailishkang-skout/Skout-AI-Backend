@@ -1,3 +1,4 @@
+import { canGrantOpsAccess } from "../services/ops-access.service.js";
 import type { FastifyInstance } from "fastify";
 import { eq } from "drizzle-orm";
 import { schema } from "@skout/db";
@@ -122,7 +123,7 @@ export async function teamRoutes(app: FastifyInstance) {
   });
 
   // POST /team/invites — create invite (owner or admin)
-  app.post<{ Body: { email: string; role: WorkspaceRole; app?: "customerops" } }>(
+  app.post<{ Body: { email: string; role: WorkspaceRole; app?: "customerops"; ops_access?: boolean } }>(
     "/team/invites",
     async (request, reply) => {
       if (!request.workspaceId || !request.userId) {
@@ -130,6 +131,15 @@ export async function teamRoutes(app: FastifyInstance) {
       }
       await shadowCheckTeamManage(request.workspaceId, request.userId, "create-invite");
       const { email, role } = request.body;
+      // COPS-15: Ops access can ride on an invite only from the ops portal, by an Owner/Admin who
+      // holds it themselves (chain of trust: a customer workspace never has a holder).
+      const wantsOps = request.body.ops_access === true;
+      if (wantsOps) {
+        const may = request.body.app === "customerops" && !!app.db && (await canGrantOpsAccess(app.db, app.config, request.workspaceId!, request.userId!, String(request.role ?? "")));
+        if (!may) {
+          return reply.code(403).send(errorResponse("Only an Owner or Admin of the Skout workspace who has Ops access can invite with Ops access", 403));
+        }
+      }
       if (!email || typeof email !== "string") {
         return reply.code(400).send(errorResponse("email is required", 400));
       }
@@ -148,6 +158,9 @@ export async function teamRoutes(app: FastifyInstance) {
       const opsBase = request.body.app === "customerops" ? customerOpsBaseUrl(app.config.COPS_APP_URL, request.headers.origin) : null;
       const baseUrl = opsBase ?? productAppUrl(app.config.INVITE_BASE_URL ?? app.config.FRONTEND_URL ?? "http://localhost:3000");
       const acceptUrl = `${baseUrl}/invite/${invite.token}`;
+      if (wantsOps) {
+        await app.db!.update(schema.workspaceInvites).set({ grantOpsAccess: true }).where(eq(schema.workspaceInvites.token, invite.token));
+      }
 
       const [ws] = await app.db!
         .select({ name: schema.workspaces.name })
@@ -166,6 +179,7 @@ export async function teamRoutes(app: FastifyInstance) {
             workspaceName: ws?.name ?? "Skout workspace",
             role: invite.role,
             acceptUrl,
+            product: opsBase ? "customerops" : undefined,
           })
         );
         emailSent = mail.sent;

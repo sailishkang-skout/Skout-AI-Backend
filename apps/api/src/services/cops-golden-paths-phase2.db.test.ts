@@ -11,6 +11,8 @@ import { runRenewals } from "./cops-renewals.service.js";
 import { projectCopsEventToTimelineRow } from "./cops-timeline.service.js";
 import { dashboard, drill } from "./cops-dashboards.service.js";
 import { generateRecommendations } from "./cops-recommendations.service.js";
+import { saveConfig } from "./cops-admin-config.service.js";
+import { DEFAULT_SLA_POLICY } from "@skout/shared";
 
 const postgres = createRequire(new URL("../../../../packages/db/package.json", import.meta.url))("postgres") as (url: string, options?: object) => any;
 
@@ -61,6 +63,9 @@ maybe("COPS-13 Phase 2 golden paths (Postgres)", () => {
     const [s] = await sql`insert into pipeline_stages (pipeline_id, name, order_index) values (${p.id}, 'Qualified', 0) returning id`;
     pipelineId = p.id;
     stageId = s.id;
+    // The SLA path uses round-the-clock P1 clocks (an on-call rota); on business hours a 4h target
+    // may not have passed 5 hours later, so the result would depend on when the suite runs.
+    await saveConfig(db, { workspaceId: ws, userId, requestId: randomUUID() } as never, "sla_policy", "default", { value: { ...DEFAULT_SLA_POLICY, onCallRota: true }, reason: "Test workspace has an on-call rota" });
   });
   afterAll(async () => {
     await sql.end();

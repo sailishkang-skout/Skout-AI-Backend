@@ -1,3 +1,4 @@
+import { grantOpsAccessFromInvite } from "./ops-access.service.js";
 import { randomBytes } from "node:crypto";
 import type { Db } from "@skout/db";
 import { schema, scopedTo, scopedById } from "@skout/db";
@@ -324,6 +325,8 @@ export function createTeamService(db: Db) {
           userId,
         });
       }
+      // COPS-15: an ops-portal invite with Ops access grants it now (the inviter was checked then).
+      await grantOpsAccessFromInvite(db, invite, userId);
 
       await db
         .update(schema.workspaceInvites)

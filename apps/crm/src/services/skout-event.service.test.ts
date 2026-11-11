@@ -70,4 +70,25 @@ describe("emitSkoutEvent (apps/crm)", () => {
 
     expect(event.type).toBe("opportunity.updated");
   });
+
+  it("returns after the timeout when Redis never answers (the add never settles)", async () => {
+    vi.useFakeTimers();
+    try {
+      queueAdd.mockImplementationOnce(() => new Promise(() => undefined));
+      const config = { REDIS_URL: "redis://localhost:6379" } as Env;
+
+      const pending = emitSkoutEvent(db, config, {
+        type: "opportunity.updated",
+        tenantId: "ws-1",
+        aggregateId: "deal-3",
+        data: {},
+      });
+      await vi.advanceTimersByTimeAsync(2_000);
+      const event = await pending;
+
+      expect(event.aggregateId).toBe("deal-3");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

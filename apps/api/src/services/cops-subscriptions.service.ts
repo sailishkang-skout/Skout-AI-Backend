@@ -20,6 +20,7 @@ import {
   type SubscriptionBilling,
   type SubscriptionCadence,
   type SubscriptionStatus,
+  defaultPriceBasis,
 } from "@skout/shared";
 import { writeCopsAudit } from "./cops-platform.service.js";
 import { getConfig } from "./cops-admin-config.service.js";
@@ -36,7 +37,7 @@ import type { PspAdapter } from "./psp/psp-adapter.js";
  * auto-debit. `invoiced` accounts are never suspended automatically. Status comes only from the
  * oldest unpaid bill, so paying it restores access with no extra step, and nothing here deletes data.
  */
-const { subscriptions, subscriptionItems, subscriptionInvoices, subscriptionAmendments, paymentRequests, copsLifecycleStates, copsProvisionings, entitlements } = schema;
+const { subscriptions, subscriptionItems, subscriptionInvoices, subscriptionAmendments, paymentRequests, copsLifecycleStates, copsProvisionings, entitlements, proposals, proposalVersions, proposalLineItems } = schema;
 
 /**
  * Account lifecycle state (COPS-01) for each subscription status. The failed-payment stages before
@@ -52,6 +53,25 @@ type AmendmentRow = typeof subscriptionAmendments.$inferSelect;
 
 const seatChanges = (amendments: AmendmentRow[]) => amendments.map((a) => ({ seq: a.seq, seats: a.seats, effective_at: a.effectiveAt }));
 const originalSeats = (items: ItemRow[]) => items.filter((i) => i.kind === "seats").reduce((sum, i) => sum + i.quantity, 0);
+/**
+ * Items priced for a period with `seats` in force. Added seats land on the first seat line; a
+ * reduction takes seats off the seat lines from the last one up, so the billed seats always add up
+ * to `seats` (a cut bigger than one plan's seats used to leave the other plan billed in full).
+ * Non-seat items keep their quantity.
+ */
+export const pricedItems = (items: ItemRow[], seats: number) => {
+  const quantities = items.map((i) => i.quantity);
+  const seatIdx = items.map((i, idx) => (i.kind === "seats" ? idx : -1)).filter((idx) => idx >= 0);
+  let delta = seats - originalSeats(items);
+  if (delta > 0 && seatIdx.length) quantities[seatIdx[0]!]! += delta;
+  for (let k = seatIdx.length - 1; delta < 0 && k >= 0; k--) {
+    const idx = seatIdx[k]!;
+    const take = Math.min(quantities[idx]!, -delta);
+    quantities[idx]! -= take;
+    delta += take;
+  }
+  return items.map((i, idx) => ({ quantity: quantities[idx]!, unit_amount_minor: Number(i.unitAmountMinor) }));
+};
 
 async function loadDunningPolicy(db: Db, workspaceId: string): Promise<DunningPolicy> {
   const config = await getConfig(db, workspaceId, "dunning_policy", "default");
@@ -76,13 +96,16 @@ function subscriptionDto(row: SubscriptionRow, items: ItemRow[], invoices: Invoi
     term_start: row.termStart.toISOString(),
     /** The renewal date: the end of the term. */
     renews_at: row.termEnd.toISOString(),
+    /** When a cancelled subscription ends (or ended); null while it renews. */
+    cancel_at: row.cancelAt?.toISOString() ?? null,
+    cancel_reason: row.cancelReason ?? null,
     payment_terms_net_days: row.paymentTermsNetDays,
     provider_subscription_id: row.providerSubscriptionId,
     provider_plan_id: row.providerPlanId,
     renewal_opportunity_id: row.renewalOpportunityId,
     renewal_opened_at: row.renewalOpenedAt?.toISOString() ?? null,
     status_changed_at: row.statusChangedAt.toISOString(),
-    items: items.map((i) => ({ id: i.id, kind: i.kind, quantity: i.quantity, unit_amount_minor: Number(i.unitAmountMinor) })),
+    items: items.map((i) => ({ id: i.id, kind: i.kind, description: i.description ?? (i.kind === "seats" ? "Seats" : "Item"), quantity: i.quantity, unit_amount_minor: Number(i.unitAmountMinor) })),
     /** Seats in force now. A seat amendment not yet effective shows in `amendments`, not here. */
     seats: effectiveSeats(originalSeats(items), seatChanges(amendments), now),
     amendments: [...amendments]
@@ -182,12 +205,40 @@ async function syncAccountFromSubscription(tx: Tx, sub: SubscriptionRow, status:
     .onConflictDoUpdate({ target: [entitlements.workspaceId, entitlements.key], set: { value, source: "cops-subscription", updatedAt: now } });
 }
 
+/**
+ * What was sold switches the customer's Skout AI limits on: a Multichannel seat line sets the plan
+ * to multichannel (2 identities, 5,000 AI actions), each "connected identity" add-on adds one
+ * identity. Read by cops-usage planLimits (entitlements plan.code and limits.extra_identities).
+ */
+export function planFromItems(items: Array<{ kind: string; description: string | null; quantity: number }>) {
+  const plan = items.some((i) => i.kind === "seats" && /multichannel/i.test(i.description ?? "")) ? "multichannel" : "full";
+  const extraIdentities = items.filter((i) => /identit/i.test(i.description ?? "")).reduce((n, i) => n + i.quantity, 0);
+  return { plan, extraIdentities };
+}
+
+async function applyPlanEntitlements(tx: Tx, sub: SubscriptionRow, items: ItemRow[], now: Date): Promise<void> {
+  const [provisioned] = await tx
+    .select({ workspaceId: copsProvisionings.provisionedWorkspaceId })
+    .from(copsProvisionings)
+    .where(and(eq(copsProvisionings.workspaceId, sub.workspaceId), eq(copsProvisionings.accountId, sub.accountId), isNotNull(copsProvisionings.provisionedWorkspaceId)))
+    .orderBy(desc(copsProvisionings.createdAt))
+    .limit(1);
+  if (!provisioned?.workspaceId) return;
+  const { plan, extraIdentities } = planFromItems(items);
+  for (const [key, value] of [["plan.code", plan], ["limits.extra_identities", extraIdentities]] as const) {
+    await tx
+      .insert(entitlements)
+      .values({ workspaceId: provisioned.workspaceId, key, value, source: "cops-subscription", updatedAt: now })
+      .onConflictDoUpdate({ target: [entitlements.workspaceId, entitlements.key], set: { value, source: "cops-subscription", updatedAt: now } });
+  }
+}
+
 /** One bill per period that has started. Safe to call again: a period is billed once. */
 async function ensurePeriodInvoices(tx: Tx, sub: SubscriptionRow, items: ItemRow[], now: Date, amendments: AmendmentRow[] = []): Promise<number> {
   const base = originalSeats(items);
   const changes = seatChanges(amendments);
   // A period is billed for the seats in force when it starts: a later seat change never reprices it.
-  const priced = (at: Date) => items.map((i) => ({ quantity: i.kind === "seats" ? effectiveSeats(base, changes, at) : i.quantity, unit_amount_minor: Number(i.unitAmountMinor) }));
+  const priced = (at: Date) => pricedItems(items, effectiveSeats(base, changes, at));
   const periods = periodsStarted(sub.termStart, sub.cadence as SubscriptionCadence, sub.termMonths, now);
   if (periods.length === 0) return 0;
   const rows = await tx
@@ -208,9 +259,66 @@ async function ensurePeriodInvoices(tx: Tx, sub: SubscriptionRow, items: ItemRow
   return rows.length;
 }
 
+/**
+ * The proposal's payment link charges the first bill (a year up front on annual billing). When the
+ * deal has already paid it, that payment settles the first period instead of billing it again.
+ * Returns the settled invoice id, or null when there is nothing to settle.
+ */
+async function settleFirstPeriodFromProposalPayment(tx: Tx, sub: SubscriptionRow, now: Date): Promise<string | null> {
+  if (!sub.opportunityId) return null;
+  const [paid] = await tx
+    .select({ id: paymentRequests.id, paidAt: paymentRequests.paidAt, amountMinor: paymentRequests.amountMinor, currency: paymentRequests.currency })
+    .from(paymentRequests)
+    .where(and(eq(paymentRequests.workspaceId, sub.workspaceId), eq(paymentRequests.opportunityId, sub.opportunityId), isNotNull(paymentRequests.proposalId), eq(paymentRequests.status, "paid")))
+    .orderBy(desc(paymentRequests.paidAt))
+    .limit(1);
+  if (!paid || paid.currency !== sub.currency) return null;
+  const [used] = await tx.select({ id: subscriptionInvoices.id }).from(subscriptionInvoices).where(eq(subscriptionInvoices.paymentRequestId, paid.id)).limit(1);
+  if (used) return null;
+  const [first] = await tx
+    .select()
+    .from(subscriptionInvoices)
+    .where(and(eq(subscriptionInvoices.subscriptionId, sub.id), eq(subscriptionInvoices.status, "open")))
+    .orderBy(asc(subscriptionInvoices.periodStart))
+    .limit(1);
+  if (!first || first.periodStart.getTime() !== sub.termStart.getTime() || Number(paid.amountMinor) < Number(first.amountMinor)) return null;
+  await tx.update(subscriptionInvoices).set({ status: "paid", paidAt: paid.paidAt ?? now, paymentRequestId: paid.id }).where(eq(subscriptionInvoices.id, first.id));
+  return first.id;
+}
+
+/**
+ * A bill paid by a payment that has now been refunded is no longer paid: on a closed subscription
+ * it is voided, on a running one it is open again (the customer owes it). Returns the bills changed.
+ */
+export async function unsettleInvoicesForRefund(tx: Tx, workspaceId: string, paymentRequestId: string, requestId: string): Promise<Array<{ id: string; status: "void" | "open" }>> {
+  const rows = await tx
+    .select({ id: subscriptionInvoices.id, subscriptionId: subscriptionInvoices.subscriptionId, subStatus: subscriptions.status })
+    .from(subscriptionInvoices)
+    .innerJoin(subscriptions, eq(subscriptions.id, subscriptionInvoices.subscriptionId))
+    .where(and(eq(subscriptionInvoices.workspaceId, workspaceId), eq(subscriptionInvoices.paymentRequestId, paymentRequestId), eq(subscriptionInvoices.status, "paid")));
+  const changed: Array<{ id: string; status: "void" | "open" }> = [];
+  for (const row of rows) {
+    const status = row.subStatus === "closed" ? "void" : "open";
+    await tx.update(subscriptionInvoices).set({ status, paidAt: null }).where(eq(subscriptionInvoices.id, row.id));
+    await writeCopsAudit(tx, {
+      tenantId: workspaceId,
+      actor: { type: "system", id: null },
+      entityType: "subscription_invoice",
+      entityId: row.id,
+      action: "subscription_invoice.refunded",
+      before: { status: "paid" },
+      after: { status, payment_request_id: paymentRequestId, subscription_id: row.subscriptionId },
+      correlationId: requestId,
+      sourceChannel: "api",
+    });
+    changed.push({ id: row.id, status });
+  }
+  return changed;
+}
+
 export interface CreateSubscriptionInput {
   opportunity_id: string;
-  seats: number;
+  seats?: number;
   cadence: SubscriptionCadence;
   term_months: number;
   billing?: SubscriptionBilling;
@@ -229,11 +337,21 @@ export async function createSubscription(db: Db, ctx: CommercialContext, account
   if (opportunity.companyId !== accountId) {
     throw new CommercialError("VALIDATION_FAILED", "opportunity_id is not an opportunity of this account", { fields: [{ path: "opportunity_id", code: "invalid", message: "Not an opportunity of this account" }] });
   }
-  // The deal's currency is the subscription's currency. Nothing is converted.
-  const currency = opportunity.currency;
+  // What was sold: the recurring lines of the deal's latest sent proposal. Without one, the old
+  // single seat line (seats x price book) is used.
+  const recurring = await recurringProposalLines(db, ctx.workspaceId, opportunity.id);
+  // The subscription bills in the currency the proposal was sent in (its prices are in that
+  // currency); without a proposal, the deal's. Nothing is converted.
+  const currency = recurring?.currency ?? opportunity.currency;
   if (!currency) throw new CommercialError("VALIDATION_FAILED", "The opportunity has no currency", { fields: [{ path: "opportunity_id", code: "invalid", message: "Set the opportunity currency first" }] });
+  if (recurring && !recurring.lines.length) {
+    throw new CommercialError("BUSINESS_STATE_CONFLICT", "The sent proposal has no recurring lines (only one-time items), so there is nothing to subscribe to; one-time items are charged through the payment link", {});
+  }
+  if (!recurring && !(input.seats && input.seats > 0)) {
+    throw new CommercialError("VALIDATION_FAILED", "Send a proposal for this deal first, or give the number of seats", { fields: [{ path: "seats", code: "required", message: "Give seats or send a proposal" }] });
+  }
   let unit = input.seat_month_minor;
-  if (unit == null) {
+  if (unit == null && !recurring) {
     const book = priceBookSchema.safeParse((await getConfig(db, ctx.workspaceId, "price_book", "default"))?.value);
     unit = book.success ? (seatMonthMinor(book.data, currency, input.cadence) ?? undefined) : undefined;
     if (unit == null) {
@@ -265,16 +383,21 @@ export async function createSubscription(db: Db, ctx: CommercialContext, account
         createdBy: ctx.userId,
       })
       .returning();
-    const [item] = await tx.insert(subscriptionItems).values({ workspaceId: ctx.workspaceId, subscriptionId: sub!.id, kind: "seats", quantity: input.seats, unitAmountMinor: unit! }).returning();
-    await ensurePeriodInvoices(tx, sub!, [item!], now);
-    await syncAccountFromSubscription(tx, sub!, "active", input.seats, now, ctx.requestId);
+    const rows = recurring
+      ? recurring.lines.map((l) => ({ workspaceId: ctx.workspaceId, subscriptionId: sub!.id, kind: l.kind, description: l.description, quantity: l.quantity, unitAmountMinor: l.unitMinor }))
+      : [{ workspaceId: ctx.workspaceId, subscriptionId: sub!.id, kind: "seats", description: "Seats", quantity: input.seats!, unitAmountMinor: unit! }];
+    const items = await tx.insert(subscriptionItems).values(rows).returning();
+    await ensurePeriodInvoices(tx, sub!, items, now);
+    const settledInvoiceId = await settleFirstPeriodFromProposalPayment(tx, sub!, now);
+    await syncAccountFromSubscription(tx, sub!, "active", originalSeats(items), now, ctx.requestId);
+    await applyPlanEntitlements(tx, sub!, items, now);
     await writeCopsAudit(tx, {
       tenantId: ctx.workspaceId,
       actor: { type: "user", id: ctx.userId },
       entityType: "subscription",
       entityId: sub!.id,
       action: "subscription.created",
-      after: { account_id: accountId, seats: input.seats, seat_month_minor: unit, currency, cadence: input.cadence, term_months: input.term_months, billing },
+      after: { account_id: accountId, seats: input.seats, seat_month_minor: unit, currency, cadence: input.cadence, term_months: input.term_months, billing, first_bill_settled_by_proposal_payment: settledInvoiceId },
       correlationId: ctx.requestId,
       sourceChannel: "api",
     });
@@ -406,7 +529,9 @@ export async function runSubscriptionBilling(db: Db, now: Date = new Date(), sco
         .where(and(eq(subscriptionInvoices.subscriptionId, sub.id), eq(subscriptionInvoices.status, "open"), lte(subscriptionInvoices.dueAt, now)))
         .orderBy(asc(subscriptionInvoices.dueAt))
         .limit(1);
-      const next = subscriptionStatusFor(policy, { billing: sub.billing as SubscriptionBilling, oldest_overdue_due_at: overdue?.dueAt ?? null, now });
+      const dunned = subscriptionStatusFor(policy, { billing: sub.billing as SubscriptionBilling, oldest_overdue_due_at: overdue?.dueAt ?? null, now });
+      // A cancelled subscription closes once its cancel date has passed.
+      const next = sub.cancelAt && sub.cancelAt.getTime() <= now.getTime() ? { ...dunned, status: "closed" as SubscriptionStatus } : dunned;
       const from = sub.status as SubscriptionStatus;
       await syncAccountFromSubscription(tx, sub, next.status, effectiveSeats(originalSeats(items), seatChanges(amendments), now), now, requestId);
       if (next.status === from) return;
@@ -562,6 +687,10 @@ export async function getCustomerSubscription(db: Db, customerWorkspaceId: strin
     cadence: dto.cadence,
     seats: dto.seats,
     renews_at: dto.renews_at,
+    /** When a cancelled subscription ends; the customer sees it in Skout AI. */
+    cancel_at: dto.cancel_at,
+    /** What the customer pays for each month: name and quantity (prices stay on the bills). */
+    items: dto.items.map((i) => ({ description: i.description, kind: i.kind, quantity: i.quantity })),
     invoices: dto.invoices.map(({ payment_request_id: _p, ...bill }) => bill),
     dunning: dto.dunning,
   };
@@ -583,4 +712,146 @@ export async function customerInvoicePaymentLink(db: Db, psp: PspAdapter, custom
   const [request] = await db.select({ checkoutUrl: paymentRequests.checkoutUrl, status: paymentRequests.status }).from(paymentRequests).where(eq(paymentRequests.id, linked.payment_request_id)).limit(1);
   if (!request) throw new CommercialError("PROVIDER_ERROR", "The payment link could not be created; try again");
   return { checkout_url: request.checkoutUrl, status: request.status };
+}
+
+/**
+ * What a seat or term change would do, before it is made (CEO sign-off: show the charge or credit
+ * first). Seats change from the next billing period with no proration, so the preview is that
+ * period's bill before and after the change. Nothing is written.
+ */
+export async function previewAmendment(db: Db, ctx: CommercialContext, subscriptionId: string, input: { seats?: number; term_months?: number }, now: Date = new Date()) {
+  const [sub] = await db.select().from(subscriptions).where(and(eq(subscriptions.id, subscriptionId), eq(subscriptions.workspaceId, ctx.workspaceId))).limit(1);
+  if (!sub) throw new CommercialError("NOT_FOUND", "Subscription not found");
+  const items = await db.select().from(subscriptionItems).where(eq(subscriptionItems.subscriptionId, sub.id));
+  const earlier = await db.select().from(subscriptionAmendments).where(eq(subscriptionAmendments.subscriptionId, sub.id));
+  const seatsBefore = effectiveSeats(originalSeats(items), seatChanges(earlier), new Date(8_640_000_000_000_000));
+  const seatsAfter = input.seats ?? seatsBefore;
+  const termMonths = input.term_months ?? sub.termMonths;
+  const next = nextPeriodStart(sub.termStart, sub.cadence as SubscriptionCadence, termMonths, now);
+  const period = next ? periodsStarted(sub.termStart, sub.cadence as SubscriptionCadence, termMonths, next).at(-1) : undefined;
+  const bill = (seats: number) =>
+    period ? periodAmountMinor(pricedItems(items, seats), period.months) : null;
+  const before = bill(seatsBefore);
+  const after = bill(seatsAfter);
+  return {
+    currency: sub.currency,
+    seats: { before: seatsBefore, after: seatsAfter },
+    term_months: { before: sub.termMonths, after: termMonths },
+    renews_at: { before: sub.termEnd.toISOString(), after: addMonthsUtc(sub.termStart, termMonths).toISOString() },
+    next_period: period ? { start: period.start.toISOString(), end: period.end.toISOString() } : null,
+    next_bill_minor: { before, after },
+    /** Positive: the next bill goes up by this much (a charge). Negative: it goes down (a credit). */
+    change_minor: before !== null && after !== null ? after - before : null,
+    proration: "none" as const,
+  };
+}
+
+/** One subscription of this workspace as its DTO. */
+async function subscriptionById(db: Db, workspaceId: string, id: string, now: Date): Promise<SubscriptionDto> {
+  const [row] = await db.select().from(subscriptions).where(and(eq(subscriptions.id, id), eq(subscriptions.workspaceId, workspaceId))).limit(1);
+  if (!row) throw new CommercialError("NOT_FOUND", "Subscription not found");
+  return loadDto(db, row, now);
+}
+
+/**
+ * Cancels a subscription, with a reason. "end_of_term" keeps it running and billing to the end of
+ * the paid term, then it closes and no renewal opens; "now" closes it at once. Nothing is deleted.
+ */
+export async function cancelSubscription(db: Db, ctx: CommercialContext, subscriptionId: string, input: { when: "end_of_term" | "now"; reason: string }, now: Date = new Date()): Promise<SubscriptionDto> {
+  await db.transaction(async (tx) => {
+    const [sub] = await tx.select().from(subscriptions).where(and(eq(subscriptions.id, subscriptionId), eq(subscriptions.workspaceId, ctx.workspaceId))).for("update").limit(1);
+    if (!sub) throw new CommercialError("NOT_FOUND", "Subscription not found");
+    if (sub.status === "closed") throw new CommercialError("BUSINESS_STATE_CONFLICT", "This subscription is already closed", { status: sub.status });
+    const cancelAt = input.when === "now" ? now : sub.termEnd;
+    const status = input.when === "now" ? "closed" : sub.status;
+    await tx
+      .update(subscriptions)
+      .set({ cancelAt, cancelRequestedAt: now, cancelReason: input.reason, cancelledBy: ctx.userId, updatedAt: now, ...(status !== sub.status ? { status, statusChangedAt: now } : {}) })
+      .where(eq(subscriptions.id, sub.id));
+    // Closing now ends billing: bills not yet paid are voided so the customer is not asked to pay them.
+    const voided =
+      input.when === "now"
+        ? await tx
+            .update(subscriptionInvoices)
+            .set({ status: "void" })
+            .where(and(eq(subscriptionInvoices.subscriptionId, sub.id), eq(subscriptionInvoices.status, "open")))
+            .returning({ id: subscriptionInvoices.id })
+        : [];
+    if (status !== sub.status) {
+      const items = await tx.select().from(subscriptionItems).where(eq(subscriptionItems.subscriptionId, sub.id));
+      const amendments = await tx.select().from(subscriptionAmendments).where(eq(subscriptionAmendments.subscriptionId, sub.id));
+      await syncAccountFromSubscription(tx as never, sub, status as SubscriptionStatus, effectiveSeats(originalSeats(items), seatChanges(amendments), now), now, ctx.requestId);
+    }
+    await writeCopsAudit(tx, {
+      tenantId: ctx.workspaceId,
+      actor: { type: "user", id: ctx.userId },
+      entityType: "subscription",
+      entityId: sub.id,
+      action: "subscription.cancelled",
+      before: { status: sub.status, cancel_at: sub.cancelAt?.toISOString() ?? null },
+      after: { status, cancel_at: cancelAt.toISOString(), when: input.when, reason: input.reason, voided_invoice_ids: voided.map((v) => v.id) },
+      correlationId: ctx.requestId,
+      sourceChannel: "api",
+    });
+  });
+  return subscriptionById(db, ctx.workspaceId, subscriptionId, now);
+}
+
+/** Withdraws an end-of-term cancellation before the subscription has closed. */
+export async function resumeSubscription(db: Db, ctx: CommercialContext, subscriptionId: string, reason: string, now: Date = new Date()): Promise<SubscriptionDto> {
+  await db.transaction(async (tx) => {
+    const [sub] = await tx.select().from(subscriptions).where(and(eq(subscriptions.id, subscriptionId), eq(subscriptions.workspaceId, ctx.workspaceId))).for("update").limit(1);
+    if (!sub) throw new CommercialError("NOT_FOUND", "Subscription not found");
+    if (sub.status === "closed") throw new CommercialError("BUSINESS_STATE_CONFLICT", "A closed subscription cannot be resumed; start a new one", { status: sub.status });
+    if (!sub.cancelAt) throw new CommercialError("BUSINESS_STATE_CONFLICT", "This subscription is not cancelled", {});
+    await tx.update(subscriptions).set({ cancelAt: null, cancelRequestedAt: null, cancelReason: null, cancelledBy: null, updatedAt: now }).where(eq(subscriptions.id, sub.id));
+    await writeCopsAudit(tx, {
+      tenantId: ctx.workspaceId,
+      actor: { type: "user", id: ctx.userId },
+      entityType: "subscription",
+      entityId: sub.id,
+      action: "subscription.cancel_withdrawn",
+      before: { cancel_at: sub.cancelAt.toISOString(), reason: sub.cancelReason },
+      after: { cancel_at: null, reason },
+      correlationId: ctx.requestId,
+      sourceChannel: "api",
+    });
+  });
+  return subscriptionById(db, ctx.workspaceId, subscriptionId, now);
+}
+
+/**
+ * The monthly lines of a deal's latest sent proposal, priced per unit after the line discount and
+ * the proposal discount: seat plans as "seats", everything else billed monthly (support, add-ons)
+ * as "product". One-time lines are left out (the payment link charges them). Null without a sent
+ * proposal.
+ */
+async function recurringProposalLines(db: Db, workspaceId: string, opportunityId: string) {
+  const [version] = await db
+    .select({ id: proposalVersions.id, discountPct: proposalVersions.discountPct, currency: proposalVersions.currency, termMonths: proposalVersions.termMonths })
+    .from(proposals)
+    .innerJoin(proposalVersions, eq(proposalVersions.proposalId, proposals.id))
+    .where(and(eq(proposals.workspaceId, workspaceId), eq(proposals.opportunityId, opportunityId), inArray(proposals.status, ["sent", "accepted"]), isNotNull(proposalVersions.sentAt)))
+    .orderBy(desc(proposalVersions.sentAt))
+    .limit(1);
+  if (!version) return null;
+  const lines = await db.select().from(proposalLineItems).where(eq(proposalLineItems.versionId, version.id)).orderBy(asc(proposalLineItems.position));
+  const keep = 1 - Number(version.discountPct) / 100;
+  // A per-term line (the default for seats, and how annual deals are usually priced) is the whole
+  // term's price: spread over its months, so it bills like a per-month line. One-time lines stay out.
+  const months = Math.max(1, version.termMonths ?? 12);
+  return {
+    currency: version.currency,
+    lines: lines
+      .filter((l) => (l.priceBasis ?? defaultPriceBasis(l.kind)) !== "one_time" && l.quantity > 0)
+      .map((l) => {
+        const perMonth = (l.priceBasis ?? defaultPriceBasis(l.kind)) === "per_month";
+        return {
+          kind: l.kind === "seats" ? "seats" : "product",
+          description: l.description,
+          quantity: l.quantity,
+          unitMinor: Math.round(((Number(l.netMinor) / l.quantity) * keep) / (perMonth ? 1 : months)),
+        };
+      }),
+  };
 }

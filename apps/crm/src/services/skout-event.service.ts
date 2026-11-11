@@ -7,6 +7,9 @@ import { redisBullMqConnection } from "../lib/redis.js";
 
 const log = serviceLog("skout-event");
 
+/** Same limit as apps/api: how long to wait for Redis before giving up on the enqueue. */
+const ENQUEUE_TIMEOUT_MS = 2_000;
+
 /**
  * §7.3 — apps/crm's producer side of the Dexter event spine. Enqueues onto the exact same
  * BullMQ queue name ("skout-dexter-event") that apps/api's dexter-event.queue.ts / .worker.ts
@@ -67,11 +70,30 @@ export async function emitSkoutEvent<T extends Record<string, unknown>>(
     log.warn("REDIS_URL unset — skipping event-spine emission", { type: event.type });
     return event;
   }
-  await q.add("process-event", { event }, { jobId: event.id }).catch((err: unknown) => {
-    log.warn("dexter event enqueue failed", {
-      type: event.type,
-      err: err instanceof Error ? err.message : String(err),
-    });
+  // Without Redis, Queue.add() never settles (ioredis keeps the command offline and retries),
+  // which hung deal create/update until the browser retried and made a duplicate deal. Race it
+  // against a timer like apps/api's enqueueDexterEventJob; the event is still in skout_events.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const added = q.add("process-event", { event }, { jobId: event.id }).then(
+    () => "added" as const,
+    (err: unknown) => {
+      log.warn("dexter event enqueue failed", {
+        type: event.type,
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return "failed" as const;
+    }
+  );
+  const timedOut = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), ENQUEUE_TIMEOUT_MS);
   });
+  const outcome = await Promise.race([added, timedOut]);
+  if (timer) clearTimeout(timer);
+  if (outcome === "timeout") {
+    log.warn("dexter event enqueue timed out — Redis unreachable or slow; event kept in the log only", {
+      type: event.type,
+      timeoutMs: ENQUEUE_TIMEOUT_MS,
+    });
+  }
   return event;
 }

@@ -33,6 +33,10 @@ const money = (minor: number, currency: string) => {
   }
 };
 
+/** Our own domains: a proposal to one of them is almost always a mistake, so it needs an Admin override. */
+export const INTERNAL_EMAIL_DOMAINS = ["skoutai.io"];
+export const isInternalEmail = (email: string) => INTERNAL_EMAIL_DOMAINS.some((d) => email.toLowerCase().endsWith(`@${d}`) || email.toLowerCase().endsWith(`.${d}`));
+
 /** The chosen contacts that have an email and sit on the deal's account; any other id is dropped. */
 async function recipients(db: Db, workspaceId: string, dealId: string, contactIds: string[]) {
   if (!contactIds.length) return [];
@@ -60,7 +64,7 @@ async function deliver(config: Env, list: { firstName: string; email: string }[]
  * Emails the current draft version of a proposal (its lines, total and a PDF) to the chosen
  * contacts. Called before the version is locked, so a proposal is only marked sent once it went out.
  */
-export async function emailProposal(db: Db, config: Env, workspaceId: string, proposalId: string, contactIds: string[], message?: string): Promise<EmailResult> {
+export async function emailProposal(db: Db, config: Env, workspaceId: string, proposalId: string, contactIds: string[], message?: string, opts: { allowInternal?: boolean } = {}): Promise<EmailResult> {
   const [proposal] = await db.select().from(proposals).where(and(eq(proposals.workspaceId, workspaceId), eq(proposals.id, proposalId))).limit(1);
   if (!proposal) throw new CommercialError("NOT_FOUND", "Proposal not found");
   if (["accepted", "declined", "expired"].includes(proposal.status)) {
@@ -69,6 +73,10 @@ export async function emailProposal(db: Db, config: Env, workspaceId: string, pr
   const list = await recipients(db, workspaceId, proposal.opportunityId, contactIds);
   if (!list.length) {
     throw new CommercialError("VALIDATION_FAILED", "None of the chosen people is a contact with an email on this account. Add a contact, then send the proposal.");
+  }
+  const internal = list.filter((r) => isInternalEmail(r.email)).map((r) => r.email);
+  if (internal.length && !opts.allowInternal) {
+    throw new CommercialError("VALIDATION_FAILED", `Proposals do not go to internal addresses (${internal.join(", ")}). Untick them, or an Admin can send with a reason.`, { internal_recipients: internal });
   }
   const [version] = await db
     .select()
@@ -136,6 +144,9 @@ export async function emailPaymentLink(db: Db, config: Env, workspaceId: string,
 /** A one-page proposal PDF: the same lines and total as the email. */
 export function proposalPdf(p: { title: string; version: number; termMonths: number; discount: string; rows: { label: string; amount: string }[]; total: string }): Promise<Buffer> {
   return new Promise((resolve, reject) => {
+    // The built-in PDF font has no rupee glyph (€ and £ are fine), so ₹ is written as "INR".
+    const safe = (t: string) => t.replace(/₹\s?/g, "INR ");
+    p = { ...p, rows: p.rows.map((r) => ({ label: safe(r.label), amount: safe(r.amount) })), total: safe(p.total), title: safe(p.title) };
     const doc = new PDFDocument({ margin: 56, size: "A4", info: { Title: `${p.title} v${p.version}` } });
     const chunks: Buffer[] = [];
     doc.on("data", (c: Buffer) => chunks.push(c));

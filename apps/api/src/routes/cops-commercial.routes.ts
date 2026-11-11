@@ -16,7 +16,7 @@ import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
  */
 import { APPROVER_ROLES, REDLINE_STATUSES, PRICE_BASES, SUBSCRIPTION_BILLING, SUBSCRIPTION_CADENCES, BILLING_CADENCES, COMMERCIAL_GATE_POLICIES, COMMERCIAL_LINE_KINDS, copsErrorBody, copsErrorStatus, resolveCorrelationId } from "@skout/shared";
 import { getMemberPermissions } from "@skout/auth";
-import { copsIdempotencyStore, requireAnyCopsPermission } from "../services/cops-platform.service.js";
+import { copsIdempotencyStore, requireAnyCopsPermission, writeCopsAudit } from "../services/cops-platform.service.js";
 import { withCopsIdempotentReply, type CopsCapturingReply } from "../services/cops-idempotent.js";
 import {
   addContractVersion,
@@ -36,8 +36,8 @@ import {
   discardDraftContract,
   type CommercialContext,
 } from "../services/cops-commercial.service.js";
-import { cancelPaymentRequest, createPaymentRequest, handlePaymentWebhook, loadPaymentRequests } from "../services/cops-payments.service.js";
-import { emailPaymentLink, emailProposal } from "../services/cops-commercial-email.service.js";
+import { cancelPaymentRequest, createPaymentRequest, handlePaymentWebhook, loadPaymentRequests, previewRefund, refundPaymentRequest } from "../services/cops-payments.service.js";
+import { emailPaymentLink, emailProposal, isInternalEmail } from "../services/cops-commercial-email.service.js";
 import { assertApproved, assertContractApproved, decideApproval, evaluateProposalApprovals, listApprovals, requestApproval } from "../services/cops-approvals.service.js";
 import { createRazorpayPaymentLinkAdapter } from "../services/psp/razorpay.js";
 import {
@@ -56,7 +56,7 @@ import { handleEsignWebhook, listEnvelopes, sendEnvelope } from "../services/cop
 import { removeContractDocumentIfUnused, resolveContractDocumentForProvider } from "./cops-contract-documents.routes.js";
 import { getAccountContractFields, setAccountContractFields } from "../services/cops-account-fields.service.js";
 import { CREDIT_ACTIVITY_KINDS, listCreditActivity, listSubscriptionsForFinance, loadReconciliation } from "../services/cops-finance.service.js";
-import { amendSubscription, createSubscription, getAccountSubscription, issueInvoicePaymentLink, listFailedPayments, markInvoicePaid } from "../services/cops-subscriptions.service.js";
+import { amendSubscription, cancelSubscription, createSubscription, previewAmendment, resumeSubscription, getAccountSubscription, issueInvoicePaymentLink, listFailedPayments, markInvoicePaid, unsettleInvoicesForRefund } from "../services/cops-subscriptions.service.js";
 import { applyPaidCreditPurchases, reverseRefundedCreditPurchase } from "../services/cops-credits.service.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -89,7 +89,12 @@ const termsSchema = z
   .strict();
 const createProposalSchema = termsSchema.extend({ title: z.string().trim().min(1).max(200) }).strict();
 const sendSchema = z
-  .object({ recipient_contact_ids: z.array(z.string().regex(UUID)).max(50).optional(), message: z.string().max(5000).optional() })
+  .object({
+    recipient_contact_ids: z.array(z.string().regex(UUID)).max(50).optional(),
+    message: z.string().max(5000).optional(),
+    /** Admin only: send to an internal address anyway (testing), with a reason kept in the audit log. */
+    internal_override_reason: z.string().trim().min(8).max(1000).optional(),
+  })
   .strict();
 const reasonText = z.string().trim().min(1, "reason is required").max(1000);
 const proposalStatusSchema = z.object({ status: z.enum(["accepted", "declined", "expired"]), reason: reasonText }).strict();
@@ -156,7 +161,7 @@ const envelopeSchema = z
 const subscriptionSchema = z
   .object({
     opportunity_id: z.string().regex(UUID),
-    seats: z.number().int().min(1).max(100_000),
+    seats: z.number().int().min(1).max(100_000).optional(),
     cadence: z.enum(SUBSCRIPTION_CADENCES),
     term_months: z.number().int().min(1).max(120),
     billing: z.enum(SUBSCRIPTION_BILLING).optional(),
@@ -355,6 +360,44 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
     const bad = checkId(reply as unknown as Reply, ctx.requestId, request.params.id);
     if (bad) return bad;
     return { data: await getAccountSubscription(db, ctx.workspaceId, request.params.id) };
+  });
+
+  // Cancel a subscription (at the end of its term, or now) and withdraw an end-of-term cancel.
+  const cancelSchema = z.object({ when: z.enum(["end_of_term", "now"]), reason: reasonText }).strict();
+  app.post<IdOnly>(
+    "/subscriptions/:id/cancel",
+    { preHandler: billingWriteGate },
+    withCopsIdempotentReply<IdOnly>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      const parsed = cancelSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(reply, ctx.requestId, () => cancelSubscription(db, ctx, request.params.id, parsed.data), (subscription) => ({ data: subscription }));
+    })
+  );
+  app.post<IdOnly>(
+    "/subscriptions/:id/resume",
+    { preHandler: billingWriteGate },
+    withCopsIdempotentReply<IdOnly>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      const parsed = z.object({ reason: reasonText }).strict().safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(reply, ctx.requestId, () => resumeSubscription(db, ctx, request.params.id, parsed.data.reason), (subscription) => ({ data: subscription }));
+    })
+  );
+
+  // What a seat or term change would cost, before it is made. Writes nothing.
+  app.post<IdOnly>("/subscriptions/:id/amendments/preview", { preHandler: billingWriteGate }, async (request, rawReply) => {
+    const reply = rawReply as never;
+    const ctx = ctxOf(request);
+    const bad = checkId(reply, ctx.requestId, request.params.id);
+    if (bad) return bad;
+    const parsed = amendmentSchema.omit({ reason: true }).safeParse(request.body ?? {});
+    if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+    return run(reply, ctx.requestId, () => previewAmendment(db, ctx, request.params.id, parsed.data), (data) => ({ data }));
   });
 
   app.post<IdOnly>(
@@ -620,7 +663,10 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
           const ids = parsed.data.recipient_contact_ids ?? [];
           let emailed: { to: string[]; sent: boolean } | null = null;
           if (ids.length) {
-            emailed = await emailProposal(db, app.config, ctx.workspaceId, request.params.id, ids, parsed.data.message).catch((e: unknown) => {
+            const overrideReason = parsed.data.internal_override_reason;
+            const isAdmin = ["owner", "admin"].includes(String((request as { role?: string }).role ?? ""));
+            if (overrideReason && !isAdmin) throw new CommercialError("FORBIDDEN", "Only an Admin can send a proposal to an internal address");
+            emailed = await emailProposal(db, app.config, ctx.workspaceId, request.params.id, ids, parsed.data.message, { allowInternal: !!overrideReason }).catch((e: unknown) => {
               if (e instanceof CommercialError) throw e;
               request.log.error({ err: e }, "proposal email failed");
               throw new CommercialError("PROVIDER_ERROR", "The email could not be delivered, so the proposal was not marked as sent. Try again in a moment.");
@@ -630,6 +676,19 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
             }
           }
           await sendProposal(db, ctx, request.params.id);
+          const internalTo = (emailed?.to ?? []).filter(isInternalEmail);
+          if (internalTo.length && parsed.data.internal_override_reason) {
+            await writeCopsAudit(db as never, {
+              tenantId: ctx.workspaceId,
+              actor: { type: "user", id: ctx.userId },
+              entityType: "proposal",
+              entityId: request.params.id,
+              action: "proposal.internal_recipient_override",
+              after: { recipients: internalTo, reason: parsed.data.internal_override_reason },
+              correlationId: ctx.requestId,
+              sourceChannel: "api",
+            });
+          }
           const proposal = (await loadProposals(db, ctx.workspaceId, { proposalId: request.params.id }))[0];
           return { ...proposal, emailed };
         },
@@ -903,6 +962,61 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
     return { data: paymentRequest };
   });
 
+  // COPS-04 Q4: a refund takes back the credits that payment bought (provider event or our refund).
+  const onPaymentRefunded = async (tx: Db, refunded: { workspaceId: string; opportunityId: string; requestId: string; paymentRequestId?: string }) => {
+    const [deal] = await tx
+      .select({ companyId: schema.deals.companyId })
+      .from(schema.deals)
+      .where(and(eq(schema.deals.id, refunded.opportunityId), eq(schema.deals.workspaceId, refunded.workspaceId)))
+      .limit(1);
+    if (deal?.companyId && refunded.paymentRequestId) {
+      await reverseRefundedCreditPurchase(tx as never, {
+        operatorWorkspaceId: refunded.workspaceId,
+        accountId: deal.companyId,
+        paymentRequestId: refunded.paymentRequestId,
+        requestId: refunded.requestId,
+      });
+    }
+    // A subscription bill this payment settled is not paid any more.
+    if (refunded.paymentRequestId) await unsettleInvoicesForRefund(tx as never, refunded.workspaceId, refunded.paymentRequestId, refunded.requestId);
+  };
+
+  // Refund a paid link in full, with a reason (Finance only: money goes back to the customer).
+  // Before a refund: the amount and whether the provider balance covers it (read-only).
+  app.get<{ Params: { id: string } }>("/payment-requests/:id/refund-preview", { preHandler: requireAnyCopsPermission(["billing:refund"], perms) }, async (request, reply) => {
+    const requestId = resolveCorrelationId(request.headers["x-request-id"]);
+    const bad = checkId(reply as never, requestId, request.params.id);
+    if (bad) return bad;
+    try {
+      return { data: await previewRefund(db, psp, request.workspaceId!, request.params.id) };
+    } catch (error) {
+      if (error instanceof CommercialError) return reply.status(error.status).send(copsErrorBody({ code: error.code, message: error.message, requestId }));
+      throw error;
+    }
+  });
+
+  app.post<{ Params: { id: string }; Body: { reason?: string } }>(
+    "/payment-requests/:id/refund",
+    // Money goes back to the customer: only roles with billing:refund (Finance, Owner, Admin).
+    { preHandler: requireAnyCopsPermission(["billing:refund"], perms) },
+    withCopsIdempotentReply<{ Params: { id: string }; Body: { reason?: string } }>(idempotency, async (request, reply) => {
+      const ctx = ctxOf(request);
+      const bad = checkId(reply, ctx.requestId, request.params.id);
+      if (bad) return bad;
+      const parsed = z.object({ reason: reasonText }).strict().safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+      return run(
+        reply,
+        ctx.requestId,
+        async () => {
+          await refundPaymentRequest(db, psp, ctx, request.params.id, parsed.data.reason, onPaymentRefunded);
+          return (await loadPaymentRequests(db, ctx.workspaceId, { id: request.params.id }))[0];
+        },
+        (paymentRequest) => ({ data: paymentRequest })
+      );
+    })
+  );
+
   /**
    * Provider webhook. Public under /billing/webhooks/ (plugins/auth.ts) and authenticated by the
    * HMAC signature instead: missing secret, missing or bad signature -> 401.
@@ -927,22 +1041,7 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
       if (deal?.companyId) {
         await applyPaidCreditPurchases(tx, { operatorWorkspaceId: paid.workspaceId, accountId: deal.companyId, requestId: paid.requestId });
       }
-    }, async (tx, refunded) => {
-      // COPS-04 Q4: a refund takes back the credits that payment bought.
-      const [deal] = await tx
-        .select({ companyId: schema.deals.companyId })
-        .from(schema.deals)
-        .where(and(eq(schema.deals.id, refunded.opportunityId), eq(schema.deals.workspaceId, refunded.workspaceId)))
-        .limit(1);
-      if (deal?.companyId && refunded.paymentRequestId) {
-        await reverseRefundedCreditPurchase(tx, {
-          operatorWorkspaceId: refunded.workspaceId,
-          accountId: deal.companyId,
-          paymentRequestId: refunded.paymentRequestId,
-          requestId: refunded.requestId,
-        });
-      }
-    });
+    }, onPaymentRefunded);
     if (result.kind === "unauthorized") {
       return reply.status(401).send(copsErrorBody({ code: "UNAUTHENTICATED", message: "Invalid webhook signature", requestId }));
     }

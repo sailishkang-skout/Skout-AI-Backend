@@ -117,6 +117,10 @@ export async function createPaymentRequest(db: Db, psp: PspAdapter, ctx: Commerc
     }
   }
   currency ??= opportunity.currency;
+  // International checkout stays off until the account can accept it (Razorpay KYC).
+  if (psp.supportsCurrency && !psp.supportsCurrency(currency)) {
+    throw new CommercialError("BUSINESS_STATE_CONFLICT", `International payments are not enabled yet, so a ${currency} payment link cannot be made. Use INR, or ask Finance.`, { currency });
+  }
   if (!amountMinor || amountMinor < 100) {
     throw new CommercialError("VALIDATION_FAILED", "amount_minor is required (at least 100 minor units)", {
       fields: [{ path: "amount_minor", code: "required", message: "Required unless proposal_id is given" }],
@@ -388,5 +392,80 @@ export async function cancelPaymentRequest(db: Db, psp: PspAdapter, ctx: Commerc
       correlationId: ctx.requestId,
       sourceChannel: "api",
     });
+  });
+}
+
+/**
+ * Refunds a paid link in full at the provider, then marks it refunded here and runs the same
+ * follow-up as a provider "refunded" event (credits it bought are taken back). The provider's own
+ * refunded webhook arriving later changes nothing.
+ */
+/**
+ * What a refund would take, before it is made: the amount and whether the provider balance covers it
+ * (payments land net of fees, so a full refund can exceed it). Balance fields are null when unknown.
+ */
+export async function previewRefund(db: Db, psp: PspAdapter, workspaceId: string, id: string) {
+  const [pr] = await db.select().from(paymentRequests).where(and(eq(paymentRequests.workspaceId, workspaceId), eq(paymentRequests.id, id))).limit(1);
+  if (!pr) throw new CommercialError("NOT_FOUND", "Payment request not found");
+  const balance = psp.getBalance ? await psp.getBalance().catch(() => null) : null;
+  const sameCurrency = balance && balance.currency === pr.currency;
+  return {
+    amount_minor: Number(pr.amountMinor),
+    currency: pr.currency,
+    refundable: pr.status === "paid",
+    provider_balance_minor: sameCurrency ? balance.balanceMinor : null,
+    balance_covers_refund: sameCurrency ? balance.balanceMinor >= Number(pr.amountMinor) : null,
+  };
+}
+
+export async function refundPaymentRequest(db: Db, psp: PspAdapter, ctx: CommercialContext, id: string, reason: string, onRefunded?: OnPaymentChange): Promise<void> {
+  const [pr] = await db.select().from(paymentRequests).where(and(eq(paymentRequests.workspaceId, ctx.workspaceId), eq(paymentRequests.id, id))).limit(1);
+  if (!pr) throw new CommercialError("NOT_FOUND", "Payment request not found");
+  if (pr.status !== "paid") throw new CommercialError("BUSINESS_STATE_CONFLICT", `Only a paid link can be refunded; this one is ${pr.status}`, { status: pr.status });
+  if (!pr.providerPaymentId || !psp.refundPayment) {
+    throw new CommercialError("BUSINESS_STATE_CONFLICT", "The provider's payment id is missing, so this refund has to be made in the provider's dashboard", {});
+  }
+  let refundId: string;
+  try {
+    ({ refundId } = await psp.refundPayment(pr.providerPaymentId, Number(pr.amountMinor), { payment_request_id: pr.id, reason: reason.slice(0, 200) }, pr.currency));
+  } catch (error) {
+    if (error instanceof PspRequestError) {
+      // Razorpay's description alone is often generic ("invalid request sent"); reason and field say why.
+      let why = "";
+      let reason: string | null = null;
+      try {
+        const e = (JSON.parse(error.providerMessage) as { error?: { description?: unknown; reason?: unknown; field?: unknown; code?: unknown } }).error ?? {};
+        reason = [e.reason, e.field].filter((x) => typeof x === "string" && x && x !== "NA").join(" / ") || null;
+        why = [String(e.description ?? ""), reason ? `(${reason})` : ""].filter(Boolean).join(" ");
+      } catch {
+        why = "";
+      }
+      // A refund moves money: never retried automatically, whatever the provider answered.
+      throw new CommercialError("PROVIDER_ERROR", why ? `The payment provider did not refund: ${why}` : "The payment provider did not refund this payment", { provider_status: error.providerStatus, provider_reason: reason, no_retry: true });
+    }
+    throw error;
+  }
+  const at = new Date();
+  await db.transaction(async (tx) => {
+    // Only from paid: when the provider's refund webhook got here first, the side effects (credits
+    // taken back, the bill un-settled) have already run and must not run twice.
+    const moved = await tx
+      .update(paymentRequests)
+      .set({ status: "refunded", statusChangedAt: at, updatedAt: at })
+      .where(and(eq(paymentRequests.id, pr.id), eq(paymentRequests.status, "paid")))
+      .returning({ id: paymentRequests.id });
+    const firstToRefund = moved.length > 0;
+    await writeCopsAudit(tx, {
+      tenantId: ctx.workspaceId,
+      actor: { type: "user", id: ctx.userId },
+      entityType: "payment_request",
+      entityId: pr.id,
+      action: "payment_request.refunded",
+      before: { status: "paid" },
+      after: { status: "refunded", amount_minor: Number(pr.amountMinor), currency: pr.currency, provider_refund_id: refundId, reason, ...(firstToRefund ? {} : { already_refunded_by_provider_event: true }) },
+      correlationId: ctx.requestId,
+      sourceChannel: "api",
+    });
+    if (firstToRefund && onRefunded) await onRefunded(tx as unknown as Db, { workspaceId: pr.workspaceId, opportunityId: pr.opportunityId, requestId: ctx.requestId, paymentRequestId: pr.id });
   });
 }

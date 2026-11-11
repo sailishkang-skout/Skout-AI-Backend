@@ -31,6 +31,7 @@ maybe("COPS-03 payment requests and webhook", () => {
   let opportunityId = "";
   const linkCalls: Array<Record<string, unknown>> = [];
   const cancelCalls: string[] = [];
+  const refundCalls: { paymentId: string; body: { amount?: number } }[] = [];
 
   const call = (method: "GET" | "POST", path: string, body?: unknown, key: string | null = randomUUID()) =>
     app.inject({
@@ -78,8 +79,21 @@ maybe("COPS-03 payment requests and webhook", () => {
         const body = JSON.parse(String(init?.body ?? "{}"));
         linkCalls.push(body);
         if (body.description === "FAIL") return new Response('{"error":{"code":"BAD_REQUEST_ERROR"}}', { status: 400 });
+        if (body.description === "DOWN") return new Response('{"error":{"code":"SERVER_ERROR"}}', { status: 503 });
         const id = `plink_${randomUUID().replace(/-/g, "").slice(0, 14)}`;
         return new Response(JSON.stringify({ id, short_url: `https://rzp.io/i/${id}`, status: "created" }), { status: 200 });
+      }
+      if (target === "https://api.razorpay.com/v1/balance") return new Response(JSON.stringify({ balance: 30_000, currency: "INR" }), { status: 200 });
+      const refund = /^https:\/\/api\.razorpay\.com\/v1\/payments\/([^/]+)\/refund$/.exec(target);
+      if (refund) {
+        refundCalls.push({ paymentId: refund[1]!, body: JSON.parse(String(init?.body ?? "{}")) });
+        if (refund[1]!.startsWith("pay_lowbalance")) {
+          return new Response(JSON.stringify({ error: { code: "BAD_REQUEST_ERROR", description: "invalid request sent", reason: "NA", field: "NA" } }), { status: 400 });
+        }
+        if (refund[1]!.startsWith("pay_norefund")) {
+          return new Response(JSON.stringify({ error: { code: "BAD_REQUEST_ERROR", description: "invalid request sent", reason: "insufficient_balance", field: "amount" } }), { status: 400 });
+        }
+        return new Response(JSON.stringify({ id: `rfnd_${randomUUID().slice(0, 8)}`, status: "processed" }), { status: 200 });
       }
       const cancel = /^https:\/\/api\.razorpay\.com\/v1\/payment_links\/([^/]+)\/cancel$/.exec(target);
       if (cancel) {
@@ -142,10 +156,13 @@ maybe("COPS-03 payment requests and webhook", () => {
     expect(state.state).toBe("payment_pending");
   });
 
-  it("returns 502 retryable when the provider rejects, and 422 without an amount", async () => {
+  it("returns 502 when the provider fails: retryable only when it was down, not when it refused; 422 without an amount", async () => {
     const res = await call("POST", "/payment-requests", { opportunity_id: opportunityId, amount_minor: 50_000, description: "FAIL" });
     expect(res.statusCode).toBe(502);
-    expect(res.json()).toMatchObject({ code: "PROVIDER_ERROR", retryable: true });
+    // A 4xx refusal fails the same way again, so the client must not retry it.
+    expect(res.json()).toMatchObject({ code: "PROVIDER_ERROR", retryable: false });
+    const down = await call("POST", "/payment-requests", { opportunity_id: opportunityId, amount_minor: 50_000, description: "DOWN" });
+    expect(down.json()).toMatchObject({ code: "PROVIDER_ERROR", retryable: true });
     expect((await call("POST", "/payment-requests", { opportunity_id: opportunityId })).statusCode).toBe(422);
   });
 
@@ -192,6 +209,53 @@ maybe("COPS-03 payment requests and webhook", () => {
     const again = await forProposal();
     expect(again.statusCode).toBe(409);
     expect(again.json().details).toMatchObject({ status: "paid" });
+  });
+
+  it("refunds a paid link in full with a reason; an unpaid or already refunded link is refused", async () => {
+    const pr = await newRequest();
+    expect((await call("POST", `/payment-requests/${pr.id}/refund`, { reason: "Not paid yet" })).statusCode).toBe(409);
+    expect((await webhook(paidEvent(pr.provider_ref, `pay_refund_${RUN}`))).statusCode).toBe(200);
+    expect((await call("POST", `/payment-requests/${pr.id}/refund`, {})).statusCode).toBe(422);
+    const refunded = await call("POST", `/payment-requests/${pr.id}/refund`, { reason: "Customer cancelled within the trial" });
+    expect(refunded.statusCode).toBe(200);
+    expect(refunded.json().data.status).toBe("refunded");
+    const [row] = await sql`select amount_minor from payment_requests where id = ${pr.id}`;
+    expect(refundCalls.at(-1)).toMatchObject({ paymentId: `pay_refund_${RUN}`, body: { amount: Number(row.amount_minor) } });
+    expect((await call("POST", `/payment-requests/${pr.id}/refund`, { reason: "again" })).statusCode).toBe(409);
+    const [audit] = await sql`select action from audit_logs where entity_id = ${pr.id} and action = 'payment_request.refunded'`;
+    expect(audit.action).toBe("payment_request.refunded");
+  });
+
+  it("a refund the provider refuses is not retryable and says why; the link stays paid", async () => {
+    const pr = await newRequest();
+    expect((await webhook(paidEvent(pr.provider_ref, `pay_norefund_${RUN}`))).statusCode).toBe(200);
+    const before = refundCalls.length;
+    const res = await call("POST", `/payment-requests/${pr.id}/refund`, { reason: "Customer cancelled" });
+    expect(res.statusCode).toBe(502);
+    expect(res.json()).toMatchObject({ code: "PROVIDER_ERROR", retryable: false, details: { provider_status: 400, provider_reason: "insufficient_balance / amount" } });
+    expect(res.json().message).toContain("insufficient_balance");
+    expect(refundCalls.length - before).toBe(1);
+    const [row] = await sql`select status from payment_requests where id = ${pr.id}`;
+    expect(row.status).toBe("paid");
+  });
+
+  it("the refund preview says whether the Razorpay balance covers the refund", async () => {
+    const small = await newRequest();
+    expect((await webhook(paidEvent(small.provider_ref, `pay_preview_${RUN}`))).statusCode).toBe(200);
+    const res = await call("GET", `/payment-requests/${small.id}/refund-preview`);
+    expect(res.statusCode).toBe(200);
+    const [row] = await sql`select amount_minor from payment_requests where id = ${small.id}`;
+    // The stub balance is INR 300.00 (30,000 minor units).
+    expect(res.json().data).toEqual({ amount_minor: Number(row.amount_minor), currency: "INR", refundable: true, provider_balance_minor: 30_000, balance_covers_refund: Number(row.amount_minor) <= 30_000 });
+  });
+
+  it("a refund larger than the Razorpay balance says so instead of 'invalid request sent'", async () => {
+    const pr = await newRequest();
+    expect((await webhook(paidEvent(pr.provider_ref, `pay_lowbalance_${RUN}`))).statusCode).toBe(200);
+    const res = await call("POST", `/payment-requests/${pr.id}/refund`, { reason: "Customer cancelled" });
+    expect(res.statusCode).toBe(502);
+    expect(res.json().message).toContain("Razorpay balance (INR 300.00) is lower than the refund");
+    expect(res.json()).toMatchObject({ retryable: false, details: { provider_reason: "insufficient_balance / amount" } });
   });
 
   it("rejects a missing or bad signature with 401 and changes nothing", async () => {

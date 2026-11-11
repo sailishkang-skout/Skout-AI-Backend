@@ -15,6 +15,7 @@
  * email with AUTH_EMAIL_NOT_VERIFIED after the password checks out. Signup still records
  * auth_identities.emailVerifiedAt as null until verify-email/confirm or otp/verify sets it.
  */
+import { opsAccessState } from "../services/ops-access.service.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { createHmac, randomBytes } from "node:crypto";
 import { z } from "zod";
@@ -579,6 +580,8 @@ export async function authCoreRoutes(app: FastifyInstance) {
     if (!requireEnabled(reply)) return;
     try {
       const identity = await requireOwnAuthUser(request, app);
+      // COPS-15: the ops portal decides at sign-in from these two flags.
+      const ops = app.db && identity.workspaceId ? await opsAccessState(app.db, app.config, identity.workspaceId, identity.userId) : null;
       return reply.send(
         successResponse({
           userId: identity.userId,
@@ -586,6 +589,8 @@ export async function authCoreRoutes(app: FastifyInstance) {
           fullName: identity.fullName,
           workspaceId: identity.workspaceId,
           role: identity.role,
+          opsAccess: ops?.allowed ?? false,
+          opsAccessEnforced: ops?.enforced ?? false,
         })
       );
     } catch (err) {

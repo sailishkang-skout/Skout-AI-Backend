@@ -1,3 +1,5 @@
+import { DEFAULT_SLA_POLICY } from "@skout/shared";
+import { saveConfig } from "./cops-admin-config.service.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
@@ -30,6 +32,10 @@ maybe("COPS-12 ticket SLA (Postgres)", () => {
     ctx = { workspaceId: ws.id, userId: user.id, requestId: randomUUID() };
     const [co] = await sql`insert into companies (workspace_id, name, employee_count) values (${ws.id}, 'SLA Co', 50) returning id`;
     accountId = co.id;
+    // These tests exercise round-the-clock P1 clocks, so this workspace has an on-call rota;
+    // without one P1 runs on business hours (covered in the shared SLA tests), which would make
+    // the results depend on the day the suite runs.
+    await saveConfig(db, { workspaceId: ws.id, userId: user.id, requestId: randomUUID() } as never, "sla_policy", "default", { value: { ...DEFAULT_SLA_POLICY, onCallRota: true }, reason: "Test workspace has an on-call rota" });
   });
   afterAll(async () => {
     await sql.end();
@@ -43,7 +49,7 @@ maybe("COPS-12 ticket SLA (Postgres)", () => {
   };
   const byKind = async (ticketId: string, kind: string) => (await clocks(ticketId)).find((c) => c.kind === kind)!;
 
-  it("every ticket gets a response and a resolution clock; P1 runs 24x7 with the Bible targets", async () => {
+  it("every ticket gets a response and a resolution clock; with an on-call rota P1 runs 24x7 with the Bible targets", async () => {
     const { ticket } = await createTicket(db, ctx, { account_id: accountId, title: "Outage", priority: "p1", severity: "critical" } as never);
     const c = await clocks(ticket.id);
     expect(c.map((x) => x.kind).sort()).toEqual(["resolution", "response"]);

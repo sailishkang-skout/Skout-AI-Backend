@@ -74,7 +74,8 @@ maybe("COPS-05 onboarding email (Postgres)", () => {
     const p = await previewOnboardingEmail(db, ctx, a.accountId, { booking_url: "https://cal.test/skout" }, deps);
     expect(p).toMatchObject({ template_key: "welcome_trial", template_version: 1, to: a.adminEmail, blocked: null });
     expect(p.html).toContain("https://app.skout.test/invite/");
-    expect(p.text).toContain("CRM connected");
+    // Activation template v2 (migration 0147): the first campaign sent is the step to reach.
+    expect(p.text).toContain("First campaign sent");
     expect(p.text).toContain("https://cal.test/skout");
     expect(send).not.toHaveBeenCalled();
   });
@@ -173,7 +174,7 @@ maybe("COPS-05 onboarding email (Postgres)", () => {
     expect(p.text).toContain("Your account manager is Priya.");
     expect(p.text).not.toContain("{{");
     // Still the operational content: workspace link and activation steps.
-    expect(p.text).toContain("CRM connected");
+    expect(p.text).toContain("First campaign sent");
     expect(p.template_version).toBe(1001);
     const sent = await sendOnboardingEmail(db, ctx, a.accountId, randomUUID(), {}, deps);
     expect(sent.send).toMatchObject({ template_key: "welcome_trial", template_version: 1001, status: "sent" });
