@@ -225,6 +225,55 @@ describe("person profile extraction", () => {
     expect(bad.phone).toBeUndefined();
   });
 
+  it("reads company and school from the current top card when Experience and Education have not loaded", () => {
+    const person = loadCapturePage({
+      url: "https://www.linkedin.com/in/sahil-sawal/",
+      html: `<main><section componentkey="com.linkedin.sdui.profile.card.refXTopcard">
+        <h1>Sahil Sawal</h1><p>He/Him</p><p>AI Forward Deployed Engineer (FDE)</p>
+        <div><p>Gurugram, Haryana, India</p><p>·</p><p><a href="https://www.linkedin.com/in/sahil-sawal/overlay/contact-info/">Contact info</a></p></div>
+        <div role="button"><figure><img></figure><p><span>Skout AI</span></p></div>
+        <div role="button"><figure><img></figure><p><span>Thapar Institute of Engineering &amp; Technology</span></p></div>
+        <button>Message</button>
+      </section></main>`,
+      files: EXTRACT_FILES,
+    }).SkoutCapturePage.extractPerson();
+    expect(person.currentCompanies).toMatchObject([{ name: "Skout AI" }]);
+    expect(person.educations).toMatchObject([{ school: "Thapar Institute of Engineering & Technology" }]);
+    expect(person.locationName).toBe("Gurugram, Haryana, India");
+  });
+
+  it("captures every past company from LinkedIn's profileCards Experience layout", () => {
+    const person = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/",
+      html: `<main><section data-view-name="profile-topcard"><h1>Jane Doe</h1><p>Head of Sales</p></section>
+        <div componentkey="profileCardsExperienceOnlyjanedoe"><h2>Experience</h2>
+          <div><div><p>Head of Sales</p><p>Acme · Full-time</p><p>Jan 2024 - Present · 1 yr</p></div></div>
+          <div><div><p>Sales Manager</p><p>Globex · Full-time</p><p>2020 - 2023 · 3 yrs</p><p>Berlin, Germany</p></div></div>
+          <div><div><p>Account Executive</p><p>Initech</p><p>2017 - 2020</p></div></div>
+        </div></main>`,
+      files: EXTRACT_FILES,
+    }).SkoutCapturePage.extractPerson();
+    expect(person.currentCompanies.map((c) => c.name)).toEqual(["Acme"]);
+    expect(person.previousCompanies.map((c) => `${c.title} @ ${c.name}`)).toEqual(["Sales Manager @ Globex", "Account Executive @ Initech"]);
+  });
+
+  it("finds email and phone in the bio when Contact info has none, and reads a dialog element", () => {
+    const bio = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/",
+      html: `<main><section data-view-name="profile-topcard"><h1>Jane Doe</h1><p>Head of Sales</p></section>
+        <div componentkey="profile.AboutTopLevelSection"><span data-testid="expandable-text-box">Reach me at Jane.Doe@Acme.example or WhatsApp: +91 98765 43210. Founded 2019.</span></div></main>`,
+      files: EXTRACT_FILES,
+    }).SkoutCapturePage.extractPerson();
+    expect(bio).toMatchObject({ email: "jane.doe@acme.example", phone: "+91 98765 43210" });
+
+    const dialog = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/overlay/contact-info/",
+      html: `<main><h1>Jane Doe</h1></main><dialog open style="opacity:0"><h2>Contact info</h2><h3>Email</h3><a href="mailto:jane@acme.example">jane@acme.example</a><h3>Phone</h3><span>+1 415 555 0100 (Work)</span></dialog>`,
+      files: EXTRACT_FILES,
+    }).SkoutCapturePage.extractPerson();
+    expect(dialog).toMatchObject({ email: "jane@acme.example", phone: "+1 415 555 0100" });
+  });
+
   it("keeps school-only education entries and captures a full connection-degree label", () => {
     const window = loadCapturePage({
       url: "https://www.linkedin.com/in/jane-doe/",
@@ -561,6 +610,35 @@ describe("person capture run", () => {
       "University of Waterloo",
     ]);
   });
+
+  it("opens this profile's own Contact info link when LinkedIn shows the plain profile", async () => {
+    let reader;
+    const chrome = { runtime: { id: "test-extension", onMessage: { addListener(listener) { reader = listener; } } } };
+    // LinkedIn redirected /overlay/contact-info/ to the profile itself.
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/",
+      html: '<main><h1>Jane Doe</h1><a href="https://www.linkedin.com/in/jane-doe/overlay/contact-info/">Contact info</a></main>',
+      chrome,
+      files: [...EXTRACT_FILES, "capture/person-capture.js"],
+    });
+    let clicks = 0;
+    window.document.querySelector("a").addEventListener("click", (event) => {
+      event.preventDefault();
+      clicks++;
+      window.document.body.insertAdjacentHTML("beforeend", '<div role="dialog"><h2>Contact info</h2><h3>Email</h3><a href="mailto:jane@acme.example">jane@acme.example</a></div>');
+    });
+    try {
+      const result = await new Promise((resolve, reject) => {
+        reader({ type: "COLLECT_PERSON_PAGE", personId: "jane-doe", url: "https://www.linkedin.com/in/jane-doe/overlay/contact-info/" }, { id: "test-extension" }, resolve);
+        window.setTimeout(() => reject(new Error("contact page did not resolve")), 12_000);
+      });
+      expect(result.ok).toBe(true);
+      expect(clicks).toBe(1);
+      expect(result.data.email).toBe("jane@acme.example");
+    } finally {
+      window.close();
+    }
+  }, 15_000);
 
   it("waits for the Skills section to hydrate before collecting the rendered list", async () => {
     const result = await collectAfterSectionLoads(

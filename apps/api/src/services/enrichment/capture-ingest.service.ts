@@ -25,6 +25,9 @@ import {
   companyMemberKey,
   companyPublicKey,
   currentEmployerSignature,
+  isCurrentEmployerChange,
+  recentMoveFromHistory,
+  WORK_HISTORY_FIELD,
   domainFromCompany,
   hashRecord,
   isSameCompany,
@@ -595,9 +598,40 @@ async function writeSnapshot(
           isJobChange:
             entityType === "person" &&
             field === "currentCompanies" &&
-            currentEmployerSignature(oldData[field]) !== currentEmployerSignature(newValue),
+            isCurrentEmployerChange(oldData[field], newValue),
         }))
     : [];
+  // A move visible in this capture's own work history (current role started recently, the
+  // role before it at another company) is a job change even without an earlier capture.
+  // Recorded once per move.
+  if (entityType === "person" && !changes.some((change) => change.isJobChange)) {
+    const move = recentMoveFromHistory(data, new Date());
+    if (move) {
+      const signature = currentEmployerSignature(move.to);
+      const recorded = await tx
+        .select({ newValue: enrichmentChangeEvents.newValue })
+        .from(enrichmentChangeEvents)
+        .where(
+          and(
+            eq(enrichmentChangeEvents.workspaceId, actor.workspaceId),
+            eq(enrichmentChangeEvents.entityId, entityId),
+            eq(enrichmentChangeEvents.isJobChange, true)
+          )
+        );
+      if (!recorded.some((row) => currentEmployerSignature(row.newValue) === signature)) {
+        await tx.insert(enrichmentChangeEvents).values({
+          workspaceId: actor.workspaceId,
+          entityType,
+          entityId,
+          field: WORK_HISTORY_FIELD,
+          changeType: "FIELD_UPDATED" as const,
+          oldValue: [move.from],
+          newValue: move.to,
+          isJobChange: true,
+        });
+      }
+    }
+  }
   // An identical re-capture is recorded once, not as a new history entry.
   if (previous && changes.length === 0) return 0;
 

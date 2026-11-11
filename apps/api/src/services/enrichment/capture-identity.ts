@@ -253,6 +253,68 @@ export function hashRecord(record: Json): Record<string, string> {
  * Who the person currently works for, and as what — nothing else. Tenure text ("2 yrs 3 mos"),
  * descriptions and locations change without the job changing, so they are left out.
  */
+/**
+ * Whether two captures show a different current employer or role. Both captures must name an
+ * employer: a capture where Experience had not loaded yet is not evidence of a move. A missing
+ * title (e.g. read from the top card only) matches any title at the same company.
+ */
+export function isCurrentEmployerChange(previous: unknown, next: unknown): boolean {
+  const roles = (value: unknown) =>
+    records(value)
+      .map((role) => ({
+        company: normalizedCompanyName(typeof role.name === "string" ? role.name : undefined) ?? "",
+        title: typeof role.title === "string" ? role.title.replace(/\s+/g, " ").trim().toLowerCase() : "",
+      }))
+      .filter((role) => role.company);
+  const before = roles(previous);
+  const after = roles(next);
+  if (!before.length || !after.length) return false;
+  const companies = (list: typeof before) => [...new Set(list.map((role) => role.company))].sort().join(";");
+  if (companies(before) !== companies(after)) return true;
+  // Same employers: a change of title counts only when both captures read one.
+  return after.some((role) =>
+    role.title &&
+    before.some((old) => old.company === role.company && old.title) &&
+    !before.some((old) => old.company === role.company && old.title === role.title)
+  );
+}
+
+/** Change-event field for a job change read from one capture's work history. */
+export const WORK_HISTORY_FIELD = "workHistory";
+
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+/** Start of a LinkedIn date range ("Mar 2026 - Present · 8 mos", "2026 - Present"), as UTC. */
+export function roleStartDate(dates: unknown): Date | null {
+  if (typeof dates !== "string") return null;
+  const match = dates.trim().match(/^(?:([a-z]{3})[a-z]*\.?\s+)?((?:19|20)\d{2})\b/i);
+  if (!match) return null;
+  const month = match[1] ? MONTHS.indexOf(match[1].toLowerCase()) : 0;
+  return new Date(Date.UTC(Number(match[2]), Math.max(month, 0), 1));
+}
+
+/**
+ * A recent move shown in one capture's work history: the current role started within
+ * `withinDays` and the latest past role was at another company. Lets a person captured only
+ * once still surface a job change, with the company they came from.
+ */
+export function recentMoveFromHistory(
+  data: { currentCompanies?: unknown; previousCompanies?: unknown },
+  now: Date,
+  withinDays = 90
+): { from: Json; to: Json[] } | null {
+  const current = records(data.currentCompanies).filter((role) => typeof role.name === "string" && role.name.trim());
+  if (!current.length) return null;
+  const start = roleStartDate(current[0]!.dates);
+  // Month precision: a role "Mar 2026" counts from the 1st, so allow the partial month.
+  if (!start || now.getTime() - start.getTime() > (withinDays + 31) * 86_400_000 || start.getTime() > now.getTime()) return null;
+  const currentNames = new Set(current.map((role) => normalizedCompanyName(role.name as string)));
+  const from = records(data.previousCompanies).find(
+    (role) => typeof role.name === "string" && role.name.trim() && !currentNames.has(normalizedCompanyName(role.name))
+  );
+  return from ? { from, to: current } : null;
+}
+
 export function currentEmployerSignature(currentCompanies: unknown): string {
   return records(currentCompanies)
     .map((role) => {

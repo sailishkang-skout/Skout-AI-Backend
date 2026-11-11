@@ -349,7 +349,7 @@ async function readPersonPage(request, sender) {
     const tab = await chrome.tabs.create({url,active:false,openerTabId:owner}); task.tabId = tab.id;
     keepAlive = setInterval(() => { chrome.tabs.get(owner).catch(() => { task.cancelled=true; chrome.tabs.remove(task.tabId).catch(() => {}); }); },10000);
     let ready = false;
-    for (let attempt=0; attempt<30 && !task.cancelled; attempt++) { try { const response=await chrome.tabs.sendMessage(tab.id,{type:'PERSON_READER_READY',personId:request.personId}); if(response?.ok && response.url===url){ready=true;break;} } catch {} await companyReadDelay(500); }
+    for (let attempt=0; attempt<30 && !task.cancelled; attempt++) { try { const response=await chrome.tabs.sendMessage(tab.id,{type:'PERSON_READER_READY',personId:request.personId}); if(response?.ok && (response.url===url || (url.endsWith('/overlay/contact-info/') && response.url===url.replace(/overlay\/contact-info\/$/,'')))){ready=true;break;} } catch {} await companyReadDelay(500); }
     if(task.cancelled) return {ok:true,cancelled:true}; if(!ready) return {ok:false,error:'Profile page did not become readable.'};
     let timeout;
     // Skills detail pages can load several bounded "Show more" batches.

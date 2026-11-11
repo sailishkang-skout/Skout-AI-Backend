@@ -141,13 +141,23 @@ function extractPerson() {
   // unique but this numeric/slug ID is.
   // Experience lazy-loads as the page scrolls. Until it has, the top card's position line
   // ("EY Technology Solutions · Guru Nanak Dev University") still names the current employer.
+  // The current layout shows company and school as separate items beside the name.
+  const topcardOrgs = topcardOrganizations(topcard);
   if (!currentCompanyJobs.length) {
-    const fromTopcard = topcardCurrentCompany(positionLine, headline);
+    const orgCompany = topcardOrgs.find((org) => org.kind === 'company');
+    const fromTopcard = (orgCompany && topcardCurrentCompany(orgCompany.name, headline, orgCompany.companyPublicId)) ||
+      (positionLine !== locationName && topcardCurrentCompany(positionLine, headline));
     if (fromTopcard) currentCompanyJobs.push(fromTopcard);
   }
   const currentCompanyPublicId = currentCompanyJobs.find((j) => j.companyPublicId)?.companyPublicId;
   const roleMetadata = inferRoleMetadata(currentCompanyJobs[0]?.title || currentJobs[0]?.title || headline);
   const educations = extractEducation();
+  // Education lazy-loads too; the top card still names the school.
+  if (!educations.length) {
+    const school = topcardOrgs.find((org) => org.kind === 'school')?.name ||
+      (positionLine || '').split(/\s+·\s+/).slice(1).find((part) => SCHOOL_WORDS.test(part));
+    if (school) educations.push({ school: school.trim(), source: 'topcard' });
+  }
   const skills = extractSkillsSection();
   const recommendations = extractRecommendationsSection();
   const summary = extractAboutSection();
@@ -202,8 +212,9 @@ function extractPerson() {
     // validated email and phone values are sent to the capture endpoint.
     _contactInfo: contactInfo,
     _locationRank: locationRank,
-    email: contactInfo?.email,
-    phone: contactInfo?.phone,
+    // Contact info first; otherwise an email or phone the person wrote in their bio.
+    email: contactInfo?.email || emailFromText(summary),
+    phone: contactInfo?.phone || phoneFromText(summary),
     _recentActivity: recentActivity.length ? recentActivity : undefined,
     openToWork: openToWork || undefined,
     _fieldsFound: countTruthy({
@@ -219,14 +230,64 @@ function extractPerson() {
  * the current company first and the school second; a school is never taken as an employer. The
  * title comes from a "Title @ Company" / "Title at Company" headline naming the same company.
  */
-function topcardCurrentCompany(positionLine, headline) {
+function topcardCurrentCompany(positionLine, headline, companyPublicId) {
   const name = (positionLine || '').split(/\s+·\s+/)[0]?.trim();
   if (!name || name.length > 120) return undefined;
-  if (/\b(university|college|school|institute|academy|polytechnic)\b/i.test(name)) return undefined;
+  if (SCHOOL_WORDS.test(name)) return undefined;
+  if (/^(contact info|\d[\d,+]* (followers?|connections?))$/i.test(name)) return undefined;
   if (/^(https?:\/\/|www\.)/i.test(name) || /\d+\s*(followers?|connections?)/i.test(name)) return undefined;
   const match = (headline || '').match(/^(.+?)\s+(?:@|at)\s+(.+?)(?:\s+[·|•]\s+.*)?$/i);
   const title = match && match[2].trim().toLowerCase() === name.toLowerCase() ? match[1].trim() : undefined;
-  return { company: name, title, source: 'topcard' };
+  return { company: name, title, companyPublicId, source: 'topcard' };
+}
+
+const SCHOOL_WORDS = /\b(university|universit[äeà]|college|school|institute|academy|polytechnic|iit|iim|nit)\b/i;
+
+/**
+ * Company and school shown beside the name in the top card: links to /company/ or /school/,
+ * or (current layout) logo + name buttons. LinkedIn lists the employer first, then the school.
+ */
+function topcardOrganizations(topcard) {
+  if (!topcard) return [];
+  const orgs = [];
+  const add = (name, kind, companyPublicId) => {
+    const value = (name || '').replace(/\s+/g, ' ').trim();
+    if (!value || value.length > 120 || orgs.some((org) => org.name === value)) return;
+    orgs.push({ name: value, kind, companyPublicId });
+  };
+  topcard.querySelectorAll('a[href*="/company/"], a[href*="/school/"]').forEach((link) => {
+    const href = link.getAttribute('href') || '';
+    add(text(link), href.includes('/school/') ? 'school' : 'company', href.match(/\/company\/([^/?#]+)/)?.[1]);
+  });
+  topcard.querySelectorAll('[role="button"], button').forEach((button) => {
+    if (!button.querySelector('img, figure') || button.querySelector('a[href*="/in/"]')) return;
+    const name = text(button);
+    if (!name || /^(message|more|connect|follow|open to|contact info|share|save|show details)\b/i.test(name)) return;
+    add(name, undefined);
+  });
+  // Unlabelled buttons: a school name is a school; otherwise the first is the employer.
+  let companySeen = orgs.some((org) => org.kind === 'company');
+  for (const org of orgs) {
+    if (org.kind) continue;
+    if (SCHOOL_WORDS.test(org.name)) org.kind = 'school';
+    else if (!companySeen) { org.kind = 'company'; companySeen = true; }
+    else org.kind = 'school';
+  }
+  return orgs;
+}
+
+/** An email written in free text (e.g. the About section). */
+function emailFromText(value) {
+  const match = (value || '').match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}/i);
+  return match ? cleanEmail(match[0]) : undefined;
+}
+
+/** A phone in free text: an international "+.." number, or one labelled phone/mobile/call. */
+function phoneFromText(value) {
+  const source = value || '';
+  const labelled = source.match(/\b(?:phone|mobile|mob|tel|call|whatsapp|contact)\b\s*(?:no\.?|number|#)?\s*[:\-–]?\s*(\+?\d[\d\s().-]{6,}\d)/i)?.[1];
+  const international = source.match(/(?:^|[^\w+])(\+\d{1,3}[\s.-]?\(?\d[\d\s().-]{5,}\d)/)?.[1];
+  return cleanPhone(labelled) || cleanPhone(international);
 }
 
 function inferRoleMetadata(value) {
@@ -670,8 +731,8 @@ function companyPublicIdFromEntry(item) {
 // How each profile section is marked: component-key stems (singular and
 // plural), visible titles, and its /details/<slug>/ "Show all" page.
 const PROFILE_SECTIONS = {
-  Experience: { keys: ['Experience'], titles: ['Experience'], slug: 'experience' },
-  Education: { keys: ['Education'], titles: ['Education'], slug: 'education' },
+  Experience: { keys: ['Experience'], markers: ['profileCardsExperience'], titles: ['Experience'], slug: 'experience' },
+  Education: { keys: ['Education'], markers: ['profileCardsEducation'], titles: ['Education'], slug: 'education' },
   Skills: { keys: ['Skill', 'Skills'], titles: ['Skills'], slug: 'skills' },
   Certifications: { keys: ['Certification', 'Certifications', 'License', 'Licenses'], titles: ['Licenses & certifications', 'Licenses and certifications', 'Certifications'], slug: 'certifications' },
   Languages: { keys: ['Language', 'Languages'], titles: ['Languages'], slug: 'languages' },
@@ -695,6 +756,7 @@ function profileSection(name) {
   const main = document.querySelector('main') || document.body;
   const selector = spec.keys
     .flatMap((key) => [`[componentkey*="${key}TopLevel" i]`, `[componentkey*="${key}Details" i]`])
+    .concat((spec.markers || []).map((marker) => `[componentkey^="${marker}" i]`))
     .join(', ');
   const keyed = main.querySelector(selector);
   if (keyed) return keyed;
@@ -735,6 +797,13 @@ function extractExperience() {
       if (row && section.contains(row)) rows.add(row);
     });
     items = [...rows];
+  }
+  if (!items.length) {
+    // Plain-markup layouts: rows are list items or groups of text lines.
+    items = sectionRowElements(section).filter((row) => {
+      const lines = getItemParagraphs(row);
+      return lines.length >= 2 && !lines.some((line) => /^experience$/i.test(line));
+    });
   }
   const results = [];
   const isExperienceNoise = value => !value || /^(ad options?|why am i seeing this ad\??|manage your ad preferences|hide or report this ad|skills|profile|untitled role)$/i.test(value.trim());
@@ -987,8 +1056,7 @@ function extractAboutSection() {
 // Rows of a section: marked entity rows, list items, or (on plain-markup
 // detail pages) the innermost divs holding several text lines. The section
 // title bar ("Back", "Projects") is never a row.
-function sectionRows(section, titles) {
-  const titleRe = new RegExp(`^(?:${titles.map(escapeRegExp).join('|')})$`, 'i');
+function sectionRowElements(section) {
   let rows = Array.from(section.querySelectorAll('[componentkey^="entity-collection-item" i], [id^="com.linkedin.sdui.profile." i], [data-view-name*="profile-component-entity" i]'));
   if (!rows.length) rows = Array.from(section.querySelectorAll('li'));
   if (!rows.length) {
@@ -997,7 +1065,12 @@ function sectionRows(section, titles) {
     rows = groups.filter((div) => !groups.some((other) => other !== div && div.contains(other)));
   }
   // Keep outermost rows only, so a nested marker is not read twice.
-  rows = rows.filter((row) => !rows.some((other) => other !== row && other.contains(row)));
+  return rows.filter((row) => !rows.some((other) => other !== row && other.contains(row)));
+}
+
+function sectionRows(section, titles) {
+  const titleRe = new RegExp(`^(?:${titles.map(escapeRegExp).join('|')})$`, 'i');
+  const rows = sectionRowElements(section);
   return rows
     .map((row) => {
       let paragraphs = getItemParagraphs(row);
@@ -1124,12 +1197,24 @@ function cleanPhone(value) {
 }
 
 function extractContactInfo() {
+  const isContactTitle = (node) => /^contact info(?:rmation)?$/i.test(text(node) || '');
+  const leafTitles = Array.from(document.querySelectorAll('h1, h2, h3, h4, [role="heading"], p, span, div'))
+    .filter((node) => isContactTitle(node) && !Array.from(node.children).some((child) => text(child)) && !node.closest('a'));
   const candidates = [
     ...document.querySelectorAll('[aria-label*="contact info" i], [aria-labelledby*="contact-info" i]'),
-    ...Array.from(document.querySelectorAll('[role="dialog"]')).filter((dialog) =>
-      Array.from(dialog.querySelectorAll('h1, h2, h3, h4, [role="heading"]'))
-        .some((heading) => /^contact info$/i.test(text(heading) || '')),
+    ...Array.from(document.querySelectorAll('[role="dialog"], dialog, [aria-modal="true"]')).filter((dialog) =>
+      Array.from(dialog.querySelectorAll('h1, h2, h3, h4, [role="heading"], p, span')).some(isContactTitle),
     ),
+    // Layouts without a dialog role: the nearest block under the title that
+    // holds the Email / Phone / profile entries.
+    ...leafTitles.map((title) => {
+      let node = title.parentElement;
+      while (node && node !== document.body && !node.querySelector('a[href^="mailto:"], a[href^="tel:"]') &&
+        !Array.from(node.querySelectorAll('h3, p, span')).some((label) => /^(email|phone|your profile|profile)$/i.test(text(label) || ''))) {
+        node = node.parentElement;
+      }
+      return node && node !== document.body && !node.matches('main') ? node : undefined;
+    }).filter(Boolean),
   ];
   const modal = [...new Set(candidates)].find((candidate) => {
     const style = window.getComputedStyle(candidate);
@@ -1137,7 +1222,6 @@ function extractContactInfo() {
     return !candidate.closest('[aria-hidden="true"]') &&
       style.display !== "none" &&
       style.visibility !== "hidden" &&
-      style.opacity !== "0" &&
       rect.width > 0 &&
       rect.height > 0;
   });
