@@ -189,10 +189,15 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
       let previousEducation = '';
       let stableEducationPasses = 0;
       let sectionFound = !detailName;
+      const isContactPage = expectedUrl.endsWith('/overlay/contact-info/');
+      let contactLinkOpened = false;
       const otherDetail = Object.keys(DETAIL_FIELDS).find((slug) => expectedUrl.endsWith(`/details/${slug}/`));
 
       for (let attempt = 0; attempt < 40; attempt++) {
-        if (pageUrl(location.href, id) !== expectedUrl) throw new Error('Profile page changed during capture.');
+        // LinkedIn may show the Contact info overlay on the profile's own URL.
+        const here = pageUrl(location.href, id);
+        const sameContactPage = isContactPage && here === expectedUrl.replace(/overlay\/contact-info\/$/, '');
+        if (here !== expectedUrl && !sameContactPage) throw new Error('Profile page changed during capture.');
         sectionFound ||= hasRenderedSection(detailName) || hasDetailsPageTitle(detailName);
         if (isSkillsPage && sectionFound) {
           data = await collectFullyRenderedSkills();
@@ -215,9 +220,14 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
             data = await collectFullyRenderedSection(DETAIL_FIELDS[otherDetail]);
             break;
           }
-        } else if (expectedUrl.endsWith('/overlay/contact-info/')) {
-          // Wait for the Contact info modal; profiles without one stop after ~6s.
-          if (data._contactInfo || attempt >= 12) break;
+        } else if (isContactPage) {
+          // Wait for the Contact info modal (~10s). If LinkedIn showed the plain
+          // profile instead, open this person's own Contact info link once.
+          if (data._contactInfo || attempt >= 20) break;
+          if (attempt >= 4 && !contactLinkOpened) {
+            const contactInfoLink = document.querySelector(`main a[href*="/in/${id}/overlay/contact-info"]`);
+            if (contactInfoLink) { contactLinkOpened = true; contactInfoLink.click(); }
+          }
         } else if (!detailName) {
           const hasSection = ['currentCompanies','previousCompanies','projects','educations','skills','certifications','languages','volunteerExperiences','honors','publications','patents','courses','organizations']
             .some((key) => Array.isArray(data[key]) && data[key].length);

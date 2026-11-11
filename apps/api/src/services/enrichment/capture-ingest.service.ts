@@ -24,7 +24,7 @@ import {
   companyMatchScore,
   companyMemberKey,
   companyPublicKey,
-  currentEmployerSignature,
+  isCurrentEmployerChange,
   domainFromCompany,
   hashRecord,
   isSameCompany,
@@ -595,7 +595,7 @@ async function writeSnapshot(
           isJobChange:
             entityType === "person" &&
             field === "currentCompanies" &&
-            currentEmployerSignature(oldData[field]) !== currentEmployerSignature(newValue),
+            isCurrentEmployerChange(oldData[field], newValue),
         }))
     : [];
   // An identical re-capture is recorded once, not as a new history entry.

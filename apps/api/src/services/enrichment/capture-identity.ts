@@ -253,6 +253,32 @@ export function hashRecord(record: Json): Record<string, string> {
  * Who the person currently works for, and as what — nothing else. Tenure text ("2 yrs 3 mos"),
  * descriptions and locations change without the job changing, so they are left out.
  */
+/**
+ * Whether two captures show a different current employer or role. Both captures must name an
+ * employer: a capture where Experience had not loaded yet is not evidence of a move. A missing
+ * title (e.g. read from the top card only) matches any title at the same company.
+ */
+export function isCurrentEmployerChange(previous: unknown, next: unknown): boolean {
+  const roles = (value: unknown) =>
+    records(value)
+      .map((role) => ({
+        company: normalizedCompanyName(typeof role.name === "string" ? role.name : undefined) ?? "",
+        title: typeof role.title === "string" ? role.title.replace(/\s+/g, " ").trim().toLowerCase() : "",
+      }))
+      .filter((role) => role.company);
+  const before = roles(previous);
+  const after = roles(next);
+  if (!before.length || !after.length) return false;
+  const companies = (list: typeof before) => [...new Set(list.map((role) => role.company))].sort().join(";");
+  if (companies(before) !== companies(after)) return true;
+  // Same employers: a change of title counts only when both captures read one.
+  return after.some((role) =>
+    role.title &&
+    before.some((old) => old.company === role.company && old.title) &&
+    !before.some((old) => old.company === role.company && old.title === role.title)
+  );
+}
+
 export function currentEmployerSignature(currentCompanies: unknown): string {
   return records(currentCompanies)
     .map((role) => {

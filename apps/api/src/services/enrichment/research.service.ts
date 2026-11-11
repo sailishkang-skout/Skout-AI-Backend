@@ -644,7 +644,11 @@ export async function listJobChanges(
         prospectId: change.entityId,
         fullName: text(person.fullName),
         sourceUrl: text(person.sourceUrl) ?? text(person.linkedinUrl),
-        from: roleOf(change.oldValue),
+        // Older records can lack the earlier employer; the profile's latest past role names it.
+        from: (() => {
+          const before = roleOf(change.oldValue);
+          return before.company ? before : roleOf(person.previousCompanies);
+        })(),
         to: roleOf(change.newValue),
         requiresReview: !change.reviewedAt,
         // A detected change is surfaced for a person to review. It starts no outreach.
