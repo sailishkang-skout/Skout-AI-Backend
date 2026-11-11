@@ -94,10 +94,27 @@ export function personReviewPreview(data) {
 }
 
 const EDITABLE_FIELDS = {
-  person: [["fullName", "Name"], ["headline", "Headline"], ["locationName", "Location"], ["locationCountry", "Country"], ["pronoun", "Pronouns"], ["summary", "About", true], ["email", "Email"], ["phone", "Phone"]],
+  person: [["fullName", "Name"], ["headline", "Headline"], ["locationName", "Location"], ["locationCountry", "Country"], ["pronoun", "Pronouns"], ["summary", "About", true], ["email", "Email"], ["phone", "Phone"], ["currentCompany", "Current company"], ["currentTitle", "Current title"], ["previousCompany", "Previous company"]],
   company: [["name", "Name"], ["industry", "Industry"], ["headquarter", "Headquarters"], ["size", "Company size"], ["website", "Website"]],
   sales: [],
 };
+
+// Review fields that edit the most recent role rather than a top-level value.
+const ROLE_FIELDS = {
+  currentCompany: { list: "currentCompanies", key: "name" },
+  currentTitle: { list: "currentCompanies", key: "title" },
+  previousCompany: { list: "previousCompanies", key: "name" },
+};
+
+export function setRoleField(data, { list, key }, value) {
+  const roles = Array.isArray(data[list]) ? data[list] : [];
+  if (!value) {
+    if (roles[0]) delete roles[0][key];
+    return;
+  }
+  data[list] = roles.length ? roles : [{}];
+  data[list][0] = { ...data[list][0], [key]: value };
+}
 
 function send(type, payload = {}) {
   return new Promise((resolve) => {
@@ -260,9 +277,11 @@ export function initCapturePanel() {
         wrapper.textContent = label;
         const input = document.createElement(multiline ? "textarea" : "input");
         if (!multiline) input.type = "text";
-        input.value = data[field] ?? "";
+        const role = ROLE_FIELDS[field];
+        input.value = (role ? data[role.list]?.[0]?.[role.key] : data[field]) ?? "";
         input.addEventListener("input", () => {
-          if (input.value.trim()) state.data[field] = input.value;
+          if (role) setRoleField(state.data, role, input.value.trim());
+          else if (input.value.trim()) state.data[field] = input.value;
           else delete state.data[field];
           syncJson();
         });
