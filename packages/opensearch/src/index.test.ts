@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { buildSearchQuery } from "./index.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { buildSearchQuery, getProspectById } from "./index.js";
 
 describe("buildSearchQuery", () => {
   it("returns match_all when no filters", () => {
@@ -24,5 +24,30 @@ describe("buildSearchQuery", () => {
         { range: { employeeCount: { gte: 50 } } },
       ])
     );
+  });
+});
+
+describe("OpenSearch 429 handling", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const cfg = { url: "https://os.example", index: "prospects" };
+  const tooMany = () =>
+    new Response(JSON.stringify({ code: 429, message: "Concurrent request limit" }), { status: 429 });
+
+  it("retries a 429 and returns the document once the cluster accepts the request", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementationOnce(async () => tooMany())
+      .mockImplementationOnce(async () => tooMany())
+      .mockImplementation(async () => new Response(JSON.stringify({ _source: { prospectId: "p1" } }), { status: 200 }));
+    const doc = await getProspectById(cfg, "p1");
+    expect(doc).toEqual({ prospectId: "p1" });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("gives up after repeated 429s", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => tooMany());
+    expect(await getProspectById(cfg, "p1")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 });

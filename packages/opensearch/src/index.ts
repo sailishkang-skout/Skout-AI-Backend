@@ -141,15 +141,24 @@ async function osFetch<T>(
   init: RequestInit = {}
 ): Promise<T> {
   const url = `${cfg.url.replace(/\/$/, "")}${path}`;
-  const res = await fetch(url, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeader(cfg),
-      ...(init.headers as Record<string, string> | undefined),
-    },
-    signal: AbortSignal.timeout(cfg.timeoutMs ?? 15000),
-  });
+  // Hosted clusters (e.g. Bonsai) cap concurrent requests and answer 429 when exceeded. That is
+  // transient, so back off briefly and retry instead of failing the caller (a failed lookup
+  // would otherwise surface as "prospect_not_found"). Request bodies are strings, so resending is safe.
+  let res!: Response;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    res = await fetch(url, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeader(cfg),
+        ...(init.headers as Record<string, string> | undefined),
+      },
+      signal: AbortSignal.timeout(cfg.timeoutMs ?? 15000),
+    });
+    if (res.status !== 429 || attempt === 4) break;
+    await res.text().catch(() => "");
+    await new Promise((r) => setTimeout(r, 200 * 2 ** attempt + Math.random() * 150));
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`OpenSearch ${res.status}: ${body.slice(0, 200)}`);
