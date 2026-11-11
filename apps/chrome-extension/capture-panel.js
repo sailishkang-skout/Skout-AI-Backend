@@ -60,7 +60,7 @@ export function draftSummary(kind, data) {
     if (data.email || data.phone) {
       parts.push("Contact details ready to save after review");
     }
-    for (const [key, label] of [["certifications", "certifications"], ["languages", "languages"], ["recommendations", "recommendations"], ["volunteerExperiences", "volunteering"], ["honors", "honors"], ["publications", "publications"], ["patents", "patents"], ["courses", "courses"], ["organizations", "organizations"]]) {
+    for (const [key, label] of [["certifications", "certifications"], ["languages", "languages"], ["recommendations", "recommendations"], ["volunteerExperiences", "volunteering"], ["honors", "honors"], ["publications", "publications"], ["patents", "patents"], ["courses", "courses"], ["organizations", "organizations"], ["projects", "projects"]]) {
       if (size(data[key])) parts.push(`${size(data[key])} ${label}`);
     }
   } else if (kind === "company") {
@@ -94,7 +94,7 @@ export function personReviewPreview(data) {
 }
 
 const EDITABLE_FIELDS = {
-  person: [["fullName", "Name"], ["headline", "Headline"], ["locationName", "Location"], ["summary", "About", true], ["email", "Email"], ["phone", "Phone"]],
+  person: [["fullName", "Name"], ["headline", "Headline"], ["locationName", "Location"], ["locationCountry", "Country"], ["pronoun", "Pronouns"], ["summary", "About", true], ["email", "Email"], ["phone", "Phone"]],
   company: [["name", "Name"], ["industry", "Industry"], ["headquarter", "Headquarters"], ["size", "Company size"], ["website", "Website"]],
   sales: [],
 };

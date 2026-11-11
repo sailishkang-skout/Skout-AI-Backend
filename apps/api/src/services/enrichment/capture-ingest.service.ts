@@ -784,7 +784,7 @@ interface PersonRecordInput {
 
 /** Profile facts written to the Evidence Ledger, one row per attribute. */
 const PROFILE_EVIDENCE_ATTRIBUTES = [
-  "fullName", "headline", "summary", "locationName", "locationCountry", "industry", "pronoun",
+  "fullName", "headline", "summary", "locationName", "locationCountry", "industry", "pronoun", "email", "phone",
   "currentCompanies", "previousCompanies", "educations", "skills", "certifications", "languages",
   "recommendations", "volunteerExperiences", "honors", "publications", "patents", "courses",
   "organizations", "projects", "connectionsCount", "followersCount", "relationshipContext",

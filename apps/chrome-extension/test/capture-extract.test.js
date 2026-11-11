@@ -113,6 +113,118 @@ describe("person profile extraction", () => {
     expect(hidden.SkoutCapturePage.extractPerson()._contactInfo).toBeUndefined();
   });
 
+  it("extracts Education from a detail page whose title is a plain paragraph", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/details/education/",
+      html: `
+        <main>
+          <div>
+            <div><p>Education</p></div>
+            <div>
+              <div><div><p>Stanford University</p><p>BS, Computer Science</p><p>2010 - 2014</p></div></div>
+              <div><div><p>Lincoln High School</p><p>2006 - 2010</p></div></div>
+            </div>
+          </div>
+          <aside><p>People also viewed</p><div><p>Someone Else</p><p>2015</p></div></aside>
+        </main>
+      `,
+      files: EXTRACT_FILES,
+    });
+    const schools = window.SkoutCapturePage.extractPerson().educations.map((e) => e.school);
+    expect(schools).toEqual(["Stanford University", "Lincoln High School"]);
+  });
+
+  it("extracts Education when the detail page title is a span inside a div", () => {
+    const window = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/details/education/",
+      html: `
+        <main>
+          <div><div><a href="/in/jane-doe/">Back</a><span>Education</span></div>
+            <div><div><a href="/school/mit/"><span>MIT</span></a><span>MBA</span><span>2018 - 2020</span></div></div>
+          </div>
+          <aside><p>People you may know</p></aside>
+        </main>
+      `,
+      files: EXTRACT_FILES,
+    });
+    expect(window.SkoutCapturePage.extractPerson().educations).toMatchObject([{ school: "MIT", degree: "MBA", dates: "2018 - 2020" }]);
+  });
+
+  it("never uses a date like Present as a location and falls back to the current job, contact info, then bio", () => {
+    const load = (html) => loadCapturePage({ url: "https://www.linkedin.com/in/jane-doe/", html, files: EXTRACT_FILES })
+      .SkoutCapturePage.extractPerson();
+    const experience = (lines) => `<div componentkey="profile.ExperienceTopLevelSection"><ul><li componentkey="entity-collection-item-1">${lines.map((l) => `<p>${l}</p>`).join("")}</li></ul></div>`;
+    const top = `<section data-view-name="profile-topcard"><h1>Jane Doe</h1><p>Head of Sales</p></section>`;
+
+    // "Present" split from the date range is not a place.
+    const split = load(`<main>${top}${experience(["Head of Sales", "Acme · Full-time", "Jan 2022 -", "Present", "3 yrs 2 mos"])}</main>`);
+    expect(split.locationName).toBeUndefined();
+    expect(split.currentCompanies?.[0]?.location).toBeUndefined();
+
+    const job = load(`<main>${top}${experience(["Head of Sales", "Acme · Full-time", "Jan 2022 - Present", "Berlin, Germany · Hybrid"])}</main>`);
+    expect(job.locationName).toBe("Berlin, Germany");
+
+    const contact = load(`<main>${top}${experience(["Head of Sales", "Acme · Full-time", "Jan 2022 - Present", "Berlin, Germany"])}
+      <div role="dialog"><h2>Contact info</h2><h3>Email</h3><a href="mailto:jane@acme.example">jane@acme.example</a><h3>Phone</h3><span>+49 30 1234567</span><h3>Address</h3><p>Munich, Bavaria</p></div></main>`);
+    expect(contact).toMatchObject({ locationName: "Munich, Bavaria", email: "jane@acme.example", phone: "+49 30 1234567" });
+
+    const bio = load(`<main>${top}<div componentkey="profile.AboutTopLevelSection"><span data-testid="expandable-text-box">Sales leader based in Austin, Texas. Ex-Oracle.</span></div></main>`);
+    expect(bio.locationName).toBe("Austin, Texas");
+
+    const header = load(`<main><section data-view-name="profile-topcard"><h1>Jane Doe</h1><p>Head of Sales</p><p>Acme</p><p>London, England, United Kingdom</p></section>${experience(["Head of Sales", "Acme", "2022 - Present", "Berlin, Germany"])}</main>`);
+    expect(header.locationName).toBe("London, England, United Kingdom");
+  });
+
+  it("reads every section from plain-markup Show all pages and the main profile", () => {
+    const certs = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/details/certifications/",
+      html: `<main><div><div><a href="/in/jane-doe/">Back</a><span>Licenses & certifications</span></div>
+        <div><div><p>AWS Solutions Architect</p><p>Amazon Web Services</p><p>Issued Jan 2023</p><p>Credential ID ABC-123</p></div></div>
+        <div><div><p>Scrum Master</p><p>Scrum Alliance</p><p>Issued 2021</p></div></div></div>
+        <aside><p>People also viewed</p><div><p>Other Person</p><p>Some Cert</p></div></aside></main>`,
+      files: EXTRACT_FILES,
+    }).SkoutCapturePage.extractPerson();
+    expect(certs.certifications).toMatchObject([
+      { name: "AWS Solutions Architect", issuer: "Amazon Web Services", dates: "Issued Jan 2023", credentialId: "ABC-123" },
+      { name: "Scrum Master", issuer: "Scrum Alliance" },
+    ]);
+
+    const profile = loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/",
+      html: `<main>
+        <section data-view-name="profile-topcard"><h1>Jane Doe</h1><p>She/Her</p><p>Head of Sales</p><p>Acme</p><p>London, England, United Kingdom</p><div aria-label="Hiring"></div></section>
+        <section><h2>Projects</h2><ul><li><p>CRM migration</p><p>Mar 2022 - Present</p><span data-testid="expandable-text-box">Moved 40k accounts.</span></li></ul></section>
+        <section><h2>Languages</h2><ul><li><p>German</p><p>Native or bilingual proficiency</p></li></ul></section>
+      </main>`,
+      files: EXTRACT_FILES,
+    }).SkoutCapturePage.extractPerson();
+    expect(profile).toMatchObject({
+      pronoun: "She/Her",
+      hiring: true,
+      locationName: "London, England, United Kingdom",
+      locationCountry: "United Kingdom",
+      projects: [{ title: "CRM migration", dates: "Mar 2022 - Present" }],
+      languages: [{ language: "German", proficiency: "Native or bilingual proficiency" }],
+    });
+    expect(profile.headline).toBe("Head of Sales");
+  });
+
+  it("reads only valid email and phone values from Contact info", () => {
+    const load = (modal) => loadCapturePage({
+      url: "https://www.linkedin.com/in/jane-doe/overlay/contact-info/",
+      html: `<main><h1>Jane Doe</h1><div role="dialog"><h2>Contact info</h2>${modal}</div></main>`,
+      files: EXTRACT_FILES,
+    }).SkoutCapturePage.extractPerson();
+
+    expect(load(`<h3>Your Profile</h3><a href="https://www.linkedin.com/in/jane-doe">linkedin.com/in/jane-doe</a>
+      <h3>Phone</h3><span>+1 (415) 555-0100 (Mobile)</span><h3>Email</h3><a href="mailto:Jane.Doe@Acme.example">Jane.Doe@Acme.example</a>
+      <h3>Connected</h3><span>March 3, 2021</span>`)).toMatchObject({ email: "jane.doe@acme.example", phone: "+1 (415) 555-0100" });
+
+    const bad = load(`<h3>Phone</h3><span>call me</span><h3>Email</h3><span>jane at acme</span><h3>Connected</h3><span>2021 2022 2023 2024</span>`);
+    expect(bad.email).toBeUndefined();
+    expect(bad.phone).toBeUndefined();
+  });
+
   it("keeps school-only education entries and captures a full connection-degree label", () => {
     const window = loadCapturePage({
       url: "https://www.linkedin.com/in/jane-doe/",
@@ -396,7 +508,8 @@ describe("person capture run", () => {
       return 0;
     };
     expect(window.SkoutPersonCapture.pageUrl("/in/stranger-person/", "jane-doe")).toBeUndefined();
-    expect(window.SkoutPersonCapture.pageUrl("/in/jane-doe/overlay/contact-info/", "jane-doe")).toBeUndefined();
+    expect(window.SkoutPersonCapture.pageUrl("/in/stranger-person/overlay/contact-info/", "jane-doe")).toBeUndefined();
+    expect(window.SkoutPersonCapture.pageUrl("/in/jane-doe/overlay/contact-info/", "jane-doe")).toBe("https://www.linkedin.com/in/jane-doe/overlay/contact-info/");
 
     await window.SkoutPersonCapture.start();
     expect(opened).toEqual([
@@ -404,6 +517,7 @@ describe("person capture run", () => {
       "https://www.linkedin.com/in/jane-doe/details/experience/",
       "https://www.linkedin.com/in/jane-doe/details/education/",
       "https://www.linkedin.com/in/jane-doe/details/skills/",
+      "https://www.linkedin.com/in/jane-doe/overlay/contact-info/",
     ]);
     const review = sent.find((message) => message.type === "SKOUT_CAPTURE_REVIEW");
     expect(review).toMatchObject({ kind: "person", sourceUrl: "https://www.linkedin.com/in/jane-doe/" });
