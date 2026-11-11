@@ -50,6 +50,23 @@ maybe("COPS-15 first Owner gets Ops access (Postgres)", () => {
     }
   });
 
+  it("treats the bootstrap admin like a Skout Owner, even without a Skout email", async () => {
+    const bootEmail = `boot-${tag()}@admin.example`;
+    const boot = await make(bootEmail, "owner", true);
+    // Not the bootstrap admin: refused.
+    expect(await claimFirstOpsAccess(db, ws, boot)).toBe(false);
+    if (await fresh()) {
+      expect(await claimFirstOpsAccess(db, ws, boot, bootEmail.toUpperCase())).toBe(true);
+      expect(await holds(boot)).toBe(1);
+      await sql`delete from workspace_member_roles where user_id = ${boot}`;
+      await sql`set session_replication_role = replica`;
+      await sql`delete from audit_logs where entity_id = ${boot} and action = 'ops_access.granted'`;
+      await sql`set session_replication_role = origin`;
+    } else {
+      expect(await claimFirstOpsAccess(db, ws, boot, bootEmail)).toBe(false);
+    }
+  });
+
   it("gives the first verified Skout Owner Ops access once; after that nobody claims it", async () => {
     const first = await make(`owner-${tag()}@skoutai.io`, "owner", true);
     const second = await make(`owner2-${tag()}@SkoutAI.io`, "owner", true);
