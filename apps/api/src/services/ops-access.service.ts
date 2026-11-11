@@ -101,9 +101,10 @@ export const SKOUT_STAFF_EMAIL_DOMAIN = "skoutai.io";
 
 /**
  * The very first holder, when nobody has ever been given Ops access (a new environment where
- * migration 0152 found no Skout workspace): the first workspace Owner with a verified
- * @skoutai.io email, or the bootstrap admin (BOOTSTRAP_ADMIN_EMAIL, already trusted by the deploy), who signs in gets it, audited `first_owner`. A customer cannot: their email is
- * not a Skout one. Once anyone has ever held it, this never grants again; from then on only a
+ * migration 0152 found no Skout workspace). When the deploy sets BOOTSTRAP_ADMIN_EMAIL, only that
+ * account can be first, so another staff member signing in earlier cannot make their own workspace
+ * the Skout one. Without it, the first workspace Owner with a verified @skoutai.io email who signs
+ * in gets it. Audited `first_owner`. A customer cannot: their email is not a Skout one. Once anyone has ever held it, this never grants again; from then on only a
  * holder gives it (invite or People).
  */
 export async function claimFirstOpsAccess(db: Db, workspaceId: string, userId: string, bootstrapAdminEmail?: string): Promise<boolean> {
@@ -114,8 +115,9 @@ export async function claimFirstOpsAccess(db: Db, workspaceId: string, userId: s
     .where(and(eq(schema.workspaceMembers.workspaceId, workspaceId), eq(schema.workspaceMembers.userId, userId)))
     .limit(1);
   const email = member?.email.trim().toLowerCase() ?? "";
-  const bootstrapAdmin = !!bootstrapAdminEmail && email === bootstrapAdminEmail.trim().toLowerCase();
-  if (member?.role !== "owner" || !(bootstrapAdmin || email.endsWith(`@${SKOUT_STAFF_EMAIL_DOMAIN}`))) return false;
+  const bootstrap = bootstrapAdminEmail?.trim().toLowerCase();
+  const eligible = bootstrap ? email === bootstrap : email.endsWith(`@${SKOUT_STAFF_EMAIL_DOMAIN}`);
+  if (member?.role !== "owner" || !eligible) return false;
   const [verified] = await db
     .select({ id: schema.authIdentities.id })
     .from(schema.authIdentities)

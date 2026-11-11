@@ -55,6 +55,10 @@ maybe("COPS-15 first Owner gets Ops access (Postgres)", () => {
     const boot = await make(bootEmail, "owner", true);
     // Not the bootstrap admin: refused.
     expect(await claimFirstOpsAccess(db, ws, boot)).toBe(false);
+    // With a bootstrap admin set, another Skout Owner cannot be first.
+    const otherStaff = await make(`staff-${tag()}@skoutai.io`, "owner", true);
+    expect(await claimFirstOpsAccess(db, ws, otherStaff, bootEmail)).toBe(false);
+    expect(await holds(otherStaff)).toBe(0);
     if (await fresh()) {
       expect(await claimFirstOpsAccess(db, ws, boot, bootEmail.toUpperCase())).toBe(true);
       expect(await holds(boot)).toBe(1);
