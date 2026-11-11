@@ -21,6 +21,7 @@ import { EnrichmentService } from "./service.js";
 import type { EnrichmentStore } from "./types.js";
 import type { ProspectSnapshot as ActivateSnapshot } from "./service.js";
 import { applyEnrichmentAutoFill } from "../enrichment-autofill.service.js";
+import { withEmailIntel } from "./email-intel-providers.js";
 
 export * from "./types.js";
 export { EnrichmentService, SCORE_CREDIT_COST } from "./service.js";
@@ -71,7 +72,7 @@ function buildEngine(config: Env, workspaceOverrides: Partial<PalConfig> = {}): 
   const cached = engineCache.get(cacheKey);
   if (cached) return cached;
 
-  const engine = new EnrichmentEngine(createRegistryFromConfig(platform, workspaceOverrides), {
+  const engine = new EnrichmentEngine(withEmailIntel(createRegistryFromConfig(platform, workspaceOverrides), config), {
     phoneScoreGate: config.ENRICHMENT_PHONE_SCORE_GATE,
   });
   engineCache.set(cacheKey, engine);
