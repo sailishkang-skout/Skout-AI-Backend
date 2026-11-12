@@ -159,6 +159,13 @@ interface VendorPage {
 /** Wiza's search returns at most 30 people per call and has no offset or cursor. */
 const WIZA_MAX_RESULTS = 30;
 
+/** Most people one search may pull in total via a Wiza list; 0 when deeper pages are off. */
+export function wizaDeepMax(env: Env): number {
+  if (!isLive(env.WIZA_API_KEY)) return 0;
+  const n = Number(env.WIZA_DEEP_SEARCH_MAX ?? 0);
+  return Number.isFinite(n) && n > WIZA_MAX_RESULTS ? Math.floor(n) : 0;
+}
+
 /**
  * Wiza only serves page 1. We always ask for its maximum (30) regardless of the UI page size, so
  * one search stores everything Wiza will give for those filters and page 2 onward is answered
@@ -195,8 +202,75 @@ async function searchWiza(env: Env, f: SearchFilters, size: number, page: number
       location: str(p.location_name),
     });
   }
-  const reachable = typeof body.data?.total === "number" ? Math.min(body.data.total, WIZA_MAX_RESULTS) : undefined;
+  const reachableMax = Math.max(WIZA_MAX_RESULTS, wizaDeepMax(env));
+  const reachable = typeof body.data?.total === "number" ? Math.min(body.data.total, reachableMax) : undefined;
   return { people: out, total: reachable };
+}
+
+// ---------------------------------------------------------------------------
+// Wiza prospect LIST — how a search goes past the 30 people the search call returns.
+// Creating a list is asynchronous and costs 1 credit per person (even with enrichment off), so it
+// is only used on demand and capped by WIZA_DEEP_SEARCH_MAX. Results are stored in our index.
+// ---------------------------------------------------------------------------
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+export async function fetchWizaDeepList(
+  env: Env,
+  f: SearchFilters,
+  maxProfiles: number,
+  opts: { pollMs?: number; timeoutMs?: number } = {}
+): Promise<VendorPerson[]> {
+  const filters = buildWizaFilters(f);
+  if (Object.keys(filters).length === 0 || maxProfiles <= 0) return [];
+  const base = root(env.WIZA_BASE_URL);
+  const headers = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    Authorization: `Bearer ${env.WIZA_API_KEY}`,
+  };
+
+  const created = await http<{ data?: { id?: number } }>(`${base}/api/prospects/create_prospect_list`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      list: { name: `skout-${Date.now()}`, max_profiles: maxProfiles, enrichment_level: "none" },
+      filters,
+    }),
+  });
+  const id = created.data?.id;
+  if (!id) throw new Error("list was not created");
+
+  const pollMs = opts.pollMs ?? 2_000;
+  const deadline = Date.now() + (opts.timeoutMs ?? 60_000);
+  for (;;) {
+    const list = await http<{ data?: { status?: string } }>(`${base}/api/lists/${id}`, { headers });
+    const status = list.data?.status;
+    if (status === "finished") break;
+    if (status === "failed" || status === "error") throw new Error(`list ${status}`);
+    if (Date.now() >= deadline) throw new Error("list timed out");
+    await sleep(pollMs);
+  }
+
+  const contacts = await http<{ data?: Json[] }>(`${base}/api/lists/${id}/contacts?segment=people`, { headers });
+  const out: VendorPerson[] = [];
+  for (const c of contacts.data ?? []) {
+    const fullName = str(c.full_name);
+    if (!fullName) continue;
+    out.push({
+      vendor: "wiza",
+      fullName,
+      title: str(c.title),
+      linkedinUrl: absoluteUrl(str(c.linkedin_profile_url) ?? str(c.linkedin) ?? str(c.profile_url)),
+      companyName: str(c.company),
+      companyDomain: str(c.company_domain),
+      industry: str(c.company_industry),
+      location: str(c.location),
+      employeeCount: typeof c.company_size === "number" ? c.company_size : undefined,
+    });
+    if (out.length >= maxProfiles) break;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

@@ -14,7 +14,16 @@ import { createLogger } from "@skout/observability";
 import type { Db } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
-import { enabledVendors, searchVendors, toProspectDocument } from "./vendor-search.service.js";
+import { createHash } from "node:crypto";
+import { getRedis } from "../lib/redis.js";
+import {
+  enabledVendors,
+  fetchWizaDeepList,
+  mergePeople,
+  searchVendors,
+  toProspectDocument,
+  wizaDeepMax,
+} from "./vendor-search.service.js";
 import { 
   listSignalsForEntities, 
   computeSignalStackScore, 
@@ -221,6 +230,37 @@ export function buildDetailFromSnapshot(
 /**
  * Search service — OpenSearch corpus with demo fallback when OPENSEARCH_URL unset.
  */
+const DEEP_CLAIM_TTL_SECONDS = 7 * 24 * 3600;
+const deepClaims = new Map<string, number>();
+
+function deepClaimKey(filters: unknown): string {
+  return `deep-fetch:${createHash("sha256").update(JSON.stringify(filters)).digest("hex")}`;
+}
+
+/** True for the first caller per search for a week, so one search never creates a second paid list. */
+async function claimDeepFetch(env: Env, key: string): Promise<boolean> {
+  const redis = getRedis(env);
+  if (redis) {
+    try {
+      if (redis.status === "wait") await redis.connect();
+      return (await redis.set(key, "1", "EX", DEEP_CLAIM_TTL_SECONDS, "NX")) === "OK";
+    } catch {
+      // fall through to the in-process claim
+    }
+  }
+  const now = Date.now();
+  const expires = deepClaims.get(key);
+  if (expires && expires > now) return false;
+  deepClaims.set(key, now + DEEP_CLAIM_TTL_SECONDS * 1000);
+  return true;
+}
+
+async function releaseDeepFetch(env: Env, key: string): Promise<void> {
+  deepClaims.delete(key);
+  const redis = getRedis(env);
+  if (redis) await redis.del(key).catch(() => undefined);
+}
+
 export class SearchService {
   constructor(private readonly env: Env, private readonly db: Db) {}
 
@@ -378,14 +418,27 @@ export class SearchService {
 
     const outcome = await searchVendors(this.env, filters, pageSize, page);
     if (outcome.attempted.length > 0 && outcome.failed.length === outcome.attempted.length && stored.hits.length === 0) {
-      throw new HttpError(
-        "vendor_search_unavailable",
-        502,
-        `Prospect data providers failed: ${outcome.failed.map((f) => `${f.vendor} (${f.error})`).join("; ")}`
-      );
+      // Provider names and errors are logged by searchVendors; the user only needs to know to retry.
+      throw new HttpError("vendor_search_unavailable", 502, "Prospect data is temporarily unavailable. Please try again.");
     }
 
-    const fresh = outcome.people.map(toProspectDocument);
+    // The first page beyond what we already hold pulls the rest of this search (up to the cap) in
+    // one go, once per search; every later page is then served from our own index.
+    let people = outcome.people;
+    const deepMax = wizaDeepMax(this.env);
+    if (page > 1 && deepMax > 0 && (page - 1) * pageSize < deepMax) {
+      const claim = deepClaimKey(filters);
+      if (await claimDeepFetch(this.env, claim)) {
+        try {
+          people = mergePeople([...people, ...(await fetchWizaDeepList(this.env, filters, deepMax))]);
+        } catch (err) {
+          log.error("deeper results fetch failed", err, { page });
+          await releaseDeepFetch(this.env, claim);
+        }
+      }
+    }
+
+    const fresh = people.map(toProspectDocument);
     let hits = stored.hits;
     let total = Math.max(stored.total, outcome.total ?? 0);
     if (fresh.length > 0) {
