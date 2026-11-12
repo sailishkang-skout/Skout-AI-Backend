@@ -4,6 +4,17 @@ import { getMemberPermissions } from "@skout/auth";
 import { appendActivityRecorded } from "@skout/shared";
 import { writeCopsAudit } from "./cops-platform.service.js";
 
+/*
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md (billing ticket additions).
+ *   - Tables touched directly: companies, deals (read only), activities (insert: one timeline row per step) - owned by apps/crm
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: a billing ticket must check, in the same request, that the payment or subscription
+ *     belongs to the customer it is raised on (payment -> deal -> company) and show the customer's
+ *     name in Finance's queue; the timeline row is written next to the audit row, as the other
+ *     CustomerOps writers already do (cops-playbooks, cops-follow-up-actions).
+ *   - Review date: revisit when apps/crm's internal API covers transactional writes
+ */
 const { copsBillingTickets, companies, deals, paymentRequests, subscriptions, users, activities } = schema;
 
 export const BILLING_TICKET_KINDS = ["refund", "cancel"] as const;
