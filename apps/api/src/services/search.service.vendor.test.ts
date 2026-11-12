@@ -67,4 +67,37 @@ describe("SearchService vendor-backed search", () => {
       new SearchService(env, {} as never).searchProspects({ page: 1, pageSize: 25, filters: { jobTitle: "CTO" } })
     ).rejects.toMatchObject({ statusCode: 502 });
   });
+
+  it("pulls a deeper list once, on the first page past what is stored, then serves later pages from the index", async () => {
+    const deepEnv = { ...(env as object), WIZA_DEEP_SEARCH_MAX: 100 } as never;
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      urls.push(url);
+      if (url.endsWith("/create_prospect_list")) return new Response(JSON.stringify({ data: { id: 9 } }), { status: 200 });
+      if (url.endsWith("/api/lists/9")) return new Response(JSON.stringify({ data: { status: "finished" } }), { status: 200 });
+      return new Response(JSON.stringify({ data: [{ full_name: "Deep Person", linkedin_profile_url: "https://linkedin.com/in/deep" }] }), { status: 200 });
+    }));
+    osSearch.mockResolvedValueOnce({ hits: [], total: 30 }).mockResolvedValueOnce({ hits: [doc(31)], total: 31 });
+    bulkCreate.mockResolvedValue({ created: 1, existing: 0, failed: 0 });
+    const svc = new SearchService(deepEnv, {} as never);
+    const filters = { jobTitle: "Deep-once-only" };
+    const res = await svc.searchProspects({ page: 2, pageSize: 25, filters });
+    expect(urls.some((u) => u.endsWith("/create_prospect_list"))).toBe(true);
+    expect(res.results[0]!.prospectId).toBe("p31");
+
+    // Same search, next page: the claim is already taken, so no second paid list is created.
+    urls.length = 0;
+    osSearch.mockResolvedValue({ hits: [], total: 31 });
+    await svc.searchProspects({ page: 3, pageSize: 25, filters });
+    expect(urls.some((u) => u.endsWith("/create_prospect_list"))).toBe(false);
+  });
+
+  it("never exposes provider names in the error when all vendors fail", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("forbidden", { status: 403 })));
+    osSearch.mockResolvedValue({ hits: [], total: 0 });
+    await expect(
+      new SearchService(env, {} as never).searchProspects({ page: 1, pageSize: 25, filters: { jobTitle: "CTO" } })
+    ).rejects.toMatchObject({ statusCode: 502, message: expect.not.stringMatching(/wiza|contactout/i) });
+  });
 });
+
