@@ -54,6 +54,9 @@ function osConfig(env: Env): OpenSearchConfig | null {
   };
 }
 
+/** dataSource of documents indexed from LinkedIn profile captures. */
+export const LINKEDIN_CAPTURE_SOURCE = "linkedin_capture";
+
 function toFilters(body: SearchProspectsRequest): SearchFilters {
   const f = body.filters ?? {};
   return {
@@ -353,7 +356,8 @@ export class SearchService {
     cfg: OpenSearchConfig | null
   ): Promise<SearchProspectsResponse> {
     const filters = toFilters(body);
-    const storedFilters = { ...filters, dataSource: "vendor", stableOrder: true };
+    // Real people only: vendor results and LinkedIn captures from every workspace.
+    const storedFilters = { ...filters, dataSource: ["vendor", LINKEDIN_CAPTURE_SOURCE], stableOrder: true };
     const lookup = async () => {
       if (!cfg) return { hits: [] as ProspectDocument[], total: 0 };
       try {

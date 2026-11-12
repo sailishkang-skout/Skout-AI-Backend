@@ -30,6 +30,9 @@ import {
   type CaptureRun,
 } from "../services/enrichment/capture-ingest.service.js";
 
+import { indexCapturedPeople } from "../services/enrichment/capture-search-index.js";
+import { openSearchConfigFromEnv } from "../lib/opensearch-config.js";
+
 const uuidSchema = z.string().uuid();
 
 function runDto(run: CaptureRun) {
@@ -147,6 +150,14 @@ export async function enrichmentCaptureRoutes(app: FastifyInstance) {
       await suggestForJobChanges(db, app.config, actor.workspaceId).catch((error: unknown) =>
         request.log.warn({ err: error }, "job-change suggestion failed")
       );
+      // Make the person findable in Search & Discover. A failure never fails the capture.
+      const searchIndex = openSearchConfigFromEnv(app.config);
+      if (searchIndex && person) {
+        const { prospectId } = person as { prospectId: string };
+        await indexCapturedPeople(db, searchIndex, actor.workspaceId, [prospectId]).catch((error: unknown) =>
+          request.log.warn({ err: error }, "indexing captured person for search failed")
+        );
+      }
       return reply.status(201).send({ run: runDto(run), person, ...counts });
     } catch (error) {
       return sendCaptureError(reply, error);
@@ -175,6 +186,14 @@ export async function enrichmentCaptureRoutes(app: FastifyInstance) {
     } catch (error) {
       return sendCaptureError(reply, error);
     }
+  });
+
+  // Adds every profile this workspace captured before indexing existed to Search & Discover.
+  app.post("/enrichment/search-index/backfill", async (request, reply) => {
+    const { db, actor } = await authorize(request, "enrichment:admin");
+    const searchIndex = openSearchConfigFromEnv(app.config);
+    if (!searchIndex) return reply.status(503).send({ error: "search_index_unavailable" });
+    return reply.send(await indexCapturedPeople(db, searchIndex, actor.workspaceId));
   });
 
   app.get("/enrichment/ingest/company/:publicId/captured-profile-ids", async (request, reply) => {

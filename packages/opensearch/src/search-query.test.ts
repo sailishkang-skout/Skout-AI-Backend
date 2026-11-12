@@ -67,11 +67,12 @@ describe("buildSearchQuery", () => {
       expect(q.query).toEqual({ bool: { must: [{ match_all: {} }] } });
     });
 
-    it("adds match filter for jobTitle", () => {
+    it("matches jobTitle against title and headline", () => {
       const q = buildSearchQuery({ jobTitle: "VP Sales" });
       const bool = q.query.bool as { filter?: object[] };
-      expect(bool.filter).toContainEqual({ match: { title: "VP Sales" } });
+      expect(bool.filter).toContainEqual({ multi_match: { query: "VP Sales", fields: ["title", "headline"] } });
     });
+
 
     it("adds term filter for department", () => {
       const q = buildSearchQuery({ department: "Sales" });

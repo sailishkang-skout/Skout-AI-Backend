@@ -35,7 +35,7 @@ describe("SearchService vendor-backed search", () => {
     osSearch.mockResolvedValue({ hits: [doc(1), doc(2)], total: 60 });
     const res = await new SearchService(env, {} as never).searchProspects({ page: 2, pageSize: 2, filters: { jobTitle: "CTO" } });
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(osSearch.mock.calls[0]![1]).toMatchObject({ dataSource: "vendor", stableOrder: true });
+    expect(osSearch.mock.calls[0]![1]).toMatchObject({ dataSource: ["vendor", "linkedin_capture"], stableOrder: true });
     expect(res).toMatchObject({ total: 60, source: "opensearch" });
   });
 
