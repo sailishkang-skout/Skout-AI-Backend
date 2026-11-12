@@ -9,7 +9,8 @@ export const COPS_SYSTEM_ROLE_GRANTS = [
   {
     key: "cs",
     name: "Customer Success",
-    permissionKeys: ["crm:read", "crm:write", "onboarding:read", "onboarding:write", "onboarding:send", "tickets:read", "tickets:write", "tickets:send", "analytics:read"],
+    // commercial:read: CS sees the customer's payments and subscription, so they can raise a refund or cancel request.
+    permissionKeys: ["crm:read", "crm:write", "commercial:read", "onboarding:read", "onboarding:write", "onboarding:send", "tickets:read", "tickets:write", "tickets:send", "analytics:read"],
   },
   {
     key: "finance",
