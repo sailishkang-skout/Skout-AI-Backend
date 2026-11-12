@@ -39,6 +39,16 @@ describe("SearchService vendor-backed search", () => {
     expect(res).toMatchObject({ total: 60, source: "opensearch" });
   });
 
+  it("tags people that came from a LinkedIn capture as extension-sourced", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    osSearch.mockResolvedValue({
+      hits: [{ ...doc(1), dataSource: "linkedin_capture" }, { ...doc(2), dataSource: "vendor" }],
+      total: 2,
+    });
+    const res = await new SearchService(env, {} as never).searchProspects({ page: 1, pageSize: 2, filters: { jobTitle: "CTO" } });
+    expect(res.results.map((r) => (r as { origin?: string }).origin)).toEqual(["extension", undefined]);
+  });
+
   it("tops up from vendors when the index is thin, saves create-only, and re-reads the index", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => wizaResponse()));
     osSearch.mockResolvedValueOnce({ hits: [], total: 0 }).mockResolvedValueOnce({ hits: [doc(9)], total: 1 });

@@ -129,6 +129,7 @@ function mapDocToSummary(doc: ProspectDocument, signalStackScore?: SignalStackSc
     companyName: doc.companyName,
     linkedinUrl: doc.linkedinUrl,
     city: doc.city,
+    origin: doc.dataSource === LINKEDIN_CAPTURE_SOURCE ? ("extension" as const) : undefined,
     recordType: recordTypeFor(doc),
     employeeCount: doc.employeeCount,
     // Fit score: ICP/firmographic match (original icpScore)

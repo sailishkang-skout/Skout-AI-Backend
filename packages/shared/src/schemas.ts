@@ -243,6 +243,8 @@ export const prospectSummarySchema = z.object({
   companyName: z.string().optional(),
   linkedinUrl: z.string().optional(),
   city: z.string().optional(),
+  /** Set when the person came from a LinkedIn capture made with the Chrome extension. */
+  origin: z.enum(["extension"]).optional(),
   recordType: z.enum(["person", "company"]).optional(),
   employeeCount: z.number().optional(),
   // New score fields: fit (ICP/firmographic) and timing (signal-stacking)
