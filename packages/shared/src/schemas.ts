@@ -241,6 +241,8 @@ export const prospectSummarySchema = z.object({
   industry: z.string(),
   companyDomain: z.string(),
   companyName: z.string().optional(),
+  linkedinUrl: z.string().optional(),
+  city: z.string().optional(),
   recordType: z.enum(["person", "company"]).optional(),
   employeeCount: z.number().optional(),
   // New score fields: fit (ICP/firmographic) and timing (signal-stacking)
