@@ -1,4 +1,7 @@
-import { and, asc, desc, eq, gt, isNull, like, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, like, ne, or, sql } from "drizzle-orm";
+
+/** Auth events that mean the person signed in (a password login, or a session from an invite or SSO). */
+export const SIGN_IN_EVENTS = ["login_success", "session_created"];
 import { schema, type Db } from "@skout/db";
 import { appendCopsEvent, createCopsEvent } from "@skout/shared";
 import { writeCopsAudit } from "./cops-platform.service.js";
@@ -335,7 +338,9 @@ export async function collectProductSignals(db: Db, instance: { customerWorkspac
     .select({ id: authEvents.id, userId: authEvents.userId, at: authEvents.createdAt })
     .from(authEvents)
     .innerJoin(workspaceMembers, and(eq(workspaceMembers.userId, authEvents.userId), eq(workspaceMembers.workspaceId, ws)))
-    .where(eq(authEvents.type, "login_success"))
+    // An invited customer signs in through the invite (code, then password): that writes a
+    // session_created, never a login_success. Either one is a sign-in.
+    .where(inArray(authEvents.type, SIGN_IN_EVENTS))
     .orderBy(asc(authEvents.createdAt))
     .limit(1);
   if (login) signals.push({ key: "first_login", sourceRef: login.id, sourceType: "auth.login_success", occurredAt: login.at, evidence: { user_id: login.userId } });
