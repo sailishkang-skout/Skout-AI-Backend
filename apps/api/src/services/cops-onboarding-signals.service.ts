@@ -3,7 +3,7 @@ import { schema, type Db } from "@skout/db";
 import { appendCopsEvent, createCopsEvent } from "@skout/shared";
 import { createLogger } from "@skout/observability";
 import { canContact } from "./cops-can-contact.js";
-import { evaluateActivation, openInstances } from "./cops-activation.service.js";
+import { SIGN_IN_EVENTS, evaluateActivation, openInstances } from "./cops-activation.service.js";
 import { startFollowUp, type FollowUpDeps } from "./cops-follow-up.service.js";
 import { stopAccountFollowUps } from "./cops-stop.service.js";
 
@@ -241,7 +241,7 @@ export async function evaluateOnboarding(
       .select({ id: authEvents.id })
       .from(authEvents)
       .innerJoin(workspaceMembers, and(eq(workspaceMembers.userId, authEvents.userId), eq(workspaceMembers.workspaceId, inst.customerWorkspaceId)))
-      .where(and(eq(authEvents.type, "login_success"), gt(authEvents.createdAt, new Date(now.getTime() - 72 * HOUR))))
+      .where(and(inArray(authEvents.type, SIGN_IN_EVENTS), gt(authEvents.createdAt, new Date(now.getTime() - 72 * HOUR))))
       .limit(1);
     if (!recent && now.getTime() - inst.firstLoginAt.getTime() > 72 * HOUR) await fire("no_activity_72h", "No sign-in in the last 72 hours.");
   }
