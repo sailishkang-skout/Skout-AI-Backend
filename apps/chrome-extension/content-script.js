@@ -589,9 +589,8 @@
       return;
     }
 
-    if (sessionStorage.getItem("skout-ai-panel-hidden") === "1") return;
-    if (!isProfilePage() && !isCompanyPage() && !isPostPage()) return;
-    ensurePanel();
+    // Profile, company and post pages show no in-page popup: list, enrich and score
+    // actions live in the extension's side panel.
   }
 
   function nameFromUrlVanity() {
