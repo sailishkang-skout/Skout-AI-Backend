@@ -58,8 +58,6 @@ export interface ProspectDocument {
   dataSource?: string;
   /** Which vendors returned this person (wiza | contactout | datagma). */
   dataVendors?: string[];
-  /** Set on workspace-private documents (LinkedIn captures): only that workspace can find them. */
-  workspaceId?: string;
   headline?: string;
   location?: string;
   skills?: string[];
@@ -71,8 +69,6 @@ export interface SearchFilters {
   query?: string;
   /** Restrict to documents with this dataSource (e.g. "vendor" = real people only), or any of several. */
   dataSource?: string | string[];
-  /** The searching workspace: its private documents are included. Without it, none are. */
-  workspaceId?: string;
   /** Oldest-first order so pages stay stable while new documents are added (vendor pagination). */
   stableOrder?: boolean;
   // Contact
@@ -240,7 +236,6 @@ export async function ensureProspectsIndex(cfg: OpenSearchConfig): Promise<void>
 
 /** Fields added for LinkedIn captures; also put on indexes created before they existed. */
 const CAPTURE_FIELD_MAPPINGS = {
-  workspaceId: { type: "keyword" },
   headline: { type: "text" },
   location: { type: "text" },
   skills: { type: "text" },
@@ -367,15 +362,6 @@ export async function getProspectById(
   } catch {
     return null;
   }
-}
-
-/**
- * Workspace-private documents (LinkedIn captures) are hidden from every other workspace:
- * excluded when they carry a workspaceId other than the searching one.
- */
-export function privateDocumentsExcluded(workspaceId?: string): object {
-  const owned = { exists: { field: "workspaceId" } };
-  return workspaceId ? { bool: { must: [owned], must_not: [{ term: { workspaceId } }] } } : owned;
 }
 
 /** Build OpenSearch query from product filters + free-text query. */
@@ -548,7 +534,6 @@ export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25
         if (must.length) bool.must = must;
         if (filter.length) bool.filter = filter;
         if (!must.length && !filter.length) bool.must = [{ match_all: {} }];
-        bool.must_not = [privateDocumentsExcluded(filters.workspaceId)];
         return bool;
       })(),
     },

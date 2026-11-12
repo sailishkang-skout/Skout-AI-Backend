@@ -70,7 +70,7 @@ export async function searchRoutes(app: FastifyInstance) {
     const svc = createSearchService(app.config, app.db || {} as any);
     let result;
     try {
-      result = await svc.searchProspects(body, workspaceId);
+      result = await svc.searchProspects(body);
     } catch (err) {
       if (err instanceof HttpError) {
         return reply

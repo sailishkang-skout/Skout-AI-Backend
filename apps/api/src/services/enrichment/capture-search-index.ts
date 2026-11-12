@@ -1,6 +1,7 @@
-// LinkedIn profile captures in Search & Discover. Each captured person is indexed into the
-// prospect search index as a workspace-private document, so only the workspace that captured
-// them finds them, by name, headline, company, role, past company, school, skill or location.
+// LinkedIn profile captures in Search & Discover. Each captured person is indexed into the shared
+// prospect search index, so every workspace finds them by name, headline, company, role, past
+// company, school, skill or location. One document per person: a re-capture from any workspace
+// refreshes it.
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
@@ -25,11 +26,6 @@ const names = (values: unknown, key: string): string[] | undefined => {
   return out.length ? out : undefined;
 };
 
-/** Index document ID: a person captured by two workspaces gets one private copy each. */
-export function capturedDocId(workspaceId: string, prospectId: string): string {
-  return `capture:${workspaceId}:${prospectId}`;
-}
-
 /** True when a prospect snapshot came from a LinkedIn profile capture. */
 export function isLinkedinCapture(snapshot: Json): boolean {
   return snapshot.captureSource === "linkedin-public-profile" || !!str(snapshot.linkedinPublicId);
@@ -37,7 +33,6 @@ export function isLinkedinCapture(snapshot: Json): boolean {
 
 /** Search document for one captured person, built from the saved prospect snapshot. */
 export function capturedPersonDocument(
-  workspaceId: string,
   prospectId: string,
   companyId: string,
   snapshot: Json,
@@ -49,7 +44,6 @@ export function capturedPersonDocument(
   const doc: ProspectDocument = {
     prospectId,
     companyId,
-    workspaceId,
     dataSource: LINKEDIN_CAPTURE_SOURCE,
     fullName: str(snapshot.fullName),
     title: str(snapshot.title) ?? str(current?.title),
@@ -117,10 +111,10 @@ export async function indexCapturedPeople(
     const docs = rows
       .filter((row) => isLinkedinCapture((row.snapshot ?? {}) as Json))
       .map((row) =>
-        capturedPersonDocument(workspaceId, row.prospectId, row.companyId ?? row.prospectId, (row.snapshot ?? {}) as Json, row.updatedAt)
+        capturedPersonDocument(row.prospectId, row.companyId ?? row.prospectId, (row.snapshot ?? {}) as Json, row.updatedAt)
       )
       .filter((doc) => doc.fullName);
-    const result = await bulkUpsertProspects(cfg, docs, (doc) => capturedDocId(workspaceId, doc.prospectId));
+    const result = await bulkUpsertProspects(cfg, docs);
     indexed += result.ingested;
     failed += result.failed;
     if (rows.length < pageSize) break;

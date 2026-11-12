@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { buildSearchQuery } from "@skout/opensearch";
-import { capturedDocId, capturedPersonDocument, isLinkedinCapture } from "./capture-search-index.js";
+import { capturedPersonDocument, isLinkedinCapture } from "./capture-search-index.js";
 
 describe("capturedPersonDocument", () => {
-  it("maps a captured profile into a workspace-private search document", () => {
+  it("maps a captured profile into a shared search document", () => {
     const doc = capturedPersonDocument(
-      "ws-1",
       "p-1",
       "c-1",
       {
@@ -24,7 +23,6 @@ describe("capturedPersonDocument", () => {
       new Date("2026-11-12T00:00:00Z")
     );
     expect(doc).toMatchObject({
-      workspaceId: "ws-1",
       dataSource: "linkedin_capture",
       title: "Software Engineer",
       companyName: "Uber",
@@ -35,7 +33,7 @@ describe("capturedPersonDocument", () => {
       country: "India",
       email: "s@example.com",
     });
-    expect(capturedDocId("ws-1", "p-1")).toBe("capture:ws-1:p-1");
+    expect(doc).not.toHaveProperty("workspaceId");
   });
 
   it("recognises captured snapshots only", () => {
@@ -45,16 +43,10 @@ describe("capturedPersonDocument", () => {
   });
 });
 
-describe("search visibility", () => {
-  const filters = (q: unknown) => JSON.stringify(q);
-  it("hides workspace-private documents without a workspace", () => {
-    const q = filters(buildSearchQuery({ query: "uber" }));
-    expect(q).toContain('"must_not":[{"exists":{"field":"workspaceId"}}]');
-    expect(q).not.toContain('"term":{"workspaceId"');
-  });
-  it("includes the searching workspace's own captures and searches skills and schools", () => {
-    const q = filters(buildSearchQuery({ query: "typescript", workspaceId: "ws-1", dataSource: ["vendor", "linkedin_capture"] }));
-    expect(q).toContain('"term":{"workspaceId":"ws-1"}');
+describe("search", () => {
+  it("finds captures from every workspace and searches skills and schools", () => {
+    const q = JSON.stringify(buildSearchQuery({ query: "typescript", dataSource: ["vendor", "linkedin_capture"] }));
+    expect(q).not.toContain("workspaceId");
     expect(q).toContain('"terms":{"dataSource":["vendor","linkedin_capture"]}');
     expect(q).toContain('"skills"');
     expect(q).toContain('"schools"');
