@@ -156,7 +156,15 @@ interface VendorPage {
   total?: number;
 }
 
-/** Wiza's search has no documented offset (max 30 per call), so it only serves page 1. */
+/** Wiza's search returns at most 30 people per call and has no offset or cursor. */
+const WIZA_MAX_RESULTS = 30;
+
+/**
+ * Wiza only serves page 1. We always ask for its maximum (30) regardless of the UI page size, so
+ * one search stores everything Wiza will give for those filters and page 2 onward is answered
+ * from our own index. The reported total is capped at 30 because that is all we can ever reach:
+ * Wiza's own total (e.g. 41) would otherwise promise pages that come back empty.
+ */
 async function searchWiza(env: Env, f: SearchFilters, size: number, page: number): Promise<VendorPage> {
   const filters = buildWizaFilters(f);
   if (page > 1 || Object.keys(filters).length === 0) return { people: [] };
@@ -169,7 +177,7 @@ async function searchWiza(env: Env, f: SearchFilters, size: number, page: number
         Accept: "application/json",
         Authorization: `Bearer ${env.WIZA_API_KEY}`,
       },
-      body: JSON.stringify({ filters, size: Math.min(size, 30) }),
+      body: JSON.stringify({ filters, size: WIZA_MAX_RESULTS }),
     }
   );
   const out: VendorPerson[] = [];
@@ -187,7 +195,8 @@ async function searchWiza(env: Env, f: SearchFilters, size: number, page: number
       location: str(p.location_name),
     });
   }
-  return { people: out, total: typeof body.data?.total === "number" ? body.data.total : undefined };
+  const reachable = typeof body.data?.total === "number" ? Math.min(body.data.total, WIZA_MAX_RESULTS) : undefined;
+  return { people: out, total: reachable };
 }
 
 // ---------------------------------------------------------------------------
