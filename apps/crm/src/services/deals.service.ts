@@ -35,6 +35,8 @@ export interface DealDto {
   closeDate: string | null;
   probability: number | null;
   status: string;
+  leadSource: string | null;
+  leadSourceDetail: string | null;
   fieldSources: FieldSourcesMap;
   createdAt: string;
   updatedAt: string;
@@ -74,6 +76,8 @@ function toDto(row: typeof deals.$inferSelect): DealDto {
     closeDate: row.closeDate,
     probability: row.probability,
     status: row.status,
+    leadSource: row.leadSource,
+    leadSourceDetail: row.leadSourceDetail,
     fieldSources: asFieldSourcesMap(row.fieldSources),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -258,6 +262,15 @@ export class DealsService {
     if (!stageId) throw new HttpError("pipeline_stage_required", 400);
 
     const dto = await this.db.transaction(async (tx) => {
+      // No source given: the deal takes its company's (set once on the company, reused on every deal).
+      let inheritedSource: { leadSource: string | null; leadSourceDetail: string | null } | undefined;
+      if (input.leadSource === undefined && input.companyId) {
+        [inheritedSource] = await tx
+          .select({ leadSource: schema.companies.leadSource, leadSourceDetail: schema.companies.leadSourceDetail })
+          .from(schema.companies)
+          .where(and(eq(schema.companies.id, input.companyId), eq(schema.companies.workspaceId, workspaceId)))
+          .limit(1);
+      }
       const [row] = await tx
         .insert(deals)
         .values({
@@ -271,6 +284,8 @@ export class DealsService {
           currency: input.currency,
           closeDate: input.closeDate,
           probability: input.probability,
+          leadSource: input.leadSource !== undefined ? input.leadSource : inheritedSource?.leadSource ?? null,
+          leadSourceDetail: input.leadSource !== undefined ? input.leadSourceDetail?.trim() || null : inheritedSource?.leadSourceDetail ?? null,
         })
         .returning();
 
@@ -349,6 +364,8 @@ export class DealsService {
           ...(input.closeDate !== undefined ? { closeDate: input.closeDate } : {}),
           ...(input.probability !== undefined ? { probability: input.probability } : {}),
           ...(input.status !== undefined ? { status: input.status } : {}),
+          ...(input.leadSource !== undefined ? { leadSource: input.leadSource } : {}),
+          ...(input.leadSourceDetail !== undefined ? { leadSourceDetail: input.leadSourceDetail?.trim() || null } : {}),
           ...(nextFieldSources !== undefined ? { fieldSources: nextFieldSources } : {}),
           updatedAt: new Date(),
         })

@@ -462,6 +462,10 @@ export const TASK_TYPES = ["call", "email", "follow-up", "custom"] as const;
 export const TASK_DISPOSITIONS = ["connected", "no_answer", "voicemail", "bad_number"] as const;
 export const ACTIVITY_TYPES = ["note", "call", "email", "meeting", "stage_change"] as const;
 
+/** Where a company or deal came from. */
+export const LEAD_SOURCES = ["inbound", "outbound", "referral", "partner", "event", "other"] as const;
+export type LeadSource = (typeof LEAD_SOURCES)[number];
+
 export const companyCreateSchema = z.object({
   name: z.string().min(1).max(255),
   domain: z.string().max(255).optional(),
@@ -472,6 +476,8 @@ export const companyCreateSchema = z.object({
   ownerId: z.string().uuid().optional(),
   status: z.enum(COMPANY_STATUSES).default("active"),
   sourceProspectCompanyId: z.string().optional(),
+  leadSource: z.enum(LEAD_SOURCES).nullable().optional(),
+  leadSourceDetail: z.string().trim().max(255).nullable().optional(),
 });
 
 export const companyUpdateSchema = companyCreateSchema
@@ -508,6 +514,8 @@ export const companyResponseSchema = z.object({
   ownerId: z.string().uuid().nullable(),
   status: z.enum(COMPANY_STATUSES),
   sourceProspectCompanyId: z.string().nullable(),
+  leadSource: z.enum(LEAD_SOURCES).nullable().optional(),
+  leadSourceDetail: z.string().nullable().optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -622,6 +630,8 @@ export const dealCreateSchema = z.object({
   currency: z.string().length(3).default("USD"),
   closeDate: z.string().date().optional(),
   probability: z.number().int().min(0).max(100).optional(),
+  leadSource: z.enum(LEAD_SOURCES).nullable().optional(),
+  leadSourceDetail: z.string().trim().max(255).nullable().optional(),
 });
 
 export const dealUpdateSchema = z
@@ -636,6 +646,8 @@ export const dealUpdateSchema = z
     closeDate: z.string().date().optional(),
     probability: z.number().int().min(0).max(100).optional(),
     status: z.enum(DEAL_STATUSES).optional(),
+    leadSource: z.enum(LEAD_SOURCES).nullable().optional(),
+    leadSourceDetail: z.string().trim().max(255).nullable().optional(),
   })
   .refine((d) => Object.values(d).some((v) => v !== undefined), {
     message: "At least one field is required",
@@ -654,6 +666,8 @@ export const dealResponseSchema = z.object({
   closeDate: z.string().nullable(),
   probability: z.number().nullable(),
   status: z.enum(DEAL_STATUSES),
+  leadSource: z.enum(LEAD_SOURCES).nullable().optional(),
+  leadSourceDetail: z.string().nullable().optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
