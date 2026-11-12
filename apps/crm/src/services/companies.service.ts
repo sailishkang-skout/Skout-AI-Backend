@@ -31,6 +31,8 @@ export interface CompanyDto {
   ownerId: string | null;
   status: string;
   sourceProspectCompanyId: string | null;
+  leadSource: string | null;
+  leadSourceDetail: string | null;
   fieldSources: FieldSourcesMap;
   /** §8.12 Task 29 — RetentionRulesService.classify() result against status, or null if
    * unclassified / no matching active rule. Recomputed by update() on every status change. */
@@ -58,6 +60,8 @@ type CompanyDbUpdatePatch = Partial<{
   ownerId: string | null;
   status: string;
   sourceProspectCompanyId: string | null;
+  leadSource: string | null;
+  leadSourceDetail: string | null;
   retentionClassification: string | null;
 }>;
 
@@ -74,6 +78,8 @@ function toDto(row: typeof companies.$inferSelect): CompanyDto {
     ownerId: row.ownerId,
     status: row.status,
     sourceProspectCompanyId: row.sourceProspectCompanyId,
+    leadSource: row.leadSource,
+    leadSourceDetail: row.leadSourceDetail,
     fieldSources: asFieldSourcesMap(row.fieldSources),
     retentionClassification: row.retentionClassification,
     createdAt: row.createdAt.toISOString(),
@@ -146,6 +152,8 @@ export class CompaniesService {
           ownerId: input.ownerId,
           status: input.status,
           sourceProspectCompanyId: input.sourceProspectCompanyId,
+          leadSource: input.leadSource ?? null,
+          leadSourceDetail: input.leadSourceDetail?.trim() || null,
         })
         .returning();
 
@@ -191,6 +199,8 @@ export class CompaniesService {
       ...(input.location !== undefined ? { location: input.location } : {}),
       ...(input.ownerId !== undefined ? { ownerId: input.ownerId } : {}),
       ...(input.status !== undefined ? { status: input.status } : {}),
+      ...(input.leadSource !== undefined ? { leadSource: input.leadSource } : {}),
+      ...(input.leadSourceDetail !== undefined ? { leadSourceDetail: input.leadSourceDetail?.trim() || null } : {}),
       ...(input.sourceProspectCompanyId !== undefined
         ? { sourceProspectCompanyId: input.sourceProspectCompanyId }
         : {}),

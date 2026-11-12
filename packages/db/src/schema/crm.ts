@@ -33,6 +33,10 @@ export const companies = pgTable(
     ownerId: uuid("owner_id").references(() => users.id, { onDelete: "set null" }),
     status: text("status").notNull().default("active"),
     sourceProspectCompanyId: text("source_prospect_company_id"),
+    /** Where the company came from: inbound, outbound, referral, partner, event, other (LEAD_SOURCES). */
+    leadSource: text("lead_source"),
+    /** Free text: who referred it, which event or campaign. */
+    leadSourceDetail: text("lead_source_detail"),
     /** R13.3 — per-field provenance: { [field]: { source, confidence?, setAt } }. "manual" wins forever. */
     fieldSources: jsonb("field_sources").notNull().default({}),
     /** §8.12 Task 29 — RetentionRulesService.classify() result against `status`, recomputed on
@@ -166,6 +170,9 @@ export const deals = pgTable(
     contractEndDate: date("contract_end_date"),
     /** COPS-03: selects the commercial gate policy (commercial_gate_policies). Null uses the workspace default. */
     dealType: text("deal_type"),
+    /** Where the deal came from (LEAD_SOURCES); a new deal takes its company's when not given. */
+    leadSource: text("lead_source"),
+    leadSourceDetail: text("lead_source_detail"),
     /** R16.3 — per-field provenance for LLM-extracted deal fields (amount/closeDate), same
      * pattern R13.3 built for contacts/companies. "manual" wins forever. */
     fieldSources: jsonb("field_sources").notNull().default({}),
