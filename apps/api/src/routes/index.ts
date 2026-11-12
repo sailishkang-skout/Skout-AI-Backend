@@ -70,6 +70,7 @@ import { copsAuditRoutes } from "./cops-audit.routes.js";
 import { copsTimelineRoutes } from "./cops-timeline.routes.js";
 import { copsAccount360Routes } from "./account-360.routes.js";
 import { copsSavedViewsRoutes } from "./cops-saved-views.routes.js";
+import { copsBillingTicketsRoutes } from "./cops-billing-tickets.routes.js";
 import { copsCrmObjectsRoutes } from "./cops-crm-objects.routes.js";
 import { copsCommercialRoutes } from "./cops-commercial.routes.js";
 import { copsProvisioningRoutes } from "./cops-provisioning.routes.js";
@@ -204,7 +205,7 @@ export async function registerRoutes(app: FastifyInstance) {
       await ops(copsIncidentsRoutes);
       await ops(copsAuditRoutes, { db: app.db });
       await gated("crm", [copsTimelineRoutes, copsAccount360Routes, copsSavedViewsRoutes, copsCrmObjectsRoutes]);
-      await gated("commercial", [copsCommercialRoutes, copsContractDocumentRoutes]);
+      await gated("commercial", [copsCommercialRoutes, copsContractDocumentRoutes, copsBillingTicketsRoutes]);
       await gated("provisioning", [copsProvisioningRoutes]);
       await gated("onboarding", [copsOnboardingRoutes]);
       await gated("tickets", [copsTicketsRoutes]);

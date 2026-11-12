@@ -228,3 +228,9 @@ by apps/api.
 | File | Tables | Access |
 | --- | --- | --- |
 | `apps/api/src/services/cops-commercial-email.service.ts` | contacts, deals | read only: name, email and account of the contacts a proposal or payment link is emailed to; the deal's account, so a payment link only goes to that account's contacts |
+
+## Billing ticket additions (2026-11-12)
+
+| File | Tables | Access |
+| --- | --- | --- |
+| `apps/api/src/services/cops-billing-tickets.service.ts` | companies, deals, activities | read: the customer's name, and that a payment's deal belongs to the customer the refund ticket is raised on; insert: one `activities` timeline row per ticket step (raised, done, declined) |
