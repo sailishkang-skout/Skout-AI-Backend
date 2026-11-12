@@ -54,9 +54,13 @@ function osConfig(env: Env): OpenSearchConfig | null {
   };
 }
 
-function toFilters(body: SearchProspectsRequest): SearchFilters {
+/** dataSource of documents indexed from LinkedIn profile captures. */
+export const LINKEDIN_CAPTURE_SOURCE = "linkedin_capture";
+
+function toFilters(body: SearchProspectsRequest, workspaceId?: string): SearchFilters {
   const f = body.filters ?? {};
   return {
+    workspaceId,
     query: body.query,
     fullName: f.fullName,
     jobTitle: f.jobTitle,
@@ -253,7 +257,8 @@ export class SearchService {
     return doc ? mapDocToDetail(doc, await this.computeStackScoreForDoc(doc)) : null;
   }
 
-  async searchProspects(body: SearchProspectsRequest): Promise<SearchProspectsResponse> {
+  /** `workspaceId` adds that workspace's own LinkedIn captures to the shared results. */
+  async searchProspects(body: SearchProspectsRequest, workspaceId?: string): Promise<SearchProspectsResponse> {
     const page = body.page ?? 1;
     const pageSize = body.pageSize ?? 25;
     const cfg = osConfig(this.env);
@@ -261,12 +266,12 @@ export class SearchService {
     // Real data: when any vendor key is configured, serve real people only — from our own
     // index first (free), topping up from Wiza/ContactOut/Datagma when the index is thin.
     if (enabledVendors(this.env).length > 0) {
-      return this.vendorBackedSearch(body, page, pageSize, cfg);
+      return this.vendorBackedSearch(body, page, pageSize, cfg, workspaceId);
     }
 
     if (cfg) {
       try {
-        const res = await osSearch(cfg, toFilters(body), page, pageSize);
+        const res = await osSearch(cfg, toFilters(body, workspaceId), page, pageSize);
         log.debug("prospect search completed", {
           page,
           pageSize,
@@ -350,10 +355,12 @@ export class SearchService {
     body: SearchProspectsRequest,
     page: number,
     pageSize: number,
-    cfg: OpenSearchConfig | null
+    cfg: OpenSearchConfig | null,
+    workspaceId?: string
   ): Promise<SearchProspectsResponse> {
-    const filters = toFilters(body);
-    const storedFilters = { ...filters, dataSource: "vendor", stableOrder: true };
+    const filters = toFilters(body, workspaceId);
+    // Real people only: vendor results and this workspace's LinkedIn captures.
+    const storedFilters = { ...filters, dataSource: ["vendor", LINKEDIN_CAPTURE_SOURCE], stableOrder: true };
     const lookup = async () => {
       if (!cfg) return { hits: [] as ProspectDocument[], total: 0 };
       try {

@@ -2,11 +2,14 @@ import { describe, it, expect } from "vitest";
 import { aggregateDemoCorpus, buildSearchQuery } from "./index.js";
 import type { ProspectDocument } from "./index.js";
 
+// Without a workspace, workspace-private documents are excluded.
+const SHARED_ONLY = { exists: { field: "workspaceId" } };
+
 describe("buildSearchQuery", () => {
   describe("empty filters", () => {
     it("returns match_all when no filters provided", () => {
       const q = buildSearchQuery({});
-      expect(q.query).toEqual({ bool: { must: [{ match_all: {} }] } });
+      expect(q.query).toEqual({ bool: { must: [{ match_all: {} }], must_not: [SHARED_ONLY] } });
     });
 
     it("defaults to page 1 and size 25", () => {
@@ -45,7 +48,7 @@ describe("buildSearchQuery", () => {
 
     it("ignores whitespace-only query", () => {
       const q = buildSearchQuery({ query: "   " });
-      expect(q.query).toEqual({ bool: { must: [{ match_all: {} }] } });
+      expect(q.query).toEqual({ bool: { must: [{ match_all: {} }], must_not: [SHARED_ONLY] } });
     });
   });
 
@@ -64,13 +67,20 @@ describe("buildSearchQuery", () => {
 
     it("ignores whitespace-only fullName", () => {
       const q = buildSearchQuery({ fullName: "   " });
-      expect(q.query).toEqual({ bool: { must: [{ match_all: {} }] } });
+      expect(q.query).toEqual({ bool: { must: [{ match_all: {} }], must_not: [SHARED_ONLY] } });
     });
 
-    it("adds match filter for jobTitle", () => {
+    it("matches jobTitle against title and headline", () => {
       const q = buildSearchQuery({ jobTitle: "VP Sales" });
       const bool = q.query.bool as { filter?: object[] };
-      expect(bool.filter).toContainEqual({ match: { title: "VP Sales" } });
+      expect(bool.filter).toContainEqual({ multi_match: { query: "VP Sales", fields: ["title", "headline"] } });
+    });
+
+    it("shows a workspace its own private documents and hides other workspaces'", () => {
+      const q = buildSearchQuery({ workspaceId: "ws-1" });
+      expect((q.query.bool as { must_not?: object[] }).must_not).toEqual([
+        { bool: { must: [SHARED_ONLY], must_not: [{ term: { workspaceId: "ws-1" } }] } },
+      ]);
     });
 
     it("adds term filter for department", () => {
@@ -99,7 +109,7 @@ describe("buildSearchQuery", () => {
 
     it("does NOT add filter when emailAvailable is false", () => {
       const q = buildSearchQuery({ emailAvailable: false });
-      expect(q.query).toEqual({ bool: { must: [{ match_all: {} }] } });
+      expect(q.query).toEqual({ bool: { must: [{ match_all: {} }], must_not: [SHARED_ONLY] } });
     });
 
     it("adds exists filter for phoneAvailable", () => {
@@ -160,7 +170,7 @@ describe("buildSearchQuery", () => {
 
     it("does not add filter for empty contactSignals array", () => {
       const q = buildSearchQuery({ contactSignals: [] });
-      expect(q.query).toEqual({ bool: { must: [{ match_all: {} }] } });
+      expect(q.query).toEqual({ bool: { must: [{ match_all: {} }], must_not: [SHARED_ONLY] } });
     });
   });
 
@@ -253,7 +263,7 @@ describe("buildSearchQuery", () => {
 
     it("does NOT add filter when currentlyHiring is false", () => {
       const q = buildSearchQuery({ currentlyHiring: false });
-      expect(q.query).toEqual({ bool: { must: [{ match_all: {} }] } });
+      expect(q.query).toEqual({ bool: { must: [{ match_all: {} }], must_not: [SHARED_ONLY] } });
     });
 
     it("adds terms filter for hiringDepartments", () => {
@@ -315,7 +325,7 @@ describe("buildSearchQuery", () => {
 
     it("omits the terms clause for an empty array", () => {
       const q = buildSearchQuery({ industries: [] });
-      expect(q.query.bool).toEqual({ must: [{ match_all: {} }] });
+      expect(q.query.bool).toEqual({ must: [{ match_all: {} }], must_not: [SHARED_ONLY] });
     });
   });
 });

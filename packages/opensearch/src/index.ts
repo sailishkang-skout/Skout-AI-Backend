@@ -58,13 +58,21 @@ export interface ProspectDocument {
   dataSource?: string;
   /** Which vendors returned this person (wiza | contactout | datagma). */
   dataVendors?: string[];
+  /** Set on workspace-private documents (LinkedIn captures): only that workspace can find them. */
+  workspaceId?: string;
+  headline?: string;
+  location?: string;
+  skills?: string[];
+  schools?: string[];
   updatedAt: string;
 }
 
 export interface SearchFilters {
   query?: string;
-  /** Restrict to documents with this dataSource (e.g. "vendor" = real people only). */
-  dataSource?: string;
+  /** Restrict to documents with this dataSource (e.g. "vendor" = real people only), or any of several. */
+  dataSource?: string | string[];
+  /** The searching workspace: its private documents are included. Without it, none are. */
+  workspaceId?: string;
   /** Oldest-first order so pages stay stable while new documents are added (vendor pagination). */
   stableOrder?: boolean;
   // Contact
@@ -222,6 +230,7 @@ export async function ensureProspectsIndex(cfg: OpenSearchConfig): Promise<void>
           outreachReadiness: { type: "keyword" },
           dataSource: { type: "keyword" },
           dataVendors: { type: "keyword" },
+          ...CAPTURE_FIELD_MAPPINGS,
           updatedAt: { type: "date" },
         },
       },
@@ -229,16 +238,35 @@ export async function ensureProspectsIndex(cfg: OpenSearchConfig): Promise<void>
   });
 }
 
-/** Bulk upsert documents (idempotent by prospectId). */
+/** Fields added for LinkedIn captures; also put on indexes created before they existed. */
+const CAPTURE_FIELD_MAPPINGS = {
+  workspaceId: { type: "keyword" },
+  headline: { type: "text" },
+  location: { type: "text" },
+  skills: { type: "text" },
+  schools: { type: "text" },
+} as const;
+
+/** Adds the capture fields to an existing index's mapping. Safe to call repeatedly. */
+export async function ensureCaptureFieldMappings(cfg: OpenSearchConfig): Promise<void> {
+  const index = cfg.index ?? PROSPECTS_INDEX;
+  await osFetch(cfg, `/${index}/_mapping`, {
+    method: "PUT",
+    body: JSON.stringify({ properties: CAPTURE_FIELD_MAPPINGS }),
+  });
+}
+
+/** Bulk upsert documents (idempotent by prospectId, or by `idOf` when given). */
 export async function bulkUpsertProspects(
   cfg: OpenSearchConfig,
-  docs: ProspectDocument[]
+  docs: ProspectDocument[],
+  idOf: (doc: ProspectDocument) => string = (doc) => doc.prospectId
 ): Promise<{ ingested: number; failed: number }> {
   if (!docs.length) return { ingested: 0, failed: 0 };
   const index = cfg.index ?? PROSPECTS_INDEX;
   const lines: string[] = [];
   for (const doc of docs) {
-    lines.push(JSON.stringify({ index: { _index: index, _id: doc.prospectId } }));
+    lines.push(JSON.stringify({ index: { _index: index, _id: idOf(doc) } }));
     lines.push(JSON.stringify(doc));
   }
   const body = lines.join("\n") + "\n";
@@ -341,6 +369,15 @@ export async function getProspectById(
   }
 }
 
+/**
+ * Workspace-private documents (LinkedIn captures) are hidden from every other workspace:
+ * excluded when they carry a workspaceId other than the searching one.
+ */
+export function privateDocumentsExcluded(workspaceId?: string): object {
+  const owned = { exists: { field: "workspaceId" } };
+  return workspaceId ? { bool: { must: [owned], must_not: [{ term: { workspaceId } }] } } : owned;
+}
+
 /** Build OpenSearch query from product filters + free-text query. */
 export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25) {
   const must: object[] = [];
@@ -350,18 +387,20 @@ export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25
     must.push({
       multi_match: {
         query: filters.query,
-        fields: ["fullName^2", "title", "companyName", "companyDomain", "industry"],
+        fields: ["fullName^2", "title", "headline", "companyName", "companyDomain", "industry", "previousCompany", "skills", "schools", "location"],
         type: "best_fields",
       },
     });
   }
-  if (filters.dataSource) filter.push({ term: { dataSource: filters.dataSource } });
+  if (Array.isArray(filters.dataSource)) filter.push({ terms: { dataSource: filters.dataSource } });
+  else if (filters.dataSource) filter.push({ term: { dataSource: filters.dataSource } });
+
   // Contact information
   if (filters.fullName?.trim()) {
     filter.push({ match_phrase_prefix: { fullName: filters.fullName.trim() } });
   }
   if (filters.jobTitle?.trim()) {
-    filter.push({ match: { title: filters.jobTitle.trim() } });
+    filter.push({ multi_match: { query: filters.jobTitle.trim(), fields: ["title", "headline"] } });
   }
   if (filters.department) filter.push({ term: { department: filters.department } });
   if (filters.seniority) filter.push({ term: { seniority: filters.seniority } });
@@ -509,6 +548,7 @@ export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25
         if (must.length) bool.must = must;
         if (filter.length) bool.filter = filter;
         if (!must.length && !filter.length) bool.must = [{ match_all: {} }];
+        bool.must_not = [privateDocumentsExcluded(filters.workspaceId)];
         return bool;
       })(),
     },
