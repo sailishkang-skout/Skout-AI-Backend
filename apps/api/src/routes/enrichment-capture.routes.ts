@@ -191,7 +191,7 @@ export async function enrichmentCaptureRoutes(app: FastifyInstance) {
   // Adds every profile captured before indexing existed, from ALL workspaces, to Search &
   // Discover. Captures are shared across workspaces, so this is one global run, not per workspace.
   app.post("/enrichment/search-index/backfill", async (request, reply) => {
-    const { db, actor } = await authorize(request, "enrichment:admin");
+    const { db } = await authorize(request, "enrichment:admin");
     const searchIndex = openSearchConfigFromEnv(app.config);
     if (!searchIndex) return reply.status(503).send({ error: "search_index_unavailable" });
     return reply.send(await indexCapturedPeople(db, searchIndex, null));
