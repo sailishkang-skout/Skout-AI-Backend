@@ -69,13 +69,14 @@ export function capturedPersonDocument(
 let mappingsReady: Promise<void> | null = null;
 
 /**
- * Indexes captured people of one workspace: the given prospects, or every captured profile
- * when `prospectIds` is omitted (backfill). Returns how many documents were written.
+ * Indexes captured people: the given prospects, or every captured profile when `prospectIds` is
+ * omitted (backfill). Captures are shared across workspaces, so `workspaceId` may be null to
+ * cover every workspace (the global backfill). Returns how many documents were written.
  */
 export async function indexCapturedPeople(
   db: Db,
   cfg: OpenSearchConfig,
-  workspaceId: string,
+  workspaceId: string | null,
   prospectIds?: string[]
 ): Promise<{ indexed: number; failed: number }> {
   if (prospectIds && !prospectIds.length) return { indexed: 0, failed: 0 };
@@ -99,13 +100,14 @@ export async function indexCapturedPeople(
       .from(prospectActivations)
       .where(
         and(
-          eq(prospectActivations.workspaceId, workspaceId),
+          workspaceId ? eq(prospectActivations.workspaceId, workspaceId) : undefined,
           prospectIds
             ? inArray(prospectActivations.prospectId, prospectIds)
             : sql`(${prospectActivations.snapshot} ->> 'captureSource' = 'linkedin-public-profile' or ${prospectActivations.snapshot} ? 'linkedinPublicId')`
         )
       )
-      .orderBy(prospectActivations.prospectId)
+      // workspaceId breaks ties so offset paging stays stable when several workspaces hold the same person.
+      .orderBy(prospectActivations.prospectId, prospectActivations.workspaceId)
       .limit(pageSize)
       .offset(offset);
     const docs = rows
