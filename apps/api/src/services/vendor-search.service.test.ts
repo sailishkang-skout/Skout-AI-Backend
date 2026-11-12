@@ -85,10 +85,18 @@ describe("searchVendors", () => {
     vi.stubGlobal("fetch", fetchMock);
     const out = await searchVendors(env(), { jobTitle: "CTO" }, 25);
     expect(out.people.map((p) => p.fullName).sort()).toEqual(["Ada L", "Bob B"]);
-    expect(out.total).toBe(120);
+    expect(out.total).toBe(80); // Wiza's 120 is capped at the 30 it can serve; ContactOut's 80 is the largest reachable
     expect(out.failed).toEqual([]);
     const wizaCall = fetchMock.mock.calls.find((c) => String(c[0]).includes("wiza.test"))!;
     expect(wizaCall[1]).toMatchObject({ headers: { Authorization: "Bearer w-key" } });
+  });
+
+  it("asks Wiza for its maximum of 30 whatever the page size, and caps the total at 30", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => wizaOk());
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await searchVendors({ ...(env() as object), CONTACTOUT_API_KEY: undefined } as never, { jobTitle: "CTO" }, 10);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]!.body)).size).toBe(30);
+    expect(out.total).toBe(30);
   });
 
   it("makes scheme-less Wiza LinkedIn URLs absolute", async () => {

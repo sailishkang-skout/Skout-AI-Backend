@@ -47,7 +47,7 @@ describe("SearchService vendor-backed search", () => {
     expect(bulkCreate).toHaveBeenCalledTimes(1);
     expect(bulkCreate.mock.calls[0]![1][0]).toMatchObject({ fullName: "Ada L", dataSource: "vendor" });
     expect(res.results[0]!.prospectId).toBe("p9");
-    expect(res).toMatchObject({ source: "vendor", total: 90 }); // vendor-reported total, not just what is stored
+    expect(res).toMatchObject({ source: "vendor", total: 30 }); // vendor-reported total (Wiza 90, capped to the 30 it can serve), not just what is stored
   });
 
   it("returns 502 when every vendor fails and nothing is stored", async () => {
