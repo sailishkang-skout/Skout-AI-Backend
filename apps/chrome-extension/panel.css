@@ -163,10 +163,37 @@ body.side-panel {
   font-size: 11px;
 }
 
-.capture-lead span:first-of-type {
+/* The shared input style is full width; a lead's checkbox must not push its name out of view. */
+.capture-lead input[type="checkbox"] {
+  flex: none;
+  width: auto;
+  margin: 0;
+  padding: 0;
+}
+
+.capture-lead-text {
+  display: flex;
   flex: 1;
+  flex-direction: column;
   min-width: 0;
+}
+
+.capture-lead-name,
+.capture-lead-role {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.capture-lead-name {
+  color: #e2e8f0;
+  font-weight: 600;
+}
+
+.capture-lead-role {
+  color: #94a3b8;
+}
+
+.capture-lead .vision-chip {
+  flex: none;
 }

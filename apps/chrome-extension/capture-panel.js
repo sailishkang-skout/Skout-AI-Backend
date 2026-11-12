@@ -116,6 +116,15 @@ export function setRoleField(data, { list, key }, value) {
   data[list][0] = { ...data[list][0], [key]: value };
 }
 
+/** A lead's display name; falls back to the readable part of the profile link. */
+export function leadName(profile) {
+  const name = String(profile?.fullName || "").trim();
+  if (name) return name;
+  const slug = String(profile?.publicId || "").replace(/-[0-9a-f]{6,}$/i, "");
+  const fromSlug = slug.split("-").filter(Boolean).map((part) => part[0].toUpperCase() + part.slice(1)).join(" ");
+  return fromSlug || "Unknown person";
+}
+
 function send(type, payload = {}) {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage({ type, ...payload }, (response) => {
@@ -303,9 +312,12 @@ export function initCapturePanel() {
           reviewNotesEl.firstChild.textContent = draftSummary(draft.kind, currentData());
           syncJson();
         });
-        const text = document.createElement("span");
+        const text = Object.assign(document.createElement("span"), { className: "capture-lead-text" });
+        const name = leadName(profile);
         const role = profile.headline || profile.currentCompanies?.[0]?.title || "";
-        text.textContent = [profile.fullName || "Unknown person", role].filter(Boolean).join(" · ");
+        text.title = [name, role].filter(Boolean).join(" · ");
+        text.append(Object.assign(document.createElement("span"), { className: "capture-lead-name", textContent: name }));
+        if (role) text.append(Object.assign(document.createElement("span"), { className: "capture-lead-role", textContent: role }));
         const tag = Object.assign(document.createElement("span"), {
           className: "vision-chip",
           textContent: isPublicProfileUrl(profile.sourceUrl) ? "public link" : "Sales lead",

@@ -29,3 +29,12 @@ describe("review dialog company fields", () => {
     expect(data.previousCompanies).toEqual([{ name: "Lyft" }]);
   });
 });
+
+describe("captured company people names", () => {
+  it("shows the captured name, or a readable name from the profile link", async () => {
+    const { leadName } = await import("../capture-panel.js");
+    expect(leadName({ fullName: "Priya Sharma" })).toBe("Priya Sharma");
+    expect(leadName({ publicId: "priya-sharma-1a2b3c4d" })).toBe("Priya Sharma");
+    expect(leadName({})).toBe("Unknown person");
+  });
+});
