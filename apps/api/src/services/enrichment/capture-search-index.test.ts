@@ -1,6 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const bulkUpsert = vi.fn(async (_cfg: unknown, docs: unknown[]) => ({ ingested: docs.length, failed: 0 }));
+vi.mock("@skout/opensearch", async (orig) => ({
+  ...(await orig<typeof import("@skout/opensearch")>()),
+  ensureCaptureFieldMappings: async () => undefined,
+  bulkUpsertProspects: (cfg: unknown, docs: unknown[]) => bulkUpsert(cfg, docs),
+}));
+
 import { buildSearchQuery } from "@skout/opensearch";
-import { capturedPersonDocument, isLinkedinCapture } from "./capture-search-index.js";
+import { capturedPersonDocument, indexCapturedPeople, isLinkedinCapture } from "./capture-search-index.js";
 
 describe("capturedPersonDocument", () => {
   it("maps a captured profile into a shared search document", () => {
@@ -50,5 +58,33 @@ describe("search", () => {
     expect(q).toContain('"terms":{"dataSource":["vendor","linkedin_capture"]}');
     expect(q).toContain('"skills"');
     expect(q).toContain('"schools"');
+  });
+});
+
+describe("indexCapturedPeople (global backfill)", () => {
+  const row = (n: number, workspace: string) => ({
+    prospectId: `p${n}`,
+    companyId: null,
+    snapshot: { fullName: `Person ${n}`, captureSource: "linkedin-public-profile", workspaceMarker: workspace },
+    updatedAt: new Date("2026-11-12T00:00:00Z"),
+  });
+
+  it("with no workspace pages through every workspace's captures and indexes them all", async () => {
+    const pages = [Array.from({ length: 500 }, (_, i) => row(i, i % 2 ? "w1" : "w2")), [row(900, "w3")]];
+    const offsets: number[] = [];
+    const chain = {
+      from: () => chain,
+      where: () => chain,
+      orderBy: () => chain,
+      limit: () => chain,
+      offset: async (n: number) => {
+        offsets.push(n);
+        return pages.shift() ?? [];
+      },
+    };
+    const db = { select: () => chain } as never;
+    const res = await indexCapturedPeople(db, { url: "https://os.test" } as never, null);
+    expect(res).toEqual({ indexed: 501, failed: 0 });
+    expect(offsets).toEqual([0, 500]);
   });
 });
