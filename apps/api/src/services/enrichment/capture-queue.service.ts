@@ -1,3 +1,14 @@
+/**
+ * §5.2 / §7.1 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) — see
+ * docs/adr/0003-read-model-exceptions.md. ENR-02 capture queue company list.
+ *   - Tables touched directly: companies (owned by apps/crm)
+ *     - read only (name of each captured company, to list it in the extension's company queue)
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: the list joins the CRM company name with the capture identity key (the LinkedIn
+ *     company id) and the capture queue progress in one query; same boundary as ENR-03
+ *     (research.service.ts) and ENR-02 (capture-ingest.service.ts).
+ *   - Review date: revisit once apps/crm's internal API surface fully shipped (Wave 2)
+ */
 import { and, asc, eq, ilike, isNull, like, sql } from "drizzle-orm";
 import { z } from "zod";
 import { schema, type Db } from "@skout/db";
