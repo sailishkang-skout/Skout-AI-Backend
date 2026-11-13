@@ -3,6 +3,7 @@
 export const DRAFT_KEY = "skoutCaptureDraft";
 export const PROGRESS_KEY = "skoutCaptureProgress";
 export const HALT_KEY = "skoutCaptureHalt";
+export const RUN_QUEUE_KEY = "skoutCaptureRunQueue";
 const checkpointKey = (companyId) => `company-people-capture:${companyId}`;
 /** Matches capture-background.js: a reader silent for this long is no longer running. */
 const PROGRESS_STALE_MS = 3 * 60 * 1000;
@@ -157,6 +158,32 @@ export function fieldCoverage(kind, data) {
   return { total: fields.length, found: fields.length - missing.length, missing };
 }
 
+/** One line about a captured company's people capture: what is saved and what is left. */
+export function companyProgressText(company) {
+  const found = Number(company?.peopleFound) || 0;
+  const total = Number.isFinite(company?.expectedPeople) ? ` of about ${company.expectedPeople.toLocaleString()}` : "";
+  if (company?.local === "paused") return `${found.toLocaleString()} people saved · a batch is paused, it resumes where it stopped`;
+  if (company?.complete === true) return `All people captured (${found.toLocaleString()})`;
+  if (found > 0 || company?.local === "partial") return `${found.toLocaleString()}${total} people saved · more remain`;
+  return "No people captured yet";
+}
+
+/** One line for a company in a running queue. */
+export function runItemText(item) {
+  switch (item?.status) {
+    case "running": return item.batches ? `Reading batch ${item.batches + 1}…` : "Reading people…";
+    case "review": return "Review and save the batch above";
+    case "done": {
+      const batches = item.batches > 1 ? ` in ${item.batches} batches` : "";
+      return `Saved ${item.saved ?? 0} people${batches}${item.moreRemain ? " · more remain, pick it again to continue" : ""}`;
+    }
+    case "pending": return item.batches ? `Batch ${item.batches} saved (${item.saved ?? 0} people so far) · reading the next batch` : "Waiting";
+    case "skipped": return "Skipped";
+    case "failed": return `Could not read: ${item.error || "unknown error"}`;
+    default: return "Waiting";
+  }
+}
+
 export const NOT_FOUND_PLACEHOLDER = "NOT FOUND · type to add";
 
 /** A lead's display name; falls back to the readable part of the profile link. */
@@ -256,11 +283,20 @@ export function initCapturePanel() {
   const continueBoxEl = $("capture-continue-box");
   const continueTextEl = $("capture-continue-text");
   const continueBtn = $("capture-continue");
-  const queueCountEl = $("capture-queue-count");
-  const queueStatusEl = $("capture-queue-status");
-  const queueListEl = $("capture-queue-list");
+  const companyListEl = $("capture-company-list");
+  const companyStatusEl = $("capture-company-status");
+  const companySearchEl = $("capture-company-search");
+  const companyAllEl = $("capture-company-all");
+  const companySelectedEl = $("capture-company-selected");
+  const companyStartBtn = $("capture-company-start");
+  const runEl = $("capture-run");
+  const runNoteEl = $("capture-run-note");
+  const runListEl = $("capture-run-list");
+  const runPauseBtn = $("capture-run-pause");
+  const runResumeBtn = $("capture-run-resume");
+  const runClearBtn = $("capture-run-clear");
 
-  const state = { status: null, statusError: "", tab: null, progress: null, halt: null, draft: null, data: null, excluded: new Set(), saving: false, invalid: new Map(), continueCompany: null, queue: [] };
+  const state = { status: null, statusError: "", tab: null, progress: null, halt: null, draft: null, data: null, excluded: new Set(), saving: false, invalid: new Map(), continueCompany: null, companies: [], selected: new Set(), run: null, companiesError: "" };
 
   const show = (el, visible) => el?.classList.toggle("hidden", !visible);
 
@@ -333,49 +369,130 @@ export function initCapturePanel() {
     if (!companyId) return;
     setResult("Opening the company and reading the next batch of people…");
     continueBtn.disabled = true;
-    const response = await send("capture-queue-continue", { companyId, tabId: state.tab?.id });
+    const response = await send("capture-continue", { companyId, tabId: state.tab?.id });
     if (!response.ok) setResult(`Could not continue: ${response.error}`, "capture-error");
     else setResult("Reading the next batch. Review it here when it is ready.");
     renderContinue();
   }
 
-  const queueLabel = (item) => item.companyName || item.companyPublicId;
+  const runActive = () => state.run?.active === true;
 
-  function renderQueue() {
-    const items = state.queue;
-    queueCountEl.textContent = String(items.length);
-    queueListEl.replaceChildren(
-      ...items.map((item) => {
-        const row = Object.assign(document.createElement("li"), { className: "capture-queue-item" });
-        const name = Object.assign(document.createElement("span"), { className: "capture-queue-name", textContent: queueLabel(item), title: queueLabel(item) });
-        const total = Number.isFinite(item.expectedPeople) ? ` of about ${item.expectedPeople.toLocaleString()}` : "";
-        name.append(Object.assign(document.createElement("span"), {
-          className: "capture-queue-meta",
-          textContent: `${(item.peopleFound || 0).toLocaleString()}${total} people · ${item.pagesRead || 0} pages${item.pausedBatch ? " · paused batch" : ""}`,
-        }));
-        const go = Object.assign(document.createElement("button"), { type: "button", className: "primary", textContent: "Continue" });
-        go.disabled = isProgressActive(state.progress) || Boolean(state.draft) || state.status?.usage?.remainingToday === 0;
-        go.addEventListener("click", () => void continueQueue(item.companyPublicId));
-        const remove = Object.assign(document.createElement("button"), { type: "button", textContent: "Remove" });
-        remove.addEventListener("click", async () => {
-          remove.disabled = true;
-          const response = await send("capture-queue-remove", { companyId: item.companyPublicId });
-          if (!response.ok) setResult(`Not removed: ${response.error}`, "capture-error");
-          await refreshQueue();
+  function renderCompanies() {
+    const locked = runActive();
+    const companies = state.companies;
+    companyListEl.replaceChildren(
+      ...companies.map((company) => {
+        const row = Object.assign(document.createElement("li"), { className: "capture-company-item" });
+        const box = Object.assign(document.createElement("input"), {
+          type: "checkbox",
+          checked: state.selected.has(company.companyPublicId),
+          disabled: locked,
         });
-        row.append(name, go, remove);
+        box.setAttribute("aria-label", `Select ${company.name}`);
+        box.addEventListener("change", () => {
+          if (box.checked) state.selected.add(company.companyPublicId);
+          else state.selected.delete(company.companyPublicId);
+          renderCompanyControls();
+        });
+        const text = Object.assign(document.createElement("span"));
+        text.append(
+          Object.assign(document.createElement("span"), { className: "capture-company-name", textContent: company.name, title: company.name }),
+          Object.assign(document.createElement("span"), { className: "capture-company-meta", textContent: companyProgressText(company) }),
+        );
+        row.append(box, text);
         return row;
       })
     );
-    queueStatusEl.textContent = items.length ? state.queueError || "" : state.queueError || "No companies are waiting.";
+    companyStatusEl.textContent = state.companiesError
+      ? `Could not load your companies: ${state.companiesError}`
+      : companies.length
+        ? `${companies.length} captured companies.`
+        : companySearchEl.value.trim()
+          ? "No captured company matches that search."
+          : "No captured companies yet. Capture a company first, then it appears here.";
+    companyStatusEl.classList.toggle("capture-error", Boolean(state.companiesError));
+    renderCompanyControls();
   }
 
-  async function refreshQueue() {
-    const response = await send("capture-queue");
-    state.queue = response.ok ? response.items || [] : [];
-    state.queueError = response.ok ? (response.serverError ? `Only this browser's queue is shown: ${response.serverError}` : "") : response.error;
-    renderQueue();
+  function renderCompanyControls() {
+    const visible = state.companies.map((company) => company.companyPublicId);
+    const selectedVisible = visible.filter((id) => state.selected.has(id)).length;
+    companySelectedEl.textContent = String(state.selected.size);
+    companyAllEl.disabled = runActive() || !visible.length;
+    companyAllEl.checked = visible.length > 0 && selectedVisible === visible.length;
+    companyAllEl.indeterminate = selectedVisible > 0 && selectedVisible < visible.length;
+    companyStartBtn.textContent = state.selected.size ? `Start queue (${state.selected.size})` : "Start queue";
+    companyStartBtn.disabled =
+      !state.selected.size || runActive() || isProgressActive(state.progress) || Boolean(state.draft) || Boolean(state.halt) ||
+      state.saving || state.status?.usage?.remainingToday === 0;
+    companyStartBtn.title = state.status?.usage?.remainingToday === 0 ? "The daily capture limit is reached. Try again tomorrow." : "";
   }
+
+  function renderRun() {
+    const run = state.run;
+    show(runEl, Boolean(run));
+    if (!run) return renderCompanies();
+    const pending = run.items.some((item) => item.status === "pending");
+    runNoteEl.textContent = run.note || (run.active ? "Queue running. Keep this window open." : "");
+    runListEl.replaceChildren(
+      ...run.items.map((item) => {
+        const row = Object.assign(document.createElement("li"), { className: "capture-run-item" });
+        row.dataset.status = item.status;
+        row.append(
+          Object.assign(document.createElement("span"), { className: "capture-company-name", textContent: item.name, title: item.name }),
+          Object.assign(document.createElement("span"), { className: "capture-company-meta", textContent: runItemText(item) }),
+        );
+        return row;
+      })
+    );
+    show(runPauseBtn, run.active === true);
+    show(runResumeBtn, !run.active && pending);
+    show(runClearBtn, !run.active);
+    renderCompanies();
+  }
+
+  let companyReload = 0;
+  async function refreshCompanies() {
+    const ticket = ++companyReload;
+    const response = await send("capture-companies", { q: companySearchEl.value.trim() });
+    if (ticket !== companyReload) return; // A newer search replaced this one.
+    state.companies = response.ok ? response.companies || [] : [];
+    state.companiesError = response.ok ? "" : response.error;
+    renderCompanies();
+  }
+
+  let searchTimer;
+  companySearchEl.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => void refreshCompanies(), 300);
+  });
+  companyAllEl.addEventListener("change", () => {
+    for (const company of state.companies) {
+      if (companyAllEl.checked) state.selected.add(company.companyPublicId);
+      else state.selected.delete(company.companyPublicId);
+    }
+    renderCompanies();
+  });
+  companyStartBtn.addEventListener("click", async () => {
+    const companies = state.companies.filter((company) => state.selected.has(company.companyPublicId)).map(({ companyPublicId, name }) => ({ companyPublicId, name }));
+    // Companies picked earlier but hidden by a later search are kept in the queue too.
+    const hidden = [...state.selected].filter((id) => !companies.some((company) => company.companyPublicId === id)).map((companyPublicId) => ({ companyPublicId, name: companyPublicId }));
+    companyStartBtn.disabled = true;
+    setResult("");
+    const response = await send("capture-queue-start", { companies: [...companies, ...hidden], untilComplete: $("capture-until-complete").checked });
+    if (!response.ok) setResult(`Queue did not start: ${response.error}`, "capture-error");
+    else state.selected.clear();
+    renderCompanies();
+  });
+  runPauseBtn.addEventListener("click", () => void send("capture-queue-stop"));
+  runResumeBtn.addEventListener("click", async () => {
+    const response = await send("capture-queue-resume");
+    if (!response.ok) setResult(`Could not resume: ${response.error}`, "capture-error");
+  });
+  runClearBtn.addEventListener("click", async () => {
+    const response = await send("capture-queue-clear");
+    if (!response.ok) setResult(response.error, "capture-error");
+  });
 
   function renderProgress() {
     const progress = state.progress;
@@ -614,7 +731,7 @@ export function initCapturePanel() {
     discardBtn.disabled = true;
     // Not a success message: the run is only reported once the API records its final status.
     setResult("Saving… waiting for the capture run to be recorded.");
-    const response = await send("capture-send", { data: currentData() });
+    const response = await send("capture-send", { data: currentData(), autoContinue: Boolean($("capture-auto-continue")?.checked) });
     state.saving = false;
     discardBtn.disabled = false;
     if (response.ok) {
@@ -626,8 +743,12 @@ export function initCapturePanel() {
           ? ` ${checkpoint.error}`
           : checkpoint.complete
             ? ` People discovery finished: ${checkpoint.stopReason}.`
-            : ` More people remain (${checkpoint.distinctCandidates} found so far). Choose Continue capturing queue to read the next batch, now or later.`;
-      if (checkpoint && !checkpoint.error && !checkpoint.complete && checkpoint.companyId) {
+            : response.autoContinued
+              ? ` More people remain (${checkpoint.distinctCandidates} found so far). The next batch of up to 250 is being read now; review and save it when it appears.`
+              : ` More people remain (${checkpoint.distinctCandidates} found so far). Choose Continue capturing queue to read the next batch, now or later.`;
+      if (response.autoContinued) {
+        setContinue(null);
+      } else if (checkpoint && !checkpoint.error && !checkpoint.complete && checkpoint.companyId) {
         setContinue(checkpoint.companyId, `Batch saved. ${checkpoint.distinctCandidates} people found so far${Number.isFinite(checkpoint.expectedAssociatedMembers) ? ` of about ${checkpoint.expectedAssociatedMembers}` : ""}.${checkpoint.queued === false ? " The Skout queue could not be updated; this browser still remembers where to continue." : ""}`);
       } else if (checkpoint?.complete) {
         setContinue(null);
@@ -641,7 +762,7 @@ export function initCapturePanel() {
     }
     await refreshStatus();
     await renderCheckpoint();
-    await refreshQueue();
+    await refreshCompanies();
   });
 
   continueBtn.addEventListener("click", () => void continueQueue(state.continueCompany));
@@ -652,17 +773,25 @@ export function initCapturePanel() {
       state.progress = changes[PROGRESS_KEY].newValue || null;
       renderProgress();
       renderStart();
-      renderQueue();
+      renderCompanyControls();
+    }
+    if (changes[RUN_QUEUE_KEY]) {
+      state.run = changes[RUN_QUEUE_KEY].newValue || null;
+      renderRun();
+      renderStart();
     }
     if (changes[HALT_KEY]) {
       state.halt = changes[HALT_KEY].newValue || null;
       renderHalt();
       renderStart();
     }
-    if (changes[DRAFT_KEY]) applyDraft(changes[DRAFT_KEY].newValue);
+    if (changes[DRAFT_KEY]) {
+      applyDraft(changes[DRAFT_KEY].newValue);
+      renderCompanyControls();
+    }
     if (Object.keys(changes).some((key) => key.startsWith("company-people-capture:"))) {
       void renderCheckpoint();
-      void refreshQueue();
+      void refreshCompanies();
     }
   });
   chrome.tabs.onActivated.addListener(() => void refreshTab());
@@ -677,6 +806,8 @@ export function initCapturePanel() {
     renderProgress();
     renderHalt();
     applyDraft(stored[DRAFT_KEY]);
-    await Promise.all([refreshStatus(), refreshTab(), refreshQueue()]);
+    state.run = (await chrome.storage.local.get(RUN_QUEUE_KEY))[RUN_QUEUE_KEY] || null;
+    renderRun();
+    await Promise.all([refreshStatus(), refreshTab(), refreshCompanies()]);
   })();
 }

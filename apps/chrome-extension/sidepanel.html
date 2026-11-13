@@ -69,6 +69,10 @@
           <input id="capture-include-people" type="checkbox" checked />
           Include visible associated people (discovery candidates)
         </label>
+        <label class="checkbox-row">
+          <input id="capture-auto-continue" type="checkbox" checked />
+          Keep reading this company's people until all are captured (250 per batch, you review and save each)
+        </label>
         <label for="capture-departments">Department keywords (optional)</label>
         <input id="capture-departments" type="text" placeholder="Sales, engineering, marketing" />
         <label for="capture-seniorities">Seniority or title keywords (optional)</label>
@@ -103,13 +107,31 @@
         <button id="capture-continue" type="button" class="primary">Continue capturing queue</button>
       </div>
       <details id="capture-queue" class="capture-queue">
-        <summary>Capture queue (<span id="capture-queue-count">0</span>)</summary>
+        <summary>Company queue</summary>
         <p class="vision-desc">
-          Companies with people left to capture. Each batch saves up to 250 people; continue whenever you want.
-          The same list is under LinkedIn Enrichment → Capture queue in Skout.
+          Pick companies you have captured and read their people one company at a time, up to 250 people per
+          batch. You review and save each batch before the next company opens. Companies with people left can be
+          picked again later.
         </p>
-        <p id="capture-queue-status" class="vision-desc"></p>
-        <ul id="capture-queue-list" class="capture-queue-list"></ul>
+        <div id="capture-run" class="capture-run hidden">
+          <p id="capture-run-note" class="vision-desc" role="status" aria-live="polite"></p>
+          <ul id="capture-run-list" class="capture-run-list"></ul>
+          <button id="capture-run-pause" type="button" class="hidden">Pause queue</button>
+          <button id="capture-run-resume" type="button" class="primary hidden">Resume queue</button>
+          <button id="capture-run-clear" type="button" class="hidden">Clear</button>
+        </div>
+        <label class="checkbox-row">
+          <input id="capture-until-complete" type="checkbox" checked />
+          Keep reading each company until all its people are captured (250 per batch, you review each)
+        </label>
+        <input id="capture-company-search" type="search" placeholder="Search your captured companies" aria-label="Search captured companies" />
+        <label class="checkbox-row">
+          <input id="capture-company-all" type="checkbox" />
+          Select all (<span id="capture-company-selected">0</span> selected)
+        </label>
+        <p id="capture-company-status" class="vision-desc" role="status"></p>
+        <ul id="capture-company-list" class="capture-company-list"></ul>
+        <button id="capture-company-start" type="button" class="primary" disabled>Start queue</button>
       </details>
     </section>
 

@@ -33,9 +33,8 @@ import {
 import {
   captureQueueIdSchema,
   captureQueueUpdateSchema,
-  listCaptureQueue,
+  listCapturableCompanies,
   recordCaptureQueueBatch,
-  removeFromCaptureQueue,
 } from "../services/enrichment/capture-queue.service.js";
 import { indexCapturedPeople } from "../services/enrichment/capture-search-index.js";
 import { openSearchConfigFromEnv } from "../lib/opensearch-config.js";
@@ -204,13 +203,11 @@ export async function enrichmentCaptureRoutes(app: FastifyInstance) {
     return reply.send(await indexCapturedPeople(db, searchIndex, null));
   });
 
-  // Capture queue: companies whose people discovery still has result pages left.
-  app.get("/enrichment/capture/queue", async (request, reply) => {
-    const { db, actor } = await authorize(request, "enrichment:read");
-    const { includeComplete } = z
-      .object({ includeComplete: z.enum(["true", "false"]).optional() })
-      .parse(request.query ?? {});
-    return reply.send({ items: await listCaptureQueue(db, actor.workspaceId, { includeComplete: includeComplete === "true" }) });
+  // Companies captured in this workspace, for the extension's company queue.
+  app.get("/enrichment/capture/companies", async (request, reply) => {
+    const { db, actor } = await authorize(request, "enrichment:capture");
+    const { q } = z.object({ q: z.string().trim().max(100).optional() }).parse(request.query ?? {});
+    return reply.send({ companies: await listCapturableCompanies(db, actor.workspaceId, q) });
   });
 
   app.put(
@@ -223,15 +220,6 @@ export async function enrichmentCaptureRoutes(app: FastifyInstance) {
       return reply.send({ item: await recordCaptureQueueBatch(db, actor, publicId, body) });
     }
   );
-
-  app.delete("/enrichment/capture/queue/:publicId", async (request, reply) => {
-    const { db, actor } = await authorize(request, "enrichment:capture");
-    const publicId = captureQueueIdSchema.parse((request.params as { publicId: string }).publicId);
-    if (!(await removeFromCaptureQueue(db, actor.workspaceId, publicId))) {
-      return reply.status(404).send({ error: "not_found" });
-    }
-    return reply.status(204).send();
-  });
 
   app.get("/enrichment/ingest/company/:publicId/captured-profile-ids", async (request, reply) => {
     const { db, actor } = await authorize(request, "enrichment:capture");
