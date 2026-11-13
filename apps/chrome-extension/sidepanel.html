@@ -98,6 +98,19 @@
         <button id="capture-discard" type="button">Discard</button>
       </div>
       <p id="capture-result" class="hidden" role="status" aria-live="polite"></p>
+      <div id="capture-continue-box" class="capture-continue hidden">
+        <p id="capture-continue-text" class="vision-desc"></p>
+        <button id="capture-continue" type="button" class="primary">Continue capturing queue</button>
+      </div>
+      <details id="capture-queue" class="capture-queue">
+        <summary>Capture queue (<span id="capture-queue-count">0</span>)</summary>
+        <p class="vision-desc">
+          Companies with people left to capture. Each batch saves up to 250 people; continue whenever you want.
+          The same list is under LinkedIn Enrichment → Capture queue in Skout.
+        </p>
+        <p id="capture-queue-status" class="vision-desc"></p>
+        <ul id="capture-queue-list" class="capture-queue-list"></ul>
+      </details>
     </section>
 
     <section class="card">

@@ -95,8 +95,8 @@ export function personReviewPreview(data) {
 
 const EDITABLE_FIELDS = {
   // [field, label, multiline, type] — type "count" is a whole number, "url" a website address.
-  person: [["fullName", "Name"], ["headline", "Headline"], ["locationName", "Location"], ["locationCountry", "Country"], ["pronoun", "Pronouns"], ["summary", "About", true], ["email", "Email"], ["phone", "Phone"], ["website", "Website / portfolio", false, "url"], ["followersCount", "Followers", false, "count"], ["currentCompany", "Current company"], ["currentTitle", "Current title"], ["previousCompany", "Previous company"]],
-  company: [["name", "Name"], ["industry", "Industry"], ["headquarter", "Headquarters"], ["size", "Company size"], ["website", "Website", false, "url"], ["followers", "Followers", false, "count"]],
+  person: [["fullName", "Name"], ["headline", "Headline"], ["currentCompany", "Current company"], ["currentTitle", "Current title"], ["previousCompany", "Previous company"], ["previousTitle", "Previous title"], ["locationName", "Location"], ["locationCountry", "Country"], ["email", "Email", false, "email"], ["phone", "Phone", false, "phone"], ["website", "Website / portfolio", false, "url"], ["followersCount", "Followers", false, "count"], ["connectionsCount", "Connections", false, "count"], ["pronoun", "Pronouns"], ["summary", "About", true]],
+  company: [["name", "Name"], ["tagline", "Tagline"], ["industry", "Industry"], ["headquarter", "Headquarters"], ["locationCountry", "Country"], ["size", "Company size"], ["employeesOnLi", "Members on LinkedIn", false, "count"], ["followers", "Followers", false, "count"], ["website", "Website", false, "url"], ["phone", "Phone", false, "phone"], ["foundedAt", "Founded"], ["overview", "About", true]],
   sales: [],
 };
 
@@ -105,17 +105,59 @@ const ROLE_FIELDS = {
   currentCompany: { list: "currentCompanies", key: "name" },
   currentTitle: { list: "currentCompanies", key: "title" },
   previousCompany: { list: "previousCompanies", key: "name" },
+  previousTitle: { list: "previousCompanies", key: "title" },
 };
 
-export function setRoleField(data, { list, key }, value) {
+const sameName = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+
+/**
+ * Which role a review field shows. The previous company is the most recent past role at a
+ * different employer: an earlier title at the current company is a promotion, not a move.
+ */
+export function roleIndex(data, { list }) {
+  const roles = Array.isArray(data?.[list]) ? data[list] : [];
+  if (list !== "previousCompanies") return 0;
+  const current = data?.currentCompanies?.[0]?.name;
+  const index = roles.findIndex((role) => role?.name && !sameName(role.name, current));
+  return index >= 0 ? index : 0;
+}
+
+export function roleValue(data, role) {
+  return data?.[role.list]?.[roleIndex(data, role)]?.[role.key];
+}
+
+export function setRoleField(data, role, value) {
+  const { list, key } = role;
   const roles = Array.isArray(data[list]) ? data[list] : [];
+  const index = roleIndex(data, role);
   if (!value) {
-    if (roles[0]) delete roles[0][key];
+    if (roles[index]) delete roles[index][key];
     return;
   }
   data[list] = roles.length ? roles : [{}];
-  data[list][0] = { ...data[list][0], [key]: value };
+  data[list][index] = { ...data[list][index], [key]: value };
 }
+
+/** Fields the review shows for this kind of capture: [field, label][]. */
+export function reviewFieldList(kind) {
+  return (EDITABLE_FIELDS[kind] || []).map(([field, label]) => [field, label]);
+}
+
+/** A review field's current value ("" when LinkedIn did not show it). */
+export function reviewFieldValue(data, field) {
+  const role = ROLE_FIELDS[field];
+  const value = role ? roleValue(data, role) : data?.[field];
+  return value === undefined || value === null ? "" : String(value);
+}
+
+/** Which review fields were captured and which LinkedIn did not show. */
+export function fieldCoverage(kind, data) {
+  const fields = reviewFieldList(kind);
+  const missing = fields.filter(([field]) => !reviewFieldValue(data, field).trim()).map(([, label]) => label);
+  return { total: fields.length, found: fields.length - missing.length, missing };
+}
+
+export const NOT_FOUND_PLACEHOLDER = "NOT FOUND · type to add";
 
 /** A lead's display name; falls back to the readable part of the profile link. */
 export function leadName(profile) {
@@ -138,6 +180,27 @@ export function parseCountInput(raw) {
   if (!Number.isFinite(value) || value < 0 || value > MAX_COUNT) return { error: "Enter a whole number, such as 2300 or 1.2K." };
   return { value };
 }
+
+/** An email typed in the review: { empty } | { value } | { error }. */
+export function normalizeEmailInput(raw) {
+  const input = String(raw ?? "").trim().replace(/^mailto:/i, "").toLowerCase();
+  if (!input) return { empty: true };
+  return /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$/.test(input) && input.length <= 320
+    ? { value: input }
+    : { error: "Enter a valid email address, such as name@example.com." };
+}
+
+/** A phone typed in the review: 7 to 15 digits, with optional +, spaces, dots, dashes, brackets. */
+export function normalizePhoneInput(raw) {
+  const input = String(raw ?? "").replace(/\s+/g, " ").trim();
+  if (!input) return { empty: true };
+  const digits = input.replace(/\D/g, "");
+  return /^\+?[\d\s().-]+$/.test(input) && digits.length >= 7 && digits.length <= 15
+    ? { value: input }
+    : { error: "Enter a phone number with 7 to 15 digits, such as +1 415 555 0100." };
+}
+
+const PARSERS = { count: parseCountInput, url: normalizeWebsiteInput, email: normalizeEmailInput, phone: normalizePhoneInput };
 
 /** A website address typed in the review: { empty } | { value } | { error }. Adds https:// when missing. */
 export function normalizeWebsiteInput(raw) {
@@ -190,8 +253,14 @@ export function initCapturePanel() {
   const sendBtn = $("capture-send");
   const discardBtn = $("capture-discard");
   const resultEl = $("capture-result");
+  const continueBoxEl = $("capture-continue-box");
+  const continueTextEl = $("capture-continue-text");
+  const continueBtn = $("capture-continue");
+  const queueCountEl = $("capture-queue-count");
+  const queueStatusEl = $("capture-queue-status");
+  const queueListEl = $("capture-queue-list");
 
-  const state = { status: null, statusError: "", tab: null, progress: null, halt: null, draft: null, data: null, excluded: new Set(), saving: false, invalid: new Map() };
+  const state = { status: null, statusError: "", tab: null, progress: null, halt: null, draft: null, data: null, excluded: new Set(), saving: false, invalid: new Map(), continueCompany: null, queue: [] };
 
   const show = (el, visible) => el?.classList.toggle("hidden", !visible);
 
@@ -220,6 +289,7 @@ export function initCapturePanel() {
     startBtn.textContent = kind ? START_LABELS[kind] : "Open a LinkedIn profile, company or Sales Navigator search";
     startBtn.disabled = Boolean(blocked) || !kind || busy || Boolean(state.draft) || state.saving;
     show(companyOptionsEl, kind === "company" && !busy && !state.draft);
+    renderContinue();
   }
 
   async function renderCheckpoint() {
@@ -237,6 +307,74 @@ export function initCapturePanel() {
     }
     checkpointEl.textContent = message;
     show(checkpointEl, Boolean(message));
+    // An unfinished company on the open tab can always be continued from here.
+    if (saved?.committed && !saved.committed.complete && !saved.draft) {
+      setContinue(companyId, `${(saved.committed.seenIds || []).length} people captured for this company so far. More result pages remain.`);
+    } else if (state.continueCompany === companyId && saved?.committed?.complete) {
+      setContinue(null);
+    }
+  }
+
+  function setContinue(companyId, text) {
+    state.continueCompany = companyId || null;
+    continueTextEl.textContent = text || "";
+    renderContinue();
+  }
+
+  function renderContinue() {
+    const busy = isProgressActive(state.progress);
+    show(continueBoxEl, Boolean(state.continueCompany) && !state.draft);
+    const dailyLeft = state.status?.usage?.remainingToday;
+    continueBtn.disabled = busy || state.saving || Boolean(state.halt) || dailyLeft === 0;
+    continueBtn.title = dailyLeft === 0 ? "The daily capture limit is reached. Continue tomorrow." : "";
+  }
+
+  async function continueQueue(companyId) {
+    if (!companyId) return;
+    setResult("Opening the company and reading the next batch of people…");
+    continueBtn.disabled = true;
+    const response = await send("capture-queue-continue", { companyId, tabId: state.tab?.id });
+    if (!response.ok) setResult(`Could not continue: ${response.error}`, "capture-error");
+    else setResult("Reading the next batch. Review it here when it is ready.");
+    renderContinue();
+  }
+
+  const queueLabel = (item) => item.companyName || item.companyPublicId;
+
+  function renderQueue() {
+    const items = state.queue;
+    queueCountEl.textContent = String(items.length);
+    queueListEl.replaceChildren(
+      ...items.map((item) => {
+        const row = Object.assign(document.createElement("li"), { className: "capture-queue-item" });
+        const name = Object.assign(document.createElement("span"), { className: "capture-queue-name", textContent: queueLabel(item), title: queueLabel(item) });
+        const total = Number.isFinite(item.expectedPeople) ? ` of about ${item.expectedPeople.toLocaleString()}` : "";
+        name.append(Object.assign(document.createElement("span"), {
+          className: "capture-queue-meta",
+          textContent: `${(item.peopleFound || 0).toLocaleString()}${total} people · ${item.pagesRead || 0} pages${item.pausedBatch ? " · paused batch" : ""}`,
+        }));
+        const go = Object.assign(document.createElement("button"), { type: "button", className: "primary", textContent: "Continue" });
+        go.disabled = isProgressActive(state.progress) || Boolean(state.draft) || state.status?.usage?.remainingToday === 0;
+        go.addEventListener("click", () => void continueQueue(item.companyPublicId));
+        const remove = Object.assign(document.createElement("button"), { type: "button", textContent: "Remove" });
+        remove.addEventListener("click", async () => {
+          remove.disabled = true;
+          const response = await send("capture-queue-remove", { companyId: item.companyPublicId });
+          if (!response.ok) setResult(`Not removed: ${response.error}`, "capture-error");
+          await refreshQueue();
+        });
+        row.append(name, go, remove);
+        return row;
+      })
+    );
+    queueStatusEl.textContent = items.length ? state.queueError || "" : state.queueError || "No companies are waiting.";
+  }
+
+  async function refreshQueue() {
+    const response = await send("capture-queue");
+    state.queue = response.ok ? response.items || [] : [];
+    state.queueError = response.ok ? (response.serverError ? `Only this browser's queue is shown: ${response.serverError}` : "") : response.error;
+    renderQueue();
   }
 
   function renderProgress() {
@@ -312,39 +450,59 @@ export function initCapturePanel() {
     }
 
     state.invalid.clear();
-    reviewFieldsEl.replaceChildren(
-      ...EDITABLE_FIELDS[draft.kind].map(([field, label, multiline, type]) => {
-        const wrapper = document.createElement("label");
-        wrapper.textContent = label;
-        const input = document.createElement(multiline ? "textarea" : "input");
-        if (!multiline) input.type = "text";
-        if (type === "count") input.inputMode = "numeric";
-        if (type === "url") input.placeholder = "https://";
-        const problem = document.createElement("span");
-        problem.className = "capture-field-error";
-        problem.setAttribute("role", "alert");
-        const role = ROLE_FIELDS[field];
-        input.value = (role ? data[role.list]?.[0]?.[role.key] : data[field]) ?? "";
-        input.addEventListener("input", () => {
-          const parsed = type === "count" ? parseCountInput(input.value) : type === "url" ? normalizeWebsiteInput(input.value) : null;
-          if (parsed?.error) {
-            state.invalid.set(field, parsed.error);
-            delete state.data[field];
-          } else {
-            state.invalid.delete(field);
-            const value = parsed ? (parsed.empty ? "" : parsed.value) : input.value.trim();
-            if (role) setRoleField(state.data, role, value);
-            else if (value !== "") state.data[field] = parsed ? value : input.value;
-            else delete state.data[field];
-          }
-          problem.textContent = state.invalid.get(field) || "";
-          input.setAttribute("aria-invalid", String(state.invalid.has(field)));
-          syncJson();
-        });
-        wrapper.append(input, problem);
-        return wrapper;
-      })
-    );
+    const coverageEl = Object.assign(document.createElement("p"), { className: "vision-desc capture-coverage" });
+    const renderCoverage = () => {
+      const { total, found, missing } = fieldCoverage(draft.kind, state.data);
+      coverageEl.textContent = missing.length
+        ? `Captured ${found} of ${total} fields. Not found on LinkedIn: ${missing.join(", ")}. Fill any you know before saving.`
+        : `Captured all ${total} fields.`;
+    };
+    const fieldEls = (EDITABLE_FIELDS[draft.kind] || []).map(([field, label, multiline, type]) => {
+      const wrapper = document.createElement("label");
+      const caption = Object.assign(document.createElement("span"), { textContent: label });
+      const tag = Object.assign(document.createElement("span"), { className: "capture-field-missing-tag", textContent: "Not found" });
+      caption.append(tag);
+      const input = document.createElement(multiline ? "textarea" : "input");
+      if (!multiline) input.type = "text";
+      if (type === "count") input.inputMode = "numeric";
+      if (type === "email") input.inputMode = "email";
+      if (type === "phone") input.inputMode = "tel";
+      input.placeholder = NOT_FOUND_PLACEHOLDER;
+      const problem = document.createElement("span");
+      problem.className = "capture-field-error";
+      problem.setAttribute("role", "alert");
+      const role = ROLE_FIELDS[field];
+      input.value = reviewFieldValue(data, field);
+      const markMissing = () => {
+        const missing = !input.value.trim();
+        input.classList.toggle("capture-field-missing", missing);
+        tag.hidden = !missing;
+      };
+      markMissing();
+      input.addEventListener("input", () => {
+        const parsed = PARSERS[type]?.(input.value) ?? null;
+        if (parsed?.error) {
+          state.invalid.set(field, parsed.error);
+          if (role) setRoleField(state.data, role, "");
+          else delete state.data[field];
+        } else {
+          state.invalid.delete(field);
+          const value = parsed ? (parsed.empty ? "" : parsed.value) : input.value.trim();
+          if (role) setRoleField(state.data, role, value);
+          else if (value !== "") state.data[field] = parsed ? value : input.value;
+          else delete state.data[field];
+        }
+        problem.textContent = state.invalid.get(field) || "";
+        input.setAttribute("aria-invalid", String(state.invalid.has(field)));
+        markMissing();
+        renderCoverage();
+        syncJson();
+      });
+      wrapper.append(caption, input, problem);
+      return wrapper;
+    });
+    renderCoverage();
+    reviewFieldsEl.replaceChildren(...(fieldEls.length ? [coverageEl, ...fieldEls] : []));
 
     const leads = Array.isArray(data.peopleProfiles) ? data.peopleProfiles : [];
     show(reviewLeadsEl, leads.length > 0);
@@ -468,7 +626,12 @@ export function initCapturePanel() {
           ? ` ${checkpoint.error}`
           : checkpoint.complete
             ? ` People discovery finished: ${checkpoint.stopReason}.`
-            : ` More result pages remain. Start the capture again to continue from page ${checkpoint.pagesRead + 1}.`;
+            : ` More people remain (${checkpoint.distinctCandidates} found so far). Choose Continue capturing queue to read the next batch, now or later.`;
+      if (checkpoint && !checkpoint.error && !checkpoint.complete && checkpoint.companyId) {
+        setContinue(checkpoint.companyId, `Batch saved. ${checkpoint.distinctCandidates} people found so far${Number.isFinite(checkpoint.expectedAssociatedMembers) ? ` of about ${checkpoint.expectedAssociatedMembers}` : ""}.${checkpoint.queued === false ? " The Skout queue could not be updated; this browser still remembers where to continue." : ""}`);
+      } else if (checkpoint?.complete) {
+        setContinue(null);
+      }
       const dropped = response.rejectedFields?.length ? ` ${response.rejectedFields.length} non-profile items were left out.` : "";
       setResult(`Saved. Capture run ${response.run.status}: ${created} new, ${merged} merged, ${rejected} rejected.${dropped}${next}`, "capture-success");
     } else {
@@ -478,7 +641,10 @@ export function initCapturePanel() {
     }
     await refreshStatus();
     await renderCheckpoint();
+    await refreshQueue();
   });
+
+  continueBtn.addEventListener("click", () => void continueQueue(state.continueCompany));
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
@@ -486,6 +652,7 @@ export function initCapturePanel() {
       state.progress = changes[PROGRESS_KEY].newValue || null;
       renderProgress();
       renderStart();
+      renderQueue();
     }
     if (changes[HALT_KEY]) {
       state.halt = changes[HALT_KEY].newValue || null;
@@ -493,7 +660,10 @@ export function initCapturePanel() {
       renderStart();
     }
     if (changes[DRAFT_KEY]) applyDraft(changes[DRAFT_KEY].newValue);
-    if (Object.keys(changes).some((key) => key.startsWith("company-people-capture:"))) void renderCheckpoint();
+    if (Object.keys(changes).some((key) => key.startsWith("company-people-capture:"))) {
+      void renderCheckpoint();
+      void refreshQueue();
+    }
   });
   chrome.tabs.onActivated.addListener(() => void refreshTab());
   chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
@@ -507,6 +677,6 @@ export function initCapturePanel() {
     renderProgress();
     renderHalt();
     applyDraft(stored[DRAFT_KEY]);
-    await Promise.all([refreshStatus(), refreshTab()]);
+    await Promise.all([refreshStatus(), refreshTab(), refreshQueue()]);
   })();
 }

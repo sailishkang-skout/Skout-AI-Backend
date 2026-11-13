@@ -21,6 +21,13 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
     const rankA = a?._locationRank ?? (a?.locationName ? 1 : 99), rankB = b?._locationRank ?? 99;
     for (const [key, value] of Object.entries(b || {})) {
       if (key === '_locationRank') continue;
+      // Keep the Contact info read (for the review note) from whichever page found details.
+      if (key === '_contactInfo') {
+        if (value && (value.email || value.phone || value.website || value.address)) out._contactInfo = { ...(out._contactInfo || {}), ...value };
+        continue;
+      }
+      // Counts: keep the first real value; a later page that missed the header never clears it.
+      if ((key === 'followersCount' || key === 'connectionsCount') && Number.isFinite(out[key])) continue;
       if (key === 'locationName' && rankB > rankA) continue;
       if (key.startsWith('_') || value === undefined || value === null || value === '') continue;
       if (Array.isArray(value)) out[key] = [...(out[key] || []), ...value];
@@ -196,6 +203,7 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
       let sectionFound = !detailName;
       const isContactPage = expectedUrl.endsWith('/overlay/contact-info/');
       let contactLinkOpened = false;
+      let emptyContactPasses = 0;
       const otherDetail = Object.keys(DETAIL_FIELDS).find((slug) => expectedUrl.endsWith(`/details/${slug}/`));
 
       for (let attempt = 0; attempt < 40; attempt++) {
@@ -229,7 +237,11 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
         } else if (isContactPage) {
           // Wait for the Contact info modal (~10s). If LinkedIn showed the plain
           // profile instead, open this person's own Contact info link once.
-          if (data._contactInfo || attempt >= 20) break;
+          // The dialog can appear before its entries do: wait for a value, or ~3s of an empty dialog.
+          const contact = data._contactInfo;
+          if (contact && (contact.email || contact.phone || contact.website || contact.address)) break;
+          if (contact && ++emptyContactPasses >= 6) break;
+          if (attempt >= 24) break;
           if (attempt >= 4 && !contactLinkOpened) {
             const contactInfoLink = document.querySelector(`main a[href*="/in/${id}/overlay/contact-info"]`);
             if (contactInfoLink) { contactLinkOpened = true; contactInfoLink.click(); }

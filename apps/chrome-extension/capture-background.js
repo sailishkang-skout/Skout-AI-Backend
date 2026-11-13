@@ -261,6 +261,9 @@ async function readCompanyPeopleSearch(request, sender) {
     let pagesRead = state.draft?.pagesRead || 0;
     let resumeUrl = state.draft?.resumeUrl || committed?.resumeUrl || url;
     let complete = !!state.draft?.complete;
+    // Largest results page seen in this batch: the next page could add this many people.
+    let pageSize = state.draft?.pageSize || 0;
+    let batchFull = !!state.draft?.batchFull;
     if (state.draft?.resumeUrl && state.draft.resumeUrl === state.draft.lastReadUrl && !complete)
       pagesRead = Math.max(0,pagesRead - 1); // Re-read the last page after an interrupted advance.
     // The aggregate member count is not a dependable paginator length.
@@ -272,10 +275,11 @@ async function readCompanyPeopleSearch(request, sender) {
     let stopReason = complete ? 'LinkedIn showed no next page' : 'session page limit';
     const saveDraft = async () => setCompanyPeopleState(request.companyId,{
       searchKey,searchUrl:url,committed,
-      draft:{token,profiles:[...people.values()],pagesRead,resumeUrl,complete,lastReadUrl,
+      draft:{token,profiles:[...people.values()],pagesRead,resumeUrl,complete,lastReadUrl,pageSize,batchFull,
         expectedAssociatedMembers:Number(request.expectedAssociatedMembers) || undefined},
     });
-    if (complete || pagesRead >= maxPages) return {ok:true,peopleProfiles:[...people.values()],checkpointToken:token,complete,
+    // A batch that already reached its page or people limit is returned as it is, never grown past it.
+    if (complete || batchFull || pagesRead >= maxPages || (pageSize && people.size + pageSize > COMPANY_PEOPLE_SESSION_LEADS)) return {ok:true,peopleProfiles:[...people.values()],checkpointToken:token,complete,
       progress:{pagesThisBatch:pagesRead,pagesPreviouslySaved:committed?.pagesRead || 0},
       warnings:[`Resumed ${pagesRead} locally saved pages. Review and save this batch before reading more.`]};
     // LinkedIn often defers search-card hydration in an inactive tab. Keep
@@ -293,6 +297,7 @@ async function readCompanyPeopleSearch(request, sender) {
       if (new URL(result.url).searchParams.get('currentCompany') !== searchKey || result.page !== ready.page)
         throw new Error('LinkedIn changed the company search during capture.');
       for (const profile of result.peopleProfiles || []) if (profile?.publicId) people.set(profile.publicId,profile);
+      pageSize = Math.max(pageSize, (result.peopleProfiles || []).length);
       pagesRead++;
       await setProgress({kind:'company',tabId:owner,active:true,text:`Reading people results: page ${pagesRead} of up to ${maxPages} in this batch, ${people.size} candidates so far.`});
       resumeUrl = result.url; // Re-reading this page after an interruption is safe.
@@ -311,9 +316,12 @@ async function readCompanyPeopleSearch(request, sender) {
       await saveDraft();
       afterPage = undefined;
       // Stop before a page that could push this reviewed batch past the per-run lead cap.
-      const leadLimitReached = people.size + (result.peopleProfiles || []).length > COMPANY_PEOPLE_SESSION_LEADS;
+      const leadLimitReached = people.size + pageSize > COMPANY_PEOPLE_SESSION_LEADS;
       if (pagesRead >= maxPages || leadLimitReached || Date.now() - startedAt >= COMPANY_PEOPLE_SESSION_MS) {
-        stopReason = pagesRead >= maxPages ? 'session page limit' : leadLimitReached ? 'session lead limit' : 'session time limit';break;
+        stopReason = pagesRead >= maxPages ? 'session page limit' : leadLimitReached ? 'session lead limit' : 'session time limit';
+        batchFull = pagesRead >= maxPages || leadLimitReached;
+        await saveDraft();
+        break;
       }
       await companyReadDelay(2500);
     }
@@ -346,7 +354,9 @@ async function readPersonPage(request, sender) {
   if (blocked) return {ok:false,error:blocked};
   const task = {tabId:null,cancelled:false}; personReads.set(owner,task); let keepAlive;
   try {
-    const tab = await chrome.tabs.create({url,active:false,openerTabId:owner}); task.tabId = tab.id;
+    // LinkedIn renders the Contact info dialog only in a visible tab; every other page reads in the background.
+    const active = url.endsWith('/overlay/contact-info/');
+    const tab = await chrome.tabs.create({url,active,openerTabId:owner}); task.tabId = tab.id;
     keepAlive = setInterval(() => { chrome.tabs.get(owner).catch(() => { task.cancelled=true; chrome.tabs.remove(task.tabId).catch(() => {}); }); },10000);
     let ready = false;
     for (let attempt=0; attempt<30 && !task.cancelled; attempt++) { try { const response=await chrome.tabs.sendMessage(tab.id,{type:'PERSON_READER_READY',personId:request.personId}); if(response?.ok && (response.url===url || (url.endsWith('/overlay/contact-info/') && response.url===url.replace(/overlay\/contact-info\/$/,'')))){ready=true;break;} } catch {} await companyReadDelay(500); }
@@ -358,7 +368,11 @@ async function readPersonPage(request, sender) {
     try { return await Promise.race([chrome.tabs.sendMessage(tab.id,{type:'COLLECT_PERSON_PAGE',personId:request.personId,url}),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Profile page took too long to load.')),45000);})]); }
     finally { clearTimeout(timeout); }
   } catch(error) { return task.cancelled ? {ok:true,cancelled:true} : {ok:false,error:error.message}; }
-  finally { clearInterval(keepAlive); personReads.delete(owner); if(task.tabId != null) await chrome.tabs.remove(task.tabId).catch(() => {}); }
+  finally {
+    clearInterval(keepAlive); personReads.delete(owner);
+    if(task.tabId != null) await chrome.tabs.remove(task.tabId).catch(() => {});
+    if (url.endsWith('/overlay/contact-info/')) await chrome.tabs.update(owner,{active:true}).catch(() => {});
+  }
 }
 
 // ── Drafts, progress, halt ────────────────────────────────────────────────────
@@ -512,6 +526,10 @@ async function sendCapture(message) {
   if (draft.kind === 'company' && draft.meta?.checkpointToken) {
     const commit = await commitCompanyPeopleCapture({ companyId: draft.meta.companyId, token: draft.meta.checkpointToken });
     checkpoint = commit.ok ? commit.data : { error: 'The page checkpoint could not be finalized. Resuming may revisit this batch safely.' };
+    if (commit.ok) {
+      checkpoint.companyId = draft.meta.companyId;
+      checkpoint.queued = await reportCaptureQueue(draft.meta.companyId, draft.data?.name, commit.data);
+    }
   }
   await chrome.storage.local.remove(CAPTURE_DRAFT_KEY);
   return {
@@ -586,6 +604,116 @@ async function pageKind(message) {
   }
 }
 
+// ── Capture queue: companies whose people discovery has result pages left ─────
+
+/** Tells Skout where a company's people discovery stands, for LinkedIn Enrichment → Capture queue. */
+async function reportCaptureQueue(companyId, companyName, commit) {
+  try {
+    await deps.skoutFetch(`${API}/capture/queue/${encodeURIComponent(companyId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(captureQueueReport(companyName, commit)),
+    });
+    return true;
+  } catch {
+    return false; // The local checkpoint still resumes; only the web list is out of date.
+  }
+}
+
+/** The queue update for one committed batch. Exported for tests. */
+export function captureQueueReport(companyName, commit) {
+  const report = {
+    pagesRead: Math.max(0, Number(commit.pagesRead) || 0),
+    peopleFound: Math.max(0, Number(commit.distinctCandidates) || 0),
+    complete: commit.complete === true,
+  };
+  if (typeof companyName === 'string' && companyName.trim()) report.companyName = companyName.trim().slice(0, 300);
+  if (Number.isFinite(commit.expectedAssociatedMembers)) report.expectedPeople = commit.expectedAssociatedMembers;
+  if (commit.stopReason) report.stopReason = String(commit.stopReason).slice(0, 300);
+  return report;
+}
+
+const COMPANY_ID = /^[A-Za-z0-9%._~-]{1,200}$/;
+
+/** Companies with people left to capture: this browser's saved checkpoints plus the workspace queue. */
+async function listCaptureQueue() {
+  const items = new Map();
+  const all = await chrome.storage.local.get(null);
+  for (const [key, state] of Object.entries(all)) {
+    if (!key.startsWith('company-people-capture:') || !state) continue;
+    const companyId = key.slice('company-people-capture:'.length);
+    if (state.committed?.complete && !state.draft) continue;
+    if (!state.committed && !state.draft) continue;
+    items.set(companyId, {
+      companyPublicId: companyId,
+      pagesRead: (state.committed?.pagesRead || 0) + (state.draft?.pagesRead || 0),
+      peopleFound: (state.committed?.seenIds || []).length,
+      pausedBatch: Boolean(state.draft),
+      local: true,
+    });
+  }
+  let serverError;
+  try {
+    const body = await deps.skoutFetch(`${API}/capture/queue`);
+    for (const item of body?.items || []) {
+      if (item.complete) continue;
+      items.set(item.companyPublicId, { ...item, ...items.get(item.companyPublicId), companyName: item.companyName, expectedPeople: item.expectedPeople, peopleFound: Math.max(item.peopleFound || 0, items.get(item.companyPublicId)?.peopleFound || 0) });
+    }
+  } catch (error) {
+    serverError = error?.message || 'The workspace queue could not be loaded.';
+  }
+  return { ok: true, items: [...items.values()], serverError };
+}
+
+async function removeFromCaptureQueue(companyId) {
+  if (!COMPANY_ID.test(companyId || '')) return { ok: false, error: 'Not a LinkedIn company.' };
+  await chrome.storage.local.remove(companyPeopleStateKey(companyId));
+  try {
+    await deps.skoutFetch(`${API}/capture/queue/${encodeURIComponent(companyId)}`, { method: 'DELETE' });
+  } catch (error) {
+    if (error?.status !== 404) return { ok: false, error: error?.message || 'The company could not be removed from the queue.' };
+  }
+  return { ok: true };
+}
+
+async function waitForTabUrl(tabId, matches, timeoutMs = 25000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+    if (!tab) return false;
+    if (tab.status === 'complete' && matches(tab.url || '')) return true;
+    await timing.delay(400);
+  }
+  return false;
+}
+
+/**
+ * Reads the next batch of a queued company: opens (or reuses) a tab on its LinkedIn page and
+ * starts a people-only capture that resumes from the saved result page. Only ever runs after
+ * the user clicks Continue in the side panel or on the Skout Capture queue page.
+ */
+async function continueCaptureQueue(message) {
+  const companyId = String(message.companyId || '');
+  if (!COMPANY_ID.test(companyId)) return { ok: false, error: 'Not a LinkedIn company.' };
+  const companyUrl = `https://www.linkedin.com/company/${companyId}/`;
+  const onCompany = url => companyReadUrl(url, companyId) !== undefined;
+  let tabId = message.tabId;
+  const current = tabId != null ? await chrome.tabs.get(tabId).catch(() => undefined) : undefined;
+  if (!current) {
+    const tab = await chrome.tabs.create({ url: companyUrl, active: true });
+    tabId = tab.id;
+  } else if (!onCompany(current.url || '')) {
+    await chrome.tabs.update(tabId, { url: companyUrl, active: true });
+  }
+  if (!(await waitForTabUrl(tabId, onCompany))) return { ok: false, error: 'The LinkedIn company page did not load. Open it and try again.' };
+  await timing.delay(1500); // Let LinkedIn hydrate the company top card before reading it.
+  return startCapture({
+    tabId,
+    kind: 'company',
+    replaceDraft: message.replaceDraft === true,
+    options: { includeCompany: false, includePeople: true, resume: true },
+  });
+}
+
 async function capturedCompanyProfileIds(companyId) {
   try {
     const body = await deps.skoutFetch(`${API}/ingest/company/${encodeURIComponent(companyId)}/captured-profile-ids`);
@@ -615,6 +743,12 @@ export function handleCaptureMessage(message, sender) {
       return fromExtensionPage(sender) ? sendCapture(message) : undefined;
     case 'capture-discard':
       return fromExtensionPage(sender) ? chrome.storage.local.remove(CAPTURE_DRAFT_KEY).then(() => ({ ok: true })) : undefined;
+    case 'capture-queue':
+      return fromExtensionPage(sender) ? listCaptureQueue() : undefined;
+    case 'capture-queue-continue':
+      return fromExtensionPage(sender) ? continueCaptureQueue(message) : undefined;
+    case 'capture-queue-remove':
+      return fromExtensionPage(sender) ? removeFromCaptureQueue(message.companyId) : undefined;
     case 'capture-ack-halt':
       return fromExtensionPage(sender) ? chrome.storage.local.remove(CAPTURE_HALT_KEY).then(() => ({ ok: true })) : undefined;
     // LinkedIn tabs running the capture readers.
@@ -665,4 +799,9 @@ export function registerCaptureBackground({ skoutFetch }) {
   });
 }
 
-export const __test = { commitCompanyPeopleCapture, getCompanyPeopleState, captureBlock, companyReadUrl, deps };
+/** The Skout web app's Continue button (LinkedIn Enrichment → Capture queue). */
+export function continueCaptureQueueFromWeb(companyId) {
+  return continueCaptureQueue({ companyId });
+}
+
+export const __test = { commitCompanyPeopleCapture, getCompanyPeopleState, captureBlock, companyReadUrl, deps, listCaptureQueue, removeFromCaptureQueue, readCompanyPeopleSearch };

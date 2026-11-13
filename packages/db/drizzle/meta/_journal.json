@@ -1100,6 +1100,13 @@
       "when": 1798300300000,
       "tag": "0154_cops_billing_tickets",
       "breakpoints": true
+    },
+    {
+      "idx": 157,
+      "version": "7",
+      "when": 1798300400000,
+      "tag": "0155_enrichment_capture_queue",
+      "breakpoints": true
     }
   ]
 }
