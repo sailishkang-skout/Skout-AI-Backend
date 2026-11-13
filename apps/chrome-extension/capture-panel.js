@@ -94,8 +94,9 @@ export function personReviewPreview(data) {
 }
 
 const EDITABLE_FIELDS = {
-  person: [["fullName", "Name"], ["headline", "Headline"], ["locationName", "Location"], ["locationCountry", "Country"], ["pronoun", "Pronouns"], ["summary", "About", true], ["email", "Email"], ["phone", "Phone"], ["currentCompany", "Current company"], ["currentTitle", "Current title"], ["previousCompany", "Previous company"]],
-  company: [["name", "Name"], ["industry", "Industry"], ["headquarter", "Headquarters"], ["size", "Company size"], ["website", "Website"]],
+  // [field, label, multiline, type] — type "count" is a whole number, "url" a website address.
+  person: [["fullName", "Name"], ["headline", "Headline"], ["locationName", "Location"], ["locationCountry", "Country"], ["pronoun", "Pronouns"], ["summary", "About", true], ["email", "Email"], ["phone", "Phone"], ["website", "Website / portfolio", false, "url"], ["followersCount", "Followers", false, "count"], ["currentCompany", "Current company"], ["currentTitle", "Current title"], ["previousCompany", "Previous company"]],
+  company: [["name", "Name"], ["industry", "Industry"], ["headquarter", "Headquarters"], ["size", "Company size"], ["website", "Website", false, "url"], ["followers", "Followers", false, "count"]],
   sales: [],
 };
 
@@ -123,6 +124,35 @@ export function leadName(profile) {
   const slug = String(profile?.publicId || "").replace(/-[0-9a-f]{6,}$/i, "");
   const fromSlug = slug.split("-").filter(Boolean).map((part) => part[0].toUpperCase() + part.slice(1)).join(" ");
   return fromSlug || "Unknown person";
+}
+
+const MAX_COUNT = 2_000_000_000;
+
+/** "2,300", "1.2K" or "3M followers" as a whole number: { empty } | { value } | { error }. */
+export function parseCountInput(raw) {
+  const input = String(raw ?? "").trim();
+  if (!input) return { empty: true };
+  const match = input.match(/^([\d,]+(?:\.\d+)?)\s*([kKmM])?\s*(?:followers?)?$/);
+  const number = match ? Number(match[1].replace(/,/g, "")) * ({ k: 1e3, m: 1e6 }[match[2]?.toLowerCase()] ?? 1) : NaN;
+  const value = Math.round(number);
+  if (!Number.isFinite(value) || value < 0 || value > MAX_COUNT) return { error: "Enter a whole number, such as 2300 or 1.2K." };
+  return { value };
+}
+
+/** A website address typed in the review: { empty } | { value } | { error }. Adds https:// when missing. */
+export function normalizeWebsiteInput(raw) {
+  const input = String(raw ?? "").trim();
+  if (!input) return { empty: true };
+  const error = { error: "Enter a valid website address, such as https://example.com." };
+  try {
+    const url = new URL(/^[a-z][a-z0-9+.-]*:/i.test(input) ? input : `https://${input}`);
+    const host = url.hostname.toLowerCase();
+    if (!/^https?:$/.test(url.protocol) || !host.includes(".") || /(^|\.)linkedin\.com$/.test(host)) return error;
+    const value = /^[a-z][a-z0-9+.-]*:/i.test(input) ? input : `https://${input}`;
+    return value.length > 2000 ? error : { value };
+  } catch {
+    return error;
+  }
 }
 
 function send(type, payload = {}) {
@@ -161,7 +191,7 @@ export function initCapturePanel() {
   const discardBtn = $("capture-discard");
   const resultEl = $("capture-result");
 
-  const state = { status: null, statusError: "", tab: null, progress: null, halt: null, draft: null, data: null, excluded: new Set(), saving: false };
+  const state = { status: null, statusError: "", tab: null, progress: null, halt: null, draft: null, data: null, excluded: new Set(), saving: false, invalid: new Map() };
 
   const show = (el, visible) => el?.classList.toggle("hidden", !visible);
 
@@ -236,7 +266,8 @@ export function initCapturePanel() {
   function syncJson() {
     reviewJsonEl.value = JSON.stringify(currentData(), null, 2);
     reviewJsonErrorEl.textContent = "";
-    sendBtn.disabled = state.saving;
+    // A field with a value that cannot be saved blocks Save until it is fixed.
+    sendBtn.disabled = state.saving || state.invalid.size > 0;
   }
 
   function renderReview() {
@@ -280,21 +311,37 @@ export function initCapturePanel() {
       }
     }
 
+    state.invalid.clear();
     reviewFieldsEl.replaceChildren(
-      ...EDITABLE_FIELDS[draft.kind].map(([field, label, multiline]) => {
+      ...EDITABLE_FIELDS[draft.kind].map(([field, label, multiline, type]) => {
         const wrapper = document.createElement("label");
         wrapper.textContent = label;
         const input = document.createElement(multiline ? "textarea" : "input");
         if (!multiline) input.type = "text";
+        if (type === "count") input.inputMode = "numeric";
+        if (type === "url") input.placeholder = "https://";
+        const problem = document.createElement("span");
+        problem.className = "capture-field-error";
+        problem.setAttribute("role", "alert");
         const role = ROLE_FIELDS[field];
         input.value = (role ? data[role.list]?.[0]?.[role.key] : data[field]) ?? "";
         input.addEventListener("input", () => {
-          if (role) setRoleField(state.data, role, input.value.trim());
-          else if (input.value.trim()) state.data[field] = input.value;
-          else delete state.data[field];
+          const parsed = type === "count" ? parseCountInput(input.value) : type === "url" ? normalizeWebsiteInput(input.value) : null;
+          if (parsed?.error) {
+            state.invalid.set(field, parsed.error);
+            delete state.data[field];
+          } else {
+            state.invalid.delete(field);
+            const value = parsed ? (parsed.empty ? "" : parsed.value) : input.value.trim();
+            if (role) setRoleField(state.data, role, value);
+            else if (value !== "") state.data[field] = parsed ? value : input.value;
+            else delete state.data[field];
+          }
+          problem.textContent = state.invalid.get(field) || "";
+          input.setAttribute("aria-invalid", String(state.invalid.has(field)));
           syncJson();
         });
-        wrapper.appendChild(input);
+        wrapper.append(input, problem);
         return wrapper;
       })
     );
@@ -403,7 +450,7 @@ export function initCapturePanel() {
   });
 
   sendBtn.addEventListener("click", async () => {
-    if (!state.draft || state.saving) return;
+    if (!state.draft || state.saving || state.invalid.size) return;
     state.saving = true;
     sendBtn.disabled = true;
     discardBtn.disabled = true;

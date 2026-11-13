@@ -2,7 +2,7 @@
 // EnrichmentTool prototype. Read-only: no network requests, clicks, scrolling or navigation,
 // and no reads of inline page JSON or private APIs.
 globalThis.SkoutCapturePage = (() => {
-const { text, firstMatch, allMatches, metaContent, publicIdFromUrl, parseCount, textMultiline } =
+const { text, firstMatch, allMatches, metaContent, publicIdFromUrl, parseCount, textMultiline, cleanWebsite } =
   window.SkoutCaptureExtract;
 
 // ---------------------------------------------------------------------------
@@ -213,6 +213,8 @@ function extractPerson() {
     _contactInfo: contactInfo,
     _locationRank: locationRank,
     // Contact info first; otherwise an email or phone the person wrote in their bio.
+    website: contactInfo?.website,
+    websites: contactInfo?.websites,
     email: contactInfo?.email || emailFromText(summary),
     phone: contactInfo?.phone || phoneFromText(summary),
     _recentActivity: recentActivity.length ? recentActivity : undefined,
@@ -383,7 +385,7 @@ function extractCompany() {
 
   // Website/overview — best-effort, not yet verified against real captured
   // HTML the way the topcard fields above were.
-  const website = Array.from(document.querySelectorAll('.org-top-card-primary-actions a[href]')).find(a => /Visit website/i.test(a.textContent))?.href;
+  const website = cleanWebsite(Array.from(document.querySelectorAll('.org-top-card-primary-actions a[href]')).find(a => /Visit website/i.test(a.textContent))?.getAttribute('href'));
   const overview = window.SkoutCompanySections.clean(document.querySelector('main .org-page-details-module__card-spacing > p, main .org-about-module__description'));
 
   // About-tab detail list (Website/Industry/Company size/HQ/Founded/
@@ -399,7 +401,7 @@ function extractCompany() {
     if (label && dd && dd.tagName === 'DD') detailMap[label.toLowerCase()] = text(dd);
   });
   const sduiAbout = window.SkoutCompanySections.aboutDetails();
-  const aboutWebsite = detailMap['website'] || sduiAbout.website;
+  const aboutWebsite = cleanWebsite(detailMap['website']) || cleanWebsite(sduiAbout.website);
   const companyWebsite = website || aboutWebsite;
   let domain;
   try { domain = new URL(companyWebsite).hostname.replace(/^www\./, ''); } catch {}
@@ -1226,7 +1228,20 @@ function extractContactInfo() {
       rect.height > 0;
   });
   if (!modal) return undefined;
-  const website = modal.querySelector('a[href^="http"]:not([href*="linkedin.com"])')?.href;
+  // Every outside link in the popup (portfolio, personal site, blog), with the "(Portfolio)"
+  // style label LinkedIn prints next to it. LinkedIn wraps these links; cleanWebsite unwraps them.
+  const websites = [];
+  for (const anchor of modal.querySelectorAll('a[href]')) {
+    const url = cleanWebsite(anchor.getAttribute('href'), window.location.href);
+    if (!url || websites.some((entry) => entry.url === url)) continue;
+    const around = (anchor.parentElement?.textContent || '').replace(anchor.textContent || '', ' ');
+    const label = around.match(/\(([^)]{2,40})\)/)?.[1]?.trim();
+    websites.push(label ? { url, label } : { url });
+    if (websites.length >= 10) break;
+  }
+  // The person's own site: a portfolio/personal/blog link first, never the employer's website.
+  const website = (websites.find((entry) => /portfolio|personal|blog/i.test(entry.label || '')) ||
+    websites.find((entry) => !/company/i.test(entry.label || '')))?.url;
   // The modal lists "Label / value" pairs (Email, Phone, Address, ...).
   const leaves = Array.from(modal.querySelectorAll('h3, p, span, div, a'))
     .filter((node) => !Array.from(node.children).some((child) => text(child)))
@@ -1249,7 +1264,7 @@ function extractContactInfo() {
     .map((value) => cleanPhone(value))
     .find(Boolean);
   const address = valueAfter(/^address$/i);
-  return { website, email, phone, address };
+  return { website, websites: websites.length ? websites : undefined, email, phone, address };
 }
 
 /**

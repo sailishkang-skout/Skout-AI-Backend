@@ -31,6 +31,26 @@ const text = (max: number) => z.string().trim().max(max);
 const name = text(300);
 const count = z.number().int().nonnegative().max(2_000_000_000);
 
+/** A website a person published (portfolio, blog): http(s), a real host, never LinkedIn itself. */
+const webUrl = z
+  .string()
+  .trim()
+  .max(2_000)
+  .refine((value) => {
+    try {
+      const url = new URL(value);
+      const host = url.hostname.toLowerCase();
+      return (
+        ["http:", "https:"].includes(url.protocol) &&
+        host.includes(".") &&
+        !/(^|\.)(linkedin\.com|lnkd\.in|licdn\.com)$/.test(host)
+      );
+    } catch {
+      return false;
+    }
+  }, "Expected a website address");
+const websiteLink = z.object({ url: webUrl, label: text(60).optional() }).strict();
+
 const factItem = z
   .record(z.unknown())
   .refine((value) => JSON.stringify(value).length <= MAX_FACT_ITEM_BYTES, "Captured item is too large");
@@ -103,6 +123,9 @@ export const personIngestSchema = z
     logoUrl: z.string().url().max(2_000).optional(),
     connectionsCount: count.optional(),
     followersCount: count.optional(),
+    /** The person's own site, from the Contact info popup the signed-in user had open. */
+    website: webUrl.optional(),
+    websites: z.array(websiteLink).max(10).optional(),
     relationshipContext: relationshipContext.optional(),
     currentCompanies: factList(50).optional(),
     previousCompanies: factList().optional(),

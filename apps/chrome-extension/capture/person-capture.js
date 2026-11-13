@@ -26,7 +26,7 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
       if (Array.isArray(value)) out[key] = [...(out[key] || []), ...value];
       else out[key] = value;
     }
-    for (const key of ['educations','skills','recommendations','certifications','languages','volunteerExperiences','honors','publications','patents','courses','organizations','projects','currentCompanies','previousCompanies']) {
+    for (const key of ['educations','skills','recommendations','certifications','languages','volunteerExperiences','honors','publications','patents','courses','organizations','projects','websites','currentCompanies','previousCompanies']) {
       if (Array.isArray(out[key])) {
         if (key === 'skills') {
           const byName = new Map();

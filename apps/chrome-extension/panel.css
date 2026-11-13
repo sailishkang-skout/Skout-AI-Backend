@@ -197,3 +197,14 @@ body.side-panel {
 .capture-lead .vision-chip {
   flex: none;
 }
+
+.capture-field-error {
+  display: block;
+  margin-top: 2px;
+  color: #fca5a5;
+  font-size: 11px;
+}
+
+.capture-fields input[aria-invalid="true"] {
+  border-color: #f87171;
+}

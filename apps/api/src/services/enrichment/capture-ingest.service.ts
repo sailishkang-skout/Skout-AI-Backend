@@ -821,7 +821,7 @@ const PROFILE_EVIDENCE_ATTRIBUTES = [
   "fullName", "headline", "summary", "locationName", "locationCountry", "industry", "pronoun", "email", "phone",
   "currentCompanies", "previousCompanies", "educations", "skills", "certifications", "languages",
   "recommendations", "volunteerExperiences", "honors", "publications", "patents", "courses",
-  "organizations", "projects", "connectionsCount", "followersCount", "relationshipContext",
+  "organizations", "projects", "connectionsCount", "followersCount", "website", "relationshipContext",
   "seniority", "jobFunction", "openToWork", "hiring",
 ] as const;
 const CARD_EVIDENCE_ATTRIBUTES = ["fullName", "headline", "locationName", "currentCompanies"] as const;
