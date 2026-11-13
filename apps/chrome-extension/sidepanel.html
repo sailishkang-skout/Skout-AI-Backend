@@ -69,6 +69,10 @@
           <input id="capture-include-people" type="checkbox" checked />
           Include visible associated people (discovery candidates)
         </label>
+        <label class="checkbox-row">
+          <input id="capture-auto-continue" type="checkbox" checked />
+          Keep reading this company's people until all are captured (250 per batch, you review and save each)
+        </label>
         <label for="capture-departments">Department keywords (optional)</label>
         <input id="capture-departments" type="text" placeholder="Sales, engineering, marketing" />
         <label for="capture-seniorities">Seniority or title keywords (optional)</label>
@@ -116,6 +120,10 @@
           <button id="capture-run-resume" type="button" class="primary hidden">Resume queue</button>
           <button id="capture-run-clear" type="button" class="hidden">Clear</button>
         </div>
+        <label class="checkbox-row">
+          <input id="capture-until-complete" type="checkbox" checked />
+          Keep reading each company until all its people are captured (250 per batch, you review each)
+        </label>
         <input id="capture-company-search" type="search" placeholder="Search your captured companies" aria-label="Search captured companies" />
         <label class="checkbox-row">
           <input id="capture-company-all" type="checkbox" />

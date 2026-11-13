@@ -171,9 +171,13 @@ export function companyProgressText(company) {
 /** One line for a company in a running queue. */
 export function runItemText(item) {
   switch (item?.status) {
-    case "running": return "Reading people…";
+    case "running": return item.batches ? `Reading batch ${item.batches + 1}…` : "Reading people…";
     case "review": return "Review and save the batch above";
-    case "done": return `Saved ${item.saved ?? 0} people${item.moreRemain ? " · more remain, pick it again to continue" : ""}`;
+    case "done": {
+      const batches = item.batches > 1 ? ` in ${item.batches} batches` : "";
+      return `Saved ${item.saved ?? 0} people${batches}${item.moreRemain ? " · more remain, pick it again to continue" : ""}`;
+    }
+    case "pending": return item.batches ? `Batch ${item.batches} saved (${item.saved ?? 0} people so far) · reading the next batch` : "Waiting";
     case "skipped": return "Skipped";
     case "failed": return `Could not read: ${item.error || "unknown error"}`;
     default: return "Waiting";
@@ -475,7 +479,7 @@ export function initCapturePanel() {
     const hidden = [...state.selected].filter((id) => !companies.some((company) => company.companyPublicId === id)).map((companyPublicId) => ({ companyPublicId, name: companyPublicId }));
     companyStartBtn.disabled = true;
     setResult("");
-    const response = await send("capture-queue-start", { companies: [...companies, ...hidden] });
+    const response = await send("capture-queue-start", { companies: [...companies, ...hidden], untilComplete: $("capture-until-complete").checked });
     if (!response.ok) setResult(`Queue did not start: ${response.error}`, "capture-error");
     else state.selected.clear();
     renderCompanies();
@@ -727,7 +731,7 @@ export function initCapturePanel() {
     discardBtn.disabled = true;
     // Not a success message: the run is only reported once the API records its final status.
     setResult("Saving… waiting for the capture run to be recorded.");
-    const response = await send("capture-send", { data: currentData() });
+    const response = await send("capture-send", { data: currentData(), autoContinue: Boolean($("capture-auto-continue")?.checked) });
     state.saving = false;
     discardBtn.disabled = false;
     if (response.ok) {
@@ -739,8 +743,12 @@ export function initCapturePanel() {
           ? ` ${checkpoint.error}`
           : checkpoint.complete
             ? ` People discovery finished: ${checkpoint.stopReason}.`
-            : ` More people remain (${checkpoint.distinctCandidates} found so far). Choose Continue capturing queue to read the next batch, now or later.`;
-      if (checkpoint && !checkpoint.error && !checkpoint.complete && checkpoint.companyId) {
+            : response.autoContinued
+              ? ` More people remain (${checkpoint.distinctCandidates} found so far). The next batch of up to 250 is being read now; review and save it when it appears.`
+              : ` More people remain (${checkpoint.distinctCandidates} found so far). Choose Continue capturing queue to read the next batch, now or later.`;
+      if (response.autoContinued) {
+        setContinue(null);
+      } else if (checkpoint && !checkpoint.error && !checkpoint.complete && checkpoint.companyId) {
         setContinue(checkpoint.companyId, `Batch saved. ${checkpoint.distinctCandidates} people found so far${Number.isFinite(checkpoint.expectedAssociatedMembers) ? ` of about ${checkpoint.expectedAssociatedMembers}` : ""}.${checkpoint.queued === false ? " The Skout queue could not be updated; this browser still remembers where to continue." : ""}`);
       } else if (checkpoint?.complete) {
         setContinue(null);

@@ -382,4 +382,83 @@ describe("company queue run", () => {
     expect((await handleCaptureMessage({ type: "capture-queue-clear" }, sidePanel)).ok).toBe(true);
     expect(store[RUN_QUEUE_KEY]).toBeUndefined();
   });
+
+  describe("keep reading until the company is finished", () => {
+    const stateKey = (id) => `company-people-capture:${id}`;
+    /** Seeds the reader's saved draft so a save commits a checkpoint for it. */
+    const seed = (store, id, { complete }) => {
+      store[stateKey(id)] = {
+        searchKey: "k", searchUrl: "https://www.linkedin.com/search/results/people/?currentCompany=%5B%221%22%5D",
+        draft: { token: "t", profiles: [{ publicId: "p1" }], pagesRead: 10, resumeUrl: "https://www.linkedin.com/search/results/people/?currentCompany=%5B%221%22%5D&page=11", complete, expectedAssociatedMembers: undefined },
+      };
+    };
+    const reviewAndSave = async (env, id, { complete, created = 250 }) => {
+      seed(env.store, id, { complete });
+      await handleCaptureMessage({ type: "SKOUT_CAPTURE_REVIEW", kind: "company", sourceUrl: `https://www.linkedin.com/company/${id}/`, data: { publicId: id, name: id.toUpperCase(), _captureCheckpointToken: "t", peopleProfiles: [] } }, { tab: { id: 50 } });
+      const draft = env.store[CAPTURE_DRAFT_KEY];
+      draft.meta.checkpointToken = "t";
+      return handleCaptureMessage({ type: "capture-send", autoContinue: true }, sidePanel);
+    };
+
+    it("reads batch after batch of one company, in order, until it is finished", async () => {
+      const env = browser();
+      await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["alpha", "beta"]), untilComplete: true }, sidePanel);
+      await tick();
+      expect((await reviewAndSave(env, "alpha", { complete: false })).ok).toBe(true);
+      await tick(); await tick();
+      // alpha goes back to waiting and is read again before beta starts.
+      expect(await statuses()).toEqual({ alpha: "running", beta: "pending" });
+      expect((await __test.getRunQueue()).items[0]).toMatchObject({ batches: 1, saved: 10 });
+      await reviewAndSave(env, "alpha", { complete: true });
+      await tick(); await tick();
+      expect(await statuses()).toEqual({ alpha: "done", beta: "running" });
+      expect((await __test.getRunQueue()).items[0]).toMatchObject({ batches: 2, saved: 20, moreRemain: false });
+    });
+
+    it("moves on after one batch when 'keep reading' is off", async () => {
+      const env = browser();
+      await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["alpha", "beta"]) }, sidePanel);
+      await tick();
+      await reviewAndSave(env, "alpha", { complete: false });
+      await tick(); await tick();
+      expect(await statuses()).toEqual({ alpha: "done", beta: "running" });
+      expect((await __test.getRunQueue()).items[0].moreRemain).toBe(true);
+    });
+
+    it("continues a company captured with Capture this company, with no queue running", async () => {
+      const env = browser();
+      const saved = await reviewAndSave(env, "alpha", { complete: false });
+      expect(saved.ok).toBe(true);
+      expect(saved.autoContinued).toBe(true);
+      await tick(); await tick();
+      const queue = await __test.getRunQueue();
+      expect(queue).toMatchObject({ active: true, tabId: 50 });
+      expect(queue.items[0]).toMatchObject({ companyPublicId: "alpha", name: "ALPHA", untilComplete: true, status: "running", batches: 1 });
+    });
+
+    it("does not continue a finished company or when the option is off", async () => {
+      const env = browser();
+      expect((await reviewAndSave(env, "alpha", { complete: true })).autoContinued).toBe(false);
+      expect(await __test.getRunQueue()).toBeNull();
+      seed(env.store, "beta", { complete: false });
+      await handleCaptureMessage({ type: "SKOUT_CAPTURE_REVIEW", kind: "company", sourceUrl: "https://www.linkedin.com/company/beta/", data: { publicId: "beta", name: "Beta", peopleProfiles: [] } }, { tab: { id: 50 } });
+      env.store[CAPTURE_DRAFT_KEY].meta.checkpointToken = "t";
+      expect((await handleCaptureMessage({ type: "capture-send" }, sidePanel)).autoContinued).toBe(false);
+      expect(await __test.getRunQueue()).toBeNull();
+    });
+
+    it("stops a company whose batch saved no new people", async () => {
+      const env = browser();
+      await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["alpha", "beta"]), untilComplete: true }, sidePanel);
+      await tick();
+      seed(env.store, "alpha", { complete: false });
+      await handleCaptureMessage({ type: "SKOUT_CAPTURE_REVIEW", kind: "company", sourceUrl: "https://www.linkedin.com/company/alpha/", data: { publicId: "alpha", name: "Alpha", peopleProfiles: [] } }, { tab: { id: 50 } });
+      env.store[CAPTURE_DRAFT_KEY].meta.checkpointToken = "t";
+      const fetch = __test.deps.skoutFetch;
+      __test.deps.skoutFetch = async (path, options) => (path.includes("/ingest/company") ? { run: { status: "completed", terminal: true }, created: 0, merged: 0 } : fetch(path, options));
+      await handleCaptureMessage({ type: "capture-send" }, sidePanel);
+      await tick(); await tick();
+      expect(await statuses()).toEqual({ alpha: "done", beta: "running" });
+    });
+  });
 });

@@ -533,9 +533,15 @@ async function sendCapture(message) {
     }
   }
   await chrome.storage.local.remove(CAPTURE_DRAFT_KEY);
-  if (draft.kind === 'company') await runQueueBatchSaved(draft.meta?.companyId, { created: body.created, merged: body.merged }, checkpoint);
+  let autoContinued = false;
+  if (draft.kind === 'company') {
+    autoContinued = await runQueueBatchSaved(draft.meta?.companyId, { created: body.created, merged: body.merged }, checkpoint, {
+      autoContinue: message.autoContinue === true, name: draft.data?.name, tabId: draft.tabId,
+    });
+  }
   return {
     ok: true,
+    autoContinued,
     run,
     counts: { received: body.received, created: body.created, merged: body.merged, rejected: body.rejected },
     rejectedFields: body.rejectedFields || [],
@@ -708,6 +714,8 @@ async function continueCaptureQueue(message) {
 export const RUN_QUEUE_KEY = 'skoutCaptureRunQueue';
 const MAX_QUEUE_COMPANIES = 200;
 const RUN_QUEUE_GAP_MS = 3000;
+// A company read "until finished" stops after this many saved batches (250 people each).
+const MAX_BATCHES_PER_COMPANY = 40;
 
 async function getRunQueue() {
   return (await getStored(RUN_QUEUE_KEY)) || null;
@@ -768,7 +776,10 @@ async function startRunQueue(message) {
     const id = String(company?.companyPublicId || '');
     if (!COMPANY_ID.test(id) || seen.has(id)) continue;
     seen.add(id);
-    items.push({ companyPublicId: id, name: String(company?.name || id).slice(0, 200), status: 'pending' });
+    items.push({
+      companyPublicId: id, name: String(company?.name || id).slice(0, 200), status: 'pending',
+      ...(message.untilComplete === true ? { untilComplete: true } : {}),
+    });
   }
   if (!items.length) return { ok: false, error: 'Select at least one company.' };
   if (items.length > MAX_QUEUE_COMPANIES) return { ok: false, error: `A queue holds at most ${MAX_QUEUE_COMPANIES} companies. Select fewer.` };
@@ -819,16 +830,31 @@ async function runQueueInReview(companyId) {
   await setRunQueue(queue);
 }
 
-/** A reviewed batch was saved for the company the queue is on: record it and move to the next. */
-async function runQueueBatchSaved(companyId, counts, checkpoint) {
-  const queue = await getRunQueue();
-  const item = queue?.items?.find(entry => entry.companyPublicId === companyId && ['running', 'review'].includes(entry.status));
-  if (!item) return;
-  item.status = 'done';
-  item.saved = (counts?.created || 0) + (counts?.merged || 0);
-  item.moreRemain = Boolean(checkpoint) && !checkpoint.error && checkpoint.complete === false;
+/**
+ * A reviewed batch was saved. For a company read "until finished" with people left, the company
+ * goes back to waiting so the queue reads its next batch; otherwise it is done and the queue moves
+ * on. A company captured outside the queue (Capture this company) joins a new one-company queue
+ * when `autoContinue` is set and people remain.
+ */
+async function runQueueBatchSaved(companyId, counts, checkpoint, extra = {}) {
+  const savedNow = (counts?.created || 0) + (counts?.merged || 0);
+  const moreRemain = Boolean(checkpoint) && !checkpoint.error && checkpoint.complete === false;
+  let queue = await getRunQueue();
+  let item = queue?.items?.find(entry => entry.companyPublicId === companyId && ['running', 'review'].includes(entry.status));
+  if (!item) {
+    if (!(extra.autoContinue && moreRemain && savedNow > 0 && COMPANY_ID.test(companyId || '')) || queue?.active) return false;
+    item = { companyPublicId: companyId, name: String(extra.name || companyId).slice(0, 200), status: 'running', untilComplete: true, batches: 0, saved: 0 };
+    queue = { active: true, tabId: extra.tabId ?? null, items: [item], startedAt: Date.now() };
+  }
+  item.batches = (item.batches || 0) + 1;
+  item.saved = (item.saved || 0) + savedNow;
+  // No new people in a batch means more reading would only repeat itself.
+  const again = item.untilComplete === true && moreRemain && savedNow > 0 && item.batches < MAX_BATCHES_PER_COMPANY;
+  item.status = again ? 'pending' : 'done';
+  item.moreRemain = moreRemain && !again;
   await setRunQueue(queue);
   if (queue.active) advanceSoon();
+  return again;
 }
 
 /** The reviewed batch was discarded: skip that company and move on. */
