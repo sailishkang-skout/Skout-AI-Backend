@@ -383,7 +383,11 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
         let commercialState: string | null = null;
         if (permissions.includes("commercial:read")) {
           const [row] = await db
-            .select({ state: copsLifecycleStates.state })
+            .select({
+              state: copsLifecycleStates.state,
+              // Paid before the contract was signed: the money is in, the signature is what is left.
+              paid: sql<boolean>`exists (select 1 from payment_requests pr where pr.workspace_id = ${workspaceId} and pr.opportunity_id = ${deals.id} and pr.status = 'paid')`,
+            })
             .from(copsLifecycleStates)
             .innerJoin(deals, eq(deals.id, copsLifecycleStates.entityId))
             .where(
@@ -398,7 +402,9 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
             )
             .orderBy(desc(copsLifecycleStates.updatedAt))
             .limit(1);
-          commercialState = row?.state ?? null;
+          // The commercial lifecycle expects signature, then payment. When the customer paid first,
+          // "payment pending" was wrong: what is pending is the contract.
+          commercialState = row?.state === "payment_pending" && row.paid ? "msa_pending" : (row?.state ?? null);
         }
         // COPS-04: the provisioned trial workspace (Bible p.28 provisioning fields).
         const [provisioned] = await db
