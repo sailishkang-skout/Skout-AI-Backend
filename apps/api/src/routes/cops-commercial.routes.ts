@@ -57,6 +57,7 @@ import { removeContractDocumentIfUnused, resolveContractDocumentForProvider } fr
 import { getAccountContractFields, setAccountContractFields } from "../services/cops-account-fields.service.js";
 import { CREDIT_ACTIVITY_KINDS, listCreditActivity, listSubscriptionsForFinance, loadReconciliation } from "../services/cops-finance.service.js";
 import { amendSubscription, cancelSubscription, createSubscription, previewAmendment, resumeSubscription, getAccountSubscription, issueInvoicePaymentLink, listFailedPayments, markInvoicePaid, unsettleInvoicesForRefund } from "../services/cops-subscriptions.service.js";
+import { startSubscriptionOnProposalPayment } from "../services/cops-subscriptions.service.js";
 import { applyPaidCreditPurchases, reverseRefundedCreditPurchase } from "../services/cops-credits.service.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -1038,7 +1039,9 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
   app.post("/billing/webhooks/razorpay/payment-links", async (request, reply) => {
     const requestId = resolveCorrelationId(request.headers["x-request-id"]);
     const rawBody = request.rawBody ?? JSON.stringify(request.body ?? {});
+    let paidInfo: { workspaceId: string; opportunityId: string; paymentRequestId: string; requestId: string } | null = null;
     const result = await handlePaymentWebhook(db, psp, rawBody, request.headers, async (tx, paid) => {
+      if (paid.paymentRequestId) paidInfo = { workspaceId: paid.workspaceId, opportunityId: paid.opportunityId, requestId: paid.requestId, paymentRequestId: paid.paymentRequestId };
       await evaluateGate(tx, {
         workspaceId: paid.workspaceId,
         opportunityId: paid.opportunityId,
@@ -1063,7 +1066,10 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
       return reply.status(400).send(copsErrorBody({ code: "VALIDATION_FAILED", message: "Unreadable webhook body", requestId }));
     }
     if (result.kind === "duplicate") return { ok: true, duplicate: true };
-    return { ok: true, duplicate: false, outcome: result.outcome, status: result.status ?? null };
+    // A proposal's payment starts its subscription (after the payment is committed), so a paid
+    // customer always gets the seat limit, renewals and their Skout AI plan.
+    const started = paidInfo ? await startSubscriptionOnProposalPayment(db, paidInfo) : null;
+    return { ok: true, duplicate: false, outcome: result.outcome, status: result.status ?? null, ...(started ? { subscription_id: started } : {}) };
   });
 
   // ---- Provisioning gate ----

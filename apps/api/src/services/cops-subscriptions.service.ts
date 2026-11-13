@@ -28,6 +28,10 @@ import { runLifecycleTransition } from "./cops-lifecycle.service.js";
 import { SUBSCRIPTION_ENTITLEMENT_KEY } from "./cops-subscription-access.js";
 import { CommercialError, getOpportunity, type CommercialContext } from "./cops-commercial.service.js";
 import { createPaymentRequest } from "./cops-payments.service.js";
+import { createLogger } from "@skout/observability";
+import { COPS_TRANSITIONS } from "@skout/shared";
+
+const log = createLogger("cops-subscriptions");
 import type { PspAdapter } from "./psp/psp-adapter.js";
 
 /**
@@ -855,4 +859,113 @@ async function recurringProposalLines(db: Db, workspaceId: string, opportunityId
         };
       }),
   };
+}
+
+
+/**
+ * A proposal's payment starts the subscription by itself, from that proposal (seats, cadence,
+ * term), so a paid customer is never left without one: no seat limit, no renewal, no Skout AI plan.
+ * Does nothing for a payment that is not a proposal's (a subscription bill), when the account
+ * already has a subscription, or when the proposal has no recurring lines. Never throws: a failure
+ * leaves the manual Start subscription button as before. Returns the subscription id it started.
+ */
+export async function startSubscriptionOnProposalPayment(
+  db: Db,
+  input: { workspaceId: string; opportunityId: string; paymentRequestId: string; requestId: string }
+): Promise<string | null> {
+  try {
+    const [pr] = await db
+      .select({ proposalId: schema.paymentRequests.proposalId, createdBy: schema.paymentRequests.createdBy, status: schema.paymentRequests.status })
+      .from(schema.paymentRequests)
+      .where(and(eq(schema.paymentRequests.id, input.paymentRequestId), eq(schema.paymentRequests.workspaceId, input.workspaceId)))
+      .limit(1);
+    if (!pr?.proposalId || pr.status !== "paid" || !pr.createdBy) return null;
+    const [deal] = await db
+      .select({ companyId: schema.deals.companyId })
+      .from(schema.deals)
+      .where(and(eq(schema.deals.id, input.opportunityId), eq(schema.deals.workspaceId, input.workspaceId)))
+      .limit(1);
+    if (!deal?.companyId) return null;
+    // Paid proposal: the deal is won, whether or not the subscription was already started by hand.
+    await markDealWonOnPayment(db, { ...input, actorId: pr.createdBy });
+    const [already] = await db
+      .select({ id: subscriptions.id })
+      .from(subscriptions)
+      .where(and(eq(subscriptions.workspaceId, input.workspaceId), eq(subscriptions.accountId, deal.companyId), ne(subscriptions.status, "closed")))
+      .limit(1);
+    if (already) return null;
+    const [version] = await db
+      .select({ cadence: schema.proposalVersions.billingCadence, term: schema.proposalVersions.termMonths })
+      .from(schema.proposalVersions)
+      .where(and(eq(schema.proposalVersions.proposalId, pr.proposalId), isNotNull(schema.proposalVersions.sentAt)))
+      .orderBy(desc(schema.proposalVersions.sentAt))
+      .limit(1);
+    if (!version) return null;
+    const cadence = (version.cadence === "monthly" ? "monthly" : "annual") as SubscriptionCadence;
+    const sub = await createSubscription(
+      db,
+      // Acting as whoever made the payment link: the person who sold it.
+      { workspaceId: input.workspaceId, userId: pr.createdBy, requestId: input.requestId },
+      deal.companyId,
+      { opportunity_id: input.opportunityId, cadence, term_months: version.term, billing: "payment_link" }
+    );
+    return sub.id;
+  } catch (err) {
+    log.warn("subscription not started from the proposal payment", { err, opportunityId: input.opportunityId });
+    return null;
+  }
+}
+
+
+/**
+ * The deal's proposal is paid: the deal is won. Moves it to its pipeline's won stage through the
+ * same lifecycle transition as a stage move in the pipeline (events, audit), so the won value,
+ * pipeline and reports agree with the money. Skipped quietly when the deal is already won or the
+ * move is not allowed (e.g. another proposal waits for approval); the payment is never affected.
+ */
+async function markDealWonOnPayment(db: Db, input: { workspaceId: string; opportunityId: string; requestId: string; actorId: string }): Promise<void> {
+  try {
+    const [deal] = await db
+      .select({ id: schema.deals.id, pipelineId: schema.deals.pipelineId, status: schema.deals.status })
+      .from(schema.deals)
+      .where(and(eq(schema.deals.id, input.opportunityId), eq(schema.deals.workspaceId, input.workspaceId)))
+      .limit(1);
+    if (!deal || deal.status === "won") return;
+    const [wonStage] = await db
+      .select({ id: schema.pipelineStages.id })
+      .from(schema.pipelineStages)
+      .where(and(eq(schema.pipelineStages.pipelineId, deal.pipelineId), eq(schema.pipelineStages.isClosedWon, true)))
+      .limit(1);
+    if (!wonStage) return;
+    await db.transaction(async (tx) => {
+      const [current] = await tx
+        .select({ state: schema.copsLifecycleStates.state })
+        .from(schema.copsLifecycleStates)
+        .where(and(eq(schema.copsLifecycleStates.workspaceId, input.workspaceId), eq(schema.copsLifecycleStates.dimension, "opportunity"), eq(schema.copsLifecycleStates.entityId, deal.id)))
+        .limit(1);
+      // The lifecycle moves one step at a time (qualified -> demo -> commercial -> won). A paid
+      // proposal means the deal went through them, so walk the forward path, one audited step each.
+      let state = (current?.state ?? "qualified") as keyof typeof COPS_TRANSITIONS.opportunity;
+      for (let step = 0; step < 5 && state !== "won"; step++) {
+        const options = COPS_TRANSITIONS.opportunity[state] as readonly string[];
+        const next = (options.includes("won") ? "won" : options.find((o) => o !== "lost")) as typeof state | undefined;
+        if (!next) return;
+        await runLifecycleTransition(tx as unknown as Db, {
+          workspaceId: input.workspaceId,
+          dimension: "opportunity",
+          entityId: deal.id,
+          to: next,
+          actorId: input.actorId,
+          source: "api",
+          reason: "Proposal paid",
+          requestId: input.requestId,
+          occurredAt: new Date(),
+        } as never);
+        state = next;
+      }
+      await tx.update(schema.deals).set({ stageId: wonStage.id, status: "won", updatedAt: new Date() }).where(eq(schema.deals.id, deal.id));
+    });
+  } catch (err) {
+    log.warn("deal not marked won after its proposal was paid", { err, opportunityId: input.opportunityId });
+  }
 }

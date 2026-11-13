@@ -428,7 +428,10 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
                order by oi.created_at desc limit 1) as onboarding_pct,
             (select s.term_end from subscriptions s
                where s.workspace_id = ${workspaceId} and s.account_id = ${accountId} and s.status <> 'closed'
-               order by s.term_end desc limit 1) as renewal_at`)) as unknown as Array<{ onboarding_pct: number | null; renewal_at: Date | string | null }>;
+               order by s.term_end desc limit 1) as renewal_at,
+            (select si.description from subscription_items si join subscriptions s2 on s2.id = si.subscription_id
+               where s2.workspace_id = ${workspaceId} and s2.account_id = ${accountId} and s2.status <> 'closed'
+               order by si.created_at asc limit 1) as subscription_plan`)) as unknown as Array<{ onboarding_pct: number | null; renewal_at: Date | string | null; subscription_plan: string | null }>;
         data.header = {
           id: account.id,
           name: account.name,
@@ -443,7 +446,8 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
           csm_id: account.csmId ?? null,
           commercial_state: commercialState,
           onboarding_pct: progress?.onboarding_pct ?? null,
-          plan: provisioned ? ((provisioned.request as { plan?: string }).plan ?? null) : null,
+          // A running subscription is the plan the customer pays for; the provisioning plan is the trial.
+          plan: progress?.subscription_plan ?? (provisioned ? ((provisioned.request as { plan?: string }).plan ?? null) : null),
           provisioning: provisioned
             ? {
                 workspace_id: provisioned.workspaceId,
