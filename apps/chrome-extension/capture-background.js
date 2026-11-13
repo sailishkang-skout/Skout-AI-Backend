@@ -458,6 +458,7 @@ async function storeDraft(message, sender) {
     draft.notes.push("The website came from the already-open Contact Info dialog. Check it before saving.");
   }
   await chrome.storage.local.set({ [CAPTURE_DRAFT_KEY]: draft });
+  if (draft.kind === 'company') await runQueueInReview(draft.meta.companyId);
   return { ok: true };
 }
 
@@ -532,6 +533,7 @@ async function sendCapture(message) {
     }
   }
   await chrome.storage.local.remove(CAPTURE_DRAFT_KEY);
+  if (draft.kind === 'company') await runQueueBatchSaved(draft.meta?.companyId, { created: body.created, merged: body.merged }, checkpoint);
   return {
     ok: true,
     run,
@@ -634,45 +636,28 @@ export function captureQueueReport(companyName, commit) {
 
 const COMPANY_ID = /^[A-Za-z0-9%._~-]{1,200}$/;
 
-/** Companies with people left to capture: this browser's saved checkpoints plus the workspace queue. */
-async function listCaptureQueue() {
-  const items = new Map();
-  const all = await chrome.storage.local.get(null);
-  for (const [key, state] of Object.entries(all)) {
-    if (!key.startsWith('company-people-capture:') || !state) continue;
-    const companyId = key.slice('company-people-capture:'.length);
-    if (state.committed?.complete && !state.draft) continue;
-    if (!state.committed && !state.draft) continue;
-    items.set(companyId, {
-      companyPublicId: companyId,
-      pagesRead: (state.committed?.pagesRead || 0) + (state.draft?.pagesRead || 0),
-      peopleFound: (state.committed?.seenIds || []).length,
-      pausedBatch: Boolean(state.draft),
-      local: true,
-    });
-  }
-  let serverError;
-  try {
-    const body = await deps.skoutFetch(`${API}/capture/queue`);
-    for (const item of body?.items || []) {
-      if (item.complete) continue;
-      items.set(item.companyPublicId, { ...item, ...items.get(item.companyPublicId), companyName: item.companyName, expectedPeople: item.expectedPeople, peopleFound: Math.max(item.peopleFound || 0, items.get(item.companyPublicId)?.peopleFound || 0) });
-    }
-  } catch (error) {
-    serverError = error?.message || 'The workspace queue could not be loaded.';
-  }
-  return { ok: true, items: [...items.values()], serverError };
+/** This browser's saved people-capture position for a company: 'paused' | 'partial' | 'complete' | undefined. */
+function localProgress(state) {
+  if (!state) return undefined;
+  if (state.draft) return 'paused';
+  if (state.committed) return state.committed.complete ? 'complete' : 'partial';
+  return undefined;
 }
 
-async function removeFromCaptureQueue(companyId) {
-  if (!COMPANY_ID.test(companyId || '')) return { ok: false, error: 'Not a LinkedIn company.' };
-  await chrome.storage.local.remove(companyPeopleStateKey(companyId));
+/** Companies captured in this workspace, with how far each one's people capture got. */
+async function listCaptureCompanies(message) {
+  const q = String(message.q || '').trim().slice(0, 100);
   try {
-    await deps.skoutFetch(`${API}/capture/queue/${encodeURIComponent(companyId)}`, { method: 'DELETE' });
+    const body = await deps.skoutFetch(`${API}/capture/companies${q ? `?q=${encodeURIComponent(q)}` : ''}`);
+    const local = await chrome.storage.local.get(null);
+    const companies = (body?.companies || []).map(company => ({
+      ...company,
+      local: localProgress(local[companyPeopleStateKey(company.companyPublicId)]),
+    }));
+    return { ok: true, companies };
   } catch (error) {
-    if (error?.status !== 404) return { ok: false, error: error?.message || 'The company could not be removed from the queue.' };
+    return { ok: false, error: error?.message || 'The company list could not be loaded.' };
   }
-  return { ok: true };
 }
 
 async function waitForTabUrl(tabId, matches, timeoutMs = 25000) {
@@ -706,13 +691,171 @@ async function continueCaptureQueue(message) {
   }
   if (!(await waitForTabUrl(tabId, onCompany))) return { ok: false, error: 'The LinkedIn company page did not load. Open it and try again.' };
   await timing.delay(1500); // Let LinkedIn hydrate the company top card before reading it.
-  return startCapture({
+  const started = await startCapture({
     tabId,
     kind: 'company',
     replaceDraft: message.replaceDraft === true,
     options: { includeCompany: false, includePeople: true, resume: true },
   });
+  return started.ok ? { ...started, tabId } : started;
 }
+
+// ── Company queue: read the people of several companies, one at a time ───────
+// The user picks companies in the side panel. Each company is opened in turn and its next batch
+// of up to 250 people is read; the queue then waits for the user to review and save (or discard)
+// that batch before it opens the next company. Nothing is saved without the user's review.
+
+export const RUN_QUEUE_KEY = 'skoutCaptureRunQueue';
+const MAX_QUEUE_COMPANIES = 200;
+const RUN_QUEUE_GAP_MS = 3000;
+
+async function getRunQueue() {
+  return (await getStored(RUN_QUEUE_KEY)) || null;
+}
+async function setRunQueue(queue) {
+  await chrome.storage.local.set({ [RUN_QUEUE_KEY]: { ...queue, at: Date.now() } });
+}
+
+let advancing = false;
+async function advanceRunQueue() {
+  if (advancing) return;
+  advancing = true;
+  try {
+    for (;;) {
+      const queue = await getRunQueue();
+      if (!queue?.active) return;
+      // One company at a time: wait while one is being read or reviewed.
+      if (queue.items.some(entry => ['running', 'review'].includes(entry.status))) return;
+      const next = queue.items.find(entry => entry.status === 'pending');
+      if (!next) return setRunQueue({ ...queue, active: false, note: 'Every selected company has been read.', finishedAt: Date.now() });
+      const blocked = await captureBlock();
+      if (blocked) return setRunQueue({ ...queue, active: false, note: blocked });
+      next.status = 'running';
+      await setRunQueue(queue);
+      const result = await continueCaptureQueue({ companyId: next.companyPublicId, tabId: queue.tabId });
+      const latest = (await getRunQueue()) || queue;
+      const current = latest.items.find(entry => entry.companyPublicId === next.companyPublicId);
+      if (result.ok) {
+        // The capture is now running in the tab; the review or progress events move the queue on.
+        await setRunQueue({ ...latest, tabId: result.tabId });
+        return;
+      }
+      if (current && /daily capture limit/i.test(result.error || '')) {
+        current.status = 'pending';
+        return setRunQueue({ ...latest, active: false, note: result.error });
+      }
+      if (current) {
+        current.status = 'failed';
+        current.error = String(result.error || 'The company could not be read.').slice(0, 300);
+      }
+      await setRunQueue(latest);
+      await timing.delay(1500);
+    }
+  } finally {
+    advancing = false;
+  }
+}
+
+const advanceSoon = () => void timing.delay(RUN_QUEUE_GAP_MS).then(advanceRunQueue).catch(() => {});
+
+async function startRunQueue(message) {
+  const existing = await getRunQueue();
+  if (existing?.active) return { ok: false, error: 'A company queue is already running.' };
+  if (await getStored(CAPTURE_DRAFT_KEY)) return { ok: false, error: 'Save or discard the capture waiting for review first.' };
+  const seen = new Set();
+  const items = [];
+  for (const company of Array.isArray(message.companies) ? message.companies : []) {
+    const id = String(company?.companyPublicId || '');
+    if (!COMPANY_ID.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    items.push({ companyPublicId: id, name: String(company?.name || id).slice(0, 200), status: 'pending' });
+  }
+  if (!items.length) return { ok: false, error: 'Select at least one company.' };
+  if (items.length > MAX_QUEUE_COMPANIES) return { ok: false, error: `A queue holds at most ${MAX_QUEUE_COMPANIES} companies. Select fewer.` };
+  await setRunQueue({ active: true, tabId: null, items, startedAt: Date.now() });
+  advanceRunQueue().catch(() => {});
+  return { ok: true, count: items.length };
+}
+
+/** Pauses the queue; the company being read goes back to waiting so it resumes from the same page. */
+async function stopRunQueue() {
+  const queue = await getRunQueue();
+  if (!queue) return { ok: true };
+  const running = queue.items.find(entry => entry.status === 'running');
+  if (running) running.status = 'pending';
+  await setRunQueue({ ...queue, active: false, note: 'Queue paused. Choose Resume to continue.' });
+  const progress = await getStored(CAPTURE_PROGRESS_KEY);
+  const tabId = queue.tabId ?? progress?.tabId;
+  if (tabId != null) {
+    chrome.tabs.sendMessage(tabId, { type: 'SKOUT_CAPTURE_STOP' }).catch(() => {});
+    cancelTasksFor(tabId);
+  }
+  if (progress?.active) await setProgress({ ...progress, active: false, text: 'Paused.' });
+  return { ok: true };
+}
+
+async function resumeRunQueue() {
+  const queue = await getRunQueue();
+  if (!queue || !queue.items.some(entry => entry.status === 'pending')) return { ok: false, error: 'No companies are waiting.' };
+  if (await getStored(CAPTURE_DRAFT_KEY)) return { ok: false, error: 'Save or discard the capture waiting for review first.' };
+  await setRunQueue({ ...queue, active: true, note: undefined });
+  advanceRunQueue().catch(() => {});
+  return { ok: true };
+}
+
+async function clearRunQueue() {
+  const queue = await getRunQueue();
+  if (queue?.active) return { ok: false, error: 'Pause the queue first.' };
+  await chrome.storage.local.remove(RUN_QUEUE_KEY);
+  return { ok: true };
+}
+
+/** The company being read has a reviewable batch now. */
+async function runQueueInReview(companyId) {
+  const queue = await getRunQueue();
+  const item = queue?.items?.find(entry => entry.status === 'running' && (!companyId || entry.companyPublicId === companyId));
+  if (!item) return;
+  item.status = 'review';
+  await setRunQueue(queue);
+}
+
+/** A reviewed batch was saved for the company the queue is on: record it and move to the next. */
+async function runQueueBatchSaved(companyId, counts, checkpoint) {
+  const queue = await getRunQueue();
+  const item = queue?.items?.find(entry => entry.companyPublicId === companyId && ['running', 'review'].includes(entry.status));
+  if (!item) return;
+  item.status = 'done';
+  item.saved = (counts?.created || 0) + (counts?.merged || 0);
+  item.moreRemain = Boolean(checkpoint) && !checkpoint.error && checkpoint.complete === false;
+  await setRunQueue(queue);
+  if (queue.active) advanceSoon();
+}
+
+/** The reviewed batch was discarded: skip that company and move on. */
+async function runQueueBatchDiscarded() {
+  const queue = await getRunQueue();
+  const item = queue?.items?.find(entry => entry.status === 'review');
+  if (!item) return;
+  item.status = 'skipped';
+  await setRunQueue(queue);
+  if (queue.active) advanceSoon();
+}
+
+/** A reader ended without producing a review (an error, or the user stopped it): move on. */
+async function runQueueReadEnded(message) {
+  const queue = await getRunQueue();
+  const item = queue?.items?.find(entry => entry.status === 'running');
+  if (!item || !queue.active) return;
+  if (message.isError) {
+    item.status = 'failed';
+    item.error = String(message.text || 'The company could not be read.').slice(0, 300);
+  } else {
+    item.status = 'skipped';
+  }
+  await setRunQueue(queue);
+  advanceSoon();
+}
+
 
 async function capturedCompanyProfileIds(companyId) {
   try {
@@ -742,18 +885,28 @@ export function handleCaptureMessage(message, sender) {
     case 'capture-send':
       return fromExtensionPage(sender) ? sendCapture(message) : undefined;
     case 'capture-discard':
-      return fromExtensionPage(sender) ? chrome.storage.local.remove(CAPTURE_DRAFT_KEY).then(() => ({ ok: true })) : undefined;
-    case 'capture-queue':
-      return fromExtensionPage(sender) ? listCaptureQueue() : undefined;
-    case 'capture-queue-continue':
+      return fromExtensionPage(sender)
+        ? chrome.storage.local.remove(CAPTURE_DRAFT_KEY).then(runQueueBatchDiscarded).then(() => ({ ok: true }))
+        : undefined;
+    case 'capture-companies':
+      return fromExtensionPage(sender) ? listCaptureCompanies(message) : undefined;
+    case 'capture-queue-start':
+      return fromExtensionPage(sender) ? startRunQueue(message) : undefined;
+    case 'capture-queue-stop':
+      return fromExtensionPage(sender) ? stopRunQueue() : undefined;
+    case 'capture-queue-resume':
+      return fromExtensionPage(sender) ? resumeRunQueue() : undefined;
+    case 'capture-queue-clear':
+      return fromExtensionPage(sender) ? clearRunQueue() : undefined;
+    case 'capture-continue':
       return fromExtensionPage(sender) ? continueCaptureQueue(message) : undefined;
-    case 'capture-queue-remove':
-      return fromExtensionPage(sender) ? removeFromCaptureQueue(message.companyId) : undefined;
     case 'capture-ack-halt':
       return fromExtensionPage(sender) ? chrome.storage.local.remove(CAPTURE_HALT_KEY).then(() => ({ ok: true })) : undefined;
     // LinkedIn tabs running the capture readers.
     case 'SKOUT_CAPTURE_PROGRESS':
-      return setProgress({ kind: message.kind, tabId: sender.tab?.id, active: message.active === true, isError: message.isError === true, text: String(message.text || '') }).then(() => ({ ok: true }));
+      return setProgress({ kind: message.kind, tabId: sender.tab?.id, active: message.active === true, isError: message.isError === true, text: String(message.text || '') })
+        .then(() => (message.active === true ? undefined : runQueueReadEnded(message)))
+        .then(() => ({ ok: true }));
     case 'SKOUT_CAPTURE_REVIEW':
       return storeDraft(message, sender);
     case 'SKOUT_CAPTURE_RESTRICTION':
@@ -792,6 +945,11 @@ export function registerCaptureBackground({ skoutFetch }) {
   });
   chrome.tabs.onRemoved.addListener(async tabId => {
     cancelTasksFor(tabId);
+    const queue = await getRunQueue();
+    if (queue?.tabId === tabId) {
+      await stopRunQueue();
+      await setRunQueue({ ...(await getRunQueue()), tabId: null, note: 'The LinkedIn tab was closed. Choose Resume to continue.' });
+    }
     const progress = await getStored(CAPTURE_PROGRESS_KEY);
     if (progress?.active && progress.tabId === tabId) {
       await setProgress({ ...progress, active: false, isError: true, text: 'The LinkedIn tab was closed before the capture finished.' });
@@ -799,9 +957,4 @@ export function registerCaptureBackground({ skoutFetch }) {
   });
 }
 
-/** The Skout web app's Continue button (LinkedIn Enrichment → Capture queue). */
-export function continueCaptureQueueFromWeb(companyId) {
-  return continueCaptureQueue({ companyId });
-}
-
-export const __test = { commitCompanyPeopleCapture, getCompanyPeopleState, captureBlock, companyReadUrl, deps, listCaptureQueue, removeFromCaptureQueue, readCompanyPeopleSearch };
+export const __test = { commitCompanyPeopleCapture, getCompanyPeopleState, captureBlock, companyReadUrl, deps, listCaptureCompanies, getRunQueue, advanceRunQueue, readCompanyPeopleSearch };

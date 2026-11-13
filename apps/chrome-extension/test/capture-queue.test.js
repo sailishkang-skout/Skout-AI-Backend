@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   CAPTURE_DRAFT_KEY,
+  RUN_QUEUE_KEY,
   __test,
   captureQueueReport,
   handleCaptureMessage,
   timing,
 } from "../capture-background.js";
 import { loadCapturePage } from "./helpers/capture-dom.js";
+import { companyProgressText, runItemText } from "../capture-panel.js";
 
 timing.delay = () => Promise.resolve();
 
@@ -142,46 +144,6 @@ describe("company capture queue", () => {
     expect(saved.checkpoint).toMatchObject({ complete: false, queued: false });
   });
 
-  it("lists this browser's unfinished companies with the workspace queue", async () => {
-    const { storage } = company(1, 1);
-    storage[stateKey] = { committed: { complete: false, pagesRead: 8, seenIds: ["a", "b"] } };
-    storage["company-people-capture:done"] = { committed: { complete: true, pagesRead: 3, seenIds: ["c"] } };
-    __test.deps.skoutFetch = async () => ({
-      items: [
-        { companyPublicId: "example", companyName: "Example Co", peopleFound: 240, expectedPeople: 900, complete: false },
-        { companyPublicId: "acme", companyName: "Acme", peopleFound: 250, pagesRead: 9, complete: false },
-        { companyPublicId: "old", complete: true },
-      ],
-    });
-    const result = await handleCaptureMessage({ type: "capture-queue" }, sidePanel);
-    expect(result.ok).toBe(true);
-    const byId = Object.fromEntries(result.items.map((item) => [item.companyPublicId, item]));
-    expect(Object.keys(byId).sort()).toEqual(["acme", "example"]);
-    expect(byId.example).toMatchObject({ companyName: "Example Co", peopleFound: 240, expectedPeople: 900, pagesRead: 8, local: true });
-  });
-
-  it("shows the local queue when the workspace queue cannot be loaded", async () => {
-    const { storage } = company(1, 1);
-    storage[stateKey] = { draft: { pagesRead: 4, profiles: [] } };
-    __test.deps.skoutFetch = async () => { throw new Error("offline"); };
-    const result = await handleCaptureMessage({ type: "capture-queue" }, sidePanel);
-    expect(result.items).toEqual([expect.objectContaining({ companyPublicId: "example", pausedBatch: true })]);
-    expect(result.serverError).toBe("offline");
-  });
-
-  it("removes a company from both queues, even when Skout no longer lists it", async () => {
-    const { storage, api } = company(1, 1);
-    storage[stateKey] = { committed: { complete: false, pagesRead: 8 } };
-    __test.deps.skoutFetch = async (path, options) => {
-      api.push({ path, method: options?.method });
-      throw Object.assign(new Error("Not found"), { status: 404 });
-    };
-    expect(await handleCaptureMessage({ type: "capture-queue-remove", companyId: "example" }, sidePanel)).toEqual({ ok: true });
-    expect(storage[stateKey]).toBeUndefined();
-    expect(api).toEqual([{ path: "/api/v1/enrichment/capture/queue/example", method: "DELETE" }]);
-    expect((await handleCaptureMessage({ type: "capture-queue-remove", companyId: "../x" }, sidePanel)).ok).toBe(false);
-  });
-
   it("continues a queued company: opens its page and starts a people-only resume", async () => {
     const sent = [];
     let url = "https://www.linkedin.com/feed/";
@@ -195,8 +157,8 @@ describe("company capture queue", () => {
       storage: { local: { async get() { return {}; }, async set() {}, async remove() {} } },
     };
     __test.deps.skoutFetch = async () => ({ enabled: true, usage: { remainingToday: 500 }, caps: { dailyLeadLimit: 1000 } });
-    const result = await handleCaptureMessage({ type: "capture-queue-continue", companyId: "example", tabId: 7 }, sidePanel);
-    expect(result).toEqual({ ok: true, kind: "company" });
+    const result = await handleCaptureMessage({ type: "capture-continue", companyId: "example", tabId: 7 }, sidePanel);
+    expect(result).toEqual({ ok: true, kind: "company", tabId: 7 });
     expect(url).toBe(companyUrl);
     expect(sent.at(-1)).toEqual({ type: "SKOUT_CAPTURE_START", kind: "company", options: { includeCompany: false, includePeople: true, resume: true } });
   });
@@ -208,14 +170,14 @@ describe("company capture queue", () => {
       storage: { local: { async get() { return {}; }, async set() {}, async remove() {} } },
     };
     __test.deps.skoutFetch = async () => ({ enabled: true, usage: { remainingToday: 0 }, caps: { dailyLeadLimit: 1000 } });
-    const result = await handleCaptureMessage({ type: "capture-queue-continue", companyId: "example", tabId: 7 }, sidePanel);
+    const result = await handleCaptureMessage({ type: "capture-continue", companyId: "example", tabId: 7 }, sidePanel);
     expect(result).toEqual({ ok: false, error: "Daily capture limit of 1000 leads reached. Try again tomorrow." });
   });
 
   it("never lets a LinkedIn tab drive the queue", () => {
     const linkedinTab = { tab: { id: 7 }, frameId: 0, url: companyUrl };
-    expect(handleCaptureMessage({ type: "capture-queue-continue", companyId: "example" }, linkedinTab)).toBeUndefined();
-    expect(handleCaptureMessage({ type: "capture-queue-remove", companyId: "example" }, linkedinTab)).toBeUndefined();
+    expect(handleCaptureMessage({ type: "capture-continue", companyId: "example" }, linkedinTab)).toBeUndefined();
+    expect(handleCaptureMessage({ type: "capture-queue-start", companies: [] }, linkedinTab)).toBeUndefined();
   });
 
   it("reports only bounded counts to Skout", () => {
@@ -247,5 +209,177 @@ describe("company batch limit", () => {
     const { limitBatch } = load().SkoutCompanyCapture;
     const batch = people("x", 12);
     expect(limitBatch(batch, new Set())).toEqual({ profiles: batch, deferred: 0 });
+  });
+});
+
+describe("company list for the queue", () => {
+  it("lists workspace companies with this browser's saved position", async () => {
+    const { storage } = company(1, 1);
+    storage["company-people-capture:acme"] = { draft: { pagesRead: 2, profiles: [] } };
+    storage["company-people-capture:beta"] = { committed: { complete: true, pagesRead: 3, seenIds: [] } };
+    let asked;
+    __test.deps.skoutFetch = async (path) => {
+      asked = path;
+      return { companies: [{ companyPublicId: "acme", name: "Acme", peopleFound: 240 }, { companyPublicId: "beta", name: "Beta", peopleFound: 40, complete: true }, { companyPublicId: "gamma", name: "Gamma", peopleFound: 0 }] };
+    };
+    const result = await handleCaptureMessage({ type: "capture-companies", q: " ac " }, sidePanel);
+    expect(asked).toBe("/api/v1/enrichment/capture/companies?q=ac");
+    expect(result.companies.map((entry) => [entry.companyPublicId, entry.local])).toEqual([["acme", "paused"], ["beta", "complete"], ["gamma", undefined]]);
+  });
+
+  it("reports a clear error when the list cannot be loaded", async () => {
+    company(1, 1);
+    __test.deps.skoutFetch = async () => { throw new Error("Request failed (404)"); };
+    expect(await handleCaptureMessage({ type: "capture-companies" }, sidePanel)).toEqual({ ok: false, error: "Request failed (404)" });
+  });
+
+  it("describes each company's progress", () => {
+    expect(companyProgressText({ peopleFound: 0 })).toBe("No people captured yet");
+    expect(companyProgressText({ peopleFound: 240, expectedPeople: 1141, complete: false })).toBe("240 of about 1,141 people saved · more remain");
+    expect(companyProgressText({ peopleFound: 96, complete: true })).toBe("All people captured (96)");
+    expect(companyProgressText({ peopleFound: 5, local: "paused" })).toMatch(/paused/);
+    expect(runItemText({ status: "done", saved: 12, moreRemain: true })).toBe("Saved 12 people · more remain, pick it again to continue");
+    expect(runItemText({ status: "failed", error: "Page did not load" })).toBe("Could not read: Page did not load");
+  });
+});
+
+describe("company queue run", () => {
+  const ids = ["alpha", "beta", "gamma"];
+  const picked = (list = ids) => list.map((companyPublicId) => ({ companyPublicId, name: companyPublicId.toUpperCase() }));
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const statuses = async () => Object.fromEntries((await __test.getRunQueue()).items.map((item) => [item.companyPublicId, item.status]));
+
+  function browser({ startReply = { ok: true, kind: "company" }, status } = {}) {
+    const store = {};
+    const created = [];
+    const opened = [];
+    let url = "";
+    globalThis.chrome = {
+      runtime: { id: "test-extension" },
+      tabs: {
+        async create({ url: next }) { created.push(next); url = next; return { id: 50 }; },
+        async get(id) { if (id !== 50) throw new Error("Tab closed"); return { id, url, status: "complete" }; },
+        async update(_id, props) { url = props.url; },
+        async remove() {},
+        async sendMessage(_id, message) {
+          if (message.type === "SKOUT_CAPTURE_START") { opened.push(url); return startReply; }
+          return { ok: true };
+        },
+      },
+      storage: { local: {
+        async get(keys) { return keys === null ? { ...store } : Object.fromEntries([].concat(keys).map((key) => [key, store[key]])); },
+        async set(values) { Object.assign(store, values); },
+        async remove(keys) { for (const key of [].concat(keys)) delete store[key]; },
+      } },
+    };
+    __test.deps.skoutFetch = async (path, options = {}) => {
+      if (path.includes("/ingest/company")) {
+        const body = JSON.parse(options.body);
+        return { run: { id: "run", status: "completed", terminal: true }, received: body.peopleProfiles?.length || 0, created: 7, merged: 3, rejected: 0 };
+      }
+      if (path.includes("/capture/queue/")) return { item: {} };
+      return status || { enabled: true, caps: { dailyLeadLimit: 1000 }, usage: { remainingToday: 1000 } };
+    };
+    const reviewFrom = (id) => handleCaptureMessage({ type: "SKOUT_CAPTURE_REVIEW", kind: "company", sourceUrl: `https://www.linkedin.com/company/${id}/`, data: { publicId: id, name: id.toUpperCase(), sourceUrl: `https://www.linkedin.com/company/${id}/`, peopleProfiles: [] } }, { tab: { id: 50 } });
+    return { store, created, opened, reviewFrom };
+  }
+
+  it("reads one company at a time and moves on only after each batch is saved, discarded or fails", async () => {
+    const { reviewFrom, created, opened } = browser();
+    expect((await handleCaptureMessage({ type: "capture-queue-start", companies: picked() }, sidePanel)).ok).toBe(true);
+    await tick();
+    expect(await statuses()).toEqual({ alpha: "running", beta: "pending", gamma: "pending" });
+
+    // alpha: reviewed, then saved -> done, beta starts.
+    await reviewFrom("alpha");
+    expect(await statuses()).toMatchObject({ alpha: "review", beta: "pending" });
+    const saved = await handleCaptureMessage({ type: "capture-send" }, sidePanel);
+    expect(saved.ok).toBe(true);
+    await tick(); await tick();
+    expect(await statuses()).toEqual({ alpha: "done", beta: "running", gamma: "pending" });
+    expect((await __test.getRunQueue()).items[0]).toMatchObject({ saved: 10 });
+
+    // beta: LinkedIn page fails -> failed with the reason, gamma starts.
+    await handleCaptureMessage({ type: "SKOUT_CAPTURE_PROGRESS", kind: "company", active: false, isError: true, text: "Company content did not load." }, { tab: { id: 50 } });
+    await tick(); await tick();
+    expect(await statuses()).toEqual({ alpha: "done", beta: "failed", gamma: "running" });
+    expect((await __test.getRunQueue()).items[1].error).toBe("Company content did not load.");
+
+    // gamma: reviewed then discarded -> skipped, queue finished.
+    await reviewFrom("gamma");
+    await handleCaptureMessage({ type: "capture-discard" }, sidePanel);
+    await tick(); await tick();
+    const queue = await __test.getRunQueue();
+    expect(queue.items.map((item) => item.status)).toEqual(["done", "failed", "skipped"]);
+    expect(queue).toMatchObject({ active: false, note: "Every selected company has been read." });
+    // One LinkedIn tab is reused for every company.
+    expect(created).toEqual(["https://www.linkedin.com/company/alpha/"]);
+    expect(opened).toEqual(ids.map((id) => `https://www.linkedin.com/company/${id}/`));
+  });
+
+  it("does not open the next company while a batch is waiting for review", async () => {
+    const { reviewFrom } = browser();
+    await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["alpha", "beta"]) }, sidePanel);
+    await tick();
+    await reviewFrom("alpha");
+    await __test.advanceRunQueue();
+    expect(await statuses()).toEqual({ alpha: "review", beta: "pending" });
+  });
+
+  it("pauses and resumes from the same company", async () => {
+    const { opened } = browser();
+    await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["alpha", "beta"]) }, sidePanel);
+    await tick();
+    await handleCaptureMessage({ type: "capture-queue-stop" }, sidePanel);
+    expect(await statuses()).toEqual({ alpha: "pending", beta: "pending" });
+    expect((await __test.getRunQueue()).active).toBe(false);
+    expect((await handleCaptureMessage({ type: "capture-queue-resume" }, sidePanel)).ok).toBe(true);
+    await tick();
+    expect(await statuses()).toMatchObject({ alpha: "running" });
+    expect(opened).toEqual(["https://www.linkedin.com/company/alpha/", "https://www.linkedin.com/company/alpha/"]);
+  });
+
+  it("stops with the reason, keeping every company waiting, when the daily limit is reached", async () => {
+    browser({ status: { enabled: true, caps: { dailyLeadLimit: 1000 }, usage: { remainingToday: 0 } } });
+    await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["alpha", "beta"]) }, sidePanel);
+    await tick();
+    const queue = await __test.getRunQueue();
+    expect(queue).toMatchObject({ active: false });
+    expect(queue.note).toMatch(/daily capture limit/i);
+    expect(queue.items.map((item) => item.status)).toEqual(["pending", "pending"]);
+  });
+
+  it("stops while capture is switched off for the workspace", async () => {
+    browser({ status: { enabled: false, disabledReason: "Paused by admin" } });
+    await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["alpha"]) }, sidePanel);
+    await tick();
+    expect((await __test.getRunQueue()).note).toMatch(/Paused by admin/);
+  });
+
+  it("marks a company that cannot start as failed and carries on", async () => {
+    browser({ startReply: { ok: false, error: "Open a LinkedIn company page." } });
+    await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["alpha", "beta"]) }, sidePanel);
+    await tick(); await tick(); await tick();
+    const queue = await __test.getRunQueue();
+    expect(queue.items.map((item) => [item.status, item.error])).toEqual([["failed", "Open a LinkedIn company page."], ["failed", "Open a LinkedIn company page."]]);
+    expect(queue.active).toBe(false);
+  });
+
+  it("validates the selection and refuses a second queue", async () => {
+    browser();
+    expect(await handleCaptureMessage({ type: "capture-queue-start", companies: [] }, sidePanel)).toEqual({ ok: false, error: "Select at least one company." });
+    expect((await handleCaptureMessage({ type: "capture-queue-start", companies: [{ companyPublicId: "../x" }, { companyPublicId: "a b" }] }, sidePanel)).ok).toBe(false);
+    expect((await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["alpha", "alpha"]) }, sidePanel)).count).toBe(1);
+    expect((await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["beta"]) }, sidePanel)).error).toMatch(/already running/);
+    expect((await handleCaptureMessage({ type: "capture-queue-clear" }, sidePanel)).error).toMatch(/Pause/);
+  });
+
+  it("clears a finished queue", async () => {
+    const { store } = browser();
+    await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["alpha"]) }, sidePanel);
+    await tick();
+    await handleCaptureMessage({ type: "capture-queue-stop" }, sidePanel);
+    expect((await handleCaptureMessage({ type: "capture-queue-clear" }, sidePanel)).ok).toBe(true);
+    expect(store[RUN_QUEUE_KEY]).toBeUndefined();
   });
 });

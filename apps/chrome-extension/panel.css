@@ -255,38 +255,64 @@ body.side-panel {
   font-weight: 600;
 }
 
-.capture-queue-list {
+.capture-company-list,
+.capture-run-list {
   list-style: none;
-  margin: 6px 0 0;
+  margin: 6px 0;
   padding: 0;
 }
 
-.capture-queue-item {
+.capture-company-list {
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid #e6e6e6;
+  border-radius: 8px;
+}
+
+.capture-company-item,
+.capture-run-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 6px;
-  align-items: center;
-  padding: 6px 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 6px 8px;
   border-top: 1px solid #e6e6e6;
 }
 
-.capture-queue-name {
+.capture-company-item:first-child,
+.capture-run-item:first-child {
+  border-top: 0;
+}
+
+.capture-run-item {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.capture-company-item input[type="checkbox"] {
+  width: auto;
+  margin: 3px 0 0;
+}
+
+.capture-company-name {
+  display: block;
   overflow: hidden;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.capture-queue-meta {
+.capture-company-meta {
   display: block;
   color: #666;
   font-size: 11px;
-  font-weight: 400;
 }
 
-.capture-queue-item button {
-  width: auto;
-  margin: 0;
-  padding: 4px 8px;
-  font-size: 12px;
+.capture-run-item[data-status="running"] .capture-company-meta,
+.capture-run-item[data-status="review"] .capture-company-meta {
+  color: #0a66c2;
+  font-weight: 600;
+}
+
+.capture-run-item[data-status="failed"] .capture-company-meta {
+  color: #b42318;
 }

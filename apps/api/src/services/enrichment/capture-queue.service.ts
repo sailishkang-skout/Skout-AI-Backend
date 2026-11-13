@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, ilike, isNull, like, sql } from "drizzle-orm";
 import { z } from "zod";
 import { schema, type Db } from "@skout/db";
 import { normalizeLinkedinId } from "./capture-identity.js";
@@ -103,22 +103,52 @@ export async function recordCaptureQueueBatch(
   return captureQueueDto(row!);
 }
 
-export async function listCaptureQueue(db: Db, workspaceId: string, opts: { includeComplete?: boolean } = {}) {
-  const table = schema.enrichmentCaptureQueue;
+/**
+ * Companies captured in this workspace that the extension can read the people of, with how far
+ * each one got. The LinkedIn company id is the canonical `company:<id>` identity key.
+ */
+export async function listCapturableCompanies(db: Db, workspaceId: string, search?: string) {
+  const c = schema.companies;
+  const i = schema.enrichmentIdentities;
+  const q = schema.enrichmentCaptureQueue;
+  const term = search?.trim();
   const rows = await db
-    .select()
-    .from(table)
-    .where(opts.includeComplete ? eq(table.workspaceId, workspaceId) : and(eq(table.workspaceId, workspaceId), eq(table.complete, false)))
-    .orderBy(table.complete, desc(table.updatedAt))
-    .limit(500);
-  return rows.map(captureQueueDto);
-}
-
-export async function removeFromCaptureQueue(db: Db, workspaceId: string, rawPublicId: string) {
-  const table = schema.enrichmentCaptureQueue;
-  const removed = await db
-    .delete(table)
-    .where(and(eq(table.workspaceId, workspaceId), eq(table.companyPublicId, normalizeLinkedinId(rawPublicId))))
-    .returning({ id: table.companyPublicId });
-  return removed.length > 0;
+    .select({
+      id: c.id,
+      name: c.name,
+      key: i.canonicalKey,
+      peopleFound: q.peopleFound,
+      expectedPeople: q.expectedPeople,
+      batches: q.batches,
+      complete: q.complete,
+      updatedAt: q.updatedAt,
+    })
+    .from(c)
+    .innerJoin(
+      i,
+      and(eq(i.workspaceId, c.workspaceId), eq(i.entityId, c.id), eq(i.entityType, "company"), like(i.canonicalKey, "company:%"))
+    )
+    .leftJoin(q, and(eq(q.workspaceId, c.workspaceId), eq(q.companyPublicId, sql`substr(${i.canonicalKey}, 9)`)))
+    .where(
+      and(
+        eq(c.workspaceId, workspaceId),
+        isNull(c.deletedAt),
+        ...(term ? [ilike(c.name, `%${term.replace(/[\\%_]/g, "\\$&")}%`)] : [])
+      )
+    )
+    .orderBy(asc(c.name), asc(c.id))
+    .limit(1000);
+  const seen = new Set<string>();
+  return rows
+    .filter((row) => (seen.has(row.id) ? false : (seen.add(row.id), true)))
+    .map((row) => ({
+      companyPublicId: row.key.slice("company:".length),
+      name: row.name,
+      peopleFound: row.peopleFound ?? 0,
+      expectedPeople: row.expectedPeople,
+      batches: row.batches ?? 0,
+      // null: never captured through the queue, so nothing is known about what remains.
+      complete: row.complete,
+      updatedAt: row.updatedAt?.toISOString() ?? null,
+    }));
 }
