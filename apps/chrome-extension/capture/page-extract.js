@@ -110,8 +110,8 @@ function extractPerson() {
   // 1 = profile header, 2 = Contact info, 3 = current job, 4 = bio. Lower wins when pages are merged.
   let locationRank = locationName ? 1 : undefined;
 
-  const followersText = findCount('followers?');
-  const connectionsText = findCount('connections?');
+  const followersText = findCount('followers?') || profileCountText(topcard, 'followers?');
+  const connectionsText = findCount('connections?') || profileCountText(topcard, 'connections?');
   const relationshipContext = extractRelationshipContext(topcard);
 
   const openToWork = !!topcard?.querySelector('[aria-label*="Open to work" i]');
@@ -122,7 +122,9 @@ function extractPerson() {
   // rendered/scrolled into view; safe to call even if empty (each
   // returns [] / undefined rather than throwing).
   const experience = extractExperience();
-  const currentJobs = experience.filter((e) => e.dates && /present/i.test(e.dates));
+  let currentJobs = experience.filter((e) => e.dates && PRESENT_WORDS.test(e.dates));
+  // Rows without readable dates: LinkedIn lists the most recent role first.
+  if (!currentJobs.length && experience.length && !experience.some((e) => e.dates)) currentJobs = [experience[0]];
   const previousJobs = experience.filter((e) => !currentJobs.includes(e));
   // Personal sites and repository URLs can appear as an "organization" in
   // Experience. They are valid work-history text but must never become a
@@ -148,6 +150,11 @@ function extractPerson() {
     const fromTopcard = (orgCompany && topcardCurrentCompany(orgCompany.name, headline, orgCompany.companyPublicId)) ||
       (positionLine !== locationName && topcardCurrentCompany(positionLine, headline));
     if (fromTopcard) currentCompanyJobs.push(fromTopcard);
+  }
+  // A current role read without its title: a "Title at Company" headline naming that employer fills it.
+  if (currentCompanyJobs[0] && !currentCompanyJobs[0].title) {
+    const fromHeadline = topcardCurrentCompany(currentCompanyJobs[0].company, headline);
+    if (fromHeadline?.title) currentCompanyJobs[0] = { ...currentCompanyJobs[0], title: fromHeadline.title };
   }
   const currentCompanyPublicId = currentCompanyJobs.find((j) => j.companyPublicId)?.companyPublicId;
   const roleMetadata = inferRoleMetadata(currentCompanyJobs[0]?.title || currentJobs[0]?.title || headline);
@@ -225,6 +232,53 @@ function extractPerson() {
       experience: experience.length, educations: educations.length, skills: skills.length,
     }),
   };
+}
+
+/** "Present" in the date ranges of the languages LinkedIn profiles are commonly shown in. */
+const PRESENT_WORDS = /\b(present|presente|actualidad|atual|aujourd['’]hui|heute|heden|oggi|obecnie|nu)\b|至今|現在|현재/i;
+
+/**
+ * A follower or connection count shown near the top of the profile ("1,234 followers",
+ * "500+ connections", "1.2K followers"), wherever LinkedIn put it: a paragraph, span, link or
+ * list item. Mutual connections never match. Returns the matched text, or undefined.
+ */
+function profileCountText(topcard, labelPattern) {
+  const pattern = new RegExp(`(?:^|[\\s·(])(\\d[\\d.,]*\\s?[KkMm]?\\+?)\\s*${labelPattern}\\b`, 'i');
+  const read = (value) => {
+    const candidate = (value || '').replace(/\s+/g, ' ').trim();
+    if (!candidate || candidate.length > 80 || /\bmutual\b|\bshared\b/i.test(candidate)) return undefined;
+    const match = candidate.match(pattern);
+    return match ? `${match[1].replace(/\s+/g, '')} ${candidate.match(new RegExp(labelPattern, 'i'))[0]}` : undefined;
+  };
+  // Short text only (see read), so "<a><span>500+</span> connections</a>" matches as a whole.
+  const leaves = (root) => Array.from(root?.querySelectorAll('p, span, a, li, div, strong') || [])
+    .filter((node) => (node.textContent || '').length <= 120);
+  // 1. The profile header. 2. Links to the person's followers or connections. 3. Anything in the
+  // top of the page (above Experience), which is where LinkedIn shows these counts.
+  const labelOnly = new RegExp(`^${labelPattern}$`, 'i');
+  const numberOnly = /^\d[\d.,]*\s?[KkMm]?\+?$/;
+  for (const node of leaves(topcard)) {
+    const found = read(node.textContent) || read(node.getAttribute?.('aria-label'));
+    if (found) return found;
+    // Number and label in sibling elements: <span><b>1.2K</b></span><span>followers</span>.
+    const label = (node.textContent || '').trim();
+    const before = (node.previousElementSibling?.textContent || '').trim();
+    if (labelOnly.test(label) && numberOnly.test(before)) return `${before} ${label}`;
+  }
+  const main = document.querySelector('main') || document.body;
+  for (const link of main.querySelectorAll('a[href*="followers"], a[href*="connections"], a[href*="recent-activity"]')) {
+    const found = read(link.textContent) || read(link.getAttribute('aria-label'));
+    if (found) return found;
+  }
+  const experienceTop = profileSection('Experience')?.getBoundingClientRect().top;
+  const limit = Number.isFinite(experienceTop) ? experienceTop : 900;
+  for (const node of leaves(main)) {
+    const top = node.getBoundingClientRect().top;
+    if (top > limit) continue;
+    const found = read(node.textContent);
+    if (found) return found;
+  }
+  return undefined;
 }
 
 /**

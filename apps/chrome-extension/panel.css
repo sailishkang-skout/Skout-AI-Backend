@@ -208,3 +208,85 @@ body.side-panel {
 .capture-fields input[aria-invalid="true"] {
   border-color: #f87171;
 }
+
+/* Review fields LinkedIn did not show: still editable, clearly marked. */
+.capture-field-missing-tag {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #fff4e5;
+  color: #8a4b00;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.capture-fields input.capture-field-missing,
+.capture-fields textarea.capture-field-missing {
+  border-style: dashed;
+}
+
+.capture-fields input.capture-field-missing::placeholder,
+.capture-fields textarea.capture-field-missing::placeholder {
+  color: #8a4b00;
+  font-weight: 600;
+}
+
+.capture-coverage {
+  margin: 6px 0;
+  font-size: 12px;
+}
+
+.capture-continue {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #c7dcf5;
+  border-radius: 8px;
+  background: #f1f7fe;
+}
+
+.capture-queue {
+  margin-top: 12px;
+}
+
+.capture-queue summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.capture-queue-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+
+.capture-queue-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 0;
+  border-top: 1px solid #e6e6e6;
+}
+
+.capture-queue-name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.capture-queue-meta {
+  display: block;
+  color: #666;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.capture-queue-item button {
+  width: auto;
+  margin: 0;
+  padding: 4px 8px;
+  font-size: 12px;
+}

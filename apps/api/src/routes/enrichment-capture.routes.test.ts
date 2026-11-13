@@ -368,6 +368,50 @@ describe("ENR-02 capture ingest", () => {
     expect(ids.json().publicIds.sort()).toEqual(["jane-doe-3b2a1", "sam-lee"]);
   });
 
+  it("keeps a capture queue of companies with people left, per workspace", async () => {
+    const put = (id: string, payload: unknown, headers = owner) =>
+      app.inject({ method: "PUT", url: `/api/v1/enrichment/capture/queue/${id}`, headers, payload: payload as object });
+
+    // First batch stops at the 250-person limit; the company is listed with its progress.
+    const first = await put("Acme-Robotics", { companyName: "Acme Robotics", pagesRead: 8, peopleFound: 240, expectedPeople: 1141, complete: false, stopReason: "more pages available" });
+    expect(first.statusCode).toBe(200);
+    expect(first.json().item).toMatchObject({
+      companyPublicId: "acme-robotics",
+      sourceUrl: "https://www.linkedin.com/company/acme-robotics/",
+      peopleFound: 240,
+      remainingPeople: 901,
+      batches: 1,
+      complete: false,
+    });
+
+    // A second batch adds to it; counts never go backwards.
+    const second = await put("acme-robotics", { pagesRead: 16, peopleFound: 480, complete: false }, member);
+    expect(second.json().item).toMatchObject({ companyName: "Acme Robotics", pagesRead: 16, peopleFound: 480, expectedPeople: 1141, batches: 2 });
+    const stale = await put("acme-robotics", { pagesRead: 8, peopleFound: 240, complete: false });
+    expect(stale.json().item).toMatchObject({ pagesRead: 16, peopleFound: 480, batches: 3 });
+
+    let list = await get("/enrichment/capture/queue");
+    expect(list.statusCode).toBe(200);
+    expect(list.json().items.map((item: { companyPublicId: string }) => item.companyPublicId)).toEqual(["acme-robotics"]);
+    // Another workspace never sees it.
+    expect((await get("/enrichment/capture/queue", outsider)).json().items).toEqual([]);
+
+    // Finished: it leaves the default list but is kept for history.
+    await put("acme-robotics", { pagesRead: 46, peopleFound: 1141, complete: true, stopReason: "last visible page reached" });
+    expect((await get("/enrichment/capture/queue")).json().items).toEqual([]);
+    list = await get("/enrichment/capture/queue?includeComplete=true");
+    expect(list.json().items[0]).toMatchObject({ complete: true, peopleFound: 1141, remainingPeople: 0 });
+
+    // Bad input is rejected, and removing works once.
+    expect((await put("bad%2Fid", { pagesRead: 1, peopleFound: 1, complete: false })).statusCode).toBe(422);
+    expect((await put("acme-robotics", { pagesRead: -1, peopleFound: 1, complete: false })).statusCode).toBe(422);
+    expect((await put("acme-robotics", { pagesRead: 1, peopleFound: 1, complete: false, extra: true })).statusCode).toBe(422);
+    const del = (id: string, headers = owner) => app.inject({ method: "DELETE", url: `/api/v1/enrichment/capture/queue/${id}`, headers });
+    expect((await del("acme-robotics", outsider)).statusCode).toBe(404);
+    expect((await del("acme-robotics")).statusCode).toBe(204);
+    expect((await del("acme-robotics")).statusCode).toBe(404);
+  });
+
   it("keeps capture runs and records inside the workspace", async () => {
     const runs = await get("/enrichment/capture/runs");
     expect(runs.statusCode).toBe(200);

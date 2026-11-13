@@ -161,3 +161,33 @@ export const enrichmentCaptureRuns = pgTable(
       .where(sql`${table.clientRunId} IS NOT NULL`),
   ]
 );
+
+/**
+ * Companies whose people discovery stopped at a batch limit (one batch is at most 250 people)
+ * and still has result pages left. The extension reports each saved batch here, so the web
+ * app can list them under LinkedIn Enrichment → Capture queue and the user can continue later.
+ */
+export const enrichmentCaptureQueue = pgTable(
+  "enrichment_capture_queue",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    companyPublicId: text("company_public_id").notNull(),
+    companyName: text("company_name"),
+    sourceUrl: text("source_url").notNull(),
+    pagesRead: integer("pages_read").notNull().default(0),
+    peopleFound: integer("people_found").notNull().default(0),
+    expectedPeople: integer("expected_people"),
+    batches: integer("batches").notNull().default(0),
+    complete: boolean("complete").notNull().default(false),
+    stopReason: text("stop_reason"),
+    updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.companyPublicId] }),
+    index("enrichment_capture_queue_workspace_updated_idx").on(table.workspaceId, table.complete, table.updatedAt),
+  ]
+);

@@ -44,6 +44,20 @@ globalThis.SkoutCompanyCapture = globalThis.SkoutCompanyCapture || (() => {
     return result;
   }
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+  // One reviewed batch saves at most this many people (the API's per-run cap).
+  const BATCH_LEAD_LIMIT = 250;
+  /**
+   * Keeps a batch within the per-run cap. People from the resumable search come first: the saved
+   * checkpoint advances past their pages. Extra People-page cards are left out and are found
+   * again by the search in a later batch.
+   */
+  function limitBatch(profiles, searchIds, limit = BATCH_LEAD_LIMIT) {
+    if (!Array.isArray(profiles) || profiles.length <= limit) return { profiles, deferred: 0 };
+    const fromSearch = profiles.filter(profile => searchIds.has(profile.publicId));
+    const others = profiles.filter(profile => !searchIds.has(profile.publicId));
+    const kept = [...fromSearch, ...others].slice(0, limit);
+    return { profiles: kept, deferred: profiles.length - kept.length };
+  }
   const associatedMemberCount = value => {
     const match = String(value || '').match(/([\d,]+)\s+associated members/i);
     return match ? Number(match[1].replace(/,/g, '')) || undefined : undefined;
@@ -101,6 +115,7 @@ globalThis.SkoutCompanyCapture = globalThis.SkoutCompanyCapture || (() => {
     let about;
     let peopleSearchUrl = data._peopleSearchUrl;
     let directoryRead = false;
+    let searchIds = new Set();
     let read = 0;
     try {
       while (queue.length && !stopped) {
@@ -131,7 +146,8 @@ globalThis.SkoutCompanyCapture = globalThis.SkoutCompanyCapture || (() => {
       // Company People page. Its "Page 1 of N" control changes aggregate
       // analytics, not the member-card list, so it must not be treated as an
       // employee-directory paginator.
-      if (!stopped && options.includePeople) {
+      // A continued queue batch already has the People page cards from its first batch.
+      if (!stopped && options.includePeople && !options.resume) {
         status.textContent = 'Reading visible company people pages…';
         try {
           const directoryResult = await message({type:'READ_COMPANY_PEOPLE_DIRECTORY',url:root + 'people/',companyId});
@@ -152,8 +168,9 @@ globalThis.SkoutCompanyCapture = globalThis.SkoutCompanyCapture || (() => {
           const expectedAssociatedMembers = associatedMemberCount(data.peopleStats?.totalEmployeesText);
           const peopleResult = await message({type:'READ_COMPANY_PEOPLE_SEARCH',url:peopleSearchUrl,companyId,expectedAssociatedMembers});
           if (!peopleResult.cancelled && Array.isArray(peopleResult.peopleProfiles)) {
-            if (peopleResult.checkpointToken) data._captureCheckpointToken = peopleResult.checkpointToken;
+            searchIds = new Set(peopleResult.peopleProfiles.map(profile => profile.publicId));
             if (peopleResult.progress) data._captureProgress = {...peopleResult.progress,complete:peopleResult.complete};
+            if (peopleResult.checkpointToken) data._captureCheckpointToken = peopleResult.checkpointToken;
             const merged = new Map((data.peopleProfiles || []).map(profile => [profile.publicId, profile]));
             for (const profile of peopleResult.peopleProfiles) {
               const directCard = merged.get(profile.publicId);
@@ -178,6 +195,11 @@ globalThis.SkoutCompanyCapture = globalThis.SkoutCompanyCapture || (() => {
         const before = data.peopleProfiles.length;
         data.peopleProfiles = data.peopleProfiles.filter(profile => matchesProfileFocus(profile, focus));
         warnings.push(`Company capture focus kept ${data.peopleProfiles.length} of ${before} visible profiles (${focus.departments.length ? `departments: ${focus.departments.join(', ')}` : 'all departments'}; ${focus.seniorities.length ? `seniority/title: ${focus.seniorities.join(', ')}` : 'all seniority levels'}).`);
+      }
+      const limited = limitBatch(data.peopleProfiles, searchIds);
+      if (limited.deferred) {
+        data.peopleProfiles = limited.profiles;
+        warnings.push(`This batch keeps ${BATCH_LEAD_LIMIT} people, the most one save allows. ${limited.deferred} more will be read in the next batch: save this one, then choose Continue capturing queue.`);
       }
       if (options.includePeople) data._captureStats = {discovered, matched: data.peopleProfiles?.length || 0, alreadyCaptured: 0, readyToCapture: data.peopleProfiles?.length || 0};
       // Ask the dashboard which directly associated profiles already exist
@@ -271,5 +293,5 @@ globalThis.SkoutCompanyCapture = globalThis.SkoutCompanyCapture || (() => {
       collectPeopleDirectory(request.companyId,request.url).then(respond).catch(error => respond({ok:false,error:error.message}));return true;
     }
   });
-  return {start,merge,pageUrl,links};
+  return {start,merge,pageUrl,links,limitBatch};
 })();

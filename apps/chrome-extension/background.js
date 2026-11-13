@@ -16,7 +16,7 @@ import {
   skoutFetch,
 } from "./api.js";
 import { friendlyTabError, isUsableTab, isUsableTabUrl, nameFromLinkedInUrl } from "./tab-utils.js";
-import { registerCaptureBackground } from "./capture-background.js";
+import { continueCaptureQueueFromWeb, registerCaptureBackground } from "./capture-background.js";
 import { getLists, prefetchLists, saveLastListId, getLastListId } from "./lists-cache.js";
 import { log, logError, timeStep, withTimeout } from "./debug.js";
 import {
@@ -659,7 +659,7 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
     }
 
     if (message.type === "ping") {
-      sendResponse({ ok: true, version: "0.8.0" });
+      sendResponse({ ok: true, version: chrome.runtime.getManifest().version, captureQueue: true });
       return;
     }
 
@@ -670,6 +670,16 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
         sendResponse({ ok: true });
       } catch (err) {
         sendResponse({ ok: false, error: String(err) });
+      }
+      return;
+    }
+
+    // LinkedIn Enrichment → Capture queue → Continue: read the next batch of that company's people.
+    if (message.type === "capture-queue-continue" && typeof message.companyId === "string") {
+      try {
+        sendResponse(await continueCaptureQueueFromWeb(message.companyId));
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || String(err) });
       }
       return;
     }
