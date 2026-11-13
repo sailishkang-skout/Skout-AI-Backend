@@ -254,13 +254,20 @@ export async function assertApproved(db: Db, workspaceId: string, proposalId: st
  */
 export async function opportunityApprovals(db: Db, workspaceId: string, opportunityId: string) {
   const live = await db
-    .select({ id: proposals.id })
+    .select({ id: proposals.id, status: proposals.status })
     .from(proposals)
     .where(and(eq(proposals.workspaceId, workspaceId), eq(proposals.opportunityId, opportunityId), notInArray(proposals.status, ["declined", "expired"])));
   const blocking: Array<{ proposal_id: string; required_approvers: ApproverRole[]; approval_status: string }> = [];
-  for (const { id } of live) {
+  // The deal already went out on a proposal (sent or accepted).
+  const sentOne = live.some((p) => p.status !== "draft");
+  for (const { id, status } of live) {
     const state = await evaluateProposalApprovals(db, workspaceId, id);
-    if (!state.satisfied) blocking.push({ proposal_id: id, required_approvers: state.required_approvers, approval_status: state.approval?.status ?? "not_requested" });
+    if (state.satisfied) continue;
+    // Once another proposal went out, a draft nobody asked approval for is a dropped one: it never
+    // reached the customer and used to keep the gate shut after signature and payment. A draft
+    // waiting on its approval, or the only proposal on a trial deal, still blocks.
+    if (sentOne && status === "draft" && !state.approval) continue;
+    blocking.push({ proposal_id: id, required_approvers: state.required_approvers, approval_status: state.approval?.status ?? "not_requested" });
   }
   return { complete: blocking.length === 0, blocking };
 }
