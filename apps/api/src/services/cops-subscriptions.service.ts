@@ -397,7 +397,8 @@ export async function createSubscription(db: Db, ctx: CommercialContext, account
       entityType: "subscription",
       entityId: sub!.id,
       action: "subscription.created",
-      after: { account_id: accountId, seats: input.seats, seat_month_minor: unit, currency, cadence: input.cadence, term_months: input.term_months, billing, first_bill_settled_by_proposal_payment: settledInvoiceId },
+      // The seats really billed: the proposal's seat lines when there is one, not the number typed.
+      after: { account_id: accountId, seats: recurring ? recurring.lines.filter((l) => l.kind === "seats").reduce((n, l) => n + l.quantity, 0) : input.seats, seat_month_minor: unit, currency, cadence: input.cadence, term_months: input.term_months, billing, first_bill_settled_by_proposal_payment: settledInvoiceId },
       correlationId: ctx.requestId,
       sourceChannel: "api",
     });
