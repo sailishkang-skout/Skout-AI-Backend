@@ -1,4 +1,4 @@
-import { and, eq, gte, ilike, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, isNull, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, recordEvidence, getLatestEvidenceByAttribute } from "@skout/db";
 import { appendCopsEvent, createCopsEvent, type DealCreateInput, type DealUpdateInput } from "@skout/shared";
@@ -143,6 +143,8 @@ export class DealsService {
       .select()
       .from(deals)
       .where(and(...conditions))
+      // Newest first, so a deal just created is at the top.
+      .orderBy(desc(deals.createdAt), desc(deals.id))
       .limit(options.limit)
       .offset(options.offset);
 

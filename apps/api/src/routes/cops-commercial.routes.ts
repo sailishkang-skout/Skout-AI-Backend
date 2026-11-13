@@ -37,7 +37,7 @@ import {
   type CommercialContext,
 } from "../services/cops-commercial.service.js";
 import { cancelPaymentRequest, createPaymentRequest, handlePaymentWebhook, loadPaymentRequests, previewRefund, refundPaymentRequest } from "../services/cops-payments.service.js";
-import { emailPaymentLink, emailProposal, isInternalEmail } from "../services/cops-commercial-email.service.js";
+import { emailPaymentLink, emailProposal, isInternalEmail, proposalVersionPdf } from "../services/cops-commercial-email.service.js";
 import { assertApproved, assertContractApproved, decideApproval, evaluateProposalApprovals, listApprovals, requestApproval } from "../services/cops-approvals.service.js";
 import { createRazorpayPaymentLinkAdapter } from "../services/psp/razorpay.js";
 import {
@@ -588,6 +588,20 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
   });
 
   // ---- Proposals ----
+  // The PDF of any proposal version (draft or sent): the one the proposal email attaches.
+  app.get<IdOnly>("/proposal-versions/:id/pdf", { preHandler: readGate }, async (request, reply) => {
+    const ctx = ctxOf(request);
+    const bad = checkId(reply as unknown as Reply, ctx.requestId, request.params.id);
+    if (bad) return bad;
+    const file = await proposalVersionPdf(db, ctx.workspaceId, request.params.id);
+    if (!file) return reply.status(404).send(copsErrorBody({ code: "NOT_FOUND", message: "Proposal version not found", requestId: ctx.requestId }));
+    return reply
+      .header("content-type", "application/pdf")
+      .header("content-disposition", `inline; filename="${file.filename}"`)
+      .header("cache-control", "no-store")
+      .send(file.pdf);
+  });
+
 
   type OppBody = { Params: { id: string }; Body: unknown };
   app.post<OppBody>(

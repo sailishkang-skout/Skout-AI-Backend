@@ -141,6 +141,40 @@ export async function emailPaymentLink(db: Db, config: Env, workspaceId: string,
   }));
 }
 
+/**
+ * The PDF of any proposal version (draft or sent), the same one the proposal email attaches, so
+ * the team can see what the customer got or is about to get. Null when the version is not in this
+ * workspace.
+ */
+export async function proposalVersionPdf(db: Db, workspaceId: string, versionId: string): Promise<{ filename: string; pdf: Buffer } | null> {
+  const [row] = await db
+    .select({ version: proposalVersions, title: proposals.title })
+    .from(proposalVersions)
+    .innerJoin(proposals, eq(proposals.id, proposalVersions.proposalId))
+    .where(and(eq(proposalVersions.id, versionId), eq(proposals.workspaceId, workspaceId)))
+    .limit(1);
+  if (!row) return null;
+  const version = row.version;
+  const lines = await db.select().from(proposalLineItems).where(eq(proposalLineItems.versionId, version.id)).orderBy(asc(proposalLineItems.position));
+  const { tcv_minor: total } = proposalTcv({
+    term_months: version.termMonths,
+    discount_pct: Number(version.discountPct),
+    lines: lines.map((l) => ({ kind: l.kind, price_basis: l.priceBasis, gross_minor: Number(l.grossMinor), net_minor: Number(l.netMinor) })),
+  });
+  const cur = version.currency;
+  const price = (l: (typeof lines)[number]) => `${money(Number(l.netMinor), cur)}${(l.priceBasis ?? defaultPriceBasis(l.kind)) === "per_month" ? "/month" : ""}`;
+  const pdf = await proposalPdf({
+    title: row.title,
+    version: version.version,
+    termMonths: version.termMonths,
+    discount: Number(version.discountPct) > 0 ? ` including a ${Number(version.discountPct)}% discount` : "",
+    rows: lines.map((l) => ({ label: `${l.description} x ${l.quantity}`, amount: price(l) })),
+    total: money(total, cur),
+  });
+  const safeName = row.title.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").slice(0, 60) || "proposal";
+  return { filename: `${safeName}-v${version.version}.pdf`, pdf };
+}
+
 /** A one-page proposal PDF: the same lines and total as the email. */
 export function proposalPdf(p: { title: string; version: number; termMonths: number; discount: string; rows: { label: string; amount: string }[]; total: string }): Promise<Buffer> {
   return new Promise((resolve, reject) => {
