@@ -172,7 +172,7 @@ const subscriptionSchema = z
   })
   .strict();
 const amendmentSchema = z
-  .object({ seats: z.number().int().min(1).max(100_000).optional(), term_months: z.number().int().min(1).max(120).optional(), reason: z.string().trim().min(1, "reason is required").max(1000) })
+  .object({ seats: z.number().int().min(1).max(100_000).optional(), term_months: z.number().int().min(1).max(120).optional(), immediate: z.boolean().optional(), reason: z.string().trim().min(1, "reason is required").max(1000) })
   .strict();
 const financeSubscriptionsQuery = z
   .object({ status: z.enum(["active", "past_due", "restricted", "suspended", "closed"]).optional(), renewing_within_days: z.coerce.number().int().min(1).max(730).optional() })

@@ -594,7 +594,7 @@ export async function listFailedPayments(db: Db, workspaceId: string, now: Date 
  * and earlier amendments stay as they were. Seats change with the next billing period, with no
  * proration; a new term length moves the renewal date at once.
  */
-export async function amendSubscription(db: Db, ctx: CommercialContext, subscriptionId: string, input: { seats?: number; term_months?: number; reason: string }, now: Date = new Date()): Promise<SubscriptionDto> {
+export async function amendSubscription(db: Db, ctx: CommercialContext, subscriptionId: string, input: { seats?: number; term_months?: number; reason: string; immediate?: boolean }, now: Date = new Date()): Promise<SubscriptionDto> {
   if (input.seats == null && input.term_months == null) {
     throw new CommercialError("VALIDATION_FAILED", "Give seats, term_months or both", { fields: [{ path: "seats", code: "required", message: "Give seats, term_months or both" }] });
   }
@@ -613,7 +613,20 @@ export async function amendSubscription(db: Db, ctx: CommercialContext, subscrip
     const seatsBefore = effectiveSeats(originalSeats(items), seatChanges(earlier), new Date(8_640_000_000_000_000));
 
     let effectiveAt = now;
-    if (input.seats != null) {
+    // Added seats can start now (like a credit top-up): usable at once, and the rest of the
+    // current period is billed pro rata on its own invoice. Fewer seats always wait.
+    const addNow = !!input.immediate && input.seats != null && input.seats > seatsBefore;
+    if (addNow) {
+      const current = periodsStarted(sub.termStart, sub.cadence as SubscriptionCadence, sub.termMonths, now).at(-1);
+      if (!current || current.end.getTime() <= now.getTime()) throw new CommercialError("BUSINESS_STATE_CONFLICT", "There is no billing period running now to add seats to", { term_end: sub.termEnd.toISOString() });
+      const extra = periodAmountMinor(pricedItems(items, input.seats!), current.months) - periodAmountMinor(pricedItems(items, seatsBefore), current.months);
+      const share = (current.end.getTime() - now.getTime()) / (current.end.getTime() - current.start.getTime());
+      const amount = Math.round(extra * share);
+      if (amount > 0) {
+        await tx.insert(subscriptionInvoices).values({ workspaceId: sub.workspaceId, subscriptionId: sub.id, periodStart: now, periodEnd: current.end, dueAt: new Date(now.getTime() + sub.paymentTermsNetDays * 86_400_000), amountMinor: amount, currency: sub.currency });
+      }
+      await syncAccountFromSubscription(tx, sub, sub.status as SubscriptionStatus, input.seats!, now, ctx.requestId);
+    } else if (input.seats != null) {
       const next = nextPeriodStart(sub.termStart, sub.cadence as SubscriptionCadence, input.term_months ?? sub.termMonths, now);
       if (!next) throw new CommercialError("BUSINESS_STATE_CONFLICT", "There is no later billing period in this term for a seat change to start in; change seats at renewal or extend the term", { term_end: sub.termEnd.toISOString() });
       effectiveAt = next;
@@ -748,6 +761,14 @@ export async function previewAmendment(db: Db, ctx: CommercialContext, subscript
     /** Positive: the next bill goes up by this much (a charge). Negative: it goes down (a credit). */
     change_minor: before !== null && after !== null ? after - before : null,
     proration: "none" as const,
+    /** Adding seats now: what the extra seats cost for the rest of the current period. */
+    charge_now_minor: (() => {
+      if (seatsAfter <= seatsBefore) return null;
+      const cur = periodsStarted(sub.termStart, sub.cadence as SubscriptionCadence, sub.termMonths, now).at(-1);
+      if (!cur || cur.end.getTime() <= now.getTime()) return null;
+      const extra = periodAmountMinor(pricedItems(items, seatsAfter), cur.months) - periodAmountMinor(pricedItems(items, seatsBefore), cur.months);
+      return Math.round((extra * (cur.end.getTime() - now.getTime())) / (cur.end.getTime() - cur.start.getTime()));
+    })(),
   };
 }
 
