@@ -102,7 +102,11 @@ maybe("COPS-04 provisioning saga (Postgres)", () => {
     const [invite] = await sql`select role, email from workspace_invites where workspace_id = ${ws}`;
     expect(invite.role).toBe("owner");
     const ent = await sql`select key, value from entitlements where workspace_id = ${ws} order by key`;
-    expect(ent.map((e: { key: string }) => e.key)).toEqual(["integrations", "plan", "trial"]);
+    expect(ent.map((e: { key: string }) => e.key)).toEqual(["integrations", "plan", "subscription", "trial"]);
+    // No subscription yet: a trial whose end date stops product use once it passes.
+    const access = ent.find((e: { key: string }) => e.key === "subscription") as { value: { status: string; trial_ends_at: string } };
+    expect(access.value.status).toBe("trial");
+    expect(Date.parse(access.value.trial_ends_at)).toBeGreaterThan(Date.now());
     const [grant] = await sql`select kind, actor_type, actor_id, reason from credit_transactions where workspace_id = ${ws}`;
     expect(grant).toMatchObject({ kind: "grant", actor_type: "user", actor_id: ctx.userId });
     expect(grant.reason).toMatch(/Trial credits/);

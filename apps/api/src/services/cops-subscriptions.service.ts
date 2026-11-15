@@ -969,3 +969,37 @@ async function markDealWonOnPayment(db: Db, input: { workspaceId: string; opport
     log.warn("deal not marked won after its proposal was paid", { err, opportunityId: input.opportunityId });
   }
 }
+
+
+/**
+ * Sets what a newly provisioned workspace may use. With a running subscription (paid first), the
+ * subscription's access is written as on any billing change. Without one (a trial, or a gate
+ * override), a "trial" entitlement with the trial's end date: after it, product use is suspended
+ * until a subscription starts (subscriptionAccessBlock). Never overwrites a subscription's access.
+ */
+export async function applyAccessOnProvision(
+  tx: Tx,
+  input: { operatorWorkspaceId: string; accountId: string; customerWorkspaceId: string; requestId: string; at: Date }
+): Promise<void> {
+  const [sub] = await tx
+    .select()
+    .from(subscriptions)
+    .where(and(eq(subscriptions.workspaceId, input.operatorWorkspaceId), eq(subscriptions.accountId, input.accountId), ne(subscriptions.status, "closed")))
+    .limit(1);
+  if (sub) {
+    const items = await tx.select().from(subscriptionItems).where(eq(subscriptionItems.subscriptionId, sub.id));
+    await syncAccountFromSubscription(tx, sub, sub.status as SubscriptionStatus, originalSeats(items), input.at, input.requestId);
+    return;
+  }
+  const [prov] = await tx
+    .select({ trialEndsAt: copsProvisionings.trialEndsAt })
+    .from(copsProvisionings)
+    .where(and(eq(copsProvisionings.workspaceId, input.operatorWorkspaceId), eq(copsProvisionings.accountId, input.accountId), eq(copsProvisionings.provisionedWorkspaceId, input.customerWorkspaceId)))
+    .orderBy(desc(copsProvisionings.createdAt))
+    .limit(1);
+  const value = { status: "trial", trial_ends_at: prov?.trialEndsAt?.toISOString() ?? null };
+  await tx
+    .insert(entitlements)
+    .values({ workspaceId: input.customerWorkspaceId, key: SUBSCRIPTION_ENTITLEMENT_KEY, value, source: "cops-provisioning", updatedAt: input.at })
+    .onConflictDoNothing({ target: [entitlements.workspaceId, entitlements.key] });
+}
