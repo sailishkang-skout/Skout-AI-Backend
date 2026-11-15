@@ -234,3 +234,9 @@ by apps/api.
 | File | Tables | Access |
 | --- | --- | --- |
 | `apps/api/src/services/cops-billing-tickets.service.ts` | companies, deals, activities | read: the customer's name, and that a payment's deal belongs to the customer the refund ticket is raised on; insert: one `activities` timeline row per ticket step (raised, done, declined) |
+
+## Work tracker additions (2026-11-15)
+
+| File | Tables | Access |
+| --- | --- | --- |
+| `apps/api/src/routes/cops-task-tracker.routes.ts` | companies | read only: the name of the customer an issue is linked to, shown on boards and lists |
