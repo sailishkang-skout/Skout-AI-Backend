@@ -163,10 +163,156 @@ body.side-panel {
   font-size: 11px;
 }
 
-.capture-lead span:first-of-type {
+/* The shared input style is full width; a lead's checkbox must not push its name out of view. */
+.capture-lead input[type="checkbox"] {
+  flex: none;
+  width: auto;
+  margin: 0;
+  padding: 0;
+}
+
+.capture-lead-text {
+  display: flex;
   flex: 1;
+  flex-direction: column;
   min-width: 0;
+}
+
+.capture-lead-name,
+.capture-lead-role {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.capture-lead-name {
+  color: #e2e8f0;
+  font-weight: 600;
+}
+
+.capture-lead-role {
+  color: #94a3b8;
+}
+
+.capture-lead .vision-chip {
+  flex: none;
+}
+
+.capture-field-error {
+  display: block;
+  margin-top: 2px;
+  color: #fca5a5;
+  font-size: 11px;
+}
+
+.capture-fields input[aria-invalid="true"] {
+  border-color: #f87171;
+}
+
+/* Review fields LinkedIn did not show: still editable, clearly marked. */
+.capture-field-missing-tag {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #fff4e5;
+  color: #8a4b00;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.capture-fields input.capture-field-missing,
+.capture-fields textarea.capture-field-missing {
+  border-style: dashed;
+}
+
+.capture-fields input.capture-field-missing::placeholder,
+.capture-fields textarea.capture-field-missing::placeholder {
+  color: #8a4b00;
+  font-weight: 600;
+}
+
+.capture-coverage {
+  margin: 6px 0;
+  font-size: 12px;
+}
+
+.capture-continue {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #c7dcf5;
+  border-radius: 8px;
+  background: #f1f7fe;
+}
+
+.capture-queue {
+  margin-top: 12px;
+}
+
+.capture-queue summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.capture-company-list,
+.capture-run-list {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+}
+
+.capture-company-list {
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid #e6e6e6;
+  border-radius: 8px;
+}
+
+.capture-company-item,
+.capture-run-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 6px 8px;
+  border-top: 1px solid #e6e6e6;
+}
+
+.capture-company-item:first-child,
+.capture-run-item:first-child {
+  border-top: 0;
+}
+
+.capture-run-item {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.capture-company-item input[type="checkbox"] {
+  width: auto;
+  margin: 3px 0 0;
+}
+
+.capture-company-name {
+  display: block;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.capture-company-meta {
+  display: block;
+  color: #666;
+  font-size: 11px;
+}
+
+.capture-run-item[data-status="running"] .capture-company-meta,
+.capture-run-item[data-status="review"] .capture-company-meta {
+  color: #0a66c2;
+  font-weight: 600;
+}
+
+.capture-run-item[data-status="failed"] .capture-company-meta {
+  color: #b42318;
 }

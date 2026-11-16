@@ -78,5 +78,35 @@ window.SkoutCaptureExtract = (function () {
     return Math.round(num);
   }
 
-  return { text, firstMatch, allMatches, metaContent, publicIdFromUrl, parseCount, textMultiline };
+  /**
+   * A website link a person or company published, or undefined. LinkedIn wraps outbound links in
+   * /redir/redirect?url=..., which is unwrapped; only http(s) addresses outside LinkedIn are kept,
+   * with tracking parameters and fragments removed.
+   */
+  function cleanWebsite(value, base) {
+    if (!value || typeof value !== 'string') return undefined;
+    const raw = value.trim();
+    const hasScheme = /^[a-z][a-z0-9+.-]*:/i.test(raw);
+    let url;
+    let rewritten = false;
+    try {
+      url = new URL(hasScheme ? raw : `https://${raw}`, base || window.location.href);
+      if (/(^|\.)linkedin\.com$/i.test(url.hostname) && /^\/redir\/redirect\/?$/i.test(url.pathname)) {
+        url = new URL(url.searchParams.get('url') || '');
+        rewritten = true;
+      }
+    } catch { return undefined; }
+    const host = url.hostname.toLowerCase();
+    if (!/^https?:$/.test(url.protocol) || !host.includes('.') || /\s/.test(host)) return undefined;
+    if (/(^|\.)(linkedin\.com|lnkd\.in|licdn\.com)$/.test(host)) return undefined;
+    for (const key of [...url.searchParams.keys()]) {
+      if (/^(utm_|trk|trackingid|refid|originalsubdomain)/i.test(key)) { url.searchParams.delete(key); rewritten = true; }
+    }
+    if (url.hash) { url.hash = ''; rewritten = true; }
+    // An address that needed no cleaning is kept exactly as LinkedIn showed it.
+    const clean = rewritten ? url.toString() : hasScheme ? raw : `https://${raw}`;
+    return clean.length <= 2000 ? clean : undefined;
+  }
+
+  return { text, firstMatch, allMatches, metaContent, publicIdFromUrl, parseCount, textMultiline, cleanWebsite };
 })();

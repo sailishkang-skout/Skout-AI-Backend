@@ -178,8 +178,7 @@ export async function regionalBriefRoutes(app: FastifyInstance) {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = createVersionSchema.parse(request.body);
 
-    const slots = await svc.listSlots({});
-    const slot = slots.find((s) => s.id === id);
+    const slot = await svc.getSlot(id);
     if (!slot) return reply.code(404).send({ error: "regional_brief_slot_not_found" });
     if (GLOBAL_LAYERS.has(slot.layerType)) {
       requirePlatformAdmin(request);
@@ -198,9 +197,25 @@ export async function regionalBriefRoutes(app: FastifyInstance) {
   });
 
   app.get("/regional-brief/slots", async (request, reply) => {
-    const query = z.object({ layerType: z.string().optional(), status: z.string().optional() }).parse(request.query);
-    const slots = await svc.listSlots(query);
-    return reply.send({ data: slots, total: slots.length });
+    const query = z
+      .object({
+        layerType: z.string().optional(),
+        status: z.string().optional(),
+        // Optional paging; without `limit` every matching slot is returned (older clients rely on that).
+        limit: z.coerce.number().int().min(1).max(100).optional(),
+        offset: z.coerce.number().int().min(0).optional(),
+      })
+      .parse(request.query);
+    const { limit, offset, ...filter } = query;
+    if (limit === undefined) {
+      const slots = await svc.listSlots(filter);
+      return reply.send({ data: slots, total: slots.length });
+    }
+    const [slots, total] = await Promise.all([
+      svc.listSlots({ ...filter, limit, offset }),
+      svc.countSlots(filter),
+    ]);
+    return reply.send({ data: slots, total, limit, offset: offset ?? 0 });
   });
 
   app.get("/regional-brief/slots/:id/versions", async (request, reply) => {
@@ -216,8 +231,7 @@ export async function regionalBriefRoutes(app: FastifyInstance) {
     const versions = await svc.listVersions(undefined, id);
     const version = versions[0];
     if (!version) return reply.code(404).send({ error: "regional_brief_version_not_found" });
-    const slots = await svc.listSlots({});
-    const slot = slots.find((s) => s.id === version.slotId);
+    const slot = await svc.getSlot(version.slotId);
     if (slot && GLOBAL_LAYERS.has(slot.layerType)) requirePlatformAdmin(request);
 
     const approved = await svc.approveVersion(id, request.userId!);
@@ -241,8 +255,7 @@ export async function regionalBriefRoutes(app: FastifyInstance) {
     const versions = await svc.listVersions(undefined, id);
     const version = versions[0];
     if (!version) return reply.code(404).send({ error: "regional_brief_version_not_found" });
-    const slots = await svc.listSlots({});
-    const slot = slots.find((s) => s.id === version.slotId);
+    const slot = await svc.getSlot(version.slotId);
     if (slot && GLOBAL_LAYERS.has(slot.layerType)) requirePlatformAdmin(request);
 
     const rejected = await svc.rejectVersion(id, request.userId!, body.reason);

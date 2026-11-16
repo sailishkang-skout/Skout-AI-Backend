@@ -58,13 +58,17 @@ export interface ProspectDocument {
   dataSource?: string;
   /** Which vendors returned this person (wiza | contactout | datagma). */
   dataVendors?: string[];
+  headline?: string;
+  location?: string;
+  skills?: string[];
+  schools?: string[];
   updatedAt: string;
 }
 
 export interface SearchFilters {
   query?: string;
-  /** Restrict to documents with this dataSource (e.g. "vendor" = real people only). */
-  dataSource?: string;
+  /** Restrict to documents with this dataSource (e.g. "vendor" = real people only), or any of several. */
+  dataSource?: string | string[];
   /** Oldest-first order so pages stay stable while new documents are added (vendor pagination). */
   stableOrder?: boolean;
   // Contact
@@ -222,6 +226,7 @@ export async function ensureProspectsIndex(cfg: OpenSearchConfig): Promise<void>
           outreachReadiness: { type: "keyword" },
           dataSource: { type: "keyword" },
           dataVendors: { type: "keyword" },
+          ...CAPTURE_FIELD_MAPPINGS,
           updatedAt: { type: "date" },
         },
       },
@@ -229,16 +234,34 @@ export async function ensureProspectsIndex(cfg: OpenSearchConfig): Promise<void>
   });
 }
 
-/** Bulk upsert documents (idempotent by prospectId). */
+/** Fields added for LinkedIn captures; also put on indexes created before they existed. */
+const CAPTURE_FIELD_MAPPINGS = {
+  headline: { type: "text" },
+  location: { type: "text" },
+  skills: { type: "text" },
+  schools: { type: "text" },
+} as const;
+
+/** Adds the capture fields to an existing index's mapping. Safe to call repeatedly. */
+export async function ensureCaptureFieldMappings(cfg: OpenSearchConfig): Promise<void> {
+  const index = cfg.index ?? PROSPECTS_INDEX;
+  await osFetch(cfg, `/${index}/_mapping`, {
+    method: "PUT",
+    body: JSON.stringify({ properties: CAPTURE_FIELD_MAPPINGS }),
+  });
+}
+
+/** Bulk upsert documents (idempotent by prospectId, or by `idOf` when given). */
 export async function bulkUpsertProspects(
   cfg: OpenSearchConfig,
-  docs: ProspectDocument[]
+  docs: ProspectDocument[],
+  idOf: (doc: ProspectDocument) => string = (doc) => doc.prospectId
 ): Promise<{ ingested: number; failed: number }> {
   if (!docs.length) return { ingested: 0, failed: 0 };
   const index = cfg.index ?? PROSPECTS_INDEX;
   const lines: string[] = [];
   for (const doc of docs) {
-    lines.push(JSON.stringify({ index: { _index: index, _id: doc.prospectId } }));
+    lines.push(JSON.stringify({ index: { _index: index, _id: idOf(doc) } }));
     lines.push(JSON.stringify(doc));
   }
   const body = lines.join("\n") + "\n";
@@ -350,18 +373,20 @@ export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25
     must.push({
       multi_match: {
         query: filters.query,
-        fields: ["fullName^2", "title", "companyName", "companyDomain", "industry"],
+        fields: ["fullName^2", "title", "headline", "companyName", "companyDomain", "industry", "previousCompany", "skills", "schools", "location"],
         type: "best_fields",
       },
     });
   }
-  if (filters.dataSource) filter.push({ term: { dataSource: filters.dataSource } });
+  if (Array.isArray(filters.dataSource)) filter.push({ terms: { dataSource: filters.dataSource } });
+  else if (filters.dataSource) filter.push({ term: { dataSource: filters.dataSource } });
+
   // Contact information
   if (filters.fullName?.trim()) {
     filter.push({ match_phrase_prefix: { fullName: filters.fullName.trim() } });
   }
   if (filters.jobTitle?.trim()) {
-    filter.push({ match: { title: filters.jobTitle.trim() } });
+    filter.push({ multi_match: { query: filters.jobTitle.trim(), fields: ["title", "headline"] } });
   }
   if (filters.department) filter.push({ term: { department: filters.department } });
   if (filters.seniority) filter.push({ term: { seniority: filters.seniority } });

@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike } from "drizzle-orm";
+import { and, count, desc, eq, ilike, sql, type SQL } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
@@ -19,6 +19,21 @@ export const REGIONAL_BRIEF_LAYER_TYPES = [
   "outcome_learning",
 ] as const;
 export type RegionalBriefLayerType = (typeof REGIONAL_BRIEF_LAYER_TYPES)[number];
+
+/** Sort key that orders slots by REGIONAL_BRIEF_LAYER_TYPES; unknown layers sort last. */
+const SLOT_LAYER_RANK = sql`CASE ${regionalBriefSlots.layerType} ${sql.join(
+  REGIONAL_BRIEF_LAYER_TYPES.map((layer, i) => sql`WHEN ${layer} THEN ${i}`),
+  sql` `
+)} ELSE ${REGIONAL_BRIEF_LAYER_TYPES.length} END`;
+
+type SlotListFilter = { layerType?: string; status?: string };
+
+function slotListWhere(filter: SlotListFilter): SQL | undefined {
+  const conditions: SQL[] = [];
+  if (filter.layerType) conditions.push(eq(regionalBriefSlots.layerType, filter.layerType));
+  if (filter.status) conditions.push(eq(regionalBriefVersions.status, filter.status));
+  return conditions.length ? and(...conditions) : undefined;
+}
 
 export const REGIONAL_BRIEF_FIELD_CATEGORIES = [
   "market_economics",
@@ -578,23 +593,37 @@ export function createRegionalBriefService(db: Db, config?: Env) {
       };
     },
 
-    async listSlots(filter: { layerType?: string; status?: string }) {
-      if (filter.status) {
-        const rows = await db
-          .select({ slot: regionalBriefSlots })
-          .from(regionalBriefSlots)
-          .innerJoin(regionalBriefVersions, eq(regionalBriefSlots.currentVersionId, regionalBriefVersions.id))
-          .where(
-            filter.layerType
-              ? and(eq(regionalBriefSlots.layerType, filter.layerType), eq(regionalBriefVersions.status, filter.status))
-              : eq(regionalBriefVersions.status, filter.status)
-          );
-        return rows.map((row) => row.slot);
-      }
-      return db
-        .select()
+    /**
+     * Slots in a stable order (layer: global → … → outcome_learning, then scope key).
+     * `status` matches the slot's current version. `limit`/`offset` page the result; omit `limit` for all rows.
+     */
+    async listSlots(filter: SlotListFilter & { limit?: number; offset?: number }) {
+      let query = db
+        .select({ slot: regionalBriefSlots })
         .from(regionalBriefSlots)
-        .where(filter.layerType ? eq(regionalBriefSlots.layerType, filter.layerType) : undefined);
+        .leftJoin(regionalBriefVersions, eq(regionalBriefSlots.currentVersionId, regionalBriefVersions.id))
+        .where(slotListWhere(filter))
+        .orderBy(SLOT_LAYER_RANK, regionalBriefSlots.scopeKey, regionalBriefSlots.id)
+        .$dynamic();
+      if (filter.limit !== undefined) query = query.limit(filter.limit);
+      if (filter.offset) query = query.offset(filter.offset);
+      const rows = await query;
+      return rows.map((row) => row.slot);
+    },
+
+    /** Number of slots matching the same filter as `listSlots`, ignoring paging. */
+    async countSlots(filter: SlotListFilter) {
+      const [row] = await db
+        .select({ n: count() })
+        .from(regionalBriefSlots)
+        .leftJoin(regionalBriefVersions, eq(regionalBriefSlots.currentVersionId, regionalBriefVersions.id))
+        .where(slotListWhere(filter));
+      return row?.n ?? 0;
+    },
+
+    async getSlot(id: string) {
+      const [slot] = await db.select().from(regionalBriefSlots).where(eq(regionalBriefSlots.id, id));
+      return slot ?? null;
     },
 
     async listVersions(slotId?: string, versionId?: string) {

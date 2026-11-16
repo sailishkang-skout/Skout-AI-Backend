@@ -3,6 +3,7 @@
 export const DRAFT_KEY = "skoutCaptureDraft";
 export const PROGRESS_KEY = "skoutCaptureProgress";
 export const HALT_KEY = "skoutCaptureHalt";
+export const RUN_QUEUE_KEY = "skoutCaptureRunQueue";
 const checkpointKey = (companyId) => `company-people-capture:${companyId}`;
 /** Matches capture-background.js: a reader silent for this long is no longer running. */
 const PROGRESS_STALE_MS = 3 * 60 * 1000;
@@ -94,8 +95,9 @@ export function personReviewPreview(data) {
 }
 
 const EDITABLE_FIELDS = {
-  person: [["fullName", "Name"], ["headline", "Headline"], ["locationName", "Location"], ["locationCountry", "Country"], ["pronoun", "Pronouns"], ["summary", "About", true], ["email", "Email"], ["phone", "Phone"], ["currentCompany", "Current company"], ["currentTitle", "Current title"], ["previousCompany", "Previous company"]],
-  company: [["name", "Name"], ["industry", "Industry"], ["headquarter", "Headquarters"], ["size", "Company size"], ["website", "Website"]],
+  // [field, label, multiline, type] — type "count" is a whole number, "url" a website address.
+  person: [["fullName", "Name"], ["headline", "Headline"], ["currentCompany", "Current company"], ["currentTitle", "Current title"], ["previousCompany", "Previous company"], ["previousTitle", "Previous title"], ["locationName", "Location"], ["locationCountry", "Country"], ["email", "Email", false, "email"], ["phone", "Phone", false, "phone"], ["website", "Website / portfolio", false, "url"], ["followersCount", "Followers", false, "count"], ["connectionsCount", "Connections", false, "count"], ["pronoun", "Pronouns"], ["summary", "About", true]],
+  company: [["name", "Name"], ["tagline", "Tagline"], ["industry", "Industry"], ["headquarter", "Headquarters"], ["locationCountry", "Country"], ["size", "Company size"], ["employeesOnLi", "Members on LinkedIn", false, "count"], ["followers", "Followers", false, "count"], ["website", "Website", false, "url"], ["phone", "Phone", false, "phone"], ["foundedAt", "Founded"], ["overview", "About", true]],
   sales: [],
 };
 
@@ -104,16 +106,143 @@ const ROLE_FIELDS = {
   currentCompany: { list: "currentCompanies", key: "name" },
   currentTitle: { list: "currentCompanies", key: "title" },
   previousCompany: { list: "previousCompanies", key: "name" },
+  previousTitle: { list: "previousCompanies", key: "title" },
 };
 
-export function setRoleField(data, { list, key }, value) {
+const sameName = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+
+/**
+ * Which role a review field shows. The previous company is the most recent past role at a
+ * different employer: an earlier title at the current company is a promotion, not a move.
+ */
+export function roleIndex(data, { list }) {
+  const roles = Array.isArray(data?.[list]) ? data[list] : [];
+  if (list !== "previousCompanies") return 0;
+  const current = data?.currentCompanies?.[0]?.name;
+  const index = roles.findIndex((role) => role?.name && !sameName(role.name, current));
+  return index >= 0 ? index : 0;
+}
+
+export function roleValue(data, role) {
+  return data?.[role.list]?.[roleIndex(data, role)]?.[role.key];
+}
+
+export function setRoleField(data, role, value) {
+  const { list, key } = role;
   const roles = Array.isArray(data[list]) ? data[list] : [];
+  const index = roleIndex(data, role);
   if (!value) {
-    if (roles[0]) delete roles[0][key];
+    if (roles[index]) delete roles[index][key];
     return;
   }
   data[list] = roles.length ? roles : [{}];
-  data[list][0] = { ...data[list][0], [key]: value };
+  data[list][index] = { ...data[list][index], [key]: value };
+}
+
+/** Fields the review shows for this kind of capture: [field, label][]. */
+export function reviewFieldList(kind) {
+  return (EDITABLE_FIELDS[kind] || []).map(([field, label]) => [field, label]);
+}
+
+/** A review field's current value ("" when LinkedIn did not show it). */
+export function reviewFieldValue(data, field) {
+  const role = ROLE_FIELDS[field];
+  const value = role ? roleValue(data, role) : data?.[field];
+  return value === undefined || value === null ? "" : String(value);
+}
+
+/** Which review fields were captured and which LinkedIn did not show. */
+export function fieldCoverage(kind, data) {
+  const fields = reviewFieldList(kind);
+  const missing = fields.filter(([field]) => !reviewFieldValue(data, field).trim()).map(([, label]) => label);
+  return { total: fields.length, found: fields.length - missing.length, missing };
+}
+
+/** One line about a captured company's people capture: what is saved and what is left. */
+export function companyProgressText(company) {
+  const found = Number(company?.peopleFound) || 0;
+  const total = Number.isFinite(company?.expectedPeople) ? ` of about ${company.expectedPeople.toLocaleString()}` : "";
+  if (company?.local === "paused") return `${found.toLocaleString()} people saved · a batch is paused, it resumes where it stopped`;
+  if (company?.complete === true) return `All people captured (${found.toLocaleString()})`;
+  if (found > 0 || company?.local === "partial") return `${found.toLocaleString()}${total} people saved · more remain`;
+  return "No people captured yet";
+}
+
+/** One line for a company in a running queue. */
+export function runItemText(item) {
+  switch (item?.status) {
+    case "running": return item.batches ? `Reading batch ${item.batches + 1}…` : "Reading people…";
+    case "review": return "Review and save the batch above";
+    case "done": {
+      const batches = item.batches > 1 ? ` in ${item.batches} batches` : "";
+      return `Saved ${item.saved ?? 0} people${batches}${item.moreRemain ? " · more remain, pick it again to continue" : ""}`;
+    }
+    case "pending": return item.batches ? `Batch ${item.batches} saved (${item.saved ?? 0} people so far) · reading the next batch` : "Waiting";
+    case "skipped": return "Skipped";
+    case "failed": return `Could not read: ${item.error || "unknown error"}`;
+    default: return "Waiting";
+  }
+}
+
+export const NOT_FOUND_PLACEHOLDER = "NOT FOUND · type to add";
+
+/** A lead's display name; falls back to the readable part of the profile link. */
+export function leadName(profile) {
+  const name = String(profile?.fullName || "").trim();
+  if (name) return name;
+  const slug = String(profile?.publicId || "").replace(/-[0-9a-f]{6,}$/i, "");
+  const fromSlug = slug.split("-").filter(Boolean).map((part) => part[0].toUpperCase() + part.slice(1)).join(" ");
+  return fromSlug || "Unknown person";
+}
+
+const MAX_COUNT = 2_000_000_000;
+
+/** "2,300", "1.2K" or "3M followers" as a whole number: { empty } | { value } | { error }. */
+export function parseCountInput(raw) {
+  const input = String(raw ?? "").trim();
+  if (!input) return { empty: true };
+  const match = input.match(/^([\d,]+(?:\.\d+)?)\s*([kKmM])?\s*(?:followers?)?$/);
+  const number = match ? Number(match[1].replace(/,/g, "")) * ({ k: 1e3, m: 1e6 }[match[2]?.toLowerCase()] ?? 1) : NaN;
+  const value = Math.round(number);
+  if (!Number.isFinite(value) || value < 0 || value > MAX_COUNT) return { error: "Enter a whole number, such as 2300 or 1.2K." };
+  return { value };
+}
+
+/** An email typed in the review: { empty } | { value } | { error }. */
+export function normalizeEmailInput(raw) {
+  const input = String(raw ?? "").trim().replace(/^mailto:/i, "").toLowerCase();
+  if (!input) return { empty: true };
+  return /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$/.test(input) && input.length <= 320
+    ? { value: input }
+    : { error: "Enter a valid email address, such as name@example.com." };
+}
+
+/** A phone typed in the review: 7 to 15 digits, with optional +, spaces, dots, dashes, brackets. */
+export function normalizePhoneInput(raw) {
+  const input = String(raw ?? "").replace(/\s+/g, " ").trim();
+  if (!input) return { empty: true };
+  const digits = input.replace(/\D/g, "");
+  return /^\+?[\d\s().-]+$/.test(input) && digits.length >= 7 && digits.length <= 15
+    ? { value: input }
+    : { error: "Enter a phone number with 7 to 15 digits, such as +1 415 555 0100." };
+}
+
+const PARSERS = { count: parseCountInput, url: normalizeWebsiteInput, email: normalizeEmailInput, phone: normalizePhoneInput };
+
+/** A website address typed in the review: { empty } | { value } | { error }. Adds https:// when missing. */
+export function normalizeWebsiteInput(raw) {
+  const input = String(raw ?? "").trim();
+  if (!input) return { empty: true };
+  const error = { error: "Enter a valid website address, such as https://example.com." };
+  try {
+    const url = new URL(/^[a-z][a-z0-9+.-]*:/i.test(input) ? input : `https://${input}`);
+    const host = url.hostname.toLowerCase();
+    if (!/^https?:$/.test(url.protocol) || !host.includes(".") || /(^|\.)linkedin\.com$/.test(host)) return error;
+    const value = /^[a-z][a-z0-9+.-]*:/i.test(input) ? input : `https://${input}`;
+    return value.length > 2000 ? error : { value };
+  } catch {
+    return error;
+  }
 }
 
 function send(type, payload = {}) {
@@ -151,8 +280,26 @@ export function initCapturePanel() {
   const sendBtn = $("capture-send");
   const discardBtn = $("capture-discard");
   const resultEl = $("capture-result");
+  const continueBoxEl = $("capture-continue-box");
+  const continueTextEl = $("capture-continue-text");
+  const continueBtn = $("capture-continue");
+  const companyListEl = $("capture-company-list");
+  const companyStatusEl = $("capture-company-status");
+  const companySearchEl = $("capture-company-search");
+  const companyAllEl = $("capture-company-all");
+  const companySelectedEl = $("capture-company-selected");
+  const companyStartBtn = $("capture-company-start");
+  const requestedEl = $("capture-requested");
+  const requestedTextEl = $("capture-requested-text");
+  const requestedStartBtn = $("capture-requested-start");
+  const runEl = $("capture-run");
+  const runNoteEl = $("capture-run-note");
+  const runListEl = $("capture-run-list");
+  const runPauseBtn = $("capture-run-pause");
+  const runResumeBtn = $("capture-run-resume");
+  const runClearBtn = $("capture-run-clear");
 
-  const state = { status: null, statusError: "", tab: null, progress: null, halt: null, draft: null, data: null, excluded: new Set(), saving: false };
+  const state = { status: null, statusError: "", tab: null, progress: null, halt: null, draft: null, data: null, excluded: new Set(), saving: false, invalid: new Map(), continueCompany: null, requested: [], companies: [], selected: new Set(), run: null, companiesError: "" };
 
   const show = (el, visible) => el?.classList.toggle("hidden", !visible);
 
@@ -181,6 +328,7 @@ export function initCapturePanel() {
     startBtn.textContent = kind ? START_LABELS[kind] : "Open a LinkedIn profile, company or Sales Navigator search";
     startBtn.disabled = Boolean(blocked) || !kind || busy || Boolean(state.draft) || state.saving;
     show(companyOptionsEl, kind === "company" && !busy && !state.draft);
+    renderContinue();
   }
 
   async function renderCheckpoint() {
@@ -198,7 +346,174 @@ export function initCapturePanel() {
     }
     checkpointEl.textContent = message;
     show(checkpointEl, Boolean(message));
+    // An unfinished company on the open tab can always be continued from here.
+    if (saved?.committed && !saved.committed.complete && !saved.draft) {
+      setContinue(companyId, `${(saved.committed.seenIds || []).length} people captured for this company so far. More result pages remain.`);
+    } else if (state.continueCompany === companyId && saved?.committed?.complete) {
+      setContinue(null);
+    }
   }
+
+  function setContinue(companyId, text) {
+    state.continueCompany = companyId || null;
+    continueTextEl.textContent = text || "";
+    renderContinue();
+  }
+
+  function renderContinue() {
+    const busy = isProgressActive(state.progress);
+    show(continueBoxEl, Boolean(state.continueCompany) && !state.draft);
+    const dailyLeft = state.status?.usage?.remainingToday;
+    continueBtn.disabled = busy || state.saving || Boolean(state.halt) || dailyLeft === 0;
+    continueBtn.title = dailyLeft === 0 ? "The daily capture limit is reached. Continue tomorrow." : "";
+  }
+
+  async function continueQueue(companyId) {
+    if (!companyId) return;
+    setResult("Opening the company and reading the next batch of people…");
+    continueBtn.disabled = true;
+    const response = await send("capture-continue", { companyId, tabId: state.tab?.id });
+    if (!response.ok) setResult(`Could not continue: ${response.error}`, "capture-error");
+    else setResult("Reading the next batch. Review it here when it is ready.");
+    renderContinue();
+  }
+
+  const runActive = () => state.run?.active === true;
+
+  function renderCompanies() {
+    const locked = runActive();
+    const companies = state.companies;
+    companyListEl.replaceChildren(
+      ...companies.map((company) => {
+        const row = Object.assign(document.createElement("li"), { className: "capture-company-item" });
+        const box = Object.assign(document.createElement("input"), {
+          type: "checkbox",
+          checked: state.selected.has(company.companyPublicId),
+          disabled: locked,
+        });
+        box.setAttribute("aria-label", `Select ${company.name}`);
+        box.addEventListener("change", () => {
+          if (box.checked) state.selected.add(company.companyPublicId);
+          else state.selected.delete(company.companyPublicId);
+          renderCompanyControls();
+        });
+        const text = Object.assign(document.createElement("span"));
+        text.append(
+          Object.assign(document.createElement("span"), { className: "capture-company-name", textContent: company.name, title: company.name }),
+          Object.assign(document.createElement("span"), { className: "capture-company-meta", textContent: companyProgressText(company) }),
+        );
+        row.append(box, text);
+        return row;
+      })
+    );
+    companyStatusEl.textContent = state.companiesError
+      ? `Could not load your companies: ${state.companiesError}`
+      : companies.length
+        ? `${companies.length} captured companies.`
+        : companySearchEl.value.trim()
+          ? "No captured company matches that search."
+          : "No captured companies yet. Capture a company first, then it appears here.";
+    companyStatusEl.classList.toggle("capture-error", Boolean(state.companiesError));
+    renderCompanyControls();
+  }
+
+  function renderCompanyControls() {
+    const visible = state.companies.map((company) => company.companyPublicId);
+    const selectedVisible = visible.filter((id) => state.selected.has(id)).length;
+    companySelectedEl.textContent = String(state.selected.size);
+    companyAllEl.disabled = runActive() || !visible.length;
+    companyAllEl.checked = visible.length > 0 && selectedVisible === visible.length;
+    companyAllEl.indeterminate = selectedVisible > 0 && selectedVisible < visible.length;
+    companyStartBtn.textContent = state.selected.size ? `Start queue (${state.selected.size})` : "Start queue";
+    companyStartBtn.disabled =
+      !state.selected.size || runActive() || isProgressActive(state.progress) || Boolean(state.draft) || Boolean(state.halt) ||
+      state.saving || state.status?.usage?.remainingToday === 0;
+    companyStartBtn.title = state.status?.usage?.remainingToday === 0 ? "The daily capture limit is reached. Try again tomorrow." : "";
+  }
+
+  function renderRun() {
+    const run = state.run;
+    show(runEl, Boolean(run));
+    if (!run) return renderCompanies();
+    const pending = run.items.some((item) => item.status === "pending");
+    runNoteEl.textContent = run.note || (run.active ? "Queue running. Keep this window open." : "");
+    runListEl.replaceChildren(
+      ...run.items.map((item) => {
+        const row = Object.assign(document.createElement("li"), { className: "capture-run-item" });
+        row.dataset.status = item.status;
+        row.append(
+          Object.assign(document.createElement("span"), { className: "capture-company-name", textContent: item.name, title: item.name }),
+          Object.assign(document.createElement("span"), { className: "capture-company-meta", textContent: runItemText(item) }),
+        );
+        return row;
+      })
+    );
+    show(runPauseBtn, run.active === true);
+    show(runResumeBtn, !run.active && pending);
+    show(runClearBtn, !run.active);
+    renderCompanies();
+  }
+
+  // Jobs asked for from the workspace's Capture queue page: shown here so the user starts them.
+  async function refreshRequested() {
+    const response = await send("capture-requested");
+    state.requested = response.ok ? response.jobs || [] : [];
+    const count = state.requested.length;
+    show(requestedEl, count > 0 && !runActive());
+    const names = state.requested.slice(0, 5).map((job) => job.name).join(", ");
+    requestedTextEl.textContent = count ? `Requested from your workspace's Capture queue (${count}): ${names}${count > 5 ? ` and ${count - 5} more` : ""}.` : "";
+    requestedStartBtn.disabled = state.saving || Boolean(state.draft) || Boolean(state.halt) || state.status?.usage?.remainingToday === 0;
+  }
+  requestedStartBtn.addEventListener("click", async () => {
+    requestedStartBtn.disabled = true;
+    const response = await send("capture-queue-start", { companies: state.requested, untilComplete: true });
+    if (!response.ok) setResult(`Could not start: ${response.error}`, "capture-error");
+    await refreshRequested();
+  });
+
+  let companyReload = 0;
+  async function refreshCompanies() {
+    const ticket = ++companyReload;
+    const response = await send("capture-companies", { q: companySearchEl.value.trim() });
+    if (ticket !== companyReload) return; // A newer search replaced this one.
+    state.companies = response.ok ? response.companies || [] : [];
+    state.companiesError = response.ok ? "" : response.error;
+    renderCompanies();
+    void refreshRequested();
+  }
+
+  let searchTimer;
+  companySearchEl.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => void refreshCompanies(), 300);
+  });
+  companyAllEl.addEventListener("change", () => {
+    for (const company of state.companies) {
+      if (companyAllEl.checked) state.selected.add(company.companyPublicId);
+      else state.selected.delete(company.companyPublicId);
+    }
+    renderCompanies();
+  });
+  companyStartBtn.addEventListener("click", async () => {
+    const companies = state.companies.filter((company) => state.selected.has(company.companyPublicId)).map(({ companyPublicId, name }) => ({ companyPublicId, name }));
+    // Companies picked earlier but hidden by a later search are kept in the queue too.
+    const hidden = [...state.selected].filter((id) => !companies.some((company) => company.companyPublicId === id)).map((companyPublicId) => ({ companyPublicId, name: companyPublicId }));
+    companyStartBtn.disabled = true;
+    setResult("");
+    const response = await send("capture-queue-start", { companies: [...companies, ...hidden], untilComplete: $("capture-until-complete").checked });
+    if (!response.ok) setResult(`Queue did not start: ${response.error}`, "capture-error");
+    else state.selected.clear();
+    renderCompanies();
+  });
+  runPauseBtn.addEventListener("click", () => void send("capture-queue-stop"));
+  runResumeBtn.addEventListener("click", async () => {
+    const response = await send("capture-queue-resume");
+    if (!response.ok) setResult(`Could not resume: ${response.error}`, "capture-error");
+  });
+  runClearBtn.addEventListener("click", async () => {
+    const response = await send("capture-queue-clear");
+    if (!response.ok) setResult(response.error, "capture-error");
+  });
 
   function renderProgress() {
     const progress = state.progress;
@@ -227,7 +542,8 @@ export function initCapturePanel() {
   function syncJson() {
     reviewJsonEl.value = JSON.stringify(currentData(), null, 2);
     reviewJsonErrorEl.textContent = "";
-    sendBtn.disabled = state.saving;
+    // A field with a value that cannot be saved blocks Save until it is fixed.
+    sendBtn.disabled = state.saving || state.invalid.size > 0;
   }
 
   function renderReview() {
@@ -271,24 +587,60 @@ export function initCapturePanel() {
       }
     }
 
-    reviewFieldsEl.replaceChildren(
-      ...EDITABLE_FIELDS[draft.kind].map(([field, label, multiline]) => {
-        const wrapper = document.createElement("label");
-        wrapper.textContent = label;
-        const input = document.createElement(multiline ? "textarea" : "input");
-        if (!multiline) input.type = "text";
-        const role = ROLE_FIELDS[field];
-        input.value = (role ? data[role.list]?.[0]?.[role.key] : data[field]) ?? "";
-        input.addEventListener("input", () => {
-          if (role) setRoleField(state.data, role, input.value.trim());
-          else if (input.value.trim()) state.data[field] = input.value;
+    state.invalid.clear();
+    const coverageEl = Object.assign(document.createElement("p"), { className: "vision-desc capture-coverage" });
+    const renderCoverage = () => {
+      const { total, found, missing } = fieldCoverage(draft.kind, state.data);
+      coverageEl.textContent = missing.length
+        ? `Captured ${found} of ${total} fields. Not found on LinkedIn: ${missing.join(", ")}. Fill any you know before saving.`
+        : `Captured all ${total} fields.`;
+    };
+    const fieldEls = (EDITABLE_FIELDS[draft.kind] || []).map(([field, label, multiline, type]) => {
+      const wrapper = document.createElement("label");
+      const caption = Object.assign(document.createElement("span"), { textContent: label });
+      const tag = Object.assign(document.createElement("span"), { className: "capture-field-missing-tag", textContent: "Not found" });
+      caption.append(tag);
+      const input = document.createElement(multiline ? "textarea" : "input");
+      if (!multiline) input.type = "text";
+      if (type === "count") input.inputMode = "numeric";
+      if (type === "email") input.inputMode = "email";
+      if (type === "phone") input.inputMode = "tel";
+      input.placeholder = NOT_FOUND_PLACEHOLDER;
+      const problem = document.createElement("span");
+      problem.className = "capture-field-error";
+      problem.setAttribute("role", "alert");
+      const role = ROLE_FIELDS[field];
+      input.value = reviewFieldValue(data, field);
+      const markMissing = () => {
+        const missing = !input.value.trim();
+        input.classList.toggle("capture-field-missing", missing);
+        tag.hidden = !missing;
+      };
+      markMissing();
+      input.addEventListener("input", () => {
+        const parsed = PARSERS[type]?.(input.value) ?? null;
+        if (parsed?.error) {
+          state.invalid.set(field, parsed.error);
+          if (role) setRoleField(state.data, role, "");
           else delete state.data[field];
-          syncJson();
-        });
-        wrapper.appendChild(input);
-        return wrapper;
-      })
-    );
+        } else {
+          state.invalid.delete(field);
+          const value = parsed ? (parsed.empty ? "" : parsed.value) : input.value.trim();
+          if (role) setRoleField(state.data, role, value);
+          else if (value !== "") state.data[field] = parsed ? value : input.value;
+          else delete state.data[field];
+        }
+        problem.textContent = state.invalid.get(field) || "";
+        input.setAttribute("aria-invalid", String(state.invalid.has(field)));
+        markMissing();
+        renderCoverage();
+        syncJson();
+      });
+      wrapper.append(caption, input, problem);
+      return wrapper;
+    });
+    renderCoverage();
+    reviewFieldsEl.replaceChildren(...(fieldEls.length ? [coverageEl, ...fieldEls] : []));
 
     const leads = Array.isArray(data.peopleProfiles) ? data.peopleProfiles : [];
     show(reviewLeadsEl, leads.length > 0);
@@ -303,9 +655,12 @@ export function initCapturePanel() {
           reviewNotesEl.firstChild.textContent = draftSummary(draft.kind, currentData());
           syncJson();
         });
-        const text = document.createElement("span");
+        const text = Object.assign(document.createElement("span"), { className: "capture-lead-text" });
+        const name = leadName(profile);
         const role = profile.headline || profile.currentCompanies?.[0]?.title || "";
-        text.textContent = [profile.fullName || "Unknown person", role].filter(Boolean).join(" · ");
+        text.title = [name, role].filter(Boolean).join(" · ");
+        text.append(Object.assign(document.createElement("span"), { className: "capture-lead-name", textContent: name }));
+        if (role) text.append(Object.assign(document.createElement("span"), { className: "capture-lead-role", textContent: role }));
         const tag = Object.assign(document.createElement("span"), {
           className: "vision-chip",
           textContent: isPublicProfileUrl(profile.sourceUrl) ? "public link" : "Sales lead",
@@ -391,13 +746,13 @@ export function initCapturePanel() {
   });
 
   sendBtn.addEventListener("click", async () => {
-    if (!state.draft || state.saving) return;
+    if (!state.draft || state.saving || state.invalid.size) return;
     state.saving = true;
     sendBtn.disabled = true;
     discardBtn.disabled = true;
     // Not a success message: the run is only reported once the API records its final status.
     setResult("Saving… waiting for the capture run to be recorded.");
-    const response = await send("capture-send", { data: currentData() });
+    const response = await send("capture-send", { data: currentData(), autoContinue: Boolean($("capture-auto-continue")?.checked) });
     state.saving = false;
     discardBtn.disabled = false;
     if (response.ok) {
@@ -409,7 +764,16 @@ export function initCapturePanel() {
           ? ` ${checkpoint.error}`
           : checkpoint.complete
             ? ` People discovery finished: ${checkpoint.stopReason}.`
-            : ` More result pages remain. Start the capture again to continue from page ${checkpoint.pagesRead + 1}.`;
+            : response.autoContinued
+              ? ` More people remain (${checkpoint.distinctCandidates} found so far). The next batch of up to 250 is being read now; review and save it when it appears.`
+              : ` More people remain (${checkpoint.distinctCandidates} found so far). Choose Continue capturing queue to read the next batch, now or later.`;
+      if (response.autoContinued) {
+        setContinue(null);
+      } else if (checkpoint && !checkpoint.error && !checkpoint.complete && checkpoint.companyId) {
+        setContinue(checkpoint.companyId, `Batch saved. ${checkpoint.distinctCandidates} people found so far${Number.isFinite(checkpoint.expectedAssociatedMembers) ? ` of about ${checkpoint.expectedAssociatedMembers}` : ""}.${checkpoint.queued === false ? " The Skout queue could not be updated; this browser still remembers where to continue." : ""}`);
+      } else if (checkpoint?.complete) {
+        setContinue(null);
+      }
       const dropped = response.rejectedFields?.length ? ` ${response.rejectedFields.length} non-profile items were left out.` : "";
       setResult(`Saved. Capture run ${response.run.status}: ${created} new, ${merged} merged, ${rejected} rejected.${dropped}${next}`, "capture-success");
     } else {
@@ -419,7 +783,10 @@ export function initCapturePanel() {
     }
     await refreshStatus();
     await renderCheckpoint();
+    await refreshCompanies();
   });
+
+  continueBtn.addEventListener("click", () => void continueQueue(state.continueCompany));
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
@@ -427,14 +794,27 @@ export function initCapturePanel() {
       state.progress = changes[PROGRESS_KEY].newValue || null;
       renderProgress();
       renderStart();
+      renderCompanyControls();
+    }
+    if (changes[RUN_QUEUE_KEY]) {
+      state.run = changes[RUN_QUEUE_KEY].newValue || null;
+      renderRun();
+      renderStart();
+      void refreshRequested();
     }
     if (changes[HALT_KEY]) {
       state.halt = changes[HALT_KEY].newValue || null;
       renderHalt();
       renderStart();
     }
-    if (changes[DRAFT_KEY]) applyDraft(changes[DRAFT_KEY].newValue);
-    if (Object.keys(changes).some((key) => key.startsWith("company-people-capture:"))) void renderCheckpoint();
+    if (changes[DRAFT_KEY]) {
+      applyDraft(changes[DRAFT_KEY].newValue);
+      renderCompanyControls();
+    }
+    if (Object.keys(changes).some((key) => key.startsWith("company-people-capture:"))) {
+      void renderCheckpoint();
+      void refreshCompanies();
+    }
   });
   chrome.tabs.onActivated.addListener(() => void refreshTab());
   chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
@@ -448,6 +828,8 @@ export function initCapturePanel() {
     renderProgress();
     renderHalt();
     applyDraft(stored[DRAFT_KEY]);
-    await Promise.all([refreshStatus(), refreshTab()]);
+    state.run = (await chrome.storage.local.get(RUN_QUEUE_KEY))[RUN_QUEUE_KEY] || null;
+    renderRun();
+    await Promise.all([refreshStatus(), refreshTab(), refreshCompanies()]);
   })();
 }

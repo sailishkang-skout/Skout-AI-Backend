@@ -343,6 +343,8 @@ export async function getPerson(db: Db, workspaceId: string, prospectId: string)
     summary: text(snapshot.summary) ?? text(snapshot.about),
     connectionsCount: typeof snapshot.connectionsCount === "number" ? snapshot.connectionsCount : null,
     followersCount: typeof snapshot.followersCount === "number" ? snapshot.followersCount : null,
+    website: text(snapshot.website),
+    websites: list("websites"),
     relationshipContext: (snapshot.relationshipContext as Json | undefined) ?? null,
     experience: { current: list("currentCompanies"), previous: list("previousCompanies") },
     educations: list("educations"),

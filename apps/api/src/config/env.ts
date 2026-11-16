@@ -280,6 +280,9 @@ const envSchema = z
     LUSHA_API_KEY: z.string().optional(),
     CONTACTOUT_API_KEY: z.string().optional(),
     WIZA_API_KEY: z.string().optional(),
+    // Most people one search may pull in total. Beyond the free first 30 each person costs a
+    // provider credit, so this bounds spend per search. 0 turns deeper pages off (30 max).
+    WIZA_DEEP_SEARCH_MAX: z.coerce.number().int().min(0).max(500).default(100),
     COGNISM_API_KEY: z.string().optional(),
     // --- Enrichment provider base URLs (override per environment / sandbox). ---
     HUNTER_BASE_URL: z.string().default("https://api.hunter.io/v2"),

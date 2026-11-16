@@ -1105,7 +1105,21 @@
       "idx": 157,
       "version": "7",
       "when": 1798300400000,
-      "tag": "0155_cops_task_tracker",
+      "tag": "0155_enrichment_capture_queue",
+      "breakpoints": true
+    },
+    {
+      "idx": 158,
+      "version": "7",
+      "when": 1798300500000,
+      "tag": "0156_capture_queue_job_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 159,
+      "version": "7",
+      "when": 1798300600000,
+      "tag": "0157_cops_task_tracker",
       "breakpoints": true
     }
   ]

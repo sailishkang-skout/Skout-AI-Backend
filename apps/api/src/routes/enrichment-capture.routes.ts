@@ -30,6 +30,21 @@ import {
   type CaptureRun,
 } from "../services/enrichment/capture-ingest.service.js";
 
+import {
+  CAPTURE_JOB_STATUSES,
+  captureQueueIdSchema,
+  captureQueueSyncSchema,
+  captureQueueUpdateSchema,
+  listCapturableCompanies,
+  listCaptureQueue,
+  recordCaptureQueueBatch,
+  removeFromCaptureQueue,
+  requestCaptureResume,
+  syncCaptureQueue,
+} from "../services/enrichment/capture-queue.service.js";
+import { indexCapturedPeople } from "../services/enrichment/capture-search-index.js";
+import { openSearchConfigFromEnv } from "../lib/opensearch-config.js";
+
 const uuidSchema = z.string().uuid();
 
 function runDto(run: CaptureRun) {
@@ -147,6 +162,14 @@ export async function enrichmentCaptureRoutes(app: FastifyInstance) {
       await suggestForJobChanges(db, app.config, actor.workspaceId).catch((error: unknown) =>
         request.log.warn({ err: error }, "job-change suggestion failed")
       );
+      // Make the person findable in Search & Discover. A failure never fails the capture.
+      const searchIndex = openSearchConfigFromEnv(app.config);
+      if (searchIndex && person) {
+        const { prospectId } = person as { prospectId: string };
+        await indexCapturedPeople(db, searchIndex, actor.workspaceId, [prospectId]).catch((error: unknown) =>
+          request.log.warn({ err: error }, "indexing captured person for search failed")
+        );
+      }
       return reply.status(201).send({ run: runDto(run), person, ...counts });
     } catch (error) {
       return sendCaptureError(reply, error);
@@ -175,6 +198,66 @@ export async function enrichmentCaptureRoutes(app: FastifyInstance) {
     } catch (error) {
       return sendCaptureError(reply, error);
     }
+  });
+
+  // Adds every profile captured before indexing existed, from ALL workspaces, to Search &
+  // Discover. Captures are shared across workspaces, so this is one global run, not per workspace.
+  app.post("/enrichment/search-index/backfill", async (request, reply) => {
+    const { db } = await authorize(request, "enrichment:admin");
+    const searchIndex = openSearchConfigFromEnv(app.config);
+    if (!searchIndex) return reply.status(503).send({ error: "search_index_unavailable" });
+    return reply.send(await indexCapturedPeople(db, searchIndex, null));
+  });
+
+  // Companies captured in this workspace, for the extension's company queue.
+  app.get("/enrichment/capture/companies", async (request, reply) => {
+    const { db, actor } = await authorize(request, "enrichment:capture");
+    const { q } = z.object({ q: z.string().trim().max(100).optional() }).parse(request.query ?? {});
+    return reply.send({ companies: await listCapturableCompanies(db, actor.workspaceId, q) });
+  });
+
+  // Capture jobs: ongoing, completed and failed, for the dashboard's Capture queue page.
+  app.get("/enrichment/capture/queue", async (request, reply) => {
+    const { db, actor } = await authorize(request, "enrichment:read");
+    const { status } = z.object({ status: z.enum(CAPTURE_JOB_STATUSES).optional() }).parse(request.query ?? {});
+    return reply.send({ items: await listCaptureQueue(db, actor.workspaceId, { status }) });
+  });
+
+  // The extension reports its whole run queue after every change.
+  app.post(
+    "/enrichment/capture/queue/sync",
+    { config: { rateLimit: { max: 120, timeWindow: 60000 } } },
+    async (request, reply) => {
+      const { db, actor } = await authorize(request, "enrichment:capture");
+      return reply.send(await syncCaptureQueue(db, actor, captureQueueSyncSchema.parse(request.body ?? {})));
+    }
+  );
+
+  // Resume or retry: the job is queued again and the extension offers to start it.
+  app.post("/enrichment/capture/queue/:publicId/resume", async (request, reply) => {
+    const { db, actor } = await authorize(request, "enrichment:capture");
+    const publicId = captureQueueIdSchema.parse((request.params as { publicId: string }).publicId);
+    const item = await requestCaptureResume(db, actor, publicId);
+    if (!item) return reply.status(409).send({ error: "job_not_resumable", message: "That job is running now or no longer exists." });
+    return reply.send({ item });
+  });
+
+  app.put(
+    "/enrichment/capture/queue/:publicId",
+    { config: { rateLimit: { max: 60, timeWindow: 60000 } } },
+    async (request, reply) => {
+      const { db, actor } = await authorize(request, "enrichment:capture");
+      const publicId = captureQueueIdSchema.parse((request.params as { publicId: string }).publicId);
+      const body = captureQueueUpdateSchema.parse(request.body ?? {});
+      return reply.send({ item: await recordCaptureQueueBatch(db, actor, publicId, body) });
+    }
+  );
+
+  app.delete("/enrichment/capture/queue/:publicId", async (request, reply) => {
+    const { db, actor } = await authorize(request, "enrichment:capture");
+    const publicId = captureQueueIdSchema.parse((request.params as { publicId: string }).publicId);
+    if (!(await removeFromCaptureQueue(db, actor.workspaceId, publicId))) return reply.status(404).send({ error: "not_found" });
+    return reply.status(204).send();
   });
 
   app.get("/enrichment/ingest/company/:publicId/captured-profile-ids", async (request, reply) => {

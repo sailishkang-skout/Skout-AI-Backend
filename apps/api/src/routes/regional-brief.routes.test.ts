@@ -251,6 +251,56 @@ describe("regional-brief routes", () => {
     await app.close();
   });
 
+  it("GET /regional-brief/slots pages with limit/offset and reports the full total", async () => {
+    const app = await buildTestApp(["pager-admin@test.com"]);
+
+    // Make sure at least three slots exist so two pages of two are meaningful.
+    for (const fieldCategory of ["market_economics", "business_practice", "channel_policy"]) {
+      const created = await app.inject({
+        method: "POST",
+        url: "/api/v1/regional-brief/slots",
+        headers: json("pager-admin@test.com"),
+        payload: { layerType: "global", fieldCategory },
+      });
+      if (created.statusCode === 503) { await app.close(); return; }
+    }
+
+    type SlotsBody = { data: { id: string; layerType: string }[]; total: number; limit?: number; offset?: number };
+    const get = async (qs: string) => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/regional-brief/slots${qs}`,
+        headers: asUser("any@test.com"),
+      });
+      return res;
+    };
+
+    const all = (await get("")).json() as SlotsBody;
+    expect(all.data.length).toBe(all.total);
+    expect(all.total).toBeGreaterThanOrEqual(3);
+
+    const page1Res = await get("?limit=2&offset=0");
+    expect(page1Res.statusCode).toBe(200);
+    const page1 = page1Res.json() as SlotsBody;
+    expect(page1.data).toHaveLength(2);
+    expect(page1.total).toBe(all.total);
+    expect(page1.limit).toBe(2);
+    expect(page1.offset).toBe(0);
+
+    const page2 = (await get("?limit=2&offset=2")).json() as SlotsBody;
+    expect(page2.total).toBe(all.total);
+    const page1Ids = new Set(page1.data.map((s) => s.id));
+    expect(page2.data.some((s) => page1Ids.has(s.id))).toBe(false);
+
+    // Stable order: paged results line up with the unpaged list, global layer first.
+    expect([...page1.data, ...page2.data].map((s) => s.id)).toEqual(all.data.slice(0, 2 + page2.data.length).map((s) => s.id));
+    expect(all.data[0]?.layerType).toBe("global");
+
+    expect((await get("?limit=101")).statusCode).toBe(422);
+
+    await app.close();
+  });
+
   it("GET /regional-brief/countries returns a list of countries", async () => {
     const app = await buildTestApp([]);
 
