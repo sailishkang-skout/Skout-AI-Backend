@@ -13,6 +13,33 @@ export const seniorityEnum = z.enum([
   "unknown",
 ]);
 
+const SENIORITY_ALIASES: Record<string, string> = {
+  vice_president: "vp",
+  svp: "vp",
+  evp: "vp",
+  avp: "vp",
+  senior_vice_president: "vp",
+  c_suite: "c_level",
+  cxo: "c_level",
+  chief: "c_level",
+  executive: "c_level",
+  cofounder: "co_founder",
+  head_of: "head",
+  ic: "individual_contributor",
+};
+
+/**
+ * Seniority as people type it ("VP", "Vice President", "C-Level", "Co-Founder") → the stored enum
+ * value ("vp", "c_level", "co_founder"). Blank means not set. Anything unrecognised is returned
+ * lower-cased so the enum still rejects it with a clear message.
+ */
+export function normalizeSeniority(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const key = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (!key) return undefined;
+  return SENIORITY_ALIASES[key] ?? key;
+}
+
 // ---------------------------------------------------------------------------
 // Filter option constants — consumed by frontend dropdowns
 // ---------------------------------------------------------------------------
@@ -163,7 +190,7 @@ export const searchFiltersSchema = z.object({
   fullName: z.string().optional(),
   jobTitle: z.string().optional(),
   department: z.string().optional(),
-  seniority: seniorityEnum.optional(),
+  seniority: z.preprocess(normalizeSeniority, seniorityEnum.optional()),
   jobFunction: z.string().optional(),
   emailAvailable: z.coerce.boolean().optional(),
   phoneAvailable: z.coerce.boolean().optional(),
