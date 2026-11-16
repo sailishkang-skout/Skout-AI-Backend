@@ -8,6 +8,7 @@ import {
   type StepSuggestion,
   type StepSuggestionContext,
 } from "./sequence-step-suggestions.js";
+import { normalizeGeneratedSteps, type GeneratedSequenceStep } from "./generated-sequence-steps.js";
 
 const log = createLogger("ai.service");
 
@@ -47,29 +48,36 @@ Never invent names/companies or use square-bracket placeholders like [Your Name]
 Return ONLY a valid JSON object (no markdown, no code fences) with exactly:
   "name": short human sequence name (max 60 chars)
   "steps": array of steps, each with:
-    "stepType": "email" | "linkedin" | "wait"
+    "stepType": "email" | "linkedin" | "wait" | "condition" | "goal"
     "delayDays": integer >= 0 (days to wait AFTER the previous step; first step is 0)
     "delayUnit": "days" (always use "days")
     "linkedinAction": "connect" | "message"   (ONLY when stepType is "linkedin")
     "subject": subject line (ONLY for "email"; max 80 chars; tokens allowed; no brackets)
     "bodyTemplate": HTML body for "email", or a short plain-text message for "linkedin".
        Use only <p>, <strong>, <em>, <a>, <br>, <ul>, <li>. No wrapper tags.
+    "conditionType": ONLY for "condition" — one of email_opened, email_clicked, email_replied,
+       linkedin_connected, linkedin_invite_accepted, linkedin_invite_declined, meeting_booked,
+       call_connected, has_email, has_linkedin
+    "conditionWaitDays": ONLY for "condition" — days to wait before taking the "no" path (1–30)
+    "branch": "yes" | "no" — ONLY on steps that follow a condition step. Steps tagged "yes" run
+       when the condition is met, "no" when it is not. The next untagged step rejoins the main path.
+    "goalLabel": ONLY for "goal" (e.g. "Meeting booked")
+
+Branching example (flat list, in order):
+  email → condition(email_opened, 3 days) → email[branch yes] → linkedin[branch no] → email → goal
 
 Rules:
-- 4 to 6 steps total. Vary the angle across touches; do not repeat the same pitch.
+- Step count: if the goal asks for a specific number of steps, return EXACTLY that many (count
+  condition and goal steps as steps). Otherwise use 4 to 6 steps. Never shorten a requested cadence.
+- If the goal asks for conditions/branches/"if they open/reply/accept", use condition steps with
+  yes/no branches as described above — do not flatten them into plain emails.
+- Vary the angle across touches; do not repeat the same pitch.
 - First email step delayDays = 0. Space later steps 2–4 days apart.
 - Every email body must end with: <p style="font-size:11px;color:#888"><a href="{{unsubscribeUrl}}">Unsubscribe</a></p>
 - Greeting must be "Hi {{firstName}},". Sign off with {{senderName}}.
 - Keep copy concise and deliverability-safe (avoid spam-trigger words).`;
 
-export interface GeneratedSequenceStep {
-  stepType: "email" | "linkedin" | "wait";
-  delayDays: number;
-  delayUnit?: "minutes" | "hours" | "days" | "weeks";
-  linkedinAction?: "connect" | "message";
-  subject?: string;
-  bodyTemplate?: string;
-}
+export type { GeneratedSequenceStep };
 
 export interface GeneratedSequence {
   name: string;
@@ -256,7 +264,8 @@ RESPONSE FORMAT — reply with ONLY valid JSON (no markdown fences):
         "stepType": "email"|"linkedin"|"wait", "delayDays": 0, "delayUnit": "days",
         "linkedinAction": "connect"|"message",
         "subject": "...", "bodyTemplate": "..."
-      } ] }  // 4–6 steps; first delayDays 0
+      } ] }  // exactly the step count the user asked for (default 4–6); first delayDays 0;
+             // branching uses the same condition/branch fields as create_outbound_sequence
     { "type": "analysis", "title": "...", "summary": "...", "charts": [ {
         "kind": "pie"|"bar"|"line"|"area"|"table"|"metric", "title": "...",
         "data": [ {...} ], "xKey": "...", "yKeys": ["..."],
@@ -323,7 +332,12 @@ YOUR CAPABILITIES
 1) Live workspace Q&A via TOOLS (credits, lists, sequences, inbox, deliverability, TAM, regional brief).
 2) Create Outbound Sequences — Step A: when the user first asks you to create/build/draft a
    sequence (e.g. "create the sequence", "build a cadence"), CALL the create_outbound_sequence tool
-   with the name and complete multi-step copy. If the result has a "preview" (more than one step),
+   with the name and complete multi-step copy. Send EVERY step the user asked for — a 14-step
+   request means 14 steps in the tool call, never a trimmed 6–8 step version. When they ask for
+   conditions/branches ("if they open", "if no reply", "if they accept"), add a stepType
+   "condition" step (conditionType + conditionWaitDays) followed by its branch "yes" / "no"
+   steps; untagged steps after that rejoin the main path. Keep each email short so long
+   sequences fit. If the result has a "preview" (more than one step),
    describe it and stop — do NOT say it's created yet. Step B: when the user then confirms in a
    later message, CALL create_outbound_sequence AGAIN with ONLY confirmed: true (see BEHAVIOR above)
    — this is a real second tool call, not something you skip. Only once THIS second call succeeds
@@ -370,12 +384,8 @@ function coerceChatAction(raw: unknown): ChatAction {
     return { type: "email", subject, html };
   }
   if (r.type === "sequence") {
-    const stepsRaw = Array.isArray(r.steps) ? r.steps : [];
-    const steps = stepsRaw
-      .map(coerceStep)
-      .filter((s): s is GeneratedSequenceStep => s !== null);
+    const steps = normalizeGeneratedSteps(Array.isArray(r.steps) ? r.steps : []);
     if (steps.length === 0) return { type: "none" };
-    steps[0]!.delayDays = 0;
     const name =
       typeof r.name === "string" && r.name.trim()
         ? r.name.trim().slice(0, 60)
@@ -475,29 +485,6 @@ function coerceChart(raw: unknown): ChartSpec | null {
   if (typeof r.value === "number" || typeof r.value === "string") chart.value = r.value;
   if (typeof r.unit === "string") chart.unit = r.unit;
   return chart;
-}
-
-function coerceStep(raw: unknown): GeneratedSequenceStep | null {
-  if (!raw || typeof raw !== "object") return null;
-  const r = raw as Record<string, unknown>;
-  const stepType = r.stepType === "linkedin" || r.stepType === "wait" ? r.stepType : "email";
-  const delayDays =
-    typeof r.delayDays === "number" && Number.isFinite(r.delayDays) && r.delayDays >= 0
-      ? Math.floor(r.delayDays)
-      : 0;
-  const step: GeneratedSequenceStep = { stepType, delayDays, delayUnit: "days" };
-  if (stepType === "linkedin") {
-    step.linkedinAction = r.linkedinAction === "message" ? "message" : "connect";
-  }
-  if (stepType === "email" && typeof r.subject === "string") step.subject = r.subject.slice(0, 200);
-  if (
-    (stepType === "email" || stepType === "linkedin") &&
-    typeof r.bodyTemplate === "string" &&
-    r.bodyTemplate.trim()
-  ) {
-    step.bodyTemplate = r.bodyTemplate;
-  }
-  return step;
 }
 
 export class AiService {
@@ -692,7 +679,9 @@ export class AiService {
         try {
           result = await client.chat.completions.create({
             model,
-            max_tokens: 3500,
+            // A long sequence (e.g. 14 steps with HTML bodies) is sent as one tool-call argument;
+            // 3500 truncated it, so the model learned to trim the cadence instead.
+            max_tokens: 8000,
             temperature: 0.55,
             messages,
             ...(allowTools
@@ -810,7 +799,7 @@ export class AiService {
     try {
       const result = await client.chat.completions.create({
         model: process.env.AI_MODEL ?? "openai/gpt-4o-mini",
-        max_tokens: 2500,
+        max_tokens: 8000,
         temperature: 0.7,
         response_format: { type: "json_object" },
         messages: [
@@ -835,16 +824,15 @@ export class AiService {
 
     const stepsRaw = Array.isArray(parsed.steps) ? parsed.steps : [];
     const allowLinkedin = channels.includes("linkedin");
-    const steps = stepsRaw
-      .map(coerceStep)
-      .filter((s): s is GeneratedSequenceStep => s !== null)
-      .filter((s) => allowLinkedin || s.stepType !== "linkedin");
+    // Drop disallowed channels BEFORE normalising so branch tags and the first-step delay are
+    // computed on the steps that actually survive.
+    const steps = normalizeGeneratedSteps(
+      stepsRaw.filter((s) => allowLinkedin || (s as { stepType?: unknown } | null)?.stepType !== "linkedin")
+    );
 
     if (steps.length === 0) {
       throw Object.assign(new Error("AI returned no usable steps"), { statusCode: 502 });
     }
-    // First step should fire immediately.
-    steps[0]!.delayDays = 0;
 
     const name =
       typeof parsed.name === "string" && parsed.name.trim()
