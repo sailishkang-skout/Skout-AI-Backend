@@ -1,10 +1,11 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { createDb, type Db } from "./index.js";
 import { schema } from "./index.js";
 import { resolveDatabaseUrl, resolvePostgresSsl } from "./database-url.js";
+import { missingFrom, seedForced } from "./seed-guard.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 try {
@@ -150,6 +151,120 @@ async function getOrCreateSystemUser(db: Db): Promise<string> {
   return created!.id;
 }
 
+interface CountryCategory {
+  category: Category;
+  summary: string;
+  details: string[];
+  source: string;
+  confidence: number;
+  evidence: string;
+}
+
+/** The per-country facts the seed writes for one entry of global_best_practices.json. */
+function buildCountryCategories(bp: BestPracticeItem): CountryCategory[] {
+  return [
+    {
+      category: "business_practice",
+      summary: bp.localizationGuidance || `Business culture in ${bp.masterCountry}: prioritize local relationship building and direct value.`,
+      details: [
+        `Sales Tier: Tier ${bp.tier}`,
+        `Region: ${bp.region} (${bp.subRegion})`,
+        `Localization note: Adapt language formality, calendar, and buying committee dynamics.`
+      ],
+      source: "Global Regional Intelligence Catalog 2026",
+      confidence: 85,
+      evidence: bp.answerLabel || "Operational guidance, not legal advice",
+    },
+    {
+      category: "channel_policy",
+      summary: bp.baselineOutreach || `Use a concise, relationship-aware sequence for ${bp.masterCountry}; test email + LinkedIn + local channels.`,
+      details: [
+        "Multi-channel cadence recommended: personalized email and business social outreach.",
+        "Respect local communication preferences and cadence."
+      ],
+      source: "Global Regional Intelligence Catalog 2026",
+      confidence: 85,
+      evidence: bp.evidenceStatus || "Regional baseline — country evidence required",
+    },
+    {
+      category: "data_compliance",
+      summary: bp.complianceGuardrail || `Verify direct marketing consent, privacy laws, and opt-out requirements for ${bp.masterCountry}.`,
+      details: [
+        "Ensure valid company identification and one-click unsubscribe mechanism in all outbound communications.",
+        "Consult jurisdiction-specific electronic marketing guidance."
+      ],
+      source: "Global Outreach & Compliance Framework 2026",
+      confidence: 90,
+      evidence: bp.answerLabel || "Operational guidance, not legal advice",
+    },
+    {
+      category: "telecom_requirements",
+      summary: `Follow local business hours and telecom calling registries in ${bp.masterCountry} (${bp.alpha3}).`,
+      details: [
+        "Observe standard business calling hours (typically 8:00 AM – 8:00 PM local time).",
+        "Cross-reference national do-not-call / opt-out registries where applicable."
+      ],
+      source: "Global Telecom Regulations 2026",
+      confidence: 80,
+      evidence: bp.evidenceStatus || "Regional baseline — country evidence required",
+    },
+    {
+      category: "market_economics",
+      summary: `${bp.masterCountry} (${bp.alpha3}) is categorized as a Tier ${bp.tier} market within ${bp.region} / ${bp.subRegion}.`,
+      details: [
+        `Region: ${bp.region}`,
+        `Sub-Region: ${bp.subRegion}`,
+        `Sales Tier: ${bp.tier}`
+      ],
+      source: "Global Master Country Directory 2026",
+      confidence: 95,
+      evidence: "Global Master Country Hierarchy",
+    },
+    {
+      category: "explainability",
+      summary: bp.requiredRetrieval || "Retrieve current official/local sources; capture jurisdiction, industry, channel, publication date, and URL.",
+      details: [
+        "Evidence protocol: All country claims require verified citations and uncertainty disclosure."
+      ],
+      source: "Skout AI Intelligence Policy",
+      confidence: 100,
+      evidence: bp.evidenceStatus || "Regional baseline — country evidence required",
+    },
+  ];
+}
+
+const BEST_PRACTICES_FILE = path.resolve(__dirname, "data/global_best_practices.json");
+
+type CountryLookup = Map<string, { id: string; isoCode: string; isoAlpha3: string | null }>;
+
+/** The slot (country + scope key) one curated base row is written to. */
+function baseRowTarget(row: SeedRow, byIso3: CountryLookup, byIso2: CountryLookup): { countryId: string | null; scopeKey: string } {
+  if (row.layerType === "country" && (row.countryIsoCode || row.countryIsoAlpha3)) {
+    const country =
+      (row.countryIsoAlpha3 ? byIso3.get(row.countryIsoAlpha3) : null) ||
+      (row.countryIsoCode ? byIso2.get(row.countryIsoCode) : null);
+    if (country) {
+      return { countryId: country.id, scopeKey: `country:${country.isoAlpha3 || country.isoCode}:${row.fieldCategory}` };
+    }
+    return { countryId: null, scopeKey: "global" };
+  }
+  return { countryId: null, scopeKey: `global:${row.fieldCategory}` };
+}
+
+/** Every slot this seed writes, as scope keys. */
+function expectedScopeKeys(byIso3: CountryLookup, byIso2: CountryLookup): string[] {
+  const keys = SEED_ROWS.map((row) => baseRowTarget(row, byIso3, byIso2).scopeKey);
+  if (fs.existsSync(BEST_PRACTICES_FILE)) {
+    const bestPractices: Record<string, BestPracticeItem> = JSON.parse(fs.readFileSync(BEST_PRACTICES_FILE, "utf-8"));
+    for (const [alpha3, bp] of Object.entries(bestPractices)) {
+      const country = byIso3.get(alpha3) || byIso2.get(alpha3.slice(0, 2));
+      if (!country) continue;
+      for (const cat of buildCountryCategories(bp)) keys.push(`country:${country.isoAlpha3 || country.isoCode}:${cat.category}`);
+    }
+  }
+  return keys;
+}
+
 async function main() {
   const systemUserId = await getOrCreateSystemUser(db);
 
@@ -162,21 +277,30 @@ async function main() {
     if (c.isoAlpha3) countryMapByIso3.set(c.isoAlpha3, c);
   }
 
+  // This runs on every deploy and only ever fills in slots that have no approved version, so when
+  // every slot it would write is already there there is nothing to do (~2,500 queries saved).
+  if (!seedForced()) {
+    const expected = expectedScopeKeys(countryMapByIso3, countryMapByIso2);
+    const have = new Set(
+      (
+        await db
+          .select({ key: regionalBriefSlots.scopeKey })
+          .from(regionalBriefSlots)
+          .innerJoin(regionalBriefVersions, eq(regionalBriefVersions.slotId, regionalBriefSlots.id))
+          .where(and(eq(regionalBriefVersions.status, "approved"), inArray(regionalBriefSlots.scopeKey, expected)))
+      ).map((r) => r.key)
+    );
+    const missing = missingFrom(expected, have);
+    if (missing.length === 0) {
+      console.log(`Regional selling brief already seeded (${new Set(expected).size} facts present) - skipping. Set FORCE_SEED=1 to re-run.`);
+      return;
+    }
+    console.log(`Regional selling brief: ${missing.length} of ${new Set(expected).size} facts missing - seeding those.`);
+  }
+
   // 1. Seed base curated rows
   for (const row of SEED_ROWS) {
-    let countryId: string | null = null;
-    let scopeKey = "global";
-
-    if (row.layerType === "country" && (row.countryIsoCode || row.countryIsoAlpha3)) {
-      const country = (row.countryIsoAlpha3 ? countryMapByIso3.get(row.countryIsoAlpha3) : null) ||
-                      (row.countryIsoCode ? countryMapByIso2.get(row.countryIsoCode) : null);
-      if (country) {
-        countryId = country.id;
-        scopeKey = `country:${country.isoAlpha3 || country.isoCode}:${row.fieldCategory}`;
-      }
-    } else {
-      scopeKey = `global:${row.fieldCategory}`;
-    }
+    const { countryId, scopeKey } = baseRowTarget(row, countryMapByIso3, countryMapByIso2);
 
     await upsertSlotAndVersion(db, {
       layerType: row.layerType,
@@ -193,9 +317,8 @@ async function main() {
   }
 
   // 2. Seed all 250 global countries from global_best_practices.json
-  const bpFilePath = path.resolve(__dirname, "data/global_best_practices.json");
-  if (fs.existsSync(bpFilePath)) {
-    const rawBpData = fs.readFileSync(bpFilePath, "utf-8");
+  if (fs.existsSync(BEST_PRACTICES_FILE)) {
+    const rawBpData = fs.readFileSync(BEST_PRACTICES_FILE, "utf-8");
     const bestPractices: Record<string, BestPracticeItem> = JSON.parse(rawBpData);
 
     console.log(`\n── Seeding regional intelligence facts for ${Object.keys(bestPractices).length} global markets ──`);
@@ -204,82 +327,7 @@ async function main() {
       const country = countryMapByIso3.get(alpha3) || countryMapByIso2.get(alpha3.slice(0, 2));
       if (!country) continue;
 
-      const categories: {
-        category: Category;
-        summary: string;
-        details: string[];
-        source: string;
-        confidence: number;
-        evidence: string;
-      }[] = [
-        {
-          category: "business_practice",
-          summary: bp.localizationGuidance || `Business culture in ${bp.masterCountry}: prioritize local relationship building and direct value.`,
-          details: [
-            `Sales Tier: Tier ${bp.tier}`,
-            `Region: ${bp.region} (${bp.subRegion})`,
-            `Localization note: Adapt language formality, calendar, and buying committee dynamics.`
-          ],
-          source: "Global Regional Intelligence Catalog 2026",
-          confidence: 85,
-          evidence: bp.answerLabel || "Operational guidance, not legal advice",
-        },
-        {
-          category: "channel_policy",
-          summary: bp.baselineOutreach || `Use a concise, relationship-aware sequence for ${bp.masterCountry}; test email + LinkedIn + local channels.`,
-          details: [
-            "Multi-channel cadence recommended: personalized email and business social outreach.",
-            "Respect local communication preferences and cadence."
-          ],
-          source: "Global Regional Intelligence Catalog 2026",
-          confidence: 85,
-          evidence: bp.evidenceStatus || "Regional baseline — country evidence required",
-        },
-        {
-          category: "data_compliance",
-          summary: bp.complianceGuardrail || `Verify direct marketing consent, privacy laws, and opt-out requirements for ${bp.masterCountry}.`,
-          details: [
-            "Ensure valid company identification and one-click unsubscribe mechanism in all outbound communications.",
-            "Consult jurisdiction-specific electronic marketing guidance."
-          ],
-          source: "Global Outreach & Compliance Framework 2026",
-          confidence: 90,
-          evidence: bp.answerLabel || "Operational guidance, not legal advice",
-        },
-        {
-          category: "telecom_requirements",
-          summary: `Follow local business hours and telecom calling registries in ${bp.masterCountry} (${bp.alpha3}).`,
-          details: [
-            "Observe standard business calling hours (typically 8:00 AM – 8:00 PM local time).",
-            "Cross-reference national do-not-call / opt-out registries where applicable."
-          ],
-          source: "Global Telecom Regulations 2026",
-          confidence: 80,
-          evidence: bp.evidenceStatus || "Regional baseline — country evidence required",
-        },
-        {
-          category: "market_economics",
-          summary: `${bp.masterCountry} (${bp.alpha3}) is categorized as a Tier ${bp.tier} market within ${bp.region} / ${bp.subRegion}.`,
-          details: [
-            `Region: ${bp.region}`,
-            `Sub-Region: ${bp.subRegion}`,
-            `Sales Tier: ${bp.tier}`
-          ],
-          source: "Global Master Country Directory 2026",
-          confidence: 95,
-          evidence: "Global Master Country Hierarchy",
-        },
-        {
-          category: "explainability",
-          summary: bp.requiredRetrieval || "Retrieve current official/local sources; capture jurisdiction, industry, channel, publication date, and URL.",
-          details: [
-            "Evidence protocol: All country claims require verified citations and uncertainty disclosure."
-          ],
-          source: "Skout AI Intelligence Policy",
-          confidence: 100,
-          evidence: bp.evidenceStatus || "Regional baseline — country evidence required",
-        },
-      ];
+      const categories = buildCountryCategories(bp);
 
       for (const cat of categories) {
         const scopeKey = `country:${country.isoAlpha3 || country.isoCode}:${cat.category}`;
