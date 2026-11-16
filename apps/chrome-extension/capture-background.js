@@ -722,6 +722,47 @@ async function getRunQueue() {
 }
 async function setRunQueue(queue) {
   await chrome.storage.local.set({ [RUN_QUEUE_KEY]: { ...queue, at: Date.now() } });
+  reportRunQueue(queue);
+}
+
+/** The status the dashboard shows for a company in this browser's run queue. */
+export function jobStatusFor(item, queueActive) {
+  switch (item.status) {
+    case 'running': return 'running';
+    case 'review': return 'review';
+    case 'failed': return 'failed';
+    case 'skipped': return 'skipped';
+    case 'done': return item.moreRemain ? 'paused' : 'completed';
+    default: return queueActive ? 'queued' : 'paused';
+  }
+}
+
+// Every change to the run queue is reported so the workspace's Capture queue page follows it.
+// One request at a time; a change that arrives meanwhile is sent right after with the latest state.
+let reporting = false;
+let reportAgain = null;
+function reportRunQueue(queue) {
+  if (!queue?.items?.length) return;
+  if (reporting) { reportAgain = queue; return; }
+  reporting = true;
+  const items = queue.items.slice(0, 200).map(item => {
+    const status = jobStatusFor(item, queue.active === true);
+    return {
+      companyPublicId: item.companyPublicId,
+      companyName: item.name,
+      status,
+      ...(status === 'failed' && item.error ? { error: String(item.error).slice(0, 500) } : {}),
+    };
+  });
+  Promise.resolve()
+    .then(() => deps.skoutFetch(`${API}/capture/queue/sync`, { method: 'POST', body: JSON.stringify({ items }) }))
+    .catch(() => { /* The local queue keeps working; the dashboard catches up on the next change. */ })
+    .finally(() => {
+      reporting = false;
+      const next = reportAgain;
+      reportAgain = null;
+      if (next) reportRunQueue(next);
+    });
 }
 
 let advancing = false;
@@ -766,10 +807,26 @@ async function advanceRunQueue() {
 
 const advanceSoon = () => void timing.delay(RUN_QUEUE_GAP_MS).then(advanceRunQueue).catch(() => {});
 
+/** Jobs asked for from the workspace's Capture queue page that this browser is not reading yet. */
+async function listRequestedJobs() {
+  try {
+    const body = await deps.skoutFetch(`${API}/capture/queue?status=queued`);
+    const queue = await getRunQueue();
+    const local = new Set((queue?.items || []).filter(entry => ['pending', 'running', 'review'].includes(entry.status)).map(entry => entry.companyPublicId));
+    const jobs = (body?.items || [])
+      .filter(item => COMPANY_ID.test(item.companyPublicId || '') && !local.has(item.companyPublicId))
+      .map(item => ({ companyPublicId: item.companyPublicId, name: item.companyName || item.companyPublicId }));
+    return { ok: true, jobs };
+  } catch (error) {
+    return { ok: false, error: error?.message || 'Requested jobs could not be loaded.' };
+  }
+}
+
 async function startRunQueue(message) {
   const existing = await getRunQueue();
-  if (existing?.active) return { ok: false, error: 'A company queue is already running.' };
-  if (await getStored(CAPTURE_DRAFT_KEY)) return { ok: false, error: 'Save or discard the capture waiting for review first.' };
+  // Companies still waiting in a running or paused queue are kept; new ones join them.
+  const adding = Boolean(existing && (existing.active || existing.items.some(entry => ['pending', 'running', 'review'].includes(entry.status))));
+  if (!adding && (await getStored(CAPTURE_DRAFT_KEY))) return { ok: false, error: 'Save or discard the capture waiting for review first.' };
   const seen = new Set();
   const items = [];
   for (const company of Array.isArray(message.companies) ? message.companies : []) {
@@ -782,6 +839,16 @@ async function startRunQueue(message) {
     });
   }
   if (!items.length) return { ok: false, error: 'Select at least one company.' };
+  if (adding) {
+    // A company asked for while a queue runs joins it, unless it is already waiting or being read.
+    const fresh = items.filter(item => !existing.items.some(entry => entry.companyPublicId === item.companyPublicId && ['pending', 'running', 'review'].includes(entry.status)));
+    const kept = existing.items.filter(entry => !fresh.some(item => item.companyPublicId === entry.companyPublicId));
+    if (kept.length + fresh.length > MAX_QUEUE_COMPANIES) return { ok: false, error: `A queue holds at most ${MAX_QUEUE_COMPANIES} companies.` };
+    if (!fresh.length) return { ok: true, count: 0 };
+    await setRunQueue({ ...existing, active: true, note: undefined, items: [...kept, ...fresh] });
+    advanceRunQueue().catch(() => {});
+    return { ok: true, count: fresh.length, added: true };
+  }
   if (items.length > MAX_QUEUE_COMPANIES) return { ok: false, error: `A queue holds at most ${MAX_QUEUE_COMPANIES} companies. Select fewer.` };
   await setRunQueue({ active: true, tabId: null, items, startedAt: Date.now() });
   advanceRunQueue().catch(() => {});
@@ -916,6 +983,8 @@ export function handleCaptureMessage(message, sender) {
         : undefined;
     case 'capture-companies':
       return fromExtensionPage(sender) ? listCaptureCompanies(message) : undefined;
+    case 'capture-requested':
+      return fromExtensionPage(sender) ? listRequestedJobs() : undefined;
     case 'capture-queue-start':
       return fromExtensionPage(sender) ? startRunQueue(message) : undefined;
     case 'capture-queue-stop':
@@ -981,6 +1050,12 @@ export function registerCaptureBackground({ skoutFetch }) {
       await setProgress({ ...progress, active: false, isError: true, text: 'The LinkedIn tab was closed before the capture finished.' });
     }
   });
+}
+
+/** The dashboard's Resume / Retry button: read this company's people until it is finished. */
+export function resumeJobFromWeb(companyId, name) {
+  if (!COMPANY_ID.test(companyId || '')) return Promise.resolve({ ok: false, error: 'Not a LinkedIn company.' });
+  return startRunQueue({ companies: [{ companyPublicId: companyId, name: String(name || companyId) }], untilComplete: true });
 }
 
 export const __test = { commitCompanyPeopleCapture, getCompanyPeopleState, captureBlock, companyReadUrl, deps, listCaptureCompanies, getRunQueue, advanceRunQueue, readCompanyPeopleSearch };

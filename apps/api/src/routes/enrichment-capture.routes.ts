@@ -31,10 +31,16 @@ import {
 } from "../services/enrichment/capture-ingest.service.js";
 
 import {
+  CAPTURE_JOB_STATUSES,
   captureQueueIdSchema,
+  captureQueueSyncSchema,
   captureQueueUpdateSchema,
   listCapturableCompanies,
+  listCaptureQueue,
   recordCaptureQueueBatch,
+  removeFromCaptureQueue,
+  requestCaptureResume,
+  syncCaptureQueue,
 } from "../services/enrichment/capture-queue.service.js";
 import { indexCapturedPeople } from "../services/enrichment/capture-search-index.js";
 import { openSearchConfigFromEnv } from "../lib/opensearch-config.js";
@@ -210,6 +216,32 @@ export async function enrichmentCaptureRoutes(app: FastifyInstance) {
     return reply.send({ companies: await listCapturableCompanies(db, actor.workspaceId, q) });
   });
 
+  // Capture jobs: ongoing, completed and failed, for the dashboard's Capture queue page.
+  app.get("/enrichment/capture/queue", async (request, reply) => {
+    const { db, actor } = await authorize(request, "enrichment:read");
+    const { status } = z.object({ status: z.enum(CAPTURE_JOB_STATUSES).optional() }).parse(request.query ?? {});
+    return reply.send({ items: await listCaptureQueue(db, actor.workspaceId, { status }) });
+  });
+
+  // The extension reports its whole run queue after every change.
+  app.post(
+    "/enrichment/capture/queue/sync",
+    { config: { rateLimit: { max: 120, timeWindow: 60000 } } },
+    async (request, reply) => {
+      const { db, actor } = await authorize(request, "enrichment:capture");
+      return reply.send(await syncCaptureQueue(db, actor, captureQueueSyncSchema.parse(request.body ?? {})));
+    }
+  );
+
+  // Resume or retry: the job is queued again and the extension offers to start it.
+  app.post("/enrichment/capture/queue/:publicId/resume", async (request, reply) => {
+    const { db, actor } = await authorize(request, "enrichment:capture");
+    const publicId = captureQueueIdSchema.parse((request.params as { publicId: string }).publicId);
+    const item = await requestCaptureResume(db, actor, publicId);
+    if (!item) return reply.status(409).send({ error: "job_not_resumable", message: "That job is running now or no longer exists." });
+    return reply.send({ item });
+  });
+
   app.put(
     "/enrichment/capture/queue/:publicId",
     { config: { rateLimit: { max: 60, timeWindow: 60000 } } },
@@ -220,6 +252,13 @@ export async function enrichmentCaptureRoutes(app: FastifyInstance) {
       return reply.send({ item: await recordCaptureQueueBatch(db, actor, publicId, body) });
     }
   );
+
+  app.delete("/enrichment/capture/queue/:publicId", async (request, reply) => {
+    const { db, actor } = await authorize(request, "enrichment:capture");
+    const publicId = captureQueueIdSchema.parse((request.params as { publicId: string }).publicId);
+    if (!(await removeFromCaptureQueue(db, actor.workspaceId, publicId))) return reply.status(404).send({ error: "not_found" });
+    return reply.status(204).send();
+  });
 
   app.get("/enrichment/ingest/company/:publicId/captured-profile-ids", async (request, reply) => {
     const { db, actor } = await authorize(request, "enrichment:capture");

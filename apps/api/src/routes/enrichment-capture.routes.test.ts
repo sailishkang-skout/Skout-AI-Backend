@@ -406,6 +406,63 @@ describe("ENR-02 capture ingest", () => {
     expect((await put("acme-robotics", { pagesRead: 1, peopleFound: 1, complete: false, extra: true })).statusCode).toBe(422);
   });
 
+  it("tracks capture jobs for the dashboard: sync, progress, failure, interruption, resume and remove", async () => {
+    const queue = (headers = owner) => get("/enrichment/capture/queue", headers);
+    const job = async (id: string, headers = owner) =>
+      ((await queue(headers)).json().items as Array<Record<string, unknown>>).find((item) => item.companyPublicId === id);
+    const sync = (items: unknown, headers = owner) =>
+      app.inject({ method: "POST", url: "/api/v1/enrichment/capture/queue/sync", headers, payload: { items } as object });
+    const put = (id: string, payload: unknown, headers = owner) =>
+      app.inject({ method: "PUT", url: `/api/v1/enrichment/capture/queue/${id}`, headers, payload: payload as object });
+    const resume = (id: string, headers = owner) =>
+      app.inject({ method: "POST", url: `/api/v1/enrichment/capture/queue/${id}/resume`, headers });
+
+    // The extension reports its run queue; the dashboard sees every job.
+    expect((await sync([
+      { companyPublicId: "job-alpha", companyName: "Alpha Co", status: "running" },
+      { companyPublicId: "job-beta", companyName: "Beta Co", status: "queued" },
+      { companyPublicId: "job-gamma", companyName: "Gamma Co", status: "failed", error: "Company content did not load." },
+    ])).json()).toEqual({ updated: 3 });
+    expect(await job("job-alpha")).toMatchObject({ companyName: "Alpha Co", status: "running", state: "running", peopleFound: 0 });
+    expect(await job("job-gamma")).toMatchObject({ status: "failed", state: "failed", error: "Company content did not load." });
+
+    // A saved batch adds progress; the job is paused with people left, completed when finished.
+    await put("job-alpha", { pagesRead: 8, peopleFound: 240, expectedPeople: 900, complete: false });
+    expect(await job("job-alpha")).toMatchObject({ status: "paused", peopleFound: 240, expectedPeople: 900, batches: 1, remainingPeople: 660 });
+    await sync([{ companyPublicId: "job-alpha", status: "running" }]);
+    expect(await job("job-alpha")).toMatchObject({ status: "running", peopleFound: 240, batches: 1, companyName: "Alpha Co" });
+    await put("job-alpha", { pagesRead: 30, peopleFound: 900, complete: true });
+    expect(await job("job-alpha")).toMatchObject({ status: "completed", complete: true });
+
+    // A job that says it is running but stopped reporting shows as interrupted.
+    await sync([{ companyPublicId: "job-beta", status: "running" }]);
+    await app.db!.update(schema.enrichmentCaptureQueue)
+      .set({ updatedAt: new Date(Date.now() - 30 * 60 * 1000) })
+      .where(and(eq(schema.enrichmentCaptureQueue.workspaceId, WORKSPACE), eq(schema.enrichmentCaptureQueue.companyPublicId, "job-beta")));
+    expect(await job("job-beta")).toMatchObject({ status: "running", state: "interrupted" });
+
+    // Interrupted and failed jobs can be resumed; a job actively running cannot.
+    expect((await resume("job-beta")).json().item).toMatchObject({ status: "queued", state: "queued", error: null });
+    expect((await resume("job-gamma")).json().item).toMatchObject({ status: "queued", error: null });
+    await sync([{ companyPublicId: "job-beta", status: "running" }]);
+    expect((await resume("job-beta")).statusCode).toBe(409);
+    expect((await resume("job-missing")).statusCode).toBe(409);
+
+    // Filter by status, isolation between workspaces, validation and removal.
+    expect(((await get("/enrichment/capture/queue?status=queued")).json().items as Array<{ companyPublicId: string }>).map((item) => item.companyPublicId)).toEqual(["job-gamma"]);
+    expect(await job("job-alpha", outsider)).toBeUndefined();
+    expect((await resume("job-gamma", outsider)).statusCode).toBe(409);
+    expect((await sync([{ companyPublicId: "../x", status: "running" }])).statusCode).toBe(422);
+    expect((await sync([{ companyPublicId: "job-alpha", status: "exploded" }])).statusCode).toBe(422);
+    expect((await sync([])).statusCode).toBe(422);
+    expect((await put("job-alpha", {})).statusCode).toBe(422);
+    const del = (id: string, headers = owner) => app.inject({ method: "DELETE", url: `/api/v1/enrichment/capture/queue/${id}`, headers });
+    expect((await del("job-gamma", outsider)).statusCode).toBe(404);
+    expect((await del("job-gamma")).statusCode).toBe(204);
+    expect((await del("job-gamma")).statusCode).toBe(404);
+    expect(await job("job-gamma")).toBeUndefined();
+  });
+
   it("keeps capture runs and records inside the workspace", async () => {
     const runs = await get("/enrichment/capture/runs");
     expect(runs.statusCode).toBe(200);

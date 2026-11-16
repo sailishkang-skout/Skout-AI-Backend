@@ -182,6 +182,9 @@ export const enrichmentCaptureQueue = pgTable(
     batches: integer("batches").notNull().default(0),
     complete: boolean("complete").notNull().default(false),
     stopReason: text("stop_reason"),
+    /** queued | running | review | paused | completed | failed | skipped; kept in sync by the extension. */
+    status: text("status").notNull().default("queued"),
+    error: text("error"),
     updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
