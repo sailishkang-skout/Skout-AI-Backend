@@ -28,6 +28,7 @@ import { startRetentionSignalsSweepWorker } from "./workers/retention-signals-sw
 import { startEnrichmentEvidenceRetentionWorker } from "./workers/enrichment-evidence-retention.worker.js";
 import { startEnrichmentProviderJobWorker } from "./workers/enrichment-provider-job.worker.js";
 import { startEnrichmentOpsWorker } from "./workers/enrichment-ops.worker.js";
+import { startCaptureAutoWorker } from "./workers/capture-auto.worker.js";
 import { describeRelease } from "./services/enrichment/release-gate.js";
 import { startWorkbookRunWorker } from "./workers/workbook-run.worker.js";
 import { startReportDeliverySweepWorker } from "./workers/report-delivery-sweep.worker.js";
@@ -82,6 +83,7 @@ async function main() {
   const stopEnrichmentEvidenceRetentionWorker = await startEnrichmentEvidenceRetentionWorker(config);
   const stopEnrichmentProviderJobWorker = await startEnrichmentProviderJobWorker(config);
   const stopEnrichmentOpsWorker = await startEnrichmentOpsWorker(config);
+  const stopCaptureAutoWorker = await startCaptureAutoWorker(config);
   const stopWorkbookRunWorker = await startWorkbookRunWorker(config);
   const stopReportDeliverySweepWorker = await startReportDeliverySweepWorker(config);
   const stopIdentityMergeDiscoveryWorker = await startIdentityMergeDiscoveryWorker(config);
@@ -144,6 +146,7 @@ async function main() {
     await stopEnrichmentEvidenceRetentionWorker();
     await stopEnrichmentProviderJobWorker();
     await stopEnrichmentOpsWorker();
+    await stopCaptureAutoWorker();
     await stopRiskDecaySweepWorker();
     await stopCreditReconciliationWorker();
     await stopCopsOnboardingEvaluatorWorker();

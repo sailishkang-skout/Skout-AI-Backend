@@ -8,7 +8,8 @@
  *     canonical LinkedIn identity, end to end.
  *   - Review date: revisit once apps/crm's internal API surface fully shipped (Wave 2)
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { runAutoCapturePass, startAutoCapture } from "../services/enrichment/capture-auto.service.js";
 import { schema } from "@skout/db";
 import { and, eq, isNull, like } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -134,24 +135,24 @@ describe("ENR-02 capture ingest", () => {
     expect(await contactCount()).toBe(183);
   });
 
-  it("enforces the 10-page and 250-lead caps", async () => {
+  it("enforces the 25-page and 250-lead caps", async () => {
     expect((await post("/enrichment/ingest/sales-search", salesPayload(251))).statusCode).toBe(422);
-    expect((await post("/enrichment/ingest/sales-search", salesPayload(1, { pagesRead: 11 }))).statusCode).toBe(422);
+    expect((await post("/enrichment/ingest/sales-search", salesPayload(1, { pagesRead: 26 }))).statusCode).toBe(422);
 
     const started = await post("/enrichment/capture/runs", { kind: "sales_search", sourceUrl: SALES_URL, clientRunId: `caps-${randomUUID()}` });
     expect(started.statusCode).toBe(201);
     const runId = started.json().run.id as string;
     const batch = (count: number, pagesRead: number) =>
       post("/enrichment/ingest/sales-search", { ...salesPayload(count, { pagesRead }), runId });
-    expect((await batch(150, 6)).statusCode).toBe(201);
+    expect((await batch(150, 21)).statusCode).toBe(201);
     const overLeads = await batch(101, 1);
     expect(overLeads.statusCode).toBe(422);
     expect(overLeads.json().code).toBe("lead_cap_exceeded");
-    const overPages = await batch(10, 5);
+    const overPages = await batch(10, 5);  // 21 + 5 > 25
     expect(overPages.statusCode).toBe(422);
     expect(overPages.json().code).toBe("page_cap_exceeded");
     const finished = await post(`/enrichment/capture/runs/${runId}/finish`, { status: "completed" });
-    expect(finished.json().run).toMatchObject({ status: "completed", leadsReceived: 150, pagesRead: 6 });
+    expect(finished.json().run).toMatchObject({ status: "completed", leadsReceived: 150, pagesRead: 21 });
     // A finished run accepts nothing more and reports the state already recorded.
     expect((await batch(1, 1)).statusCode).toBe(409);
     expect((await post(`/enrichment/capture/runs/${runId}/finish`, { status: "failed" })).json().run.status).toBe("completed");
@@ -508,7 +509,7 @@ describe("ENR-02 capture ingest", () => {
 
   it("enforces the per-user daily volume limit", async () => {
     const status = (await get("/enrichment/capture/status")).json();
-    expect(status.caps).toMatchObject({ maxPagesPerRun: 10, maxLeadsPerRun: 250, dailyLeadLimit: 1000 });
+    expect(status.caps).toMatchObject({ maxPagesPerRun: 25, maxLeadsPerRun: 250, dailyLeadLimit: 1000 });
     const used = status.usage.leadsToday as number;
     expect(used).toBeGreaterThan(366);
 
@@ -522,5 +523,97 @@ describe("ENR-02 capture ingest", () => {
     // The limit is per user: another member of the workspace is unaffected.
     expect((await get("/enrichment/capture/status", member)).json().usage.leadsToday).toBe(0);
     await setCapture({ dailyLeadLimit: 1000 });
+  });
+});
+
+describe("ENR-02 automatic people capture (Unipile)", () => {
+  const unipile = { UNIPILE_DSN: "https://unipile.test", UNIPILE_API_KEY: "test-key" };
+  const config = () => ({ ...app.config, ...unipile });
+  const actor = () => ({ workspaceId: WORKSPACE, userId: OWNER_ID });
+  const job = async (id: string) =>
+    ((await get("/enrichment/capture/queue")).json().items as Array<Record<string, unknown>>).find((item) => item.companyPublicId === id);
+  const person = (n: number) => ({ id: `u${n}`, name: `Auto Person ${n}`, headline: "Engineer at Acme", public_identifier: `auto-person-${n}` });
+  /** A fake Unipile: answers search pages from `pages` in order, records every request. */
+  function fakeUnipile(pages: Array<{ items: unknown[]; cursor: string | null } | { status: number }>) {
+    const calls: Array<{ url: string; body: unknown }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      const next = pages.shift() ?? { items: [], cursor: null };
+      if ("status" in next) return new Response(JSON.stringify({ message: "forbidden" }), { status: next.status });
+      return new Response(JSON.stringify(next), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+    return calls;
+  }
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reports that automatic capture needs Unipile and a LinkedIn account", async () => {
+    const res = await get("/enrichment/capture/auto");
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ available: false });
+    expect((await post("/enrichment/capture/auto", { companyPublicIds: ["acme-robotics"] })).statusCode).toBe(409);
+    expect((await startAutoCapture(app.db!, config(), actor(), ["acme-robotics"])).ok).toBe(false);
+  });
+
+  it("reads a company's people in batches, saves them as candidates, and finishes", async () => {
+    await app.db!.insert(schema.linkedinAccounts).values({ workspaceId: WORKSPACE, unipileAccountId: "acc-auto", channel: "linkedin", displayName: "Owner LinkedIn", status: "active", isDefault: true });
+    const started = await startAutoCapture(app.db!, config(), actor(), ["acme-robotics", "never-captured"]);
+    expect(started).toMatchObject({ ok: true, queued: ["acme-robotics"], skipped: [{ companyPublicId: "never-captured" }] });
+    expect(await job("acme-robotics")).toMatchObject({ mode: "unipile", status: "queued", startedBy: expect.stringMatching(/Test User/) });
+
+    // Batch 1: five pages of 50 -> 250 people, more remain.
+    const calls = fakeUnipile([1, 2, 3, 4, 5].map((page) => ({ items: Array.from({ length: 50 }, (_, i) => person(page * 100 + i)), cursor: `c${page}` })));
+    const now = new Date();
+    expect(await runAutoCapturePass(app.db!, config(), now)).toBe(1);
+    // The company id comes from the capture (member id 424242), and every search is filtered to it.
+    expect(calls.every((call) => (call.body as { company: string[] }).company[0] === "424242")).toBe(true);
+    expect(calls[1]!.url).toContain("cursor=c1");
+    let state = await job("acme-robotics");
+    expect(state).toMatchObject({ status: "queued", batches: 1, peopleFound: 250, mode: "unipile" });
+    const saved = await app.db!.select().from(schema.contacts).where(and(eq(schema.contacts.workspaceId, WORKSPACE), like(schema.contacts.linkedinUrl, "%auto-person-%")));
+    expect(saved).toHaveLength(250);
+    expect(saved.every((row) => row.employmentStatus === "discovery_candidate")).toBe(true);
+
+    // Not due yet: the next batch waits for the gap.
+    expect(await runAutoCapturePass(app.db!, config(), new Date(now.getTime() + 60_000))).toBe(0);
+
+    // Batch 2: the last page -> completed.
+    fakeUnipile([{ items: [person(900), person(901), { id: "x", name: "No public profile" }], cursor: null }]);
+    expect(await runAutoCapturePass(app.db!, config(), new Date(now.getTime() + 4 * 60_000))).toBe(1);
+    state = await job("acme-robotics");
+    expect(state).toMatchObject({ status: "completed", state: "completed", batches: 2, peopleFound: 252, complete: true });
+  });
+
+  it("retries an empty company once, then fails it with the reason", async () => {
+    await startAutoCapture(app.db!, config(), actor(), ["acme-robotics"]);
+    fakeUnipile([{ items: [], cursor: null }, { items: [], cursor: null }]);
+    const now = new Date();
+    await runAutoCapturePass(app.db!, config(), now);
+    expect(await job("acme-robotics")).toMatchObject({ status: "queued", attempts: 1 });
+    await runAutoCapturePass(app.db!, config(), new Date(now.getTime() + 3 * 60_000));
+    expect(await job("acme-robotics")).toMatchObject({ status: "failed", error: "LinkedIn returned no people for this company." });
+  });
+
+  it("fails on a LinkedIn refusal, and can be paused and resumed", async () => {
+    await startAutoCapture(app.db!, config(), actor(), ["acme-robotics"]);
+    const pause = (headers = owner) => app.inject({ method: "POST", url: "/api/v1/enrichment/capture/queue/acme-robotics/pause", headers });
+    expect((await pause()).json().item).toMatchObject({ status: "paused", mode: "unipile" });
+    expect((await pause()).statusCode).toBe(409);
+    // Paused jobs are not read.
+    expect(await runAutoCapturePass(app.db!, config(), new Date())).toBe(0);
+    const resumed = await app.inject({ method: "POST", url: "/api/v1/enrichment/capture/queue/acme-robotics/resume", headers: owner });
+    expect(resumed.json().item).toMatchObject({ status: "queued" });
+    fakeUnipile([{ status: 403 }]);
+    expect(await runAutoCapturePass(app.db!, config(), new Date(Date.now() + 1000))).toBe(1);
+    expect(await job("acme-robotics")).toMatchObject({ status: "failed" });
+    expect(String((await job("acme-robotics"))!.error)).toMatch(/LinkedIn refused/);
+    // Another workspace cannot pause it.
+    expect((await pause(outsider)).statusCode).toBe(409);
+  });
+
+  it("shows how many people each captured company already has in the workspace", async () => {
+    const companies = (await get("/enrichment/capture/companies")).json().companies as Array<Record<string, unknown>>;
+    const acme = companies.find((company) => company.companyPublicId === "acme-robotics")!;
+    expect(Number(acme.peopleSaved)).toBeGreaterThanOrEqual(252);
+    expect(acme.mode).toBe("unipile");
   });
 });

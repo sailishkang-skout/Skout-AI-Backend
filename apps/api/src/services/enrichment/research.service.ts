@@ -389,7 +389,7 @@ function toChange(row: ChangeRow) {
 
 // ── Companies ─────────────────────────────────────────────────────────────────
 
-async function companyPeopleCounts(db: Db, workspaceId: string, companyIds: string[]) {
+export async function companyPeopleCounts(db: Db, workspaceId: string, companyIds: string[]) {
   if (!companyIds.length) return new Map<string, { verified: number; candidates: number }>();
   const [verified, discovered] = await Promise.all([
     db

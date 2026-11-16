@@ -2,7 +2,7 @@
 // EnrichmentTool prototype. Read-only: no network requests, clicks, scrolling or navigation,
 // and no reads of inline page JSON or private APIs.
 globalThis.SkoutCapturePage = (() => {
-const { text, firstMatch, allMatches, metaContent, publicIdFromUrl, parseCount, textMultiline, cleanWebsite } =
+const { text, firstMatch, allMatches, metaContent, publicIdFromUrl, parseCount, textMultiline, cleanWebsite, countryFromPlace } =
   window.SkoutCaptureExtract;
 
 // ---------------------------------------------------------------------------
@@ -214,7 +214,8 @@ function extractPerson() {
     pronoun,
     hiring: hiring || undefined,
     // "City, Region, Country": the last part is the country.
-    locationCountry: locationName && locationName.split(',').length >= 3 ? locationName.split(',').pop().trim() : undefined,
+    // "City, Region, Country": the last part; otherwise the country its state or city belongs to.
+    locationCountry: (locationName && locationName.split(',').length >= 3 ? locationName.split(',').pop().trim() : undefined) || countryFromPlace(locationName),
     // Keep the full contact section local for the review note; only the
     // validated email and phone values are sent to the capture endpoint.
     _contactInfo: contactInfo,
@@ -439,7 +440,13 @@ function extractCompany() {
 
   // Website/overview — best-effort, not yet verified against real captured
   // HTML the way the topcard fields above were.
-  const website = cleanWebsite(Array.from(document.querySelectorAll('.org-top-card-primary-actions a[href]')).find(a => /Visit website/i.test(a.textContent))?.getAttribute('href'));
+  // The "Visit website" button: by its text, its accessible name or LinkedIn's tracking name, in
+  // the old and the new top card.
+  const isVisitWebsite = (link) =>
+    /visit (?:the )?website|company website/i.test(`${link.textContent || ''} ${link.getAttribute('aria-label') || ''}`) ||
+    /visit_company_website|website_link/i.test(`${link.getAttribute('data-tracking-control-name') || ''} ${link.getAttribute('data-test-id') || ''}`);
+  const visitLink = Array.from(document.querySelectorAll('.org-top-card-primary-actions a[href], main a[href], header a[href]')).find(isVisitWebsite);
+  const website = cleanWebsite(visitLink?.getAttribute('href'));
   const overview = window.SkoutCompanySections.clean(document.querySelector('main .org-page-details-module__card-spacing > p, main .org-about-module__description'));
 
   // About-tab detail list (Website/Industry/Company size/HQ/Founded/
@@ -449,13 +456,25 @@ function extractCompany() {
   // guess than the profile-side selectors were on first try, but it's
   // still unverified against a real /about page capture.
   const detailMap = {};
+  const detailLinks = {};
   document.querySelectorAll('main dt').forEach((dt) => {
     const label = text(dt);
     const dd = dt.nextElementSibling;
-    if (label && dd && dd.tagName === 'DD') detailMap[label.toLowerCase()] = text(dd);
+    if (label && dd && dd.tagName === 'DD') {
+      detailMap[label.toLowerCase()] = text(dd);
+      const href = dd.querySelector('a[href]')?.getAttribute('href');
+      if (href) detailLinks[label.toLowerCase()] = href;
+    }
   });
   const sduiAbout = window.SkoutCompanySections.aboutDetails();
-  const aboutWebsite = cleanWebsite(detailMap['website']) || cleanWebsite(sduiAbout.website);
+  // The About "Website" row: its link (LinkedIn wraps it), then its text; last, any outside link
+  // on the About page whose text is a web address.
+  const domainText = /^(?:https?:\/\/)?(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?:\/\S*)?$/i;
+  const addressLink = /\/about\/?$/.test(location.pathname)
+    ? Array.from(document.querySelectorAll('main a[href]')).find((link) => domainText.test(text(link) || '') && cleanWebsite(link.getAttribute('href')))
+    : undefined;
+  const aboutWebsite = cleanWebsite(detailLinks['website']) || cleanWebsite(detailMap['website']) || cleanWebsite(sduiAbout.website) ||
+    cleanWebsite(addressLink?.getAttribute('href'));
   const companyWebsite = website || aboutWebsite;
   let domain;
   try { domain = new URL(companyWebsite).hostname.replace(/^www\./, ''); } catch {}
@@ -478,6 +497,14 @@ function extractCompany() {
     ? parseCount(employeeLinkText)
     : undefined;
   const foundedAt = detailMap['founded'] || sduiAbout.foundedAt;
+  // LinkedIn's numeric company id, only from this company's own employee search ("N associated
+  // members" or "Search more employees"): a wrong id would merge two companies' records.
+  let memberId;
+  try {
+    const ownSearch = associatedMemberLink?.href || sduiTopCard.employeeSearchUrl;
+    const current = ownSearch ? new URL(ownSearch, location.origin).searchParams.get('currentCompany') : undefined;
+    memberId = current?.match(/^\[?"?(\d{1,20})"?\]?$/)?.[1];
+  } catch { /* no id */ }
   const specialtiesText = detailMap['specialties'] || sduiAbout.specialties;
   const specialties = specialtiesText ? specialtiesText.split(',').map((s) => s.trim()) : undefined;
 
@@ -504,6 +531,9 @@ function extractCompany() {
     logoUrl,
     industry: detailMap['industry'] || industry || sduiAbout.industry || sduiTopCard.industry,
     headquarter: detailMap['headquarters'] || headquarter || sduiAbout.headquarter || sduiTopCard.headquarter,
+    // The country of the headquarters: written there, or known from its state or city.
+    locationCountry: countryFromPlace(detailMap['headquarters'] || headquarter || sduiAbout.headquarter || sduiTopCard.headquarter),
+    memberId,
     followers,
     size: detailMap['company size']?.replace(/\s*employees?$/i, '').trim() ||
       sduiAbout.size?.replace(/\s*employees?$/i, '').trim() || size,
