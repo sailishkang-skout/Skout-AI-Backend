@@ -51,7 +51,7 @@
       <p class="capture-notice">
         Capture reads only what LinkedIn has already rendered on the page you opened, after you start it here. It
         never sets filters, submits searches or sends messages, and nothing is saved until you review it. LinkedIn
-        prohibits scraping or automating activity with browser extensions: the 10-page / 250-lead cap is a workload
+        prohibits scraping or automating activity with browser extensions: the 25-page / 250-lead cap per batch is a workload
         control, not a safety guarantee. Stop if LinkedIn warns or restricts your account.
       </p>
       <p class="vision-desc">
@@ -135,7 +135,13 @@
         </label>
         <p id="capture-company-status" class="vision-desc" role="status"></p>
         <ul id="capture-company-list" class="capture-company-list"></ul>
+        <label class="checkbox-row">
+          <input id="capture-auto-save" type="checkbox" />
+          Save each batch automatically (no review). Batches with no people are retried once, then skipped.
+        </label>
         <button id="capture-company-start" type="button" class="primary" disabled>Start queue</button>
+        <button id="capture-company-server" type="button" disabled>Run on the server</button>
+        <p id="capture-server-note" class="vision-desc"></p>
       </details>
     </section>
 

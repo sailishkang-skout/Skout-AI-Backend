@@ -39,7 +39,7 @@ globalThis.SkoutCompanyCapture = globalThis.SkoutCompanyCapture || (() => {
     }
     // About values are more precise than the abbreviated topcard on other tabs.
     if (/\/about\/$/.test(previous.sourceUrl || '') && !/\/about\/$/.test(next.sourceUrl || '')) {
-      for (const field of ['industry','headquarter','size','website','domain','phone','employeesOnLi','foundedAt','specialties','overview']) if (previous[field] !== undefined) result[field] = previous[field];
+      for (const field of ['industry','headquarter','locationCountry','size','website','domain','phone','employeesOnLi','foundedAt','specialties','overview']) if (previous[field] !== undefined) result[field] = previous[field];
     }
     return result;
   }
@@ -146,8 +146,20 @@ globalThis.SkoutCompanyCapture = globalThis.SkoutCompanyCapture || (() => {
       // Company People page. Its "Page 1 of N" control changes aggregate
       // analytics, not the member-card list, so it must not be treated as an
       // employee-directory paginator.
-      // A continued queue batch already has the People page cards from its first batch.
-      if (!stopped && options.includePeople && !options.resume) {
+      // LinkedIn sometimes hides the "associated members" link. Use the search an earlier run
+      // saved, or build it from the company's LinkedIn id.
+      if (!stopped && options.includePeople && !peopleSearchUrl) {
+        try {
+          const saved = await message({type:'GET_SAVED_PEOPLE_SEARCH', companyId});
+          peopleSearchUrl = saved.url;
+        } catch { /* none saved */ }
+        if (!peopleSearchUrl && /^\d{1,20}$/.test(data.memberId || '')) {
+          peopleSearchUrl = `https://www.linkedin.com/search/results/people/?currentCompany=${encodeURIComponent(JSON.stringify([data.memberId]))}`;
+        }
+      }
+      // A continued queue batch already has the People page cards from its first batch, unless
+      // there is no people search to continue: then the People page is the only source.
+      if (!stopped && options.includePeople && (!options.resume || !peopleSearchUrl)) {
         status.textContent = 'Reading visible company people pages…';
         try {
           const directoryResult = await message({type:'READ_COMPANY_PEOPLE_DIRECTORY',url:root + 'people/',companyId});

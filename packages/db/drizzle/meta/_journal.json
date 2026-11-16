@@ -1114,6 +1114,13 @@
       "when": 1798300500000,
       "tag": "0156_capture_queue_job_status",
       "breakpoints": true
+    },
+    {
+      "idx": 159,
+      "version": "7",
+      "when": 1798300600000,
+      "tag": "0157_capture_queue_auto_mode",
+      "breakpoints": true
     }
   ]
 }

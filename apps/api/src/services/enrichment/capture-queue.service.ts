@@ -13,6 +13,7 @@ import { and, asc, desc, eq, ilike, isNull, like, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { schema, type Db } from "@skout/db";
 import { normalizeLinkedinId } from "./capture-identity.js";
+import { companyPeopleCounts } from "./research.service.js";
 
 /**
  * LinkedIn Enrichment → Capture queue. A company's people discovery is read in reviewed batches
@@ -88,7 +89,7 @@ export function effectiveJobState(row: Pick<Row, "status" | "updatedAt">, now = 
   return stale && (row.status === "running" || row.status === "review") ? "interrupted" : (row.status as CaptureJobStatus);
 }
 
-export function captureQueueDto(row: Row, now = Date.now()) {
+export function captureQueueDto(row: Row, now = Date.now(), startedBy: string | null = null) {
   return {
     companyPublicId: row.companyPublicId,
     companyName: row.companyName,
@@ -103,6 +104,12 @@ export function captureQueueDto(row: Row, now = Date.now()) {
     status: row.status,
     state: effectiveJobState(row, now),
     error: row.error,
+    /** extension: read in a member's browser | unipile: read automatically on the server. */
+    mode: row.mode,
+    nextRunAt: row.nextRunAt?.toISOString() ?? null,
+    attempts: row.attempts,
+    /** Name (or email) of the member who started or last moved the job. */
+    startedBy,
     stopReason: row.stopReason,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -160,6 +167,8 @@ export async function recordCaptureQueueBatch(
         expectedPeople: sql`COALESCE(${update.expectedPeople ?? null}, ${table.expectedPeople})`,
         ...(complete !== undefined ? { complete } : {}),
         ...(status ? { status, error: status === "failed" ? update.error || null : null } : {}),
+        // Queued for the extension (from the dashboard or the extension itself): the server worker leaves it alone.
+        ...(status === "queued" ? { mode: "extension", nextRunAt: null } : {}),
         stopReason: update.stopReason !== undefined ? update.stopReason || null : table.stopReason,
         updatedBy: actor.userId,
         updatedAt: now,
@@ -191,6 +200,7 @@ export async function syncCaptureQueue(db: Db, actor: { workspaceId: string; use
           complete: item.status === "completed",
           status: item.status,
           error: item.status === "failed" ? item.error || null : null,
+          mode: "extension",
           updatedBy: actor.userId,
           createdAt: now,
           updatedAt: now,
@@ -200,6 +210,9 @@ export async function syncCaptureQueue(db: Db, actor: { workspaceId: string; use
           set: {
             companyName: sql`COALESCE(${item.companyName || null}, ${table.companyName})`,
             status: item.status,
+            // The extension is reading this company now, so it is an extension job again.
+            mode: "extension",
+            nextRunAt: null,
             // A job that ends completed is finished; any other state leaves the saved counts alone.
             ...(item.status === "completed" ? { complete: true } : {}),
             error: item.status === "failed" ? item.error || null : null,
@@ -212,17 +225,19 @@ export async function syncCaptureQueue(db: Db, actor: { workspaceId: string; use
   return { updated: items.length };
 }
 
-/** Capture jobs for the dashboard, newest activity first. */
+/** Capture jobs of every member of the workspace, newest activity first. */
 export async function listCaptureQueue(db: Db, workspaceId: string, opts: { status?: CaptureJobStatus } = {}) {
   const table = schema.enrichmentCaptureQueue;
+  const users = schema.users;
   const rows = await db
-    .select()
+    .select({ job: table, name: users.fullName, email: users.email })
     .from(table)
+    .leftJoin(users, eq(users.id, sql`COALESCE(${table.requestedBy}, ${table.updatedBy})`))
     .where(opts.status ? and(eq(table.workspaceId, workspaceId), eq(table.status, opts.status)) : eq(table.workspaceId, workspaceId))
     .orderBy(desc(table.updatedAt))
     .limit(500);
   const now = Date.now();
-  return rows.map((row) => captureQueueDto(row, now));
+  return rows.map((row) => captureQueueDto(row.job, now, row.name || row.email || null));
 }
 
 /**
@@ -233,7 +248,16 @@ export async function requestCaptureResume(db: Db, actor: { workspaceId: string;
   const table = schema.enrichmentCaptureQueue;
   const [row] = await db
     .update(table)
-    .set({ status: "queued", error: null, updatedBy: actor.userId, updatedAt: new Date() })
+    .set({
+      status: "queued",
+      error: null,
+      attempts: 0,
+      // An automatic job is picked up by the worker on its next pass.
+      nextRunAt: sql`CASE WHEN ${table.mode} = 'unipile' THEN now() ELSE ${table.nextRunAt} END`,
+      requestedBy: sql`CASE WHEN ${table.mode} = 'unipile' THEN ${actor.userId}::uuid ELSE ${table.requestedBy} END`,
+      updatedBy: actor.userId,
+      updatedAt: new Date(),
+    })
     .where(
       and(
         eq(table.workspaceId, actor.workspaceId),
@@ -277,6 +301,7 @@ export async function listCapturableCompanies(db: Db, workspaceId: string, searc
       batches: q.batches,
       complete: q.complete,
       status: q.status,
+      mode: q.mode,
       updatedAt: q.updatedAt,
     })
     .from(c)
@@ -295,8 +320,10 @@ export async function listCapturableCompanies(db: Db, workspaceId: string, searc
     .orderBy(asc(c.name), asc(c.id))
     .limit(1000);
   const seen = new Set<string>();
-  return rows
-    .filter((row) => (seen.has(row.id) ? false : (seen.add(row.id), true)))
+  const unique = rows.filter((row) => (seen.has(row.id) ? false : (seen.add(row.id), true)));
+  // People already in the workspace for each company, however they were captured.
+  const counts = await companyPeopleCounts(db, workspaceId, unique.map((row) => row.id));
+  return unique
     .map((row) => ({
       companyPublicId: row.key.slice("company:".length),
       name: row.name,
@@ -306,6 +333,8 @@ export async function listCapturableCompanies(db: Db, workspaceId: string, searc
       // null: never captured through the queue, so nothing is known about what remains.
       complete: row.complete,
       status: row.status,
+      mode: row.mode ?? null,
+      peopleSaved: (counts.get(row.id)?.verified ?? 0) + (counts.get(row.id)?.candidates ?? 0),
       updatedAt: row.updatedAt?.toISOString() ?? null,
     }));
 }

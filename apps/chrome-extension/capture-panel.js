@@ -160,12 +160,15 @@ export function fieldCoverage(kind, data) {
 
 /** One line about a captured company's people capture: what is saved and what is left. */
 export function companyProgressText(company) {
-  const found = Number(company?.peopleFound) || 0;
+  // People already in the workspace for this company, however they were captured.
+  const saved = Math.max(Number(company?.peopleSaved) || 0, Number(company?.peopleFound) || 0);
   const total = Number.isFinite(company?.expectedPeople) ? ` of about ${company.expectedPeople.toLocaleString()}` : "";
-  if (company?.local === "paused") return `${found.toLocaleString()} people saved · a batch is paused, it resumes where it stopped`;
-  if (company?.complete === true) return `All people captured (${found.toLocaleString()})`;
-  if (found > 0 || company?.local === "partial") return `${found.toLocaleString()}${total} people saved · more remain`;
-  return "No people captured yet";
+  const people = `${saved.toLocaleString()}${total} people saved`;
+  const auto = company?.mode === "unipile" && ["queued", "running"].includes(company?.status) ? " · reading automatically on the server" : "";
+  if (company?.local === "paused") return `${people} · a batch is paused, it resumes where it stopped${auto}`;
+  if (company?.complete === true) return `All people captured (${saved.toLocaleString()})`;
+  if (saved > 0 || company?.local === "partial") return `${people} · more may remain${auto}`;
+  return `No people captured yet${auto}`;
 }
 
 /** One line for a company in a running queue. */
@@ -429,6 +432,11 @@ export function initCapturePanel() {
       !state.selected.size || runActive() || isProgressActive(state.progress) || Boolean(state.draft) || Boolean(state.halt) ||
       state.saving || state.status?.usage?.remainingToday === 0;
     companyStartBtn.title = state.status?.usage?.remainingToday === 0 ? "The daily capture limit is reached. Try again tomorrow." : "";
+    const serverBtn = $("capture-company-server");
+    if (serverBtn) {
+      serverBtn.textContent = state.selected.size ? `Run on the server (${state.selected.size})` : "Run on the server";
+      serverBtn.disabled = !state.serverAuto || !state.selected.size || state.status?.usage?.remainingToday === 0;
+    }
   }
 
   function renderRun() {
@@ -500,10 +508,41 @@ export function initCapturePanel() {
     const hidden = [...state.selected].filter((id) => !companies.some((company) => company.companyPublicId === id)).map((companyPublicId) => ({ companyPublicId, name: companyPublicId }));
     companyStartBtn.disabled = true;
     setResult("");
-    const response = await send("capture-queue-start", { companies: [...companies, ...hidden], untilComplete: $("capture-until-complete").checked });
+    const response = await send("capture-queue-start", {
+      companies: [...companies, ...hidden],
+      untilComplete: $("capture-until-complete").checked,
+      autoSave: $("capture-auto-save").checked,
+    });
     if (!response.ok) setResult(`Queue did not start: ${response.error}`, "capture-error");
     else state.selected.clear();
     renderCompanies();
+  });
+
+  // Automatic on the server (Unipile): no browser tab, the workspace's LinkedIn account reads the people.
+  const serverBtn = $("capture-company-server");
+  const serverNoteEl = $("capture-server-note");
+  async function refreshServerAuto() {
+    const response = await send("capture-auto-status");
+    state.serverAuto = response.ok && response.available === true;
+    serverNoteEl.textContent = response.ok
+      ? response.available
+        ? `Runs on the server with ${response.accountName || "the workspace's LinkedIn account"}; you can close this browser.`
+        : response.reason || ""
+      : "";
+    renderCompanyControls();
+  }
+  serverBtn.addEventListener("click", async () => {
+    const ids = [...state.selected];
+    serverBtn.disabled = true;
+    setResult("");
+    const response = await send("capture-auto-start", { companyPublicIds: ids });
+    if (!response.ok) setResult(`Automatic capture did not start: ${response.error}`, "capture-error");
+    else {
+      const skipped = response.skipped?.length ? ` ${response.skipped.length} skipped: ${response.skipped.map((entry) => `${entry.companyPublicId} (${entry.reason})`).join("; ")}` : "";
+      setResult(`${response.queued.length} companies are being read automatically on the server. Follow them under LinkedIn Enrichment → Capture queue.${skipped}`, "capture-success");
+      state.selected.clear();
+    }
+    await refreshCompanies();
   });
   runPauseBtn.addEventListener("click", () => void send("capture-queue-stop"));
   runResumeBtn.addEventListener("click", async () => {
@@ -752,7 +791,7 @@ export function initCapturePanel() {
     discardBtn.disabled = true;
     // Not a success message: the run is only reported once the API records its final status.
     setResult("Saving… waiting for the capture run to be recorded.");
-    const response = await send("capture-send", { data: currentData(), autoContinue: Boolean($("capture-auto-continue")?.checked) });
+    const response = await send("capture-send", { data: currentData(), autoContinue: Boolean($("capture-auto-continue")?.checked), autoSave: Boolean($("capture-auto-save")?.checked) });
     state.saving = false;
     discardBtn.disabled = false;
     if (response.ok) {
@@ -830,6 +869,6 @@ export function initCapturePanel() {
     applyDraft(stored[DRAFT_KEY]);
     state.run = (await chrome.storage.local.get(RUN_QUEUE_KEY))[RUN_QUEUE_KEY] || null;
     renderRun();
-    await Promise.all([refreshStatus(), refreshTab(), refreshCompanies()]);
+    await Promise.all([refreshStatus(), refreshTab(), refreshCompanies(), refreshServerAuto()]);
   })();
 }

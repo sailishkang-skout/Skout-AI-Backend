@@ -17,7 +17,8 @@ import {
 
 /** Workload controls, not a LinkedIn safety guarantee. Enforced server-side per capture run. */
 export const CAPTURE_CAPS = {
-  MAX_PAGES_PER_RUN: 10,
+  // LinkedIn shows 10 people per results page: 25 pages is one 250-person batch.
+  MAX_PAGES_PER_RUN: 25,
   MAX_LEADS_PER_RUN: 250,
   DEFAULT_DAILY_LEADS_PER_USER: 1000,
 } as const;

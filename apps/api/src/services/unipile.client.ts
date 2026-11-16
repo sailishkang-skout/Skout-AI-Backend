@@ -387,3 +387,38 @@ export function isUnipileConfigured(config: Env): boolean {
   // CDK seeds Secrets Manager with "replace-me" — treat that as unset.
   return Boolean(key && dsn && key !== "replace-me");
 }
+
+/** LinkedIn company profile through Unipile; `id` is LinkedIn's numeric company id. */
+export async function unipileGetCompany(
+  config: Env,
+  input: { accountId: string; identifier: string }
+): Promise<{ id: string | null; name: string | null }> {
+  const qs = new URLSearchParams({ account_id: input.accountId });
+  const data = await unipileFetch<{ id?: string | number | null; name?: string | null }>(
+    config,
+    `/api/v1/linkedin/company/${encodeURIComponent(input.identifier)}?${qs}`
+  );
+  const id = data?.id == null ? null : String(data.id);
+  return { id: id && /^\d{1,20}$/.test(id) ? id : null, name: data?.name ?? null };
+}
+
+/** People LinkedIn lists as working at a company (classic search filtered by company id), one page at a time. */
+export async function unipileSearchCompanyPeople(
+  config: Env,
+  input: { accountId: string; companyId: string; limit?: number; cursor?: string | null }
+): Promise<{ items: UnipilePeopleSearchItem[]; cursor: string | null }> {
+  const qs = new URLSearchParams({
+    account_id: input.accountId,
+    limit: String(Math.min(Math.max(input.limit ?? 50, 1), 50)),
+  });
+  if (input.cursor) qs.set("cursor", input.cursor);
+  const data = await unipileFetch<{ items?: UnipilePeopleSearchItem[]; cursor?: string | null }>(
+    config,
+    `/api/v1/linkedin/search?${qs}`,
+    {
+      method: "POST",
+      body: JSON.stringify({ api: "classic", category: "people", company: [input.companyId] }),
+    }
+  );
+  return { items: data?.items ?? [], cursor: data?.cursor ?? null };
+}

@@ -184,10 +184,10 @@ describe("company people discovery", () => {
     expect(result.peopleProfiles).toHaveLength(1);
   });
 
-  it("reviews 10-page batches and commits a cursor until the final visible page", async () => {
+  it("reviews 25-page batches and commits a cursor until the final visible page", async () => {
     const { read, commit, storage } = harness(43);
     const ids = [];
-    for (const expected of [10, 10, 10, 10, 3]) {
+    for (const expected of [25, 18]) {
       const result = await read(10);
       expect(result.ok).toBe(true);
       expect(result.peopleProfiles).toHaveLength(expected);
@@ -198,23 +198,38 @@ describe("company people discovery", () => {
     expect(storage[stateKey].committed).toMatchObject({ complete: true, pagesRead: 43 });
   });
 
-  it("re-reads an interrupted page without losing the saved draft candidates", async () => {
+  it("keeps the people already read when LinkedIn does not open the next page, then carries on", async () => {
     const { read, storage } = harness(22, { failAdvanceAt: 5 });
     const interrupted = await read(1000);
-    expect(interrupted.ok).toBe(false);
+    // The five pages read are a good batch, not an error.
+    expect(interrupted.ok).toBe(true);
+    expect(interrupted.peopleProfiles).toHaveLength(5);
+    expect(interrupted.complete).toBe(false);
+    expect(interrupted.warnings[0]).toMatch(/did not open the next page/);
     expect(storage[stateKey].draft.profiles).toHaveLength(5);
+    // Run again without saving: it re-reads page 5 and finishes the search.
     const resumed = await read(1000);
     expect(resumed.ok).toBe(true);
-    expect(resumed.peopleProfiles).toHaveLength(10);
-    expect(new Set(resumed.peopleProfiles.map((profile) => profile.publicId)).size).toBe(10);
+    expect(resumed.peopleProfiles).toHaveLength(22);
+    expect(new Set(resumed.peopleProfiles.map((profile) => profile.publicId)).size).toBe(22);
+    expect(resumed.complete).toBe(true);
+  });
+
+  it("does not hand back a paused batch that found nobody", async () => {
+    const { read, storage } = harness(3);
+    storage[stateKey] = { searchKey: '["123"]', searchUrl, draft: { token: "old", profiles: [], pagesRead: 25, batchFull: true, resumeUrl: `${searchUrl}&page=26` } };
+    const result = await read(3);
+    expect(result.ok).toBe(true);
+    expect(result.checkpointToken).not.toBe("old");
+    expect(result.peopleProfiles).toHaveLength(3);
   });
 
   it("keeps the draft and the committed cursor when a review is not saved", async () => {
-    const { read, storage } = harness(25);
-    const first = await read(25);
-    expect(first.peopleProfiles).toHaveLength(10);
+    const { read, storage } = harness(40);
+    const first = await read(40);
+    expect(first.peopleProfiles).toHaveLength(25);
     expect(storage[stateKey].committed).toBeUndefined();
-    const again = await read(25);
+    const again = await read(40);
     expect(again.checkpointToken).toBe(first.checkpointToken);
     expect(again.peopleProfiles.map((profile) => profile.publicId)).toEqual(first.peopleProfiles.map((profile) => profile.publicId));
   });
@@ -295,8 +310,8 @@ describe("saving a reviewed capture", () => {
 
   it("strips review-only fields and bounds the request", () => {
     const draft = { kind: "sales", capturedAt: "2026-10-08T10:00:00.000Z" };
-    const payload = buildCapturePayload(draft, { sourceUrl: "https://www.linkedin.com/sales/search/people", pagesRead: 14, peopleProfiles: [lead(1)], _salesCapture: { stopped: false } });
-    expect(payload).toEqual({ sourceUrl: "https://www.linkedin.com/sales/search/people", filters: undefined, pagesRead: 10, resultCount: undefined, peopleProfiles: [lead(1)], capturedAt: draft.capturedAt });
+    const payload = buildCapturePayload(draft, { sourceUrl: "https://www.linkedin.com/sales/search/people", pagesRead: 30, peopleProfiles: [lead(1)], _salesCapture: { stopped: false } });
+    expect(payload).toEqual({ sourceUrl: "https://www.linkedin.com/sales/search/people", filters: undefined, pagesRead: 25, resultCount: undefined, peopleProfiles: [lead(1)], capturedAt: draft.capturedAt });
     expect(() => buildCapturePayload(draft, { peopleProfiles: Array.from({ length: 251 }, (_, index) => lead(index)) })).toThrow(/at most 250 leads/);
   });
 
