@@ -8,7 +8,8 @@ import { createAnalyticsService } from "./analytics.service.js";
 import { createDashboardService } from "./dashboard.service.js";
 import { createWorkspaceService } from "./workspace.service.js";
 import { buildEnrichmentService } from "./enrichment/index.js";
-import { buildSequenceService, enrollListWithSideEffects } from "./sequence.service.js";
+import { buildSequenceService, enrollListWithSideEffects, CONDITION_TYPES } from "./sequence.service.js";
+import { normalizeGeneratedSteps } from "./generated-sequence-steps.js";
 import { buildInboxService, getDeliverabilityMetrics } from "./inbox.service.js";
 import { buildAiDraftService } from "./ai-draft.service.js";
 import { createBillingService } from "./billing.service.js";
@@ -528,7 +529,11 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
     function: {
       name: "create_outbound_sequence",
       description:
-        "Create, save, and draft a new multi-step outbound sales cadence/sequence directly in the workspace database. Use this whenever the user asks to create, build, draft, or set up an outreach sequence.",
+        "Create, save, and draft a new multi-step outbound sales cadence/sequence directly in the workspace database. Use this whenever the user asks to create, build, draft, or set up an outreach sequence. " +
+        "Include EVERY step the user asked for — if they ask for 14 steps, send 14 steps, never a shorter summary. " +
+        "Conditions/branches: add a step with stepType \"condition\" (with conditionType and conditionWaitDays), " +
+        "then the steps of its YES path with branch \"yes\" and the steps of its NO path with branch \"no\". " +
+        "The next step with no branch continues the main path for everyone. Optionally end with a \"goal\" step.",
       parameters: {
         type: "object",
         properties: {
@@ -544,12 +549,32 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
               properties: {
                 stepType: {
                   type: "string",
-                  enum: ["email", "linkedin", "whatsapp", "call", "wait", "task"],
-                  description: "Step channel or action type.",
+                  enum: ["email", "linkedin", "whatsapp", "call", "wait", "task", "condition", "goal"],
+                  description:
+                    "Step channel or action type. \"condition\" branches on prospect behaviour; \"goal\" marks the success end-point.",
                 },
                 delayDays: {
                   type: "number",
-                  description: "Days to wait after the previous step (0 for first step).",
+                  description: "Days to wait after the previous step (0 for first step and for condition/goal steps).",
+                },
+                conditionType: {
+                  type: "string",
+                  enum: [...CONDITION_TYPES],
+                  description: "ONLY for condition steps: what to check (e.g. email_opened, email_replied, linkedin_invite_accepted).",
+                },
+                conditionWaitDays: {
+                  type: "number",
+                  description: "ONLY for condition steps: days to wait for the condition before taking the NO path (1–30).",
+                },
+                branch: {
+                  type: "string",
+                  enum: ["yes", "no"],
+                  description:
+                    "Set on steps that follow a condition step: \"yes\" = run when the condition is met, \"no\" = run when it is not. Omit for main-path steps.",
+                },
+                goalLabel: {
+                  type: "string",
+                  description: "ONLY for goal steps, e.g. \"Meeting booked\".",
                 },
                 subject: {
                   type: "string",
@@ -1009,25 +1034,7 @@ export function createWorkspaceToolRunner(
       if (rawSteps.length === 0) {
         return { error: "at_least_one_step_required" };
       }
-      const formattedSteps = rawSteps.map((s, idx) => ({
-        stepType: (["email", "linkedin", "whatsapp", "call", "wait", "task"].includes(String(s.stepType))
-          ? String(s.stepType)
-          : "email") as any,
-        delayDays: typeof s.delayDays === "number" && s.delayDays >= 0 ? s.delayDays : idx === 0 ? 0 : 3,
-        delayUnit: "days" as const,
-        subject:
-          typeof s.subject === "string" ? s.subject : s.stepType === "email" ? "Quick question" : undefined,
-        bodyTemplate:
-          typeof s.bodyTemplate === "string" && s.bodyTemplate.trim()
-            ? s.bodyTemplate
-            : `<p>Hi {{firstName}},</p><p>Reaching out regarding {{companyName}}.</p><p style="font-size:11px;color:#888"><a href="{{unsubscribeUrl}}">Unsubscribe</a></p>`,
-        linkedinAction:
-          s.stepType === "linkedin"
-            ? (["connect", "message", "inmail", "like", "follow"].includes(String(s.linkedinAction))
-                ? (String(s.linkedinAction) as any)
-                : "connect")
-            : undefined,
-      }));
+      const formattedSteps = normalizeGeneratedSteps(rawSteps, { fillDefaults: true });
 
       const seq = await sequence.createGeneratedSequence(workspaceId, {
         name,
