@@ -9,7 +9,7 @@ import { createDashboardService } from "./dashboard.service.js";
 import { createWorkspaceService } from "./workspace.service.js";
 import { buildEnrichmentService } from "./enrichment/index.js";
 import { buildSequenceService, enrollListWithSideEffects, CONDITION_TYPES } from "./sequence.service.js";
-import { normalizeGeneratedSteps } from "./generated-sequence-steps.js";
+import { ensureGoalEnd, normalizeGeneratedSteps, validateSequenceStructure } from "./generated-sequence-steps.js";
 import { buildInboxService, getDeliverabilityMetrics } from "./inbox.service.js";
 import { buildAiDraftService } from "./ai-draft.service.js";
 import { createBillingService } from "./billing.service.js";
@@ -531,9 +531,10 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
       description:
         "Create, save, and draft a new multi-step outbound sales cadence/sequence directly in the workspace database. Use this whenever the user asks to create, build, draft, or set up an outreach sequence. " +
         "Include EVERY step the user asked for — if they ask for 14 steps, send 14 steps, never a shorter summary. " +
-        "Conditions/branches: add a step with stepType \"condition\" (with conditionType and conditionWaitDays), " +
-        "then the steps of its YES path with branch \"yes\" and the steps of its NO path with branch \"no\". " +
-        "The next step with no branch continues the main path for everyone. Optionally end with a \"goal\" step.",
+        "Conditions/branches: add a step with stepType \"condition\" (with conditionType and conditionWaitDays) and put the " +
+        "steps that depend on it INSIDE its \"yes\" array (condition met) and \"no\" array (not met) — at least one step in each. " +
+        "Top-level steps after a condition run for everyone once the branch finishes. Never put a condition inside yes/no. " +
+        "The step count includes every step object, nested ones too. End with a \"goal\" step.",
       parameters: {
         type: "object",
         properties: {
@@ -566,11 +567,21 @@ export const WORKSPACE_TOOL_DEFS: ToolDef[] = [
                   type: "number",
                   description: "ONLY for condition steps: days to wait for the condition before taking the NO path (1–30).",
                 },
+                yes: {
+                  type: "array",
+                  items: { type: "object" },
+                  description: "ONLY for condition steps: the steps (same fields as here) that run when the condition is met.",
+                },
+                no: {
+                  type: "array",
+                  items: { type: "object" },
+                  description: "ONLY for condition steps: the steps (same fields as here) that run when the condition is not met.",
+                },
                 branch: {
                   type: "string",
                   enum: ["yes", "no"],
                   description:
-                    "Set on steps that follow a condition step: \"yes\" = run when the condition is met, \"no\" = run when it is not. Omit for main-path steps.",
+                    "Alternative to yes/no arrays: set on top-level steps right after a condition (\"yes\" = condition met, \"no\" = not met). Prefer the yes/no arrays.",
                 },
                 goalLabel: {
                   type: "string",
@@ -1034,7 +1045,7 @@ export function createWorkspaceToolRunner(
       if (rawSteps.length === 0) {
         return { error: "at_least_one_step_required" };
       }
-      const formattedSteps = normalizeGeneratedSteps(rawSteps, { fillDefaults: true });
+      const formattedSteps = ensureGoalEnd(normalizeGeneratedSteps(rawSteps, { fillDefaults: true }));
 
       const seq = await sequence.createGeneratedSequence(workspaceId, {
         name,
@@ -1177,13 +1188,31 @@ export function createWorkspaceToolRunner(
     create_outbound_sequence: (args) => {
       const name = typeof args.name === "string" && args.name.trim() ? args.name.trim() : "Outbound Cadence";
       const rawSteps = Array.isArray(args.steps) ? (args.steps as Record<string, unknown>[]) : [];
+      const sentSteps = normalizeGeneratedSteps(rawSteps, { fillDefaults: true });
+      const steps = ensureGoalEnd(sentSteps);
+      // Conditions with nothing on their yes/no paths go back to the model to fix before the user
+      // ever sees a preview (thrown errors reach the model as the tool result). A missing final goal
+      // is added automatically instead.
+      const problems = validateSequenceStructure(steps);
+      if (problems.length > 0) {
+        throw new Error(
+          `Fix the sequence and call create_outbound_sequence again: ${problems.join(" ")} ` +
+            `Put the steps that depend on each condition inside its "yes" and "no" arrays.`
+        );
+      }
       return {
         toolName: "create_outbound_sequence",
-        scope: `Create a new outbound sequence "${name}" with ${rawSteps.length} step(s).`,
-        assumptions: rawSteps.length === 0 ? ["No steps provided — the sequence will fail validation."] : [],
-        affectedRecordCount: rawSteps.length,
+        scope: `Create a new outbound sequence "${name}" with ${steps.length} step(s), including ${
+          steps.filter((s) => s.stepType === "condition").length
+        } condition(s).`,
+        assumptions: [
+          ...(sentSteps.length === 0 ? ["No steps provided — the sequence will fail validation."] : []),
+          ...(steps.length > sentSteps.length ? ["A closing \"Meeting booked\" goal step is added at the end."] : []),
+        ],
+        // The added goal is a marker, not an action, so it doesn't count towards needing confirmation.
+        affectedRecordCount: sentSteps.length,
         creditCost: 0,
-        externalSideEffects: rawSteps.some((s) => s.stepType === "linkedin")
+        externalSideEffects: steps.some((s) => s.stepType === "linkedin")
           ? ["Will send LinkedIn actions once prospects are enrolled into this sequence"]
           : [],
       };
