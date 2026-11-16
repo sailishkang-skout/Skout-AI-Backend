@@ -289,6 +289,9 @@ export function initCapturePanel() {
   const companyAllEl = $("capture-company-all");
   const companySelectedEl = $("capture-company-selected");
   const companyStartBtn = $("capture-company-start");
+  const requestedEl = $("capture-requested");
+  const requestedTextEl = $("capture-requested-text");
+  const requestedStartBtn = $("capture-requested-start");
   const runEl = $("capture-run");
   const runNoteEl = $("capture-run-note");
   const runListEl = $("capture-run-list");
@@ -296,7 +299,7 @@ export function initCapturePanel() {
   const runResumeBtn = $("capture-run-resume");
   const runClearBtn = $("capture-run-clear");
 
-  const state = { status: null, statusError: "", tab: null, progress: null, halt: null, draft: null, data: null, excluded: new Set(), saving: false, invalid: new Map(), continueCompany: null, companies: [], selected: new Set(), run: null, companiesError: "" };
+  const state = { status: null, statusError: "", tab: null, progress: null, halt: null, draft: null, data: null, excluded: new Set(), saving: false, invalid: new Map(), continueCompany: null, requested: [], companies: [], selected: new Set(), run: null, companiesError: "" };
 
   const show = (el, visible) => el?.classList.toggle("hidden", !visible);
 
@@ -451,6 +454,23 @@ export function initCapturePanel() {
     renderCompanies();
   }
 
+  // Jobs asked for from the workspace's Capture queue page: shown here so the user starts them.
+  async function refreshRequested() {
+    const response = await send("capture-requested");
+    state.requested = response.ok ? response.jobs || [] : [];
+    const count = state.requested.length;
+    show(requestedEl, count > 0 && !runActive());
+    const names = state.requested.slice(0, 5).map((job) => job.name).join(", ");
+    requestedTextEl.textContent = count ? `Requested from your workspace's Capture queue (${count}): ${names}${count > 5 ? ` and ${count - 5} more` : ""}.` : "";
+    requestedStartBtn.disabled = state.saving || Boolean(state.draft) || Boolean(state.halt) || state.status?.usage?.remainingToday === 0;
+  }
+  requestedStartBtn.addEventListener("click", async () => {
+    requestedStartBtn.disabled = true;
+    const response = await send("capture-queue-start", { companies: state.requested, untilComplete: true });
+    if (!response.ok) setResult(`Could not start: ${response.error}`, "capture-error");
+    await refreshRequested();
+  });
+
   let companyReload = 0;
   async function refreshCompanies() {
     const ticket = ++companyReload;
@@ -459,6 +479,7 @@ export function initCapturePanel() {
     state.companies = response.ok ? response.companies || [] : [];
     state.companiesError = response.ok ? "" : response.error;
     renderCompanies();
+    void refreshRequested();
   }
 
   let searchTimer;
@@ -779,6 +800,7 @@ export function initCapturePanel() {
       state.run = changes[RUN_QUEUE_KEY].newValue || null;
       renderRun();
       renderStart();
+      void refreshRequested();
     }
     if (changes[HALT_KEY]) {
       state.halt = changes[HALT_KEY].newValue || null;

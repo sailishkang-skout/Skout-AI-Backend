@@ -9,7 +9,7 @@
  *     (research.service.ts) and ENR-02 (capture-ingest.service.ts).
  *   - Review date: revisit once apps/crm's internal API surface fully shipped (Wave 2)
  */
-import { and, asc, eq, ilike, isNull, like, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, isNull, like, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { schema, type Db } from "@skout/db";
 import { normalizeLinkedinId } from "./capture-identity.js";
@@ -29,18 +29,50 @@ const companyPublicId = z
 
 const count = z.number().int().nonnegative().max(2_000_000_000);
 
+export const CAPTURE_JOB_STATUSES = ["queued", "running", "review", "paused", "completed", "failed", "skipped"] as const;
+export type CaptureJobStatus = (typeof CAPTURE_JOB_STATUSES)[number];
+const jobStatus = z.enum(CAPTURE_JOB_STATUSES);
+
+/** A running or in-review job that has not reported for this long is shown as interrupted. */
+export const CAPTURE_JOB_STALE_MS = 20 * 60 * 1000;
+
+/** One saved batch (counts) and/or a status change for a company's capture job. */
 export const captureQueueUpdateSchema = z
   .object({
     companyName: z.string().trim().max(300).optional(),
-    pagesRead: count,
-    peopleFound: count,
+    status: jobStatus.optional(),
+    error: z.string().trim().max(500).optional(),
+    pagesRead: count.optional(),
+    peopleFound: count.optional(),
     expectedPeople: count.optional(),
-    complete: z.boolean(),
+    complete: z.boolean().optional(),
     stopReason: z.string().trim().max(300).optional(),
+  })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0, "Nothing to update.");
+
+export type CaptureQueueUpdate = z.infer<typeof captureQueueUpdateSchema>;
+
+/** The extension's whole run queue, reported after every change so the dashboard can follow it. */
+export const captureQueueSyncSchema = z
+  .object({
+    items: z
+      .array(
+        z
+          .object({
+            companyPublicId,
+            companyName: z.string().trim().max(300).optional(),
+            status: jobStatus,
+            error: z.string().trim().max(500).optional(),
+          })
+          .strict()
+      )
+      .min(1)
+      .max(200),
   })
   .strict();
 
-export type CaptureQueueUpdate = z.infer<typeof captureQueueUpdateSchema>;
+export type CaptureQueueSync = z.infer<typeof captureQueueSyncSchema>;
 
 export const captureQueueIdSchema = companyPublicId;
 
@@ -50,7 +82,13 @@ export function companyCaptureUrl(publicId: string): string {
 
 type Row = typeof schema.enrichmentCaptureQueue.$inferSelect;
 
-export function captureQueueDto(row: Row) {
+/** The status users see: a job that stopped reporting while running is "interrupted". */
+export function effectiveJobState(row: Pick<Row, "status" | "updatedAt">, now = Date.now()): CaptureJobStatus | "interrupted" {
+  const stale = now - row.updatedAt.getTime() > CAPTURE_JOB_STALE_MS;
+  return stale && (row.status === "running" || row.status === "review") ? "interrupted" : (row.status as CaptureJobStatus);
+}
+
+export function captureQueueDto(row: Row, now = Date.now()) {
   return {
     companyPublicId: row.companyPublicId,
     companyName: row.companyName,
@@ -62,13 +100,19 @@ export function captureQueueDto(row: Row) {
     remainingPeople: row.expectedPeople == null ? null : Math.max(0, row.expectedPeople - row.peopleFound),
     batches: row.batches,
     complete: row.complete,
+    status: row.status,
+    state: effectiveJobState(row, now),
+    error: row.error,
     stopReason: row.stopReason,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
 }
 
-/** Records one saved batch. Counts never go backwards if two batches race. */
+/**
+ * Records a saved batch (counts never go backwards if two batches race) and/or a status change.
+ * A batch without an explicit status leaves the job completed when finished, paused otherwise.
+ */
 export async function recordCaptureQueueBatch(
   db: Db,
   actor: { workspaceId: string; userId: string },
@@ -78,6 +122,10 @@ export async function recordCaptureQueueBatch(
   const publicId = normalizeLinkedinId(rawPublicId);
   const table = schema.enrichmentCaptureQueue;
   const now = new Date();
+  const savedBatch = update.pagesRead !== undefined && update.peopleFound !== undefined;
+  const status: CaptureJobStatus | undefined =
+    update.status ?? (update.complete === true ? "completed" : savedBatch ? "paused" : undefined);
+  const complete = update.complete ?? (status === "completed" ? true : undefined);
   const [row] = await db
     .insert(table)
     .values({
@@ -85,11 +133,13 @@ export async function recordCaptureQueueBatch(
       companyPublicId: publicId,
       companyName: update.companyName || null,
       sourceUrl: companyCaptureUrl(publicId),
-      pagesRead: update.pagesRead,
-      peopleFound: update.peopleFound,
+      pagesRead: update.pagesRead ?? 0,
+      peopleFound: update.peopleFound ?? 0,
       expectedPeople: update.expectedPeople ?? null,
-      batches: 1,
-      complete: update.complete,
+      batches: savedBatch ? 1 : 0,
+      complete: complete ?? false,
+      status: status ?? "queued",
+      error: status === "failed" ? update.error || null : null,
       stopReason: update.stopReason || null,
       updatedBy: actor.userId,
       createdAt: now,
@@ -99,19 +149,113 @@ export async function recordCaptureQueueBatch(
       target: [table.workspaceId, table.companyPublicId],
       set: {
         companyName: sql`COALESCE(${update.companyName || null}, ${table.companyName})`,
-        // A finished search restarts from page one next time, so its counts start over too.
-        pagesRead: update.complete ? update.pagesRead : sql`GREATEST(${table.pagesRead}, ${update.pagesRead})`,
-        peopleFound: update.complete ? update.peopleFound : sql`GREATEST(${table.peopleFound}, ${update.peopleFound})`,
+        ...(savedBatch
+          ? {
+              // A finished search restarts from page one next time, so its counts start over too.
+              pagesRead: update.complete ? update.pagesRead! : sql`GREATEST(${table.pagesRead}, ${update.pagesRead!})`,
+              peopleFound: update.complete ? update.peopleFound! : sql`GREATEST(${table.peopleFound}, ${update.peopleFound!})`,
+              batches: sql`${table.batches} + 1`,
+            }
+          : {}),
         expectedPeople: sql`COALESCE(${update.expectedPeople ?? null}, ${table.expectedPeople})`,
-        batches: sql`${table.batches} + 1`,
-        complete: update.complete,
-        stopReason: update.stopReason || null,
+        ...(complete !== undefined ? { complete } : {}),
+        ...(status ? { status, error: status === "failed" ? update.error || null : null } : {}),
+        stopReason: update.stopReason !== undefined ? update.stopReason || null : table.stopReason,
         updatedBy: actor.userId,
         updatedAt: now,
       },
     })
     .returning();
   return captureQueueDto(row!);
+}
+
+/** Applies the extension's queue states in one request; never touches counts. */
+export async function syncCaptureQueue(db: Db, actor: { workspaceId: string; userId: string }, input: CaptureQueueSync) {
+  const table = schema.enrichmentCaptureQueue;
+  const now = new Date();
+  const seen = new Set<string>();
+  const items = input.items.filter((item) => {
+    const id = normalizeLinkedinId(item.companyPublicId);
+    return seen.has(id) ? false : (seen.add(id), true);
+  });
+  await db.transaction(async (tx) => {
+    for (const item of items) {
+      const publicId = normalizeLinkedinId(item.companyPublicId);
+      await tx
+        .insert(table)
+        .values({
+          workspaceId: actor.workspaceId,
+          companyPublicId: publicId,
+          companyName: item.companyName || null,
+          sourceUrl: companyCaptureUrl(publicId),
+          complete: item.status === "completed",
+          status: item.status,
+          error: item.status === "failed" ? item.error || null : null,
+          updatedBy: actor.userId,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [table.workspaceId, table.companyPublicId],
+          set: {
+            companyName: sql`COALESCE(${item.companyName || null}, ${table.companyName})`,
+            status: item.status,
+            // A job that ends completed is finished; any other state leaves the saved counts alone.
+            ...(item.status === "completed" ? { complete: true } : {}),
+            error: item.status === "failed" ? item.error || null : null,
+            updatedBy: actor.userId,
+            updatedAt: now,
+          },
+        });
+    }
+  });
+  return { updated: items.length };
+}
+
+/** Capture jobs for the dashboard, newest activity first. */
+export async function listCaptureQueue(db: Db, workspaceId: string, opts: { status?: CaptureJobStatus } = {}) {
+  const table = schema.enrichmentCaptureQueue;
+  const rows = await db
+    .select()
+    .from(table)
+    .where(opts.status ? and(eq(table.workspaceId, workspaceId), eq(table.status, opts.status)) : eq(table.workspaceId, workspaceId))
+    .orderBy(desc(table.updatedAt))
+    .limit(500);
+  const now = Date.now();
+  return rows.map((row) => captureQueueDto(row, now));
+}
+
+/**
+ * Asks for a job to be read again (resume a paused or interrupted one, retry a failed one).
+ * The extension picks queued jobs up from its side panel, where the user starts them.
+ */
+export async function requestCaptureResume(db: Db, actor: { workspaceId: string; userId: string }, rawPublicId: string) {
+  const table = schema.enrichmentCaptureQueue;
+  const [row] = await db
+    .update(table)
+    .set({ status: "queued", error: null, updatedBy: actor.userId, updatedAt: new Date() })
+    .where(
+      and(
+        eq(table.workspaceId, actor.workspaceId),
+        eq(table.companyPublicId, normalizeLinkedinId(rawPublicId)),
+        // A job actively running is not restarted; an interrupted one (stale) can be.
+        or(
+          sql`${table.status} NOT IN ('running', 'review')`,
+          sql`${table.updatedAt} < now() - interval '20 minutes'`
+        )
+      )
+    )
+    .returning();
+  return row ? captureQueueDto(row) : null;
+}
+
+export async function removeFromCaptureQueue(db: Db, workspaceId: string, rawPublicId: string) {
+  const table = schema.enrichmentCaptureQueue;
+  const removed = await db
+    .delete(table)
+    .where(and(eq(table.workspaceId, workspaceId), eq(table.companyPublicId, normalizeLinkedinId(rawPublicId))))
+    .returning({ id: table.companyPublicId });
+  return removed.length > 0;
 }
 
 /**
@@ -132,6 +276,7 @@ export async function listCapturableCompanies(db: Db, workspaceId: string, searc
       expectedPeople: q.expectedPeople,
       batches: q.batches,
       complete: q.complete,
+      status: q.status,
       updatedAt: q.updatedAt,
     })
     .from(c)
@@ -160,6 +305,7 @@ export async function listCapturableCompanies(db: Db, workspaceId: string, searc
       batches: row.batches ?? 0,
       // null: never captured through the queue, so nothing is known about what remains.
       complete: row.complete,
+      status: row.status,
       updatedAt: row.updatedAt?.toISOString() ?? null,
     }));
 }
