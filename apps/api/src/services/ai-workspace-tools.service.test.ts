@@ -592,3 +592,44 @@ describe("assertEvidenced regression guard", () => {
     expect(() => assertEvidenced({ value: "x" }, "test")).toThrow(UnevidencedClaimError);
   });
 });
+
+describe("createWorkspaceToolRunner — create_outbound_sequence structure checks", () => {
+  it("sends a condition with empty yes/no paths back to the model instead of previewing it", async () => {
+    const runner = createWorkspaceToolRunner(null, CONFIG, "ws-struct-1", false, "skout");
+    const parsed = JSON.parse(
+      (await runner.run("create_outbound_sequence", {
+        name: "Seq",
+        steps: [
+          { stepType: "email", delayDays: 0 },
+          { stepType: "condition", conditionType: "email_opened" },
+          { stepType: "email", delayDays: 2 },
+        ],
+      })) as string
+    );
+    expect(parsed.preview).toBeUndefined();
+    expect(parsed.error).toMatch(/Condition at step 2 has no steps on its yes and no paths/);
+    expect(parsed.error).toMatch(/"yes" and "no" arrays/);
+  });
+
+  it("previews the nested yes/no form with every flattened step counted and a goal at the end", async () => {
+    const runner = createWorkspaceToolRunner(null, CONFIG, "ws-struct-2", false, "skout");
+    const parsed = JSON.parse(
+      (await runner.run("create_outbound_sequence", {
+        name: "Seq",
+        steps: [
+          { stepType: "email", delayDays: 0 },
+          {
+            stepType: "condition",
+            conditionType: "email_opened",
+            yes: [{ stepType: "email", delayDays: 1 }],
+            no: [{ stepType: "email", delayDays: 1 }],
+          },
+        ],
+      })) as string
+    );
+    // email, condition, email[yes], email[no]; the goal added at the end is shown but not counted
+    expect(parsed.preview.affectedRecordCount).toBe(4);
+    expect(parsed.preview.scope).toMatch(/5 step\(s\), including 1 condition/);
+    expect(parsed.preview.assumptions).toContain('A closing "Meeting booked" goal step is added at the end.');
+  });
+});
