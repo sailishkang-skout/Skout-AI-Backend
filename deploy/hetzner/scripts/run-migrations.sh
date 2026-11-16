@@ -16,8 +16,25 @@ run() { # image env-file entrypoint|default args...
   shift 3
   local ep_args=()
   [ "$ep" = "default" ] || ep_args=(--entrypoint "$ep")
-  docker run --rm --env-file "$ENV_DIR/$envfile" -e MIGRATIONS_FOLDER=/app/db/drizzle \
-    "${ep_args[@]}" "ghcr.io/$GHCR_OWNER/$image:$IMAGE_TAG" "$@"
+
+  # The staging Postgres is small (db-g1-small: 50 connections, 3 kept for superusers) and the running
+  # services hold pools of their own, so a step can start while it is briefly full. That is transient:
+  # wait for the services to release connections and try again, instead of failing the whole deploy
+  # (this is what failed the run for PR #286). Any other failure still fails immediately.
+  local attempt=1 max_attempts="${MIGRATION_MAX_ATTEMPTS:-6}" delay="${MIGRATION_RETRY_DELAY_SECS:-30}" log
+  log="$(mktemp)"
+  until docker run --rm --env-file "$ENV_DIR/$envfile" -e MIGRATIONS_FOLDER=/app/db/drizzle \
+    "${ep_args[@]}" "ghcr.io/$GHCR_OWNER/$image:$IMAGE_TAG" "$@" 2>&1 | tee "$log"; do
+    if [ "$attempt" -lt "$max_attempts" ] && grep -qE "remaining connection slots are reserved|too many clients already" "$log"; then
+      echo "Postgres has no free connection slots (attempt $attempt of $max_attempts); retrying in ${delay}s." >&2
+      attempt=$((attempt + 1))
+      sleep "$delay"
+      continue
+    fi
+    rm -f "$log"
+    return 1
+  done
+  rm -f "$log"
 }
 
 echo "== core (drizzle) =="
