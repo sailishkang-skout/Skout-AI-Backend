@@ -28,6 +28,12 @@ run skout-api api.env node /app/node_modules/@skout/db/dist/migrate.js
 echo "== core (rbac seed) =="
 run skout-api api.env node /app/node_modules/@skout/db/dist/backfill-rbac.js
 
+# Regions, the 250 countries, their aliases and the country x industry TAM rows. The brief seed below only
+# attaches facts to countries that already exist, and the country picker lists this table, so this must run
+# first; without it only countries auto-provisioned on demand (e.g. US) appear. Upserts, safe on every deploy.
+echo "== core (regional brief reference data) =="
+run skout-api api.env node /app/node_modules/@skout/db/dist/seed-regional-brief-reference-data.js
+
 # The Regional Selling Brief content (facts for 250 markets) is also data, not a migration; the page is empty
 # without it. The seed upserts, so running it on every deploy is safe.
 echo "== core (regional brief seed) =="
