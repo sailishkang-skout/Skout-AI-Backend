@@ -31,8 +31,10 @@ import {
 } from "../services/enrichment/capture-ingest.service.js";
 
 import {
-  CAPTURE_JOB_STATUSES,
+  cancelCaptureJob,
+  captureJobDetails,
   captureQueueIdSchema,
+  captureQueueListSchema,
   captureQueueSyncSchema,
   captureQueueUpdateSchema,
   listCapturableCompanies,
@@ -225,8 +227,24 @@ export async function enrichmentCaptureRoutes(app: FastifyInstance) {
   // Capture jobs: ongoing, completed and failed, for the dashboard's Capture queue page.
   app.get("/enrichment/capture/queue", async (request, reply) => {
     const { db, actor } = await authorize(request, "enrichment:read");
-    const { status } = z.object({ status: z.enum(CAPTURE_JOB_STATUSES).optional() }).parse(request.query ?? {});
-    return reply.send({ items: await listCaptureQueue(db, actor.workspaceId, { status }) });
+    const filters = captureQueueListSchema.parse(request.query ?? {});
+    return reply.send(await listCaptureQueue(db, actor.workspaceId, filters));
+  });
+
+  app.get("/enrichment/capture/queue/:publicId", async (request, reply) => {
+    const { db, actor } = await authorize(request, "enrichment:read");
+    const publicId = captureQueueIdSchema.parse((request.params as { publicId: string }).publicId);
+    const details = await captureJobDetails(db, actor.workspaceId, publicId);
+    if (!details) return reply.status(404).send({ error: "not_found", message: "That capture job does not exist." });
+    return reply.send(details);
+  });
+
+  app.post("/enrichment/capture/queue/:publicId/cancel", async (request, reply) => {
+    const { db, actor } = await authorize(request, "enrichment:capture");
+    const publicId = captureQueueIdSchema.parse((request.params as { publicId: string }).publicId);
+    const item = await cancelCaptureJob(db, actor, publicId);
+    if (!item) return reply.status(409).send({ error: "job_not_cancellable", message: "That job has finished, was cancelled already, or does not exist." });
+    return reply.send({ item });
   });
 
   // The extension reports its whole run queue after every change.

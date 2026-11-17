@@ -1128,6 +1128,13 @@
       "when": 1798300700000,
       "tag": "0158_cops_task_tracker",
       "breakpoints": true
+    },
+    {
+      "idx": 161,
+      "version": "7",
+      "when": 1798300800000,
+      "tag": "0159_capture_jobs_dashboard",
+      "breakpoints": true
     }
   ]
 }

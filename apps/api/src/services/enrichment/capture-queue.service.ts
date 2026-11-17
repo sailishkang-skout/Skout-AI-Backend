@@ -1,15 +1,16 @@
 /**
  * §5.2 / §7.1 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) — see
  * docs/adr/0003-read-model-exceptions.md. ENR-02 capture queue company list.
- *   - Tables touched directly: companies (owned by apps/crm)
- *     - read only (name of each captured company, to list it in the extension's company queue)
+ *   - Tables touched directly: companies, contacts (both owned by apps/crm)
+ *     - read only (the name of each captured company for the company queue; the people saved
+ *       for a company, shown in a capture job's details)
  *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
  *   - Reason: the list joins the CRM company name with the capture identity key (the LinkedIn
  *     company id) and the capture queue progress in one query; same boundary as ENR-03
  *     (research.service.ts) and ENR-02 (capture-ingest.service.ts).
  *   - Review date: revisit once apps/crm's internal API surface fully shipped (Wave 2)
  */
-import { and, asc, desc, eq, ilike, isNull, like, or, sql } from "drizzle-orm";
+import { and, asc, count as countRows, desc, eq, gte, ilike, inArray, isNull, like, lte, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { schema, type Db } from "@skout/db";
 import { normalizeLinkedinId } from "./capture-identity.js";
@@ -30,9 +31,14 @@ const companyPublicId = z
 
 const count = z.number().int().nonnegative().max(2_000_000_000);
 
-export const CAPTURE_JOB_STATUSES = ["queued", "running", "review", "paused", "completed", "failed", "skipped"] as const;
+export const CAPTURE_JOB_STATUSES = ["queued", "running", "review", "paused", "completed", "failed", "skipped", "cancelled"] as const;
 export type CaptureJobStatus = (typeof CAPTURE_JOB_STATUSES)[number];
-const jobStatus = z.enum(CAPTURE_JOB_STATUSES);
+/** Statuses the extension reports; "cancelled" is set only from the workspace. */
+const jobStatus = z.enum(["queued", "running", "review", "paused", "completed", "failed", "skipped"]);
+
+/** What a member sees: the stored status, plus "interrupted" and "partial" read from it. */
+export const CAPTURE_JOB_STATES = [...CAPTURE_JOB_STATUSES, "interrupted", "partial"] as const;
+export type CaptureJobState = (typeof CAPTURE_JOB_STATES)[number];
 
 /** A running or in-review job that has not reported for this long is shown as interrupted. */
 export const CAPTURE_JOB_STALE_MS = 20 * 60 * 1000;
@@ -48,6 +54,10 @@ export const captureQueueUpdateSchema = z
     expectedPeople: count.optional(),
     complete: z.boolean().optional(),
     stopReason: z.string().trim().max(300).optional(),
+    /** One saved batch: people it added, matched to people already saved, or refused. */
+    created: count.optional(),
+    merged: count.optional(),
+    rejected: count.optional(),
   })
   .strict()
   .refine((value) => Object.keys(value).length > 0, "Nothing to update.");
@@ -83,10 +93,41 @@ export function companyCaptureUrl(publicId: string): string {
 
 type Row = typeof schema.enrichmentCaptureQueue.$inferSelect;
 
-/** The status users see: a job that stopped reporting while running is "interrupted". */
-export function effectiveJobState(row: Pick<Row, "status" | "updatedAt">, now = Date.now()): CaptureJobStatus | "interrupted" {
+/**
+ * The status members see. "interrupted": a job that stopped reporting while running.
+ * "partial": a job that saved people but then failed or was cancelled, or finished with records refused.
+ */
+export function effectiveJobState(
+  row: Pick<Row, "status" | "updatedAt"> & Partial<Pick<Row, "peopleFound" | "peopleRejected">>,
+  now = Date.now()
+): CaptureJobState {
   const stale = now - row.updatedAt.getTime() > CAPTURE_JOB_STALE_MS;
-  return stale && (row.status === "running" || row.status === "review") ? "interrupted" : (row.status as CaptureJobStatus);
+  if (stale && (row.status === "running" || row.status === "review")) return "interrupted";
+  if ((row.status === "failed" || row.status === "cancelled") && (row.peopleFound ?? 0) > 0) return "partial";
+  if (row.status === "completed" && (row.peopleRejected ?? 0) > 0) return "partial";
+  return row.status as CaptureJobStatus;
+}
+
+/** SQL for one member-facing state, matching effectiveJobState. */
+function stateCondition(state: CaptureJobState): SQL {
+  const t = schema.enrichmentCaptureQueue;
+  const stale = sql`${t.updatedAt} < now() - interval '20 minutes'`;
+  switch (state) {
+    case "interrupted":
+      return sql`(${t.status} IN ('running', 'review') AND ${stale})`;
+    case "partial":
+      return sql`((${t.status} IN ('failed', 'cancelled') AND ${t.peopleFound} > 0) OR (${t.status} = 'completed' AND ${t.peopleRejected} > 0))`;
+    case "running":
+    case "review":
+      return sql`(${t.status} = ${state} AND NOT ${stale})`;
+    case "failed":
+    case "cancelled":
+      return sql`(${t.status} = ${state} AND ${t.peopleFound} = 0)`;
+    case "completed":
+      return sql`(${t.status} = 'completed' AND ${t.peopleRejected} = 0)`;
+    default:
+      return sql`${t.status} = ${state}`;
+  }
 }
 
 export function captureQueueDto(row: Row, now = Date.now(), startedBy: string | null = null) {
@@ -100,6 +141,10 @@ export function captureQueueDto(row: Row, now = Date.now(), startedBy: string | 
     // How many people LinkedIn says remain; unknown when LinkedIn showed no total.
     remainingPeople: row.expectedPeople == null ? null : Math.max(0, row.expectedPeople - row.peopleFound),
     batches: row.batches,
+    /** People the saved batches added, matched to people already saved (duplicates), or refused. */
+    peopleCreated: row.peopleCreated,
+    peopleMerged: row.peopleMerged,
+    peopleRejected: row.peopleRejected,
     complete: row.complete,
     status: row.status,
     state: effectiveJobState(row, now),
@@ -144,6 +189,9 @@ export async function recordCaptureQueueBatch(
       peopleFound: update.peopleFound ?? 0,
       expectedPeople: update.expectedPeople ?? null,
       batches: savedBatch ? 1 : 0,
+      peopleCreated: update.created ?? 0,
+      peopleMerged: update.merged ?? 0,
+      peopleRejected: update.rejected ?? 0,
       complete: complete ?? false,
       status: status ?? "queued",
       error: status === "failed" ? update.error || null : null,
@@ -164,6 +212,9 @@ export async function recordCaptureQueueBatch(
               batches: sql`${table.batches} + 1`,
             }
           : {}),
+        ...(update.created !== undefined ? { peopleCreated: sql`${table.peopleCreated} + ${update.created}` } : {}),
+        ...(update.merged !== undefined ? { peopleMerged: sql`${table.peopleMerged} + ${update.merged}` } : {}),
+        ...(update.rejected !== undefined ? { peopleRejected: sql`${table.peopleRejected} + ${update.rejected}` } : {}),
         expectedPeople: sql`COALESCE(${update.expectedPeople ?? null}, ${table.expectedPeople})`,
         ...(complete !== undefined ? { complete } : {}),
         ...(status ? { status, error: status === "failed" ? update.error || null : null } : {}),
@@ -187,10 +238,11 @@ export async function syncCaptureQueue(db: Db, actor: { workspaceId: string; use
     const id = normalizeLinkedinId(item.companyPublicId);
     return seen.has(id) ? false : (seen.add(id), true);
   });
+  const cancelled: string[] = [];
   await db.transaction(async (tx) => {
     for (const item of items) {
       const publicId = normalizeLinkedinId(item.companyPublicId);
-      await tx
+      const [written] = await tx
         .insert(table)
         .values({
           workspaceId: actor.workspaceId,
@@ -219,25 +271,225 @@ export async function syncCaptureQueue(db: Db, actor: { workspaceId: string; use
             updatedBy: actor.userId,
             updatedAt: now,
           },
-        });
+          // A job cancelled in the workspace stays cancelled; the extension is told to drop it.
+          // Starting the company again in the extension (queued) is a new job.
+          setWhere: sql`${table.status} <> 'cancelled' OR ${item.status} = 'queued'`,
+        })
+        .returning({ id: table.companyPublicId });
+      if (!written) cancelled.push(publicId);
     }
   });
-  return { updated: items.length };
+  return { updated: items.length - cancelled.length, cancelled };
 }
 
-/** Capture jobs of every member of the workspace, newest activity first. */
-export async function listCaptureQueue(db: Db, workspaceId: string, opts: { status?: CaptureJobStatus } = {}) {
+/** Cancels a job that has not finished. The extension drops it on its next report; the worker never reads it. */
+export async function cancelCaptureJob(db: Db, actor: { workspaceId: string; userId: string }, rawPublicId: string) {
+  const table = schema.enrichmentCaptureQueue;
+  const [row] = await db
+    .update(table)
+    .set({ status: "cancelled", nextRunAt: null, error: null, updatedBy: actor.userId, updatedAt: new Date() })
+    .where(
+      and(
+        eq(table.workspaceId, actor.workspaceId),
+        eq(table.companyPublicId, normalizeLinkedinId(rawPublicId)),
+        sql`${table.status} NOT IN ('completed', 'cancelled')`
+      )
+    )
+    .returning();
+  return row ? captureQueueDto(row) : null;
+}
+
+export interface CaptureQueueFilters {
+  status?: CaptureJobStatus;
+  state?: CaptureJobState;
+  mode?: "extension" | "unipile";
+  q?: string;
+  from?: Date;
+  to?: Date;
+  page?: number;
+  pageSize?: number;
+}
+
+export const captureQueueListSchema = z.object({
+  status: z.enum(CAPTURE_JOB_STATUSES).optional(),
+  state: z.enum(CAPTURE_JOB_STATES).optional(),
+  mode: z.enum(["extension", "unipile"]).optional(),
+  q: z.string().trim().max(100).optional(),
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+  page: z.coerce.number().int().min(1).max(10_000).default(1),
+  pageSize: z.coerce.number().int().min(1).max(200).default(200),
+});
+
+/** Capture jobs of every member of the workspace, newest activity first, with dashboard totals. */
+export async function listCaptureQueue(db: Db, workspaceId: string, opts: CaptureQueueFilters = {}) {
   const table = schema.enrichmentCaptureQueue;
   const users = schema.users;
-  const rows = await db
+  const page = opts.page ?? 1;
+  const pageSize = opts.pageSize ?? 200;
+  const term = opts.q?.trim();
+  const where = and(
+    eq(table.workspaceId, workspaceId),
+    ...(opts.status ? [eq(table.status, opts.status)] : []),
+    ...(opts.state ? [stateCondition(opts.state)] : []),
+    ...(opts.mode ? [eq(table.mode, opts.mode)] : []),
+    ...(term
+      ? [sql`(${table.companyName} ILIKE ${`%${term.replace(/[\\%_]/g, "\\$&")}%`} OR ${table.companyPublicId} ILIKE ${`%${term.replace(/[\\%_]/g, "\\$&")}%`})`]
+      : []),
+    ...(opts.from ? [gte(table.createdAt, opts.from)] : []),
+    ...(opts.to ? [lte(table.createdAt, opts.to)] : [])
+  );
+  const [rows, [totals]] = await Promise.all([
+    db
+      .select({ job: table, name: users.fullName, email: users.email })
+      .from(table)
+      .leftJoin(users, eq(users.id, sql`COALESCE(${table.requestedBy}, ${table.updatedBy})`))
+      .where(where)
+      .orderBy(desc(table.updatedAt))
+      .limit(pageSize)
+      .offset((page - 1) * pageSize),
+    db.select({ total: countRows() }).from(table).where(where),
+  ]);
+  const now = Date.now();
+  return {
+    items: rows.map((row) => captureQueueDto(row.job, now, row.name || row.email || null)),
+    total: Number(totals?.total ?? 0),
+    page,
+    pageSize,
+    stats: await captureQueueStats(db, workspaceId),
+  };
+}
+
+/** Dashboard totals across the workspace's jobs (unfiltered), and jobs created per day for 7 days. */
+export async function captureQueueStats(db: Db, workspaceId: string) {
+  const t = schema.enrichmentCaptureQueue;
+  const n = (condition: SQL) => sql<number>`count(*) filter (where ${condition})::int`;
+  const [totals] = await db
+    .select({
+      total: sql<number>`count(*)::int`,
+      running: n(sql`${stateCondition("queued")} OR ${stateCondition("running")} OR ${stateCondition("review")}`),
+      completed: n(sql`${t.status} = 'completed'`),
+      failed: n(sql`${t.status} = 'failed' OR ${stateCondition("interrupted")}`),
+      paused: n(sql`${t.status} = 'paused'`),
+      peopleCaptured: sql<number>`coalesce(sum(${t.peopleFound}), 0)::int`,
+    })
+    .from(t)
+    .where(eq(t.workspaceId, workspaceId));
+  const days = await db
+    .select({
+      day: sql<string>`to_char(date_trunc('day', ${t.createdAt}), 'YYYY-MM-DD')`,
+      created: sql<number>`count(*)::int`,
+      completed: n(sql`${t.status} = 'completed'`),
+      failed: n(sql`${t.status} = 'failed'`),
+    })
+    .from(t)
+    .where(and(eq(t.workspaceId, workspaceId), gte(t.createdAt, sql`now() - interval '7 days'`)))
+    .groupBy(sql`date_trunc('day', ${t.createdAt})`)
+    .orderBy(sql`date_trunc('day', ${t.createdAt})`);
+  return {
+    total: Number(totals?.total ?? 0),
+    running: Number(totals?.running ?? 0),
+    completed: Number(totals?.completed ?? 0),
+    failed: Number(totals?.failed ?? 0),
+    paused: Number(totals?.paused ?? 0),
+    peopleCaptured: Number(totals?.peopleCaptured ?? 0),
+    daily: days.map((d) => ({ day: d.day, created: Number(d.created), completed: Number(d.completed), failed: Number(d.failed) })),
+  };
+}
+
+/**
+ * One job for the details drawer: the job, its saved batches (capture runs of that company page:
+ * people added, duplicates, refused, and error messages), and the people saved for the company.
+ */
+export async function captureJobDetails(db: Db, workspaceId: string, rawPublicId: string) {
+  const publicId = normalizeLinkedinId(rawPublicId);
+  const table = schema.enrichmentCaptureQueue;
+  const users = schema.users;
+  const [found] = await db
     .select({ job: table, name: users.fullName, email: users.email })
     .from(table)
     .leftJoin(users, eq(users.id, sql`COALESCE(${table.requestedBy}, ${table.updatedBy})`))
-    .where(opts.status ? and(eq(table.workspaceId, workspaceId), eq(table.status, opts.status)) : eq(table.workspaceId, workspaceId))
-    .orderBy(desc(table.updatedAt))
-    .limit(500);
-  const now = Date.now();
-  return rows.map((row) => captureQueueDto(row.job, now, row.name || row.email || null));
+    .where(and(eq(table.workspaceId, workspaceId), eq(table.companyPublicId, publicId)))
+    .limit(1);
+  if (!found) return null;
+  const runs = schema.enrichmentCaptureRuns;
+  const companyUrl = companyCaptureUrl(publicId);
+  const batches = await db
+    .select()
+    .from(runs)
+    .where(
+      and(
+        eq(runs.workspaceId, workspaceId),
+        eq(runs.kind, "company"),
+        sql`${runs.sourceUrl} LIKE ${`${companyUrl.replace(/[\\%_]/g, "\\$&")}%`}`
+      )
+    )
+    .orderBy(desc(runs.startedAt))
+    .limit(25);
+  // People saved for this company: verified employees and discovery candidates.
+  const i = schema.enrichmentIdentities;
+  const [company] = await db
+    .select({ id: i.entityId })
+    .from(i)
+    .where(and(eq(i.workspaceId, workspaceId), eq(i.entityType, "company"), eq(i.canonicalKey, `company:${publicId}`)))
+    .limit(1);
+  const contacts = schema.contacts;
+  const discoveries = schema.companyPersonDiscoveries;
+  // Verified employees and discovery candidates of the company, newest first, each once.
+  const ofCompany = company
+    ? and(
+        eq(contacts.workspaceId, workspaceId),
+        isNull(contacts.deletedAt),
+        or(
+          eq(contacts.companyId, company.id),
+          inArray(
+            contacts.id,
+            db.select({ id: discoveries.contactId }).from(discoveries).where(and(eq(discoveries.workspaceId, workspaceId), eq(discoveries.companyId, company.id)))
+          )
+        )
+      )
+    : undefined;
+  const people = ofCompany
+    ? await db
+        .select({
+          id: contacts.id,
+          firstName: contacts.firstName,
+          lastName: contacts.lastName,
+          title: contacts.title,
+          linkedinUrl: contacts.linkedinUrl,
+          employmentStatus: contacts.employmentStatus,
+          savedAt: contacts.createdAt,
+        })
+        .from(contacts)
+        .where(ofCompany)
+        .orderBy(desc(contacts.createdAt), contacts.id)
+        .limit(50)
+    : [];
+  const [peopleTotal] = ofCompany ? await db.select({ total: countRows() }).from(contacts).where(ofCompany) : [{ total: 0 }];
+  return {
+    item: captureQueueDto(found.job, Date.now(), found.name || found.email || null),
+    batches: batches.map((run) => ({
+      id: run.id,
+      status: run.status,
+      startedAt: run.startedAt.toISOString(),
+      completedAt: run.completedAt?.toISOString() ?? null,
+      pagesRead: run.pagesRead,
+      received: run.leadsReceived,
+      created: run.leadsCreated,
+      merged: run.leadsMerged,
+      rejected: run.leadsRejected,
+      error: run.errorMessage,
+    })),
+    peopleTotal: Number(peopleTotal?.total ?? 0),
+    people: people.map((person) => ({
+      id: person.id,
+      name: [person.firstName, person.lastName].filter(Boolean).join(" ") || null,
+      title: person.title,
+      linkedinUrl: person.linkedinUrl,
+      verified: person.employmentStatus === "verified_employment",
+      savedAt: person.savedAt.toISOString(),
+    })),
+  };
 }
 
 /**

@@ -182,7 +182,7 @@ export const enrichmentCaptureQueue = pgTable(
     batches: integer("batches").notNull().default(0),
     complete: boolean("complete").notNull().default(false),
     stopReason: text("stop_reason"),
-    /** queued | running | review | paused | completed | failed | skipped; kept in sync by the extension. */
+    /** queued | running | review | paused | completed | failed | skipped | cancelled; kept in sync by the extension. */
     status: text("status").notNull().default("queued"),
     error: text("error"),
     /** extension: read in the user's browser | unipile: read on the server through the Unipile connector. */
@@ -195,6 +195,10 @@ export const enrichmentCaptureQueue = pgTable(
     linkedinCompanyId: text("linkedin_company_id"),
     /** The member who asked for automatic capture: its daily limit and capture runs are theirs. */
     requestedBy: uuid("requested_by").references(() => users.id, { onDelete: "set null" }),
+    /** People the saved batches added, matched to people already saved (duplicates), or refused. */
+    peopleCreated: integer("people_created").notNull().default(0),
+    peopleMerged: integer("people_merged").notNull().default(0),
+    peopleRejected: integer("people_rejected").notNull().default(0),
     updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

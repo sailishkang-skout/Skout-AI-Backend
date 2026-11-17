@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  cleanCompanyName,
   companyIdFromCompanyUrl,
   isSalesNavigatorUrl,
   linkedinIdFromSegment,
@@ -396,6 +397,16 @@ export function sanitizePersonCapture(input: PersonIngestInput): SanitizedPerson
     });
     if (kept.length) data.skills = kept;
     else delete data.skills;
+  }
+
+  // "Uber + 1 more" (top card) and "Uber · Full-time" (Experience) name the company "Uber".
+  for (const field of ["currentCompanies", "previousCompanies"] as const) {
+    const roles = data[field];
+    if (!Array.isArray(roles)) continue;
+    data[field] = roles.map((role) => {
+      const item = role as Record<string, unknown>;
+      return typeof item.name === "string" ? { ...item, name: cleanCompanyName(item.name) ?? item.name } : item;
+    });
   }
 
   for (const [field, labelKeys] of Object.entries(ITEM_LABEL_KEYS)) {

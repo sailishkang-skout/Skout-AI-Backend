@@ -423,7 +423,7 @@ describe("ENR-02 capture ingest", () => {
       { companyPublicId: "job-alpha", companyName: "Alpha Co", status: "running" },
       { companyPublicId: "job-beta", companyName: "Beta Co", status: "queued" },
       { companyPublicId: "job-gamma", companyName: "Gamma Co", status: "failed", error: "Company content did not load." },
-    ])).json()).toEqual({ updated: 3 });
+    ])).json()).toEqual({ updated: 3, cancelled: [] });
     expect(await job("job-alpha")).toMatchObject({ companyName: "Alpha Co", status: "running", state: "running", peopleFound: 0 });
     expect(await job("job-gamma")).toMatchObject({ status: "failed", state: "failed", error: "Company content did not load." });
 
@@ -615,5 +615,63 @@ describe("ENR-02 automatic people capture (Unipile)", () => {
     const acme = companies.find((company) => company.companyPublicId === "acme-robotics")!;
     expect(Number(acme.peopleSaved)).toBeGreaterThanOrEqual(252);
     expect(acme.mode).toBe("unipile");
+  });
+});
+
+describe("ENR-02 capture jobs dashboard", () => {
+  const sync = (items: unknown, headers = owner) =>
+    app.inject({ method: "POST", url: "/api/v1/enrichment/capture/queue/sync", headers, payload: { items } as object });
+  const put = (id: string, payload: unknown, headers = owner) =>
+    app.inject({ method: "PUT", url: `/api/v1/enrichment/capture/queue/${id}`, headers, payload: payload as object });
+  const list = async (query = "") => (await get(`/enrichment/capture/queue${query}`)).json();
+
+  it("filters, pages and totals the jobs, and reads partial and cancelled states", async () => {
+    await sync([{ companyPublicId: "dash-partial", companyName: "Dash Partial", status: "running" }]);
+    await put("dash-partial", { pagesRead: 5, peopleFound: 40, created: 30, merged: 8, rejected: 2, complete: false });
+    await sync([{ companyPublicId: "dash-partial", status: "failed", error: "LinkedIn stopped showing results" }]);
+    const partial = (await list("?state=partial")).items.find((item: { companyPublicId: string }) => item.companyPublicId === "dash-partial");
+    expect(partial).toMatchObject({ state: "partial", status: "failed", peopleCreated: 30, peopleMerged: 8, peopleRejected: 2, mode: "extension" });
+
+    const byName = await list("?q=Dash%20Part&mode=extension");
+    expect(byName.items.map((item: { companyPublicId: string }) => item.companyPublicId)).toEqual(["dash-partial"]);
+    expect((await list("?mode=unipile&q=Dash")).items).toEqual([]);
+    const paged = await list("?pageSize=1&page=1");
+    expect(paged.items).toHaveLength(1);
+    expect(paged.total).toBeGreaterThan(1);
+    expect(paged.stats).toMatchObject({ total: paged.total });
+    expect(paged.stats.daily.length).toBeGreaterThanOrEqual(1);
+    expect((await list("?from=2999-01-01")).items).toEqual([]);
+    expect((await get("/enrichment/capture/queue?state=exploded")).statusCode).toBe(422);
+  });
+
+  it("cancels a job; the extension is told and cannot bring it back unless the company is started again", async () => {
+    await sync([{ companyPublicId: "dash-cancel", companyName: "Dash Cancel", status: "running" }]);
+    const cancel = (headers = owner) => app.inject({ method: "POST", url: "/api/v1/enrichment/capture/queue/dash-cancel/cancel", headers });
+    expect((await cancel()).json().item).toMatchObject({ status: "cancelled", state: "cancelled" });
+    expect((await cancel()).statusCode).toBe(409);
+    expect((await cancel(outsider)).statusCode).toBe(409);
+    // The extension still reports it running: the server keeps it cancelled and says so.
+    expect((await sync([{ companyPublicId: "dash-cancel", status: "running" }])).json()).toEqual({ updated: 0, cancelled: ["dash-cancel"] });
+    expect((await list("?state=cancelled")).items.map((item: { companyPublicId: string }) => item.companyPublicId)).toContain("dash-cancel");
+    // Starting it again (queued) is a new job.
+    expect((await sync([{ companyPublicId: "dash-cancel", status: "queued" }])).json()).toEqual({ updated: 1, cancelled: [] });
+  });
+
+  it("shows a job's batches and the people saved for its company", async () => {
+    await put("acme-robotics", { pagesRead: 2, peopleFound: 2, created: 1, merged: 1, complete: false });
+    const res = await get("/enrichment/capture/queue/acme-robotics");
+    expect(res.statusCode).toBe(200);
+    const details = res.json();
+    expect(details.item).toMatchObject({ companyPublicId: "acme-robotics" });
+    expect(details.batches.length).toBeGreaterThanOrEqual(1);
+    expect(details.batches[0]).toMatchObject({ status: expect.any(String), created: expect.any(Number), merged: expect.any(Number) });
+    // The newest 50 of everyone saved for the company (two from the company capture, 252 read automatically).
+    expect(details.peopleTotal).toBeGreaterThanOrEqual(254);
+    expect(details.people).toHaveLength(50);
+    const times = details.people.map((person: { savedAt: string }) => person.savedAt);
+    expect([...times].sort().reverse()).toEqual(times);
+    expect(new Set(details.people.map((person: { id: string }) => person.id)).size).toBe(50);
+    expect((await get("/enrichment/capture/queue/acme-robotics", outsider)).statusCode).toBe(404);
+    expect((await get("/enrichment/capture/queue/no-such-job")).statusCode).toBe(404);
   });
 });

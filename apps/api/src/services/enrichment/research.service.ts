@@ -13,7 +13,7 @@ import { and, count, desc, eq, gte, inArray, isNotNull, isNull, sql, type SQL } 
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { recordPrivilegedAction } from "@skout/auth";
-import { normalizedCompanyName, prospectIdForCanonicalKey, publicIdFromProfileUrl } from "./capture-identity.js";
+import { cleanCompanyName, normalizedCompanyName, prospectIdForCanonicalKey, publicIdFromProfileUrl } from "./capture-identity.js";
 import { deleteCaptureEvidence } from "./capture-evidence.js";
 import { CaptureError, type CaptureActor } from "./capture-ingest.service.js";
 
@@ -615,7 +615,44 @@ type Role = { company: string | null; title: string | null };
 function roleOf(value: unknown): Role {
   const roles = Array.isArray(value) ? (value as Json[]) : [];
   const role = roles.find((entry) => text(entry?.name)) ?? roles[0];
-  return { company: text(role?.name), title: text(role?.title) };
+  return { company: cleanCompanyName(text(role?.name)) ?? null, title: text(role?.title) };
+}
+
+export type JobChangeKind = "new_company" | "new_role" | "left_company" | "no_change";
+
+const sameTitle = (a: string | null, b: string | null) => (a ?? "").replace(/\s+/g, " ").trim().toLowerCase() === (b ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+
+/** What kind of move a change is. "no_change": both sides name the same company and title. */
+export function classifyJobChange(from: Role, to: Role): JobChangeKind {
+  const before = normalizedCompanyName(from.company ?? undefined);
+  const after = normalizedCompanyName(to.company ?? undefined);
+  if (after && before && after === before) return to.title && from.title && !sameTitle(from.title, to.title) ? "new_role" : "no_change";
+  if (after) return "new_company";
+  if (before) return "left_company";
+  return "no_change";
+}
+
+const roleText = (role: Role) => (role.title && role.company ? `${role.title} at ${role.company}` : role.company ?? role.title ?? "");
+
+/** One plain sentence about a change, for the Job changes list. */
+export function jobChangeSummary(name: string | null, kind: JobChangeKind, from: Role, to: Role): string {
+  const who = name ?? "This person";
+  if (kind === "new_role") return `${who} has a new role at ${to.company}: ${from.title} → ${to.title}.`;
+  if (kind === "left_company") return `${who} no longer lists ${from.company} as a current employer.`;
+  if (kind === "new_company") {
+    const joined = `${who} joined ${to.company}${to.title ? ` as ${to.title}` : ""}`;
+    return from.company ? `${joined}, after ${roleText(from)}.` : `${joined}. The previous employer was not captured.`;
+  }
+  return `${who}'s current role did not change.`;
+}
+
+/** Start of the current role at the new company, as LinkedIn shows it ("Mar 2026"), when captured. */
+function roleStartText(snapshot: Json, company: string | null): string | null {
+  const roles = Array.isArray(snapshot.currentCompanies) ? (snapshot.currentCompanies as Json[]) : [];
+  const target = normalizedCompanyName(company ?? undefined);
+  const role = roles.find((entry) => normalizedCompanyName(text(entry?.name) ?? undefined) === target) ?? (target ? undefined : roles[0]);
+  const dates = text(role?.dates);
+  return dates ? (dates.split(/\s*[-–]\s*/)[0]?.trim() || null) : null;
 }
 
 /**
@@ -649,8 +686,15 @@ export function previousRoleFromCaptures(
 export async function listJobChanges(
   db: Db,
   workspaceId: string,
-  filters: { status: "pending" | "reviewed" | "all"; page: number; pageSize: number }
-) {
+  filters: { status: "pending" | "reviewed" | "all"; page: number; pageSize: number },
+  attempt = 0
+): Promise<{
+  jobChanges: Array<Record<string, unknown>>;
+  total: number;
+  page: number;
+  pageSize: number;
+  counts: { pending: number; reviewed: number; lastSevenDays: number };
+}> {
   const where = and(
     eq(enrichmentChangeEvents.workspaceId, workspaceId),
     eq(enrichmentChangeEvents.isJobChange, true),
@@ -685,36 +729,63 @@ export async function listJobChanges(
           )
         )
     : [];
+  const jobChanges = rows.map(({ change, snapshot }) => {
+    const person = (snapshot ?? {}) as Json;
+    const to = roleOf(change.newValue);
+    // Older records can lack the earlier employer; the profile's latest past role names it.
+    const from = (() => {
+      const before = roleOf(change.oldValue);
+      if (before.company) return before;
+      const captures = [
+        { rawData: { previousCompanies: person.previousCompanies }, capturedAt: change.detectedAt },
+        ...history.filter((row) => row.entityId === change.entityId),
+      ];
+      const found = previousRoleFromCaptures(captures, to.company, change.detectedAt);
+      return found ? { company: cleanCompanyName(found.company ?? undefined) ?? null, title: found.title } : before;
+    })();
+    const fullName = text(person.fullName);
+    const kind = classifyJobChange(from, to);
+    return {
+      ...toChange(change),
+      prospectId: change.entityId,
+      fullName,
+      headline: text(person.headline),
+      sourceUrl: text(person.sourceUrl) ?? text(person.linkedinUrl),
+      from,
+      to,
+      kind,
+      summary: jobChangeSummary(fullName, kind, from, to),
+      startedAt: roleStartText(person, to.company),
+      // "capture_comparison": two captures differ; "work_history": one capture shows a recent move.
+      detectedBy: change.field === "workHistory" ? ("work_history" as const) : ("capture_comparison" as const),
+      requiresReview: !change.reviewedAt,
+      // A detected change is surfaced for a person to review. It starts no outreach.
+      automation: "none" as const,
+    };
+  });
+  // Changes recorded before company names were cleaned ("Uber" → "Uber + 1 more") are not moves.
+  // They stop being job changes for good, and the page is read again without them.
+  const noise = jobChanges.filter((change) => change.kind === "no_change").map((change) => change.id as string);
+  if (noise.length && attempt < 3) {
+    await db
+      .update(enrichmentChangeEvents)
+      .set({ isJobChange: false })
+      .where(and(eq(enrichmentChangeEvents.workspaceId, workspaceId), inArray(enrichmentChangeEvents.id, noise)));
+    return listJobChanges(db, workspaceId, filters, attempt + 1);
+  }
+  const base = and(eq(enrichmentChangeEvents.workspaceId, workspaceId), eq(enrichmentChangeEvents.isJobChange, true));
+  const [pending] = await db.select({ total: count() }).from(enrichmentChangeEvents).where(and(base, isNull(enrichmentChangeEvents.reviewedAt)));
+  const [reviewed] = await db.select({ total: count() }).from(enrichmentChangeEvents).where(and(base, isNotNull(enrichmentChangeEvents.reviewedAt)));
+  const [recent] = await db
+    .select({ total: count() })
+    .from(enrichmentChangeEvents)
+    .where(and(base, gte(enrichmentChangeEvents.detectedAt, new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))));
   return {
-    jobChanges: rows.map(({ change, snapshot }) => {
-      const person = (snapshot ?? {}) as Json;
-      const to = roleOf(change.newValue);
-      return {
-        ...toChange(change),
-        prospectId: change.entityId,
-        fullName: text(person.fullName),
-        sourceUrl: text(person.sourceUrl) ?? text(person.linkedinUrl),
-        // Older records can lack the earlier employer; the profile's latest past role names it.
-        from: (() => {
-          const before = roleOf(change.oldValue);
-          if (before.company) return before;
-          const captures = [
-            { rawData: { previousCompanies: person.previousCompanies }, capturedAt: change.detectedAt },
-            ...history.filter((row) => row.entityId === change.entityId),
-          ];
-          return previousRoleFromCaptures(captures, to.company, change.detectedAt) ?? before;
-        })(),
-        to,
-        // "capture_comparison": two captures differ; "work_history": one capture shows a recent move.
-        detectedBy: change.field === "workHistory" ? ("work_history" as const) : ("capture_comparison" as const),
-        requiresReview: !change.reviewedAt,
-        // A detected change is surfaced for a person to review. It starts no outreach.
-        automation: "none" as const,
-      };
-    }),
+    jobChanges: jobChanges.filter((change) => change.kind !== "no_change"),
     total: Number(totals?.total ?? 0),
     page: filters.page,
     pageSize: filters.pageSize,
+    counts: { pending: Number(pending?.total ?? 0), reviewed: Number(reviewed?.total ?? 0), lastSevenDays: Number(recent?.total ?? 0) },
   };
 }
 
