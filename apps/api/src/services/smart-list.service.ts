@@ -4,12 +4,16 @@ import type { Db } from "@skout/db";
 import { schema, scopedTo } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import {
+  countProspects,
+  fetchProspectFacets,
   runSmartListQueryWithFallback,
   type OpenSearchConfig,
+  type ProspectFacets,
   type SearchFilters,
 } from "@skout/opensearch";
 import type { Env } from "../config/env.js";
 import { HttpError } from "../utils/http.js";
+import { resolveSmartListFilters } from "./smart-list-filters.js";
 import {
   computeNextRefreshAt,
   type SmartListRefreshCadence,
@@ -55,6 +59,45 @@ export function osConfigFromEnv(config: Env): OpenSearchConfig | null {
     password: config.OPENSEARCH_PASSWORD,
     index: config.OPENSEARCH_INDEX,
   };
+}
+
+const FACETS_TTL_MS = 10 * 60 * 1000;
+let facetsCache: { at: number; url: string; value: ProspectFacets } | null = null;
+
+/**
+ * The values stored in the index (cached 10 min). Used both to offer real choices in the form and
+ * to resolve what was typed. Null when OpenSearch isn't configured or doesn't answer: filters then
+ * resolve without it (countries still expand to code + name).
+ */
+export async function getProspectFacets(osCfg: OpenSearchConfig | null): Promise<ProspectFacets | null> {
+  if (!osCfg) return null;
+  if (facetsCache && facetsCache.url === osCfg.url && Date.now() - facetsCache.at < FACETS_TTL_MS) {
+    return facetsCache.value;
+  }
+  try {
+    const value = await fetchProspectFacets(osCfg);
+    facetsCache = { at: Date.now(), url: osCfg.url, value };
+    return value;
+  } catch (err) {
+    log.warn("could not load prospect facets; resolving filters without them", { err });
+    return facetsCache?.value ?? null;
+  }
+}
+
+/** Saved filters → filters the index can match (see smart-list-filters.ts). */
+export async function resolveFiltersForSearch(osCfg: OpenSearchConfig | null, filters: SearchFilters): Promise<SearchFilters> {
+  return resolveSmartListFilters(filters, await getProspectFacets(osCfg));
+}
+
+/** Live count for a filter set that hasn't been saved yet. */
+export async function countSmartListMatches(
+  osCfg: OpenSearchConfig | null,
+  filters: SearchFilters
+): Promise<{ total: number; demo: boolean }> {
+  const resolved = await resolveFiltersForSearch(osCfg, filters);
+  if (osCfg) return { total: await countProspects(osCfg, resolved), demo: false };
+  const { total } = await runSmartListQueryWithFallback(null, resolved, 10_000);
+  return { total, demo: true };
 }
 
 export interface SmartListRecord {
@@ -203,27 +246,29 @@ export async function runSmartList(
 
   if (!list || list.workspaceId !== workspaceId) return null;
 
-  const filters = list.filters as SearchFilters;
-  const { hits, demo } = await runSmartListQueryWithFallback(osCfg, filters);
+  const filters = await resolveFiltersForSearch(osCfg, list.filters as SearchFilters);
+  const { hits, total, demo } = await runSmartListQueryWithFallback(osCfg, filters);
 
+  // The real number of matches; hits holds at most the first 1,000 of them.
   if (!db) {
-    list.lastRunCount = hits.length;
+    list.lastRunCount = total;
     list.updatedAt = new Date();
   } else {
     await db
       .update(smartLists)
-      .set({ lastRunCount: hits.length, updatedAt: new Date() })
+      .set({ lastRunCount: total, updatedAt: new Date() })
       .where(eq(smartLists.id, listId));
   }
 
   log.info("smart list run completed", {
     workspaceId,
     listId,
-    total: hits.length,
+    total,
+    kept: hits.length,
     demo,
   });
 
-  return { list, hits, total: hits.length, demo };
+  return { list, hits, total, demo };
 }
 
 export async function updateSmartListRefreshSchedule(

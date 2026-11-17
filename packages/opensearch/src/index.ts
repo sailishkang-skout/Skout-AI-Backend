@@ -364,6 +364,42 @@ export async function getProspectById(
   }
 }
 
+/** Seniority values the filter understands; anything else stored on a record counts as "not set". */
+const KNOWN_SENIORITIES = ["founder", "co_founder", "ceo", "c_level", "vp", "director", "head", "manager", "individual_contributor"];
+
+/** Title phrases that reliably mean a seniority. Matched as phrases on the analysed `title` field. */
+const SENIORITY_TITLE_PHRASES: Record<string, string[]> = {
+  founder: ["founder"],
+  co_founder: ["co-founder", "cofounder", "co founder"],
+  ceo: ["ceo", "chief executive"],
+  c_level: ["chief", "cto", "cfo", "coo", "cmo", "cio", "cro", "cpo", "ciso", "cxo"],
+  vp: ["vp", "vice president", "svp", "evp", "avp"],
+  director: ["director"],
+  head: ["head of", "head"],
+  manager: ["manager"],
+};
+
+/**
+ * Seniority filter. Most captured (real) prospects have no seniority stored, or a value outside
+ * the filter's vocabulary, so a plain term filter silently excluded ~99% of them. A record now
+ * matches when its stored seniority is one of the wanted values, OR when it has no valid
+ * seniority and its job title contains a phrase that means one of them.
+ */
+export function seniorityClause(values: string[]): object {
+  const phrases = [...new Set(values.flatMap((v) => SENIORITY_TITLE_PHRASES[v] ?? []))];
+  const should: object[] = [{ terms: { seniority: values } }];
+  if (phrases.length) {
+    should.push({
+      bool: {
+        must_not: [{ terms: { seniority: KNOWN_SENIORITIES } }],
+        should: phrases.map((phrase) => ({ match_phrase: { title: phrase } })),
+        minimum_should_match: 1,
+      },
+    });
+  }
+  return { bool: { should, minimum_should_match: 1 } };
+}
+
 /** Build OpenSearch query from product filters + free-text query. */
 export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25) {
   const must: object[] = [];
@@ -389,7 +425,7 @@ export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25
     filter.push({ multi_match: { query: filters.jobTitle.trim(), fields: ["title", "headline"] } });
   }
   if (filters.department) filter.push({ term: { department: filters.department } });
-  if (filters.seniority) filter.push({ term: { seniority: filters.seniority } });
+  // seniority + seniorities are merged into one clause (see seniorityClause) below.
   if (filters.jobFunction) filter.push({ term: { jobFunction: filters.jobFunction } });
   if (filters.emailAvailable === true) filter.push({ exists: { field: "email" } });
   if (filters.phoneAvailable === true) filter.push({ exists: { field: "phone" } });
@@ -441,7 +477,8 @@ export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25
   if (filters.country)     filter.push({ term: { country: filters.country } });
   if (filters.industries?.length)  filter.push({ terms: { industry: filters.industries } });
   if (filters.countries?.length)   filter.push({ terms: { country: filters.countries } });
-  if (filters.seniorities?.length) filter.push({ terms: { seniority: filters.seniorities } });
+  const wantedSeniorities = [...new Set([...(filters.seniority ? [filters.seniority] : []), ...(filters.seniorities ?? [])])];
+  if (wantedSeniorities.length) filter.push(seniorityClause(wantedSeniorities));
   if (filters.employeeBuckets?.length) filter.push({ terms: { "employeeBucket.keyword": filters.employeeBuckets } });
   if (filters.state?.trim()) filter.push({ term: { state: filters.state.trim() } });
   if (filters.city?.trim())  filter.push({ match: { city: filters.city.trim() } });
@@ -686,32 +723,124 @@ export async function searchProspects(
   };
 }
 
+/** The query part of buildSearchQuery (no paging/sort), for counts and id checks. */
+function filterQuery(filters: SearchFilters): object {
+  return buildSearchQuery(filters, 1, 0).query;
+}
+
+/** Exact number of prospects matching the filters (live count while a list is being edited). */
+export async function countProspects(cfg: OpenSearchConfig, filters: SearchFilters): Promise<number> {
+  const index = cfg.index ?? PROSPECTS_INDEX;
+  const res = await osFetch<{ count: number }>(cfg, `/${index}/_count`, {
+    method: "POST",
+    body: JSON.stringify({ query: filterQuery(filters) }),
+  });
+  return res.count;
+}
+
+export interface FacetValue {
+  value: string;
+  count: number;
+}
+
+export interface ProspectFacets {
+  total: number;
+  industry: FacetValue[];
+  country: FacetValue[];
+  seniority: FacetValue[];
+}
+
+/**
+ * The values actually stored in the index, with counts. Filters are exact matches, so choices
+ * offered to users (and values typed by them) must come from here, not from hard-coded lists
+ * that drift from the data.
+ */
+export async function fetchProspectFacets(cfg: OpenSearchConfig, size = 200): Promise<ProspectFacets> {
+  const index = cfg.index ?? PROSPECTS_INDEX;
+  const res = await osFetch<{
+    hits: { total: { value: number } };
+    aggregations: Record<"industry" | "country" | "seniority", { buckets: { key: string; doc_count: number }[] }>;
+  }>(cfg, `/${index}/_search`, {
+    method: "POST",
+    body: JSON.stringify({
+      size: 0,
+      track_total_hits: true,
+      aggs: {
+        industry: { terms: { field: "industry", size } },
+        country: { terms: { field: "country", size } },
+        seniority: { terms: { field: "seniority", size: 50 } },
+      },
+    }),
+  });
+  const values = (k: "industry" | "country" | "seniority") =>
+    (res.aggregations?.[k]?.buckets ?? []).map((b) => ({ value: String(b.key), count: b.doc_count }));
+  return { total: res.hits.total.value, industry: values("industry"), country: values("country"), seniority: values("seniority") };
+}
+
 /** Execute a saved smart-list filter set (stored as SearchFilters JSON). */
 export async function runSmartListQuery(
   cfg: OpenSearchConfig,
   filters: SearchFilters,
   limit = 1000
-): Promise<ProspectDocument[]> {
-  const res = await searchProspects(cfg, filters, 1, limit);
-  return res.hits;
+): Promise<{ hits: ProspectDocument[]; total: number }> {
+  if (needsSearchPostProcess(filters)) {
+    const res = await searchProspects(cfg, filters, 1, limit);
+    return { hits: res.hits, total: res.total };
+  }
+  const index = cfg.index ?? PROSPECTS_INDEX;
+  // track_total_hits: without it OpenSearch stops counting at 10,000, and the list's count would
+  // be capped at the number of hits kept (limit) rather than the real number of matches.
+  const body = { ...buildSearchQuery(filters, 1, limit), track_total_hits: true };
+  const res = await osFetch<{
+    hits: { total: { value: number }; hits: { _source: ProspectDocument }[] };
+  }>(cfg, `/${index}/_search`, { method: "POST", body: JSON.stringify(body) });
+  return { hits: res.hits.hits.map((h) => h._source), total: res.hits.total.value };
 }
 
 /**
- * Query OpenSearch when configured; otherwise (or on connection failure) use the
- * in-process demo corpus so smart lists work in local dev without Docker OpenSearch.
+ * Which of `prospectIds` still match the filters. A refresh keeps at most `limit` hits, so a
+ * member missing from the kept hits may simply have been pushed past the cap; this tells the
+ * two cases apart so such members are not reported as dropped.
+ */
+export async function prospectIdsStillMatching(
+  cfg: OpenSearchConfig,
+  filters: SearchFilters,
+  prospectIds: string[]
+): Promise<Set<string>> {
+  if (prospectIds.length === 0) return new Set();
+  const index = cfg.index ?? PROSPECTS_INDEX;
+  const base = buildSearchQuery(filters, 1, 0).query as { bool: { must?: object[]; filter?: object[] } };
+  // Indexes we create map prospectId as keyword; ones created by dynamic mapping (Bonsai) store
+  // text + .keyword. Match either; a sub-field that doesn't exist simply matches nothing.
+  const idClause = {
+    bool: {
+      should: [{ terms: { prospectId: prospectIds } }, { terms: { "prospectId.keyword": prospectIds } }],
+      minimum_should_match: 1,
+    },
+  };
+  const query = { bool: { ...base.bool, filter: [...(base.bool.filter ?? []), idClause] } };
+  const res = await osFetch<{ hits: { hits: { _source: { prospectId: string } }[] } }>(cfg, `/${index}/_search`, {
+    method: "POST",
+    body: JSON.stringify({ size: prospectIds.length, _source: ["prospectId"], query }),
+  });
+  return new Set(res.hits.hits.map((h) => h._source.prospectId));
+}
+
+/**
+ * Query OpenSearch when it is configured. The in-process demo corpus is only used when no
+ * OpenSearch is configured at all (local dev). A configured cluster that fails must surface as an
+ * error: silently answering with fake prospects led refreshes, scoring and activation to act on
+ * demo people.
  */
 export async function runSmartListQueryWithFallback(
   cfg: OpenSearchConfig | null,
   filters: SearchFilters,
   limit = 1000
-): Promise<{ hits: ProspectDocument[]; demo: boolean }> {
+): Promise<{ hits: ProspectDocument[]; total: number; demo: boolean }> {
   if (cfg) {
-    try {
-      const hits = await runSmartListQuery(cfg, filters, limit);
-      return { hits, demo: false };
-    } catch {
-      // fall through to demo corpus
-    }
+    const { hits, total } = await runSmartListQuery(cfg, filters, limit);
+    return { hits, total, demo: false };
   }
-  return { hits: filterDemoCorpus(buildDemoCorpus(), filters, limit), demo: true };
+  const hits = filterDemoCorpus(buildDemoCorpus(), filters, limit);
+  return { hits, total: hits.length, demo: true };
 }

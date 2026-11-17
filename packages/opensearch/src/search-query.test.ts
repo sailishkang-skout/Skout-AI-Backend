@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { aggregateDemoCorpus, buildSearchQuery } from "./index.js";
+import { aggregateDemoCorpus, buildSearchQuery, seniorityClause } from "./index.js";
 import type { ProspectDocument } from "./index.js";
 
 describe("buildSearchQuery", () => {
@@ -80,10 +80,10 @@ describe("buildSearchQuery", () => {
       expect(bool.filter).toContainEqual({ term: { department: "Sales" } });
     });
 
-    it("adds term filter for seniority", () => {
+    it("adds a seniority clause that matches the stored value or, failing that, the job title", () => {
       const q = buildSearchQuery({ seniority: "vp" });
       const bool = q.query.bool as { filter?: object[] };
-      expect(bool.filter).toContainEqual({ term: { seniority: "vp" } });
+      expect(bool.filter).toContainEqual(seniorityClause(["vp"]));
     });
 
     it("adds term filter for jobFunction", () => {
@@ -311,7 +311,7 @@ describe("buildSearchQuery", () => {
       const bool = q.query.bool as { filter?: object[] };
       expect(bool.filter).toContainEqual({ terms: { industry: ["SaaS", "Fintech"] } });
       expect(bool.filter).toContainEqual({ terms: { country: ["US", "CA"] } });
-      expect(bool.filter).toContainEqual({ terms: { seniority: ["director", "vp"] } });
+      expect(bool.filter).toContainEqual(seniorityClause(["director", "vp"]));
     });
 
     it("omits the terms clause for an empty array", () => {
@@ -362,5 +362,45 @@ describe("aggregateDemoCorpus", () => {
   it("buckets missing fields as unknown", () => {
     const result = aggregateDemoCorpus([doc({})], {});
     expect(result.segments).toContainEqual({ dimension: "industry", value: "unknown", count: 1 });
+  });
+});
+
+describe("seniorityClause", () => {
+  type Clause = { bool: { should: object[]; minimum_should_match: number } };
+
+  it("matches the stored seniority value", () => {
+    const c = seniorityClause(["vp"]) as Clause;
+    expect(c.bool.minimum_should_match).toBe(1);
+    expect(c.bool.should).toContainEqual({ terms: { seniority: ["vp"] } });
+  });
+
+  it("falls back to the job title only for records without a valid seniority", () => {
+    const c = seniorityClause(["vp"]) as Clause;
+    const fallback = c.bool.should[1] as {
+      bool: { must_not: object[]; should: object[]; minimum_should_match: number };
+    };
+    expect(fallback.bool.must_not[0]).toMatchObject({ terms: { seniority: expect.arrayContaining(["vp", "director", "manager"]) } });
+    expect(fallback.bool.should).toContainEqual({ match_phrase: { title: "vp" } });
+    expect(fallback.bool.should).toContainEqual({ match_phrase: { title: "vice president" } });
+    expect(fallback.bool.minimum_should_match).toBe(1);
+  });
+
+  it("combines title phrases for several seniorities", () => {
+    const c = seniorityClause(["director", "ceo"]) as Clause;
+    const fallback = c.bool.should[1] as { bool: { should: object[] } };
+    expect(fallback.bool.should).toContainEqual({ match_phrase: { title: "director" } });
+    expect(fallback.bool.should).toContainEqual({ match_phrase: { title: "chief executive" } });
+  });
+
+  it("has no title fallback for seniorities a title can't reliably express", () => {
+    const c = seniorityClause(["individual_contributor"]) as Clause;
+    expect(c.bool.should).toEqual([{ terms: { seniority: ["individual_contributor"] } }]);
+  });
+
+  it("merges seniority and seniorities into one clause", () => {
+    const q = buildSearchQuery({ seniority: "vp", seniorities: ["director"] });
+    const bool = q.query.bool as { filter?: object[] };
+    expect(bool.filter).toHaveLength(1);
+    expect(bool.filter).toContainEqual(seniorityClause(["vp", "director"]));
   });
 });

@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import {
+  prospectIdsStillMatching,
   runSmartListQueryWithFallback,
   type ProspectDocument,
   type SearchFilters,
@@ -10,7 +11,12 @@ import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { buildEnrichmentService, InsufficientCreditsError } from "./enrichment/index.js";
 import { prospectToSnapshot } from "./smart-list.mapper.js";
-import { osConfigFromEnv, summarizeSearchFilters, type SmartListProspectDiffEntry } from "./smart-list.service.js";
+import {
+  osConfigFromEnv,
+  resolveFiltersForSearch,
+  summarizeSearchFilters,
+  type SmartListProspectDiffEntry,
+} from "./smart-list.service.js";
 import { computeNextRefreshAt, type SmartListRefreshCadence } from "./smart-list-cadence.js";
 import { createSearchCacheService } from "./search-cache.service.js";
 
@@ -54,10 +60,14 @@ export async function runSmartListRefreshJob(
   const cadence = list.refreshCadence as SmartListRefreshCadence;
 
   try {
-    const { hits } = await runSmartListQueryWithFallback(
-      osConfigFromEnv(config),
-      list.filters as SearchFilters
-    );
+    const osCfg = osConfigFromEnv(config);
+    const filters = await resolveFiltersForSearch(osCfg, list.filters as SearchFilters);
+    const { hits, total, demo } = await runSmartListQueryWithFallback(osCfg, filters);
+    // Demo prospects are fake: in a deployed environment never store them as members or spend
+    // credits scoring them. (Local dev without OpenSearch uses the demo corpus on purpose.)
+    if (demo && config.NODE_ENV === "production") {
+      throw new Error("search_unavailable: refusing to refresh a smart list from demo data");
+    }
     const matched = hits as ProspectDocument[];
     const matchedIds = new Set(matched.map((h) => h.prospectId));
 
@@ -68,7 +78,15 @@ export async function runSmartListRefreshJob(
     const previousIds = new Set(previousRows.map((r) => r.prospectId));
 
     const addedHits = matched.filter((h) => !previousIds.has(h.prospectId));
-    const droppedRows = previousRows.filter((r) => !matchedIds.has(r.prospectId));
+    const missingRows = previousRows.filter((r) => !matchedIds.has(r.prospectId));
+    // Only the first 1,000 hits are kept. When the list has more matches than that, a member that
+    // isn't among them may simply have been pushed past the cap; check before calling it dropped.
+    const stillMatching =
+      missingRows.length > 0 && total > matched.length && osCfg
+        ? await prospectIdsStillMatching(osCfg, filters, missingRows.map((r) => r.prospectId))
+        : new Set<string>();
+    const keptRows = missingRows.filter((r) => stillMatching.has(r.prospectId));
+    const droppedRows = missingRows.filter((r) => !stillMatching.has(r.prospectId));
 
     const snapshots = addedHits.map(prospectToSnapshot).filter((s) => s.companyDomain);
 
@@ -86,7 +104,7 @@ export async function runSmartListRefreshJob(
           workspaceId,
           smartListId: listId,
           status: "skipped_insufficient_credits",
-          matchedCount: matched.length,
+          matchedCount: total,
           addedCount: addedHits.length,
           droppedCount: droppedRows.length,
           addedProspects: [],
@@ -123,20 +141,18 @@ export async function runSmartListRefreshJob(
     const now = new Date();
     // Replace membership wholesale: drop stale rows for this list, re-insert current matches.
     await db.delete(smartListMembers).where(eq(smartListMembers.smartListId, listId));
-    if (matched.length > 0) {
-      await db.insert(smartListMembers).values(
-        matched.map((doc) => ({
-          smartListId: listId,
-          prospectId: doc.prospectId,
-          snapshot: toDiffEntry(doc),
-        }))
-      );
+    const members = [
+      ...matched.map((doc) => ({ smartListId: listId, prospectId: doc.prospectId, snapshot: toDiffEntry(doc) })),
+      ...keptRows.map((r) => ({ smartListId: listId, prospectId: r.prospectId, snapshot: r.snapshot })),
+    ];
+    if (members.length > 0) {
+      await db.insert(smartListMembers).values(members);
     }
 
     await db
       .update(smartLists)
       .set({
-        lastRunCount: matched.length,
+        lastRunCount: total,
         lastRefreshedAt: now,
         nextRefreshAt: computeNextRefreshAt(cadence, now),
         updatedAt: now,
@@ -149,7 +165,7 @@ export async function runSmartListRefreshJob(
       workspaceId,
       smartListId: listId,
       status: "completed",
-      matchedCount: matched.length,
+      matchedCount: total,
       addedCount: addedHits.length,
       droppedCount: droppedRows.length,
       addedProspects: addedHits.map((doc) => withMatchReason(toDiffEntry(doc), `Now matches: ${filterSummary}`)),
@@ -165,7 +181,7 @@ export async function runSmartListRefreshJob(
       .update(asyncJobs)
       .set({
         status: "completed",
-        result: { matched: matched.length, added: addedHits.length, dropped: droppedRows.length, creditsUsed },
+        result: { matched: total, added: addedHits.length, dropped: droppedRows.length, creditsUsed },
         completedAt: now,
       })
       .where(eq(asyncJobs.id, jobId));
@@ -175,7 +191,8 @@ export async function runSmartListRefreshJob(
     log.info("smart list refresh completed", {
       workspaceId,
       listId,
-      matched: matched.length,
+      matched: total,
+      kept: matched.length,
       added: addedHits.length,
       dropped: droppedRows.length,
       creditsUsed,

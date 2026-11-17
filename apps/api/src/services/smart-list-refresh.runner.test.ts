@@ -8,7 +8,12 @@ const invalidateSmartList = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("@skout/opensearch", async () => {
   const actual = await vi.importActual<typeof import("@skout/opensearch")>("@skout/opensearch");
-  return { ...actual, runSmartListQueryWithFallback: vi.fn() };
+  return {
+    ...actual,
+    runSmartListQueryWithFallback: vi.fn(),
+    prospectIdsStillMatching: vi.fn().mockResolvedValue(new Set()),
+    fetchProspectFacets: vi.fn().mockRejectedValue(new Error("facets unavailable in tests")),
+  };
 });
 
 vi.mock("./enrichment/index.js", async () => {
@@ -30,7 +35,7 @@ vi.mock("./smart-list.mapper.js", () => ({
   }),
 }));
 
-const { runSmartListQueryWithFallback } = await import("@skout/opensearch");
+const { runSmartListQueryWithFallback, prospectIdsStillMatching } = await import("@skout/opensearch");
 const { runSmartListRefreshJob } = await import("./smart-list-refresh.runner.js");
 
 const { smartLists, smartListMembers, smartListRefreshes, asyncJobs } = schema;
@@ -124,7 +129,7 @@ function baseList(overrides: Partial<typeof smartLists.$inferSelect> = {}): type
   };
 }
 
-const config = {} as never;
+const config = { OPENSEARCH_URL: "http://os.test" } as never;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -145,7 +150,8 @@ describe("runSmartListRefreshJob", () => {
   it("computes the added/dropped diff and scores only newly-added prospects on success", async () => {
     vi.mocked(runSmartListQueryWithFallback).mockResolvedValue({
       hits: [doc("A"), doc("C")],
-      demo: true,
+      total: 2,
+      demo: false,
     });
     runCorpusScore.mockResolvedValue({ scored: 1, skipped: 0, results: [], creditsUsed: 2 });
 
@@ -190,7 +196,8 @@ describe("runSmartListRefreshJob", () => {
   it("attaches a matchReason to added/dropped entries explaining which filters moved them", async () => {
     vi.mocked(runSmartListQueryWithFallback).mockResolvedValue({
       hits: [doc("A"), doc("C")],
-      demo: true,
+      total: 2,
+      demo: false,
     });
     runCorpusScore.mockResolvedValue({ scored: 1, skipped: 0, results: [], creditsUsed: 2 });
 
@@ -218,7 +225,8 @@ describe("runSmartListRefreshJob", () => {
   it("skips the refresh and leaves membership untouched when credits are insufficient", async () => {
     vi.mocked(runSmartListQueryWithFallback).mockResolvedValue({
       hits: [doc("A"), doc("C")],
-      demo: true,
+      total: 2,
+      demo: false,
     });
     runCorpusScore.mockRejectedValue(new InsufficientCreditsError(4, 1));
 
@@ -273,5 +281,73 @@ describe("runSmartListRefreshJob", () => {
 
     const jobUpdate = lastUpdate(updates, asyncJobs);
     expect(jobUpdate?.set).toMatchObject({ status: "failed", errorMessage: "opensearch exploded" });
+  });
+});
+
+describe("runSmartListRefreshJob — correctness fixes", () => {
+  const twoMembers = () => [
+    { smartListId: LIST_ID, prospectId: "A", snapshot: { prospectId: "A", fullName: "Prospect A" }, addedAt: new Date() },
+    { smartListId: LIST_ID, prospectId: "B", snapshot: { prospectId: "B", fullName: "Prospect B" }, addedAt: new Date() },
+  ];
+
+  it("in production, refuses to refresh on demo data and records a failed refresh instead", async () => {
+    vi.mocked(runSmartListQueryWithFallback).mockResolvedValue({ hits: [doc("Z")], total: 1, demo: true });
+    const { db, inserts } = createMockDb({ list: baseList(), previousMembers: twoMembers() });
+    const prodConfig = { OPENSEARCH_URL: "http://os.test", NODE_ENV: "production" } as never;
+
+    await expect(runSmartListRefreshJob(db as never, prodConfig, JOB_ID, WORKSPACE, LIST_ID)).rejects.toThrow(/demo/i);
+
+    expect(runCorpusScore).not.toHaveBeenCalled();
+    expect(inserts.find((i) => i.table === smartListMembers)).toBeUndefined();
+    expect(inserts.find((i) => i.table === smartListRefreshes)?.values).toMatchObject({ status: "failed" });
+  });
+
+  it("stores the true number of matches, not just the hits kept", async () => {
+    vi.mocked(runSmartListQueryWithFallback).mockResolvedValue({ hits: [doc("A"), doc("C")], total: 4200, demo: false });
+    runCorpusScore.mockResolvedValue({ scored: 1, skipped: 0, results: [], creditsUsed: 0 });
+    const { db, updates, inserts } = createMockDb({ list: baseList(), previousMembers: twoMembers() });
+
+    await runSmartListRefreshJob(db as never, config, JOB_ID, WORKSPACE, LIST_ID);
+
+    expect(updates.find((u) => u.table === smartLists)?.set).toMatchObject({ lastRunCount: 4200 });
+    expect(inserts.find((i) => i.table === smartListRefreshes)?.values).toMatchObject({ matchedCount: 4200 });
+  });
+
+  it("does not report a member as dropped when it still matches but was past the 1,000-hit cap", async () => {
+    vi.mocked(runSmartListQueryWithFallback).mockResolvedValue({ hits: [doc("A"), doc("C")], total: 4200, demo: false });
+    vi.mocked(prospectIdsStillMatching).mockResolvedValue(new Set(["B"]));
+    runCorpusScore.mockResolvedValue({ scored: 1, skipped: 0, results: [], creditsUsed: 0 });
+    const { db, inserts } = createMockDb({ list: baseList(), previousMembers: twoMembers() });
+
+    await runSmartListRefreshJob(db as never, config, JOB_ID, WORKSPACE, LIST_ID);
+
+    expect(prospectIdsStillMatching).toHaveBeenCalledWith(expect.anything(), expect.anything(), ["B"]);
+    const refresh = inserts.find((i) => i.table === smartListRefreshes)?.values as { droppedCount: number };
+    expect(refresh.droppedCount).toBe(0);
+    const members = inserts.find((i) => i.table === smartListMembers)?.values as { prospectId: string }[];
+    expect(members.map((m) => m.prospectId).sort()).toEqual(["A", "B", "C"]);
+  });
+
+  it("only checks past-the-cap members when the list actually exceeded the cap", async () => {
+    vi.mocked(runSmartListQueryWithFallback).mockResolvedValue({ hits: [doc("A"), doc("C")], total: 2, demo: false });
+    runCorpusScore.mockResolvedValue({ scored: 1, skipped: 0, results: [], creditsUsed: 0 });
+    const { db, inserts } = createMockDb({ list: baseList(), previousMembers: twoMembers() });
+
+    await runSmartListRefreshJob(db as never, config, JOB_ID, WORKSPACE, LIST_ID);
+
+    expect(prospectIdsStillMatching).not.toHaveBeenCalled();
+    expect(inserts.find((i) => i.table === smartListRefreshes)?.values).toMatchObject({ droppedCount: 1 });
+  });
+
+  it("refreshes with filters resolved to stored values (\"India\" also matches \"IN\")", async () => {
+    vi.mocked(runSmartListQueryWithFallback).mockResolvedValue({ hits: [], total: 0, demo: false });
+    const { db } = createMockDb({ list: baseList({ filters: { country: "India", seniority: "VP" } }), previousMembers: [] });
+
+    await runSmartListRefreshJob(db as never, config, JOB_ID, WORKSPACE, LIST_ID);
+
+    expect(runSmartListQueryWithFallback).toHaveBeenCalledWith(
+      expect.anything(),
+      { countries: ["IN", "IND", "India"], seniorities: ["vp"] }
+    );
   });
 });
