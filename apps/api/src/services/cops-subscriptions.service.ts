@@ -41,6 +41,15 @@ import type { PspAdapter } from "./psp/psp-adapter.js";
  * auto-debit. `invoiced` accounts are never suspended automatically. Status comes only from the
  * oldest unpaid bill, so paying it restores access with no extra step, and nothing here deletes data.
  */
+/*
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md (subscription auto-start additions).
+ *   - Tables touched directly: deals (read; status/stage set to won), pipeline_stages (read) - owned by apps/crm
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: a paid proposal starts the subscription and marks the deal won in the same
+ *     webhook transaction, so the payment, the subscription and the won deal cannot disagree.
+ *   - Review date: revisit when apps/crm's internal API exposes a "mark deal won" call
+ */
 const { subscriptions, subscriptionItems, subscriptionInvoices, subscriptionAmendments, paymentRequests, copsLifecycleStates, copsProvisionings, entitlements, proposals, proposalVersions, proposalLineItems } = schema;
 
 /**

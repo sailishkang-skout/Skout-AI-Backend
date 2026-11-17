@@ -240,3 +240,7 @@ by apps/api.
 | File | Tables | Access |
 | --- | --- | --- |
 | `apps/api/src/routes/cops-task-tracker.routes.ts` | companies | read only: the name of the customer an issue is linked to, shown on boards and lists |
+
+### Subscription auto-start additions (2026-11-17)
+
+- `apps/api/src/services/cops-subscriptions.service.ts`: reads `deals` and `pipeline_stages`, and sets a deal to won, when a paid proposal starts its subscription (`startSubscriptionOnProposalPayment` / `markDealWonOnPayment`). Done in the payment webhook's transaction so payment, subscription and deal stay consistent. Review when apps/crm exposes a "mark deal won" API.
