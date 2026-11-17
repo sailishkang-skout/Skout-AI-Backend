@@ -83,7 +83,9 @@ describe("verifySkoutInboundSignature", () => {
   it("accepts a timestamp right at the window boundary", () => {
     // Freeze the clock: on a slow run, time passed since NOW_SEC was taken pushes 299s past the window.
     vi.useFakeTimers({ now: NOW_SEC * 1000 });
-    onTestFinished(() => vi.useRealTimers());
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     const edgeTimestamp = NOW_SEC - 299;
     const sig = hmac(SECRET, edgeTimestamp, BODY);
     const req = makeRequest({
