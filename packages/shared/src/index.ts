@@ -29,3 +29,4 @@ export * from "./cops-admin-config.js";
 export * from "./cops-commercial-policy.js";
 export * from "./cops-esign.js";
 export * from "./cops-subscriptions.js";
+export * from "./product-features.js";

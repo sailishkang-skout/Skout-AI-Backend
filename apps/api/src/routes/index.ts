@@ -94,6 +94,9 @@ import { copsRolesRoutes } from "./cops-roles.routes.js";
 import { copsAppsRoutes } from "./cops-apps.routes.js";
 import { copsUsageRoutes, registerAiMetering } from "./cops-usage.routes.js";
 import { accountScopeGuard } from "../services/cops-data-scope.service.js";
+import { accessGuard } from "../services/access-guard.js";
+import { accessRoutes } from "./access.routes.js";
+import { copsAccessRoutes } from "./cops-access.routes.js";
 import { opsAccessGuard } from "../services/ops-access.service.js";
 import { isPublicRoute } from "../plugins/auth.js";
 import { complianceRoutes } from "./compliance.routes.js";
@@ -111,6 +114,10 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(jwksRoutes);
 
   await app.register(async (v1) => {
+    // Early access: a workspace not approved yet reaches only sign-in and its own request; a
+    // switched-off product area answers 403 feature_disabled. Before metering, so a refused AI call
+    // is never counted.
+    if (app.db) v1.addHook("preHandler", accessGuard(app.db, app.config));
     // COPS-14: count AI actions against the plan before any AI route runs.
     registerAiMetering(v1);
     // COPS-14 data scope: before any account route, a member limited to their own accounts gets
@@ -177,6 +184,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(identityMergeRoutes);
     await v1.register(consentRoutes);
     await v1.register(entitlementsRoutes);
+    await v1.register(accessRoutes);
     await v1.register(dsarRoutes);
     await v1.register(competitiveRoutes);
     await v1.register(regionalIntelRoutes);
@@ -225,6 +233,7 @@ export async function registerRoutes(app: FastifyInstance) {
       await ops(copsRolesRoutes);
       await ops(copsAppsRoutes);
       await ops(copsUsageRoutes);
+      await ops(copsAccessRoutes, { db: app.db });
     } else {
       app.log.warn("COPS audit and outbox routes disabled because DATABASE_URL is not configured");
     }

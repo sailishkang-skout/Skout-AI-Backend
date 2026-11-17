@@ -73,6 +73,7 @@ describe("CRM auth plugin — Clerk bearer (resolveAuth)", () => {
       userEmail: "user@example.com",
       workspaceId: "11111111-1111-4111-8111-111111111111",
       role: "member",
+      accessStatus: "active" as const,
     });
 
     const app = await buildAuthProbeApp(clerkOverrides);

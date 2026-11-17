@@ -40,6 +40,7 @@ describe("AUTH-BE-19 — Dual-verify mode (apps/crm)", () => {
       userEmail: USER_EMAIL,
       workspaceId: WORKSPACE_ID,
       role: "owner",
+      accessStatus: "active" as const,
     });
 
     const app = await buildAuthProbeApp(dualOverrides);
@@ -95,6 +96,7 @@ describe("AUTH-BE-19 — Dual-verify mode (apps/crm)", () => {
       userEmail: USER_EMAIL,
       workspaceId: WORKSPACE_ID,
       role: "owner",
+      accessStatus: "active" as const,
     });
 
     const app = await buildAuthProbeApp({
@@ -128,6 +130,7 @@ describe("AUTH-BE-19 — Dual-verify mode (apps/crm)", () => {
       userEmail: USER_EMAIL,
       workspaceId: WORKSPACE_ID,
       role: "owner",
+      accessStatus: "active" as const,
     });
 
     const app = await buildAuthProbeApp({

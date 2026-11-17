@@ -281,6 +281,26 @@ describe("auth-microsoft.routes (AUTH-BE-16 Microsoft) — with database", () =>
     expect(credits).toBeTruthy();
   });
 
+  it("with the early access gate on, a new Microsoft user gets a pending workspace and no credits", async () => {
+    const gated = await buildAuthCoreProbeApp(db, appOverrides({ EARLY_ACCESS_GATE_ENABLED: "true" }));
+    try {
+      const email = freshEmail("gated");
+      const flow = await startFlow(gated, "/dashboard");
+      exchange.idToken = await msIdToken({ oid: freshOid(), email, nonce: flow.nonce });
+      const res = await callback(gated, flow);
+      expect(res.statusCode).toBe(200);
+      const [m] = await db.select().from(workspaceMembers).where(eq(workspaceMembers.userId, res.json().data.user.id));
+      const [ws] = await db.select().from(schema.workspaces).where(eq(schema.workspaces.id, m!.workspaceId));
+      expect(ws!.accessStatus).toBe("pending");
+      const [req] = await db.select().from(schema.accessRequests).where(eq(schema.accessRequests.workspaceId, m!.workspaceId));
+      expect(req).toMatchObject({ signupMethod: "microsoft", status: "pending" });
+      const [bal] = await db.select().from(creditBalances).where(eq(creditBalances.workspaceId, m!.workspaceId));
+      expect(bal).toBeUndefined();
+    } finally {
+      await gated.close();
+    }
+  });
+
   it("links to an existing user with the same verified email instead of creating a duplicate", async () => {
     const email = freshEmail("existing");
     const [existing] = await db

@@ -1135,6 +1135,20 @@
       "when": 1798300800000,
       "tag": "0159_capture_jobs_dashboard",
       "breakpoints": true
+    },
+    {
+      "idx": 162,
+      "version": "7",
+      "when": 1798300900000,
+      "tag": "0160_early_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 163,
+      "version": "7",
+      "when": 1798301000000,
+      "tag": "0161_access_manage",
+      "breakpoints": true
     }
   ]
 }

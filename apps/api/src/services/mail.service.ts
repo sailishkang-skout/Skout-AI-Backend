@@ -331,6 +331,37 @@ export function buildAuthLinkEmail(opts: {
   };
 }
 
+/** Early access approval: the single-use invite code plus a link that pre-fills it. */
+export function buildEarlyAccessEmail(opts: { to: string; code: string; url: string; expiresAt: Date }): MailOptions {
+  const title = "Your Skout AI early access is ready";
+  const expires = opts.expiresAt.toUTCString().replace(/ \d\d:\d\d:\d\d GMT$/, "");
+  const bodyHtml = `
+    <p style="margin:0 0 16px;">You're in. Use this invite code to unlock your Skout AI workspace:</p>
+    <p style="margin:0 0 20px;font-size:24px;font-weight:600;letter-spacing:4px;font-family:monospace;">${escapeHtml(opts.code)}</p>
+    <p style="margin:0 0 8px;">${ctaButton(opts.url, "Unlock Skout AI")}</p>
+    <p style="margin:20px 0 0;font-size:12px;color:#71717a;">The code works once and expires on ${escapeHtml(expires)}.</p>
+  `;
+  return {
+    to: opts.to,
+    subject: title,
+    text: [
+      "You're in. Use this invite code to unlock your Skout AI workspace:",
+      "",
+      opts.code,
+      "",
+      `Or open: ${opts.url}`,
+      "",
+      `The code works once and expires on ${expires}.`,
+    ].join("\n"),
+    html: renderTransactionalLayout({
+      preheader: title,
+      title,
+      bodyHtml,
+      footerNote: "You're getting this because you requested early access to Skout AI.",
+    }),
+  };
+}
+
 async function sendViaResendApi(config: Env, opts: MailOptions): Promise<SendMailResult> {
   const from = config.RESEND_FROM ?? config.SES_FROM_EMAIL;
   const controller = new AbortController();

@@ -499,6 +499,11 @@ const STEP_RUNNERS: Record<ProvisioningStepName, StepRunner> = {
     const workspaceId = requireWorkspace(run);
     const svc = new EntitlementsService(tx);
     await svc.set(workspaceId, "plan", { name: run.request.plan, provisioning_id: run.provisioningId }, ENTITLEMENT_SOURCE);
+    // Usage limits read plan.code (cops-usage planLimits); without it a Multichannel trial got Full
+    // limits until a subscription was activated.
+    if (run.request.plan === "full" || run.request.plan === "multichannel") {
+      await svc.set(workspaceId, "plan.code", run.request.plan, ENTITLEMENT_SOURCE);
+    }
     await svc.set(
       workspaceId,
       "trial",

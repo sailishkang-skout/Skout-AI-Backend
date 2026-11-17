@@ -205,6 +205,32 @@ describe("auth-core.routes (AUTH-BE-14)", () => {
   });
 
   describe("login", () => {
+    it("with the early access gate on, signup creates a pending workspace with an access request and no credits", async () => {
+      const key = await makeTestSigningKey();
+      const gated = await buildAuthCoreProbeApp(db, {
+        AUTH_REFRESH_TOKEN_PEPPER: config.AUTH_REFRESH_TOKEN_PEPPER,
+        AUTH_JWT_PRIVATE_KEY: key.pem,
+        AUTH_JWT_KID: "test-kid",
+        AUTH_JWT_PUBLIC_KEY_SET: JSON.stringify({ keys: [key.jwk] }),
+        EARLY_ACCESS_GATE_ENABLED: "true",
+        SMTP_HOST: undefined,
+        RESEND_API_KEY: undefined,
+      });
+      const email = `ea-signup-${Date.now()}@example.test`;
+      createdUserEmails.push(email);
+      const res = await gated.inject({ method: "POST", url: "/api/v1/auth/signup", payload: { email, password: "Correct-Horse-9-Battery", fullName: "Gated" } });
+      expect(res.statusCode).toBe(201);
+      const [m] = await db.select().from(workspaceMembers).where(eq(workspaceMembers.userId, res.json().data.userId));
+      const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, m!.workspaceId));
+      expect(ws!.accessStatus).toBe("pending");
+      const [req] = await db.select().from(schema.accessRequests).where(eq(schema.accessRequests.workspaceId, m!.workspaceId));
+      expect(req).toMatchObject({ email, signupMethod: "password", status: "pending" });
+      const [bal] = await db.select().from(creditBalances).where(eq(creditBalances.workspaceId, m!.workspaceId));
+      expect(bal).toBeUndefined();
+      await db.delete(workspaces).where(eq(workspaces.id, m!.workspaceId));
+      await gated.close();
+    });
+
     async function signup(email: string, password: string) {
       const res = await app.inject({ method: "POST", url: "/api/v1/auth/signup", payload: { email, password } });
       return res.json().data.userId as string;

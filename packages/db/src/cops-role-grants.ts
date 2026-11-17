@@ -10,7 +10,8 @@ export const COPS_SYSTEM_ROLE_GRANTS = [
     key: "cs",
     name: "Customer Success",
     // commercial:read: CS sees the customer's payments and subscription, so they can raise a refund or cancel request.
-    permissionKeys: ["crm:read", "crm:write", "commercial:read", "onboarding:read", "onboarding:write", "onboarding:send", "tickets:read", "tickets:write", "tickets:send", "analytics:read"],
+    // access:manage: CS runs the early access queue alongside onboarding.
+    permissionKeys: ["crm:read", "crm:write", "commercial:read", "onboarding:read", "onboarding:write", "onboarding:send", "tickets:read", "tickets:write", "tickets:send", "analytics:read", "access:manage"],
   },
   {
     key: "finance",

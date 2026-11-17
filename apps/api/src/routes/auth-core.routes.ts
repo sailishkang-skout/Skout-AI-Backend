@@ -15,6 +15,7 @@
  * email with AUTH_EMAIL_NOT_VERIFIED after the password checks out. Signup still records
  * auth_identities.emailVerifiedAt as null until verify-email/confirm or otp/verify sets it.
  */
+import { earlyAccessGateEnabled } from "../config/early-access.js";
 import { findOpsWorkspace, opsAccessState } from "../services/ops-access.service.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { createHmac, randomBytes } from "node:crypto";
@@ -294,7 +295,7 @@ export async function authCoreRoutes(app: FastifyInstance) {
         email,
         emailVerified: false,
         name: parsed.data.fullName,
-      });
+      }, undefined, undefined, undefined, earlyAccessGateEnabled(config) ? { selfSignup: { method: "password" } } : {});
 
       const [credRow] = await db
         .insert(userCredentials)

@@ -10,6 +10,7 @@
  * Blocked / inactive users are refused with 403 AUTH_ACCOUNT_BLOCKED.
  * Successful callback issues a normal own-auth session with refresh cookie (BE-14).
  */
+import { earlyAccessGateEnabled } from "../config/early-access.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
@@ -218,7 +219,7 @@ export async function authGoogleRoutes(app: FastifyInstance) {
           email: googleUser.email,
           emailVerified: true,
           name: googleUser.name,
-        });
+        }, undefined, undefined, undefined, earlyAccessGateEnabled(app.config) ? { selfSignup: { method: "google" } } : {});
       } catch (err: unknown) {
         log.error("auth-google.routes: resolveOrProvisionUser failed", err);
         return reply.code(500).send(errorResponse("Failed to provision or link user", 500));

@@ -12,6 +12,11 @@ export const workspaces = pgTable("workspaces", {
   meetingBotAutoJoinDefault: boolean("meeting_bot_auto_join_default").notNull().default(false),
   /** Score threshold (0-100) above which a scored prospect is flagged as a promotion candidate. */
   dealPromotionThreshold: integer("deal_promotion_threshold").notNull().default(80),
+  /**
+   * Early access (migration 0160): pending | invited | active | rejected. Only public self-signups start
+   * pending; everything else (existing, provisioned, SSO, invited) is active through the default.
+   */
+  accessStatus: text("access_status").$type<"pending" | "invited" | "active" | "rejected">().notNull().default("active"),
   /** Number of enrichment credits remaining for this workspace */
   enrichmentCredits: integer("enrichment_credits").notNull().default(100),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
