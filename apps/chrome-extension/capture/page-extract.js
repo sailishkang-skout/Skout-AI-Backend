@@ -151,10 +151,19 @@ function extractPerson() {
       (positionLine !== locationName && topcardCurrentCompany(positionLine, headline));
     if (fromTopcard) currentCompanyJobs.push(fromTopcard);
   }
-  // A current role read without its title: a "Title at Company" headline naming that employer fills it.
-  if (currentCompanyJobs[0] && !currentCompanyJobs[0].title) {
-    const fromHeadline = topcardCurrentCompany(currentCompanyJobs[0].company, headline);
-    if (fromHeadline?.title) currentCompanyJobs[0] = { ...currentCompanyJobs[0], title: fromHeadline.title };
+  // Cross-check Experience against the header. The employer the header names comes first (it is
+  // the one LinkedIn treats as current), and a role read without its title takes it from a
+  // headline that names the same employer.
+  const headerCompany = topcardOrgs.find((org) => org.kind === 'company')?.name;
+  if (headerCompany && currentCompanyJobs.length > 1) {
+    const index = currentCompanyJobs.findIndex((job) => sameOrg(job.company, headerCompany));
+    if (index > 0) currentCompanyJobs.unshift(...currentCompanyJobs.splice(index, 1));
+  }
+  for (let index = 0; index < currentCompanyJobs.length; index++) {
+    const job = currentCompanyJobs[index];
+    const company = cleanOrgName(job.company);
+    const title = job.title || titleFromHeadline(headline, company);
+    if (company !== job.company || title !== job.title) currentCompanyJobs[index] = { ...job, company, title };
   }
   const currentCompanyPublicId = currentCompanyJobs.find((j) => j.companyPublicId)?.companyPublicId;
   const roleMetadata = inferRoleMetadata(currentCompanyJobs[0]?.title || currentJobs[0]?.title || headline);
@@ -197,7 +206,7 @@ function extractPerson() {
       ? currentCompanyJobs.map((j) => ({ name: j.company, companyPublicId: j.companyPublicId, title: j.title, dates: j.dates, location: j.location, workplaceType: j.workplaceType, employmentType: j.employmentType, description: j.description }))
       : undefined,
     previousCompanies: previousJobs.filter((j) => isCompanyName(j.company)).length
-      ? previousJobs.filter((j) => isCompanyName(j.company)).map((j) => ({ name: j.company, companyPublicId: j.companyPublicId, title: j.title, dates: j.dates, location: j.location, workplaceType: j.workplaceType, employmentType: j.employmentType, description: j.description }))
+      ? previousJobs.filter((j) => isCompanyName(j.company)).map((j) => ({ name: cleanOrgName(j.company), companyPublicId: j.companyPublicId, title: j.title, dates: j.dates, location: j.location, workplaceType: j.workplaceType, employmentType: j.employmentType, description: j.description }))
       : undefined,
     educations: educations.length ? educations : undefined,
     skills: skills.length ? skills : undefined,
@@ -221,7 +230,8 @@ function extractPerson() {
     _contactInfo: contactInfo,
     _locationRank: locationRank,
     // Contact info first; otherwise an email or phone the person wrote in their bio.
-    website: contactInfo?.website,
+    // Contact info first; otherwise a website the person shows in their profile header.
+    website: contactInfo ? contactInfo.website : topcardWebsite(topcard),
     websites: contactInfo?.websites,
     email: contactInfo?.email || emailFromText(summary),
     phone: contactInfo?.phone || phoneFromText(summary),
@@ -282,20 +292,64 @@ function profileCountText(topcard, labelPattern) {
   return undefined;
 }
 
+/** An outside website linked in the profile header (creators can show one under the headline). */
+function topcardWebsite(topcard) {
+  if (!topcard) return undefined;
+  for (const link of topcard.querySelectorAll('a[href]')) {
+    const href = link.getAttribute('href') || '';
+    if (/^(mailto|tel):/i.test(href) || link.closest('[role="dialog"], dialog, [aria-modal="true"]')) continue;
+    const url = cleanWebsite(href);
+    if (url) return url;
+  }
+  return undefined;
+}
+
 /**
  * Current employer from the top card when Experience hasn't rendered. The position line lists
  * the current company first and the school second; a school is never taken as an employer. The
  * title comes from a "Title @ Company" / "Title at Company" headline naming the same company.
  */
+/** A company name without what LinkedIn prints around it: "Uber + 1 more", "Uber · Full-time". */
+function cleanOrgName(value) {
+  return (value || '')
+    .replace(/\s*(?:\+|and)\s*\d+\s+more\b.*$/i, '')
+    .replace(/\s+[·•]\s+(?:full[- ]time|part[- ]time|self[- ]employed|freelance|contract|internship|apprenticeship|seasonal|permanent)\b.*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const sameOrg = (a, b) => {
+  const norm = (value) => cleanOrgName(value).toLowerCase().replace(/\b(incorporated|inc|llc|ltd|limited|corp|corporation|company|co|pvt|private)\b\.?/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  return !!norm(a) && norm(a) === norm(b);
+};
+
+/**
+ * The title in a headline that names the company: "Title at Company", "Title @ Company",
+ * "Title | Company", "Title - Company" or "Title, Company". Undefined when the headline names
+ * another company or no company at all.
+ */
+function titleFromHeadline(headline, company) {
+  if (!headline || !company) return undefined;
+  for (const separator of [/\s+(?:at|@)\s+/i, /\s*@\s*/, /\s+[|–—-]\s+/, /,\s+/]) {
+    const parts = headline.split(separator);
+    for (let index = 1; index < parts.length; index++) {
+      const after = parts.slice(index).join(' ').split(/\s+[·|•]\s+/)[0];
+      if (sameOrg(after, company) || sameOrg(parts[index].split(/\s+[·|•]\s+/)[0], company)) {
+        const title = parts.slice(0, index).join(', ').trim();
+        return title && title.length <= 150 ? title : undefined;
+      }
+    }
+  }
+  return undefined;
+}
+
 function topcardCurrentCompany(positionLine, headline, companyPublicId) {
-  const name = (positionLine || '').split(/\s+·\s+/)[0]?.trim();
+  const name = cleanOrgName((positionLine || '').split(/\s+·\s+/)[0]);
   if (!name || name.length > 120) return undefined;
   if (SCHOOL_WORDS.test(name)) return undefined;
   if (/^(contact info|\d[\d,+]* (followers?|connections?))$/i.test(name)) return undefined;
   if (/^(https?:\/\/|www\.)/i.test(name) || /\d+\s*(followers?|connections?)/i.test(name)) return undefined;
-  const match = (headline || '').match(/^(.+?)\s+(?:@|at)\s+(.+?)(?:\s+[·|•]\s+.*)?$/i);
-  const title = match && match[2].trim().toLowerCase() === name.toLowerCase() ? match[1].trim() : undefined;
-  return { company: name, title, companyPublicId, source: 'topcard' };
+  return { company: name, title: titleFromHeadline(headline, name), companyPublicId, source: 'topcard' };
 }
 
 const SCHOOL_WORDS = /\b(university|universit[äeà]|college|school|institute|academy|polytechnic|iit|iim|nit)\b/i;
@@ -308,7 +362,7 @@ function topcardOrganizations(topcard) {
   if (!topcard) return [];
   const orgs = [];
   const add = (name, kind, companyPublicId) => {
-    const value = (name || '').replace(/\s+/g, ' ').trim();
+    const value = cleanOrgName(name);
     if (!value || value.length > 120 || orgs.some((org) => org.name === value)) return;
     orgs.push({ name: value, kind, companyPublicId });
   };
@@ -389,6 +443,26 @@ function extractRelationshipContext(topcard) {
   );
   if (!degree && !mutualConnectionsText && !sharedCompanyText) return undefined;
   return { degree, isDirectConnection: degree === 1, mutualConnections: mutualConnections.length ? mutualConnections : undefined, mutualConnectionsText: mutualConnectionsText || undefined, sharedCompanyText: sharedCompanyText || undefined };
+}
+
+/** The outside link next to a "Website" label anywhere on the page (About details in any layout). */
+function labelledWebsite() {
+  const labels = Array.from(document.querySelectorAll('main dt, main h3, main h4, main p, main span, main div'))
+    .filter((node) => /^website$/i.test(text(node) || '') && !Array.from(node.children).some((child) => text(child)));
+  for (const label of labels) {
+    // The value sits in the next sibling, or in the label's row a level or two up.
+    let scope = label;
+    for (let depth = 0; depth < 3 && scope; depth++, scope = scope.parentElement) {
+      for (const link of scope.querySelectorAll('a[href]')) {
+        const url = cleanWebsite(link.getAttribute('href'));
+        if (url) return url;
+      }
+      const next = scope.nextElementSibling?.querySelector?.('a[href]') || (scope.nextElementSibling?.matches?.('a[href]') ? scope.nextElementSibling : null);
+      const nextUrl = next && cleanWebsite(next.getAttribute('href'));
+      if (nextUrl) return nextUrl;
+    }
+  }
+  return undefined;
 }
 
 function extractCompany() {
@@ -474,7 +548,7 @@ function extractCompany() {
     ? Array.from(document.querySelectorAll('main a[href]')).find((link) => domainText.test(text(link) || '') && cleanWebsite(link.getAttribute('href')))
     : undefined;
   const aboutWebsite = cleanWebsite(detailLinks['website']) || cleanWebsite(detailMap['website']) || cleanWebsite(sduiAbout.website) ||
-    cleanWebsite(addressLink?.getAttribute('href'));
+    labelledWebsite() || cleanWebsite(addressLink?.getAttribute('href'));
   const companyWebsite = website || aboutWebsite;
   let domain;
   try { domain = new URL(companyWebsite).hostname.replace(/^www\./, ''); } catch {}
@@ -1282,6 +1356,9 @@ function cleanPhone(value) {
   return candidate;
 }
 
+/** Section labels of LinkedIn's Contact info ("Jane's Profile", Website, Email, ...). */
+const CONTACT_SECTION_LABEL = /^(?:email|phone|website|websites|address|birthday|connected|im|twitter|your profile|profile|.{1,80}[’']s profile)$/i;
+
 function extractContactInfo() {
   const isContactTitle = (node) => /^contact info(?:rmation)?$/i.test(text(node) || '');
   const leafTitles = Array.from(document.querySelectorAll('h1, h2, h3, h4, [role="heading"], p, span, div'))
@@ -1295,8 +1372,9 @@ function extractContactInfo() {
     // holds the Email / Phone / profile entries.
     ...leafTitles.map((title) => {
       let node = title.parentElement;
-      while (node && node !== document.body && !node.querySelector('a[href^="mailto:"], a[href^="tel:"]') &&
-        !Array.from(node.querySelectorAll('h3, p, span')).some((label) => /^(email|phone|your profile|profile)$/i.test(text(label) || ''))) {
+      // A person may list only a website: its section label or its outbound link marks the block too.
+      while (node && node !== document.body && !node.querySelector('a[href^="mailto:"], a[href^="tel:"], a[href*="/redir/redirect"]') &&
+        !Array.from(node.querySelectorAll('h3, p, span, dt')).some((label) => CONTACT_SECTION_LABEL.test(text(label) || ''))) {
         node = node.parentElement;
       }
       return node && node !== document.body && !node.matches('main') ? node : undefined;

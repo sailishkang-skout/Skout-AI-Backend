@@ -374,6 +374,26 @@ describe("ENR-03 change detection", () => {
       (change) => change.prospectId === prospectId
     );
 
+  it("summarises each job change in plain words and drops changes that were only LinkedIn's \"+ 1 more\"", async () => {
+    const entityId = randomUUID();
+    const insert = (oldValue: unknown, newValue: unknown) =>
+      db().insert(schema.enrichmentChangeEvents).values({ workspaceId: WORKSPACE, entityType: "person", entityId, field: "currentCompanies", changeType: "FIELD_UPDATED", oldValue, newValue, isJobChange: true }).returning();
+    const [noise] = await insert([{ name: "Uber", title: "Engineer" }], [{ name: "Uber + 1 more", title: "Engineer" }]);
+    const [move] = await insert([{ name: "Hooli", title: "Sales Manager" }], [{ name: "Initech", title: "Head of Revenue", dates: "Mar 2026 - Present" }]);
+    const [promotion] = await insert([{ name: "Initech", title: "Head of Revenue" }], [{ name: "Initech", title: "VP Revenue" }]);
+    const body = (await get("/enrichment/job-changes?status=pending&pageSize=100")).json();
+    const mine = (body.jobChanges as Array<Record<string, any>>).filter((change) => change.prospectId === entityId);
+    expect(mine.map((change) => change.id).sort()).toEqual([move!.id, promotion!.id].sort());
+    const byId = Object.fromEntries(mine.map((change) => [change.id, change]));
+    expect(byId[move!.id]).toMatchObject({ kind: "new_company", summary: "This person joined Initech as Head of Revenue, after Sales Manager at Hooli." });
+    expect(byId[promotion!.id]).toMatchObject({ kind: "new_role", summary: "This person has a new role at Initech: Head of Revenue → VP Revenue." });
+    expect(body.counts.pending).toBeGreaterThanOrEqual(2);
+    expect(body.counts.lastSevenDays).toBeGreaterThanOrEqual(2);
+    // The "+ 1 more" event is no longer a job change at all.
+    const [stored] = await db().select().from(schema.enrichmentChangeEvents).where(eq(schema.enrichmentChangeEvents.id, noise!.id));
+    expect(stored!.isJobChange).toBe(false);
+  });
+
   it("does not flag a job change when the current company and role are unchanged", async () => {
     const [person] = await personByName("Priya Raman");
     // Only the tenure text and the headline moved.

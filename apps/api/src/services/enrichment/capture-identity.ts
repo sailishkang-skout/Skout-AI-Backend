@@ -96,8 +96,21 @@ export interface CompanyLike {
   headquarter?: string | null;
 }
 
+/**
+ * A company name as LinkedIn shows it, without the decorations it adds around the name: the
+ * "+ 1 more" of a top card listing several employers, and the " · Full-time" employment type.
+ */
+export function cleanCompanyName(value?: string | null): string | undefined {
+  const cleaned = value
+    ?.replace(/\s*(?:\+|and)\s*\d+\s+more\b.*$/i, "")
+    .replace(/\s+[·•|]\s+(?:full[- ]time|part[- ]time|self[- ]employed|freelance|contract|internship|apprenticeship|seasonal|permanent)\b.*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || undefined;
+}
+
 export function normalizedCompanyName(value?: string | null): string | undefined {
-  const normalized = value
+  const normalized = cleanCompanyName(value)
     ?.toLocaleLowerCase()
     .replace(/\b(incorporated|inc|llc|ltd|limited|corp|corporation|company|co)\b\.?/g, "")
     .replace(/[^a-z0-9]+/g, " ")
@@ -269,8 +282,14 @@ export function isCurrentEmployerChange(previous: unknown, next: unknown): boole
   const before = roles(previous);
   const after = roles(next);
   if (!before.length || !after.length) return false;
-  const companies = (list: typeof before) => [...new Set(list.map((role) => role.company))].sort().join(";");
-  if (companies(before) !== companies(after)) return true;
+  // A move: the person now works somewhere they did not, or left their main employer. A list that
+  // only grew or shrank around the same main employer (a capture that read more or fewer of the
+  // current roles) is not a move.
+  const beforeSet = new Set(before.map((role) => role.company));
+  const afterSet = new Set(after.map((role) => role.company));
+  if (after.some((role) => !beforeSet.has(role.company)) && !afterSet.has(before[0]!.company)) return true;
+  if (after[0] && !beforeSet.has(after[0].company)) return true;
+  if (!afterSet.has(before[0]!.company) && before.length === 1) return true;
   // Same employers: a change of title counts only when both captures read one.
   return after.some((role) =>
     role.title &&

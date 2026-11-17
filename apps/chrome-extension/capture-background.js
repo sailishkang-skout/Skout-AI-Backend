@@ -551,7 +551,7 @@ async function sendCapture(message) {
     checkpoint = commit.ok ? commit.data : { error: 'The page checkpoint could not be finalized. Resuming may revisit this batch safely.' };
     if (commit.ok) {
       checkpoint.companyId = draft.meta.companyId;
-      checkpoint.queued = await reportCaptureQueue(draft.meta.companyId, draft.data?.name, commit.data);
+      checkpoint.queued = await reportCaptureQueue(draft.meta.companyId, draft.data?.name, commit.data, { created: body.created, merged: body.merged, rejected: body.rejected });
     }
   }
   await chrome.storage.local.remove(CAPTURE_DRAFT_KEY);
@@ -637,11 +637,11 @@ async function pageKind(message) {
 // ── Capture queue: companies whose people discovery has result pages left ─────
 
 /** Tells Skout where a company's people discovery stands, for LinkedIn Enrichment → Capture queue. */
-async function reportCaptureQueue(companyId, companyName, commit) {
+async function reportCaptureQueue(companyId, companyName, commit, counts) {
   try {
     await deps.skoutFetch(`${API}/capture/queue/${encodeURIComponent(companyId)}`, {
       method: 'PUT',
-      body: JSON.stringify(captureQueueReport(companyName, commit)),
+      body: JSON.stringify(captureQueueReport(companyName, commit, counts)),
     });
     return true;
   } catch {
@@ -650,12 +650,17 @@ async function reportCaptureQueue(companyId, companyName, commit) {
 }
 
 /** The queue update for one committed batch. Exported for tests. */
-export function captureQueueReport(companyName, commit) {
+export function captureQueueReport(companyName, commit, counts) {
   const report = {
     pagesRead: Math.max(0, Number(commit.pagesRead) || 0),
     peopleFound: Math.max(0, Number(commit.distinctCandidates) || 0),
     complete: commit.complete === true,
   };
+  // What the saved batch did: people added, matched to people already saved (duplicates), refused.
+  for (const key of ['created', 'merged', 'rejected']) {
+    const value = Number(counts?.[key]);
+    if (Number.isInteger(value) && value >= 0) report[key] = value;
+  }
   if (typeof companyName === 'string' && companyName.trim()) report.companyName = companyName.trim().slice(0, 300);
   if (Number.isFinite(commit.expectedAssociatedMembers)) report.expectedPeople = commit.expectedAssociatedMembers;
   if (commit.stopReason) report.stopReason = String(commit.stopReason).slice(0, 300);
@@ -778,6 +783,7 @@ function reportRunQueue(queue) {
   });
   Promise.resolve()
     .then(() => deps.skoutFetch(`${API}/capture/queue/sync`, { method: 'POST', body: JSON.stringify({ items }) }))
+    .then((body) => (Array.isArray(body?.cancelled) && body.cancelled.length ? dropCancelledJobs(body.cancelled) : undefined))
     .catch(() => { /* The local queue keeps working; the dashboard catches up on the next change. */ })
     .finally(() => {
       reporting = false;
@@ -785,6 +791,27 @@ function reportRunQueue(queue) {
       reportAgain = null;
       if (next) reportRunQueue(next);
     });
+}
+
+/** Jobs cancelled in the workspace: drop them here, stop the one being read, and move on. */
+async function dropCancelledJobs(ids) {
+  const queue = await getRunQueue();
+  if (!queue?.items?.length) return;
+  const cancelled = new Set(ids);
+  let stoppedRunning = false;
+  for (const item of queue.items) {
+    if (!cancelled.has(item.companyPublicId) || !['pending', 'running', 'review'].includes(item.status)) continue;
+    if (item.status === 'running') stoppedRunning = true;
+    item.status = 'skipped';
+    item.error = 'Cancelled in the workspace.';
+  }
+  if (stoppedRunning && queue.tabId != null) {
+    chrome.tabs.sendMessage(queue.tabId, { type: 'SKOUT_CAPTURE_STOP' }).catch(() => {});
+    cancelTasksFor(queue.tabId);
+  }
+  // Written without reporting back: the server already holds these jobs as cancelled.
+  await chrome.storage.local.set({ [RUN_QUEUE_KEY]: { ...queue, at: Date.now() } });
+  if (queue.active) advanceSoon();
 }
 
 let advancing = false;
