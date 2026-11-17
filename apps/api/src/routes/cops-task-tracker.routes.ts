@@ -18,7 +18,7 @@ import { writeCopsAudit } from "../services/cops-platform.service.js";
  *   - Review date: revisit when apps/crm's internal API covers batched reads
  */
 
-const { copsTrackerProjects: projects, copsTrackerIssues: issues, copsTrackerComments: comments, users, companies, auditLogs, workspaceMembers } = schema;
+const { copsTrackerDepartmentMembers: deptMembers, copsTrackerDepartments: departments, copsTrackerProjects: projects, copsTrackerIssues: issues, copsTrackerComments: comments, users, companies, auditLogs, workspaceMembers } = schema;
 
 const DEPARTMENTS = schema.TRACKER_DEPARTMENTS;
 const STATUSES = schema.TRACKER_STATUSES;
@@ -30,7 +30,7 @@ const projectCreate = z
   .object({
     key: z.string().trim().toUpperCase().regex(/^[A-Z][A-Z0-9]{1,9}$/, "2 to 10 letters or digits, starting with a letter (ENG, SALES)"),
     name: z.string().trim().min(2).max(80),
-    department: z.enum(DEPARTMENTS),
+    department: z.string().trim().regex(/^[a-z][a-z0-9_]{1,39}$/, "Pick a department"),
     description: z.string().trim().max(2000).nullable().optional(),
   })
   .strict();
@@ -58,7 +58,7 @@ const issueCreate = z
 const issuePatch = z.object(issueFields).partial().strict();
 const listQuery = z.object({
   project_id: z.string().uuid().optional(),
-  department: z.enum(DEPARTMENTS).optional(),
+  department: z.string().trim().regex(/^[a-z][a-z0-9_]{1,39}$/).optional(),
   status: z.enum(STATUSES).optional(),
   priority: z.enum(PRIORITIES).optional(),
   assignee_id: z.string().uuid().optional(),
@@ -84,7 +84,7 @@ export async function copsTaskTrackerRoutes(app: FastifyInstance, opts: { db: Db
     fail(reply, requestId, "VALIDATION_FAILED", error.issues[0]?.message ?? "Invalid request", {
       fields: error.issues.map((i) => ({ path: i.path.join("."), code: i.code, message: i.message })),
     });
-  const audit = (ctx: ReturnType<typeof ctxOf>, entityType: "tracker_issue" | "tracker_project", entityId: string, action: string, before: unknown, after: unknown) =>
+  const audit = (ctx: ReturnType<typeof ctxOf>, entityType: "tracker_issue" | "tracker_project" | "tracker_department", entityId: string, action: string, before: unknown, after: unknown) =>
     writeCopsAudit(db, { tenantId: ctx.workspaceId, actor: { type: "user", id: ctx.userId }, entityType, entityId, action, before, after, correlationId: ctx.requestId, sourceChannel: "web" });
 
   /** A user must be a member of this workspace to be assigned. */
@@ -144,11 +144,64 @@ export async function copsTaskTrackerRoutes(app: FastifyInstance, opts: { db: Db
     return { data: rows.map(({ p, open }) => ({ id: p.id, key: p.key, name: p.name, department: p.department, description: p.description, open_issues: open, created_at: p.createdAt.toISOString() })) };
   });
 
+  // ---- Departments: the built-in ones plus any this workspace added ----
+  const departmentList = async (workspaceId: string) => {
+    const custom = await db.select().from(departments).where(eq(departments.workspaceId, workspaceId)).orderBy(asc(departments.name));
+    const members = await db
+      .select({ department: deptMembers.department, id: users.id, name: users.fullName, email: users.email })
+      .from(deptMembers)
+      .innerJoin(users, eq(users.id, deptMembers.userId))
+      .where(eq(deptMembers.workspaceId, workspaceId));
+    const people = (key: string) => members.filter((m) => m.department === key).map((m) => ({ id: m.id, name: m.name ?? m.email }));
+    return [
+      ...DEPARTMENTS.map((key) => ({ key, name: schema.TRACKER_DEPARTMENT_LABELS[key] ?? key, custom: false, members: people(key) })),
+      ...custom.map((d) => ({ key: d.key, name: d.name, custom: true, members: people(d.key) })),
+    ];
+  };
+  // Replace who is in a department. Only people in this workspace can be added.
+  app.put<{ Params: { key: string } }>("/tracker/departments/:key/members", async (request, reply) => {
+    const ctx = ctxOf(request);
+    const parsed = z.object({ user_ids: z.array(z.string().regex(UUID)).max(200) }).strict().safeParse(request.body ?? {});
+    if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+    const key = request.params.key;
+    const list = await departmentList(ctx.workspaceId);
+    const dept = list.find((d) => d.key === key);
+    if (!dept) return fail(reply, ctx.requestId, "NOT_FOUND", "Department not found");
+    const ids = [...new Set(parsed.data.user_ids)];
+    if (ids.length) {
+      const ok = await db.select({ id: workspaceMembers.userId }).from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, ctx.workspaceId), inArray(workspaceMembers.userId, ids)));
+      if (ok.length !== ids.length) return fail(reply, ctx.requestId, "VALIDATION_FAILED", "Everyone must be a member of this workspace", { field: "user_ids" });
+    }
+    const before = dept.members.map((m) => m.id);
+    await db.transaction(async (tx) => {
+      await tx.delete(deptMembers).where(and(eq(deptMembers.workspaceId, ctx.workspaceId), eq(deptMembers.department, key)));
+      if (ids.length) await tx.insert(deptMembers).values(ids.map((userId) => ({ workspaceId: ctx.workspaceId, department: key, userId })));
+    });
+    await audit(ctx, "tracker_department", ctx.workspaceId, "tracker_department.members_changed", { department: key, user_ids: before }, { department: key, user_ids: ids });
+    return { data: (await departmentList(ctx.workspaceId)).find((d) => d.key === key) };
+  });
+  app.get("/tracker/departments", async (request) => ({ data: await departmentList(ctxOf(request).workspaceId) }));
+  app.post("/tracker/departments", async (request, reply) => {
+    const ctx = ctxOf(request);
+    const parsed = z.object({ name: z.string().trim().min(2).max(40) }).strict().safeParse(request.body ?? {});
+    if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+    const name = parsed.data.name;
+    const key = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/^(?=[0-9])/, "d_").slice(0, 40);
+    if (key.length < 2) return fail(reply, ctx.requestId, "VALIDATION_FAILED", "Use at least two letters", { field: "name" });
+    const existing = await departmentList(ctx.workspaceId);
+    if (existing.some((d) => d.key === key || d.name.toLowerCase() === name.toLowerCase())) return fail(reply, ctx.requestId, "BUSINESS_STATE_CONFLICT", `${name} already exists`, { field: "name" });
+    const [row] = await db.insert(departments).values({ workspaceId: ctx.workspaceId, key, name, createdBy: ctx.userId }).onConflictDoNothing().returning();
+    if (!row) return fail(reply, ctx.requestId, "BUSINESS_STATE_CONFLICT", `${name} already exists`, { field: "name" });
+    await audit(ctx, "tracker_department", row.id, "tracker_department.created", null, { key, name });
+    return reply.status(201).send({ data: { key, name, custom: true, members: [] } });
+  });
+
   app.post("/tracker/projects", async (request, reply) => {
     const ctx = ctxOf(request);
     const parsed = projectCreate.safeParse(request.body ?? {});
     if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
     const b = parsed.data;
+    if (!(await departmentList(ctx.workspaceId)).some((d) => d.key === b.department)) return fail(reply, ctx.requestId, "VALIDATION_FAILED", "Unknown department", { field: "department" });
     const [row] = await db
       .insert(projects)
       .values({ workspaceId: ctx.workspaceId, key: b.key, name: b.name, department: b.department, description: b.description ?? null, createdBy: ctx.userId })

@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS "cops_tracker_projects" (
   "workspace_id" uuid NOT NULL REFERENCES "workspaces"("id") ON DELETE CASCADE,
   "key" text NOT NULL CHECK ("key" ~ '^[A-Z][A-Z0-9]{1,9}$'),
   "name" text NOT NULL,
-  "department" text NOT NULL CHECK ("department" IN ('sales','customer_success','engineering','product','finance','legal','marketing','operations','other')),
+  "department" text NOT NULL CHECK ("department" ~ '^[a-z][a-z0-9_]{1,39}$'),
   "description" text,
   "next_number" integer NOT NULL DEFAULT 1,
   "created_by" uuid REFERENCES "users"("id") ON DELETE SET NULL,
@@ -47,3 +47,23 @@ CREATE TABLE IF NOT EXISTS "cops_tracker_comments" (
   "created_at" timestamp with time zone NOT NULL DEFAULT now()
 );--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "cops_tracker_comments_issue_idx" ON "cops_tracker_comments" ("issue_id","created_at");
+
+-- Departments a workspace adds on top of the built-in ones (Support, HR...).
+CREATE TABLE IF NOT EXISTS "cops_tracker_departments" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "workspace_id" uuid NOT NULL REFERENCES "workspaces"("id") ON DELETE CASCADE,
+  "key" text NOT NULL CHECK ("key" ~ '^[a-z][a-z0-9_]{1,39}$'),
+  "name" text NOT NULL,
+  "created_by" uuid REFERENCES "users"("id") ON DELETE SET NULL,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT "cops_tracker_departments_key_unique" UNIQUE ("workspace_id", "key")
+);
+
+-- Who works in which department (built-in or added); a person can be in several.
+CREATE TABLE IF NOT EXISTS "cops_tracker_department_members" (
+  "workspace_id" uuid NOT NULL REFERENCES "workspaces"("id") ON DELETE CASCADE,
+  "department" text NOT NULL,
+  "user_id" uuid NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT "cops_tracker_department_members_pk" PRIMARY KEY ("workspace_id", "department", "user_id")
+);

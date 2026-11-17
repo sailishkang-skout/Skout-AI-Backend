@@ -13,7 +13,7 @@ const ownerEmail = `tracker-${stamp.toLowerCase()}@example.test`;
 maybe("work tracker (projects, issues, board, comments)", () => {
   let app: FastifyInstance;
   let sql: any;
-  const call = (method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown, email = ownerEmail) =>
+  const call = (method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", path: string, body?: unknown, email = ownerEmail) =>
     app.inject({ method, url: `/api/v1${path}`, headers: { "x-stub-user-email": email }, ...(body !== undefined ? { payload: body as object } : {}) });
 
   beforeAll(async () => {
@@ -69,5 +69,27 @@ maybe("work tracker (projects, issues, board, comments)", () => {
     const issue = (await call("POST", "/tracker/issues", { project_id: pid, title: "Call back Acme" })).json().data;
     expect((await call("DELETE", `/tracker/issues/${issue.id}`)).statusCode).toBe(204);
     expect((await call("GET", `/tracker/issues/${issue.id}`)).statusCode).toBe(404);
+  });
+
+  it("lets a workspace add its own departments and use them for projects", async () => {
+    const name = `Support ${stamp}`;
+    const made = await call("POST", "/tracker/departments", { name });
+    expect(made.statusCode).toBe(201);
+    const key = made.json().data.key;
+    expect(key).toBe(`support_${stamp.toLowerCase()}`);
+    expect((await call("POST", "/tracker/departments", { name: name.toUpperCase() })).statusCode).toBe(409);
+    const list = (await call("GET", "/tracker/departments")).json().data as Array<{ key: string; custom: boolean }>;
+    expect(list.find((d) => d.key === "sales")?.custom).toBe(false);
+    expect(list.find((d) => d.key === key)?.custom).toBe(true);
+    expect((await call("POST", "/tracker/projects", { key: `S${stamp}`, name: "Support desk", department: key })).statusCode).toBe(201);
+    expect((await call("POST", "/tracker/projects", { key: `X${stamp}`, name: "Nowhere", department: "not_a_department" })).statusCode).toBe(422);
+
+    // Assign people to the department; someone outside the workspace is refused.
+    const me = (await sql`select id from users where email = ${ownerEmail}`)[0].id as string;
+    const set = await call("PUT", `/tracker/departments/${key}/members`, { user_ids: [me] });
+    expect(set.statusCode).toBe(200);
+    expect(set.json().data.members.map((m: { id: string }) => m.id)).toEqual([me]);
+    expect((await call("PUT", `/tracker/departments/${key}/members`, { user_ids: ["00000000-0000-4000-8000-000000000000"] })).statusCode).toBe(422);
+    expect((await call("PUT", "/tracker/departments/nope_dept/members", { user_ids: [] })).statusCode).toBe(404);
   });
 });
