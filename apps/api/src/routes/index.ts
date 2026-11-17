@@ -96,6 +96,7 @@ import { copsUsageRoutes, registerAiMetering } from "./cops-usage.routes.js";
 import { accountScopeGuard } from "../services/cops-data-scope.service.js";
 import { accessGuard } from "../services/access-guard.js";
 import { accessRoutes } from "./access.routes.js";
+import { copsAccessRoutes } from "./cops-access.routes.js";
 import { opsAccessGuard } from "../services/ops-access.service.js";
 import { isPublicRoute } from "../plugins/auth.js";
 import { complianceRoutes } from "./compliance.routes.js";
@@ -231,6 +232,7 @@ export async function registerRoutes(app: FastifyInstance) {
       await ops(copsRolesRoutes);
       await ops(copsAppsRoutes);
       await ops(copsUsageRoutes);
+      await ops(copsAccessRoutes, { db: app.db });
     } else {
       app.log.warn("COPS audit and outbox routes disabled because DATABASE_URL is not configured");
     }

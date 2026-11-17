@@ -1,3 +1,5 @@
+import { loadWorkspaceAccess } from "@skout/auth";
+import { crmAccessGuard, earlyAccessGateEnabled } from "./plugins/access-guard.js";
 import Fastify from "fastify";
 import { randomUUID } from "node:crypto";
 import cors from "@fastify/cors";
@@ -104,6 +106,11 @@ export async function buildApp(config: Env) {
   await app.register(configPlugin, config);
   await app.register(dbPlugin);
   await app.register(authPlugin);
+  // Early access: CRM is refused to workspaces not approved yet and to those whose crm switch is off.
+  if (app.db) {
+    const db = app.db;
+    app.addHook("preHandler", crmAccessGuard((workspaceId) => loadWorkspaceAccess(db, workspaceId), earlyAccessGateEnabled(config)));
+  }
 
   const allowedOrigins = config.CORS_ORIGIN.map((o) => o.toLowerCase());
 

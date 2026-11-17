@@ -46,6 +46,9 @@ const PERMISSION_CATALOG: Array<{ key: string; description: string; category: st
   { key: "enrichment:admin", description: "Manage enrichment provider connections and settings.", category: "enrichment" },
   // COPS-15: entry to the CustomerOps portal. Granted explicitly, never through owner/admin.
   { key: "ops:access", description: "Use the CustomerOps portal (Skout staff only).", category: "ops" },
+  // Early access (migration 0161): approve self-signups, set plans and feature switches. Only acts
+  // through COPS routes, which also need ops:access in the internal workspace.
+  { key: "access:manage", description: "Approve early access requests and set workspace plans and feature switches (Skout staff).", category: "ops" },
   ...(["crm", "commercial", "legal", "billing", "credits", "onboarding", "tickets", "analytics", "admin"] as const).flatMap(
     (resource) =>
       (["read", "write", "send", "approve", "refund", "adjust", "export", "admin"] as const).map((verb) => ({

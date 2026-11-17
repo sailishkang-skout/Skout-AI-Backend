@@ -57,6 +57,8 @@ const envSchema = z.object({
   AUTH_JWT_ISSUER: z.string().default("https://auth.skoutai.io"),
   AUTH_JWT_AUDIENCE: z.string().default("skout-api"),
   AUTH_JWT_PUBLIC_KEY_SET: z.string().optional(),
+  /** Early access gate (see plugins/access-guard.ts); unset = on in production only. */
+  EARLY_ACCESS_GATE_ENABLED: z.enum(["true", "false"]).optional(),
   AUTH_STUB: z
     .string()
     .optional()
