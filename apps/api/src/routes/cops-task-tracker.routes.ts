@@ -136,7 +136,7 @@ export async function copsTaskTrackerRoutes(app: FastifyInstance, opts: { db: Db
     const rows = await db
       .select({
         p: projects,
-        open: sql<number>`(select count(*)::int from cops_tracker_issues i where i.project_id = ${projects.id} and i.status <> 'done')`,
+        open: sql<number>`(select count(*)::int from cops_tracker_issues i where i.project_id = "cops_tracker_projects"."id" and i.status <> 'done')`,
       })
       .from(projects)
       .where(and(eq(projects.workspaceId, ctx.workspaceId), isNull(projects.archivedAt)))
