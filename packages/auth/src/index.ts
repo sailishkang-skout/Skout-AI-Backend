@@ -3,6 +3,7 @@ export {
   type ProvisionResult,
   type ResolveOrProvisionInput,
 } from "./auth.service.js";
+export { loadWorkspaceAccess, invalidateWorkspaceAccess, WORKSPACE_ACCESS_TTL_MS, type WorkspaceAccessState } from "./workspace-access.js";
 export { grantSystemMemberRole } from "./grant-member-role.js";
 export {
   linkAuthIdentity,

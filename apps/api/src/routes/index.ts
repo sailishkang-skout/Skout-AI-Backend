@@ -94,6 +94,8 @@ import { copsRolesRoutes } from "./cops-roles.routes.js";
 import { copsAppsRoutes } from "./cops-apps.routes.js";
 import { copsUsageRoutes, registerAiMetering } from "./cops-usage.routes.js";
 import { accountScopeGuard } from "../services/cops-data-scope.service.js";
+import { accessGuard } from "../services/access-guard.js";
+import { accessRoutes } from "./access.routes.js";
 import { opsAccessGuard } from "../services/ops-access.service.js";
 import { isPublicRoute } from "../plugins/auth.js";
 import { complianceRoutes } from "./compliance.routes.js";
@@ -116,6 +118,9 @@ export async function registerRoutes(app: FastifyInstance) {
     // COPS-14 data scope: before any account route, a member limited to their own accounts gets
     // 404 for other accounts. Runs after the auth preHandlers, which set workspaceId and userId.
     if (app.db) v1.addHook("preHandler", accountScopeGuard(app.db));
+    // Early access: a workspace not approved yet reaches only sign-in and its own request; a
+    // switched-off product area answers 403 feature_disabled.
+    if (app.db) v1.addHook("preHandler", accessGuard(app.db, app.config));
     await v1.register(userRoutes);
     await v1.register(workspaceRoutes);
     await v1.register(dashboardRoutes);
@@ -177,6 +182,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(identityMergeRoutes);
     await v1.register(consentRoutes);
     await v1.register(entitlementsRoutes);
+    await v1.register(accessRoutes);
     await v1.register(dsarRoutes);
     await v1.register(competitiveRoutes);
     await v1.register(regionalIntelRoutes);

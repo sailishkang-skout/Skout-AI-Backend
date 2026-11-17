@@ -19,6 +19,8 @@ const setSchema = z.object({
  * admin cannot grant them to their own workspace.
  */
 export function isPlatformManagedEntitlement(key: string): boolean {
+  // Early access: feature switches and the plan are Skout's call (COPS), never the customer's.
+  if (key.startsWith("feature.") || key.startsWith("access.") || key === "plan.code") return true;
   return key === INTERNAL_ACCESS_ENTITLEMENT || key.endsWith(".internal_access");
 }
 
