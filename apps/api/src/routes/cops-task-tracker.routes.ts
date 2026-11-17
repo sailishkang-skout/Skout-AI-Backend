@@ -67,6 +67,11 @@ const listQuery = z.object({
   q: z.string().trim().max(100).optional(),
   mine: z.enum(["true", "false"]).optional(),
   include_done: z.enum(["true", "false"]).optional(),
+  /** Paging for long lists: up to 500 a page (the board loads one page). */
+  limit: z.coerce.number().int().min(1).max(500).optional(),
+  offset: z.coerce.number().int().min(0).max(100_000).optional(),
+  /** board: by status and position (default); updated: newest change first. */
+  sort: z.enum(["board", "updated"]).optional(),
 });
 
 type Reply = FastifyReply;
@@ -91,15 +96,16 @@ export async function copsTaskTrackerRoutes(app: FastifyInstance, opts: { db: Db
   const isMember = async (workspaceId: string, userId: string) =>
     !!(await db.select({ u: workspaceMembers.userId }).from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId))).limit(1))[0];
 
-  const issueRows = async (workspaceId: string, where: SQL[]) => {
+  const issueRows = async (workspaceId: string, where: SQL[], page: { limit?: number; offset?: number; sort?: "board" | "updated" } = {}) => {
     const rows = await db
       .select({ i: issues, projectKey: projects.key, projectName: projects.name, department: projects.department, accountName: companies.name })
       .from(issues)
       .innerJoin(projects, eq(projects.id, issues.projectId))
       .leftJoin(companies, eq(companies.id, issues.accountId))
       .where(and(eq(issues.workspaceId, workspaceId), ...where))
-      .orderBy(asc(issues.status), asc(issues.position), desc(issues.updatedAt))
-      .limit(500);
+      .orderBy(...(page.sort === "updated" ? [desc(issues.updatedAt), desc(issues.id)] : [asc(issues.status), asc(issues.position), desc(issues.updatedAt), asc(issues.id)]))
+      .limit(page.limit ?? 500)
+      .offset(page.offset ?? 0);
     const ids = [...new Set(rows.flatMap((r) => [r.i.assigneeId, r.i.reporterId]).filter((x): x is string => !!x))];
     const people = ids.length ? await db.select({ id: users.id, name: users.fullName, email: users.email }).from(users).where(inArray(users.id, ids)) : [];
     const who = (id: string | null) => {
@@ -248,7 +254,12 @@ export async function copsTaskTrackerRoutes(app: FastifyInstance, opts: { db: Db
       const m = q.q.match(/^([A-Za-z][A-Za-z0-9]{1,9})-(\d+)$/);
       where.push(m ? and(eq(projects.key, m[1]!.toUpperCase()), eq(issues.number, Number(m[2])))! : or(ilike(issues.title, `%${q.q}%`), ilike(issues.description, `%${q.q}%`))!);
     }
-    return { data: await issueRows(ctx.workspaceId, where) };
+    const limit = q.limit ?? 500;
+    const offset = q.offset ?? 0;
+    // One extra row tells whether another page exists.
+    const rows = await issueRows(ctx.workspaceId, where, { limit: limit + 1, offset, sort: q.sort });
+    const has_more = rows.length > limit;
+    return { data: rows.slice(0, limit), meta: { has_more, next_offset: has_more ? offset + limit : null } };
   });
 
   app.post("/tracker/issues", async (request, reply) => {

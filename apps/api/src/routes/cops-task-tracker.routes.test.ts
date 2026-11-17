@@ -57,6 +57,13 @@ maybe("work tracker (projects, issues, board, comments)", () => {
     // Search by key, by text, by label; the project list counts open work.
     expect((await call("GET", `/tracker/issues?q=${key}-2`)).json().data.map((i: { key: string }) => i.key)).toEqual([`${key}-2`]);
     expect((await call("GET", `/tracker/issues?project_id=${pid}&label=auth`)).json().data.map((i: { key: string }) => i.key)).toEqual([`${key}-1`]);
+    // Paging: one per page, newest change first, with has_more until the end.
+    const p1 = (await call("GET", `/tracker/issues?project_id=${pid}&limit=1&sort=updated`)).json();
+    expect(p1.data).toHaveLength(1);
+    expect(p1.meta).toEqual({ has_more: true, next_offset: 1 });
+    const p2 = (await call("GET", `/tracker/issues?project_id=${pid}&limit=1&offset=1&sort=updated`)).json();
+    expect(p2.data[0].id).not.toBe(p1.data[0].id);
+    expect(p2.meta.has_more).toBe(false);
     const listed = (await call("GET", "/tracker/projects")).json().data.find((p: { id: string }) => p.id === pid);
     expect(listed.open_issues).toBe(2);
   });
