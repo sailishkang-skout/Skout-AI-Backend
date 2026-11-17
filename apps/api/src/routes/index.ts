@@ -114,14 +114,15 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(jwksRoutes);
 
   await app.register(async (v1) => {
+    // Early access: a workspace not approved yet reaches only sign-in and its own request; a
+    // switched-off product area answers 403 feature_disabled. Before metering, so a refused AI call
+    // is never counted.
+    if (app.db) v1.addHook("preHandler", accessGuard(app.db, app.config));
     // COPS-14: count AI actions against the plan before any AI route runs.
     registerAiMetering(v1);
     // COPS-14 data scope: before any account route, a member limited to their own accounts gets
     // 404 for other accounts. Runs after the auth preHandlers, which set workspaceId and userId.
     if (app.db) v1.addHook("preHandler", accountScopeGuard(app.db));
-    // Early access: a workspace not approved yet reaches only sign-in and its own request; a
-    // switched-off product area answers 403 feature_disabled.
-    if (app.db) v1.addHook("preHandler", accessGuard(app.db, app.config));
     await v1.register(userRoutes);
     await v1.register(workspaceRoutes);
     await v1.register(dashboardRoutes);

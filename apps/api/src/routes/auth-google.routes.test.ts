@@ -97,6 +97,7 @@ describe("auth-google.routes (AUTH-BE-16)", () => {
   const { db, sql } = createDb(config.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/skout");
   const createdUserEmails: string[] = [];
   let app: FastifyInstance;
+  let gatedApp: FastifyInstance;
 
   async function clearRecoveryRedisKeys(): Promise<void> {
     try {
@@ -125,6 +126,16 @@ describe("auth-google.routes (AUTH-BE-16)", () => {
       GOOGLE_OAUTH_CLIENT_ID: TEST_GOOGLE_CLIENT_ID,
       GOOGLE_OAUTH_CLIENT_SECRET: TEST_GOOGLE_CLIENT_SECRET,
       NODE_ENV: "test",
+    });
+    gatedApp = await buildAuthCoreProbeApp(db, {
+      AUTH_REFRESH_TOKEN_PEPPER: config.AUTH_REFRESH_TOKEN_PEPPER,
+      AUTH_JWT_PRIVATE_KEY: ownKey.pem,
+      AUTH_JWT_KID: "test-auth-kid",
+      AUTH_JWT_PUBLIC_KEY_SET: JSON.stringify({ keys: [ownKey.jwk] }),
+      GOOGLE_OAUTH_CLIENT_ID: TEST_GOOGLE_CLIENT_ID,
+      GOOGLE_OAUTH_CLIENT_SECRET: TEST_GOOGLE_CLIENT_SECRET,
+      NODE_ENV: "test",
+      EARLY_ACCESS_GATE_ENABLED: "true",
     });
   });
 
@@ -159,6 +170,7 @@ describe("auth-google.routes (AUTH-BE-16)", () => {
   afterAll(async () => {
     resetGoogleRemoteJwks();
     await app?.close();
+    await gatedApp?.close();
     await closeRedis();
     await sql.end();
   });
@@ -402,6 +414,29 @@ describe("auth-google.routes (AUTH-BE-16)", () => {
       .where(eq(creditBalances.workspaceId, data.user.workspaceId))
       .limit(1);
     expect(balance?.balance).toBe(500);
+  });
+
+  it("with the early access gate on, a new Google user gets a pending workspace and no credits", async () => {
+    const email = freshEmail("gated");
+    const startRes = await gatedApp.inject({ method: "GET", url: "/api/v1/auth/google/start" });
+    const { state, authorizationUrl } = startRes.json().data;
+    const nonce = new URL(authorizationUrl).searchParams.get("nonce")!;
+    const stateCookie = cookieValue(startRes, GOOGLE_STATE_COOKIE_NAME);
+    mockTokenExchange.idToken = await signTestGoogleIdToken({ email, sub: `google-sub-gated-${Date.now()}`, name: "Gated", nonce });
+    const res = await gatedApp.inject({
+      method: "POST",
+      url: "/api/v1/auth/google/callback",
+      headers: { cookie: `${GOOGLE_STATE_COOKIE_NAME}=${stateCookie}` },
+      payload: { code: "valid-code", state },
+    });
+    expect(res.statusCode).toBe(200);
+    const workspaceId = res.json().data.user.workspaceId;
+    const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId));
+    expect(ws!.accessStatus).toBe("pending");
+    const [req] = await db.select().from(schema.accessRequests).where(eq(schema.accessRequests.workspaceId, workspaceId));
+    expect(req).toMatchObject({ signupMethod: "google", status: "pending" });
+    const [bal] = await db.select().from(creditBalances).where(eq(creditBalances.workspaceId, workspaceId));
+    expect(bal).toBeUndefined();
   });
 
   it("callback refuses blocked user with 403 AUTH_ACCOUNT_BLOCKED", async () => {

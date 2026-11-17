@@ -127,6 +127,16 @@ describe.skipIf(!hasDatabase)("access service (early access)", () => {
     expect(txns).toHaveLength(0);
   });
 
+  it("a zero-credit approval stays at zero after redeem and sign-in", async () => {
+    const u = await selfSignup();
+    const m = mailer();
+    await approveAccessRequest(db, ctx(), u.requestId, approveInput({ credits: 0 }), m.deps);
+    expect(await redeemAccessCode(db, { workspaceId: u.workspaceId, userId: u.userId, code: m.sent[0]! })).toEqual({ ok: true });
+    const again = await resolveOrProvisionUser(db, { provider: "password", subject: u.userEmail, email: u.userEmail, emailVerified: true });
+    expect(again.workspaceId).toBe(u.workspaceId);
+    expect(await balance(u.workspaceId)).toBe(0);
+  });
+
   it("email failure leaves approval committed and invite_email_sent_at null", async () => {
     const u = await selfSignup();
     await approveAccessRequest(db, ctx(), u.requestId, approveInput(), mailer(false).deps);
@@ -213,6 +223,14 @@ describe.skipIf(!hasDatabase)("access service (early access)", () => {
     const access = await loadWorkspaceAccess(db, operator.workspaceId);
     expect(access.status).toBe("active");
     expect(Object.values(access.features).every(Boolean)).toBe(true);
+  });
+
+  it("the bootstrap admin's workspace is active", async () => {
+    const { bootstrapAdmin } = await import("./bootstrap-admin.service.js");
+    const email = `ea-boot-${suffix}@test.com`;
+    expect(await bootstrapAdmin(db, { BOOTSTRAP_ADMIN_EMAIL: email, BOOTSTRAP_ADMIN_PASSWORD: "Correct-Horse-9-Battery" })).toBe("created");
+    const r = await resolveOrProvisionUser(db, { provider: "password", subject: email, email, emailVerified: true });
+    expect(r.accessStatus).toBe("active");
   });
 
   it("loadWorkspaceAccess treats a non-uuid pseudo workspace as active", async () => {

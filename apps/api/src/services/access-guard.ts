@@ -5,9 +5,18 @@ import { FEATURE_LABELS, featureForApiPath } from "@skout/shared";
 import type { Env } from "../config/env.js";
 import { earlyAccessGateEnabled } from "../config/early-access.js";
 import { apiError } from "../utils/http.js";
+import { isMeteredAi } from "../routes/cops-usage.routes.js";
 
 /** What a workspace that is not active yet may still call: sign-in, its own request, health. */
 export const ACCESS_ALLOWLIST = ["auth", "access-request", "health", "me", "jwks", ".well-known"] as const;
+
+function decodedUrl(url: string): string {
+  try {
+    return decodeURI(url);
+  } catch {
+    return url;
+  }
+}
 
 function firstSegment(url: string): string {
   const path = url.split("?")[0] ?? "";
@@ -27,7 +36,7 @@ export function accessGuard(db: Db, config: Pick<Env, "NODE_ENV"> & { EARLY_ACCE
     const access = await loadWorkspaceAccess(db, workspaceId);
 
     if (access.status !== "active" && earlyAccessGateEnabled(config)) {
-      if ((ACCESS_ALLOWLIST as readonly string[]).includes(firstSegment(request.url))) return;
+      if ((ACCESS_ALLOWLIST as readonly string[]).includes(firstSegment(decodedUrl(request.url)))) return;
       const rejected = access.status === "rejected";
       return reply
         .code(403)
@@ -40,7 +49,11 @@ export function accessGuard(db: Db, config: Pick<Env, "NODE_ENV"> & { EARLY_ACCE
         );
     }
 
-    const feature = featureForApiPath(request.url);
+    // The matched route pattern, not the raw URL: the router decodes "/%73equences" to /sequences, so
+    // matching the raw URL would let an encoded path dodge a switch. Metered AI actions outside /ai
+    // (account recommendations) belong to the ai switch too.
+    const feature =
+      featureForApiPath(request.routeOptions?.url ?? request.url) ?? (isMeteredAi(request.method, decodedUrl(request.url)) ? "ai" : null);
     if (feature && !access.features[feature]) {
       return reply
         .code(403)

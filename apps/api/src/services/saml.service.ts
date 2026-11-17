@@ -140,7 +140,7 @@ export async function validateSamlAssertion(
     email,
     name: displayName || email,
     emailVerified: true,
-  });
+  }, undefined, undefined, undefined, { joinWorkspace: { workspaceId, role } });
 
   // Update the user's role in the workspace if it changed
   const [existingMembership] = await db
@@ -158,7 +158,7 @@ export async function validateSamlAssertion(
       .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, result.userId)));
   }
 
-  return { ...result, role };
+  return { ...result, workspaceId, role };
 }
 
 export async function deprovisionUser(

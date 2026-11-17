@@ -126,4 +126,19 @@ describe.skipIf(!hasDatabase)("resolveOrProvisionUser — early access", () => {
       .where(and(eq(schema.workspaceMembers.userId, first.userId)));
     expect(members).toHaveLength(1);
   });
+
+  it("joinWorkspace (SAML JIT) puts a new user straight into the SSO workspace, no personal one", async () => {
+    const sso = await activeWorkspace("sso");
+    const e = email();
+    const r = await resolveOrProvisionUser(db, { provider: "saml:okta", subject: e, email: e, emailVerified: true }, undefined, undefined, undefined, {
+      joinWorkspace: { workspaceId: sso.id, role: "member" },
+    });
+    expect(r.workspaceId).toBe(sso.id);
+    expect(r.role).toBe("member");
+    const members = await db.select().from(schema.workspaceMembers).where(eq(schema.workspaceMembers.userId, r.userId));
+    expect(members.map((m) => m.workspaceId)).toEqual([sso.id]);
+    const again = await resolveOrProvisionUser(db, { provider: "saml:okta", subject: e, email: e, emailVerified: true });
+    expect(again.workspaceId).toBe(sso.id);
+  });
 });
+

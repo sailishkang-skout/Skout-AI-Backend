@@ -126,4 +126,31 @@ describe.skipIf(!hasDatabase)("early access guard", () => {
     });
     expect(plan.statusCode).toBe(403);
   });
+
+  it("a percent-encoded path cannot dodge a switched-off feature", async () => {
+    const u = await userIn("active", { sequences: false });
+    const res = await app.inject({ method: "GET", url: "/api/v1/%73equences", headers: as(u.email) });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ code: "feature_disabled", feature: "sequences" });
+  });
+
+  it("a metered AI action outside /ai is refused when ai is off", async () => {
+    const u = await userIn("active", { ai: false });
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/v1/accounts/${u.workspaceId}/recommendations/generate`,
+      headers: { ...as(u.email), "content-type": "application/json" },
+      payload: {},
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ code: "feature_disabled", feature: "ai" });
+  });
+
+  it("a pending workspace's AI call is refused before it is metered", async () => {
+    const u = await userIn("pending");
+    const res = await app.inject({ method: "POST", url: "/api/v1/ai/chat", headers: { ...as(u.email), "content-type": "application/json" }, payload: { message: "hi" } });
+    expect(res.statusCode).toBe(403);
+    const used = await db.select().from(schema.copsUsageCounters).where(eq(schema.copsUsageCounters.workspaceId, u.workspaceId));
+    expect(used.reduce((n, r) => n + r.count, 0)).toBe(0);
+  });
 });

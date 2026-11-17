@@ -25,6 +25,11 @@ export interface ProvisionOptions {
    * on: a brand-new personal workspace then starts pending, gets an access request and no welcome credits.
    */
   selfSignup?: { method: "password" | "google" | "microsoft" };
+  /**
+   * SAML JIT: a brand-new user joins this workspace instead of getting a personal one (which would
+   * otherwise be their oldest active workspace and win the default selection).
+   */
+  joinWorkspace?: { workspaceId: string; role: string };
 }
 
 export type ResolveOrProvisionInput = {
@@ -335,6 +340,16 @@ export async function resolveOrProvisionUser(
 
       const chosen = (await pickDefaultMembership(tx, userId))!;
       return { userId, userEmail, workspaceId: chosen.workspaceId, role: chosen.role, accessStatus: chosen.accessStatus };
+    }
+
+    if (options.joinWorkspace) {
+      await tx
+        .insert(schema.workspaceMembers)
+        .values({ workspaceId: options.joinWorkspace.workspaceId, userId, role: options.joinWorkspace.role })
+        .onConflictDoNothing();
+      await grantSystemMemberRole(tx, options.joinWorkspace.workspaceId, userId, options.joinWorkspace.role);
+      const joined = (await pickDefaultMembership(tx, userId))!;
+      return { userId, userEmail, workspaceId: joined.workspaceId, role: joined.role, accessStatus: joined.accessStatus };
     }
 
     const slug =

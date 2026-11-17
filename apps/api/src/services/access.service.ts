@@ -158,7 +158,11 @@ export async function approveAccessRequest(db: Db, ctx: AccessContext, id: strin
     if (wsStatus === "active") throw new AccessError("BUSINESS_STATE_CONFLICT", "This workspace already has access");
 
     await applyPlanAndFeatures(tx, req.workspaceId, { plan: input.plan, features: input.features });
-    if (input.credits > 0) {
+    if (input.credits === 0) {
+      // An explicit zero wallet: without a balance row the first active sign-in would hand out the
+      // 500 welcome credits and override COPS's decision.
+      await tx.insert(schema.creditBalances).values({ workspaceId: req.workspaceId, balance: 0 }).onConflictDoNothing();
+    } else {
       await postCreditTransaction(tx, {
         workspaceId: req.workspaceId,
         amount: input.credits,
