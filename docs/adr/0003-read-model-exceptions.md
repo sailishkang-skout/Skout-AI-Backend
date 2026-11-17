@@ -234,3 +234,13 @@ by apps/api.
 | File | Tables | Access |
 | --- | --- | --- |
 | `apps/api/src/services/cops-billing-tickets.service.ts` | companies, deals, activities | read: the customer's name, and that a payment's deal belongs to the customer the refund ticket is raised on; insert: one `activities` timeline row per ticket step (raised, done, declined) |
+
+## Work tracker additions (2026-11-15)
+
+| File | Tables | Access |
+| --- | --- | --- |
+| `apps/api/src/routes/cops-task-tracker.routes.ts` | companies | read only: the name of the customer an issue is linked to, shown on boards and lists |
+
+### Subscription auto-start additions (2026-11-17)
+
+- `apps/api/src/services/cops-subscriptions.service.ts`: reads `deals` and `pipeline_stages`, and sets a deal to won, when a paid proposal starts its subscription (`startSubscriptionOnProposalPayment` / `markDealWonOnPayment`). Done in the payment webhook's transaction so payment, subscription and deal stay consistent. Review when apps/crm exposes a "mark deal won" API.

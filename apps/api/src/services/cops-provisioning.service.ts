@@ -6,6 +6,7 @@ import { createLogger } from "@skout/observability";
 import { writeCopsAudit } from "./cops-platform.service.js";
 import { EntitlementsService } from "./entitlements.service.js";
 import { applyPaidCreditPurchases } from "./cops-credits.service.js";
+import { applyAccessOnProvision } from "./cops-subscriptions.service.js";
 
 /**
  * COPS-04 trial provisioning saga (Bible p.39, Appendix H "provisioning partial failure").
@@ -368,6 +369,13 @@ export async function startProvisioning(
     }
 
     const now = new Date();
+    // Paid first (the subscription started on payment): no trial and no trial end, so no
+    // "trial ending" alerts or expiry for a paying customer.
+    const [paidSub] = await tx
+      .select({ id: schema.subscriptions.id })
+      .from(schema.subscriptions)
+      .where(and(eq(schema.subscriptions.workspaceId, ctx.workspaceId), eq(schema.subscriptions.accountId, accountId), sql`${schema.subscriptions.status} <> 'closed'`))
+      .limit(1);
     const [row] = await tx
       .insert(copsProvisionings)
       .values({
@@ -377,8 +385,8 @@ export async function startProvisioning(
         idempotencyKey: key,
         status: "pending",
         request,
-        trialStartsAt: now,
-        trialEndsAt: new Date(now.getTime() + request.trial_days * DAY_MS),
+        trialStartsAt: paidSub ? null : now,
+        trialEndsAt: paidSub ? null : new Date(now.getTime() + request.trial_days * DAY_MS),
         requestedBy: ctx.userId,
       })
       .returning({ id: copsProvisionings.id });
@@ -752,6 +760,8 @@ async function runSaga(db: Db, ctx: ProvisioningContext, provisioningId: string,
       .update(copsProvisionings)
       .set({ status: "succeeded", completedAt: at, durationMs, lastError: null, updatedAt: at })
       .where(eq(copsProvisionings.id, provisioningId));
+    // What the new workspace may use: its subscription when there is one, else a trial that ends.
+    await applyAccessOnProvision(tx as never, { operatorWorkspaceId: ctx.workspaceId, accountId: run.accountId, customerWorkspaceId: workspaceId, requestId: ctx.requestId, at });
     const actor = { type: "user" as const, id: run.requestedBy };
     await appendCopsEvent(
       tx as never,

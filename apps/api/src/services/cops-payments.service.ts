@@ -321,7 +321,7 @@ export async function handlePaymentWebhook(
           occurredAt: at,
         })
       );
-      if (onPaid) await onPaid(tx as unknown as Db, { workspaceId: request.workspaceId, opportunityId: request.opportunityId, requestId });
+      if (onPaid) await onPaid(tx as unknown as Db, { workspaceId: request.workspaceId, opportunityId: request.opportunityId, requestId, paymentRequestId: request.id });
     }
     if (next === "refunded" && onRefunded) {
       await onRefunded(tx as unknown as Db, { workspaceId: request.workspaceId, opportunityId: request.opportunityId, requestId, paymentRequestId: request.id });

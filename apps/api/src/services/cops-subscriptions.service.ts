@@ -28,6 +28,10 @@ import { runLifecycleTransition } from "./cops-lifecycle.service.js";
 import { SUBSCRIPTION_ENTITLEMENT_KEY } from "./cops-subscription-access.js";
 import { CommercialError, getOpportunity, type CommercialContext } from "./cops-commercial.service.js";
 import { createPaymentRequest } from "./cops-payments.service.js";
+import { createLogger } from "@skout/observability";
+import { COPS_TRANSITIONS } from "@skout/shared";
+
+const log = createLogger("cops-subscriptions");
 import type { PspAdapter } from "./psp/psp-adapter.js";
 
 /**
@@ -36,6 +40,15 @@ import type { PspAdapter } from "./psp/psp-adapter.js";
  * is ours, counted from the bill's due date: that is the route for customers the provider cannot
  * auto-debit. `invoiced` accounts are never suspended automatically. Status comes only from the
  * oldest unpaid bill, so paying it restores access with no extra step, and nothing here deletes data.
+ */
+/*
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md (subscription auto-start additions).
+ *   - Tables touched directly: deals (read; status/stage set to won), pipeline_stages (read) - owned by apps/crm
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: a paid proposal starts the subscription and marks the deal won in the same
+ *     webhook transaction, so the payment, the subscription and the won deal cannot disagree.
+ *   - Review date: revisit when apps/crm's internal API exposes a "mark deal won" call
  */
 const { subscriptions, subscriptionItems, subscriptionInvoices, subscriptionAmendments, paymentRequests, copsLifecycleStates, copsProvisionings, entitlements, proposals, proposalVersions, proposalLineItems } = schema;
 
@@ -397,7 +410,8 @@ export async function createSubscription(db: Db, ctx: CommercialContext, account
       entityType: "subscription",
       entityId: sub!.id,
       action: "subscription.created",
-      after: { account_id: accountId, seats: input.seats, seat_month_minor: unit, currency, cadence: input.cadence, term_months: input.term_months, billing, first_bill_settled_by_proposal_payment: settledInvoiceId },
+      // The seats really billed: the proposal's seat lines when there is one, not the number typed.
+      after: { account_id: accountId, seats: recurring ? recurring.lines.filter((l) => l.kind === "seats").reduce((n, l) => n + l.quantity, 0) : input.seats, seat_month_minor: unit, currency, cadence: input.cadence, term_months: input.term_months, billing, first_bill_settled_by_proposal_payment: settledInvoiceId },
       correlationId: ctx.requestId,
       sourceChannel: "api",
     });
@@ -589,7 +603,7 @@ export async function listFailedPayments(db: Db, workspaceId: string, now: Date 
  * and earlier amendments stay as they were. Seats change with the next billing period, with no
  * proration; a new term length moves the renewal date at once.
  */
-export async function amendSubscription(db: Db, ctx: CommercialContext, subscriptionId: string, input: { seats?: number; term_months?: number; reason: string }, now: Date = new Date()): Promise<SubscriptionDto> {
+export async function amendSubscription(db: Db, ctx: CommercialContext, subscriptionId: string, input: { seats?: number; term_months?: number; reason: string; immediate?: boolean }, now: Date = new Date()): Promise<SubscriptionDto> {
   if (input.seats == null && input.term_months == null) {
     throw new CommercialError("VALIDATION_FAILED", "Give seats, term_months or both", { fields: [{ path: "seats", code: "required", message: "Give seats, term_months or both" }] });
   }
@@ -608,7 +622,20 @@ export async function amendSubscription(db: Db, ctx: CommercialContext, subscrip
     const seatsBefore = effectiveSeats(originalSeats(items), seatChanges(earlier), new Date(8_640_000_000_000_000));
 
     let effectiveAt = now;
-    if (input.seats != null) {
+    // Added seats can start now (like a credit top-up): usable at once, and the rest of the
+    // current period is billed pro rata on its own invoice. Fewer seats always wait.
+    const addNow = !!input.immediate && input.seats != null && input.seats > seatsBefore;
+    if (addNow) {
+      const current = periodsStarted(sub.termStart, sub.cadence as SubscriptionCadence, sub.termMonths, now).at(-1);
+      if (!current || current.end.getTime() <= now.getTime()) throw new CommercialError("BUSINESS_STATE_CONFLICT", "There is no billing period running now to add seats to", { term_end: sub.termEnd.toISOString() });
+      const extra = periodAmountMinor(pricedItems(items, input.seats!), current.months) - periodAmountMinor(pricedItems(items, seatsBefore), current.months);
+      const share = (current.end.getTime() - now.getTime()) / (current.end.getTime() - current.start.getTime());
+      const amount = Math.round(extra * share);
+      if (amount > 0) {
+        await tx.insert(subscriptionInvoices).values({ workspaceId: sub.workspaceId, subscriptionId: sub.id, periodStart: now, periodEnd: current.end, dueAt: new Date(now.getTime() + sub.paymentTermsNetDays * 86_400_000), amountMinor: amount, currency: sub.currency });
+      }
+      await syncAccountFromSubscription(tx, sub, sub.status as SubscriptionStatus, input.seats!, now, ctx.requestId);
+    } else if (input.seats != null) {
       const next = nextPeriodStart(sub.termStart, sub.cadence as SubscriptionCadence, input.term_months ?? sub.termMonths, now);
       if (!next) throw new CommercialError("BUSINESS_STATE_CONFLICT", "There is no later billing period in this term for a seat change to start in; change seats at renewal or extend the term", { term_end: sub.termEnd.toISOString() });
       effectiveAt = next;
@@ -743,6 +770,14 @@ export async function previewAmendment(db: Db, ctx: CommercialContext, subscript
     /** Positive: the next bill goes up by this much (a charge). Negative: it goes down (a credit). */
     change_minor: before !== null && after !== null ? after - before : null,
     proration: "none" as const,
+    /** Adding seats now: what the extra seats cost for the rest of the current period. */
+    charge_now_minor: (() => {
+      if (seatsAfter <= seatsBefore) return null;
+      const cur = periodsStarted(sub.termStart, sub.cadence as SubscriptionCadence, sub.termMonths, now).at(-1);
+      if (!cur || cur.end.getTime() <= now.getTime()) return null;
+      const extra = periodAmountMinor(pricedItems(items, seatsAfter), cur.months) - periodAmountMinor(pricedItems(items, seatsBefore), cur.months);
+      return Math.round((extra * (cur.end.getTime() - now.getTime())) / (cur.end.getTime() - cur.start.getTime()));
+    })(),
   };
 }
 
@@ -854,4 +889,147 @@ async function recurringProposalLines(db: Db, workspaceId: string, opportunityId
         };
       }),
   };
+}
+
+
+/**
+ * A proposal's payment starts the subscription by itself, from that proposal (seats, cadence,
+ * term), so a paid customer is never left without one: no seat limit, no renewal, no Skout AI plan.
+ * Does nothing for a payment that is not a proposal's (a subscription bill), when the account
+ * already has a subscription, or when the proposal has no recurring lines. Never throws: a failure
+ * leaves the manual Start subscription button as before. Returns the subscription id it started.
+ */
+export async function startSubscriptionOnProposalPayment(
+  db: Db,
+  input: { workspaceId: string; opportunityId: string; paymentRequestId: string; requestId: string }
+): Promise<string | null> {
+  try {
+    const [pr] = await db
+      .select({ proposalId: schema.paymentRequests.proposalId, createdBy: schema.paymentRequests.createdBy, status: schema.paymentRequests.status })
+      .from(schema.paymentRequests)
+      .where(and(eq(schema.paymentRequests.id, input.paymentRequestId), eq(schema.paymentRequests.workspaceId, input.workspaceId)))
+      .limit(1);
+    if (!pr?.proposalId || pr.status !== "paid" || !pr.createdBy) return null;
+    const [deal] = await db
+      .select({ companyId: schema.deals.companyId })
+      .from(schema.deals)
+      .where(and(eq(schema.deals.id, input.opportunityId), eq(schema.deals.workspaceId, input.workspaceId)))
+      .limit(1);
+    if (!deal?.companyId) return null;
+    // Paid proposal: the deal is won, whether or not the subscription was already started by hand.
+    await markDealWonOnPayment(db, { ...input, actorId: pr.createdBy });
+    const [already] = await db
+      .select({ id: subscriptions.id })
+      .from(subscriptions)
+      .where(and(eq(subscriptions.workspaceId, input.workspaceId), eq(subscriptions.accountId, deal.companyId), ne(subscriptions.status, "closed")))
+      .limit(1);
+    if (already) return null;
+    const [version] = await db
+      .select({ cadence: schema.proposalVersions.billingCadence, term: schema.proposalVersions.termMonths })
+      .from(schema.proposalVersions)
+      .where(and(eq(schema.proposalVersions.proposalId, pr.proposalId), isNotNull(schema.proposalVersions.sentAt)))
+      .orderBy(desc(schema.proposalVersions.sentAt))
+      .limit(1);
+    if (!version) return null;
+    const cadence = (version.cadence === "monthly" ? "monthly" : "annual") as SubscriptionCadence;
+    const sub = await createSubscription(
+      db,
+      // Acting as whoever made the payment link: the person who sold it.
+      { workspaceId: input.workspaceId, userId: pr.createdBy, requestId: input.requestId },
+      deal.companyId,
+      { opportunity_id: input.opportunityId, cadence, term_months: version.term, billing: "payment_link" }
+    );
+    return sub.id;
+  } catch (err) {
+    log.warn("subscription not started from the proposal payment", { err, opportunityId: input.opportunityId });
+    return null;
+  }
+}
+
+
+/**
+ * The deal's proposal is paid: the deal is won. Moves it to its pipeline's won stage through the
+ * same lifecycle transition as a stage move in the pipeline (events, audit), so the won value,
+ * pipeline and reports agree with the money. Skipped quietly when the deal is already won or the
+ * move is not allowed (e.g. another proposal waits for approval); the payment is never affected.
+ */
+async function markDealWonOnPayment(db: Db, input: { workspaceId: string; opportunityId: string; requestId: string; actorId: string }): Promise<void> {
+  try {
+    const [deal] = await db
+      .select({ id: schema.deals.id, pipelineId: schema.deals.pipelineId, status: schema.deals.status })
+      .from(schema.deals)
+      .where(and(eq(schema.deals.id, input.opportunityId), eq(schema.deals.workspaceId, input.workspaceId)))
+      .limit(1);
+    if (!deal || deal.status === "won") return;
+    const [wonStage] = await db
+      .select({ id: schema.pipelineStages.id })
+      .from(schema.pipelineStages)
+      .where(and(eq(schema.pipelineStages.pipelineId, deal.pipelineId), eq(schema.pipelineStages.isClosedWon, true)))
+      .limit(1);
+    if (!wonStage) return;
+    await db.transaction(async (tx) => {
+      const [current] = await tx
+        .select({ state: schema.copsLifecycleStates.state })
+        .from(schema.copsLifecycleStates)
+        .where(and(eq(schema.copsLifecycleStates.workspaceId, input.workspaceId), eq(schema.copsLifecycleStates.dimension, "opportunity"), eq(schema.copsLifecycleStates.entityId, deal.id)))
+        .limit(1);
+      // The lifecycle moves one step at a time (qualified -> demo -> commercial -> won). A paid
+      // proposal means the deal went through them, so walk the forward path, one audited step each.
+      let state = (current?.state ?? "qualified") as keyof typeof COPS_TRANSITIONS.opportunity;
+      for (let step = 0; step < 5 && state !== "won"; step++) {
+        const options = COPS_TRANSITIONS.opportunity[state] as readonly string[];
+        const next = (options.includes("won") ? "won" : options.find((o) => o !== "lost")) as typeof state | undefined;
+        if (!next) return;
+        await runLifecycleTransition(tx as unknown as Db, {
+          workspaceId: input.workspaceId,
+          dimension: "opportunity",
+          entityId: deal.id,
+          to: next,
+          actorId: input.actorId,
+          source: "api",
+          reason: "Proposal paid",
+          requestId: input.requestId,
+          occurredAt: new Date(),
+        } as never);
+        state = next;
+      }
+      await tx.update(schema.deals).set({ stageId: wonStage.id, status: "won", updatedAt: new Date() }).where(eq(schema.deals.id, deal.id));
+    });
+  } catch (err) {
+    log.warn("deal not marked won after its proposal was paid", { err, opportunityId: input.opportunityId });
+  }
+}
+
+
+/**
+ * Sets what a newly provisioned workspace may use. With a running subscription (paid first), the
+ * subscription's access is written as on any billing change. Without one (a trial, or a gate
+ * override), a "trial" entitlement with the trial's end date: after it, product use is suspended
+ * until a subscription starts (subscriptionAccessBlock). Never overwrites a subscription's access.
+ */
+export async function applyAccessOnProvision(
+  tx: Tx,
+  input: { operatorWorkspaceId: string; accountId: string; customerWorkspaceId: string; requestId: string; at: Date }
+): Promise<void> {
+  const [sub] = await tx
+    .select()
+    .from(subscriptions)
+    .where(and(eq(subscriptions.workspaceId, input.operatorWorkspaceId), eq(subscriptions.accountId, input.accountId), ne(subscriptions.status, "closed")))
+    .limit(1);
+  if (sub) {
+    const items = await tx.select().from(subscriptionItems).where(eq(subscriptionItems.subscriptionId, sub.id));
+    await syncAccountFromSubscription(tx, sub, sub.status as SubscriptionStatus, originalSeats(items), input.at, input.requestId);
+    return;
+  }
+  const [prov] = await tx
+    .select({ trialEndsAt: copsProvisionings.trialEndsAt })
+    .from(copsProvisionings)
+    .where(and(eq(copsProvisionings.workspaceId, input.operatorWorkspaceId), eq(copsProvisionings.accountId, input.accountId), eq(copsProvisionings.provisionedWorkspaceId, input.customerWorkspaceId)))
+    .orderBy(desc(copsProvisionings.createdAt))
+    .limit(1);
+  const value = { status: "trial", trial_ends_at: prov?.trialEndsAt?.toISOString() ?? null };
+  await tx
+    .insert(entitlements)
+    .values({ workspaceId: input.customerWorkspaceId, key: SUBSCRIPTION_ENTITLEMENT_KEY, value, source: "cops-provisioning", updatedAt: input.at })
+    .onConflictDoNothing({ target: [entitlements.workspaceId, entitlements.key] });
 }
