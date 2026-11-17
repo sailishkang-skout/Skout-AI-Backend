@@ -1,4 +1,4 @@
-import { and, eq, ilike, isNull, or } from "drizzle-orm";
+import { and, eq, ilike, isNull, or, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, recordEvidence, getLatestEvidenceByAttribute } from "@skout/db";
 import type { ContactCreateInput, ContactUpdateInput } from "@skout/shared";
@@ -118,6 +118,16 @@ export class ContactsService {
   async create(workspaceId: string, actorId: string | undefined, input: ContactCreateInput): Promise<ContactDto> {
     if (input.companyId && !(await this.companiesService.existsInWorkspace(workspaceId, input.companyId))) {
       throw new HttpError("company_not_found", 404);
+    }
+    // One contact per email in a workspace: a double click or a second "Add contact" made two.
+    const email = input.email?.trim().toLowerCase();
+    if (email) {
+      const [existing] = await this.db
+        .select({ id: contacts.id })
+        .from(contacts)
+        .where(and(eq(contacts.workspaceId, workspaceId), isNull(contacts.deletedAt), sql`lower(${contacts.email}) = ${email}`))
+        .limit(1);
+      if (existing) throw new HttpError("A contact with this email already exists", 409);
     }
 
     const [row] = await this.db

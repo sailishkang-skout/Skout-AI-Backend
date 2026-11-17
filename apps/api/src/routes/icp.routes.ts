@@ -93,7 +93,7 @@ const icpSchema = z.object({
 });
 
 /** Reject bare completedAt claims — wizard must include minimum profile answers. */
-function assertValidOnboardingCompletion(
+export function assertValidOnboardingCompletion(
   onboarding: z.infer<typeof onboardingSchema> | undefined
 ): void {
   if (!onboarding?.completedAt) return;
@@ -111,7 +111,18 @@ function assertValidOnboardingCompletion(
   const hasMarket = (onboarding.market?.length ?? 0) > 0;
   const hasLeadVolume = Boolean(onboarding.leadVolume?.trim());
 
-  if (!hasCompany || !hasGoals || !hasIcpIndustries || !hasPeople || !hasMarket || !hasLeadVolume) {
+  // The wizard asks different questions per persona (contentStepsForPersona in the app): an
+  // Executive Viewer only gives company and goals; a BDR/SDR or AE skips market. Requiring the full
+  // list for them made "Finish" fail every time.
+  const persona = (onboarding as { persona?: string }).persona;
+  const hasCompanyName = Boolean(onboarding.company?.name?.trim());
+  const complete =
+    persona === "executive_viewer"
+      ? hasCompanyName && hasGoals
+      : persona === "bdr_sdr" || persona === "ae"
+        ? hasCompany && hasGoals && hasIcpIndustries && hasPeople && hasLeadVolume
+        : hasCompany && hasGoals && hasIcpIndustries && hasPeople && hasMarket && hasLeadVolume;
+  if (!complete) {
     const err = new Error(
       "Onboarding completion requires company, goals, ICP industries, people targets, market, and lead volume"
     );

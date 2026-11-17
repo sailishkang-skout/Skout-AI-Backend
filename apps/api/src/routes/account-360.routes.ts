@@ -383,7 +383,11 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
         let commercialState: string | null = null;
         if (permissions.includes("commercial:read")) {
           const [row] = await db
-            .select({ state: copsLifecycleStates.state })
+            .select({
+              state: copsLifecycleStates.state,
+              // Paid before the contract was signed: the money is in, the signature is what is left.
+              paid: sql<boolean>`exists (select 1 from payment_requests pr where pr.workspace_id = ${workspaceId} and pr.opportunity_id = ${deals.id} and pr.status = 'paid')`,
+            })
             .from(copsLifecycleStates)
             .innerJoin(deals, eq(deals.id, copsLifecycleStates.entityId))
             .where(
@@ -398,7 +402,9 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
             )
             .orderBy(desc(copsLifecycleStates.updatedAt))
             .limit(1);
-          commercialState = row?.state ?? null;
+          // The commercial lifecycle expects signature, then payment. When the customer paid first,
+          // "payment pending" was wrong: what is pending is the contract.
+          commercialState = row?.state === "payment_pending" && row.paid ? "msa_pending" : (row?.state ?? null);
         }
         // COPS-04: the provisioned trial workspace (Bible p.28 provisioning fields).
         const [provisioned] = await db
@@ -428,7 +434,10 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
                order by oi.created_at desc limit 1) as onboarding_pct,
             (select s.term_end from subscriptions s
                where s.workspace_id = ${workspaceId} and s.account_id = ${accountId} and s.status <> 'closed'
-               order by s.term_end desc limit 1) as renewal_at`)) as unknown as Array<{ onboarding_pct: number | null; renewal_at: Date | string | null }>;
+               order by s.term_end desc limit 1) as renewal_at,
+            (select si.description from subscription_items si join subscriptions s2 on s2.id = si.subscription_id
+               where s2.workspace_id = ${workspaceId} and s2.account_id = ${accountId} and s2.status <> 'closed'
+               order by si.created_at asc limit 1) as subscription_plan`)) as unknown as Array<{ onboarding_pct: number | null; renewal_at: Date | string | null; subscription_plan: string | null }>;
         data.header = {
           id: account.id,
           name: account.name,
@@ -443,7 +452,8 @@ export async function copsAccount360Routes(app: FastifyInstance, opts: { db: Db 
           csm_id: account.csmId ?? null,
           commercial_state: commercialState,
           onboarding_pct: progress?.onboarding_pct ?? null,
-          plan: provisioned ? ((provisioned.request as { plan?: string }).plan ?? null) : null,
+          // A running subscription is the plan the customer pays for; the provisioning plan is the trial.
+          plan: progress?.subscription_plan ?? (provisioned ? ((provisioned.request as { plan?: string }).plan ?? null) : null),
           provisioning: provisioned
             ? {
                 workspace_id: provisioned.workspaceId,

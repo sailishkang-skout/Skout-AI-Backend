@@ -37,7 +37,7 @@ import {
   type CommercialContext,
 } from "../services/cops-commercial.service.js";
 import { cancelPaymentRequest, createPaymentRequest, handlePaymentWebhook, loadPaymentRequests, previewRefund, refundPaymentRequest } from "../services/cops-payments.service.js";
-import { emailPaymentLink, emailProposal, isInternalEmail } from "../services/cops-commercial-email.service.js";
+import { emailPaymentLink, emailProposal, isInternalEmail, proposalVersionPdf } from "../services/cops-commercial-email.service.js";
 import { assertApproved, assertContractApproved, decideApproval, evaluateProposalApprovals, listApprovals, requestApproval } from "../services/cops-approvals.service.js";
 import { createRazorpayPaymentLinkAdapter } from "../services/psp/razorpay.js";
 import {
@@ -57,6 +57,7 @@ import { removeContractDocumentIfUnused, resolveContractDocumentForProvider } fr
 import { getAccountContractFields, setAccountContractFields } from "../services/cops-account-fields.service.js";
 import { CREDIT_ACTIVITY_KINDS, listCreditActivity, listSubscriptionsForFinance, loadReconciliation } from "../services/cops-finance.service.js";
 import { amendSubscription, cancelSubscription, createSubscription, previewAmendment, resumeSubscription, getAccountSubscription, issueInvoicePaymentLink, listFailedPayments, markInvoicePaid, unsettleInvoicesForRefund } from "../services/cops-subscriptions.service.js";
+import { startSubscriptionOnProposalPayment } from "../services/cops-subscriptions.service.js";
 import { applyPaidCreditPurchases, reverseRefundedCreditPurchase } from "../services/cops-credits.service.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -171,7 +172,7 @@ const subscriptionSchema = z
   })
   .strict();
 const amendmentSchema = z
-  .object({ seats: z.number().int().min(1).max(100_000).optional(), term_months: z.number().int().min(1).max(120).optional(), reason: z.string().trim().min(1, "reason is required").max(1000) })
+  .object({ seats: z.number().int().min(1).max(100_000).optional(), term_months: z.number().int().min(1).max(120).optional(), immediate: z.boolean().optional(), reason: z.string().trim().min(1, "reason is required").max(1000) })
   .strict();
 const financeSubscriptionsQuery = z
   .object({ status: z.enum(["active", "past_due", "restricted", "suspended", "closed"]).optional(), renewing_within_days: z.coerce.number().int().min(1).max(730).optional() })
@@ -588,6 +589,20 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
   });
 
   // ---- Proposals ----
+  // The PDF of any proposal version (draft or sent): the one the proposal email attaches.
+  app.get<IdOnly>("/proposal-versions/:id/pdf", { preHandler: readGate }, async (request, reply) => {
+    const ctx = ctxOf(request);
+    const bad = checkId(reply as unknown as Reply, ctx.requestId, request.params.id);
+    if (bad) return bad;
+    const file = await proposalVersionPdf(db, ctx.workspaceId, request.params.id);
+    if (!file) return reply.status(404).send(copsErrorBody({ code: "NOT_FOUND", message: "Proposal version not found", requestId: ctx.requestId }));
+    return reply
+      .header("content-type", "application/pdf")
+      .header("content-disposition", `inline; filename="${file.filename}"`)
+      .header("cache-control", "no-store")
+      .send(file.pdf);
+  });
+
 
   type OppBody = { Params: { id: string }; Body: unknown };
   app.post<OppBody>(
@@ -1024,7 +1039,9 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
   app.post("/billing/webhooks/razorpay/payment-links", async (request, reply) => {
     const requestId = resolveCorrelationId(request.headers["x-request-id"]);
     const rawBody = request.rawBody ?? JSON.stringify(request.body ?? {});
+    let paidInfo: { workspaceId: string; opportunityId: string; paymentRequestId: string; requestId: string } | null = null;
     const result = await handlePaymentWebhook(db, psp, rawBody, request.headers, async (tx, paid) => {
+      if (paid.paymentRequestId) paidInfo = { workspaceId: paid.workspaceId, opportunityId: paid.opportunityId, requestId: paid.requestId, paymentRequestId: paid.paymentRequestId };
       await evaluateGate(tx, {
         workspaceId: paid.workspaceId,
         opportunityId: paid.opportunityId,
@@ -1049,7 +1066,10 @@ export async function copsCommercialRoutes(app: FastifyInstance, opts: { db: Db;
       return reply.status(400).send(copsErrorBody({ code: "VALIDATION_FAILED", message: "Unreadable webhook body", requestId }));
     }
     if (result.kind === "duplicate") return { ok: true, duplicate: true };
-    return { ok: true, duplicate: false, outcome: result.outcome, status: result.status ?? null };
+    // A proposal's payment starts its subscription (after the payment is committed), so a paid
+    // customer always gets the seat limit, renewals and their Skout AI plan.
+    const started = paidInfo ? await startSubscriptionOnProposalPayment(db, paidInfo) : null;
+    return { ok: true, duplicate: false, outcome: result.outcome, status: result.status ?? null, ...(started ? { subscription_id: started } : {}) };
   });
 
   // ---- Provisioning gate ----

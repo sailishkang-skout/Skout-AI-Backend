@@ -11,7 +11,9 @@ import { HttpError } from "@skout/auth";
  *
  * The state is read from the `subscription` entitlement that the billing pass keeps on the
  * customer's own workspace, so product code does not need to know about CustomerOps tables. A
- * workspace with no such entitlement (internal workspaces, trials) is never restricted.
+ * workspace with no such entitlement (internal workspaces) is never restricted. A trial (or a
+ * workspace opened by a gate override) carries status "trial" and its end date: once that date
+ * passes without a subscription it is treated as suspended, so free access does not run forever.
  */
 const { entitlements } = schema;
 
@@ -30,7 +32,12 @@ export async function subscriptionAccessBlock(db: Pick<Db, "select">, workspaceI
       .from(entitlements)
       .where(and(eq(entitlements.workspaceId, workspaceId), eq(entitlements.key, SUBSCRIPTION_ENTITLEMENT_KEY)))
       .limit(1);
-    const status = (row?.value as { status?: unknown } | null | undefined)?.status;
+    const value = row?.value as { status?: unknown; trial_ends_at?: unknown } | null | undefined;
+    const status = value?.status;
+    if (status === "trial") {
+      const ends = typeof value?.trial_ends_at === "string" ? Date.parse(value.trial_ends_at) : NaN;
+      return Number.isFinite(ends) && ends <= Date.now() ? "suspended" : null;
+    }
     return typeof status === "string" && BLOCKING.includes(status) ? (status as SubscriptionAccessBlock) : null;
   } catch {
     return null;
