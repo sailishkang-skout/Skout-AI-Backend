@@ -6,6 +6,7 @@ import {
   proxyWarmupOAuthCallback,
   proxyWarmupTool,
 } from "../services/warmup-tool.service.js";
+import { warmupOAuthReturnUrl } from "../services/warmup-oauth-return.js";
 
 function mapUnavailable(reply: FastifyReply, err: WarmupToolUnavailableError) {
   return reply.code(502).send({
@@ -34,31 +35,28 @@ export async function warmupToolRoutes(app: FastifyInstance) {
       message: "Set WARMUP_TOOL_SERVICE_URL to enable Email Warm-up.",
     });
 
-  app.get("/warmup-tool/oauth/google/callback", async (request, reply) => {
-    if (!isWarmupToolConfigured(app.config)) return notConfigured(reply);
-    try {
-      const q = (request.url.split("?")[1] ?? "").toString();
-      const result = await proxyWarmupOAuthCallback(app.config, "google", q);
-      if (result.contentType) reply.header("content-type", result.contentType);
-      return reply.code(result.status).send(result.body);
-    } catch (err) {
-      if (err instanceof WarmupToolUnavailableError) return mapUnavailable(reply, err);
-      throw err;
-    }
-  });
-
-  app.get("/warmup-tool/oauth/microsoft/callback", async (request, reply) => {
-    if (!isWarmupToolConfigured(app.config)) return notConfigured(reply);
-    try {
-      const q = (request.url.split("?")[1] ?? "").toString();
-      const result = await proxyWarmupOAuthCallback(app.config, "microsoft", q);
-      if (result.contentType) reply.header("content-type", result.contentType);
-      return reply.code(result.status).send(result.body);
-    } catch (err) {
-      if (err instanceof WarmupToolUnavailableError) return mapUnavailable(reply, err);
-      throw err;
-    }
-  });
+  // Google/Microsoft send the browser here after consent. Hand the code/state to
+  // the Warm-Up Tool, then send the user back to the Mailboxes page with the
+  // outcome in the query string rather than showing them raw JSON.
+  for (const provider of ["google", "microsoft"] as const) {
+    app.get(`/warmup-tool/oauth/${provider}/callback`, async (request, reply) => {
+      if (!isWarmupToolConfigured(app.config)) {
+        return reply.redirect(warmupOAuthReturnUrl(app.config, provider, { reason: "warmup_tool_not_configured" }));
+      }
+      try {
+        const q = (request.url.split("?")[1] ?? "").toString();
+        const result = await proxyWarmupOAuthCallback(app.config, provider, q);
+        if (result.status >= 400) {
+          app.log.warn({ provider, status: result.status }, "Warm-Up OAuth callback failed upstream");
+        }
+        return reply.redirect(warmupOAuthReturnUrl(app.config, provider, { status: result.status, body: result.body }));
+      } catch (err) {
+        app.log.error({ err, provider }, "Warm-Up OAuth callback could not reach the Warm-Up Tool");
+        const reason = err instanceof WarmupToolUnavailableError ? "warmup_tool_unavailable" : "connect_failed";
+        return reply.redirect(warmupOAuthReturnUrl(app.config, provider, { reason }));
+      }
+    });
+  }
 
   app.post("/warmup-tool/integration-events/poll", async (request, reply) => {
     if (!isWarmupToolConfigured(app.config)) return notConfigured(reply);
