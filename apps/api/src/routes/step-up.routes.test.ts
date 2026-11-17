@@ -73,6 +73,7 @@ describe("POST /api/v1/auth/step-up", () => {
           userEmail: "user@example.com",
           workspaceId: "11111111-1111-4111-8111-111111111111",
           role: "member",
+          accessStatus: "active" as const,
         };
       });
 
@@ -104,6 +105,7 @@ describe("POST /api/v1/auth/step-up", () => {
         userEmail: "user@example.com",
         workspaceId: "11111111-1111-4111-8111-111111111111",
         role: "member",
+        accessStatus: "active" as const,
       });
 
       const res = await app.inject({
@@ -135,6 +137,7 @@ describe("POST /api/v1/auth/step-up", () => {
         userEmail: "user@example.com",
         workspaceId: "11111111-1111-4111-8111-111111111111",
         role: "member",
+        accessStatus: "active" as const,
       });
 
       const res = await app.inject({
@@ -185,6 +188,7 @@ describe("POST /api/v1/auth/step-up", () => {
         userEmail: email,
         workspaceId: "11111111-1111-4111-8111-111111111111",
         role: "member",
+        accessStatus: "active" as const,
       });
 
       const res = await app.inject({
@@ -255,6 +259,7 @@ describe("POST /api/v1/auth/step-up", () => {
         userEmail: email,
         workspaceId: "11111111-1111-4111-8111-111111111111",
         role: "member",
+        accessStatus: "active" as const,
       });
 
       const res = await app.inject({
@@ -316,6 +321,7 @@ describe("POST /api/v1/auth/step-up", () => {
         userEmail: email,
         workspaceId: "11111111-1111-4111-8111-111111111111",
         role: "member",
+        accessStatus: "active" as const,
       });
 
       const res = await app.inject({
@@ -389,6 +395,7 @@ describe("POST /api/v1/auth/step-up", () => {
         userEmail: email,
         workspaceId: "11111111-1111-4111-8111-111111111111",
         role: "member",
+        accessStatus: "active" as const,
       });
 
       const res = await app.inject({
@@ -443,6 +450,7 @@ describe("POST /api/v1/auth/step-up", () => {
         userEmail: email,
         workspaceId: "11111111-1111-4111-8111-111111111111",
         role: "member",
+        accessStatus: "active" as const,
       });
 
       const res = await app.inject({
@@ -486,6 +494,7 @@ describe("POST /api/v1/auth/step-up", () => {
         userEmail: email,
         workspaceId: "11111111-1111-4111-8111-111111111111",
         role: "member",
+        accessStatus: "active" as const,
       });
 
       const res = await app.inject({

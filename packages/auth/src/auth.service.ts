@@ -1,18 +1,30 @@
 import { schema, postCreditTransaction } from "@skout/db";
 import type { Db } from "@skout/db";
 import { providerForClerkUserId } from "@skout/db/schema";
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, asc, eq, gt, isNull, sql } from "drizzle-orm";
 import { normalizeEmail } from "@skout/shared";
 import { HttpError } from "./http.js";
 import { AuthErrorCode, AuthErrorMessage } from "./auth-error-codes.js";
 import { linkAuthIdentity } from "./link-auth-identity.js";
 import { grantSystemMemberRole } from "./grant-member-role.js";
 
+export type WorkspaceAccess = "pending" | "invited" | "active" | "rejected";
+
 export interface ProvisionResult {
   userId: string;
   userEmail: string;
   workspaceId: string;
   role: string;
+  /** Early access state of workspaceId (spec 2026-11-17). */
+  accessStatus: WorkspaceAccess;
+}
+
+export interface ProvisionOptions {
+  /**
+   * Set only by the public sign-up routes (password, Google, Microsoft) while the early access gate is
+   * on: a brand-new personal workspace then starts pending, gets an access request and no welcome credits.
+   */
+  selfSignup?: { method: "password" | "google" | "microsoft" };
 }
 
 export type ResolveOrProvisionInput = {
@@ -151,7 +163,8 @@ export async function resolveOrProvisionUser(
   input: ResolveOrProvisionInput | string,
   email?: string,
   fullName?: string,
-  legacyOptions?: { emailVerified?: boolean }
+  legacyOptions?: { emailVerified?: boolean },
+  options: ProvisionOptions = {}
 ): Promise<ProvisionResult> {
   const resolved = normalizeInput(input, email, fullName, legacyOptions?.emailVerified ?? true);
   const storedEmail = storageEmail(resolved);
@@ -254,29 +267,27 @@ export async function resolveOrProvisionUser(
       emailVerifiedAt
     );
 
-    const [membership] = await tx
-      .select({
-        workspaceId: schema.workspaceMembers.workspaceId,
-        role: schema.workspaceMembers.role,
-      })
-      .from(schema.workspaceMembers)
-      .where(eq(schema.workspaceMembers.userId, userId))
-      .limit(1);
+    const membership = await pickDefaultMembership(tx, userId);
 
     if (membership) {
-      const [balance] = await tx
-        .select({ workspaceId: schema.creditBalances.workspaceId })
-        .from(schema.creditBalances)
-        .where(eq(schema.creditBalances.workspaceId, membership.workspaceId))
-        .limit(1);
+      // A workspace waiting for early access approval gets its credits from the approval, not here.
+      if (membership.accessStatus === "active") {
+        const [balance] = await tx
+          .select({ workspaceId: schema.creditBalances.workspaceId })
+          .from(schema.creditBalances)
+          .where(eq(schema.creditBalances.workspaceId, membership.workspaceId))
+          .limit(1);
 
-      if (!balance) {
-        await grantWelcomeCredits(tx, membership.workspaceId);
+        if (!balance) {
+          await grantWelcomeCredits(tx, membership.workspaceId);
+        }
       }
 
-      await autoAcceptPendingInvites(tx, userId, userEmail, membership.workspaceId);
+      const accepted = await autoAcceptPendingInvites(tx, userId, userEmail, membership.workspaceId);
+      // An invite just accepted may be the active workspace a pending self-signup should land in.
+      const chosen = accepted > 0 ? ((await pickDefaultMembership(tx, userId)) ?? membership) : membership;
 
-      return { userId, userEmail, workspaceId: membership.workspaceId, role: membership.role };
+      return { userId, userEmail, workspaceId: chosen.workspaceId, role: chosen.role, accessStatus: chosen.accessStatus };
     }
 
     const now = new Date();
@@ -322,16 +333,18 @@ export async function resolveOrProvisionUser(
         await grantWelcomeCredits(tx, primary.workspaceId);
       }
 
-      return { userId, userEmail, workspaceId: primary.workspaceId, role: primary.role };
+      const chosen = (await pickDefaultMembership(tx, userId))!;
+      return { userId, userEmail, workspaceId: chosen.workspaceId, role: chosen.role, accessStatus: chosen.accessStatus };
     }
 
     const slug =
       storedEmail.split("@")[0].toLowerCase().replace(/[^a-z0-9]+/g, "-") || "workspace";
     const uniqueSlug = `${slug}-${Math.random().toString(36).slice(2, 7)}`;
 
+    const accessStatus: WorkspaceAccess = options.selfSignup ? "pending" : "active";
     const [workspace] = await tx
       .insert(schema.workspaces)
-      .values({ name: `${displayName}'s Workspace`, slug: uniqueSlug })
+      .values({ name: `${displayName}'s Workspace`, slug: uniqueSlug, accessStatus })
       .returning({ id: schema.workspaces.id });
 
     if (!workspace) throw new HttpError("Failed to create workspace", 500);
@@ -343,9 +356,19 @@ export async function resolveOrProvisionUser(
     });
     await grantSystemMemberRole(tx, workspace.id, userId, "owner");
 
-    await grantWelcomeCredits(tx, workspace.id);
+    if (options.selfSignup) {
+      await tx.insert(schema.accessRequests).values({
+        workspaceId: workspace.id,
+        userId,
+        email: userEmail,
+        fullName: resolved.name ?? null,
+        signupMethod: options.selfSignup.method,
+      });
+    } else {
+      await grantWelcomeCredits(tx, workspace.id);
+    }
 
-    return { userId, userEmail, workspaceId: workspace.id, role: "owner" };
+    return { userId, userEmail, workspaceId: workspace.id, role: "owner", accessStatus };
   });
 
   // Concurrent first sign-ins for the same new user (the app sends several requests at once)
@@ -366,12 +389,32 @@ function isUniqueViolation(error: unknown, depth = 0): boolean {
   return e.code === "23505" || isUniqueViolation(e.cause, depth + 1);
 }
 
+/**
+ * The workspace a user lands in when they belong to several: an active one first (so a pending
+ * self-signup workspace never hides a team or provisioned workspace), then the earliest joined.
+ */
+async function pickDefaultMembership(tx: Tx, userId: string) {
+  const [row] = await tx
+    .select({
+      workspaceId: schema.workspaceMembers.workspaceId,
+      role: schema.workspaceMembers.role,
+      accessStatus: schema.workspaces.accessStatus,
+    })
+    .from(schema.workspaceMembers)
+    .innerJoin(schema.workspaces, eq(schema.workspaces.id, schema.workspaceMembers.workspaceId))
+    .where(eq(schema.workspaceMembers.userId, userId))
+    .orderBy(sql`case when ${schema.workspaces.accessStatus} = 'active' then 0 else 1 end`, asc(schema.workspaceMembers.joinedAt))
+    .limit(1);
+  return row ?? null;
+}
+
+/** Accepts every open invite for this email; returns how many it accepted. */
 async function autoAcceptPendingInvites(
   tx: Tx,
   userId: string,
   email: string,
   currentWorkspaceId: string
-): Promise<void> {
+): Promise<number> {
   const now = new Date();
   const normalizedEmail = normalizeEmail(email);
   const pending = await tx
@@ -416,6 +459,7 @@ async function autoAcceptPendingInvites(
     await grantInviteOpsAccess(tx, invite, userId);
     await tx.update(schema.workspaceInvites).set({ acceptedAt: now }).where(eq(schema.workspaceInvites.id, invite.id));
   }
+  return pending.filter((invite) => invite.workspaceId !== currentWorkspaceId).length;
 }
 
 /**

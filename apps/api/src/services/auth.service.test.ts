@@ -9,6 +9,7 @@ function selectChain(result: unknown[]) {
   const c: Record<string, unknown> = {};
   c.from = vi.fn().mockReturnValue(c);
   c.innerJoin = vi.fn().mockReturnValue(c);
+  c.orderBy = vi.fn().mockReturnValue(c);
   c.where = vi.fn().mockReturnValue(c);
   c.limit = vi.fn().mockResolvedValue(result);
   // make chain directly awaitable (for queries that omit .limit())
@@ -101,7 +102,7 @@ function makeDb(tx: ReturnType<typeof makeTx>) {
 }
 
 const BASE_USER = { id: "u-1", email: "test@example.com", status: "active", isBlocked: false };
-const BASE_MEMBERSHIP = { workspaceId: "ws-1", role: "owner" };
+const BASE_MEMBERSHIP = { workspaceId: "ws-1", role: "owner", accessStatus: "active" };
 const NEW_USER = { id: "u-new", email: "new@example.com", status: "active", isBlocked: false };
 const NEW_WORKSPACE = { id: "ws-new" };
 
@@ -129,6 +130,7 @@ describe("resolveOrProvisionUser", () => {
         userEmail: "test@example.com",
         workspaceId: "ws-1",
         role: "owner",
+        accessStatus: "active",
       });
       expect(tx.insert).toHaveBeenCalledTimes(1);
       expect(tx.update).not.toHaveBeenCalled();
@@ -210,6 +212,7 @@ describe("resolveOrProvisionUser", () => {
         userEmail: "new@example.com",
         workspaceId: "ws-new",
         role: "owner",
+        accessStatus: "active",
       });
       expect(tx.insert).toHaveBeenCalledTimes(5);
       expect(tx.update).not.toHaveBeenCalled();

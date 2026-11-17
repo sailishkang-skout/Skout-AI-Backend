@@ -45,6 +45,8 @@ const envSchema = z
      * first start every internal member gets Ops access once); "false" drops back to logging only.
      */
     OPS_ACCESS_ENFORCED: z.enum(["true", "false"]).optional(),
+    /** Early access gate for new self-signups; see config/early-access.ts for the default. */
+    EARLY_ACCESS_GATE_ENABLED: z.enum(["true", "false"]).optional(),
     TRUST_PROXY: z
       .string()
       .optional()

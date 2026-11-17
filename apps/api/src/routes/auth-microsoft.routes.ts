@@ -11,6 +11,7 @@
  * microsoft-auth.service.ts. Blocked / inactive users are refused with 403 AUTH_ACCOUNT_BLOCKED.
  * A successful callback issues a normal own-auth session with refresh cookie (BE-14).
  */
+import { earlyAccessGateEnabled } from "../config/early-access.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { eq, sql, type SQL } from "drizzle-orm";
@@ -213,7 +214,7 @@ export async function authMicrosoftRoutes(app: FastifyInstance) {
           email: msUser.email,
           emailVerified: true,
           name: msUser.name,
-        });
+        }, undefined, undefined, undefined, earlyAccessGateEnabled(app.config) ? { selfSignup: { method: "microsoft" } } : {});
       } catch (err: unknown) {
         log.error("auth-microsoft.routes: resolveOrProvisionUser failed", err);
         return reply.code(500).send(errorResponse("Failed to provision or link user", 500));

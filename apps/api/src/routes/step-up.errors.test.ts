@@ -61,6 +61,7 @@ describe("POST /api/v1/auth/step-up — error codes", () => {
       userEmail: "a@b.com",
       workspaceId: "11111111-1111-4111-8111-111111111111",
       role: "member",
+      accessStatus: "active" as const,
     });
 
     const app = await buildStepUpProbeApp();
@@ -95,6 +96,7 @@ describe("POST /api/v1/auth/step-up — error codes", () => {
           userEmail: "a@b.com",
           workspaceId: "11111111-1111-4111-8111-111111111111",
           role: "member",
+          accessStatus: "active" as const,
         };
       }
       return {
@@ -102,6 +104,7 @@ describe("POST /api/v1/auth/step-up — error codes", () => {
         userEmail: "a@b.com",
         workspaceId: "11111111-1111-4111-8111-111111111111",
         role: "member",
+        accessStatus: "active" as const,
       };
     });
 

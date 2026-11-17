@@ -78,6 +78,7 @@ describe("auth plugin — Clerk bearer (resolveAuth)", () => {
       userEmail: "clerk@example.com",
       workspaceId: ISK_WORKSPACE_ID,
       role: "member",
+      accessStatus: "active" as const,
     });
 
     const app = await buildAuthProbeApp(clerkOverrides);
