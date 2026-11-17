@@ -72,9 +72,9 @@
       "NEXT_PUBLIC_API_URL": "${PUBLIC_URL}"
     },
     "GOOGLE_REDIRECT_URI": {
-      "GOOGLE_REDIRECT_URI": "${PUBLIC_URL}/api/v1/warmup-tool/oauth/google/callback",
-      "WARMUP_OAUTH_GOOGLE_CALLBACK": "${PUBLIC_URL}/api/v1/warmup-tool/oauth/google/callback",
-      "WARMUP_OAUTH_MICROSOFT_CALLBACK": "${PUBLIC_URL}/api/v1/warmup-tool/oauth/microsoft/callback"
+      "GOOGLE_REDIRECT_URI": "https://www.skoutai.io/app/api/v1/warmup-tool/oauth/google/callback",
+      "WARMUP_OAUTH_GOOGLE_CALLBACK": "https://www.skoutai.io/app/api/v1/warmup-tool/oauth/google/callback",
+      "WARMUP_OAUTH_MICROSOFT_CALLBACK": "https://www.skoutai.io/app/api/v1/warmup-tool/oauth/microsoft/callback"
     },
     "STORAGE_BUCKET": {
       "STORAGE_BUCKET": "${BUCKET_EMAIL_INTEL}",
