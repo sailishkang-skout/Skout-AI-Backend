@@ -216,7 +216,7 @@ describe("company batch limit", () => {
 describe("company list for the queue", () => {
   it("lists workspace companies with this browser's saved position", async () => {
     const { storage } = company(1, 1);
-    storage["company-people-capture:acme"] = { draft: { pagesRead: 2, profiles: [] } };
+    storage["company-people-capture:acme"] = { draft: { pagesRead: 2, profiles: [{ publicId: "x" }] } };
     storage["company-people-capture:beta"] = { committed: { complete: true, pagesRead: 3, seenIds: [] } };
     let asked;
     __test.deps.skoutFetch = async (path) => {
@@ -236,7 +236,10 @@ describe("company list for the queue", () => {
 
   it("describes each company's progress", () => {
     expect(companyProgressText({ peopleFound: 0 })).toBe("No people captured yet");
-    expect(companyProgressText({ peopleFound: 240, expectedPeople: 1141, complete: false })).toBe("240 of about 1,141 people saved · more remain");
+    expect(companyProgressText({ peopleFound: 240, expectedPeople: 1141, complete: false })).toBe("240 of about 1,141 people saved · more may remain");
+    // People already in the workspace count, even when no queue batch saved them.
+    expect(companyProgressText({ peopleFound: 0, peopleSaved: 57 })).toBe("57 people saved · more may remain");
+    expect(companyProgressText({ peopleSaved: 3, mode: "unipile", status: "running" })).toMatch(/reading automatically on the server/);
     expect(companyProgressText({ peopleFound: 96, complete: true })).toBe("All people captured (96)");
     expect(companyProgressText({ peopleFound: 5, local: "paused" })).toMatch(/paused/);
     expect(runItemText({ status: "done", saved: 12, moreRemain: true })).toBe("Saved 12 people · more remain, pick it again to continue");
@@ -281,7 +284,7 @@ describe("company queue run", () => {
       if (path.includes("/capture/queue/")) return { item: {} };
       return status || { enabled: true, caps: { dailyLeadLimit: 1000 }, usage: { remainingToday: 1000 } };
     };
-    const reviewFrom = (id) => handleCaptureMessage({ type: "SKOUT_CAPTURE_REVIEW", kind: "company", sourceUrl: `https://www.linkedin.com/company/${id}/`, data: { publicId: id, name: id.toUpperCase(), sourceUrl: `https://www.linkedin.com/company/${id}/`, peopleProfiles: [] } }, { tab: { id: 50 } });
+    const reviewFrom = (id) => handleCaptureMessage({ type: "SKOUT_CAPTURE_REVIEW", kind: "company", sourceUrl: `https://www.linkedin.com/company/${id}/`, data: { publicId: id, name: id.toUpperCase(), sourceUrl: `https://www.linkedin.com/company/${id}/`, peopleProfiles: [{ publicId: `${id}-p1`, sourceUrl: `https://www.linkedin.com/in/${id}-p1/`, fullName: "P One" }] } }, { tab: { id: 50 } });
     return { store, created, opened, reviewFrom };
   }
 
@@ -409,7 +412,7 @@ describe("company queue run", () => {
     };
     const reviewAndSave = async (env, id, { complete, created = 250 }) => {
       seed(env.store, id, { complete });
-      await handleCaptureMessage({ type: "SKOUT_CAPTURE_REVIEW", kind: "company", sourceUrl: `https://www.linkedin.com/company/${id}/`, data: { publicId: id, name: id.toUpperCase(), _captureCheckpointToken: "t", peopleProfiles: [] } }, { tab: { id: 50 } });
+      await handleCaptureMessage({ type: "SKOUT_CAPTURE_REVIEW", kind: "company", sourceUrl: `https://www.linkedin.com/company/${id}/`, data: { publicId: id, name: id.toUpperCase(), _captureCheckpointToken: "t", peopleProfiles: [{ publicId: `${id}-p1`, sourceUrl: `https://www.linkedin.com/in/${id}-p1/`, fullName: "P One" }] } }, { tab: { id: 50 } });
       const draft = env.store[CAPTURE_DRAFT_KEY];
       draft.meta.checkpointToken = "t";
       return handleCaptureMessage({ type: "capture-send", autoContinue: true }, sidePanel);
@@ -456,7 +459,7 @@ describe("company queue run", () => {
       expect((await reviewAndSave(env, "alpha", { complete: true })).autoContinued).toBe(false);
       expect(await __test.getRunQueue()).toBeNull();
       seed(env.store, "beta", { complete: false });
-      await handleCaptureMessage({ type: "SKOUT_CAPTURE_REVIEW", kind: "company", sourceUrl: "https://www.linkedin.com/company/beta/", data: { publicId: "beta", name: "Beta", peopleProfiles: [] } }, { tab: { id: 50 } });
+      await handleCaptureMessage({ type: "SKOUT_CAPTURE_REVIEW", kind: "company", sourceUrl: "https://www.linkedin.com/company/beta/", data: { publicId: "beta", name: "Beta", peopleProfiles: [{ publicId: "b1", sourceUrl: "https://www.linkedin.com/in/b1/", fullName: "B One" }] } }, { tab: { id: 50 } });
       env.store[CAPTURE_DRAFT_KEY].meta.checkpointToken = "t";
       expect((await handleCaptureMessage({ type: "capture-send" }, sidePanel)).autoContinued).toBe(false);
       expect(await __test.getRunQueue()).toBeNull();
@@ -467,7 +470,7 @@ describe("company queue run", () => {
       await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["alpha", "beta"]), untilComplete: true }, sidePanel);
       await tick();
       seed(env.store, "alpha", { complete: false });
-      await handleCaptureMessage({ type: "SKOUT_CAPTURE_REVIEW", kind: "company", sourceUrl: "https://www.linkedin.com/company/alpha/", data: { publicId: "alpha", name: "Alpha", peopleProfiles: [] } }, { tab: { id: 50 } });
+      await handleCaptureMessage({ type: "SKOUT_CAPTURE_REVIEW", kind: "company", sourceUrl: "https://www.linkedin.com/company/alpha/", data: { publicId: "alpha", name: "Alpha", peopleProfiles: [{ publicId: "a1", sourceUrl: "https://www.linkedin.com/in/a1/", fullName: "A One" }] } }, { tab: { id: 50 } });
       env.store[CAPTURE_DRAFT_KEY].meta.checkpointToken = "t";
       const fetch = __test.deps.skoutFetch;
       __test.deps.skoutFetch = async (path, options) => (path.includes("/ingest/company") ? { run: { status: "completed", terminal: true }, created: 0, merged: 0 } : fetch(path, options));

@@ -42,6 +42,12 @@ import {
   requestCaptureResume,
   syncCaptureQueue,
 } from "../services/enrichment/capture-queue.service.js";
+import {
+  autoCaptureAvailability,
+  autoCaptureStartSchema,
+  pauseAutoCapture,
+  startAutoCapture,
+} from "../services/enrichment/capture-auto.service.js";
 import { indexCapturedPeople } from "../services/enrichment/capture-search-index.js";
 import { openSearchConfigFromEnv } from "../lib/opensearch-config.js";
 
@@ -252,6 +258,31 @@ export async function enrichmentCaptureRoutes(app: FastifyInstance) {
       return reply.send({ item: await recordCaptureQueueBatch(db, actor, publicId, body) });
     }
   );
+
+  // Automatic (server-side) people capture through the workspace's Unipile LinkedIn account.
+  app.get("/enrichment/capture/auto", async (request, reply) => {
+    const { db, actor } = await authorize(request, "enrichment:read");
+    const availability = await autoCaptureAvailability(db, app.config, actor.workspaceId);
+    return reply.send({ available: availability.available, reason: availability.reason, accountName: availability.account?.displayName ?? null });
+  });
+
+  app.post("/enrichment/capture/auto", { config: { rateLimit: { max: 20, timeWindow: 60000 } } }, async (request, reply) => {
+    const { db, actor } = await authorize(request, "enrichment:capture");
+    const { companyPublicIds } = autoCaptureStartSchema.parse(request.body ?? {});
+    const result = await startAutoCapture(db, app.config, actor, companyPublicIds);
+    if (!result.ok) return reply.status(409).send({ error: "auto_capture_unavailable", message: result.reason });
+    return reply.send({ queued: result.queued, skipped: result.skipped });
+  });
+
+  app.post("/enrichment/capture/queue/:publicId/pause", async (request, reply) => {
+    const { db, actor } = await authorize(request, "enrichment:capture");
+    const publicId = captureQueueIdSchema.parse((request.params as { publicId: string }).publicId);
+    const item = await pauseAutoCapture(db, actor, publicId);
+    if (!item) {
+      return reply.status(409).send({ error: "job_not_pausable", message: "Only a queued or running automatic job can be paused here; pause an extension job from the extension." });
+    }
+    return reply.send({ item });
+  });
 
   app.delete("/enrichment/capture/queue/:publicId", async (request, reply) => {
     const { db, actor } = await authorize(request, "enrichment:capture");

@@ -185,6 +185,16 @@ export const enrichmentCaptureQueue = pgTable(
     /** queued | running | review | paused | completed | failed | skipped; kept in sync by the extension. */
     status: text("status").notNull().default("queued"),
     error: text("error"),
+    /** extension: read in the user's browser | unipile: read on the server through the Unipile connector. */
+    mode: text("mode").notNull().default("extension"),
+    /** Automatic mode: Unipile search cursor for the next page, when the next batch is due, failed tries. */
+    cursor: text("cursor"),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }),
+    attempts: integer("attempts").notNull().default(0),
+    /** LinkedIn's numeric company id, needed to filter a people search to this company. */
+    linkedinCompanyId: text("linkedin_company_id"),
+    /** The member who asked for automatic capture: its daily limit and capture runs are theirs. */
+    requestedBy: uuid("requested_by").references(() => users.id, { onDelete: "set null" }),
     updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

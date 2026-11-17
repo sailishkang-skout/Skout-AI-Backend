@@ -231,12 +231,12 @@ describe("Case 3 — an eight-page Sales Navigator search", () => {
     expect((await people(`Lead ACwAA${RUN}p3n0`)).people[0]).toMatchObject({ identity: "public_profile", linkedinUrl: `https://www.linkedin.com/in/visible-${RUN}/` });
   });
 
-  it("stops at the ten-page and 250-lead caps before writing anything", async () => {
+  it("stops at the 25-page and 250-lead caps before writing anything", async () => {
     const started = await post("/enrichment/capture/runs", { kind: "sales_search", sourceUrl: SALES_URL });
     const runId = started.json().run.id as string;
     const before = (await people(`Cap ${RUN}`)).total;
     await expect(
-      ingestSalesSearchCapture(db(), actor(), { runId, sourceUrl: SALES_URL, pagesRead: 10, peopleProfiles: [lead(`cap${RUN}a`, { fullName: `Cap ${RUN} A` })] as any })
+      ingestSalesSearchCapture(db(), actor(), { runId, sourceUrl: SALES_URL, pagesRead: 25, peopleProfiles: [lead(`cap${RUN}a`, { fullName: `Cap ${RUN} A` })] as any })
     ).resolves.toBeTruthy();
     await expect(
       ingestSalesSearchCapture(db(), actor(), { runId, sourceUrl: SALES_URL, pagesRead: 1, peopleProfiles: [lead(`cap${RUN}b`, { fullName: `Cap ${RUN} B` })] as any })
@@ -252,7 +252,7 @@ describe("Case 3 — an eight-page Sales Navigator search", () => {
     // The refused requests wrote nothing; the run keeps what it had and can still be finished.
     expect((await people(`Cap ${RUN}`)).total).toBe(before + 1);
     const run = (await get(`/enrichment/capture/runs/${runId}`)).json().run;
-    expect(run).toMatchObject({ status: "running", pagesRead: 10, leadsReceived: 1 });
+    expect(run).toMatchObject({ status: "running", pagesRead: 25, leadsReceived: 1 });
     expect((await post(`/enrichment/capture/runs/${runId}/finish`, { status: "completed" })).json().run.status).toBe("completed");
   });
 

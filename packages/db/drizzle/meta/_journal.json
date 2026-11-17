@@ -1119,7 +1119,14 @@
       "idx": 159,
       "version": "7",
       "when": 1798300600000,
-      "tag": "0157_cops_task_tracker",
+      "tag": "0157_capture_queue_auto_mode",
+      "breakpoints": true
+    },
+    {
+      "idx": 160,
+      "version": "7",
+      "when": 1798300700000,
+      "tag": "0158_cops_task_tracker",
       "breakpoints": true
     }
   ]

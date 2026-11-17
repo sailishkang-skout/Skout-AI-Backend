@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 
 import { resolveDatabaseUrl, resolvePostgresSsl } from "./database-url.js";
+import { describeSeedStatus, missingFrom, seedForced, seedStatusComplete, type SeedStatus } from "./seed-guard.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Optional: load .env for local CLI runs (dotenv is optional in container images)
@@ -106,7 +107,87 @@ interface GlobalCountry {
   aliases: string[];
 }
 
+interface TamSeedRow {
+  countryIso: string;
+  countryIso2: string;
+  countryName: string;
+  industryCode: string;
+  industryName: string;
+  establishments: number | null;
+  icpFitPct: number;
+  acvUsd: number;
+  dataSource: string;
+  dataYear: number;
+  canonicalInclude: boolean;
+}
+
+const COUNTRIES_FILE = path.resolve(__dirname, "data/global_countries.json");
+const TAM_FILE = path.resolve(__dirname, "data/global_country_industry_tam.json");
+
+/**
+ * What this seed would write that isn't in the database yet. Runs on every deploy, so a complete
+ * database means the seed can skip itself instead of replaying ~5,000 upserts (and overwriting TAM
+ * values someone edited in the app).
+ */
+async function referenceDataStatus(): Promise<SeedStatus[]> {
+  const regionCodes = [...TOP_LEVEL_REGIONS.map((r) => r.code), ...SUB_REGIONS.map((r) => r.code)];
+  const haveRegions = new Set((await sql<{ code: string }[]>`SELECT code FROM regions`).map((r) => r.code));
+
+  const globalCountries: Record<string, GlobalCountry> = JSON.parse(fs.readFileSync(COUNTRIES_FILE, "utf-8"));
+  const haveIso = new Set((await sql<{ iso_code: string }[]>`SELECT iso_code FROM countries`).map((r) => r.iso_code));
+
+  const statuses: SeedStatus[] = [
+    {
+      label: "regions",
+      expected: new Set(regionCodes).size,
+      missing: missingFrom(regionCodes, haveRegions).length,
+    },
+    {
+      label: "countries",
+      expected: Object.keys(globalCountries).length,
+      missing: missingFrom(
+        Object.values(globalCountries).map((c) => c.isoCode),
+        haveIso
+      ).length,
+    },
+  ];
+
+  if (fs.existsSync(TAM_FILE)) {
+    const tamRows: TamSeedRow[] = JSON.parse(fs.readFileSync(TAM_FILE, "utf-8"));
+    const countryRows = await sql<{ id: string; iso_alpha3: string; iso_code: string }[]>`
+      SELECT id, iso_alpha3, iso_code FROM countries`;
+    const idByIso = new Map<string, string>();
+    for (const c of countryRows) {
+      idByIso.set(c.iso_alpha3, c.id);
+      idByIso.set(c.iso_code, c.id);
+    }
+    // Same lookup the insert below uses; rows whose country doesn't exist are skipped there too.
+    const wanted: string[] = [];
+    for (const row of tamRows) {
+      const id = idByIso.get(row.countryIso) || idByIso.get(row.countryIso2);
+      if (id) wanted.push(`${id}|${row.industryCode}`);
+    }
+    const haveTam = new Set(
+      (await sql<{ country_id: string; industry_code: string }[]>`
+        SELECT country_id, industry_code FROM country_industry_tam`).map((r) => `${r.country_id}|${r.industry_code}`)
+    );
+    statuses.push({ label: "country x industry TAM rows", expected: new Set(wanted).size, missing: missingFrom(wanted, haveTam).length });
+  }
+  return statuses;
+}
+
 try {
+  const force = seedForced();
+  if (!force) {
+    const status = await referenceDataStatus();
+    if (seedStatusComplete(status)) {
+      console.log(`Reference data already present (${describeSeedStatus(status)}) - skipping. Set FORCE_SEED=1 to re-apply it.`);
+      await sql.end();
+      process.exit(0);
+    }
+    console.log(`Reference data incomplete (${describeSeedStatus(status)}) - seeding. Existing TAM rows are kept as they are.`);
+  }
+
   // ── 1. Top-level regions ─────────────────────────────────────────────────────
   console.log("\n── Upserting top-level regions ──");
   for (const r of TOP_LEVEL_REGIONS) {
@@ -133,8 +214,7 @@ try {
 
   // ── 3. Load all 250 global countries from JSON ────────────────────────────────
   console.log("\n── Upserting all 250 global countries ──");
-  const countriesFilePath = path.resolve(__dirname, "data/global_countries.json");
-  const rawData = fs.readFileSync(countriesFilePath, "utf-8");
+  const rawData = fs.readFileSync(COUNTRIES_FILE, "utf-8");
   const globalCountries: Record<string, GlobalCountry> = JSON.parse(rawData);
 
   // Default region lookup helper
@@ -177,23 +257,9 @@ try {
 
   // ── 4. Global NAICS TAM rows (5,000 rows across 250 countries) ─────────────
   console.log("\n── Upserting 20-sector NAICS TAM rows for all 250 global countries ──");
-  const tamFilePath = path.resolve(__dirname, "data/global_country_industry_tam.json");
-  
-  if (fs.existsSync(tamFilePath)) {
-    const rawTamData = fs.readFileSync(tamFilePath, "utf-8");
-    interface TamSeedRow {
-      countryIso: string;
-      countryIso2: string;
-      countryName: string;
-      industryCode: string;
-      industryName: string;
-      establishments: number | null;
-      icpFitPct: number;
-      acvUsd: number;
-      dataSource: string;
-      dataYear: number;
-      canonicalInclude: boolean;
-    }
+
+  if (fs.existsSync(TAM_FILE)) {
+    const rawTamData = fs.readFileSync(TAM_FILE, "utf-8");
     const globalTamRows: TamSeedRow[] = JSON.parse(rawTamData);
 
     const countryIdLookup = new Map<string, string>();
@@ -214,6 +280,18 @@ try {
         const countryId = countryIdLookup.get(row.countryIso) || countryIdLookup.get(row.countryIso2);
         if (!countryId) continue;
 
+        // Without FORCE_SEED existing rows are left alone: they may have been edited in the app.
+        const onConflict = force
+          ? sql`ON CONFLICT (country_id, industry_code) DO UPDATE
+            SET industry_name  = EXCLUDED.industry_name,
+                establishments = EXCLUDED.establishments,
+                icp_fit_pct    = EXCLUDED.icp_fit_pct,
+                acv_usd        = EXCLUDED.acv_usd,
+                data_source    = EXCLUDED.data_source,
+                data_year      = EXCLUDED.data_year,
+                canonical_include = EXCLUDED.canonical_include`
+          : sql`ON CONFLICT (country_id, industry_code) DO NOTHING`;
+
         await sql`
           INSERT INTO country_industry_tam (
             country_id, industry_code, industry_name,
@@ -226,19 +304,12 @@ try {
             ${row.establishments}, ${row.icpFitPct}, ${row.acvUsd},
             ${row.dataSource}, ${row.dataYear}, ${row.canonicalInclude}
           )
-          ON CONFLICT (country_id, industry_code) DO UPDATE
-            SET industry_name  = EXCLUDED.industry_name,
-                establishments = EXCLUDED.establishments,
-                icp_fit_pct    = EXCLUDED.icp_fit_pct,
-                acv_usd        = EXCLUDED.acv_usd,
-                data_source    = EXCLUDED.data_source,
-                data_year      = EXCLUDED.data_year,
-                canonical_include = EXCLUDED.canonical_include
+          ${onConflict}
         `;
         upsertedCount++;
       }
     }
-    console.log(`✓ Seeded ${upsertedCount} country × industry TAM rows.`);
+    console.log(`✓ Processed ${upsertedCount} country × industry TAM rows${force ? "" : " (existing rows kept)"}.`);
   }
 
   console.log("\n✅ Global reference data seeded successfully.");

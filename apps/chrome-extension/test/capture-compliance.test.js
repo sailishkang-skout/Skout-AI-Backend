@@ -47,19 +47,26 @@ describe("capture compliance guardrails", () => {
       expect(source, file).not.toMatch(/\.submit\s*\(|requestSubmit|\.value\s*=[^=]|dispatchEvent|KeyboardEvent|InputEvent|execCommand/);
       expect(source, file).not.toMatch(/messaging|\/msg\/|invite|connect-button|InMail/i);
     }
-    // Every click a reader makes is one of: next results page, a profile's own "show more
+    // Every click a reader makes is one of: a profile's own "show more
     // skills", this profile's own "Contact info" link (when LinkedIn did not open the overlay
     // from its URL), or opening the lead actions menu to read the link LinkedIn shows there.
     const clicks = captureScripts.flatMap((file) =>
       [...readSource(file).matchAll(/(\w+)(?:\(\))?\.click\(\)/g)].map((match) => `${file}:${match[1]}`)
     );
     expect(clicks.sort()).toEqual([
-      "capture/company-people-search.js:next",
       "capture/person-capture.js:contactInfoLink",
       "capture/person-capture.js:showMore",
       "capture/sales-lead-link-reader.js:button",
       "capture/sales-navigator-capture.js:nextButton",
     ]);
+    // The only page a reader opens by itself is the next page of the same company people search:
+    // the current address with page + 1 and nothing else changed.
+    const navigations = captureScripts.flatMap((file) =>
+      [...readSource(file).matchAll(/location\.(assign|replace|href\s*=[^=])/g)].map(() => file)
+    );
+    expect(navigations).toEqual(["capture/company-people-search.js"]);
+    const reader = readSource("capture/company-people-search.js");
+    expect(reader).toMatch(/url\.searchParams\.set\('page', String\(pageNumber\(\) \+ 1\)\)/);
   });
 
   it("reads rendered content only in the existing profile scraper", () => {

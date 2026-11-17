@@ -3,7 +3,7 @@ import { workspaces } from "./workspaces.js";
 import { users } from "./users.js";
 import { companies } from "./crm.js";
 
-/** Work tracker (GitHub Projects / Jira style) for every Skout department. Migration 0157. */
+/** Work tracker (GitHub Projects / Jira style) for every Skout department. Migration 0158. */
 export const TRACKER_DEPARTMENTS = ["sales", "customer_success", "engineering", "product", "finance", "legal", "marketing", "operations", "other"] as const;
 export const TRACKER_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done"] as const;
 export const TRACKER_PRIORITIES = ["low", "medium", "high", "urgent"] as const;

@@ -8,6 +8,13 @@ import {
   type StepSuggestion,
   type StepSuggestionContext,
 } from "./sequence-step-suggestions.js";
+import {
+  ensureGoalEnd,
+  normalizeGeneratedSteps,
+  requestedStepCount,
+  validateSequenceStructure,
+  type GeneratedSequenceStep,
+} from "./generated-sequence-steps.js";
 
 const log = createLogger("ai.service");
 
@@ -47,29 +54,52 @@ Never invent names/companies or use square-bracket placeholders like [Your Name]
 Return ONLY a valid JSON object (no markdown, no code fences) with exactly:
   "name": short human sequence name (max 60 chars)
   "steps": array of steps, each with:
-    "stepType": "email" | "linkedin" | "wait"
+    "stepType": "email" | "linkedin" | "wait" | "condition" | "goal"
     "delayDays": integer >= 0 (days to wait AFTER the previous step; first step is 0)
     "delayUnit": "days" (always use "days")
     "linkedinAction": "connect" | "message"   (ONLY when stepType is "linkedin")
     "subject": subject line (ONLY for "email"; max 80 chars; tokens allowed; no brackets)
     "bodyTemplate": HTML body for "email", or a short plain-text message for "linkedin".
        Use only <p>, <strong>, <em>, <a>, <br>, <ul>, <li>. No wrapper tags.
+    "conditionType": ONLY for "condition" — one of email_opened, email_clicked, email_replied,
+       linkedin_connected, linkedin_invite_accepted, linkedin_invite_declined, meeting_booked,
+       call_connected, has_email, has_linkedin
+    "conditionWaitDays": ONLY for "condition" — days to wait before taking the "no" path (1–30)
+    "yes": ONLY for "condition" — array of steps that run when the condition is met
+    "no":  ONLY for "condition" — array of steps that run when it is not met
+    "goalLabel": ONLY for "goal" (e.g. "Meeting booked")
+
+Conditions branch. Put the steps that depend on the outcome INSIDE the condition's "yes" and "no"
+arrays — never after it at the top level. Top-level steps after a condition run for everyone once
+the branch finishes. Do not put a condition inside "yes" or "no".
+
+Example (8 steps in total — every object counts, including nested ones, conditions and goals):
+{"name":"Example","steps":[
+  {"stepType":"email","delayDays":0,"subject":"...","bodyTemplate":"..."},
+  {"stepType":"condition","delayDays":0,"conditionType":"email_opened","conditionWaitDays":3,
+   "yes":[{"stepType":"email","delayDays":1,"subject":"...","bodyTemplate":"..."}],
+   "no":[{"stepType":"linkedin","delayDays":1,"linkedinAction":"connect","bodyTemplate":"..."},
+         {"stepType":"email","delayDays":2,"subject":"...","bodyTemplate":"..."}]},
+  {"stepType":"condition","delayDays":0,"conditionType":"email_replied","conditionWaitDays":3,
+   "yes":[{"stepType":"goal","delayDays":0,"goalLabel":"Meeting booked"}],
+   "no":[{"stepType":"email","delayDays":2,"subject":"...","bodyTemplate":"..."}]},
+  {"stepType":"goal","delayDays":0,"goalLabel":"Meeting booked"}
+]}
 
 Rules:
-- 4 to 6 steps total. Vary the angle across touches; do not repeat the same pitch.
+- Step count: if the goal asks for a specific number of steps, the total number of step objects
+  (top-level plus everything inside "yes"/"no", conditions and goals included) must be EXACTLY that
+  number. Otherwise use 4 to 6 steps. Count before you answer.
+- If the goal asks for conditions/branches/"if they open/reply/accept", use condition steps, and
+  give every condition at least one step in "yes" AND at least one in "no".
+- The last top-level step must be a goal (e.g. "Meeting booked").
+- Vary the angle across touches; do not repeat the same pitch.
 - First email step delayDays = 0. Space later steps 2–4 days apart.
 - Every email body must end with: <p style="font-size:11px;color:#888"><a href="{{unsubscribeUrl}}">Unsubscribe</a></p>
 - Greeting must be "Hi {{firstName}},". Sign off with {{senderName}}.
 - Keep copy concise and deliverability-safe (avoid spam-trigger words).`;
 
-export interface GeneratedSequenceStep {
-  stepType: "email" | "linkedin" | "wait";
-  delayDays: number;
-  delayUnit?: "minutes" | "hours" | "days" | "weeks";
-  linkedinAction?: "connect" | "message";
-  subject?: string;
-  bodyTemplate?: string;
-}
+export type { GeneratedSequenceStep };
 
 export interface GeneratedSequence {
   name: string;
@@ -256,7 +286,8 @@ RESPONSE FORMAT — reply with ONLY valid JSON (no markdown fences):
         "stepType": "email"|"linkedin"|"wait", "delayDays": 0, "delayUnit": "days",
         "linkedinAction": "connect"|"message",
         "subject": "...", "bodyTemplate": "..."
-      } ] }  // 4–6 steps; first delayDays 0
+      } ] }  // exactly the step count the user asked for (default 4–6); first delayDays 0;
+             // conditions carry their dependent steps in "yes"/"no" arrays, as in create_outbound_sequence
     { "type": "analysis", "title": "...", "summary": "...", "charts": [ {
         "kind": "pie"|"bar"|"line"|"area"|"table"|"metric", "title": "...",
         "data": [ {...} ], "xKey": "...", "yKeys": ["..."],
@@ -323,7 +354,14 @@ YOUR CAPABILITIES
 1) Live workspace Q&A via TOOLS (credits, lists, sequences, inbox, deliverability, TAM, regional brief).
 2) Create Outbound Sequences — Step A: when the user first asks you to create/build/draft a
    sequence (e.g. "create the sequence", "build a cadence"), CALL the create_outbound_sequence tool
-   with the name and complete multi-step copy. If the result has a "preview" (more than one step),
+   with the name and complete multi-step copy. Send EVERY step the user asked for — a 14-step
+   request means 14 steps in the tool call, never a trimmed 6–8 step version. When they ask for
+   conditions/branches ("if they open", "if no reply", "if they accept"), add a stepType
+   "condition" step (conditionType + conditionWaitDays) and put the steps that depend on it
+   INSIDE its "yes" and "no" arrays, at least one step in each; the step count includes those
+   nested steps. End the sequence with a "goal" step. Keep each email short so long sequences
+   fit. If the tool returns an error asking you to fix the sequence, fix it and call it again.
+   If the result has a "preview" (more than one step),
    describe it and stop — do NOT say it's created yet. Step B: when the user then confirms in a
    later message, CALL create_outbound_sequence AGAIN with ONLY confirmed: true (see BEHAVIOR above)
    — this is a real second tool call, not something you skip. Only once THIS second call succeeds
@@ -370,12 +408,8 @@ function coerceChatAction(raw: unknown): ChatAction {
     return { type: "email", subject, html };
   }
   if (r.type === "sequence") {
-    const stepsRaw = Array.isArray(r.steps) ? r.steps : [];
-    const steps = stepsRaw
-      .map(coerceStep)
-      .filter((s): s is GeneratedSequenceStep => s !== null);
+    const steps = ensureGoalEnd(normalizeGeneratedSteps(Array.isArray(r.steps) ? r.steps : []));
     if (steps.length === 0) return { type: "none" };
-    steps[0]!.delayDays = 0;
     const name =
       typeof r.name === "string" && r.name.trim()
         ? r.name.trim().slice(0, 60)
@@ -475,29 +509,6 @@ function coerceChart(raw: unknown): ChartSpec | null {
   if (typeof r.value === "number" || typeof r.value === "string") chart.value = r.value;
   if (typeof r.unit === "string") chart.unit = r.unit;
   return chart;
-}
-
-function coerceStep(raw: unknown): GeneratedSequenceStep | null {
-  if (!raw || typeof raw !== "object") return null;
-  const r = raw as Record<string, unknown>;
-  const stepType = r.stepType === "linkedin" || r.stepType === "wait" ? r.stepType : "email";
-  const delayDays =
-    typeof r.delayDays === "number" && Number.isFinite(r.delayDays) && r.delayDays >= 0
-      ? Math.floor(r.delayDays)
-      : 0;
-  const step: GeneratedSequenceStep = { stepType, delayDays, delayUnit: "days" };
-  if (stepType === "linkedin") {
-    step.linkedinAction = r.linkedinAction === "message" ? "message" : "connect";
-  }
-  if (stepType === "email" && typeof r.subject === "string") step.subject = r.subject.slice(0, 200);
-  if (
-    (stepType === "email" || stepType === "linkedin") &&
-    typeof r.bodyTemplate === "string" &&
-    r.bodyTemplate.trim()
-  ) {
-    step.bodyTemplate = r.bodyTemplate;
-  }
-  return step;
 }
 
 export class AiService {
@@ -692,7 +703,9 @@ export class AiService {
         try {
           result = await client.chat.completions.create({
             model,
-            max_tokens: 3500,
+            // A long sequence (e.g. 14 steps with HTML bodies) is sent as one tool-call argument;
+            // 3500 truncated it, so the model learned to trim the cadence instead.
+            max_tokens: 8000,
             temperature: 0.55,
             messages,
             ...(allowTools
@@ -806,52 +819,90 @@ export class AiService {
       .filter(Boolean)
       .join("\n\n");
 
-    let raw: string;
-    try {
-      const result = await client.chat.completions.create({
-        model: process.env.AI_MODEL ?? "openai/gpt-4o-mini",
-        max_tokens: 2500,
-        temperature: 0.7,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: SEQUENCE_SYSTEM_PROMPT },
-          { role: "user", content: userContent },
-        ],
-      });
-      raw = result.choices[0]?.message?.content ?? "{}";
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.error("ai.service: sequence generation failed", err);
-      captureException(err, { module: "ai.service", op: "generateSequence" });
-      throw Object.assign(new Error(`AI generation failed: ${msg}`), { statusCode: 502 });
-    }
-
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(raw) as Record<string, unknown>;
-    } catch {
-      throw Object.assign(new Error("AI returned an unparseable sequence"), { statusCode: 502 });
-    }
-
-    const stepsRaw = Array.isArray(parsed.steps) ? parsed.steps : [];
     const allowLinkedin = channels.includes("linkedin");
-    const steps = stepsRaw
-      .map(coerceStep)
-      .filter((s): s is GeneratedSequenceStep => s !== null)
-      .filter((s) => allowLinkedin || s.stepType !== "linkedin");
+    const wantedSteps = requestedStepCount(input.goal);
+    // Sequence structure is the hardest output we ask a model for; a stronger model can be set for
+    // this task alone without changing every other AI call.
+    const model = process.env.AI_SEQUENCE_MODEL ?? process.env.AI_MODEL ?? "openai/gpt-4o-mini";
 
-    if (steps.length === 0) {
+    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+      { role: "system", content: SEQUENCE_SYSTEM_PROMPT },
+      { role: "user", content: userContent },
+    ];
+
+    // The model is asked for an exact step count and yes/no branches, but does not reliably
+    // deliver either (measured with gpt-4o-mini: 14/15/18 steps for "15 steps", conditions left
+    // empty). Check each answer and send the specific problems back, up to MAX_ATTEMPTS calls.
+    const MAX_ATTEMPTS = 3;
+    let best: { name: string; steps: GeneratedSequenceStep[]; problems: string[]; score: number } | null = null;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      let raw: string;
+      try {
+        const result = await client.chat.completions.create({
+          model,
+          max_tokens: 8000,
+          temperature: 0.4,
+          response_format: { type: "json_object" },
+          messages,
+        });
+        raw = result.choices[0]?.message?.content ?? "{}";
+      } catch (err: unknown) {
+        // A failed retry shouldn't throw away an earlier usable answer.
+        if (best) break;
+        const msg = err instanceof Error ? err.message : String(err);
+        log.error("ai.service: sequence generation failed", err);
+        captureException(err, { module: "ai.service", op: "generateSequence" });
+        throw Object.assign(new Error(`AI generation failed: ${msg}`), { statusCode: 502 });
+      }
+
+      let parsed: Record<string, unknown> | null = null;
+      try {
+        parsed = JSON.parse(raw) as Record<string, unknown>;
+      } catch {
+        parsed = null;
+      }
+
+      const flat = normalizeGeneratedSteps(Array.isArray(parsed?.steps) ? (parsed!.steps as unknown[]) : []);
+      // Drop disallowed channels after flattening, so LinkedIn steps nested inside a branch go too.
+      const steps = allowLinkedin ? flat : flat.filter((s) => s.stepType !== "linkedin");
+      if (steps.length > 0) steps[0]!.delayDays = 0;
+
+      const problems = parsed ? validateSequenceStructure(steps) : ["The response was not valid JSON."];
+      if (steps.length === 0) problems.push("The sequence has no usable steps.");
+      if (wantedSteps !== null && steps.length !== wantedSteps) {
+        problems.push(
+          `The user asked for exactly ${wantedSteps} steps but the sequence has ${steps.length} (counting every step object, including those inside "yes"/"no", conditions and goals).`
+        );
+      }
+      if (!allowLinkedin && flat.length !== steps.length) {
+        problems.push("LinkedIn steps are not allowed for this sequence (email only).");
+      }
+
+      const name =
+        typeof parsed?.name === "string" && parsed.name.trim() ? parsed.name.trim().slice(0, 60) : "AI-generated sequence";
+      // Prefer valid structure first, then the count closest to what was asked for.
+      const score = (problems.length - (wantedSteps !== null && steps.length !== wantedSteps ? 1 : 0)) * 100 +
+        (wantedSteps !== null ? Math.abs(steps.length - wantedSteps) : 0);
+      if (steps.length > 0 && (!best || score < best.score)) best = { name, steps, problems, score };
+      if (problems.length === 0) break;
+
+      log.warn("ai.service: generated sequence needs fixing", { attempt, problems, steps: steps.length, wantedSteps });
+      messages.push({ role: "assistant", content: raw });
+      messages.push({
+        role: "user",
+        content: `That sequence has these problems:\n- ${problems.join("\n- ")}\n\nReturn the complete corrected JSON object (same format), fixing every problem.`,
+      });
+    }
+
+    if (!best) {
       throw Object.assign(new Error("AI returned no usable steps"), { statusCode: 502 });
     }
-    // First step should fire immediately.
-    steps[0]!.delayDays = 0;
-
-    const name =
-      typeof parsed.name === "string" && parsed.name.trim()
-        ? parsed.name.trim().slice(0, 60)
-        : "AI-generated sequence";
-
-    return { name, steps };
+    if (best.problems.length > 0) {
+      log.warn("ai.service: returning best generated sequence with unresolved problems", { problems: best.problems });
+    }
+    // Always finish on the goal, even if the model never fixed that itself.
+    return { name: best.name, steps: ensureGoalEnd(best.steps) };
   }
 
   /**

@@ -9,7 +9,8 @@
 export const CAPTURE_DRAFT_KEY = 'skoutCaptureDraft';
 export const CAPTURE_PROGRESS_KEY = 'skoutCaptureProgress';
 export const CAPTURE_HALT_KEY = 'skoutCaptureHalt';
-export const CAPTURE_CAPS = { MAX_PAGES: 10, MAX_LEADS: 250 };
+// LinkedIn shows 10 people per results page: 25 pages make one 250-person batch.
+export const CAPTURE_CAPS = { MAX_PAGES: 25, MAX_LEADS: 250 };
 
 /** Content scripts a capture needs, in load order (also declared in manifest.json). */
 export const CAPTURE_CONTENT_FILES = [
@@ -188,10 +189,11 @@ function companyPeopleSearchUrl(value) {
   } catch { return undefined; }
 }
 const COMPANY_PEOPLE_MAX_TOTAL_PAGES = 1000;
-// One reviewed batch is one capture run: the same 10-page / 250-lead cap the API enforces.
-const COMPANY_PEOPLE_SESSION_PAGES = 10;
+// One reviewed batch is one capture run: the same 25-page / 250-lead cap the API enforces.
+const COMPANY_PEOPLE_SESSION_PAGES = 25;
 const COMPANY_PEOPLE_SESSION_LEADS = 250;
-const COMPANY_PEOPLE_SESSION_MS = 210000;
+// 25 pages at ~10-15 seconds each (load, scroll every card into view, pause between pages).
+const COMPANY_PEOPLE_SESSION_MS = 10 * 60 * 1000;
 const COMPANY_PEOPLE_MAX_PASSES = 3;
 const companyPeopleStateKey = companyId => `company-people-capture:${companyId}`;
 async function getCompanyPeopleState(companyId) {
@@ -255,16 +257,19 @@ async function readCompanyPeopleSearch(request, sender) {
     if (state.searchKey && state.searchKey !== searchKey) throw new Error('The LinkedIn company search identity changed; the saved capture cursor needs review.');
     // A fresh user-triggered capture may discover new employees after an
     // earlier search was complete. Start from page one again in that case.
-    const committed = state.committed?.complete && !state.draft ? undefined : state.committed;
-    const token = state.draft?.token || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const people = new Map((state.draft?.profiles || []).map(profile => [profile.publicId,profile]));
-    let pagesRead = state.draft?.pagesRead || 0;
-    let resumeUrl = state.draft?.resumeUrl || committed?.resumeUrl || url;
-    let complete = !!state.draft?.complete;
+    // A paused batch that found nobody is not worth resuming: read those pages again instead of
+    // handing the same empty batch back on every run.
+    const draft = state.draft?.profiles?.length ? state.draft : undefined;
+    const committed = state.committed?.complete && !draft ? undefined : state.committed;
+    const token = draft?.token || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const people = new Map((draft?.profiles || []).map(profile => [profile.publicId,profile]));
+    let pagesRead = draft?.pagesRead || 0;
+    let resumeUrl = draft?.resumeUrl || committed?.resumeUrl || url;
+    let complete = !!draft?.complete;
     // Largest results page seen in this batch: the next page could add this many people.
-    let pageSize = state.draft?.pageSize || 0;
-    let batchFull = !!state.draft?.batchFull;
-    if (state.draft?.resumeUrl && state.draft.resumeUrl === state.draft.lastReadUrl && !complete)
+    let pageSize = draft?.pageSize || 0;
+    let batchFull = !!draft?.batchFull;
+    if (draft?.resumeUrl && draft.resumeUrl === draft.lastReadUrl && !complete)
       pagesRead = Math.max(0,pagesRead - 1); // Re-read the last page after an interrupted advance.
     // The aggregate member count is not a dependable paginator length.
     // Follow the visible Next control instead, within both hard bounds.
@@ -286,14 +291,18 @@ async function readCompanyPeopleSearch(request, sender) {
     // this one user-triggered, temporary reader active while it pages results.
     const tab = await chrome.tabs.create({url:resumeUrl,active:true,openerTabId:owner}); task.tabId = tab.id;
     let afterPage;
-    let lastReadUrl = state.draft?.lastReadUrl;
+    let lastReadUrl = draft?.lastReadUrl;
     for (; pagesRead < maxPages && !task.cancelled;) {
       const blocked = await captureBlock();
       if (blocked) throw new Error(blocked);
       const ready = await waitForCompanyPeoplePage(tab.id,searchKey,afterPage,task);
       if (!ready) return {ok:true,cancelled:true};
       const result = await chrome.tabs.sendMessage(tab.id,{type:'COLLECT_COMPANY_PEOPLE_PAGE'});
-      if (!result?.ok) throw new Error(result?.error || 'The results page could not be read.');
+      if (!result?.ok) {
+        // Pages already read are kept: the batch ends here and the next one re-reads this page.
+        if (pagesRead > 0) { stopReason = `LinkedIn stopped showing results (${result?.error || 'unreadable page'})`; await saveDraft(); break; }
+        throw new Error(result?.error || 'The results page could not be read.');
+      }
       if (new URL(result.url).searchParams.get('currentCompany') !== searchKey || result.page !== ready.page)
         throw new Error('LinkedIn changed the company search during capture.');
       for (const profile of result.peopleProfiles || []) if (profile?.publicId) people.set(profile.publicId,profile);
@@ -308,9 +317,17 @@ async function readCompanyPeopleSearch(request, sender) {
       }
       await saveDraft();
       afterPage = result.page;
-      const advance = await chrome.tabs.sendMessage(tab.id,{type:'ADVANCE_COMPANY_PEOPLE_PAGE'});
-      if (!advance?.ok) throw new Error(advance?.error || 'LinkedIn results did not advance.');
-      const next = await waitForCompanyPeoplePage(tab.id,searchKey,afterPage,task);
+      let next;
+      try {
+        const advance = await chrome.tabs.sendMessage(tab.id,{type:'ADVANCE_COMPANY_PEOPLE_PAGE'});
+        if (!advance?.ok) throw new Error(advance?.error || 'LinkedIn results did not advance.');
+        next = await waitForCompanyPeoplePage(tab.id,searchKey,afterPage,task);
+      } catch (error) {
+        // The people read so far are a good batch; the next batch starts at the page that did not open.
+        stopReason = `LinkedIn did not open the next page (${error.message})`;
+        await saveDraft();
+        break;
+      }
       if (!next) return {ok:true,cancelled:true};
       resumeUrl = next.url;
       await saveDraft();
@@ -457,8 +474,13 @@ async function storeDraft(message, sender) {
   if (message.kind === "person" && draft.data._contactInfo?.website) {
     draft.notes.push("The website came from the already-open Contact Info dialog. Check it before saving.");
   }
+  // A queued company whose batch came back empty never waits for a review of nothing.
+  if (draft.kind === 'company' && (await runQueueEmptyBatch(draft))) return { ok: true };
   await chrome.storage.local.set({ [CAPTURE_DRAFT_KEY]: draft });
-  if (draft.kind === 'company') await runQueueInReview(draft.meta.companyId);
+  if (draft.kind === 'company') {
+    const autoSave = await runQueueInReview(draft.meta.companyId);
+    if (autoSave) autoSaveBatch(draft.meta.companyId).catch(() => {});
+  }
   return { ok: true };
 }
 
@@ -536,7 +558,7 @@ async function sendCapture(message) {
   let autoContinued = false;
   if (draft.kind === 'company') {
     autoContinued = await runQueueBatchSaved(draft.meta?.companyId, { created: body.created, merged: body.merged }, checkpoint, {
-      autoContinue: message.autoContinue === true, name: draft.data?.name, tabId: draft.tabId,
+      autoContinue: message.autoContinue === true, autoSave: message.autoSave === true, name: draft.data?.name, tabId: draft.tabId,
     });
   }
   return {
@@ -645,7 +667,7 @@ const COMPANY_ID = /^[A-Za-z0-9%._~-]{1,200}$/;
 /** This browser's saved people-capture position for a company: 'paused' | 'partial' | 'complete' | undefined. */
 function localProgress(state) {
   if (!state) return undefined;
-  if (state.draft) return 'paused';
+  if (state.draft?.profiles?.length) return 'paused';
   if (state.committed) return state.committed.complete ? 'complete' : 'partial';
   return undefined;
 }
@@ -845,12 +867,15 @@ async function startRunQueue(message) {
     const kept = existing.items.filter(entry => !fresh.some(item => item.companyPublicId === entry.companyPublicId));
     if (kept.length + fresh.length > MAX_QUEUE_COMPANIES) return { ok: false, error: `A queue holds at most ${MAX_QUEUE_COMPANIES} companies.` };
     if (!fresh.length) return { ok: true, count: 0 };
-    await setRunQueue({ ...existing, active: true, note: undefined, items: [...kept, ...fresh] });
+    await setRunQueue({
+      ...existing, active: true, note: undefined, items: [...kept, ...fresh],
+      ...(typeof message.autoSave === 'boolean' ? { autoSave: message.autoSave } : {}),
+    });
     advanceRunQueue().catch(() => {});
     return { ok: true, count: fresh.length, added: true };
   }
   if (items.length > MAX_QUEUE_COMPANIES) return { ok: false, error: `A queue holds at most ${MAX_QUEUE_COMPANIES} companies. Select fewer.` };
-  await setRunQueue({ active: true, tabId: null, items, startedAt: Date.now() });
+  await setRunQueue({ active: true, tabId: null, items, startedAt: Date.now(), autoSave: message.autoSave === true });
   advanceRunQueue().catch(() => {});
   return { ok: true, count: items.length };
 }
@@ -889,12 +914,83 @@ async function clearRunQueue() {
 }
 
 /** The company being read has a reviewable batch now. */
+/** The company being read has a reviewable batch now. Returns true when the queue saves batches itself. */
 async function runQueueInReview(companyId) {
   const queue = await getRunQueue();
   const item = queue?.items?.find(entry => entry.status === 'running' && (!companyId || entry.companyPublicId === companyId));
-  if (!item) return;
+  if (!item) return false;
   item.status = 'review';
   await setRunQueue(queue);
+  return queue.autoSave === true;
+}
+
+/**
+ * A batch with no people for the company the queue is reading: tried once more from the same
+ * page, then the company fails with the reason and the queue moves on. Returns true when handled.
+ */
+async function runQueueEmptyBatch(draft) {
+  if ((draft.data?.peopleProfiles || []).length) return false;
+  const queue = await getRunQueue();
+  const item = queue?.items?.find(entry => entry.status === 'running' && entry.companyPublicId === draft.meta.companyId);
+  if (!item) return false;
+  // Everyone on those pages is already saved: move past them instead of calling the company empty.
+  if (Number(draft.meta?.stats?.discovered) > 0 && draft.meta?.checkpointToken) {
+    const commit = await commitCompanyPeopleCapture({ companyId: item.companyPublicId, token: draft.meta.checkpointToken });
+    const moreRemain = commit.ok && commit.data.complete === false;
+    if (commit.ok) await reportCaptureQueue(item.companyPublicId, item.name, commit.data);
+    item.batches = (item.batches || 0) + 1;
+    item.emptyTries = 0;
+    item.status = moreRemain && item.untilComplete && item.batches < MAX_BATCHES_PER_COMPANY ? 'pending' : 'done';
+    item.moreRemain = moreRemain && item.status === 'done';
+    await setRunQueue(queue);
+    if (queue.active) advanceSoon();
+    return true;
+  }
+  // Forget the empty page cursor so the retry reads those pages again.
+  const state = await getCompanyPeopleState(item.companyPublicId);
+  if (state.draft) await setCompanyPeopleState(item.companyPublicId, { ...state, draft: undefined });
+  item.emptyTries = (item.emptyTries || 0) + 1;
+  if (item.emptyTries < 2) {
+    item.status = 'pending';
+  } else {
+    item.status = 'failed';
+    item.error = 'LinkedIn showed no people for this company (tried twice). Open its People page on LinkedIn to check, then retry.';
+  }
+  await setRunQueue(queue);
+  if (queue.active) advanceSoon();
+  return true;
+}
+
+/** Automatic mode: saves the batch without a review, as Save would. */
+async function autoSaveBatch(companyId) {
+  const result = await sendCapture({});
+  if (result.ok) return;
+  const queue = await getRunQueue();
+  const item = queue?.items?.find(entry => entry.companyPublicId === companyId && entry.status === 'review');
+  if (!item) return;
+  if (/daily capture limit|capture is disabled/i.test(result.error || '')) {
+    // The batch waits in the side panel; the queue stops until the limit resets or capture is back.
+    await setRunQueue({ ...queue, active: false, note: `Stopped: ${result.error} The batch for ${item.name} is waiting to be saved.` });
+    return;
+  }
+  item.status = 'failed';
+  item.error = String(result.error || 'The batch could not be saved.').slice(0, 300);
+  await chrome.storage.local.remove(CAPTURE_DRAFT_KEY);
+  await setRunQueue(queue);
+  if (queue.active) advanceSoon();
+}
+
+/** Discard: the batch is dropped, and so is its unsaved page cursor (the next run reads those pages again). */
+async function discardDraft() {
+  const draft = await getStored(CAPTURE_DRAFT_KEY);
+  await chrome.storage.local.remove(CAPTURE_DRAFT_KEY);
+  const companyId = draft?.kind === 'company' ? draft.meta?.companyId : undefined;
+  if (companyId) {
+    const state = await getCompanyPeopleState(companyId);
+    if (state.draft) await setCompanyPeopleState(companyId, { ...state, draft: undefined });
+  }
+  await runQueueBatchDiscarded();
+  return { ok: true };
 }
 
 /**
@@ -911,7 +1007,7 @@ async function runQueueBatchSaved(companyId, counts, checkpoint, extra = {}) {
   if (!item) {
     if (!(extra.autoContinue && moreRemain && savedNow > 0 && COMPANY_ID.test(companyId || '')) || queue?.active) return false;
     item = { companyPublicId: companyId, name: String(extra.name || companyId).slice(0, 200), status: 'running', untilComplete: true, batches: 0, saved: 0 };
-    queue = { active: true, tabId: extra.tabId ?? null, items: [item], startedAt: Date.now() };
+    queue = { active: true, tabId: extra.tabId ?? null, items: [item], startedAt: Date.now(), autoSave: extra.autoSave === true };
   }
   item.batches = (item.batches || 0) + 1;
   item.saved = (item.saved || 0) + savedNow;
@@ -950,6 +1046,34 @@ async function runQueueReadEnded(message) {
 }
 
 
+/** Whether this workspace can read people automatically on the server (Unipile). */
+async function autoCaptureStatus() {
+  try {
+    return { ok: true, ...(await deps.skoutFetch(`${API}/capture/auto`)) };
+  } catch (error) {
+    return { ok: false, error: error?.message || 'Automatic capture status is unavailable.' };
+  }
+}
+
+/** Queues server-side automatic people capture for these companies. */
+async function startAutoCapture(message) {
+  const ids = (Array.isArray(message.companyPublicIds) ? message.companyPublicIds : []).filter(id => COMPANY_ID.test(id || '')).slice(0, 200);
+  if (!ids.length) return { ok: false, error: 'Select at least one company.' };
+  try {
+    const body = await deps.skoutFetch(`${API}/capture/auto`, { method: 'POST', body: JSON.stringify({ companyPublicIds: ids }) });
+    return { ok: true, queued: body?.queued || [], skipped: body?.skipped || [] };
+  } catch (error) {
+    return { ok: false, error: error?.body?.message || error?.message || 'Automatic capture could not start.' };
+  }
+}
+
+/** The company people search saved by an earlier run, for when LinkedIn hides the link on the page. */
+async function savedPeopleSearch(companyId) {
+  if (!COMPANY_ID.test(companyId || '')) return { ok: true, url: undefined };
+  const state = await getCompanyPeopleState(companyId);
+  return { ok: true, url: companyPeopleSearchUrl(state.searchUrl || '') };
+}
+
 async function capturedCompanyProfileIds(companyId) {
   try {
     const body = await deps.skoutFetch(`${API}/ingest/company/${encodeURIComponent(companyId)}/captured-profile-ids`);
@@ -978,11 +1102,13 @@ export function handleCaptureMessage(message, sender) {
     case 'capture-send':
       return fromExtensionPage(sender) ? sendCapture(message) : undefined;
     case 'capture-discard':
-      return fromExtensionPage(sender)
-        ? chrome.storage.local.remove(CAPTURE_DRAFT_KEY).then(runQueueBatchDiscarded).then(() => ({ ok: true }))
-        : undefined;
+      return fromExtensionPage(sender) ? discardDraft() : undefined;
     case 'capture-companies':
       return fromExtensionPage(sender) ? listCaptureCompanies(message) : undefined;
+    case 'capture-auto-status':
+      return fromExtensionPage(sender) ? autoCaptureStatus() : undefined;
+    case 'capture-auto-start':
+      return fromExtensionPage(sender) ? startAutoCapture(message) : undefined;
     case 'capture-requested':
       return fromExtensionPage(sender) ? listRequestedJobs() : undefined;
     case 'capture-queue-start':
@@ -1016,6 +1142,8 @@ export function handleCaptureMessage(message, sender) {
       return readCompanyPeopleSearch(message, sender);
     case 'RESOLVE_SALES_LEAD_LINKS':
       return resolveSalesLeadLinks(message, sender);
+    case 'GET_SAVED_PEOPLE_SEARCH':
+      return savedPeopleSearch(message.companyId);
     case 'GET_CAPTURED_COMPANY_PROFILE_IDS':
       return capturedCompanyProfileIds(message.companyId);
     case 'CANCEL_PERSON_READ':
