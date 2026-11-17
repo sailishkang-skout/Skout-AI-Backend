@@ -1,13 +1,15 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { searchFiltersSchema } from "@skout/shared";
+import { SENIORITY_OPTIONS, searchFiltersSchema } from "@skout/shared";
 import { buildEnrichmentService, InsufficientCreditsError } from "../services/enrichment/index.js";
 import { prospectToSnapshot, prospectToSummary } from "../services/smart-list.mapper.js";
 import { createSearchCacheService } from "../services/search-cache.service.js";
 import { buildListService } from "../services/list.service.js";
 import {
+  countSmartListMatches,
   createSmartList,
   deleteSmartList,
+  getProspectFacets,
   getSmartListRefresh,
   listSmartListRefreshes,
   listSmartLists,
@@ -19,16 +21,25 @@ import {
 } from "../services/smart-list.service.js";
 import { CADENCE_VALUES } from "../services/smart-list-cadence.js";
 import { HttpError, errorResponse, requireWorkspaceId } from "../utils/http.js";
+import { countryLabel } from "../services/smart-list-filters.js";
+
+/** Search filters plus the free-text query, which the shared schema doesn't carry and used to be
+ * silently dropped when a smart list was saved. */
+const smartListFiltersSchema = searchFiltersSchema.extend({
+  query: z.string().trim().max(500).optional(),
+});
 
 const createSchema = z.object({
   name: z.string().min(1).max(255),
-  filters: searchFiltersSchema,
+  filters: smartListFiltersSchema,
 });
+
+const countSchema = z.object({ filters: smartListFiltersSchema });
 
 const updateSchema = z
   .object({
     name: z.string().min(1).max(255).optional(),
-    filters: searchFiltersSchema.optional(),
+    filters: smartListFiltersSchema.optional(),
   })
   .refine((v) => v.name !== undefined || v.filters !== undefined, {
     message: "Provide name or filters to update",
@@ -47,6 +58,25 @@ function osConfig(app: FastifyInstance) {
   return osConfigFromEnv(app.config);
 }
 
+/** A configured OpenSearch that fails now surfaces as an error instead of fake demo prospects. */
+function searchUnavailable(err: unknown) {
+  return {
+    error: "search_unavailable",
+    message: "Prospect search is unavailable right now. Try again in a moment.",
+    detail: err instanceof Error ? err.message.slice(0, 200) : undefined,
+  };
+}
+
+/** In a deployed environment, never activate or spend credits on demo (fake) prospects. */
+function demoBlocked(app: FastifyInstance, demo: boolean) {
+  return demo && app.config.NODE_ENV === "production";
+}
+
+const DEMO_BLOCKED = {
+  error: "demo_data",
+  message: "Search returned demo data, so nothing was created. Check that prospect search is configured.",
+};
+
 function formatRunResponse(result: NonNullable<Awaited<ReturnType<typeof runSmartList>>>) {
   const hits = result.hits.map(prospectToSummary);
   return {
@@ -58,6 +88,35 @@ function formatRunResponse(result: NonNullable<Awaited<ReturnType<typeof runSmar
 }
 
 export async function smartListRoutes(app: FastifyInstance) {
+  /** Filter choices taken from the values actually stored in the search index, with counts. */
+  app.get("/smart-lists/facets", async (request, reply) => {
+    requireWorkspaceId(request);
+    const facets = await getProspectFacets(osConfig(app));
+    const seniorityCounts = new Map((facets?.seniority ?? []).map((f) => [f.value, f.count]));
+    return reply.send({
+      data: {
+        total: facets?.total ?? null,
+        industry: (facets?.industry ?? []).map((f) => ({ ...f, label: f.value })),
+        country: (facets?.country ?? []).map((f) => ({ ...f, label: countryLabel(f.value) })),
+        // Every value the filter accepts, whether or not records store it yet: the seniority filter
+        // also matches by job title, so a stored count of 0 doesn't mean no matches.
+        seniority: SENIORITY_OPTIONS.map((o) => ({ value: o.value, label: o.label, count: seniorityCounts.get(o.value) ?? null })),
+      },
+    });
+  });
+
+  /** Live match count for filters that haven't been saved yet. */
+  app.post("/smart-lists/count", async (request, reply) => {
+    requireWorkspaceId(request);
+    const body = countSchema.parse(request.body ?? {});
+    try {
+      return reply.send(await countSmartListMatches(osConfig(app), body.filters));
+    } catch (err) {
+      request.log.warn({ err }, "smart list count failed");
+      return reply.status(502).send(searchUnavailable(err));
+    }
+  });
+
   app.get("/smart-lists", async (request, reply) => {
     const workspaceId = requireWorkspaceId(request);
     const data = await listSmartLists(app.db, workspaceId);
@@ -149,7 +208,13 @@ export async function smartListRoutes(app: FastifyInstance) {
     const cached = await cache.getSmartList(workspaceId, id);
     if (cached) return reply.send(cached);
 
-    const result = await runSmartList(app.db, osConfig(app), workspaceId, id);
+    let result: Awaited<ReturnType<typeof runSmartList>>;
+    try {
+      result = await runSmartList(app.db, osConfig(app), workspaceId, id);
+    } catch (err) {
+      request.log.warn({ err }, "smart list run failed");
+      return reply.status(502).send(searchUnavailable(err));
+    }
     if (!result) return reply.status(404).send({ error: "smart_list_not_found" });
     const payload = formatRunResponse(result);
     await cache.setSmartList(workspaceId, id, payload as Record<string, unknown>);
@@ -162,8 +227,15 @@ export async function smartListRoutes(app: FastifyInstance) {
     const workspaceId = requireWorkspaceId(request);
     const body = activateSchema.parse(request.body ?? {});
 
-    const result = await runSmartList(app.db, osConfig(app), workspaceId, id);
+    let result: Awaited<ReturnType<typeof runSmartList>>;
+    try {
+      result = await runSmartList(app.db, osConfig(app), workspaceId, id);
+    } catch (err) {
+      request.log.warn({ err }, "smart list activate failed");
+      return reply.status(502).send(searchUnavailable(err));
+    }
     if (!result) return reply.status(404).send({ error: "smart_list_not_found" });
+    if (demoBlocked(app, result.demo)) return reply.status(409).send(DEMO_BLOCKED);
 
     const prospects = result.hits.map(prospectToSnapshot).filter((p) => p.companyDomain);
     if (prospects.length === 0) {
@@ -204,8 +276,15 @@ export async function smartListRoutes(app: FastifyInstance) {
   app.post("/smart-lists/:id/score", async (request, reply) => {
     const { id } = request.params as { id: string };
     const workspaceId = requireWorkspaceId(request);
-    const result = await runSmartList(app.db, osConfig(app), workspaceId, id);
+    let result: Awaited<ReturnType<typeof runSmartList>>;
+    try {
+      result = await runSmartList(app.db, osConfig(app), workspaceId, id);
+    } catch (err) {
+      request.log.warn({ err }, "smart list score failed");
+      return reply.status(502).send(searchUnavailable(err));
+    }
     if (!result) return reply.status(404).send({ error: "smart_list_not_found" });
+    if (demoBlocked(app, result.demo)) return reply.status(409).send(DEMO_BLOCKED);
 
     const svc = buildEnrichmentService(app.db, app.config);
     const snapshots = result.hits.map(prospectToSnapshot).filter((p) => p.companyDomain);

@@ -174,3 +174,57 @@ describe("smart list API", () => {
     await app.close();
   }, 30000);
 });
+
+describe("smart list API — usability fixes", () => {
+  const headers = { "x-workspace-id": WORKSPACE, "content-type": "application/json" };
+
+  it("keeps the free-text query when a smart list is saved (it used to be dropped)", async () => {
+    const app = await buildTestApp();
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/v1/smart-lists",
+      headers,
+      payload: { name: "Query kept", filters: { query: "Razorpay", seniorities: ["vp"] } },
+    });
+    expect(create.statusCode).toBe(201);
+    expect((create.json() as { filters: Record<string, unknown> }).filters).toMatchObject({ query: "Razorpay" });
+    await app.close();
+  }, 60000);
+
+  it("counts matches for unsaved filters", async () => {
+    const app = await buildTestApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/smart-lists/count",
+      headers,
+      payload: { filters: { industry: "Software & SaaS", country: "US" } },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { total: number; demo: boolean };
+    expect(body.total).toBeGreaterThan(0);
+    expect(body.demo).toBe(true);
+    await app.close();
+  }, 60000);
+
+  it("rejects a count request with invalid filters", async () => {
+    const app = await buildTestApp();
+    const res = await app.inject({ method: "POST", url: "/api/v1/smart-lists/count", headers, payload: { filters: { minEmployees: "lots" } } });
+    expect(res.statusCode).toBeGreaterThanOrEqual(400);
+    expect(res.statusCode).toBeLessThan(500);
+    await app.close();
+  }, 60000);
+
+  it("lists the filter choices, with every seniority the filter accepts", async () => {
+    const app = await buildTestApp();
+    const res = await app.inject({ method: "GET", url: "/api/v1/smart-lists/facets", headers });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as {
+      data: { seniority: { value: string; label: string }[]; industry: unknown[]; country: unknown[] };
+    };
+    expect(body.data.seniority.map((s) => s.value)).toEqual(expect.arrayContaining(["vp", "c_level", "director"]));
+    expect(body.data.seniority.find((s) => s.value === "vp")?.label).toBe("VP");
+    expect(Array.isArray(body.data.industry)).toBe(true);
+    expect(Array.isArray(body.data.country)).toBe(true);
+    await app.close();
+  }, 60000);
+});
