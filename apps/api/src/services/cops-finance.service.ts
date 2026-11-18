@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
 
 /**
@@ -30,7 +30,9 @@ export async function loadReconciliation(db: Db, workspaceId: string, now: Date 
   const events = await db
     .select()
     .from(paymentProviderEvents)
-    .where(and(eq(paymentProviderEvents.workspaceId, workspaceId), inArray(paymentProviderEvents.outcome, ["received", "unmatched"]), gte(paymentProviderEvents.receivedAt, new Date(now.getTime() - 30 * 86_400_000))))
+    // An event for a link we do not know has no workspace (nothing to match it to). Those are exactly
+    // the ones Finance must see, so they are listed too; they carry only the provider's reference.
+    .where(and(or(eq(paymentProviderEvents.workspaceId, workspaceId), isNull(paymentProviderEvents.workspaceId)), inArray(paymentProviderEvents.outcome, ["received", "unmatched"]), gte(paymentProviderEvents.receivedAt, new Date(now.getTime() - 30 * 86_400_000))))
     .orderBy(desc(paymentProviderEvents.receivedAt))
     .limit(200);
   for (const e of events) {
@@ -40,7 +42,9 @@ export async function loadReconciliation(db: Db, workspaceId: string, now: Date 
       entity_id: e.id,
       provider_state: e.eventType,
       skout_state: e.outcome,
-      detail: `${e.provider} event ${e.providerEventId} was received and not applied`,
+      detail: e.workspaceId
+        ? `${e.provider} event ${e.providerEventId} was received and not applied`
+        : `${e.provider} ${e.eventType} for a payment link Skout has no record of (event ${e.providerEventId}). Check the provider dashboard.`,
       since: e.receivedAt.toISOString(),
     });
   }
