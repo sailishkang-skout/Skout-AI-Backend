@@ -389,6 +389,12 @@ describe("ENR-03 change detection", () => {
     expect(byId[promotion!.id]).toMatchObject({ kind: "new_role", summary: "This person has a new role at Initech: Head of Revenue → VP Revenue." });
     expect(body.counts.pending).toBeGreaterThanOrEqual(2);
     expect(body.counts.lastSevenDays).toBeGreaterThanOrEqual(2);
+    // A change that recorded no new role, with nothing showing the person left, is not "left company".
+    const [unknownNow] = await insert([{ name: "Skout AI", title: "AI Forward Deployed Engineer (FDE)" }], []);
+    const again = (await get("/enrichment/job-changes?status=pending&pageSize=100")).json();
+    expect((again.jobChanges as Array<{ id: string }>).some((change) => change.id === unknownNow!.id)).toBe(false);
+    const [kept] = await db().select().from(schema.enrichmentChangeEvents).where(eq(schema.enrichmentChangeEvents.id, unknownNow!.id));
+    expect(kept!.isJobChange).toBe(false);
     // The "+ 1 more" event is no longer a job change at all.
     const [stored] = await db().select().from(schema.enrichmentChangeEvents).where(eq(schema.enrichmentChangeEvents.id, noise!.id));
     expect(stored!.isJobChange).toBe(false);

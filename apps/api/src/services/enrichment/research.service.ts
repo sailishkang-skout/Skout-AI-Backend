@@ -622,14 +622,26 @@ export type JobChangeKind = "new_company" | "new_role" | "left_company" | "no_ch
 
 const sameTitle = (a: string | null, b: string | null) => (a ?? "").replace(/\s+/g, " ").trim().toLowerCase() === (b ?? "").replace(/\s+/g, " ").trim().toLowerCase();
 
-/** What kind of move a change is. "no_change": both sides name the same company and title. */
-export function classifyJobChange(from: Role, to: Role): JobChangeKind {
+/**
+ * What kind of move a change is. "no_change": both sides name the same company and title, or
+ * nothing shows the person left. `currentCompanies` are the employers the latest capture lists as
+ * current: a person is said to have left only when that capture names current employers and the
+ * old company is not among them. A capture that read no current role is not evidence of leaving.
+ */
+export function classifyJobChange(from: Role, to: Role, currentCompanies: (string | null)[] = []): JobChangeKind {
   const before = normalizedCompanyName(from.company ?? undefined);
   const after = normalizedCompanyName(to.company ?? undefined);
   if (after && before && after === before) return to.title && from.title && !sameTitle(from.title, to.title) ? "new_role" : "no_change";
   if (after) return "new_company";
-  if (before) return "left_company";
-  return "no_change";
+  if (!before) return "no_change";
+  const current = currentCompanies.map((name) => normalizedCompanyName(name ?? undefined)).filter(Boolean);
+  return current.length && !current.includes(before) ? "left_company" : "no_change";
+}
+
+/** Employers the latest capture lists as current. */
+function currentCompanyNames(snapshot: Json): string[] {
+  const roles = Array.isArray(snapshot.currentCompanies) ? (snapshot.currentCompanies as Json[]) : [];
+  return roles.map((role) => cleanCompanyName(text(role?.name) ?? undefined)).filter((name): name is string => Boolean(name));
 }
 
 const roleText = (role: Role) => (role.title && role.company ? `${role.title} at ${role.company}` : role.company ?? role.title ?? "");
@@ -731,7 +743,11 @@ export async function listJobChanges(
     : [];
   const jobChanges = rows.map(({ change, snapshot }) => {
     const person = (snapshot ?? {}) as Json;
-    const to = roleOf(change.newValue);
+    const recorded = roleOf(change.newValue);
+    // A change that did not record the new role (Experience had not loaded) shows the latest
+    // capture's current role instead of "Not captured".
+    const latest = roleOf(person.currentCompanies);
+    const to = recorded.company ? recorded : latest.company ? latest : recorded;
     // Older records can lack the earlier employer; the profile's latest past role names it.
     const from = (() => {
       const before = roleOf(change.oldValue);
@@ -744,7 +760,7 @@ export async function listJobChanges(
       return found ? { company: cleanCompanyName(found.company ?? undefined) ?? null, title: found.title } : before;
     })();
     const fullName = text(person.fullName);
-    const kind = classifyJobChange(from, to);
+    const kind = classifyJobChange(from, to, currentCompanyNames(person));
     return {
       ...toChange(change),
       prospectId: change.entityId,
