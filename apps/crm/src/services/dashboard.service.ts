@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { ActivitiesService, ActivityDto } from "./activities.service.js";
@@ -526,14 +526,16 @@ export class DashboardService {
     if (expiringDeals.length === 0) return [];
 
     const companyIds = expiringDeals.filter(d => d.companyId).map(d => d.companyId as string);
-    const companyList = await this.db
-      .select({ id: companies.id, name: companies.name })
-      .from(companies)
-      .where(and(eq(companies.workspaceId, workspaceId), inArray(companies.id, companyIds)));
-
     const companyMap = new Map<string, string>();
-    for (const company of companyList) {
-      companyMap.set(company.id, company.name);
+    if (companyIds.length > 0) {
+      const companyList = await this.db
+        .select({ id: companies.id, name: companies.name })
+        .from(companies)
+        .where(and(eq(companies.workspaceId, workspaceId), inArray(companies.id, companyIds)));
+
+      for (const company of companyList) {
+        companyMap.set(company.id, company.name);
+      }
     }
 
     const computedAt = new Date().toISOString();
@@ -583,11 +585,14 @@ export class DashboardService {
       .leftJoin(evidenceLedger, eq(signals.evidenceId, evidenceLedger.id))
       .leftJoin(companies, and(
         eq(companies.workspaceId, workspaceId),
-        eq(companies.id, signals.entityId)
+        sql`${companies.id}::text = ${signals.entityId}`
       ))
       .where(
         and(
-          eq(evidenceLedger.workspaceId, workspaceId),
+          or(
+            eq(evidenceLedger.workspaceId, workspaceId),
+            eq(companies.workspaceId, workspaceId)
+          ),
           inArray(signals.signalType, Array.from(EXPANSION_SIGNAL_TYPES)),
           sql`${signals.detectedAt} >= now() - interval '${sql.raw(String(EXPANSION_LOOKBACK_DAYS))} days'`
         )
