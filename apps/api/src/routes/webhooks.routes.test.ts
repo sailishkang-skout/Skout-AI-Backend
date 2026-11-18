@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import Fastify, { type FastifyInstance } from "fastify";
 import { ZodError } from "zod";
-import { webhookRoutes } from "./webhooks.routes.js";
+import { webhookRoutes, webhookUrlProblem } from "./webhooks.routes.js";
 
 // ---------------------------------------------------------------------------
 // Mock the webhook service so tests don't need a real DB
@@ -52,6 +52,8 @@ async function buildTestApp(): Promise<FastifyInstance> {
 
   app.addHook("preHandler", async (req) => {
     req.workspaceId = "ws-1";
+    // Admin by default; a test can act as a plain member with x-test-role.
+    (req as unknown as { role: string }).role = (req.headers["x-test-role"] as string) ?? "admin";
   });
 
   await app.register(webhookRoutes);
@@ -185,5 +187,23 @@ describe("webhooks routes", () => {
       url: "/webhooks/endpoints/missing/deliveries",
     });
     expect(res.statusCode).toBe(404);
+  });
+});
+
+describe("webhook safety", () => {
+  it("only accepts public https addresses", () => {
+    expect(webhookUrlProblem("https://hooks.example.com/skout")).toBeNull();
+    expect(webhookUrlProblem("http://hooks.example.com/skout")).toMatch(/https/);
+    for (const bad of ["https://localhost/x", "https://127.0.0.1/x", "https://10.0.0.5/x", "https://192.168.1.2/x", "https://169.254.169.254/latest", "https://[::1]/x", "https://db.internal/x", "https://intranet/x", "https://user:pw@example.com/x"]) {
+      expect(webhookUrlProblem(bad), bad).not.toBeNull();
+    }
+  });
+
+  it("refuses a member who is not owner or admin", async () => {
+    const app = await buildTestApp();
+    const res = await app.inject({ method: "POST", url: "/webhooks/endpoints", headers: { "x-test-role": "member" }, payload: { url: "https://example.com/hook", eventTypes: ["prospect.enrolled"] } });
+    expect(res.statusCode).toBe(403);
+    const internal = await app.inject({ method: "POST", url: "/webhooks/endpoints", payload: { url: "https://127.0.0.1/hook", eventTypes: ["prospect.enrolled"] } });
+    expect(internal.statusCode).toBe(400);
   });
 });

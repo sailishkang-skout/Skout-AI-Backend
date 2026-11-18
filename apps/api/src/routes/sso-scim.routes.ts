@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
@@ -201,6 +202,18 @@ export function mapScimGroupsToRole(groups: string[] | undefined, fallback: stri
   return fallback;
 }
 
+/** What an admin pastes into their identity provider: the same values our SAML metadata advertises. */
+function serviceProvider(app: FastifyInstance) {
+  const cfg = app.config as { API_URL?: string; SAML_ISSUER?: string };
+  const api = (cfg.API_URL || "https://api.skout.com").replace(/\/$/, "");
+  return {
+    entityId: cfg.SAML_ISSUER || "https://app.skout.com",
+    acsUrl: `${api}/api/v1/saml/acs`,
+    metadataUrl: `${api}/api/v1/saml/metadata`,
+    scimBaseUrl: `${api}/api/v1/scim/v2`,
+  };
+}
+
 export async function ssoScimRoutes(app: FastifyInstance) {
   app.get("/sso/stage6/status", async (request, reply) => {
     if (!request.workspaceId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
@@ -244,10 +257,12 @@ export async function ssoScimRoutes(app: FastifyInstance) {
       .select({
         workspaceId: workspaceSsoConfigs.workspaceId,
         clerkOrgId: workspaceSsoConfigs.clerkOrgId,
+        idpOrgRef: workspaceSsoConfigs.idpOrgRef,
         idpProvider: workspaceSsoConfigs.idpProvider,
         idpConnectionId: workspaceSsoConfigs.idpConnectionId,
         idpMetadataUrl: workspaceSsoConfigs.idpMetadataUrl,
         scimEnabled: workspaceSsoConfigs.scimEnabled,
+        scimApiToken: workspaceSsoConfigs.scimApiToken,
         groupRoleMap: workspaceSsoConfigs.groupRoleMap,
         status: workspaceSsoConfigs.status,
         activatedAt: workspaceSsoConfigs.activatedAt,
@@ -259,7 +274,9 @@ export async function ssoScimRoutes(app: FastifyInstance) {
       .from(workspaceSsoConfigs)
       .where(scopedTo(workspaceSsoConfigs, request.workspaceId))
       .limit(1);
-    return reply.send({ data: cfg ?? null });
+    // The token itself is never returned after it is created; only whether one exists.
+    const { scimApiToken, ...rest } = cfg ?? ({} as Record<string, unknown>);
+    return reply.send({ data: cfg ? { ...rest, scimTokenSet: Boolean(scimApiToken) } : null, serviceProvider: serviceProvider(app) });
   });
 
   app.put("/sso/workspaces/current", async (request, reply) => {
@@ -296,7 +313,8 @@ export async function ssoScimRoutes(app: FastifyInstance) {
       .onConflictDoUpdate({
         target: workspaceSsoConfigs.workspaceId,
         set: {
-          clerkOrgId: parsed.data.clerkOrgId ?? "", // maintain NOT NULL constraint while supporting new orgRef field
+          // Only change the Clerk org id when one is sent; a save from the admin page must not blank it.
+          ...(parsed.data.clerkOrgId ? { clerkOrgId: parsed.data.clerkOrgId } : {}),
           idpOrgRef: parsed.data.orgRef ?? null,
           idpProvider: parsed.data.idpProvider,
           idpConnectionId: parsed.data.idpConnectionId ?? null,
@@ -334,6 +352,7 @@ export async function ssoScimRoutes(app: FastifyInstance) {
     if (!request.role || !["owner", "admin"].includes(request.role)) {
       return reply.code(403).send(errorResponse("Requires owner or admin", 403));
     }
+    const reason = typeof (request.body as { reason?: unknown } | undefined)?.reason === "string" ? String((request.body as { reason: string }).reason).trim().slice(0, 500) || null : null;
     const [cfg] = await app.db
       .select({
         idpConnectionId: workspaceSsoConfigs.idpConnectionId,
@@ -367,7 +386,7 @@ export async function ssoScimRoutes(app: FastifyInstance) {
       entityId: request.workspaceId,
       action: "sso.activated",
       after: { status: "active" },
-      reason: null,
+      reason,
       correlationId: resolveCorrelationId(request.headers["x-request-id"] as string | undefined),
       sourceChannel: "api",
     }).catch((err) => app.log.warn({ err }, "SSO audit write failed"));
@@ -375,6 +394,57 @@ export async function ssoScimRoutes(app: FastifyInstance) {
       data: row,
       note: "Workspace SSO marked active. Complete IdP bind in Clerk Dashboard if connection id is a placeholder.",
     });
+  });
+
+  // Turn SSO off again: staff go back to email and password. The setup is kept.
+  app.post("/sso/workspaces/current/deactivate", async (request, reply) => {
+    if (!request.workspaceId || !request.userId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    if (!request.role || !["owner", "admin"].includes(request.role)) return reply.code(403).send(errorResponse("Requires owner or admin", 403));
+    const reason = String((request.body as { reason?: unknown } | undefined)?.reason ?? "").trim();
+    if (reason.length < 8) return reply.code(422).send(errorResponse("Give a reason of at least 8 characters", 422));
+    const [row] = await app.db
+      .update(workspaceSsoConfigs)
+      .set({ status: "disabled", updatedAt: new Date() })
+      .where(scopedTo(workspaceSsoConfigs, request.workspaceId))
+      .returning({ status: workspaceSsoConfigs.status });
+    if (!row) return reply.code(404).send(errorResponse("SSO is not set up", 404));
+    await writeCopsAudit(app.db, {
+      tenantId: request.workspaceId,
+      actor: { type: "user", id: request.userId },
+      entityType: "sso_config",
+      entityId: request.workspaceId,
+      action: "sso.deactivated",
+      after: { status: "disabled" },
+      reason,
+      correlationId: resolveCorrelationId(request.headers["x-request-id"] as string | undefined),
+      sourceChannel: "api",
+    }).catch((err) => app.log.warn({ err }, "SSO audit write failed"));
+    return reply.send({ data: row });
+  });
+
+  // Create (or replace) the SCIM bearer token. Shown once; replacing it stops the old one at once.
+  app.post("/sso/workspaces/current/scim-token", async (request, reply) => {
+    if (!request.workspaceId || !request.userId || !app.db) return reply.code(401).send(errorResponse("Unauthorized", 401));
+    if (!request.role || !["owner", "admin"].includes(request.role)) return reply.code(403).send(errorResponse("Requires owner or admin", 403));
+    const token = `scim_${randomBytes(32).toString("base64url")}`;
+    const [row] = await app.db
+      .update(workspaceSsoConfigs)
+      .set({ scimApiToken: token, updatedAt: new Date() })
+      .where(scopedTo(workspaceSsoConfigs, request.workspaceId))
+      .returning({ workspaceId: workspaceSsoConfigs.workspaceId });
+    if (!row) return reply.code(404).send(errorResponse("Save the SSO setup first", 404));
+    await writeCopsAudit(app.db, {
+      tenantId: request.workspaceId,
+      actor: { type: "user", id: request.userId },
+      entityType: "sso_config",
+      entityId: request.workspaceId,
+      action: "sso.scim_token_rotated",
+      after: { scim_token_set: true },
+      reason: null,
+      correlationId: resolveCorrelationId(request.headers["x-request-id"] as string | undefined),
+      sourceChannel: "api",
+    }).catch((err) => app.log.warn({ err }, "SSO audit write failed"));
+    return reply.send({ data: { token, scimBaseUrl: serviceProvider(app).scimBaseUrl } });
   });
 
   app.post("/sso/scim/sync-members", async (request, reply) => {

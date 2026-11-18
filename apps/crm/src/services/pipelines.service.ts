@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import type { PipelineCreateInput, PipelineStageCreateInput, PipelineStageUpdateInput, PipelineUpdateInput } from "@skout/shared";
@@ -154,6 +154,19 @@ export class PipelinesService {
   ): Promise<PipelineStageDto> {
     const pipeline = await this.getById(workspaceId, pipelineId);
     if (!pipeline) throw new HttpError("pipeline_not_found", 404);
+
+    // Inserting before Won/Lost: move the stages at and after this position down one, last
+    // first, so (pipeline_id, order_index) stays unique at every step.
+    if (input.shift) {
+      const later = await this.db
+        .select({ id: pipelineStages.id, orderIndex: pipelineStages.orderIndex })
+        .from(pipelineStages)
+        .where(and(eq(pipelineStages.pipelineId, pipelineId), gte(pipelineStages.orderIndex, input.orderIndex)))
+        .orderBy(desc(pipelineStages.orderIndex));
+      for (const st of later) {
+        await this.db.update(pipelineStages).set({ orderIndex: st.orderIndex + 1 }).where(eq(pipelineStages.id, st.id));
+      }
+    }
 
     let row: typeof pipelineStages.$inferSelect;
     try {
