@@ -28,6 +28,8 @@ interface OnboardingTemplate {
   key: string;
   version: number;
   label: string;
+  /** The built-in wording, with {{workspace}} / {{name}} placeholders (what admins start editing from). */
+  defaults: { subject: string; intro: string; closing: string };
   render(input: OnboardingTemplateInput): MailOptions;
 }
 
@@ -41,11 +43,18 @@ export function segmentOf(employeeCount: number | null | undefined): Segment {
 
 const ENTERPRISE_NOTE = "Your account team will reach out to schedule a kickoff with your stakeholders and agree the success plan.";
 
-/** {{workspace}} in admin-written wording becomes the customer workspace name. */
-export const fillTemplateText = (text: string, input: Pick<OnboardingTemplateInput, "workspaceName">) => text.replace(/\{\{\s*workspace\s*\}\}/g, input.workspaceName);
+/** Placeholders admins can use in their wording. */
+export const TEMPLATE_VARIABLES = [
+  { token: "{{workspace}}", description: "Customer workspace name" },
+  { token: "{{name}}", description: "Recipient first name" },
+] as const;
+
+/** {{workspace}} becomes the customer workspace name; {{name}} the recipient's first name. */
+export const fillTemplateText = (text: string, input: Pick<OnboardingTemplateInput, "workspaceName"> & { customerName?: string }) =>
+  text.replace(/\{\{\s*workspace\s*\}\}/g, input.workspaceName).replace(/\{\{\s*name\s*\}\}/g, input.customerName ?? "there");
 
 function body(input: OnboardingTemplateInput, defaultIntro: string): { html: string; text: string } {
-  const intro = input.override ? fillTemplateText(input.override.intro, input) : defaultIntro;
+  const intro = fillTemplateText(input.override ? input.override.intro : defaultIntro, input);
   const closing = input.override?.closing ? fillTemplateText(input.override.closing, input) : null;
   const start = input.inviteUrl ?? input.workspaceUrl;
   const steps = input.activationSteps.length > 0 ? input.activationSteps : ["Sign in to your workspace"];
@@ -85,19 +94,23 @@ function body(input: OnboardingTemplateInput, defaultIntro: string): { html: str
 }
 
 function enterpriseVariant(base: OnboardingTemplate, key: string, label: string): OnboardingTemplate {
-  return { key, version: 1, label, render: (input) => base.render({ ...input, enterprise: true }) };
+  return { key, version: 1, label, defaults: base.defaults, render: (input) => base.render({ ...input, enterprise: true }) };
 }
+
+const TRIAL_DEFAULTS = { subject: "Your Skout AI trial is ready: {{workspace}}", intro: 'Your Skout AI trial workspace "{{workspace}}" is ready.', closing: "" };
+const PAID_DEFAULTS = { subject: "Welcome to Skout AI: {{workspace}}", intro: 'Welcome aboard. Your Skout AI workspace "{{workspace}}" is ready.', closing: "" };
 
 const BASE_TEMPLATES: Record<string, OnboardingTemplate> = {
   welcome_trial: {
     key: "welcome_trial",
     version: 1,
     label: "Trial welcome",
+    defaults: TRIAL_DEFAULTS,
     render(input) {
-      const { html, text } = body(input, `Your Skout AI trial workspace "${input.workspaceName}" is ready.`);
+      const { html, text } = body(input, TRIAL_DEFAULTS.intro);
       return {
         to: input.to,
-        subject: input.override ? fillTemplateText(input.override.subject, input) : `Your Skout AI trial is ready: ${input.workspaceName}`,
+        subject: fillTemplateText(input.override ? input.override.subject : TRIAL_DEFAULTS.subject, input),
         text,
         html: renderTransactionalLayout({ preheader: "Your trial workspace is ready", title: "Welcome to Skout AI", bodyHtml: html }),
       };
@@ -107,11 +120,12 @@ const BASE_TEMPLATES: Record<string, OnboardingTemplate> = {
     key: "welcome_paid",
     version: 1,
     label: "Customer welcome",
+    defaults: PAID_DEFAULTS,
     render(input) {
-      const { html, text } = body(input, `Welcome aboard. Your Skout AI workspace "${input.workspaceName}" is ready.`);
+      const { html, text } = body(input, PAID_DEFAULTS.intro);
       return {
         to: input.to,
-        subject: input.override ? fillTemplateText(input.override.subject, input) : `Welcome to Skout AI: ${input.workspaceName}`,
+        subject: fillTemplateText(input.override ? input.override.subject : PAID_DEFAULTS.subject, input),
         text,
         html: renderTransactionalLayout({ preheader: "Your workspace is ready", title: "Welcome to Skout AI", bodyHtml: html }),
       };
@@ -134,4 +148,27 @@ export function chooseOnboardingTemplate(
   if (override) return ONBOARDING_TEMPLATES[override] ?? null;
   const kind = (plan ?? "trial").toLowerCase().includes("trial") ? "welcome_trial" : "welcome_paid";
   return ONBOARDING_TEMPLATES[segment === "enterprise" ? `${kind}_enterprise` : kind]!;
+}
+
+/** Sample data for the admin preview: shows every part of the email (trial date, steps, booking link). */
+export function previewOnboardingTemplate(
+  key: string,
+  override: { subject: string; intro: string; closing?: string } | null,
+  sample: { workspaceName?: string; customerName?: string; appBaseUrl: string; resourcesUrl: string; supportEmail: string }
+): MailOptions | null {
+  const template = ONBOARDING_TEMPLATES[key];
+  if (!template) return null;
+  return template.render({
+    override,
+    to: "priya@example.com",
+    customerName: sample.customerName ?? "Priya",
+    workspaceName: sample.workspaceName ?? "Acme Corp",
+    workspaceUrl: sample.appBaseUrl,
+    inviteUrl: null,
+    trialEndsAt: key.startsWith("welcome_trial") ? new Date(Date.now() + 14 * 86_400_000).toISOString() : null,
+    activationSteps: ["Connect your CRM", "Import your first list", "Launch your first sequence"],
+    bookingUrl: "https://cal.example.com/skout-onboarding",
+    resourcesUrl: sample.resourcesUrl,
+    supportEmail: sample.supportEmail,
+  });
 }
