@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash, randomUUID } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
 import { generateCompanyId, generateProspectId, normalizeDomain } from "@skout/shared";
 import {
@@ -17,6 +17,7 @@ import { createLogger } from "@skout/observability";
 import { assertPermission, recordPrivilegedAction } from "@skout/auth";
 import { ensureContactLinkedToProspect } from "../services/prospect-crm-link.service.js";
 import { assertCaptureEnabled, CaptureError } from "../services/enrichment/capture-ingest.service.js";
+import { isCurrentEmployerChange } from "../services/enrichment/capture-identity.js";
 import { auditEntityId } from "../utils/audit-entity-id.js";
 
 const log = createLogger("prospect.routes");
@@ -95,9 +96,39 @@ async function recordCaptureHistory(
           changeType: Object.hasOwn(oldHashes, field) ? ("FIELD_UPDATED" as const) : ("FIELD_ADDED" as const),
           oldValue: oldData[field] ?? null,
           newValue,
-          isJobChange: entityType === "person" && ["title", "headline", "currentCompanies", "companyName"].includes(field),
+          isJobChange:
+            entityType === "person" &&
+            field === "currentCompanies" &&
+            isCurrentEmployerChange(oldData[field], newValue),
         }));
-      if (changes.length) await tx.insert(enrichmentChangeEvents).values(changes);
+      if (!changes.length) return;
+
+      // Deduplicate job change events before inserting
+      const jobChanges = changes.filter((c) => c.isJobChange);
+      if (jobChanges.length > 0) {
+        const existingJobChanges = await tx
+          .select({ newValue: enrichmentChangeEvents.newValue })
+          .from(enrichmentChangeEvents)
+          .where(
+            and(
+              eq(enrichmentChangeEvents.workspaceId, workspaceId),
+              eq(enrichmentChangeEvents.entityId, snapshotEntityId),
+              eq(enrichmentChangeEvents.isJobChange, true),
+              gte(enrichmentChangeEvents.detectedAt, new Date(Date.now() - 5 * 60 * 1000))
+            )
+          );
+        const uniqueChanges = changes.filter((change) => {
+          if (!change.isJobChange) return true;
+          return !existingJobChanges.some((existing) => JSON.stringify(existing.newValue) === JSON.stringify(change.newValue));
+        });
+        if (uniqueChanges.length !== changes.length) {
+          log.info(`Filtered out ${changes.length - uniqueChanges.length} duplicate job change events for entity ${snapshotEntityId}`);
+          await tx.insert(enrichmentChangeEvents).values(uniqueChanges).onConflictDoNothing();
+          return;
+        }
+      }
+
+      await tx.insert(enrichmentChangeEvents).values(changes).onConflictDoNothing();
     };
 
     await recordSnapshot("person", entityId, rawData);

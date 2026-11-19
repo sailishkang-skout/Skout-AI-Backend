@@ -711,10 +711,18 @@ export async function listJobChanges(
     )
     .where(where)
     .orderBy(desc(enrichmentChangeEvents.detectedAt))
-    .limit(filters.pageSize)
-    .offset((filters.page - 1) * filters.pageSize);
+    .limit(filters.pageSize * 5)
+    .offset((filters.page - 1) * filters.pageSize * 5);
+  // Deduplicate job changes: keep only the most recent change per person per detected time
+  const seen = new Set<string>();
+  const uniqueRows = rows.filter((row) => {
+    const key = `${row.change.entityId}-${row.change.detectedAt.getTime()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, filters.pageSize);
   // Rows whose change event does not name the old company are filled from capture history.
-  const missingFrom = rows
+  const missingFrom = uniqueRows
     .filter(({ change }) => !roleOf(change.oldValue).company)
     .map(({ change }) => change.entityId);
   const history = missingFrom.length
@@ -729,7 +737,7 @@ export async function listJobChanges(
           )
         )
     : [];
-  const jobChanges = rows.map(({ change, snapshot }) => {
+  const jobChanges = uniqueRows.map(({ change, snapshot }) => {
     const person = (snapshot ?? {}) as Json;
     const to = roleOf(change.newValue);
     // Older records can lack the earlier employer; the profile's latest past role names it.
