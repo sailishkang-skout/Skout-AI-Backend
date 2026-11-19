@@ -884,6 +884,43 @@ describe.skipIf(!hasDatabase)("CRM service E2E", () => {
     expect(found!.daysSinceUpdate).toBeGreaterThanOrEqual(19);
   });
 
+  it("CRM intelligence endpoints return 200 and query real Postgres cleanly without type errors", async () => {
+    const headers = asUser(`crm-intelligence-${randomUUID()}@test.com`);
+    const workspaceId = await getWorkspaceIdFor(headers);
+    const company = await createCompany(headers, "Intelligence Target Co");
+
+    // Seed a signal with text entity_id matching company.id to test uuid=text join fix
+    await db.insert(schema.signals).values({
+      entityType: "company",
+      entityId: company.id,
+      signalType: "recent_funding",
+      detectedAt: new Date(),
+    });
+
+    const [expansionRes, disengagementRes, renewalRes, missingStakeholderRes] = await Promise.all([
+      app.inject({ method: "GET", url: "/api/v1/dashboard/expansion-signal-flags", headers }),
+      app.inject({ method: "GET", url: "/api/v1/dashboard/disengagement-flags", headers }),
+      app.inject({ method: "GET", url: "/api/v1/dashboard/renewal-risk-flags", headers }),
+      app.inject({ method: "GET", url: "/api/v1/dashboard/missing-stakeholder-deals", headers }),
+    ]);
+
+    expect(expansionRes.statusCode).toBe(200);
+    const expansionBody = expansionRes.json() as { expansionSignalFlags: unknown[] };
+    expect(Array.isArray(expansionBody.expansionSignalFlags)).toBe(true);
+
+    expect(disengagementRes.statusCode).toBe(200);
+    const disengagementBody = disengagementRes.json() as { disengagementFlags: unknown[] };
+    expect(Array.isArray(disengagementBody.disengagementFlags)).toBe(true);
+
+    expect(renewalRes.statusCode).toBe(200);
+    const renewalBody = renewalRes.json() as { renewalRiskFlags: unknown[] };
+    expect(Array.isArray(renewalBody.renewalRiskFlags)).toBe(true);
+
+    expect(missingStakeholderRes.statusCode).toBe(200);
+    const missingBody = missingStakeholderRes.json() as { missingStakeholderDeals: unknown[] };
+    expect(Array.isArray(missingBody.missingStakeholderDeals)).toBe(true);
+  });
+
   it("malformed :id path params return a clean 400, not a raw DB 500", async () => {
     const headers = asUser(`crm-malformed-id-${randomUUID()}@test.com`);
 
