@@ -1,11 +1,14 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import type { Db } from "@skout/db";
+import { schema, type Db } from "@skout/db";
+import { eq } from "drizzle-orm";
 import { copsErrorBody, copsErrorStatus, isCopsConfigKind, resolveCorrelationId } from "@skout/shared";
 import { getMemberPermissions } from "@skout/auth";
 import { copsIdempotencyStore, requireAnyCopsPermission } from "../services/cops-platform.service.js";
 import { withCopsIdempotentReply, type CopsCapturingReply } from "../services/cops-idempotent.js";
-import { AdminConfigError, listConfig, listConfigVersions, rollbackConfig, saveConfig } from "../services/cops-admin-config.service.js";
+import { AdminConfigError, getConfig, listConfig, listConfigVersions, rollbackConfig, saveConfig } from "../services/cops-admin-config.service.js";
+import { ONBOARDING_TEMPLATES, TEMPLATE_VARIABLES, previewOnboardingTemplate } from "../services/cops-onboarding-templates.js";
+import { defaultOnboardingDeps } from "../services/cops-onboarding.service.js";
 
 const saveSchema = z
   .object({
@@ -25,7 +28,7 @@ type KeyParams = { Params: { kind: string; key: string }; Body: unknown };
  * Reads need admin:read (Product holds it), writes need admin:admin. Every write is a new version
  * with a reason and an audit row.
  */
-export async function copsAdminConfigRoutes(app: FastifyInstance, opts: { db: Db }) {
+export async function copsAdminConfigRoutes(app: FastifyInstance, opts: { db: Db; emailDeps?: ReturnType<typeof defaultOnboardingDeps> }) {
   const { db } = opts;
   const perms = (ws: string, user: string) => getMemberPermissions(db, ws, user);
   const readGate = requireAnyCopsPermission(["admin:read", "admin:admin"], perms);
@@ -60,6 +63,61 @@ export async function copsAdminConfigRoutes(app: FastifyInstance, opts: { db: Db
       throw error;
     }
   }
+
+  // ---- Email templates: the built-in wording, this workspace's saved wording, and a live preview ----
+  const emailDeps = opts.emailDeps ?? defaultOnboardingDeps(app.config);
+  const wordingSchema = z
+    .object({ subject: z.string().trim().min(1, "Subject is required").max(200), intro: z.string().trim().min(1, "Intro is required").max(4000), closing: z.string().trim().max(4000).optional() })
+    .strict();
+
+  app.get("/admin/email-templates", { preHandler: readGate }, async (request) => {
+    const ctx = ctxOf(request);
+    const data = await Promise.all(
+      Object.values(ONBOARDING_TEMPLATES).map(async (t) => {
+        const saved = await getConfig(db, ctx.workspaceId, "email_template", t.key);
+        const custom = saved && !saved.is_system_default ? saved : null;
+        return {
+          key: t.key,
+          label: t.label,
+          defaults: t.defaults,
+          custom: custom ? { ...(custom.value as Record<string, string>), version: custom.version, updated_at: custom.created_at } : null,
+        };
+      })
+    );
+    return { data, variables: TEMPLATE_VARIABLES };
+  });
+
+  app.post<{ Params: { key: string } }>("/admin/email-templates/:key/preview", { preHandler: readGate }, async (request, rawReply) => {
+    const reply = rawReply as unknown as Reply;
+    const ctx = ctxOf(request);
+    const parsed = wordingSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+    const mail = previewOnboardingTemplate(request.params.key, parsed.data, emailDeps);
+    if (!mail) return reply.status(copsErrorStatus("NOT_FOUND")).send(copsErrorBody({ code: "NOT_FOUND", message: "Unknown template", requestId: ctx.requestId }));
+    return { data: { subject: mail.subject, html: mail.html, text: mail.text } };
+  });
+
+  // Send the draft to the person editing it (their own login email only), marked as a test.
+  app.post<{ Params: { key: string } }>("/admin/email-templates/:key/test", { preHandler: writeGate }, async (request, rawReply) => {
+    const reply = rawReply as unknown as Reply;
+    const ctx = ctxOf(request);
+    const parsed = wordingSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return invalid(reply, ctx.requestId, parsed.error);
+    const [me] = await db.select({ email: schema.users.email, name: schema.users.fullName }).from(schema.users).where(eq(schema.users.id, ctx.userId)).limit(1);
+    if (!me?.email) return invalid(reply, ctx.requestId, { path: "to", message: "Your account has no email address" });
+    const mail = previewOnboardingTemplate(request.params.key, parsed.data, { ...emailDeps, customerName: me.name?.split(" ")[0] || undefined });
+    if (!mail) return reply.status(copsErrorStatus("NOT_FOUND")).send(copsErrorBody({ code: "NOT_FOUND", message: "Unknown template", requestId: ctx.requestId }));
+    let sent = false;
+    try {
+      sent = (await emailDeps.send({ ...mail, to: me.email, subject: `[Test] ${mail.subject}` })).sent;
+    } catch (error) {
+      request.log.warn({ err: error }, "email template test send failed");
+    }
+    if (!sent) {
+      return reply.status(copsErrorStatus("BUSINESS_STATE_CONFLICT")).send(copsErrorBody({ code: "BUSINESS_STATE_CONFLICT", message: "The test email could not be sent. Check the mail settings.", requestId: ctx.requestId }));
+    }
+    return { data: { to: me.email, subject: `[Test] ${mail.subject}` } };
+  });
 
   app.get<KindParams>("/admin/config/:kind", { preHandler: readGate }, async (request, rawReply) => {
     const reply = rawReply as unknown as Reply;

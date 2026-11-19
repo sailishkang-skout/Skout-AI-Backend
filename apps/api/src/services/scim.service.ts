@@ -24,47 +24,37 @@ export const SCIM_SCHEMAS = {
   ERROR: "urn:ietf:params:scim:api:messages:2.0:Error",
 };
 
-// Schema to validate SCIM bearer token auth
-async function validateScimAuth(
-  request: FastifyRequest,
-  reply: FastifyReply,
-  workspaceId: string,
-  db: Db,
-  config: Env
-): Promise<boolean> {
+/**
+ * SCIM bearer auth: the token identifies the workspace (the identity provider has no Skout login).
+ * Returns the workspace id, or null after sending 401/403.
+ */
+async function scimWorkspace(request: FastifyRequest, reply: FastifyReply, db: Db): Promise<string | null> {
   const authHeader = request.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     reply.code(401).send(errorResponse("Missing or invalid authorization header", 401));
-    return false;
+    return null;
   }
-
-  const token = authHeader.slice(7);
-  
-  // Get workspace SSO config to check SCIM token
-  const [ssoConfig] = await db
-      .select({ 
-          // @ts-ignore
-          scimApiToken: workspaceSsoConfigs.scimApiToken,
-          // @ts-ignore
-          scimEnabled: workspaceSsoConfigs.scimEnabled
-      })
-      .from(workspaceSsoConfigs)
-      .where(eq(workspaceSsoConfigs.workspaceId, workspaceId))
-      .limit(1);
-
-  // Constant-time: a plain !== leaks how much of the token matched through timing.
-  if (!ssoConfig || !ssoConfig.scimApiToken || !safeEqual(ssoConfig.scimApiToken, token)) {
+  const token = authHeader.slice(7).trim();
+  if (!token.startsWith("scim_") || token.length < 20) {
     reply.code(401).send(errorResponse("Invalid SCIM API token", 401));
-    return false;
+    return null;
   }
-
-  // Check if SCIM is enabled for this workspace
-  if (!ssoConfig.scimEnabled) {
+  const [cfg] = await db
+    .select({ workspaceId: workspaceSsoConfigs.workspaceId, scimApiToken: workspaceSsoConfigs.scimApiToken, scimEnabled: workspaceSsoConfigs.scimEnabled })
+    .from(workspaceSsoConfigs)
+    .where(eq(workspaceSsoConfigs.scimApiToken, token))
+    .limit(1);
+  // Constant-time compare as well, so a near-match never answers faster.
+  if (!cfg || !cfg.scimApiToken || !safeEqual(cfg.scimApiToken, token)) {
+    reply.code(401).send(errorResponse("Invalid SCIM API token", 401));
+    return null;
+  }
+  if (!cfg.scimEnabled) {
     reply.code(403).send(errorResponse("SCIM is not enabled for this workspace", 403));
-    return false;
+    return null;
   }
-
-  return true;
+  request.workspaceId = cfg.workspaceId;
+  return cfg.workspaceId;
 }
 
 // Convert internal user to SCIM user format
@@ -108,13 +98,9 @@ function toScimGroup(role: string, members: any[]) {
 export async function registerScimRoutes(app: FastifyInstance) {
   // SCIM Users endpoint - GET /api/v1/scim/v2/Users
   app.get(`${SCIM_BASE}/Users`, async (request, reply) => {
-    const workspaceId = request.workspaceId;
-    if (!workspaceId || !app.db) {
-      return reply.code(401).send(errorResponse("Unauthorized", 401));
-    }
-
-    const isAuthorized = await validateScimAuth(request, reply, workspaceId, app.db, app.config as Env);
-    if (!isAuthorized) return;
+    if (!app.db) return reply.code(503).send(errorResponse("Database unavailable", 503));
+    const workspaceId = await scimWorkspace(request, reply, app.db as Db);
+    if (!workspaceId) return;
 
     const db = app.db as Db;
     // @ts-ignore - filter and startIndex from query
@@ -174,13 +160,9 @@ export async function registerScimRoutes(app: FastifyInstance) {
 
   // SCIM Get single user endpoint - GET /api/v1/scim/v2/Users/:id
   app.get(`${SCIM_BASE}/Users/:id`, async (request, reply) => {
-    const workspaceId = request.workspaceId;
-    if (!workspaceId || !app.db) {
-      return reply.code(401).send(errorResponse("Unauthorized", 401));
-    }
-
-    const isAuthorized = await validateScimAuth(request, reply, workspaceId, app.db, app.config as Env);
-    if (!isAuthorized) return;
+    if (!app.db) return reply.code(503).send(errorResponse("Database unavailable", 503));
+    const workspaceId = await scimWorkspace(request, reply, app.db as Db);
+    if (!workspaceId) return;
 
     const db = app.db as Db;
     // @ts-ignore - id from params
@@ -217,13 +199,9 @@ export async function registerScimRoutes(app: FastifyInstance) {
 
   // SCIM Update user endpoint - PATCH /api/v1/scim/v2/Users/:id
   app.patch(`${SCIM_BASE}/Users/:id`, async (request, reply) => {
-    const workspaceId = request.workspaceId;
-    if (!workspaceId || !app.db) {
-      return reply.code(401).send(errorResponse("Unauthorized", 401));
-    }
-
-    const isAuthorized = await validateScimAuth(request, reply, workspaceId, app.db, app.config as Env);
-    if (!isAuthorized) return;
+    if (!app.db) return reply.code(503).send(errorResponse("Database unavailable", 503));
+    const workspaceId = await scimWorkspace(request, reply, app.db as Db);
+    if (!workspaceId) return;
 
     const db = app.db as Db;
     // @ts-ignore - id from params
@@ -273,13 +251,9 @@ export async function registerScimRoutes(app: FastifyInstance) {
 
   // SCIM Groups endpoint - GET /api/v1/scim/v2/Groups
   app.get(`${SCIM_BASE}/Groups`, async (request, reply) => {
-    const workspaceId = request.workspaceId;
-    if (!workspaceId || !app.db) {
-      return reply.code(401).send(errorResponse("Unauthorized", 401));
-    }
-
-    const isAuthorized = await validateScimAuth(request, reply, workspaceId, app.db, app.config as Env);
-    if (!isAuthorized) return;
+    if (!app.db) return reply.code(503).send(errorResponse("Database unavailable", 503));
+    const workspaceId = await scimWorkspace(request, reply, app.db as Db);
+    if (!workspaceId) return;
 
     const db = app.db as Db;
 

@@ -175,6 +175,9 @@ export function isPublicRoute(url: string, method?: string): boolean {
     pathname.startsWith("/api/v1/crm/hubspot/callback") ||
     pathname.startsWith("/api/v1/crm/hubspot/webhook") ||
     pathname.startsWith("/api/v1/billing/webhooks/") ||
+    // SCIM 2.0 is called by the identity provider with the workspace's SCIM token, not a staff
+    // login; scim.service checks that token itself and finds the workspace from it.
+    pathname.startsWith("/api/v1/scim/v2/") ||
     // COPS-05: product analytics events; the route checks INTERNAL_SERVICE_TOKEN itself.
     pathname === "/api/v1/internal/product-events" ||
     pathname.startsWith("/api/v1/webhooks/unipile/") ||

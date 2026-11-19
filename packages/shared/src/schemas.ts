@@ -620,6 +620,8 @@ export const pipelineStageCreateSchema = z.object({
   probability: z.number().int().min(0).max(100).default(0),
   isClosedWon: z.boolean().default(false),
   isClosedLost: z.boolean().default(false),
+  /** Make room: stages at this position and after move one down instead of a 409. */
+  shift: z.boolean().optional(),
 });
 
 /** COPS-07: rename a stage or change its win probability. Order and closed flags are not editable. */

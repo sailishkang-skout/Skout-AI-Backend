@@ -1063,5 +1063,18 @@ describe.skipIf(!hasDatabase)("CRM service E2E", () => {
     });
     expect(duplicate.statusCode).toBe(409);
     expect((duplicate.json() as { error: string }).error).toBe("stage_order_conflict");
+
+    // With shift, the new stage takes position 8 and Stage A moves to 9.
+    const shifted = await app.inject({
+      method: "POST",
+      url: `/api/v1/pipelines/${pipeline.id}/stages`,
+      headers,
+      payload: { name: "Stage C", orderIndex: 8, shift: true },
+    });
+    expect(shifted.statusCode).toBe(201);
+    const after = await app.inject({ method: "GET", url: "/api/v1/pipelines", headers });
+    const stages = (after.json() as { data: Array<{ id: string; stages: Array<{ name: string; orderIndex: number }> }> }).data.find((p) => p.id === pipeline.id)!.stages;
+    expect(stages.find((st) => st.name === "Stage C")?.orderIndex).toBe(8);
+    expect(stages.find((st) => st.name === "Stage A")?.orderIndex).toBe(9);
   });
 });

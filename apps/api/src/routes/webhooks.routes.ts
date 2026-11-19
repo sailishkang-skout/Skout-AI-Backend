@@ -1,19 +1,66 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { randomUUID } from "node:crypto";
+import { isIP } from "node:net";
 import { z } from "zod";
+import { schema } from "@skout/db";
+import { and, eq } from "drizzle-orm";
 import { WEBHOOK_EVENT_TYPES, buildWebhookService } from "../services/webhook.service.js";
+import { deliverOnce } from "../workers/webhook-delivery.worker.js";
 import { requireWorkspaceId } from "../utils/http.js";
+
+/**
+ * Webhooks send customer data to another server, so the address must be public HTTPS: no
+ * localhost, no private or link-local IPs, no internal hostnames (protects our own network).
+ */
+export function webhookUrlProblem(raw: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return "Must be a valid URL";
+  }
+  if (u.protocol !== "https:") return "Must start with https://";
+  if (u.username || u.password) return "Must not contain a username or password";
+  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal") || !host.includes(".")) {
+    return "Must be a public address, not a local or internal one";
+  }
+  const v = isIP(host);
+  if (v === 4) {
+    const [a, b] = host.split(".").map(Number) as [number, number];
+    if (a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127)) {
+      return "Must be a public address, not a private IP";
+    }
+  }
+  if (v === 6 && (host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80") || host.startsWith("::ffff:"))) {
+    return "Must be a public address, not a private IP";
+  }
+  return null;
+}
+const publicHttpsUrl = z.string().superRefine((v, ctx) => {
+  const problem = webhookUrlProblem(v);
+  if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem });
+});
+
+/** Creating, changing, deleting or testing an endpoint is for workspace owners and admins. */
+async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
+  const role = (request as FastifyRequest & { role?: string }).role;
+  if (!role || !["owner", "admin"].includes(role)) {
+    return reply.status(403).send({ error: "forbidden", message: "Only workspace owners and admins can manage webhooks" });
+  }
+}
 
 const eventTypeEnum = z.enum(WEBHOOK_EVENT_TYPES);
 
 const createEndpointSchema = z.object({
-  url: z.string().url("Must be a valid URL"),
+  url: publicHttpsUrl,
   description: z.string().max(255).optional(),
   eventTypes: z.array(eventTypeEnum).min(1, "At least one event type required"),
 });
 
 const updateEndpointSchema = z
   .object({
-    url: z.string().url("Must be a valid URL").optional(),
+    url: publicHttpsUrl.optional(),
     description: z.string().max(255).nullable().optional(),
     enabled: z.boolean().optional(),
     eventTypes: z.array(eventTypeEnum).min(1).optional(),
@@ -43,7 +90,7 @@ export async function webhookRoutes(app: FastifyInstance) {
   });
 
   /** POST /webhooks/endpoints */
-  app.post("/webhooks/endpoints", async (request, reply) => {
+  app.post("/webhooks/endpoints", { preHandler: requireAdmin }, async (request, reply) => {
     const workspaceId = requireWorkspaceId(request);
     const svc = buildWebhookService(app.db);
     if (!svc) return reply.status(503).send({ error: "database_unavailable" });
@@ -64,7 +111,7 @@ export async function webhookRoutes(app: FastifyInstance) {
   });
 
   /** PATCH /webhooks/endpoints/:id */
-  app.patch("/webhooks/endpoints/:id", async (request, reply) => {
+  app.patch("/webhooks/endpoints/:id", { preHandler: requireAdmin }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const workspaceId = requireWorkspaceId(request);
     const svc = buildWebhookService(app.db);
@@ -76,7 +123,7 @@ export async function webhookRoutes(app: FastifyInstance) {
   });
 
   /** DELETE /webhooks/endpoints/:id */
-  app.delete("/webhooks/endpoints/:id", async (request, reply) => {
+  app.delete("/webhooks/endpoints/:id", { preHandler: requireAdmin }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const workspaceId = requireWorkspaceId(request);
     const svc = buildWebhookService(app.db);
@@ -87,7 +134,7 @@ export async function webhookRoutes(app: FastifyInstance) {
   });
 
   /** POST /webhooks/endpoints/:id/rotate-secret */
-  app.post("/webhooks/endpoints/:id/rotate-secret", async (request, reply) => {
+  app.post("/webhooks/endpoints/:id/rotate-secret", { preHandler: requireAdmin }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const workspaceId = requireWorkspaceId(request);
     const svc = buildWebhookService(app.db);
@@ -95,6 +142,42 @@ export async function webhookRoutes(app: FastifyInstance) {
     const newSecret = await svc.rotateSecret(id, workspaceId);
     if (!newSecret) return reply.status(404).send({ error: "not_found" });
     return reply.send({ secret: newSecret });
+  });
+
+  /**
+   * POST /webhooks/endpoints/:id/test: send one signed `webhook.test` event now and report what
+   * the receiver answered. Not queued and not retried, so the admin sees the result at once.
+   */
+  app.post("/webhooks/endpoints/:id/test", { preHandler: requireAdmin }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const workspaceId = requireWorkspaceId(request);
+    if (!app.db) return reply.status(503).send({ error: "database_unavailable" });
+    const [ep] = await app.db
+      .select({ url: schema.webhookEndpoints.url, secret: schema.webhookEndpoints.secret })
+      .from(schema.webhookEndpoints)
+      .where(and(eq(schema.webhookEndpoints.id, id), eq(schema.webhookEndpoints.workspaceId, workspaceId)))
+      .limit(1);
+    if (!ep) return reply.status(404).send({ error: "not_found" });
+    const problem = webhookUrlProblem(ep.url);
+    if (problem) return reply.status(422).send({ error: "invalid_url", message: `This endpoint's address is not allowed: ${problem}` });
+    const deliveryId = randomUUID();
+    try {
+      const r = await deliverOnce(deliveryId, {
+        deliveryId,
+        endpointId: id,
+        url: ep.url,
+        secret: ep.secret,
+        workspaceId,
+        eventType: "webhook.test" as never,
+        eventId: randomUUID(),
+        attempt: 1,
+        payload: { message: "Test event from Skout. You can ignore it." },
+      });
+      return reply.send({ ok: r.statusCode >= 200 && r.statusCode < 300, statusCode: r.statusCode, durationMs: r.durationMs, responseBody: r.responseBody.slice(0, 300) });
+    } catch (err) {
+      const aborted = err instanceof Error && err.name === "AbortError";
+      return reply.send({ ok: false, statusCode: null, durationMs: null, error: aborted ? "No answer within 10 seconds" : "Could not reach the endpoint" });
+    }
   });
 
   /** GET /webhooks/endpoints/:id/deliveries */

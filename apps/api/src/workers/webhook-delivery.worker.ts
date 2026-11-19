@@ -52,7 +52,8 @@ interface DeliveryResult {
   durationMs: number;
 }
 
-async function deliverOnce(
+/** One signed POST to an endpoint (also used by "Send test event" in admin). */
+export async function deliverOnce(
   deliveryId: string,
   job: WebhookDeliveryJobPayload
 ): Promise<DeliveryResult> {
