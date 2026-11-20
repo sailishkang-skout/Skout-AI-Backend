@@ -16,6 +16,7 @@ import { createLogger } from "@skout/observability";
 import { generateCompanyId, normalizeDomain } from "@skout/shared";
 import { recordPrivilegedAction } from "@skout/auth";
 import { buildEntitlementsService } from "../entitlements.service.js";
+import { recordJobScan } from "./company-jobs.service.js";
 import { proposeMerge } from "../identity-merge.service.js";
 import { readRetentionDays, recordObservedFacts, type CaptureEvidenceSource, type EvidenceState } from "./capture-evidence.js";
 import {
@@ -1291,15 +1292,16 @@ export async function ingestCompanyCapture(
   db: Db,
   actor: CaptureActor,
   input: CompanyIngestInput
-): Promise<IngestOutcome & { company: { id: string; created: boolean } | null }> {
+): Promise<IngestOutcome & { company: { id: string; created: boolean } | null; jobScan: Awaited<ReturnType<typeof recordJobScan>> | null }> {
   const people = input.peopleProfiles ?? [];
   let companyResult: { id: string; created: boolean } | null = null;
+  let jobScanResult: Awaited<ReturnType<typeof recordJobScan>> | null = null;
   const outcome = await withRun(
     db,
     actor,
     { runId: input.runId, clientRunId: input.clientRunId, kind: "company", sourceUrl: input.sourceUrl, leads: people.length, pages: input.pagesRead ?? 0 },
     async () => {
-      const { runId: _runId, clientRunId: _clientRunId, peopleProfiles: _people, pagesRead: _pages, ...capture } = input;
+      const { runId: _runId, clientRunId: _clientRunId, peopleProfiles: _people, pagesRead: _pages, jobScan, ...capture } = input;
       const domain = domainFromCompany(capture);
       const retentionDays = await readRetentionDays(db, actor.workspaceId);
       const observedAt = new Date(capture.capturedAt ?? Date.now());
@@ -1397,6 +1399,8 @@ export async function ingestCompanyCapture(
           capturedAt: capture.capturedAt ?? new Date().toISOString(),
         });
         await writeSnapshot(tx, actor, "company", stored.id, merged);
+        // Latest Job Roles: the scan that came with this capture, recorded with the company.
+        if (jobScan) jobScanResult = await recordJobScan(tx, actor, stored.id, jobScan);
         await recordObservedFacts(tx, {
           workspaceId: actor.workspaceId,
           entityType: "company",
@@ -1487,7 +1491,7 @@ export async function ingestCompanyCapture(
       return counts;
     }
   );
-  return { ...outcome, company: companyResult };
+  return { ...outcome, company: companyResult, jobScan: jobScanResult };
 }
 
 /** Public ids already associated with a saved company, so the extension can skip them. */

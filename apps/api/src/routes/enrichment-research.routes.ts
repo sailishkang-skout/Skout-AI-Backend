@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { guardWithReleaseGate } from "../services/enrichment/release-gate.js";
 import { z } from "zod";
+import { jobListSchema, listCompanyJobs, requestJobRescan } from "../services/enrichment/company-jobs.service.js";
 import type { Db } from "@skout/db";
 import { assertPermission, recordPrivilegedAction } from "@skout/auth";
 import { HttpError, requireWorkspaceId } from "../utils/http.js";
@@ -152,6 +153,29 @@ export async function enrichmentResearchRoutes(app: FastifyInstance) {
     const company = uuid.safeParse(id).success ? await getCompany(db, actor.workspaceId, id) : null;
     if (!company) return reply.status(404).send({ error: "company_not_found" });
     return reply.send({ workspaceId: actor.workspaceId, company });
+  });
+
+  // Latest Job Roles: the company's captured job listings, newest first, with the scan history.
+  app.get("/enrichment/companies/:id/jobs", async (request, reply) => {
+    const { db, actor } = await authorize(request, "enrichment:read");
+    const { id } = request.params as { id: string };
+    const query = jobListSchema.parse(request.query ?? {});
+    const company = uuid.safeParse(id).success ? await getCompany(db, actor.workspaceId, id) : null;
+    if (!company) return reply.status(404).send({ error: "company_not_found" });
+    return reply.send({
+      workspaceId: actor.workspaceId,
+      companyId: id,
+      ...(await listCompanyJobs(db, actor.workspaceId, id, { includeNotSeen: query.includeNotSeen === "true", limit: query.limit })),
+    });
+  });
+
+  // Rescan: the extension offers it in its side panel; a person starts the scan there.
+  app.post("/enrichment/companies/:id/jobs/rescan", mutation, async (request, reply) => {
+    const { db, actor } = await authorize(request, "enrichment:capture");
+    const { id } = request.params as { id: string };
+    const company = uuid.safeParse(id).success ? await getCompany(db, actor.workspaceId, id) : null;
+    if (!company) return reply.status(404).send({ error: "company_not_found" });
+    return reply.send(await requestJobRescan(db, actor, id));
   });
 
   // Verified employees and discovered candidates are separate, paginated lists.

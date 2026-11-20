@@ -171,6 +171,75 @@ const companySectionSchema = z
   })
   .strict();
 
+/** One job listing read from a company's LinkedIn jobs. Nothing here is guessed: absent means not shown. */
+export const jobRoleSchema = z
+  .object({
+    jobId: z.string().trim().regex(/^\d{4,20}$/).optional(),
+    jobUrl: z
+      .string()
+      .url()
+      .max(2_000)
+      .refine((value) => {
+        try {
+          const url = new URL(value);
+          return url.protocol === "https:" && ["www.linkedin.com", "linkedin.com"].includes(url.hostname);
+        } catch {
+          return false;
+        }
+      }, "Expected a LinkedIn job URL")
+      .optional(),
+    title: text(300).min(1),
+    companyName: text(300).optional(),
+    department: text(200).optional(),
+    location: text(300).optional(),
+    country: text(120).optional(),
+    employmentType: text(80).optional(),
+    workplaceType: z.enum(["remote", "hybrid", "on_site"]).optional(),
+    description: text(30_000).optional(),
+    requirements: text(15_000).optional(),
+    postedAt: z.string().datetime().optional(),
+    postedText: text(100).optional(),
+    source: text(60).optional(),
+  })
+  .strict();
+
+export const JOB_SCAN_CLIENT_STATUSES = ["completed", "failed", "restricted", "not_loaded", "in_progress"] as const;
+
+/**
+ * A scan of a company's job listings: every pass (initial, verification), whether the passes agree
+ * the list is complete, and the jobs found. The server decides what the scan can be trusted for.
+ */
+export const jobScanSchema = z
+  .object({
+    clientScanId: z.string().trim().min(8).max(100),
+    status: z.enum(JOB_SCAN_CLIENT_STATUSES),
+    source: text(60).optional(),
+    passes: z
+      .array(
+        z
+          .object({
+            pass: z.number().int().min(1).max(5),
+            method: text(80).optional(),
+            found: z.number().int().min(0).max(5_000),
+            /** The pass reached the end of what LinkedIn shows (no "more" left, not cut short). */
+            complete: z.boolean(),
+            note: text(300).optional(),
+          })
+          .strict()
+      )
+      .max(5)
+      .default([]),
+    jobs: z.array(jobRoleSchema).max(500).default([]),
+    notes: z.array(text(300)).max(30).default([]),
+    error: text(500).optional(),
+    startedAt: z.string().datetime().optional(),
+    completedAt: z.string().datetime().optional(),
+  })
+  .strict();
+
+export type JobScanInput = z.infer<typeof jobScanSchema>;
+export type JobRoleInput = z.infer<typeof jobRoleSchema>;
+
 export const COMPANY_SECTION_KEYS = [
   "home",
   "about",
@@ -236,6 +305,8 @@ export const companyIngestSchema = z
     funding: factItem.optional(),
     recentPosts: factList(20).optional(),
     openJobs: factList(200).optional(),
+    /** Job listings with the scan that found them (see company-jobs.service.ts). */
+    jobScan: jobScanSchema.optional(),
     products: factList().optional(),
     life: z.array(z.union([text(4_000), factItem])).max(50).optional(),
     peopleStats: factItem.optional(),

@@ -723,3 +723,167 @@ describe("ENR-02 retried captures are saved once", () => {
     expect(again.json().run).toMatchObject({ id: first.json().run.id, status: "completed", errorMessage: null });
   });
 });
+
+describe("ENR-02 Latest Job Roles", () => {
+  // One fixed moment: a posting date must be the same every time a job is read.
+  const base = Date.now();
+  const ago = (days: number) => new Date(base - days * 86_400_000).toISOString();
+  const pass = (n: number, found: number, complete = true, method = n === 1 ? "company-jobs-tab" : "job-search") => ({ pass: n, method, found, complete });
+  const job = (n: number, extra: Record<string, unknown> = {}) => ({
+    jobId: `40000000${n}`,
+    jobUrl: `https://www.linkedin.com/jobs/view/40000000${n}/`,
+    title: `Role ${n}`,
+    location: "Austin, TX",
+    postedAt: ago(n),
+    ...extra,
+  });
+  const scan = (id: string, jobs: unknown[], extra: Record<string, unknown> = {}) => ({
+    clientScanId: id,
+    status: "completed",
+    passes: [pass(1, jobs.length), pass(2, jobs.length)],
+    jobs,
+    notes: [],
+    ...extra,
+  });
+  const companyBody = (jobScan?: unknown) => ({
+    publicId: "jobs-co",
+    sourceUrl: "https://www.linkedin.com/company/jobs-co/jobs/",
+    name: "Jobs Co",
+    ...(jobScan ? { jobScan } : {}),
+  });
+  const scanPath = "/enrichment/companies/jobs-co/jobs/scan";
+  /** Sends a scan and insists it was accepted: a 429 or 422 here would otherwise look like missing data. */
+  const send = async (body: unknown, path = scanPath, headers = owner) => {
+    const res = await post(path, body, headers);
+    expect([200, 201], `${path} answered ${res.statusCode}: ${res.body.slice(0, 200)}`).toContain(res.statusCode);
+    return res;
+  };
+  const roles = async (companyId: string, query = "", headers = owner) => (await get(`/enrichment/companies/${companyId}/jobs${query}`, headers)).json();
+  let companyId = "";
+
+  it("refuses a scan for a company that was never captured, and bad job data", async () => {
+    const missing = await post(scanPath, scan("scan-before-company", [job(1)]));
+    expect(missing.statusCode).toBe(409);
+    expect(missing.json().error).toBe("company_not_captured");
+    const created = await post("/enrichment/ingest/company", companyBody());
+    companyId = created.json().company.id;
+    expect(created.statusCode).toBe(201);
+    expect((await post(scanPath, scan("scan-bad-job-url-0000", [{ title: "X", jobUrl: "https://evil.example/jobs/1" }]))).statusCode).toBe(422);
+    expect((await post(scanPath, scan("scan-bad-workplace-0000", [job(1, { workplaceType: "anywhere" })]))).statusCode).toBe(422);
+    expect((await post(scanPath, { clientScanId: "x", status: "completed" })).statusCode).toBe(422);
+  });
+
+  it("saves the jobs that come with a company capture, newest first, with a verified scan", async () => {
+    const res = await post("/enrichment/ingest/company", companyBody(scan("with-company-capture", [job(3), job(1), job(2, { workplaceType: "remote", employmentType: "Full-time", department: "Engineering" })])));
+    expect(res.json().jobScan).toMatchObject({ status: "completed_verified", verified: true, jobsFound: 3, jobsNew: 3, passes: 2 });
+    const body = await roles(companyId);
+    expect(body.total).toBe(3);
+    expect(body.jobs.map((entry: { title: string }) => entry.title)).toEqual(["Role 1", "Role 2", "Role 3"]);
+    expect(body.jobs[1]).toMatchObject({ workplaceType: "remote", employmentType: "Full-time", department: "Engineering", status: "open", isNew: true });
+    expect(body.lastScan).toMatchObject({ status: "completed_verified" });
+    // The scan is not stored inside the company snapshot.
+    const snapshot = (await get(`/enrichment/companies/${companyId}`)).json();
+    expect(JSON.stringify(snapshot)).not.toContain("with-company-capture");
+  });
+
+  it("records the same scan once, however often it is sent", async () => {
+    const again = await post(scanPath, scan("with-company-capture", [job(1), job(2), job(3)]));
+    expect(again.statusCode).toBe(200);
+    expect(again.json()).toMatchObject({ replay: true, created: 0 });
+    const body = await roles(companyId);
+    expect(body.total).toBe(3);
+    expect(body.scans.filter((entry: { status: string }) => entry.status === "completed_verified")).toHaveLength(1);
+  });
+
+  it("merges a later scan: fills details, keeps the longer description, flags what changed", async () => {
+    const res = await send(scan("scan-details-1-0000", [job(1, { description: "Build and run the billing platform for enterprise customers.", requirements: "5+ years of TypeScript" }), job(2), job(3)]));
+    expect(res.json()).toMatchObject({ created: 0, updated: 1 });
+    await send(scan("scan-details-2-0000", [job(1, { description: "Short card snippet." }), job(2), job(3)]));
+    const first = (await roles(companyId)).jobs.find((entry: { title: string }) => entry.title === "Role 1");
+    expect(first).toMatchObject({ description: "Build and run the billing platform for enterprise customers.", requirements: "5+ years of TypeScript", detailsComplete: true, isUpdated: true });
+  });
+
+  it("treats a role read first without an id and then with one as the same role", async () => {
+    await send(scan("scan-no-id-0000", [job(1), job(2), job(3), { title: "Platform Engineer", location: "Remote" }]));
+    let body = await roles(companyId);
+    expect(body.total).toBe(4);
+    await send(scan("scan-now-with-id-0000", [job(1), job(2), job(3), { jobId: "500000001", jobUrl: "https://www.linkedin.com/jobs/view/500000001/", title: "Platform Engineer", location: "Remote" }]));
+    body = await roles(companyId);
+    expect(body.total).toBe(4);
+    expect(body.jobs.filter((entry: { title: string }) => entry.title === "Platform Engineer")).toHaveLength(1);
+    expect(body.jobs.find((entry: { title: string }) => entry.title === "Platform Engineer").jobId).toBe("500000001");
+  });
+
+  it("never reports a failed, restricted or single-pass scan as an empty result", async () => {
+    const before = await roles(companyId);
+    const failed = await post(scanPath, { clientScanId: "scan-failed-scan-0000", status: "failed", passes: [pass(1, 0, false)], jobs: [], notes: [], error: "LinkedIn did not load the jobs page" });
+    expect(failed.json().scan).toMatchObject({ status: "failed", verified: false, error: "LinkedIn did not load the jobs page" });
+    const restricted = await post(scanPath, { clientScanId: "scan-restricted-scan-0000", status: "restricted", passes: [pass(1, 0, false)], jobs: [], notes: [] });
+    expect(restricted.json().scan.status).toBe("restricted");
+    const single = await post(scanPath, { clientScanId: "scan-single-pass-0000", status: "completed", passes: [pass(1, 0)], jobs: [], notes: [] });
+    expect(single.json().scan).toMatchObject({ status: "verification_required", verified: false });
+    // None of these touched the saved roles.
+    const after = await roles(companyId);
+    expect(after.total).toBe(before.total);
+    expect(after.notSeen).toBe(0);
+  });
+
+  it("does not close a job because it is missing: two verified scans mark it not seen, never closed", async () => {
+    const keep = [job(1), job(2), job(3)];
+    await send(scan("scan-miss-1-0000", keep));
+    let body = await roles(companyId, "?includeNotSeen=true");
+    const missing = () => body.jobs.find((entry: { title: string }) => entry.title === "Platform Engineer");
+    expect(missing()).toMatchObject({ status: "open" });
+    await send(scan("scan-miss-2-0000", keep));
+    body = await roles(companyId, "?includeNotSeen=true");
+    expect(missing()).toMatchObject({ status: "not_seen" });
+    // Listed only on request; the open count excludes it; nothing is ever "closed".
+    expect((await roles(companyId)).total).toBe(3);
+    expect((await roles(companyId)).notSeen).toBe(1);
+    // Seen again: it is open again.
+    await send(scan("scan-miss-3-0000", [...keep, { jobId: "500000001", title: "Platform Engineer", location: "Remote" }]));
+    body = await roles(companyId, "?includeNotSeen=true");
+    expect(missing()).toMatchObject({ status: "open" });
+    const stored = await app.db!.select().from(schema.companyJobRoles).where(eq(schema.companyJobRoles.companyId, companyId));
+    expect(stored.every((row) => ["open", "not_seen"].includes(row.status))).toBe(true);
+  });
+
+  it("confirms there are no jobs only after two complete passes", async () => {
+    await post("/enrichment/ingest/company", { publicId: "empty-co", sourceUrl: "https://www.linkedin.com/company/empty-co/", name: "Empty Co" });
+    const emptyScan = (id: string, passes: unknown[]) => send({ clientScanId: id, status: "completed", passes, jobs: [], notes: [] }, "/enrichment/companies/empty-co/jobs/scan");
+    expect((await emptyScan("scan-empty-1-0000", [pass(1, 0)])).json().scan.status).toBe("verification_required");
+    expect((await emptyScan("scan-empty-2-0000", [pass(1, 0), pass(2, 0, false)])).json().scan.status).toBe("verification_required");
+    expect((await emptyScan("scan-empty-3-0000", [pass(1, 0), pass(2, 0)])).json().scan).toMatchObject({ status: "not_found", verified: true });
+  });
+
+  it("reports a job list that could not be confirmed complete as partial", async () => {
+    const res = await post(scanPath, { clientScanId: "scan-cut-short-0000", status: "completed", passes: [pass(1, 3), pass(2, 3, false)], jobs: [job(1), job(2), job(3)], notes: ["Second pass stopped at page 2"] });
+    expect(res.json().scan).toMatchObject({ status: "partial", verified: false });
+  });
+
+  it("shows a rescan request once, to the extension, and answers it with the next scan", async () => {
+    const request = () => post(`/enrichment/companies/${companyId}/jobs/rescan`, {});
+    expect((await request()).json()).toMatchObject({ alreadyRequested: false, scan: { status: "requested" } });
+    expect((await request()).json()).toMatchObject({ alreadyRequested: true });
+    const requested = (await get("/enrichment/capture/job-scans/requested")).json().scans as Array<{ companyPublicId: string; name: string }>;
+    expect(requested).toEqual([expect.objectContaining({ companyPublicId: "jobs-co", name: "Jobs Co" })]);
+    // The extension starts it, then finishes it: one row, not three.
+    const started = await post(`${scanPath}/start`, { clientScanId: "from-request-1" });
+    expect(started.json().scan.status).toBe("in_progress");
+    expect((await roles(companyId)).activeScan).toMatchObject({ status: "in_progress" });
+    await post(scanPath, scan("from-request-1", [job(1), job(2), job(3)]));
+    const body = await roles(companyId);
+    expect(body.activeScan).toBeNull();
+    expect(body.scans.filter((entry: { source: string | null; status: string }) => entry.status === "completed_verified").length).toBeGreaterThanOrEqual(1);
+    expect((await get("/enrichment/capture/job-scans/requested")).json().scans).toEqual([]);
+    const rows = await app.db!.select().from(schema.companyJobScans).where(and(eq(schema.companyJobScans.workspaceId, WORKSPACE), eq(schema.companyJobScans.clientScanId, "from-request-1")));
+    expect(rows).toHaveLength(1);
+  });
+
+  it("keeps jobs inside the workspace", async () => {
+    expect((await get(`/enrichment/companies/${companyId}/jobs`, outsider)).statusCode).toBe(404);
+    expect((await post(`/enrichment/companies/${companyId}/jobs/rescan`, {}, outsider)).statusCode).toBe(404);
+    expect((await post(scanPath, scan("scan-outsider-scan-0000", [job(1)]), outsider)).statusCode).toBe(409);
+    expect((await get("/enrichment/capture/job-scans/requested", outsider)).json().scans).toEqual([]);
+  });
+});
