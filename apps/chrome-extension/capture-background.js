@@ -19,6 +19,7 @@ export const CAPTURE_CONTENT_FILES = [
   'capture/page-extract.js',
   'capture/restriction-detect.js',
   'capture/capture-ui.js',
+  'capture/capture-verify.js',
   'capture/company-capture.js',
   'capture/person-capture.js',
   'capture/sales-navigator-capture.js',
@@ -187,8 +188,8 @@ async function readCompanyPage(request, sender, collectMessage = 'COLLECT_COMPAN
     let timeout;
     try {
       const result = await Promise.race([
-        chrome.tabs.sendMessage(tab.id,{type:collectMessage,companyId:request.companyId,url}),
-        new Promise((_,reject) => {timeout=setTimeout(() => reject(new Error('Page took too long to load.')),55000);}),
+        chrome.tabs.sendMessage(tab.id,{type:collectMessage,companyId:request.companyId,url,deep:request.deep === true}),
+        new Promise((_,reject) => {timeout=setTimeout(() => reject(new Error('Page took too long to load.')),request.deep === true ? 90000 : 55000);}),
       ]);
       return task.cancelled ? {ok:true,cancelled:true} : result;
     } finally {clearTimeout(timeout);}
@@ -405,7 +406,7 @@ async function readPersonPage(request, sender) {
     // Skills detail pages can load several bounded "Show more" batches.
     // Keep this user-triggered, same-profile reader alive long enough to
     // finish them; it still closes its temporary tab immediately afterward.
-    try { return await Promise.race([chrome.tabs.sendMessage(tab.id,{type:'COLLECT_PERSON_PAGE',personId:request.personId,url}),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Profile page took too long to load.')),45000);})]); }
+    try { return await Promise.race([chrome.tabs.sendMessage(tab.id,{type:'COLLECT_PERSON_PAGE',personId:request.personId,url,deep:request.deep === true}),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Profile page took too long to load.')),request.deep === true ? 120000 : 45000);})]); }
     finally { clearTimeout(timeout); }
   } catch(error) { return task.cancelled ? {ok:true,cancelled:true} : {ok:false,error:error.message}; }
   finally {

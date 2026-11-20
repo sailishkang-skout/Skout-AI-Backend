@@ -67,6 +67,7 @@
         "capture/page-extract.js",
         "capture/restriction-detect.js",
         "capture/capture-ui.js",
+        "capture/capture-verify.js",
         "capture/company-capture.js",
         "capture/person-capture.js",
         "capture/sales-navigator-capture.js",

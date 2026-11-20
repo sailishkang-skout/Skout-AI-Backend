@@ -345,6 +345,8 @@ export async function getPerson(db: Db, workspaceId: string, prospectId: string)
     followersCount: typeof snapshot.followersCount === "number" ? snapshot.followersCount : null,
     website: text(snapshot.website),
     websites: list("websites"),
+    /** What the capture's verification scan concluded (statuses, sections, what was not found). */
+    verification: (snapshot.verification as Json | undefined) ?? null,
     relationshipContext: (snapshot.relationshipContext as Json | undefined) ?? null,
     experience: { current: list("currentCompanies"), previous: list("previousCompanies") },
     educations: list("educations"),
@@ -534,6 +536,8 @@ export async function getCompany(db: Db, workspaceId: string, companyId: string)
       discoveryCandidates: counts.get(companyId)!.candidates,
     },
     facts,
+    /** What the capture's verification scan concluded for this company (people, jobs, About details). */
+    verification: (capture.verification as Json | undefined) ?? null,
     evidence: rows.slice(0, 100).map((evidence) => toFact(evidence)),
     changes: changes.map(toChange),
     freshness: { capturedAt: snapshot?.capturedAt.toISOString() ?? null, stale: facts.length > 0 && facts.every((fact) => fact.stale) },

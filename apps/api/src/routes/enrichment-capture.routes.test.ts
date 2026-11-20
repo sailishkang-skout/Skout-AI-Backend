@@ -894,3 +894,47 @@ describe("ENR-02 Latest Job Roles", () => {
     expect((await get("/enrichment/capture/job-scans/requested", outsider)).json().scans).toEqual([]);
   });
 });
+
+describe("ENR-02 capture verification is stored and shown", () => {
+  const verification = (overrides: Record<string, unknown> = {}) => ({
+    status: "partial",
+    passes: 2,
+    sections: { skills: { found: 12, expected: 27, state: "incomplete" }, education: { found: 1, state: "complete" } },
+    missing: ["Phone"],
+    notes: ["Skills: captured 12 of 30."],
+    verifiedAt: new Date().toISOString(),
+    ...overrides,
+  });
+
+  it("keeps a company's verification with the capture and returns it with the company", async () => {
+    const res = await post("/enrichment/ingest/company", {
+      publicId: "verified-co",
+      sourceUrl: "https://www.linkedin.com/company/verified-co/",
+      name: "Verified Co",
+      verification: verification({ status: "verified", sections: { people: { found: 3, state: "complete" }, jobs: { found: 2, state: "none" } }, missing: undefined }),
+    });
+    expect(res.statusCode).toBe(201);
+    const detail = (await get(`/enrichment/companies/${res.json().company.id}`)).json().company;
+    expect(detail.verification).toMatchObject({ status: "verified", passes: 2, sections: { people: { found: 3, state: "complete" } } });
+  });
+
+  it("rejects a verification with a made-up status or section state", async () => {
+    const body = { publicId: "bad-verified-co", sourceUrl: "https://www.linkedin.com/company/bad-verified-co/", name: "Bad Verified Co" };
+    expect((await post("/enrichment/ingest/company", { ...body, verification: verification({ status: "great" }) })).statusCode).toBe(422);
+    expect((await post("/enrichment/ingest/company", { ...body, verification: verification({ sections: { skills: { found: 1, state: "maybe" } } }) })).statusCode).toBe(422);
+    expect((await post("/enrichment/ingest/company", { ...body, verification: verification({ passes: 0 }) })).statusCode).toBe(422);
+  });
+
+  it("stores a person's verification and returns it with the person", async () => {
+    const res = await post("/enrichment/ingest/person", {
+      publicId: "verified-person",
+      sourceUrl: "https://www.linkedin.com/in/verified-person/",
+      fullName: "Verified Person",
+      headline: "Engineer",
+      verification: verification(),
+    });
+    expect(res.statusCode).toBe(201);
+    const detail = (await get(`/enrichment/people/${res.json().person.prospectId}`)).json().person;
+    expect(detail.verification).toMatchObject({ status: "partial", missing: ["Phone"], sections: { skills: { found: 12, expected: 27, state: "incomplete" } } });
+  });
+});

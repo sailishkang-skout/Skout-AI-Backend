@@ -90,6 +90,49 @@ globalThis.SkoutCompanyCapture = globalThis.SkoutCompanyCapture || (() => {
     else if (!response?.ok) reject(new Error(response?.error || 'Capture did not return data.'));
     else resolve(response);
   }));
+  /**
+   * What the capture's verification scans concluded, per source: the people (and whether each way of
+   * finding them was read), the job roles, and the About details. A source that failed or never
+   * loaded is not an empty one.
+   */
+  function companyVerification({data, options, peopleTrace, aboutMissing, aboutVerified, errors}) {
+    const verify = globalThis.SkoutCaptureVerify;
+    const sections = {};
+    const notes = [];
+    if (options.includeCompany) sections.about = {found: 5 - aboutMissing.length, expected: 5, state: aboutVerified ? 'complete' : 'not_loaded'};
+    if (options.includeCompany && !aboutVerified) notes.push('The About page could not be read.');
+    if (options.includePeople && peopleTrace.search !== 'skipped') {
+      const found = (data.peopleProfiles || []).length;
+      let state;
+      if (found) state = 'complete';
+      else if (peopleTrace.restricted) state = 'restricted';
+      else if (peopleTrace.directory === 'error' && ['error', 'unavailable'].includes(peopleTrace.search)) state = 'failed';
+      // Zero people is confirmed only when the People page and the people search were both read.
+      else if (peopleTrace.directory === 'none' && peopleTrace.search === 'none') state = 'none';
+      else if (peopleTrace.search === 'none' && peopleTrace.directory === 'skipped') state = 'none';
+      else state = 'not_loaded';
+      sections.people = {found, state};
+      const via = [peopleTrace.directory === 'cards' ? 'the People page' : '', ['results'].includes(peopleTrace.search) ? 'the company people search' : ''].filter(Boolean).join(' and ');
+      if (found) notes.push(`People: ${found} found through ${via || 'LinkedIn'} in this batch.`);
+      else if (state === 'none') notes.push('People: none found by the People page or the company people search, after a second scan.');
+      else if (state === 'not_loaded') notes.push(`People: none found, but ${peopleTrace.search === 'unavailable' ? 'LinkedIn did not give a people search link' : 'a source did not load'}, so this is not confirmed.`);
+      else if (peopleTrace.error) notes.push(`People: ${peopleTrace.error}`);
+    }
+    if (data.jobScan) {
+      const scan = data.jobScan;
+      const twice = (scan.passes || []).length >= 2 && scan.passes.every(pass => pass.complete);
+      const count = (scan.jobs || []).length;
+      const state = scan.status === 'restricted' ? 'restricted' : scan.status === 'not_loaded' ? 'not_loaded' : scan.status === 'failed' ? 'failed'
+        : twice ? (count ? 'complete' : 'none') : (count ? 'incomplete' : 'not_loaded');
+      sections.jobs = {found: count, state};
+    }
+    return verify.verdictFor(sections, {
+      missing: aboutMissing,
+      passes: 2,
+      restricted: peopleTrace.restricted,
+      notes: [...notes, ...errors.filter(error => /^Verification/.test(error)).slice(0, 3)],
+    });
+  }
   let running = false;
   async function initialCompanyData(options) {
     let data = extractCompany();
@@ -151,6 +194,18 @@ globalThis.SkoutCompanyCapture = globalThis.SkoutCompanyCapture || (() => {
       }
       // Reapply the detailed About payload last when available, regardless of traversal order.
       if (about) data = merge(data, about);
+      // Verification of the company's own details: a field the pages did not show gets one more look
+      // at the About page (scrolled further), then is named as not found.
+      const ABOUT_FIELDS = [['industry','Industry'],['headquarter','Headquarters'],['size','Company size'],['website','Website'],['overview','About']];
+      const aboutMissing = () => ABOUT_FIELDS.filter(([key]) => !data[key]).map(([, label]) => label);
+      let aboutVerified = Boolean(about);
+      if (!stopped && options.includeCompany && aboutMissing().length) {
+        status.textContent = 'Verifying company details: second look at the About page…';
+        try {
+          const again = await message({type:'READ_COMPANY_PAGE',url:root + 'about/',companyId,deep:true});
+          if (!again.cancelled) { data = merge(data, again.data); about = again.data; aboutVerified = true; }
+        } catch (error) { warnings.push(`Verification of the About page: ${error.message}`); }
+      }
       // Capture the individual cards that LinkedIn actually renders on the
       // Company People page. Its "Page 1 of N" control changes aggregate
       // analytics, not the member-card list, so it must not be treated as an
@@ -166,45 +221,66 @@ globalThis.SkoutCompanyCapture = globalThis.SkoutCompanyCapture || (() => {
           peopleSearchUrl = `https://www.linkedin.com/search/results/people/?currentCompany=${encodeURIComponent(JSON.stringify([data.memberId]))}`;
         }
       }
+      // Where the people came from, and whether each source was read: a source that failed is not
+      // an empty one, so a failed fallback is never reported as "no people".
+      const peopleTrace = {directory:'skipped', search: options.includePeople ? (peopleSearchUrl ? 'pending' : 'unavailable') : 'skipped', error: undefined, restricted: false};
+      const noteFailure = (error) => { peopleTrace.error = error.message; if (/restricted|warning|verify it/i.test(error.message)) peopleTrace.restricted = true; };
+      const readDirectory = async (deep) => {
+        try {
+          const directoryResult = await message({type:'READ_COMPANY_PEOPLE_DIRECTORY',url:root + 'people/',companyId,deep});
+          if (directoryResult.cancelled) return;
+          directoryRead = true;
+          if (Array.isArray(directoryResult.peopleProfiles) && directoryResult.peopleProfiles.length) {
+            peopleTrace.directory = 'cards';
+            data.peopleProfiles = directoryResult.peopleProfiles;
+            warnings.push(...(directoryResult.warnings || []));
+          } else {
+            peopleTrace.directory = 'none';
+          }
+        } catch (error) { peopleTrace.directory = 'error'; noteFailure(error); warnings.push(`Company People page: ${error.message}`); }
+      };
+      const readSearch = async () => {
+        try {
+          const expectedAssociatedMembers = associatedMemberCount(data.peopleStats?.totalEmployeesText);
+          const peopleResult = await message({type:'READ_COMPANY_PEOPLE_SEARCH',url:peopleSearchUrl,companyId,expectedAssociatedMembers});
+          if (peopleResult.cancelled) return;
+          if (!Array.isArray(peopleResult.peopleProfiles)) return;
+          peopleTrace.search = peopleResult.peopleProfiles.length ? 'results' : 'none';
+          searchIds = new Set(peopleResult.peopleProfiles.map(profile => profile.publicId));
+          if (peopleResult.progress) data._captureProgress = {...peopleResult.progress,complete:peopleResult.complete};
+          if (peopleResult.checkpointToken) data._captureCheckpointToken = peopleResult.checkpointToken;
+          const merged = new Map((data.peopleProfiles || []).map(profile => [profile.publicId, profile]));
+          for (const profile of peopleResult.peopleProfiles) {
+            const directCard = merged.get(profile.publicId);
+            // A direct card from the company People page is stronger
+            // evidence than a broad search result; do not downgrade it.
+            merged.set(profile.publicId, directCard?.associationSource === 'company-people-page'
+              ? {...profile, ...directCard}
+              : {...directCard, ...profile});
+          }
+          data.peopleProfiles = [...merged.values()];
+          warnings.push(...(peopleResult.warnings || []));
+        } catch (error) { peopleTrace.search = 'error'; noteFailure(error); errors.push(`associated people: ${error.message}`); }
+      };
       // A continued queue batch already has the People page cards from its first batch, unless
       // there is no people search to continue: then the People page is the only source.
       if (!stopped && options.includePeople && (!options.resume || !peopleSearchUrl)) {
         status.textContent = 'Reading visible company people pages…';
-        try {
-          const directoryResult = await message({type:'READ_COMPANY_PEOPLE_DIRECTORY',url:root + 'people/',companyId});
-          if (!directoryResult.cancelled) {
-            directoryRead = true;
-            if (Array.isArray(directoryResult.peopleProfiles) && directoryResult.peopleProfiles.length) {
-              data.peopleProfiles = directoryResult.peopleProfiles;
-              warnings.push(...(directoryResult.warnings || []));
-            } else {
-              warnings.push('The Company People page had no direct employee cards; checking LinkedIn’s company-filtered people search.');
-            }
-          }
-        } catch (error) { warnings.push(`Company People page: ${error.message}`); }
+        await readDirectory(false);
+        if (peopleTrace.directory === 'none') warnings.push('The Company People page showed no employee cards (LinkedIn may show only suggestions there). Reading the company-filtered people search instead.');
       }
       if (!stopped && options.includePeople && peopleSearchUrl) {
         status.textContent = 'Reading additional visible associated people…';
-        try {
-          const expectedAssociatedMembers = associatedMemberCount(data.peopleStats?.totalEmployeesText);
-          const peopleResult = await message({type:'READ_COMPANY_PEOPLE_SEARCH',url:peopleSearchUrl,companyId,expectedAssociatedMembers});
-          if (!peopleResult.cancelled && Array.isArray(peopleResult.peopleProfiles)) {
-            searchIds = new Set(peopleResult.peopleProfiles.map(profile => profile.publicId));
-            if (peopleResult.progress) data._captureProgress = {...peopleResult.progress,complete:peopleResult.complete};
-            if (peopleResult.checkpointToken) data._captureCheckpointToken = peopleResult.checkpointToken;
-            const merged = new Map((data.peopleProfiles || []).map(profile => [profile.publicId, profile]));
-            for (const profile of peopleResult.peopleProfiles) {
-              const directCard = merged.get(profile.publicId);
-              // A direct card from the company People page is stronger
-              // evidence than a broad search result; do not downgrade it.
-              merged.set(profile.publicId, directCard?.associationSource === 'company-people-page'
-                ? {...profile, ...directCard}
-                : {...directCard, ...profile});
-            }
-            data.peopleProfiles = [...merged.values()];
-          }
-          warnings.push(...(peopleResult.warnings || []));
-        } catch (error) { errors.push(`associated people: ${error.message}`); }
+        await readSearch();
+      }
+      // Second scan: nothing was found yet. Look again before concluding there are no people: the
+      // search once more (it may have been slow to render), then the People page, scrolled further.
+      if (!stopped && options.includePeople && !options.resume && !(data.peopleProfiles || []).length && !peopleTrace.restricted) {
+        status.textContent = 'No people found yet: second scan…';
+        await pause(2500);
+        if (peopleSearchUrl) await readSearch();
+        if (!(data.peopleProfiles || []).length && !stopped) await readDirectory(true);
+        peopleTrace.secondScan = true;
       }
       if (!stopped && options.includePeople && !peopleSearchUrl) {
         warnings.push('LinkedIn did not render an associated-members results link for this company, so no profile search was started.');
@@ -249,6 +325,7 @@ globalThis.SkoutCompanyCapture = globalThis.SkoutCompanyCapture || (() => {
         }
       }
       data.sourceUrl = root;
+      data.verification = companyVerification({data, options, peopleTrace, aboutMissing: aboutMissing(), aboutVerified, errors});
       const notes = [`${stopped ? 'Stopped. ' : ''}Read ${read} company pages. All collected details are saved together.`,
         ...errors.map(error => `Could not read ${error}`), ...new Set(warnings),
         'Includes accessible company tabs and loaded cards. Restricted pages, external job-search results, and older posts may be absent.'];
@@ -258,7 +335,7 @@ globalThis.SkoutCompanyCapture = globalThis.SkoutCompanyCapture || (() => {
     finally {running = false;}
   }
   let collecting = false;
-  async function collectPeopleDirectory(companyId, expectedUrl) {
+  async function collectPeopleDirectory(companyId, expectedUrl, deep = false) {
     if (collecting) throw new Error('This page is already being read.');
     collecting = true;
     try {
@@ -274,6 +351,8 @@ globalThis.SkoutCompanyCapture = globalThis.SkoutCompanyCapture || (() => {
         // reaching the discovery save step.
         visibleProfiles = extractCompany().peopleProfiles || [];
         if (visibleProfiles.length) break;
+        // Cards below the fold render only as the page scrolls; the second scan scrolls further.
+        window.scrollBy({top: Math.max(400, Math.floor(window.innerHeight * 0.7)), behavior: 'auto'});
         if (document.querySelector('main')?.textContent?.includes('People you may know') && extractCompany().peopleStats?.totalEmployeesText) break;
         await pause(500);
       }
@@ -283,7 +362,7 @@ globalThis.SkoutCompanyCapture = globalThis.SkoutCompanyCapture || (() => {
       return {ok:true,peopleProfiles:[...people.values()],warnings:[`Collected ${people.size} profiles from LinkedIn's visible company People pages.`]};
     } finally { collecting = false; }
   }
-  async function collect(companyId, expectedUrl) {
+  async function collect(companyId, expectedUrl, deep = false) {
     if (collecting) throw new Error('This page is already being read.');
     collecting = true;
     const banner = document.createElement('div');
@@ -307,8 +386,14 @@ globalThis.SkoutCompanyCapture = globalThis.SkoutCompanyCapture || (() => {
           await pause(500);
         }
       }
+      // The verification scan reads further: scroll the page so lazily rendered details load.
+      if (deep) {
+        for (let pass = 0; pass < 14; pass++) { window.scrollBy({top: Math.max(500, Math.floor(window.innerHeight * 0.8)), behavior: 'auto'}); await pause(700); }
+        window.scrollTo(0, 0);
+        await pause(400);
+      }
       const result = extractCompany();
-      const warnings = ['Only content already rendered on this page was captured. Scroll or open carousel cards yourself, then capture again to add more.'];
+      const warnings = ['Details the page did not render were not captured. The verification scan looks again, and anything still missing is listed in the review.'];
       return {ok:true,data:result,links:links(companyId),warnings};
     } finally {collecting = false;banner.remove();}
   }
@@ -316,10 +401,10 @@ globalThis.SkoutCompanyCapture = globalThis.SkoutCompanyCapture || (() => {
     if (sender.id !== chrome.runtime.id) return;
     if (request.type === 'COMPANY_READER_READY') {respond({ok:true,url:pageUrl(location.href, request.companyId)});return;}
     if (request.type === 'COLLECT_COMPANY_PAGE') {
-      collect(request.companyId,request.url).then(respond).catch(error => respond({ok:false,error:error.message}));return true;
+      collect(request.companyId,request.url,request.deep === true).then(respond).catch(error => respond({ok:false,error:error.message}));return true;
     }
     if (request.type === 'COLLECT_COMPANY_PEOPLE_DIRECTORY') {
-      collectPeopleDirectory(request.companyId,request.url).then(respond).catch(error => respond({ok:false,error:error.message}));return true;
+      collectPeopleDirectory(request.companyId,request.url,request.deep === true).then(respond).catch(error => respond({ok:false,error:error.message}));return true;
     }
   });
   return {start,merge,pageUrl,links,limitBatch};

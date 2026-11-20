@@ -194,6 +194,30 @@ export function runItemText(item) {
   }
 }
 
+const VERIFICATION_LABELS = {
+  verified: "Completed & verified",
+  missing_data: "Completed with missing data",
+  verification_required: "Verification required",
+  partial: "Partial capture",
+  not_loaded: "Not loaded",
+  restricted: "Restricted by LinkedIn",
+  failed: "Failed",
+};
+const SECTION_WORDS = { complete: "matches what LinkedIn shows", incomplete: "short of what LinkedIn shows", none: "none on LinkedIn (confirmed)", not_loaded: "did not load", restricted: "restricted by LinkedIn", failed: "could not be read" };
+
+/** The review lines for a capture's verification scan: the verdict, each section, and what was not found. */
+export function verificationLines(verification) {
+  if (!verification) return [];
+  const lines = [`Verification: ${VERIFICATION_LABELS[verification.status] || "Unknown"} (${verification.passes} scan${verification.passes === 1 ? "" : "s"})`];
+  for (const [key, section] of Object.entries(verification.sections || {})) {
+    const name = key.charAt(0).toUpperCase() + key.slice(1);
+    lines.push(`${name}: ${section.found}${section.expected !== undefined ? ` of ${section.expected}` : ""} · ${SECTION_WORDS[section.state] || section.state}${section.note ? ` (${section.note})` : ""}`);
+  }
+  if (verification.missing?.length) lines.push(`Not found on the profile: ${verification.missing.join(", ")}. Fill any you know below.`);
+  lines.push(...(verification.notes || []).filter((note) => !/^(Skills|Education|Experience): captured/.test(note)));
+  return lines;
+}
+
 /** How far a job scan can be trusted, in words (before and after the workspace has judged it). */
 export function jobScanStatusLabel(scan) {
   const jobs = Array.isArray(scan?.jobs) ? scan.jobs.length : Number(scan?.jobsFound) || 0;
@@ -626,6 +650,7 @@ export function initCapturePanel() {
     reviewNotesEl.replaceChildren(
       ...[
         draftSummary(draft.kind, currentData()),
+        ...verificationLines(data.verification),
         `Source: ${draft.sourceUrl || data.sourceUrl || "unknown"} · captured ${new Date(draft.capturedAt).toLocaleString()}`,
         ...(draft.kind === "sales" ? (data.filters || []).map((filter) => `Your filter: ${filter}`) : []),
         ...(draft.notes || []),

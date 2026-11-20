@@ -105,6 +105,38 @@ const relationshipContext = z
   })
   .strict();
 
+export const CAPTURE_VERIFICATION_STATUSES = ["verified", "missing_data", "verification_required", "partial", "not_loaded", "restricted", "failed"] as const;
+
+/**
+ * What a capture's verification scan concluded, section by section. `complete`: matched what the
+ * page said it has; `incomplete`: fewer than the page says (after the second look); `none`: the
+ * section loaded and is empty; `not_loaded`: it never finished loading; `restricted`: LinkedIn
+ * would not show it.
+ */
+export const captureVerificationSchema = z
+  .object({
+    status: z.enum(CAPTURE_VERIFICATION_STATUSES),
+    passes: z.number().int().min(1).max(5),
+    sections: z
+      .record(
+        z.string().max(40),
+        z
+          .object({
+            found: z.number().int().min(0).max(100_000),
+            expected: z.number().int().min(0).max(100_000).optional(),
+            state: z.enum(["complete", "incomplete", "none", "not_loaded", "restricted", "failed"]),
+            note: text(300).optional(),
+          })
+          .strict()
+      )
+      .refine((value) => Object.keys(value).length <= 20, "Too many sections")
+      .optional(),
+    missing: z.array(text(60)).max(30).optional(),
+    notes: z.array(text(300)).max(20).optional(),
+    verifiedAt: z.string().datetime().optional(),
+  })
+  .strict();
+
 export const personIngestSchema = z
   .object({
     runId,
@@ -132,6 +164,8 @@ export const personIngestSchema = z
     website: webUrl.optional(),
     websites: z.array(websiteLink).max(10).optional(),
     relationshipContext: relationshipContext.optional(),
+    /** What the verification scan concluded about this capture's completeness. */
+    verification: captureVerificationSchema.optional(),
     currentCompanies: factList(50).optional(),
     previousCompanies: factList().optional(),
     educations: factList(50).optional(),
@@ -305,6 +339,7 @@ export const companyIngestSchema = z
     funding: factItem.optional(),
     recentPosts: factList(20).optional(),
     openJobs: factList(200).optional(),
+    verification: captureVerificationSchema.optional(),
     /** Job listings with the scan that found them (see company-jobs.service.ts). */
     jobScan: jobScanSchema.optional(),
     products: factList().optional(),

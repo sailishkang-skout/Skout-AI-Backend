@@ -9,6 +9,11 @@ const { text, firstMatch, allMatches, metaContent, publicIdFromUrl, parseCount, 
 // Extraction
 // ---------------------------------------------------------------------------
 
+function _signals() {
+  const { expectedCounts, showAll } = extractExpectedCounts();
+  return { _expectedCounts: expectedCounts, _showAll: showAll };
+}
+
 function extractPerson() {
   const publicId = publicIdFromUrl('person');
 
@@ -229,6 +234,7 @@ function extractPerson() {
     // validated email and phone values are sent to the capture endpoint.
     _contactInfo: contactInfo,
     _locationRank: locationRank,
+    ..._signals(),
     // Contact info first; otherwise an email or phone the person wrote in their bio.
     // Contact info first; otherwise a website the person shows in their profile header.
     website: contactInfo ? contactInfo.website : topcardWebsite(topcard),
@@ -243,6 +249,28 @@ function extractPerson() {
       experience: experience.length, educations: educations.length, skills: skills.length,
     }),
   };
+}
+
+/**
+ * What the profile says it has, from its own "Show all 27 skills" / "Show all 6 experiences" links:
+ * the totals the verification scan compares against, and whether a Show all link exists at all.
+ */
+function extractExpectedCounts() {
+  const expectedCounts = {};
+  const showAll = {};
+  const names = { skill: 'skills', experience: 'experience', education: 'education' };
+  const main = document.querySelector('main') || document.body;
+  for (const node of main.querySelectorAll('a, button, span')) {
+    const label = ((node.getAttribute('aria-label') || text(node) || '')).replace(/\s+/g, ' ').trim();
+    const match = label.match(/^show all(?:\s+([\d,]+))?\s+(skills?|experiences?|educations?)\b/i);
+    if (!match) continue;
+    const key = names[match[2].toLowerCase().replace(/s$/, '')];
+    if (!key) continue;
+    showAll[key] = true;
+    const total = match[1] ? Number(match[1].replace(/,/g, '')) : undefined;
+    if (Number.isFinite(total)) expectedCounts[key] = Math.max(expectedCounts[key] || 0, total);
+  }
+  return { expectedCounts, showAll };
 }
 
 /** "Present" in the date ranges of the languages LinkedIn profiles are commonly shown in. */
