@@ -13,6 +13,7 @@ import { and, count, desc, eq, gte, inArray, isNotNull, isNull, sql, type SQL } 
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { recordPrivilegedAction } from "@skout/auth";
+import { jobRoleCounts } from "./company-jobs.service.js";
 import { cleanCompanyName, normalizedCompanyName, prospectIdForCanonicalKey, publicIdFromProfileUrl } from "./capture-identity.js";
 import { deleteCaptureEvidence } from "./capture-evidence.js";
 import { CaptureError, type CaptureActor } from "./capture-ingest.service.js";
@@ -442,11 +443,14 @@ export async function listCompanies(db: Db, workspaceId: string, filters: { q?: 
     .limit(filters.pageSize)
     .offset((filters.page - 1) * filters.pageSize);
   const counts = await companyPeopleCounts(db, workspaceId, rows.map((row) => row.id));
+  const openRoles = await jobRoleCounts(db, workspaceId, rows.map((row) => row.id));
   return {
     companies: rows.map((row) => {
       const people = counts.get(row.id)!;
       return {
         ...row,
+        /** Job roles the latest scans saw as open (Latest Job Roles). */
+        openRoles: openRoles.get(row.id) ?? 0,
         verifiedEmployees: people.verified,
         discoveryCandidates: people.candidates,
         // ENR-01 response shape, kept for existing consumers.

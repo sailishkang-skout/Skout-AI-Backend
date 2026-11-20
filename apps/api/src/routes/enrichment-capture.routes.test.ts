@@ -880,6 +880,13 @@ describe("ENR-02 Latest Job Roles", () => {
     expect(rows).toHaveLength(1);
   });
 
+  it("shows each company's open role count in the Companies list", async () => {
+    const list = (await get("/enrichment/companies?q=Jobs%20Co")).json().companies as Array<{ id: string; openRoles: number }>;
+    const total = (await roles(companyId)).total;
+    expect(total).toBeGreaterThan(0);
+    expect(list.find((company) => company.id === companyId)?.openRoles).toBe(total);
+  });
+
   it("tells the extension which jobs already have their details", async () => {
     const known = (await get("/enrichment/companies/jobs-co/jobs/known")).json().jobs as Array<{ jobId: string; detailsComplete: boolean }>;
     expect(known.find((entry) => entry.jobId === "400000001")).toMatchObject({ detailsComplete: true });

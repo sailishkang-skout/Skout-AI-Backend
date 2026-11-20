@@ -116,7 +116,7 @@ async function upsertRoles(tx: Tx, workspaceId: string, companyId: string, jobs:
   }
   for (const [key, job] of [...incoming]) {
     if (job.jobId) continue;
-    const identified = [...incoming.entries()].filter(([other, value]) => value.jobId && jobSignature(value) === jobSignature(job));
+    const identified = [...incoming.entries()].filter(([, value]) => value.jobId && jobSignature(value) === jobSignature(job));
     if (identified.length === 1) {
       incoming.set(identified[0]![0], { ...job, ...incoming.get(identified[0]![0])! });
       incoming.delete(key);
