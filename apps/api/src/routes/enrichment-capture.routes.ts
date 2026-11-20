@@ -50,6 +50,8 @@ import {
   pauseAutoCapture,
   startAutoCapture,
 } from "../services/enrichment/capture-auto.service.js";
+import { companyIdForPublicId, knownCompanyJobs, listRequestedJobScans, recordJobScan, startJobScan } from "../services/enrichment/company-jobs.service.js";
+import { jobScanSchema } from "../services/enrichment/capture-schemas.js";
 import { indexCapturedPeople } from "../services/enrichment/capture-search-index.js";
 import { openSearchConfigFromEnv } from "../lib/opensearch-config.js";
 
@@ -188,8 +190,8 @@ export async function enrichmentCaptureRoutes(app: FastifyInstance) {
     const { db, actor } = await authorize(request, "enrichment:capture");
     const body = companyIngestSchema.parse(request.body ?? {});
     try {
-      const { run, company, ...counts } = await ingestCompanyCapture(db, actor, body);
-      return reply.status(201).send({ run: runDto(run), company, ...counts });
+      const { run, company, jobScan, ...counts } = await ingestCompanyCapture(db, actor, body);
+      return reply.status(201).send({ run: runDto(run), company, jobScan: jobScan?.scan ?? null, ...counts });
     } catch (error) {
       return sendCaptureError(reply, error);
     }
@@ -307,6 +309,42 @@ export async function enrichmentCaptureRoutes(app: FastifyInstance) {
     const publicId = captureQueueIdSchema.parse((request.params as { publicId: string }).publicId);
     if (!(await removeFromCaptureQueue(db, actor.workspaceId, publicId))) return reply.status(404).send({ error: "not_found" });
     return reply.status(204).send();
+  });
+
+  // Latest Job Roles from the extension: one scan of a company's job listings (initial and
+  // verification pass). Sending the same scan again records it once.
+  app.post("/enrichment/companies/:publicId/jobs/scan", ingestRoute, async (request, reply) => {
+    const { db, actor } = await authorize(request, "enrichment:capture");
+    const { publicId } = request.params as { publicId: string };
+    const scan = jobScanSchema.parse(request.body ?? {});
+    const companyId = await companyIdForPublicId(db, actor.workspaceId, captureQueueIdSchema.parse(publicId));
+    if (!companyId) {
+      return reply.status(409).send({ error: "company_not_captured", message: "Capture this company first, then its job roles can be saved." });
+    }
+    const result = await recordJobScan(db, actor, companyId, scan);
+    return reply.status(result.replay ? 200 : 201).send(result);
+  });
+
+  app.post("/enrichment/companies/:publicId/jobs/scan/start", async (request, reply) => {
+    const { db, actor } = await authorize(request, "enrichment:capture");
+    const { publicId } = request.params as { publicId: string };
+    const { clientScanId } = z.object({ clientScanId: z.string().trim().min(8).max(100) }).strict().parse(request.body ?? {});
+    const companyId = await companyIdForPublicId(db, actor.workspaceId, captureQueueIdSchema.parse(publicId));
+    if (!companyId) return reply.status(409).send({ error: "company_not_captured", message: "Capture this company first, then its job roles can be saved." });
+    return reply.send(await startJobScan(db, actor, companyId, clientScanId));
+  });
+
+  app.get("/enrichment/companies/:publicId/jobs/known", async (request, reply) => {
+    const { db, actor } = await authorize(request, "enrichment:capture");
+    const { publicId } = request.params as { publicId: string };
+    const companyId = await companyIdForPublicId(db, actor.workspaceId, captureQueueIdSchema.parse(publicId));
+    return reply.send({ jobs: companyId ? await knownCompanyJobs(db, actor.workspaceId, companyId) : [] });
+  });
+
+  // Job scans asked for in the workspace, for the extension's side panel.
+  app.get("/enrichment/capture/job-scans/requested", async (request, reply) => {
+    const { db, actor } = await authorize(request, "enrichment:capture");
+    return reply.send({ scans: await listRequestedJobScans(db, actor.workspaceId) });
   });
 
   app.get("/enrichment/ingest/company/:publicId/captured-profile-ids", async (request, reply) => {

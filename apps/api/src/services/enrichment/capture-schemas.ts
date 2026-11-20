@@ -87,6 +87,8 @@ const linkedinId = z
   .refine((value) => !!linkedinIdFromSegment(value), "Not a LinkedIn identifier");
 
 const runId = z.string().uuid().optional();
+/** Names one capture so that sending it again (after a lost response) is safe: it is never saved twice. */
+const clientRunId = z.string().trim().min(8).max(100).optional();
 
 const relationshipContext = z
   .object({
@@ -103,9 +105,42 @@ const relationshipContext = z
   })
   .strict();
 
+export const CAPTURE_VERIFICATION_STATUSES = ["verified", "missing_data", "verification_required", "partial", "not_loaded", "restricted", "failed"] as const;
+
+/**
+ * What a capture's verification scan concluded, section by section. `complete`: matched what the
+ * page said it has; `incomplete`: fewer than the page says (after the second look); `none`: the
+ * section loaded and is empty; `not_loaded`: it never finished loading; `restricted`: LinkedIn
+ * would not show it.
+ */
+export const captureVerificationSchema = z
+  .object({
+    status: z.enum(CAPTURE_VERIFICATION_STATUSES),
+    passes: z.number().int().min(1).max(5),
+    sections: z
+      .record(
+        z.string().max(40),
+        z
+          .object({
+            found: z.number().int().min(0).max(100_000),
+            expected: z.number().int().min(0).max(100_000).optional(),
+            state: z.enum(["complete", "incomplete", "none", "not_loaded", "restricted", "failed"]),
+            note: text(300).optional(),
+          })
+          .strict()
+      )
+      .refine((value) => Object.keys(value).length <= 20, "Too many sections")
+      .optional(),
+    missing: z.array(text(60)).max(30).optional(),
+    notes: z.array(text(300)).max(20).optional(),
+    verifiedAt: z.string().datetime().optional(),
+  })
+  .strict();
+
 export const personIngestSchema = z
   .object({
     runId,
+    clientRunId,
     publicId: linkedinId,
     sourceUrl: publicProfileUrl,
     capturedAt: z.string().datetime().optional(),
@@ -129,6 +164,8 @@ export const personIngestSchema = z
     website: webUrl.optional(),
     websites: z.array(websiteLink).max(10).optional(),
     relationshipContext: relationshipContext.optional(),
+    /** What the verification scan concluded about this capture's completeness. */
+    verification: captureVerificationSchema.optional(),
     currentCompanies: factList(50).optional(),
     previousCompanies: factList().optional(),
     educations: factList(50).optional(),
@@ -168,6 +205,75 @@ const companySectionSchema = z
   })
   .strict();
 
+/** One job listing read from a company's LinkedIn jobs. Nothing here is guessed: absent means not shown. */
+export const jobRoleSchema = z
+  .object({
+    jobId: z.string().trim().regex(/^\d{4,20}$/).optional(),
+    jobUrl: z
+      .string()
+      .url()
+      .max(2_000)
+      .refine((value) => {
+        try {
+          const url = new URL(value);
+          return url.protocol === "https:" && ["www.linkedin.com", "linkedin.com"].includes(url.hostname);
+        } catch {
+          return false;
+        }
+      }, "Expected a LinkedIn job URL")
+      .optional(),
+    title: text(300).min(1),
+    companyName: text(300).optional(),
+    department: text(200).optional(),
+    location: text(300).optional(),
+    country: text(120).optional(),
+    employmentType: text(80).optional(),
+    workplaceType: z.enum(["remote", "hybrid", "on_site"]).optional(),
+    description: text(30_000).optional(),
+    requirements: text(15_000).optional(),
+    postedAt: z.string().datetime().optional(),
+    postedText: text(100).optional(),
+    source: text(60).optional(),
+  })
+  .strict();
+
+export const JOB_SCAN_CLIENT_STATUSES = ["completed", "failed", "restricted", "not_loaded", "in_progress"] as const;
+
+/**
+ * A scan of a company's job listings: every pass (initial, verification), whether the passes agree
+ * the list is complete, and the jobs found. The server decides what the scan can be trusted for.
+ */
+export const jobScanSchema = z
+  .object({
+    clientScanId: z.string().trim().min(8).max(100),
+    status: z.enum(JOB_SCAN_CLIENT_STATUSES),
+    source: text(60).optional(),
+    passes: z
+      .array(
+        z
+          .object({
+            pass: z.number().int().min(1).max(5),
+            method: text(80).optional(),
+            found: z.number().int().min(0).max(5_000),
+            /** The pass reached the end of what LinkedIn shows (no "more" left, not cut short). */
+            complete: z.boolean(),
+            note: text(300).optional(),
+          })
+          .strict()
+      )
+      .max(5)
+      .default([]),
+    jobs: z.array(jobRoleSchema).max(500).default([]),
+    notes: z.array(text(300)).max(30).default([]),
+    error: text(500).optional(),
+    startedAt: z.string().datetime().optional(),
+    completedAt: z.string().datetime().optional(),
+  })
+  .strict();
+
+export type JobScanInput = z.infer<typeof jobScanSchema>;
+export type JobRoleInput = z.infer<typeof jobRoleSchema>;
+
 export const COMPANY_SECTION_KEYS = [
   "home",
   "about",
@@ -202,6 +308,7 @@ const discoveryProfile = z
 export const companyIngestSchema = z
   .object({
     runId,
+    clientRunId,
     publicId: linkedinId,
     memberId: z.string().trim().regex(/^\d{1,20}$/).optional(),
     sourceUrl: companyUrl,
@@ -232,6 +339,9 @@ export const companyIngestSchema = z
     funding: factItem.optional(),
     recentPosts: factList(20).optional(),
     openJobs: factList(200).optional(),
+    verification: captureVerificationSchema.optional(),
+    /** Job listings with the scan that found them (see company-jobs.service.ts). */
+    jobScan: jobScanSchema.optional(),
     products: factList().optional(),
     life: z.array(z.union([text(4_000), factItem])).max(50).optional(),
     peopleStats: factItem.optional(),
@@ -287,6 +397,7 @@ const salesLeadProfile = z
 export const salesSearchIngestSchema = z
   .object({
     runId,
+    clientRunId,
     sourceUrl: salesUrl,
     capturedAt: z.string().datetime().optional(),
     filters: z.array(text(300)).max(100).optional(),
