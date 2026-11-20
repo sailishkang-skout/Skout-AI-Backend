@@ -675,3 +675,51 @@ describe("ENR-02 capture jobs dashboard", () => {
     expect((await get("/enrichment/capture/queue/no-such-job")).statusCode).toBe(404);
   });
 });
+
+describe("ENR-02 retried captures are saved once", () => {
+  const company = (extra: Record<string, unknown> = {}) => ({
+    publicId: "retry-co",
+    sourceUrl: "https://www.linkedin.com/company/retry-co/",
+    name: "Retry Co",
+    peopleProfiles: [
+      { publicId: "retry-p1", sourceUrl: "https://www.linkedin.com/in/retry-p1/", fullName: "Retry One", associationSource: "company-search-result" },
+      { publicId: "retry-p2", sourceUrl: "https://www.linkedin.com/in/retry-p2/", fullName: "Retry Two", associationSource: "company-search-result" },
+    ],
+    pagesRead: 2,
+    ...extra,
+  });
+
+  it("replays the recorded result when the same capture is sent again", async () => {
+    const clientRunId = `retry-${randomUUID()}`;
+    const first = await post("/enrichment/ingest/company", company({ clientRunId }));
+    expect(first.statusCode).toBe(201);
+    expect(first.json()).toMatchObject({ created: 2, run: { status: "completed", leadsReceived: 2 } });
+    // The first response was "lost": the extension sends it again.
+    const again = await post("/enrichment/ingest/company", company({ clientRunId }));
+    expect(again.statusCode).toBe(201);
+    expect(again.json().run.id).toBe(first.json().run.id);
+    expect(again.json()).toMatchObject({ received: 2, created: 2, merged: 0, run: { status: "completed", leadsReceived: 2, pagesRead: 2 } });
+    // No second run, and the people exist once.
+    const runs = (await get("/enrichment/capture/runs")).json().runs as Array<{ id: string }>;
+    expect(runs.filter((run) => run.id === first.json().run.id)).toHaveLength(1);
+    const contacts = await app.db!.select().from(schema.contacts).where(and(eq(schema.contacts.workspaceId, WORKSPACE), like(schema.contacts.linkedinUrl, "%retry-p%")));
+    expect(contacts).toHaveLength(2);
+  });
+
+  it("does not replay across members or for a different key", async () => {
+    const clientRunId = `retry-${randomUUID()}`;
+    const mine = await post("/enrichment/ingest/company", company({ clientRunId }));
+    const other = await post("/enrichment/ingest/company", company({ clientRunId: `retry-${randomUUID()}` }));
+    expect(other.json().run.id).not.toBe(mine.json().run.id);
+    expect((await post("/enrichment/ingest/company", company({ clientRunId: "short" }))).statusCode).toBe(422);
+  });
+
+  it("puts a failed run back to running so the retry can finish it", async () => {
+    const clientRunId = `retry-${randomUUID()}`;
+    const first = await post("/enrichment/ingest/company", company({ clientRunId }));
+    await app.db!.update(schema.enrichmentCaptureRuns).set({ status: "failed", errorCode: "ingest_failed", errorMessage: "boom" }).where(eq(schema.enrichmentCaptureRuns.id, first.json().run.id));
+    const again = await post("/enrichment/ingest/company", company({ clientRunId }));
+    expect(again.statusCode).toBe(201);
+    expect(again.json().run).toMatchObject({ id: first.json().run.id, status: "completed", errorMessage: null });
+  });
+});

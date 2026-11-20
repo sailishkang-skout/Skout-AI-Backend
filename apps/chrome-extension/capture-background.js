@@ -42,16 +42,33 @@ async function getStored(key) {
  * page a capture opens, so a LinkedIn warning or the workspace kill switch stops a long
  * run at the next step. A status that cannot be confirmed also stops it.
  */
-async function captureBlock() {
+// The last "capture is enabled" the API confirmed. The API enforces the kill switch and the daily
+// limit on every save, so when one status check fails (a slow or restarting API) a recent
+// confirmation lets the reader carry on: nothing is saved without the API answering.
+const STATUS_FALLBACK_MS = 10 * 60 * 1000;
+let lastConfirmedStatus = null;
+
+/**
+ * Why a capture may not read another page right now: `{ reason }`, with `transient: true` when
+ * the cause is only that the status could not be confirmed (try again) rather than a decision
+ * (a LinkedIn warning, the kill switch). Nothing blocks: `{}`.
+ */
+async function captureBlockDetail() {
   const halt = await getStored(CAPTURE_HALT_KEY);
-  if (halt) return `Capture is stopped: ${halt.reason} Review the warning in the Skout side panel before continuing.`;
+  if (halt) return { reason: `Capture is stopped: ${halt.reason} Review the warning in the Skout side panel before continuing.` };
   try {
     const status = await deps.skoutFetch(`${API}/capture/status`);
-    if (!status?.enabled) return `Capture is disabled for this workspace${status?.disabledReason ? `: ${status.disabledReason}` : '.'}`;
+    lastConfirmedStatus = status?.enabled ? { at: Date.now() } : null;
+    if (!status?.enabled) return { reason: `Capture is disabled for this workspace${status?.disabledReason ? `: ${status.disabledReason}` : '.'}` };
   } catch (error) {
-    return `Capture status could not be confirmed (${error?.message || 'request failed'}).`;
+    if (lastConfirmedStatus && Date.now() - lastConfirmedStatus.at < STATUS_FALLBACK_MS) return {};
+    return { reason: `Capture status could not be confirmed (${error?.message || 'request failed'}).`, transient: true };
   }
-  return undefined;
+  return {};
+}
+
+async function captureBlock() {
+  return (await captureBlockDetail()).reason;
 }
 
 // ── Sales Navigator: public-link lookup, one lead page at a time ──────────────
@@ -293,8 +310,13 @@ async function readCompanyPeopleSearch(request, sender) {
     let afterPage;
     let lastReadUrl = draft?.lastReadUrl;
     for (; pagesRead < maxPages && !task.cancelled;) {
-      const blocked = await captureBlock();
-      if (blocked) throw new Error(blocked);
+      const block = await captureBlockDetail();
+      if (block.reason) {
+        // Only the status check failed: keep the pages already read as a batch instead of
+        // throwing them away; the next run continues from here.
+        if (block.transient && pagesRead > 0) { stopReason = 'the capture status could not be confirmed (it will continue next time)'; await saveDraft(); break; }
+        throw new Error(block.reason);
+      }
       const ready = await waitForCompanyPeoplePage(tab.id,searchKey,afterPage,task);
       if (!ready) return {ok:true,cancelled:true};
       const result = await chrome.tabs.sendMessage(tab.id,{type:'COLLECT_COMPANY_PEOPLE_PAGE'});
@@ -459,6 +481,8 @@ async function storeDraft(message, sender) {
     notes: Array.isArray(message.notes) ? message.notes.filter(Boolean).map(String) : [],
     sourceUrl: message.sourceUrl,
     capturedAt: message.capturedAt || new Date().toISOString(),
+    // Names this capture for idempotent saves (see sendCapture).
+    clientRunId: globalThis.crypto?.randomUUID?.(),
     tabId: sender.tab?.id,
     meta: {
       companyId: message.kind === 'company' ? data.publicId : undefined,
@@ -492,6 +516,7 @@ export function buildCapturePayload(draft, data) {
     throw new Error(`A capture run saves at most ${CAPTURE_CAPS.MAX_LEADS} leads. Remove ${leads.length - CAPTURE_CAPS.MAX_LEADS} before saving.`);
   }
   const capturedAt = draft.capturedAt;
+  const key = draft.clientRunId ? { clientRunId: draft.clientRunId } : {};
   if (draft.kind === 'sales') {
     return {
       sourceUrl: clean.sourceUrl,
@@ -500,10 +525,11 @@ export function buildCapturePayload(draft, data) {
       resultCount: clean.resultCount,
       peopleProfiles: leads || [],
       capturedAt,
+      ...key,
     };
   }
   if (draft.kind === 'company') {
-    const payload = { ...clean, capturedAt };
+    const payload = { ...clean, capturedAt, ...key };
     if (leads?.length) {
       payload.peopleProfiles = leads;
       payload.pagesRead = Math.min(CAPTURE_CAPS.MAX_PAGES, Number(draft.meta?.progress?.pagesThisBatch) || 0);
@@ -513,9 +539,11 @@ export function buildCapturePayload(draft, data) {
     }
     return payload;
   }
-  return { ...clean, capturedAt };
+  return { ...clean, capturedAt, ...key };
 }
 
+// A save that times out is sent again this many times in all before the user is asked to retry.
+const SAVE_ATTEMPTS = 3;
 const INGEST_PATHS = { person: 'person', company: 'company', sales: 'sales-search' };
 
 /**
@@ -530,8 +558,29 @@ async function sendCapture(message) {
   let body;
   try {
     const payload = buildCapturePayload(draft, message.data || draft.data);
-    body = await deps.skoutFetch(`${API}/ingest/${path}`, { method: 'POST', body: JSON.stringify(payload), timeoutMs: 60_000 });
+    // The same capture carries the same clientRunId every time, so sending it again after a
+    // timeout is safe: the API replays what it recorded instead of saving it twice.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        body = await deps.skoutFetch(`${API}/ingest/${path}`, { method: 'POST', body: JSON.stringify(payload), timeoutMs: 60_000 });
+        break;
+      } catch (error) {
+        if (!(error?.transient || error?.timedOut) || attempt >= SAVE_ATTEMPTS) throw error;
+        await timing.delay(Math.min(15_000, 3_000 * attempt));
+      }
+    }
   } catch (error) {
+    if (error?.timedOut || error?.transient) {
+      // A timeout does not mean the capture failed: it may be saved, or still saving. The reviewed
+      // batch is kept, and Save again is safe (it is not saved twice).
+      return {
+        ok: false,
+        pending: true,
+        error: `Skout is taking longer than usual to confirm this save (${error.message}). Your reviewed capture is kept: choose Save again in a moment. It will not be saved twice.`,
+        code: 'save_unconfirmed',
+        run: null,
+      };
+    }
     // The API lists the fields that failed validation under details.fields.
     const issues = (error?.body?.details?.fields || []).slice(0, 5).map(issue => `${issue.path}: ${issue.message}`);
     return {
@@ -743,6 +792,8 @@ const MAX_QUEUE_COMPANIES = 200;
 const RUN_QUEUE_GAP_MS = 3000;
 // A company read "until finished" stops after this many saved batches (250 people each).
 const MAX_BATCHES_PER_COMPANY = 40;
+// A queue waits this many times (with growing pauses) for a status check that cannot be confirmed.
+const MAX_STATUS_RETRIES = 6;
 
 async function getRunQueue() {
   return (await getStored(RUN_QUEUE_KEY)) || null;
@@ -826,8 +877,16 @@ async function advanceRunQueue() {
       if (queue.items.some(entry => ['running', 'review'].includes(entry.status))) return;
       const next = queue.items.find(entry => entry.status === 'pending');
       if (!next) return setRunQueue({ ...queue, active: false, note: 'Every selected company has been read.', finishedAt: Date.now() });
-      const blocked = await captureBlock();
-      if (blocked) return setRunQueue({ ...queue, active: false, note: blocked });
+      const block = await captureBlockDetail();
+      if (block.transient && (queue.statusRetries || 0) < MAX_STATUS_RETRIES) {
+        // A slow or restarting API is not a reason to stop the queue: wait, then try again.
+        const waitMs = Math.min(5 * 60_000, 20_000 * 2 ** (queue.statusRetries || 0));
+        await setRunQueue({ ...queue, statusRetries: (queue.statusRetries || 0) + 1, note: `Waiting for Skout to answer (retry in ${Math.round(waitMs / 1000)} s).` });
+        timing.delay(waitMs).then(advanceRunQueue).catch(() => {});
+        return;
+      }
+      if (block.reason) return setRunQueue({ ...queue, active: false, note: block.reason });
+      if (queue.statusRetries) queue.statusRetries = 0;
       next.status = 'running';
       await setRunQueue(queue);
       const result = await continueCaptureQueue({ companyId: next.companyPublicId, tabId: queue.tabId });
@@ -1213,4 +1272,4 @@ export function resumeJobFromWeb(companyId, name) {
   return startRunQueue({ companies: [{ companyPublicId: companyId, name: String(name || companyId) }], untilComplete: true });
 }
 
-export const __test = { commitCompanyPeopleCapture, getCompanyPeopleState, captureBlock, companyReadUrl, deps, listCaptureCompanies, getRunQueue, advanceRunQueue, readCompanyPeopleSearch };
+export const __test = { commitCompanyPeopleCapture, getCompanyPeopleState, captureBlock, captureBlockDetail, resetStatusCache: () => { lastConfirmedStatus = null; }, companyReadUrl, deps, listCaptureCompanies, getRunQueue, advanceRunQueue, readCompanyPeopleSearch };

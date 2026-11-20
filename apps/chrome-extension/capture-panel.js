@@ -817,7 +817,8 @@ export function initCapturePanel() {
       setResult(`Saved. Capture run ${response.run.status}: ${created} new, ${merged} merged, ${rejected} rejected.${dropped}${next}`, "capture-success");
     } else {
       const runState = response.run ? ` Capture run status: ${response.run.status}.` : "";
-      setResult(`Not saved: ${response.error}${runState}`, "capture-error");
+      // A save that could not be confirmed is not a failure: the batch is kept and Save is safe to repeat.
+      setResult(response.pending ? response.error : `Not saved: ${response.error}${runState}`, "capture-error");
       sendBtn.disabled = false;
     }
     await refreshStatus();

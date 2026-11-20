@@ -87,6 +87,8 @@ const linkedinId = z
   .refine((value) => !!linkedinIdFromSegment(value), "Not a LinkedIn identifier");
 
 const runId = z.string().uuid().optional();
+/** Names one capture so that sending it again (after a lost response) is safe: it is never saved twice. */
+const clientRunId = z.string().trim().min(8).max(100).optional();
 
 const relationshipContext = z
   .object({
@@ -106,6 +108,7 @@ const relationshipContext = z
 export const personIngestSchema = z
   .object({
     runId,
+    clientRunId,
     publicId: linkedinId,
     sourceUrl: publicProfileUrl,
     capturedAt: z.string().datetime().optional(),
@@ -202,6 +205,7 @@ const discoveryProfile = z
 export const companyIngestSchema = z
   .object({
     runId,
+    clientRunId,
     publicId: linkedinId,
     memberId: z.string().trim().regex(/^\d{1,20}$/).optional(),
     sourceUrl: companyUrl,
@@ -287,6 +291,7 @@ const salesLeadProfile = z
 export const salesSearchIngestSchema = z
   .object({
     runId,
+    clientRunId,
     sourceUrl: salesUrl,
     capturedAt: z.string().datetime().optional(),
     filters: z.array(text(300)).max(100).optional(),
