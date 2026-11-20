@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { sql, eq } from "drizzle-orm";
 import { boolean, foreignKey, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { users } from "./users.js";
 import { workspaces } from "./workspaces.js";
@@ -92,6 +92,9 @@ export const enrichmentChangeEvents = pgTable(
       table.entityType,
       table.entityId
     ),
+    uniqueIndex("enrichment_change_events_job_change_unique_idx")
+      .on(table.workspaceId, table.entityId, table.field, table.newValue)
+      .where(eq(table.isJobChange, true)),
   ]
 );
 

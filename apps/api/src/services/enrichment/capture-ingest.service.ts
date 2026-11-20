@@ -583,7 +583,7 @@ async function writeSnapshot(
   const oldData = (previous?.rawData ?? {}) as Json;
   // Bookkeeping fields change on every capture and are not profile changes.
   const ignored = new Set(["capturedAt", "sourceUrl", "captureSource"]);
-  const changes = previous
+  let changes = previous
     ? Object.entries(data)
         .filter(([field]) => !ignored.has(field) && oldHashes[field] !== fieldHashes[field])
         .map(([field, newValue]) => ({
@@ -632,6 +632,35 @@ async function writeSnapshot(
       }
     }
   }
+  // Deduplicate job change events before inserting: don't create duplicate events for the same change
+  if (changes.some((change) => change.isJobChange)) {
+    const existingJobChanges = await tx
+      .select({ newValue: enrichmentChangeEvents.newValue, detectedAt: enrichmentChangeEvents.detectedAt })
+      .from(enrichmentChangeEvents)
+      .where(
+        and(
+          eq(enrichmentChangeEvents.workspaceId, actor.workspaceId),
+          eq(enrichmentChangeEvents.entityId, entityId),
+          eq(enrichmentChangeEvents.isJobChange, true),
+          gte(enrichmentChangeEvents.detectedAt, new Date(Date.now() - 5 * 60 * 1000)) // Within last 5 minutes
+        )
+      );
+    // Filter out duplicate job changes
+    const newChanges = changes.filter((change) => {
+      if (!change.isJobChange) return true;
+      // Check if an identical job change already exists
+      return !existingJobChanges.some((existing) => {
+        // Compare the newValue to see if this is the same change
+        return JSON.stringify(existing.newValue) === JSON.stringify(change.newValue);
+      });
+    });
+    // Only proceed if we have changes left
+    if (newChanges.length !== changes.length) {
+      log.info(`Filtered out ${changes.length - newChanges.length} duplicate job change events for entity ${entityId}`);
+      changes = newChanges;
+    }
+  }
+
   // An identical re-capture is recorded once, not as a new history entry.
   if (previous && changes.length === 0) return 0;
 
@@ -644,7 +673,7 @@ async function writeSnapshot(
     capturedVia: "EXTENSION",
     capturedBy: actor.userId,
   });
-  if (changes.length) await tx.insert(enrichmentChangeEvents).values(changes);
+  if (changes.length) await tx.insert(enrichmentChangeEvents).values(changes).onConflictDoNothing();
   return changes.length;
 }
 
